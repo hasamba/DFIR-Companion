@@ -402,6 +402,21 @@ const IMPORTER_TIME_KEYS = [
   "EndTime",
 ];
 
+// Field keys the importers' own pickers choose among (#1736), so an importer's debug summary can
+// name the key it used. Code-authored and generic — never a person, org or host name.
+const IMPORTER_FIELD_KEYS = [
+  "computer_name",
+  "agent.hostname",
+  "beat.hostname",
+  "device.hostname",
+  "endpoint.name",
+  "src_host",
+  "source.host",
+  "winlog.computer_name",
+  "DeviceName",
+  "EventData.UtcTime",
+];
+
 /** The raw allowlist, as the tools spell it. Normalized into a set by `importShape.ts`. */
 export const KNOWN_COLUMN_NAME_LIST: readonly string[] = [
   ...WINDOWS_EVENT_LOG,
@@ -413,4 +428,5 @@ export const KNOWN_COLUMN_NAME_LIST: readonly string[] = [
   ...THOR,
   ...SIEM,
   ...IMPORTER_TIME_KEYS,
+  ...IMPORTER_FIELD_KEYS,
 ];

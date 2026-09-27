@@ -20,6 +20,8 @@
 // Events are tagged "Suricata" / "Zeek" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { interleave, noteNetworkStream } from "./networkImportDecisions.js";
 import { readSuricataCertificates, readSuricataTls, readZeekSsl, readZeekX509 } from "./tlsSession.js";
 import { addTls, emptyTlsObservations } from "./tlsGraphJoin.js";
 import { tlsFamilies } from "./tlsGraphRows.js";
@@ -77,6 +79,7 @@ export interface NetworkImportOptions {
   // Zeek exported as per-stream JSON has no `_path`; the filename names the stream (conn.json,
   // dns.json, …). When provided, it's the authoritative stream for records that carry no `_path`.
   filename?: string;
+  debug?: ImportDebugRecorder; // this attempt's debug recorder (#1736): decisions and counts only
 }
 
 const ZEEK_STREAMS = [
@@ -600,25 +603,6 @@ function pickHost(row: Row): string {
   return firstStr(row, ["hostname", "agent.hostname", "agent.name", "observer.name"]) || str(h).trim();
 }
 
-// ───────────────────────────── telemetry budget ─────────────────────────────
-
-// Round-robin across families, each already in its own priority order, until `budget` rows.
-export function interleave<T>(families: readonly (readonly T[])[], budget: number): T[] {
-  const out: T[] = [];
-  const cursors = families.map(() => 0);
-  let progressed = true;
-  while (out.length < budget && progressed) {
-    progressed = false;
-    for (let i = 0; i < families.length && out.length < budget; i++) {
-      if (cursors[i] < families[i].length) {
-        out.push(families[i][cursors[i]++]);
-        progressed = true;
-      }
-    }
-  }
-  return out;
-}
-
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}): NetworkParseResult {
@@ -660,6 +644,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
     // A Zeek http row's scalar `host` is the HTTP Host header — the server the CLIENT named, never
     // the sensor. Only a shipper's observer/agent fields name the sensor on such a row (#993).
     const zstream = etype ? "" : zpath || fileStream || inferZeekStream(row);
+    noteNetworkStream(opts.debug, etype, zpath, fileStream);
     const host = zstream === "http" ? (sensorOf(row)?.name ?? "") : pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
@@ -745,6 +730,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const flows = [...flowSink.values()]
     .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
+  if (flowSink.size > flows.length) opts.debug?.omitted("over_flow_budget", flowSink.size - flows.length);
   // Every telemetry family is pre-selected in its own order (flows by bytes, TLS most-seen, TLS
   // graph leads first, web file-identity first, DNS in-window leads first) and the families share ONE budget round-robin
   // — the event budget less the detection rows already mapped, which outrank telemetry at the

@@ -24,7 +24,9 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
-import type { ImportBase } from "../routes/context.js";
+import type { ImportBase, RouteContext } from "../routes/context.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
@@ -74,7 +76,7 @@ export interface VeloHuntsDeps {
     text: string,
   ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
-  resolveImportKind: (filename: string, text: string) => string;
+  resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
   demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
@@ -82,7 +84,7 @@ export interface VeloHuntsDeps {
   resynthesizeInBackground: (caseId: string) => void;
   markConclusionsOutOfDate?: (caseId: string, reason: string) => Promise<void>; // #1599: no run of its own
   /** The diagnostics ring + FAILED log line (#1438); a collect that dies is otherwise only a job status. */
-  recordImportFailure?: (caseId: string, kind: string, filename: string, err: unknown) => void;
+  recordImportFailure?: RouteContext["recordImportFailure"]; // takes the attempt's recorder (#1736)
 }
 
 export interface VeloHunts {
@@ -217,6 +219,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     // `finally`. Acquire order is slot-then-lock everywhere, so the two can never deadlock.
     let importSlot: RegisteredJob | null = null;
     let releaseImportLock: (() => void) | null = null;
+    let inFlight: ImportDebugRecorder | undefined; // the artifact import attempt in progress (#1736)
     // Scratch dir for streaming each artifact's rows to disk as they're fetched, instead of holding
     // every artifact of a hunt in memory at once (see the streaming note at step 1 below). Removed in
     // the `finally` regardless of where this pass stops.
@@ -369,24 +372,18 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // read from its scratch file, imported, and released before the next is read.
       const jobHuntId = job.huntId; // hoisted so later closures don't re-narrow the reassignable `job`
       const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId); // GUI deep-link every event shares
-      // The importer's per-call event cap (DFIR_MAX_EVENTS, default 2000) used to bound the WHOLE hunt,
-      // because the whole hunt was one importVelociraptor call. Now that each artifact imports
-      // separately, a fresh per-call cap would let a 45-artifact bundle through 45x the intended
-      // ceiling — so one budget is carried across the loop and shrunk by however many forensic events
-      // each artifact actually added, the same way step 5 below measures "added" for the combined
-      // import-meta diff (before/after forensicTimeline length).
+      // The importer's per-call event cap (DFIR_MAX_EVENTS) bounds the WHOLE hunt: a fresh cap per
+      // artifact would let a 45-artifact bundle through 45x the ceiling. One budget is carried across
+      // the loop, shrunk by the forensic events each artifact added (step 5's before/after diff).
       let eventBudgetRemaining = maxEventsDefault();
       let budgetBaseline = options.stateStore ? stateBefore : null;
       let budgetExhaustedLogged = false;
-      // Same fix for a super-only bundle: one budget of the super-timeline's own (much larger) cap is
-      // carried across the loop, instead of each artifact getting a fresh DFIR_SUPERTIMELINE_MAX.
+      // Same for a super-only bundle: one DFIR_SUPERTIMELINE_MAX budget across the loop, not per artifact.
       let superEventBudgetRemaining = Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000;
       let superBudgetExhaustedLogged = false;
-      // Per-artifact progress on the import job (#1428). A big bundle used to sit in the Background
-      // jobs popover as a bare "running" for many minutes — the loop was advancing one artifact at a
-      // time (a 100k-row MFT takes minutes on its own) but never told the job, so a slow import and a
-      // stuck one looked the same. The job engine turns these into a rate and an ETA; the popover
-      // draws the bar. The log line is the same signal for whoever is tailing the session log.
+      // Per-artifact progress on the import job (#1428), so a slow import and a stuck one no longer
+      // look the same "running" in the popover: the job engine turns these into a rate and an ETA,
+      // and the log line is the same signal for whoever is tailing the session log.
       const reportArtifactProgress = (done: number, detail: string): void => {
         if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
       };
@@ -395,6 +392,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;
         reportArtifactProgress(index, step);
         logLine(`[velociraptor] hunt ${job.huntId}: importing ${step}`);
+        const debug = (inFlight = createImportDebugRecorder()); // one recorder per artifact (#1736)
+        debug.detected("velociraptor", { confident: true, decision: "explicit_route" }); // a row map
         const json = await readFile(file, "utf8");
         const { storedName, importedAt, seq } = await persistEvidence(
           caseId,
@@ -505,6 +504,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             minSeverity,
             veloUrl,
             velociraptor: { maxEvents: eventBudgetRemaining, partlyReadArtifact: partly },
+            debug,
           });
           importedAny = true;
           if (options.stateStore && budgetBaseline) {
@@ -519,7 +519,9 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             }
           }
         }
+        emitImportDebug(caseId, debug, "succeeded"); // no dispatchImport here to write the line
       }
+      inFlight = undefined; // every artifact's line is written; a later failure is not an artifact's
       reportArtifactProgress(
         artifactFiles.length,
         `${artifactFiles.length}/${artifactFiles.length} artifact(s) imported`,
@@ -527,7 +529,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
 
       // 4) The uploaded JSON reports read above → detect + dispatch.
       for (const up of uploads) {
-        const upKind = resolveImportKind(up.name, up.content); // honor custom importers like /import + /push
+        const upDebug = createImportDebugRecorder(); // one recorder per upload (#1736)
+        const upKind = resolveImportKind(up.name, up.content, upDebug); // honors custom importers too
         if (upKind === "unknown") continue;
         if (superOnly) {
           // Super-only bundles route to the super-timeline; the upload path (THOR/Hayabusa JSON) only has
@@ -555,11 +558,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             idPrefix: `${seq}`,
             importedAt,
             minSeverity,
+            debug: upDebug,
           });
           importedAny = true;
         } catch (e) {
           logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`);
-          recordImportFailure?.(caseId, `velociraptor-upload:${upKind}`, up.name, e); // the [import] FAILED line (#1438)
+          recordImportFailure?.(caseId, `velociraptor-upload:${upKind}`, up.name, e, upDebug); // the [import] FAILED line (#1438)
         }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
@@ -693,7 +697,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       else if (inventorySignature([before]) !== inventorySignature([job]))
         await deps.markConclusionsOutOfDate?.(caseId, "hunt outcome changed"); // what settles moved (#1612)
     } catch (err) {
-      recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err);
+      recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err, inFlight);
       try {
         const cur = await huntStore.get(caseId, huntId);
         if (cur)

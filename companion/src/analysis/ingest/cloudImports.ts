@@ -15,6 +15,8 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import { recordParsedImport } from "./parsedDebug.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
@@ -46,10 +48,11 @@ export async function importM365(
     importedAt: string;
     m365?: M365ImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseM365Audit(text, opts.m365);
+  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug });
 
   // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
   const { events: crossRows, retentionNote } = await crossUploadSprayRows(
@@ -67,6 +70,8 @@ export async function importM365(
     ...parsedRaw,
     events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
   };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length + crossRows.length, parsed.events.length);
+  if (crossRows.length > 0) opts.debug?.fallback("cross_upload_spray", crossRows.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(
@@ -129,11 +134,13 @@ export async function importOkta(
     importedAt: string;
     okta?: OktaImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button)
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseOktaSystemLog(text, opts.okta);
+  const parsedRaw = parseOktaSystemLog(text, { ...opts.okta, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Okta", parsed.total);
 
@@ -183,11 +190,13 @@ export async function importAzureStorageLog(
     importedAt: string;
     azureStorageLog?: AzureStorageLogImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseAzureStorageLog(text, opts.azureStorageLog);
+  const parsedRaw = parseAzureStorageLog(text, { ...opts.azureStorageLog, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Azure Storage Logs", parsed.total);
 
@@ -238,11 +247,13 @@ export async function importGoogleWorkspace(
     importedAt: string;
     gws?: GoogleWorkspaceImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseGoogleWorkspaceReport(text, opts.gws);
+  const parsedRaw = parseGoogleWorkspaceReport(text, { ...opts.gws, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total),
@@ -297,11 +308,13 @@ export async function importHindsight(
     importedAt: string;
     hindsight?: HindsightImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseHindsight(text, opts.hindsight);
+  const parsedRaw = parseHindsight(text, { ...opts.hindsight, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Hindsight", parsed.total);
 
@@ -351,11 +364,13 @@ export async function importMacos(
     importedAt: string;
     macos?: MacosImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseMacos(text, opts.macos);
+  const parsedRaw = parseMacos(text, { ...opts.macos, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "macOS", parsed.total);
 
@@ -407,11 +422,13 @@ export async function importLeapp(
     filename?: string;
     leapp?: LeappImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, opts.leapp);
+  const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, { ...opts.leapp, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "LEAPP", parsed.total);
 
@@ -467,11 +484,13 @@ export async function importAws(
     importedAt: string;
     aws?: AwsImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseCloudTrail(text, opts.aws);
+  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total),
@@ -526,11 +545,13 @@ export async function importCloudActivity(
     importedAt: string;
     cloud?: CloudActivityImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseCloudActivity(text, opts.cloud);
+  const parsedRaw = parseCloudActivity(text, { ...opts.cloud, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total),
@@ -586,11 +607,13 @@ export async function importK8sAudit(
     importedAt: string;
     k8s?: K8sAuditImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseK8sAudit(text, opts.k8s);
+  const parsedRaw = parseK8sAudit(text, { ...opts.k8s, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Kubernetes audit", parsed.total);
 
@@ -641,11 +664,13 @@ export async function importOsquery(
     importedAt: string;
     osquery?: OsqueryImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseOsqueryLog(text, opts.osquery);
+  const parsedRaw = parseOsqueryLog(text, { ...opts.osquery, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "osquery", parsed.total);
 

@@ -7,6 +7,7 @@ import { hashManifestValue } from "../analysis/analysisRunHash.js";
 import { checkReplayAvailability, type ReplayEnvironment } from "../analysis/analysisRunReplay.js";
 import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { IMPORT_KINDS } from "../analysis/importerSpec.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
@@ -122,7 +123,11 @@ async function replayEnvironment(
   };
 }
 
-async function replayImport(ctx: RouteContext, run: AnalysisRunManifest): Promise<void> {
+async function replayImport(
+  ctx: RouteContext,
+  run: AnalysisRunManifest,
+  debug?: ImportDebugRecorder,
+): Promise<void> {
   const { options, store } = ctx;
   if (!options.stateStore || !options.analysisRunStore) throw new Error("analysis runs not configured");
   const artifact = run.input.artifacts[0];
@@ -132,8 +137,11 @@ async function replayImport(ctx: RouteContext, run: AnalysisRunManifest): Promis
   const text = await readFile(resolve(store.caseDir(run.caseId), artifact.path), "utf8");
   const startedAt = new Date().toISOString();
   const before = await options.stateStore.load(run.caseId);
+  // The kind is the recorded run's, so nothing was sniffed (#1736).
+  debug?.detected(kind, { confident: true, decision: "replay" });
   await ctx.dispatchImport(kind, run.caseId, text, {
     label: `replay-${run.id}`,
+    ...(debug ? { debug } : {}),
     idPrefix: `replay-${Date.now()}`,
     importedAt: startedAt,
   });
@@ -254,11 +262,15 @@ async function replaySynthesis(ctx: RouteContext, run: AnalysisRunManifest): Pro
   }
 }
 
-async function executeReplay(ctx: RouteContext, run: AnalysisRunManifest): Promise<"completed" | "accepted"> {
+async function executeReplay(
+  ctx: RouteContext,
+  run: AnalysisRunManifest,
+  debug?: ImportDebugRecorder,
+): Promise<"completed" | "accepted"> {
   const { options } = ctx;
   switch (run.kind) {
     case "import":
-      await replayImport(ctx, run);
+      await replayImport(ctx, run, debug);
       return "completed";
     case "deterministic":
       await replayTagger(ctx, run);
@@ -353,11 +365,13 @@ export function registerAnalysisRunRoutes(app: Express, ctx: RouteContext): void
     if (!run) return res.status(404).json({ error: "analysis run not found" });
     const preflight = checkReplayAvailability(run, await replayEnvironment(ctx, req.params.id, run));
     if (!preflight.ready) return res.status(409).json(preflight);
+    // An import replay is an import attempt, so it carries its own recorder (#1736).
+    const debug = run.kind === "import" ? createImportDebugRecorder() : undefined;
     try {
-      const status = await executeReplay(ctx, run);
+      const status = await executeReplay(ctx, run, debug);
       return res.status(status === "accepted" ? 202 : 200).json({ accepted: true, parentRunId: run.id });
     } catch (err) {
-      ctx.recordImportFailure(run.caseId, "replay", `replay-${run.id}`, err); // the [import] FAILED line (#1438)
+      ctx.recordImportFailure(run.caseId, "replay", `replay-${run.id}`, err, debug); // the [import] FAILED line (#1438)
       return res.status(500).json({ error: (err as Error).message });
     }
   });

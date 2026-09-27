@@ -36,6 +36,7 @@ import {
 } from "./siemImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { reconTechniques } from "./reconTechniques.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -44,6 +45,8 @@ export interface OsqueryImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface OsqueryParseResult {
@@ -82,14 +85,22 @@ const SUMMARY_KEYS = [
   "value",
 ];
 
-function timeOf(rec: Row): string {
+// `onKey` hears which key supplied the time (#1736) — the key name, never the value.
+function timeOf(rec: Row, onKey?: (key: string) => void): string {
   const unix = Number(getCI(rec, "unixTime"));
-  if (Number.isFinite(unix) && unix > 0) return new Date(unix * 1000).toISOString();
+  if (Number.isFinite(unix) && unix > 0) {
+    onKey?.("unixTime");
+    return new Date(unix * 1000).toISOString();
+  }
   const cal = str(getCI(rec, "calendarTime")).trim();
   if (cal) {
     const d = new Date(cal); // "Tue Aug 1 12:00:00 2024 UTC"
-    if (!Number.isNaN(d.getTime())) return d.toISOString();
+    if (!Number.isNaN(d.getTime())) {
+      onKey?.("calendarTime");
+      return d.toISOString();
+    }
   }
+  onKey?.("time");
   return normalizeTime(str(getCI(rec, "time")));
 }
 
@@ -191,21 +202,34 @@ export function parseOsqueryLog(text: string, opts: OsqueryImportOptions = {}): 
     const name = str(getCI(rec, "name"));
     const columns = getCI(rec, "columns");
     const snapshot = getCI(rec, "snapshot");
-    if (!name || (!isObject(columns) && !Array.isArray(snapshot))) continue;
+    if (!name || (!isObject(columns) && !Array.isArray(snapshot))) {
+      opts.debug?.skipped("missing_required_field");
+      continue;
+    }
 
-    const host = str(getCI(rec, "hostIdentifier")) || str(getCI(rec, "host_identifier"));
+    const hostId = str(getCI(rec, "hostIdentifier"));
+    const host = hostId || str(getCI(rec, "host_identifier"));
+    if (host) opts.debug?.field("host", hostId ? "hostIdentifier" : "host_identifier");
+    else opts.debug?.observed("missing_host");
     const action = str(getCI(rec, "action"));
-    const ts = timeOf(rec);
+    const ts = timeOf(rec, (k) => opts.debug?.field("timestamp", k));
 
     if (isObject(columns)) {
       mapped.push(mapRow(name, host, action, ts, columns, iocSink));
     } else if (Array.isArray(snapshot)) {
       let n = 0;
+      let seen = 0;
       for (const row of snapshot) {
-        if (!isObject(row)) continue;
+        seen++;
+        if (!isObject(row)) {
+          opts.debug?.skipped("not_an_object");
+          continue;
+        }
         mapped.push(mapRow(name, host, action || "snapshot", ts, row, iocSink));
         if (++n >= MAX_SNAPSHOT_ROWS) break;
       }
+      // Rows past the per-snapshot bound are never read (#1736).
+      if (seen < snapshot.length) opts.debug?.skipped("over_snapshot_cap", snapshot.length - seen);
     }
   }
   if (mapped.length === 0) {

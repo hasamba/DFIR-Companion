@@ -12,6 +12,7 @@
 // the Windows event XML is highly regular, so a focused scan over `<Event>` blocks is robust and
 // avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
+import type { ImportDebugRecorder } from "./importDebug.js";
 import type { SiemImportOptions, SiemParseResult } from "./siemImport.js";
 import {
   buildSiemResultProgress,
@@ -152,14 +153,17 @@ function parseEventBlock(block: string): Row | undefined {
 // Parse a Windows Event Log XML document into records shaped for the SIEM importer's mapWindows
 // (EventID / Channel / Computer / @timestamp / EventData). Tolerant of missing fields and the
 // optional `<?xml?>` declaration; skips a block that has no EventID.
-export function parseWinEventXml(text: string): Row[] {
+export function parseWinEventXml(text: string, debug?: ImportDebugRecorder): Row[] {
   const records: Row[] = [];
   const eventRe = /<Event\b[^>]*>([\s\S]*?)<\/Event>/gi;
   let m: RegExpExecArray | null;
+  let scanned = 0;
   while ((m = eventRe.exec(text)) !== null) {
+    scanned++;
     const record = parseEventBlock(m[1]);
     if (record) records.push(record);
   }
+  debug?.skipped("no_event_id", scanned - records.length);
   return records;
 }
 
@@ -173,6 +177,7 @@ export async function parseWinEventXmlProgress(
   text: string,
   onProgress?: (done: number, total: number) => void | Promise<void>,
   signal?: AbortSignal,
+  debug?: ImportDebugRecorder,
 ): Promise<Row[]> {
   throwIfImportAborted(signal);
   // Counting exec loop, not text.match(): match() would materialize a throwaway array with one
@@ -211,13 +216,14 @@ export async function parseWinEventXmlProgress(
   }
   if (scanned % progressChunkSize !== 0) await onProgress?.(scanned, total);
   throwIfImportAborted(signal);
+  debug?.skipped("no_event_id", scanned - records.length); // a block with no EventID is not an event
   return records;
 }
 
 // Parse a Windows Event Log XML export into a SIEM result (identical shape to parseSiemExport). The
 // same builder as the progress path the import route runs, so both give one answer (#1621).
 export function parseEvtxXml(text: string, opts: SiemImportOptions = {}): SiemParseResult {
-  const records = parseWinEventXml(text);
+  const records = parseWinEventXml(text, opts.debug);
   return buildWindowsEventResult(records, "winevent-xml", opts, text);
 }
 
@@ -228,6 +234,6 @@ export async function parseEvtxXmlProgress(
   onProcessProgress?: (done: number, total: number) => void | Promise<void>,
   signal?: AbortSignal,
 ): Promise<SiemParseResult> {
-  const records = await parseWinEventXmlProgress(text, onParseProgress, signal);
+  const records = await parseWinEventXmlProgress(text, onParseProgress, signal, opts.debug);
   return buildSiemResultProgress(records, "winevent-xml", opts, text, onProcessProgress, signal);
 }

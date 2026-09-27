@@ -37,6 +37,7 @@ import { prefetchSignal } from "./prefetchExecution.js";
 import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
 import { companionLeads, type PrefetchEntry } from "./prefetchResources.js";
 import { NOISY_LOLBINS } from "./winProcessBaseline.js";
+import { createDecisionTally, type ImportDebugRecorder } from "./rowDecisionDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -45,6 +46,7 @@ export interface KapeImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 export interface KapeParseResult {
@@ -508,6 +510,26 @@ const PROFILES: Profile[] = [
   },
 ];
 
+// Each profile's time columns, in the order its mapper tries them (#1736). The import debug record
+// names the one that dated a row — the first here whose value reads as the event's own time.
+const PROFILE_TIME_KEYS: Readonly<Record<string, readonly string[]>> = {
+  Prefetch: ["LastRun", "SourceModified"],
+  Amcache: ["FileKeyLastWriteTimestamp"],
+  ShimCache: ["LastModifiedTimeUTC"],
+  LNK: ["TargetModified", "TargetCreated", "SourceModified"],
+  JumpLists: ["TargetModified", "TargetCreated"],
+  UsnJrnl: ["UpdateTimestamp"],
+  MFT: ["Created0x10", "LastModified0x10"],
+  SRUM: ["Timestamp"],
+  RecycleBin: ["DeletedOn"],
+  Shellbags: ["LastInteracted", "FirstInteracted"],
+};
+
+function profileTimeKey(profile: string, row: Row, timestamp: string): string {
+  for (const k of PROFILE_TIME_KEYS[profile] ?? []) if (ezTime(getCI(row, k)) === timestamp) return k;
+  return "";
+}
+
 function detectProfile(headers: string[]): Profile | null {
   const set = new Set(headers.map((h) => h.trim().toLowerCase()));
   for (const p of PROFILES) if (p.match(set)) return p;
@@ -529,9 +551,13 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     aggregate: opts.aggregate,
     maxEvents: opts.maxEvents,
   });
-  if (acquisition) return acquisition;
+  if (acquisition) {
+    opts.debug?.fallback("kape_acquisition_log");
+    return acquisition;
+  }
   const profile = headers.length ? detectProfile(headers) : null;
   if (!profile) {
+    opts.debug?.skipped("unrecognized_ez_tool", rows.length);
     return {
       events: [],
       iocs: [],
@@ -549,6 +575,7 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
   const usnRows: Row[] = [];
   const srumRows: SrumRow[] = [];
   const prefetchEntries: PrefetchEntry[] = [];
+  const tally = opts.debug ? createDecisionTally() : undefined;
   for (const cols of rows) {
     const row: Row = {};
     headers.forEach((h, i) => {
@@ -556,6 +583,13 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
     });
     const m = profile.map(row, iocSink);
     if (m) mapped.push(m);
+    if (tally) {
+      const timeKey = m?.timestamp ? profileTimeKey(profile.name, row, m.timestamp) : "";
+      const dir = profile.name === "MFT" && truthy(getCI(row, "IsDirectory"));
+      if (!m) tally.skipped.add(dir ? "directory_entry" : "missing_required_field");
+      else if (timeKey) tally.fields.add("timestamp", timeKey);
+      else tally.observed.add(m.timestamp ? "timestamp_from_other_column" : "empty_timestamp");
+    }
     // Bounded. A real $J export runs to millions of rows, and lifecycle reconstruction holds every
     // one it is given, sorts a copy, and allocates a record per row — all BEFORE maxEvents applies.
     // Unbounded, that exhausts the process before any capped result is produced.
@@ -677,6 +711,10 @@ export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapePa
       path: pair.newName,
     });
   }
+
+  if (usnRows.length === MAX_LIFECYCLE_ROWS && rows.length > MAX_LIFECYCLE_ROWS)
+    tally?.observed.add("lifecycle_rows_capped");
+  tally?.flush(opts.debug);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

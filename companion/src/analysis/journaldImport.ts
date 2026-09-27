@@ -16,6 +16,8 @@
 //   4. AGGREGATES repetitive identical entries (shared with the SIEM importer) and caps the total.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -41,6 +43,7 @@ export interface JournaldImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface JournaldParseResult {
@@ -205,6 +208,7 @@ export function parseJournald(text: string, opts: JournaldImportOptions = {}): J
   const maxIocs = opts.maxIocs ?? 5000;
   const { records } = extractRecords(text);
   const journal = records.filter((r) => isObject(r) && looksLikeJournald(r));
+  opts.debug?.skipped("not_a_journal_entry", records.length - journal.length);
   if (journal.length === 0) {
     return {
       events: [],
@@ -221,11 +225,13 @@ export function parseJournald(text: string, opts: JournaldImportOptions = {}): J
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  let unmapped = 0;
   for (const rec of journal) {
     const host = firstStr(rec, ["_HOSTNAME", "HOSTNAME"]);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const m = mapEntry(rec, iocSink);
     if (m) mapped.push(m);
+    else unmapped++;
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -236,6 +242,8 @@ export function parseJournald(text: string, opts: JournaldImportOptions = {}): J
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  opts.debug?.skipped("unmapped_entry", unmapped);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

@@ -13,6 +13,8 @@ import { createCanonicalEvent } from "./canonicalEvent.js";
 import { MAX_FIELD_LEN, MAX_RAW_TEXT_LEN, SPOTLIGHT_USAGE_BASIS } from "./canonicalSpotlightUsage.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { createFieldTally } from "./parseDebugTally.js";
 
 export const MAX_SPOTLIGHT_ROWS_SCANNED = 20_000; // report-wide
 
@@ -22,6 +24,8 @@ export interface MacSpotlightUsageOptions {
   /** The uploaded file's own name (opts.label from the ingest wrapper) — the CSV's own content
    * carries no store-file identity field, so this is the only available source, best-effort only. */
   sourceLabel?: string;
+  /** This attempt's import debug recorder (#1736): selected columns, aggregation and cap. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface MacSpotlightUsageResult {
@@ -225,6 +229,8 @@ export function parseMacSpotlightUsageCsv(
   let filteredNoSignalRows = 0;
   let rowsTruncated = false;
   let scanned = 0;
+  const fields = createFieldTally();
+  let undated = 0;
 
   for (const row of it) {
     if (scanned >= MAX_SPOTLIGHT_ROWS_SCANNED) {
@@ -247,6 +253,10 @@ export function parseMacSpotlightUsageCsv(
       continue;
     }
     mapped.push(event);
+    const nameSource = event.canonical?.spotlightUsage?.displayNameSource;
+    if (nameSource && nameSource !== "unavailable") fields.add("path", nameSource);
+    if (event.timestamp) fields.add("timestamp", "kMDItemLastUsedDate");
+    else undated += 1;
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -254,6 +264,10 @@ export function parseMacSpotlightUsageCsv(
     minSeverity: "Info",
     maxEvents: opts.maxEvents ?? MAX_SPOTLIGHT_ROWS_SCANNED,
   });
+  fields.flush(opts.debug);
+  if (undated) opts.debug?.observed("empty_timestamp", undated);
+  // The event cap is recorded by the ingest wrapper from `groups` / `kept`.
+  if (mapped.length > groups) opts.debug?.omitted("aggregated", mapped.length - groups);
 
   return {
     events,

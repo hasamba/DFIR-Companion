@@ -27,6 +27,8 @@
 // tag (see importDetect.ts), so an ASA export never reaches here.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { createSiemDebugTally } from "./siemImportDebug.js";
 import {
   createEventAggregator,
   addIoc,
@@ -50,6 +52,7 @@ export interface SyslogImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   assumeYear?: number; // year stamped onto RFC 3164 (year-less) timestamps; default: current UTC year
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export type SyslogParseResult = SiemParseResult;
@@ -225,23 +228,31 @@ function createSyslogAccumulator(opts: SyslogImportOptions): {
   const year = opts.assumeYear ?? new Date().getUTCFullYear();
   const maxIocs = opts.maxIocs ?? 5000;
   const sink = new Map<string, SiemIoc>();
-  const agg = createEventAggregator({
-    aggregate: opts.aggregate,
-    minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? maxEventsDefault(),
-  });
+  const tally = createSiemDebugTally(opts.debug, opts.minSeverity);
+  const agg = tally.watch(
+    createEventAggregator({
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    }),
+  );
   const sshEvents: MappedEvent[] = []; // ONLY accepted sshd logins — everything else streams into agg
   const sshAuth: SshAuthEvent<number>[] = []; // accepted keyed by index in `sshEvents`; failed carry key -1
   let total = 0;
+  let [unparsed, yearInferred] = [0, 0];
 
   return {
     line(raw: string): void {
       const line = raw.trim();
       if (!line) return;
       const p = parseSyslogLine(line, year);
-      if (!p) return;
+      if (!p) {
+        unparsed++; // not an RFC 3164 / 5424 line
+        return;
+      }
       const m = mapParsedSyslog(p, sink);
       total++;
+      if (m.yearInferred) yearInferred++;
       // Hold back sshd login SUCCESSES for the brute-force-success correlation in finish() — the
       // only events markSshBruteForce ever rewrites. A FAILURE contributes just its {ms, ip} to the
       // correlation (its key is never read; -1 marks "not buffered") and streams into the
@@ -282,6 +293,9 @@ function createSyslogAccumulator(opts: SyslogImportOptions): {
 
       const { events, groups } = agg.finish();
       const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+      opts.debug?.skipped("unparseable_line", unparsed);
+      opts.debug?.observed("timestamp_year_inferred", yearInferred);
+      tally.flush({ total, kept: events.length, groups, dropped: Math.max(0, total - represented) });
 
       return {
         events,

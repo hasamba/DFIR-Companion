@@ -27,6 +27,9 @@ import { describeFloor } from "./floorNote.js";
 import { deltaIocs, hostIdentityDelta, knownHostIdentity, noteEmptyImport } from "./importState.js";
 import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { recordParsedImport } from "./parsedDebug.js";
+import { recordFloorCounts } from "../rowDecisionDebug.js";
 
 /**
  * Endpoint and host-triage collections: agent output, triage bundles and EDR exports.
@@ -52,10 +55,13 @@ export async function importThor(
     thor?: ThorImportOptions; // filtering overrides (dropInfo, dropLifecycleModules…)
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseThorReport(jsonText, opts.thor);
+  const parsedRaw = parseThorReport(jsonText, { ...opts.thor, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  const thorShape = { ...parsedRaw, events: [], groups: 0, kept: 0 }; // aggregation + cap: recorded by the parser
+  recordParsedImport(opts.debug, thorShape, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "THOR", parsed.total);
 
@@ -106,11 +112,13 @@ export async function importChainsaw(
     chainsaw?: ChainsawImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
-  const parsedRaw = parseChainsawReport(jsonText, { ...known, ...opts.chainsaw });
+  const parsedRaw = parseChainsawReport(jsonText, { ...known, ...opts.chainsaw, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Chainsaw", parsed.total);
 
@@ -169,11 +177,13 @@ export async function importHayabusa(
     hayabusa?: HayabusaImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
-  const parsedRaw = parseHayabusaTimeline(text, { ...known, ...opts.hayabusa });
+  const parsedRaw = parseHayabusaTimeline(text, { ...known, ...opts.hayabusa, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
 
@@ -231,6 +241,7 @@ export async function importVelociraptor(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     veloUrl?: string; // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
@@ -252,7 +263,7 @@ export async function importVelociraptor(
       label: opts.label,
       idPrefix: opts.idPrefix,
       importedAt: opts.importedAt,
-      velociraptor: { artifact, ...known, ...opts.velociraptor },
+      velociraptor: { artifact, ...known, ...opts.velociraptor, debug: opts.debug },
       minSeverity: opts.minSeverity,
       veloUrl: opts.veloUrl,
       onProgress: opts.onProgress,
@@ -264,10 +275,11 @@ export async function importVelociraptor(
   // import streams live progress instead of freezing the server on one synchronous pass.
   const parsedRaw = await parseVelociraptorJsonProgress(
     text,
-    { artifact, ...known, ...opts.velociraptor },
+    { artifact, ...known, ...opts.velociraptor, debug: opts.debug },
     opts.onProgress,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Velociraptor", parsed.total);
 
@@ -344,10 +356,12 @@ export async function importKape(
     kape?: KapeImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseKapeCsv(text, opts.kape);
+  const parsedRaw = parseKapeCsv(text, { ...opts.kape, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
 
@@ -402,9 +416,11 @@ export async function importWer(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const report = parseWerReport(text);
+  if (!report) opts.debug?.skipped("unreadable_report");
   if (!report) return noteEmptyImport(ctx, caseId, opts, "WER", 0);
 
   return ctx.withStateLock(caseId, async () => {
@@ -434,6 +450,7 @@ export async function importWer(
       ...(report.appName ? { processName: report.appName } : {}),
     };
     const events = applySeverityFloor([event] as never, opts.minSeverity);
+    recordFloorCounts(opts.debug, 1, 1, events.length);
     if (events.length === 0) return state;
 
     const iocs = [
@@ -483,10 +500,12 @@ export async function importCybertriage(
     cybertriage?: CybertriageImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseCybertriage(text, opts.cybertriage);
+  const parsedRaw = parseCybertriage(text, { ...opts.cybertriage, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Cyber Triage", parsed.total);
 
@@ -544,6 +563,7 @@ export async function importLinuxPersist(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
@@ -564,6 +584,7 @@ export async function importLinuxPersist(
       parsed.events.map((e) => ({ ...e, relatedFindingIds: [], sourceScreenshots: [] })) as never,
       opts.minSeverity,
     );
+    recordFloorCounts(opts.debug, parsed.files.length, parsed.events.length, events.length);
 
     const delta = deltaSchema.parse({
       findings: [],
@@ -606,6 +627,7 @@ export async function importMacosPersist(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
@@ -616,6 +638,7 @@ export async function importMacosPersist(
       text,
       { incident: incidentWindowFromTimeline(state.forensicTimeline) },
       opts.importedAt,
+      opts.debug,
     );
     if (parsed.files.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS persistence", 0);
 
@@ -626,6 +649,7 @@ export async function importMacosPersist(
       parsed.events.map((e) => ({ ...e, relatedFindingIds: [], sourceScreenshots: [] })) as never,
       opts.minSeverity,
     );
+    recordFloorCounts(opts.debug, parsed.files.length, parsed.events.length, events.length);
 
     const delta = deltaSchema.parse({
       findings: [],
@@ -671,6 +695,7 @@ export async function importRclone(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
@@ -744,6 +769,9 @@ export async function importRclone(
     if (events.length === 0) return noteEmptyImport(ctx, caseId, opts, "rclone/MEGAsync", 0);
 
     const graded = applySeverityFloor(events as never, opts.minSeverity);
+    recordFloorCounts(opts.debug, remotes.length + transfers.length, events.length, graded.length);
+    opts.debug?.skipped("no_transfer_signal", transfers.length - (events.length - remotes.length));
+    opts.debug?.observed("timestamp_inferred", events.filter((e) => e.timestamp === opts.importedAt).length);
     const iocs = [...iocValues].slice(0, 200);
 
     const delta = deltaSchema.parse({

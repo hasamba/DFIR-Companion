@@ -234,6 +234,13 @@ export function copiedFileTimes(row: Row): CopiedFileTimes | null {
 // process-memory hit to its rule's 2014 authoring date (#1603). Skipped only on a YARA-shaped row.
 const RULE_META_RE = /^meta(?:data)?$/i;
 
+// Which column dated the row (#1736). A synchronous hook: the import debug tally sets it around ONE
+// row's mapping and clears it after, so two imports never share it. Key NAMES only, never a value.
+let timeKeySink: ((key: string) => void) | undefined;
+export function setTimeKeySink(sink: ((key: string) => void) | undefined): void {
+  timeKeySink = sink;
+}
+
 // `preferred` columns (an artifact's own time names; dotted paths allowed, an array reads its first
 // element) are tried before TIME_KEYS, through `readPreferred` when the artifact has its own format.
 export function pickTime(
@@ -246,7 +253,10 @@ export function pickTime(
     const raw = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const v = Array.isArray(raw) ? raw[0] : raw;
     const t = readPreferred(v);
-    if (t) return t;
+    if (t) {
+      timeKeySink?.(k);
+      return t;
+    }
     if (unreadableTime(v, readPreferred)) unreadable = true;
   }
   for (const k of TIME_KEYS) {
@@ -258,8 +268,9 @@ export function pickTime(
       if (unreadableTime(v, vrTime)) unreadable = true;
       continue;
     }
-    if (k === "Mtime") return copiedFileTimes(row)?.created ?? t;
-    return t;
+    const copied = k === "Mtime" ? copiedFileTimes(row) : null;
+    timeKeySink?.(copied ? "Btime" : k);
+    return copied ? copied.created : t;
   }
   const yaraRow = getCI(row, "Rule") != null;
   // Fallback: no known column matched (browser history, shellbags, userassist, and other raw artifacts
@@ -267,6 +278,7 @@ export function pickTime(
   // level) for the EARLIEST plausible timestamp — a real artifact time beats the `_ts` collection time
   // below, and a blank/sentinel field can't win.
   let best = "",
+    bestKey = "",
     bestMs = Infinity;
   const scan = (obj: Row, prefix: string, depth: number): void => {
     for (const [k, v] of Object.entries(obj)) {
@@ -284,11 +296,17 @@ export function pickTime(
       if (ms >= MIN_TIME_MS && ms <= MAX_TIME_MS && ms < bestMs) {
         bestMs = ms;
         best = t;
+        bestKey = prefix + k;
       }
     }
   };
   scan(row, "", 0);
-  if (best) return best;
+  if (best) {
+    timeKeySink?.(bestKey);
+    return best;
+  }
   if (unreadable) return ""; // undated beats dated at the collection time (#1618, #1631)
-  return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
+  const collected = vrTime(getCI(row, "_ts"));
+  if (collected) timeKeySink?.("_ts");
+  return collected; // collection time — absolute last resort, only when nothing else dated the row
 }

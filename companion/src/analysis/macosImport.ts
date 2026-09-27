@@ -22,6 +22,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Deterministic importer for macOS host artifacts — the platform gap beside the Windows (KAPE/EVTX)
 // and Linux (auditd/journald) paths. No AI call. Two shapes, auto-detected:
@@ -48,6 +49,8 @@ export interface MacosImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface MacosParseResult {
@@ -64,10 +67,14 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
-function pick(rec: Row, keys: readonly string[]): string {
+// `onKey` hears which candidate key supplied the value (#1736) — the key name, never the value.
+function pick(rec: Row, keys: readonly string[], onKey?: (key: string) => void): string {
   for (const k of keys) {
     const v = getCI(rec, k);
-    if (v != null && text(v).trim() !== "") return text(v).trim();
+    if (v != null && text(v).trim() !== "") {
+      onKey?.(k);
+      return text(v).trim();
+    }
   }
   return "";
 }
@@ -84,15 +91,22 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-function mapUnifiedLog(rec: Row): MappedEvent | null {
-  const timestamp = pick(rec, ["timestamp", "time"]);
-  if (!timestamp) return null;
+function mapUnifiedLog(rec: Row, debug?: ImportDebugRecorder): MappedEvent | null {
+  let timeKey = "";
+  const timestamp = pick(rec, ["timestamp", "time"], (k) => (timeKey = k));
+  if (!timestamp) {
+    debug?.skipped("missing_timestamp");
+    return null;
+  }
+  debug?.field("timestamp", timeKey);
 
-  const message = pick(rec, ["eventMessage", "message", "composedMessage"]);
-  const proc = pick(rec, ["processImagePath", "process"]);
+  const message = pick(rec, ["eventMessage", "message", "composedMessage"], (k) =>
+    debug?.field("message", k),
+  );
+  const proc = pick(rec, ["processImagePath", "process"], (k) => debug?.field("process", k));
   const subsystem = pick(rec, ["subsystem"]);
   const category = pick(rec, ["category"]);
-  const asset = pick(rec, ["machineName", "hostname", "host"]);
+  const asset = pick(rec, ["machineName", "hostname", "host"], (k) => debug?.field("host", k));
   const pid = pick(rec, ["processID", "pid"]);
 
   const procName = proc ? baseName(proc) : "";
@@ -171,10 +185,13 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   const route = (rec: Row, headers: readonly string[], index: number): boolean => {
     if (isQuarantineAttributeRecord(rec)) {
       addAttribute(attributes, readQuarantineAttributeRecord(rec, index));
+      opts.debug?.fallback("quarantine_attribute_record");
       return true;
     }
     const isQuarantine = isQuarantineRecord(rec, headers);
-    const event = isQuarantine ? mapQuarantine(rec, iocSink, index) : mapUnifiedLog(rec);
+    const event = isQuarantine ? mapQuarantine(rec, iocSink, index) : mapUnifiedLog(rec, opts.debug);
+    if (isQuarantine && event) opts.debug?.fallback("quarantine_record");
+    else if (isQuarantine) opts.debug?.skipped("unreadable_quarantine_record");
     if (event) mapped.push(event);
     if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     return isQuarantine;
@@ -221,6 +238,7 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   // The excess variants leave `mapped` too, so the bound holds with aggregation off; indicators come
   // only from the rows that survived, linked to their rows.
   const dropped = new Set(quarantineRows.filter((r) => !bounded.includes(r)));
+  if (dropped.size > 0) opts.debug?.omitted("quarantine_variant_fold", dropped.size);
   // The join (#1037): every surviving database row rewritten with what the upload's attribute
   // records establish, and the attribute rows beside them. Indicators are the database rows' own,
   // linked to the joined row's key.

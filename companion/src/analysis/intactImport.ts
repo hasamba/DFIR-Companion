@@ -37,6 +37,7 @@ import {
 } from "./siemImport.js";
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { YARA_SOURCE } from "./yaraImport.js";
+import { recordAggregation } from "./parseDebugTally.js";
 import { createHash } from "node:crypto";
 
 type Row = Record<string, unknown>;
@@ -467,7 +468,8 @@ export function parseIntact(text: string, opts: MemoryImportOptions = {}): Intac
   if (input.format === "intact-volweb" && input.yara.length >= INTACT_YARA_ROW_CAP)
     truncated.push({ name: "yara", rows: input.yara.length });
   const hits = dedupeYaraRows(input.yara);
-  const { events: yaraEvents, groups: yaraGroups } = aggregateEvents(mapYaraHits(hits), {
+  const yaraMapped = mapYaraHits(hits);
+  const { events: yaraEvents, groups: yaraGroups } = aggregateEvents(yaraMapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
@@ -486,6 +488,8 @@ export function parseIntact(text: string, opts: MemoryImportOptions = {}): Intac
     tagged.sort(bySeverityThenCount).slice(0, opts.maxEvents ?? maxEventsDefault()),
     text,
   );
+  recordAggregation(opts.debug, yaraMapped.length, yaraGroups, yaraEvents.length);
+  if (tagged.length > events.length) opts.debug?.omitted("over_event_cap", tagged.length - events.length);
 
   const total = plugins.total + input.yara.length;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -512,7 +516,14 @@ export function parseMemoryOrIntact(
   text: string,
   opts: MemoryImportOptions = {},
 ): MemoryParseResult & Partial<Pick<IntactParseResult, "truncated" | "yaraHits">> {
-  return parseIntact(text, opts) ?? parseMemory(text, opts);
+  const intact = parseIntact(text, opts);
+  if (!intact) return parseMemory(text, opts);
+  // #1736: this attempt's debug record. The plugin half already recorded its own parse through
+  // parseMemory; these counts are the whole Intact import's and replace the plugin half's.
+  opts.debug?.fallback("intact_bundle");
+  opts.debug?.counts({ total: intact.total, kept: intact.kept, dropped: intact.dropped });
+  if (intact.truncated.length) opts.debug?.observed("source_row_cap_reached", intact.truncated.length);
+  return intact;
 }
 
 /**

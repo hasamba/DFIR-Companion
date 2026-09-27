@@ -14,6 +14,7 @@ import { boundedAggKey, boundedText, boundedTextTo } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import { pinnedClocks, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
 import { readOrigin } from "./mobileOriginRead.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Deterministic importer for iLEAPP / ALEAPP output — iOS and Android logical-extraction parsing.
 // No AI call.
@@ -72,6 +73,8 @@ export interface LeappImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface LeappParseResult {
@@ -241,6 +244,7 @@ export function parseLeappTsv(
   // Both go through the shared quote-aware parser (embedded delimiters and newlines survive).
   const firstLine = trimmed.split(/\r\n|\r|\n/, 1)[0] ?? "";
   const delimiter = firstLine.includes("\t") ? "\t" : ",";
+  if (delimiter === ",") opts.debug?.fallback("comma_delimiter");
   const records = [...parseCsvRecords(trimmed, delimiter)].filter((r) => r.some((c) => c.trim() !== ""));
   if (records.length < 2) return empty;
 
@@ -253,7 +257,9 @@ export function parseLeappTsv(
   const platform = opts.platform ?? "unknown";
   // A registered artifact whose headers match the pin may declare upstream's own datetime columns
   // (#1298); otherwise the generic picker, as for every table before it.
-  const candidates = pinnedClocks(platform, artifact, headers) ?? timeColumns(headers);
+  const pinned = pinnedClocks(platform, artifact, headers);
+  if (!pinned) opts.debug?.fallback("generic_clock_picker");
+  const candidates = pinned ?? timeColumns(headers);
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let undated = 0;
@@ -269,6 +275,9 @@ export function parseLeappTsv(
   for (const [rowIndex, cells] of rows.entries()) {
     const clock = rowClock(headers, cells, candidates);
     if (!clock?.timestamp) undated++;
+    // The column that dated the row, by its header name (#1736); an undated row is kept.
+    if (clock?.timestamp) opts.debug?.field("timestamp", headers[clock.index] ?? "");
+    else opts.debug?.observed("undated");
     // The origin registry's reading of this row (#988): its facets from its own columns, or the
     // plain statement that the registry does not cover it. Counted per coverage.
     const reading = readOrigin(platform, artifact, headers, cells);

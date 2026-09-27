@@ -29,7 +29,7 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
 import { detectImportWithCustomEx } from "../analysis/importDecision.js";
-import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "../routes/importDebugEmit.js";
 import {
   looksLikeMacLoginItemFilename,
@@ -64,15 +64,10 @@ export interface ImportIngestDeps {
   resynthesizeInBackground: (caseId: string) => void;
 }
 
-/**
- * A job-bound caller's hooks for the model call (#1629). Used only for an AI kind (csv/log) and only
- * past the AI-off gate, so the row names a model exactly when one runs: `beforeModelRun` pins it,
- * and `signal` rides on the model calls so the served-model stamp (#1601) finds the job.
- */
-export interface ModelCallHooks {
-  signal?: AbortSignal;
-  beforeModelRun?: (kind: string) => void;
-}
+// Declared in routes/context.ts (#1736) so RouteContext.ingestStreamed can name it without an upward
+// import; re-exported here for the callers that have always taken it from this module.
+import type { ModelCallHooks } from "../routes/context.js";
+export type { ModelCallHooks } from "../routes/context.js";
 
 export interface ImportIngest {
   /** The live declarative-importer registry. An accessor: it is loaded async and reloaded on CRUD. */
@@ -114,12 +109,19 @@ export interface ImportIngest {
     provenance?: ArtifactProvenance,
     assetHost?: string,
     modelCall?: ModelCallHooks,
+    /**
+     * The attempt's debug recorder (#1736). A caller that detected the kind itself passes the one it
+     * gave resolveImportKind, and hands the same one to recordImportFailure on a throw; without one
+     * ingestStreamed makes its own, so the success line is still written.
+     */
+    debug?: ImportDebugRecorder,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
   ingestMacLoginItemStreamed(
     caseId: string,
     bytes: Buffer,
     originalName: string,
+    debug?: ImportDebugRecorder,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 }
 
@@ -500,6 +502,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     provenance?: ArtifactProvenance,
     assetHost?: string, // the analyst-declared host (#1496): a drop subfolder named asset=<HOST>
     modelCall?: ModelCallHooks,
+    debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -558,6 +561,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         importedAt,
         onProgress,
         minSeverity,
+        debug, // dispatchImport writes its succeeded / cancelled line
         ...(assetHost ? { assetHost } : {}),
         ...(signal ? { signal } : {}),
       });
@@ -652,10 +656,13 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     caseId: string,
     bytes: Buffer,
     originalName: string,
+    debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     options.onImport?.(caseId);
+    // Only a login-item container reaches this path, so the kind is fixed, not sniffed.
+    debug.detected("macloginitem", { confident: true, decision: "explicit_route" });
 
     const preview = parseMacLoginItemBtm(bytes);
     if (!preview) {
@@ -709,7 +716,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
           label: storedName,
           idPrefix: `bt${seq}`,
           importedAt,
+          debug,
         }),
+        debug,
       );
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 

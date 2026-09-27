@@ -29,6 +29,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Deterministic importer for Google Workspace Admin SDK Reports API activities — the third identity
 // ingest path, beside m365Import.ts (Entra) and oktaImport.ts. No AI call.
@@ -57,6 +58,8 @@ export interface GoogleWorkspaceImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface GoogleWorkspaceParseResult {
@@ -687,14 +690,24 @@ export function parseGoogleWorkspaceReport(
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   records.forEach((raw, recordIndex) => {
-    if (!isObject(raw)) return;
+    if (!isObject(raw)) {
+      opts.debug?.skipped("not_an_object");
+      return;
+    }
     const rec = raw;
-    if (!isWorkspaceActivity(rec)) return;
+    if (!isWorkspaceActivity(rec)) {
+      opts.debug?.skipped("unrecognized_record");
+      return;
+    }
     const events = getCI(rec, "events");
     // One record, N events — each is its own thing that happened, with its own locator.
     const list = Array.isArray(events) ? events : [];
+    if (list.length === 0) opts.debug?.skipped("no_events");
     list.forEach((e, eventIndex) => {
-      if (!isObject(e)) return;
+      if (!isObject(e)) {
+        opts.debug?.skipped("not_an_object");
+        return;
+      }
       mapped.push(mapEvent(rec, e, iocSink, `record:${recordIndex}/event:${eventIndex}`));
     });
   });

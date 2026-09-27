@@ -11,6 +11,8 @@ import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import { recordParsedImport } from "./parsedDebug.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
  * Network sensors and captures.
@@ -33,6 +35,7 @@ export async function importSnort(
     importedAt: string;
     snort?: SnortImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
@@ -44,8 +47,19 @@ export async function importSnort(
   const parsedRaw = parseSnortLog(text, {
     ...opts.snort,
     ...(assumeYear !== undefined ? { assumeYear } : {}),
+    debug: opts.debug,
   });
+  // Every Snort row is year-less: the year comes from the caller, the case's dominant year, or now.
+  opts.debug?.fallback(
+    opts.snort?.assumeYear !== undefined
+      ? "caller_year"
+      : assumeYear !== undefined
+        ? "case_dominant_year"
+        : "current_year",
+  );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
+  if (parsed.events.length > 0) opts.debug?.observed("timestamp_inferred", parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Snort", parsed.total);
 
@@ -99,6 +113,7 @@ export async function importNetwork(
     importedAt: string;
     network?: NetworkImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
@@ -107,8 +122,10 @@ export async function importNetwork(
   const parsedRaw = parseNetworkLogs(text, {
     ...opts.network,
     filename: opts.network?.filename ?? opts.label,
+    debug: opts.debug,
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Network", parsed.total);
 
@@ -170,11 +187,13 @@ export async function importSecurityOnion(
     importedAt: string;
     securityOnion?: SecurityOnionImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
+  const parsedRaw = parseSecurityOnion(text, { ...opts.securityOnion, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Security Onion", parsed.total);
 
@@ -234,12 +253,17 @@ export async function importExporterFlow(
     importedAt: string;
     exporterFlow?: ExporterFlowOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseExporterFlowNdjson(text, opts.exporterFlow);
-  if (!parsedRaw) throw new Error("not an nfdump exporter flow ndjson document");
+  const parsedRaw = parseExporterFlowNdjson(text, { ...opts.exporterFlow, debug: opts.debug });
+  if (!parsedRaw) {
+    opts.debug?.failedAt("parse");
+    throw new Error("not an nfdump exporter flow ndjson document");
+  }
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRecords ? `${parsed.malformedRecords} malformed record(s)` : "",

@@ -13,6 +13,7 @@ import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import { createImportDebugRecorder } from "../analysis/importDebug.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -49,8 +50,12 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         job.lastCheckpoint?.progress.done ?? 0,
         lastCommittedImportBatch(before.timeline, parameters.storedName),
       );
+      // This attempt's own recorder (#1736): the kind is the saved one, so nothing was sniffed.
+      const recorder = createImportDebugRecorder();
+      recorder.detected(parameters.kind, { confident: true, decision: "resumed_job" });
       const base: ImportBase = {
         label: parameters.storedName,
+        debug: recorder,
         idPrefix: String(parameters.sequence),
         importedAt: parameters.importedAt,
         ...(minSeverity ? { minSeverity } : {}),
@@ -218,7 +223,8 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
         // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
         // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
-        if (!cancelled) ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error);
+        if (!cancelled)
+          ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error, recorder);
         options.onAiStatus?.(
           job.caseId,
           cancelled

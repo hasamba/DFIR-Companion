@@ -28,6 +28,8 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 
 // The case's rename ledger for a super-only parse (#1495): what the forensic path reads through
 // importState.ts knownHostIdentity, from the snapshot this path already holds. Nothing when the
@@ -49,7 +51,7 @@ export interface VeloExternalIngestDeps {
     text: string,
   ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
-  resolveImportKind: (filename: string, text: string) => string;
+  resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
   demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
@@ -133,10 +135,14 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       hostFallback?: string;
       veloUrl?: string;
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
+      // The caller's recorder for this artifact (#1736). The caller owns failure (recordImportFailure);
+      // this function writes the success line, since it imports without dispatchImport.
+      debug?: ImportDebugRecorder;
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
+    opts.debug?.detected("velociraptor", { confident: true, decision: "explicit_route" }); // a row map
     // One import writer per case: the section spans the snapshot, the merge and the diff
     // below, so no concurrent import can be counted into this artifact map's numbers.
     // See analysis/importLock.ts.
@@ -178,6 +184,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             "super-only",
           );
           if (res) {
+            emitImportDebug(caseId, opts.debug, "succeeded");
             resynthesizeInBackground(caseId);
             return { addedEvents: res.superAppended, addedIocs: 0, storedName };
           }
@@ -222,6 +229,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         await autoTagImported(caseId, events);
         // Super-only imports never touch the forensic timeline, so the forensic diff below is always 0 —
         // report the SUPER-TIMELINE count instead so "+N events" reflects what actually landed.
+        emitImportDebug(caseId, opts.debug, "succeeded");
         resynthesizeInBackground(caseId);
         return { addedEvents: superAdded, addedIocs: 0, storedName };
       }
@@ -238,6 +246,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               }
             : undefined,
         veloUrl: opts.veloUrl,
+        debug: opts.debug,
       });
 
       let addedEvents = 0,
@@ -310,6 +319,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       } catch {
         /* non-fatal */
       }
+      emitImportDebug(caseId, opts.debug, "succeeded");
       resynthesizeInBackground(caseId);
       return { addedEvents, addedIocs, storedName };
     } finally {
@@ -346,7 +356,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       const skipped: string[] = [];
       let lastStoredName: string | undefined;
       for (const up of uploads) {
-        const kind = resolveImportKind(up.name, up.content);
+        const debug = createImportDebugRecorder(); // one recorder per uploaded file (#1736)
+        const kind = resolveImportKind(up.name, up.content, debug);
         if (kind === "unknown") {
           skipped.push(up.name);
           continue;
@@ -366,9 +377,12 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             idPrefix: `${seq}`,
             importedAt,
             minSeverity: opts.minSeverity,
+            debug,
           });
           imported.push(up.name);
         } catch (e) {
+          // No failure ring on this path: the upload is skipped and logged, so its line is written here.
+          emitImportDebug(caseId, debug, "failed");
           logLine(`[velociraptor] uploads-only import failed (${up.name}): ${(e as Error).message}`);
           skipped.push(up.name);
         }

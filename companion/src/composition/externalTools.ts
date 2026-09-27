@@ -54,11 +54,12 @@ import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 
 export interface ExternalToolsDeps {
   store: CaseStore;
   options: AppOptions;
-  resolveImportKind: (filename: string, text: string) => string;
+  resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   ingestStreamed: (
     caseId: string,
     kind: string,
@@ -67,6 +68,8 @@ export interface ExternalToolsDeps {
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
     assetHost?: string, // the analyst-declared host for the output (#1496)
+    modelCall?: undefined,
+    debug?: ImportDebugRecorder, // this attempt's import-debug recorder (#1736)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** Persist a binary original verbatim as evidence (see ImportIngest.persistRawEvidence). */
   persistRawEvidence: (
@@ -95,7 +98,7 @@ export interface ExternalTools {
     caseId: string,
     toolId: string,
     fullPath: string,
-    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
   ): Promise<boolean>;
   runToolAndIngest(
     caseId: string,
@@ -105,6 +108,7 @@ export interface ExternalTools {
       undoLabel?: string;
       preserveOriginal?: { bytes: Buffer; originalName: string };
       cache?: ToolRunCache;
+      debug?: ImportDebugRecorder; // the caller's attempt recorder, so its failure ring gets the detail (#1736)
     },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   startSocratesAnalysis(
@@ -192,9 +196,9 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     caseId: string,
     toolId: string,
     fullPath: string,
-    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
   ): Promise<boolean> {
-    const { name, dropRelpath, cache } = opts;
+    const { name, dropRelpath, cache, debug } = opts;
     // FIRST, before either transport touches the file: run-pending feeds this relpath from
     // state/drop-status.json, which an imported archive restores verbatim (#919). The schema drops
     // an escaping entry at load and moveDropFile refuses one before the rename — but the READ half
@@ -249,7 +253,11 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     // A raw file under drop/asset=<HOST>/ carries the analyst's declared host through the tool run
     // (#1496); derived from the validated relpath, never stored beside it, so "Run pending" agrees.
     const assetHost = dropRelpath !== undefined ? assetHostFromDropRelpath(dropRelpath) : "";
-    const r = await runToolAndIngest(caseId, toolId, target, { cache, ...(assetHost ? { assetHost } : {}) });
+    const r = await runToolAndIngest(caseId, toolId, target, {
+      cache,
+      ...(assetHost ? { assetHost } : {}),
+      ...(debug ? { debug } : {}),
+    });
     if (!r.analyzed)
       throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
     return false;
@@ -269,6 +277,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       preserveOriginal?: { bytes: Buffer; originalName: string };
       cache?: ToolRunCache;
       assetHost?: string; // the analyst-declared host for the tool's output (#1496)
+      debug?: ImportDebugRecorder; // the caller's attempt recorder (#1736)
     } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const cfg = liveToolConfigs().get(toolId);
@@ -312,7 +321,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     });
     const outName = `${basename(contained)}.${toolId}.out`;
     // Custom tools declare no fixed importer — detect the kind from the tool's output.
-    const kind = importKind === "auto" ? resolveImportKind(outName, outputText) : importKind;
+    const kind = importKind === "auto" ? resolveImportKind(outName, outputText, opts.debug) : importKind;
     if (kind === "unknown")
       throw new Error(`${toolId}: could not detect the tool output's format (not a recognized import)`);
     // ingestStreamed skips the undo checkpoint (built for high-frequency streaming), so a MANUAL tool
@@ -340,6 +349,8 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         source: describeToolRun(provenance) + (preservedName ? ` | original ${preservedName}` : ""),
       },
       opts.assetHost,
+      undefined,
+      opts.debug,
     );
     if (before && opts.undoLabel && (r.addedEvents > 0 || r.addedIocs > 0)) {
       await pushImportCheckpoint(caseId, before, opts.undoLabel);
@@ -421,7 +432,19 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
           fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
           ingest: (cid, text, name) =>
             queueSocratesIngest(cid, async () => {
-              const r = await ingestStreamed(cid, "socrates", text, name);
+              // Each verdict set is its own import attempt with its own recorder (#1736).
+              const debug = createImportDebugRecorder();
+              const r = await ingestStreamed(
+                cid,
+                "socrates",
+                text,
+                name,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                debug,
+              );
               return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
             }),
         },

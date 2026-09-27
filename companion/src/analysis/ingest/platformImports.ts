@@ -20,8 +20,9 @@ import { detectTool } from "../toolDetect.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
 import { describeFloor } from "./floorNote.js";
-import { commitDelta, noteEmptyImport } from "./importState.js";
+import { commitDelta, noteEmptyImport, noteParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 import type { ForensicEvent } from "../stateTypes.js";
 
 /**
@@ -48,10 +49,12 @@ export async function importSiem(
     siem?: SiemImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSiemExport(jsonText, opts.siem);
+  const parsedRaw = parseSiemExport(jsonText, { ...opts.siem, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "SIEM", parsed.total);
 
@@ -103,15 +106,17 @@ export async function importDeclarative(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
     // Per-importer health (#84): fired with the raw parse stats (total/kept/dropped/format) right
     // after parsing, BEFORE the zero-events early return, so a run that legitimately produced
     // nothing still counts as a completed (not failed) run in the diagnostics table.
     onParsed?: (result: SiemParseResult) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
+  const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity, debug: opts.debug });
   opts.onParsed?.(parsedRaw);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, opts.importer.label, parsed.total);
 
@@ -152,6 +157,7 @@ export async function importSandbox(
     sandbox?: SandboxImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
   // No severity floor here: the floor gates what reaches the FORENSIC timeline, and nothing from
@@ -160,7 +166,8 @@ export async function importSandbox(
   // Both routes can carry a floor — the unified one as opts.minSeverity, the dedicated one inside
   // opts.sandbox — and neither may reach the parser: a Critical floor would remove every row while
   // the registry record was still written, an annotation with nothing behind it.
-  const parsed = parseSandboxReport(text, { ...opts.sandbox, minSeverity: undefined });
+  const parsed = parseSandboxReport(text, { ...opts.sandbox, minSeverity: undefined, debug: opts.debug });
+  noteParsed(opts.debug, parsed.total, parsed.events, parsed.events);
   if (parsed.events.length === 0 && parsed.labIntel.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Sandbox", parsed.total);
 
@@ -229,10 +236,12 @@ export async function importMemory(
     memory?: MemoryImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseMemoryOrIntact(text, { ...opts.memory, filename: opts.label });
+  const parsedRaw = parseMemoryOrIntact(text, { ...opts.memory, filename: opts.label, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Memory", parsed.total, parsed.note);
 
@@ -285,10 +294,12 @@ export async function importEmail(
     email?: EmailImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseEmail(text, opts.email);
+  const parsedRaw = parseEmail(text, { ...opts.email, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Email", parsed.total);
 
@@ -335,10 +346,12 @@ export async function importTheHive(
     thehive?: TheHiveImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseTheHive(text, opts.thehive);
+  const parsedRaw = parseTheHive(text, { ...opts.thehive, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "TheHive", parsed.total);
 
@@ -380,10 +393,12 @@ export async function importIris(
     iris?: IrisImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseIrisCase(data, opts.iris);
+  const parsedRaw = parseIrisCase(data, { ...opts.iris, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.timelineCount, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "DFIR-IRIS", parsed.timelineCount);
 
@@ -423,10 +438,12 @@ export async function importWazuh(
     wazuh?: WazuhImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
+  const parsedRaw = parseWazuhAlerts(text, { ...opts.wazuh, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Wazuh", parsed.total);
 
@@ -469,10 +486,12 @@ export async function importYara(
     yara?: YaraImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseYaraOutput(text, { ...opts.yara });
+  const parsedRaw = parseYaraOutput(text, { ...opts.yara, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "YARA", parsed.total);
 
@@ -513,10 +532,12 @@ export async function importSocrates(
     socrates?: SocratesImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button)
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSocrates(text, opts.socrates);
+  const parsedRaw = parseSocrates(text, { ...opts.socrates, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "SO-CRATES", parsed.total);
 
@@ -554,6 +575,7 @@ export async function importEvtxXml(
     siem?: SiemImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void | Promise<void>;
+    debug?: ImportDebugRecorder; // #1736
     onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>;
     signal?: AbortSignal;
     startBatch?: number;
@@ -566,7 +588,7 @@ export async function importEvtxXml(
   let parseTotal = 0;
   const parsedRaw = await parseEvtxXmlProgress(
     xmlText,
-    opts.siem,
+    { ...opts.siem, debug: opts.debug },
     (done, total) => {
       parseTotal = total;
       return opts.onParseProgress?.(done, total * 2, "reading Windows events");
@@ -576,6 +598,7 @@ export async function importEvtxXml(
     opts.signal,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Windows Event Log (XML)", parsed.total);
 

@@ -7,6 +7,8 @@ import { parseChannelInput, redactChannel } from "../analysis/notifications.js";
 import { telegramChatsFromBindings } from "../analysis/slashCommandStore.js";
 import type { RouteContext } from "./context.js";
 import { requestAuthentication } from "../auth/types.js";
+import { createImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "./importDebugEmit.js";
 
 /**
  * Push + notification routes: the generic external push-ingest endpoint (#84) with its per-case
@@ -67,11 +69,15 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
 
     const { text, source, filename } = extractPushPayload(req.body);
     if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
-    const kind = ctx.resolveImportKind()(filename, text);
-    if (kind === "unknown")
+    // One recorder for this push (#1736): the detection decision, the importer's choices, the failure.
+    const debug = createImportDebugRecorder();
+    const kind = ctx.resolveImportKind()(filename, text, debug);
+    if (kind === "unknown") {
+      emitImportDebug(caseId, debug, "failed"); // the refusal's detection decision
       return res
         .status(400)
         .json({ error: "could not detect the payload type — not recognized as any supported import shape" });
+    }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
 
@@ -80,14 +86,16 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     res.status(202).json({ accepted: true, kind, source });
     // Import in the background; the 202 already went out. The failure ring is the one place a
     // failed import is logged (#1438), so a push that dies after the 202 still leaves a line.
-    ingestStreamed(caseId, kind, text, filename, minSeverity).catch((err) => {
-      ctx.recordImportFailure(caseId, kind, filename, err);
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: `push import failed: ${(err as Error).message}`,
-      });
-    });
+    ingestStreamed(caseId, kind, text, filename, minSeverity, undefined, undefined, undefined, debug).catch(
+      (err) => {
+        ctx.recordImportFailure(caseId, kind, filename, err, debug);
+        options.onAiStatus?.(caseId, {
+          status: "error",
+          at: new Date().toISOString(),
+          detail: `push import failed: ${(err as Error).message}`,
+        });
+      },
+    );
   });
 
   // Per-case push token management (#84). GET returns the case token's EXISTENCE (never the secret —

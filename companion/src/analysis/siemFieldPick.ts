@@ -1,0 +1,106 @@
+// The SIEM importer's field pickers, and the small value helpers they read records with.
+//
+// Lifted out of siemImport.ts (a ledgered oversized file, #385) so the pickers can say WHICH key
+// they selected (#1736) without the ledger growing. siemImport re-exports every helper here, so each
+// importer that has always taken them from that module keeps its unchanged import site. Pure.
+
+type Row = Record<string, unknown>;
+
+export function isObject(v: unknown): v is Row {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+export function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? "" : String(v);
+}
+// Case-insensitive single-key lookup.
+export function getCI(row: Row, key: string): unknown {
+  if (key in row) return row[key];
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
+  return undefined;
+}
+// Dotted-path getter ("host.name", "event.action"), case-insensitive per segment.
+export function getPath(row: Row, path: string): unknown {
+  let cur: unknown = row;
+  for (const seg of path.split(".")) {
+    if (!isObject(cur)) return undefined;
+    cur = getCI(cur, seg);
+  }
+  return cur;
+}
+
+/** The first candidate key holding a non-empty string (case-insensitive, dotted paths), and that string. */
+export function firstKeyed(row: Row, keys: readonly string[]): { key: string; value: string } | undefined {
+  for (const k of keys) {
+    const s = str(k.includes(".") ? getPath(row, k) : getCI(row, k)).trim();
+    if (s) return { key: k, value: s };
+  }
+  return undefined;
+}
+// First non-empty string across candidate keys (case-insensitive), supporting dotted paths.
+export function firstStr(row: Row, keys: string[]): string {
+  return firstKeyed(row, keys)?.value ?? "";
+}
+
+export const TIME_KEYS = [
+  "@timestamp",
+  "timestamp",
+  "_time",
+  "eventTime",
+  "EventTime",
+  "event_time",
+  "DeviceEventTime",
+  "createdAt",
+  "created",
+  "event.created",
+  "ingested",
+  "generated_time",
+  "received_time",
+  "observed_timestamp",
+  "time",
+  "date",
+  "@time",
+];
+
+/** A Windows record's EventData, under any of its three spellings. */
+export function windowsEventDataRaw(rec: Row): unknown {
+  return getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
+}
+
+// The event's own time, and the key it came from. For Sysmon prefer the structured UtcTime (the
+// in-event clock — the artifact's own time); otherwise the record's @timestamp / common time fields.
+// Never the import time. The value is raw: siemImport's pickTimestamp normalizes it.
+export function timestampSource(rec: Row, ed: Row | undefined): { key: string; value: string } | undefined {
+  const sysmonUtc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
+  return sysmonUtc ? { key: "UtcTime", value: sysmonUtc } : firstKeyed(rec, TIME_KEYS);
+}
+
+const HOST_KEYS = [
+  "computer_name",
+  "Computer",
+  "hostname",
+  "host.name",
+  "host",
+  "host_name",
+  "agent.hostname",
+  "beat.hostname",
+  "device.hostname",
+  "endpoint.name",
+  "MachineName",
+  "src_host",
+  "source.host",
+  "winlog.computer_name",
+];
+
+/** The record's host, and the key it came from (`host.name` for an ECS host:{name} object). */
+export function hostSource(rec: Row): { key: string; value: string } | undefined {
+  for (const k of HOST_KEYS) {
+    const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
+    if (typeof v === "string" && v.trim()) return { key: k, value: v.trim() };
+    if (isObject(v)) {
+      const n = str(getCI(v, "name")).trim();
+      if (n) return { key: `${k}.name`, value: n };
+    } // ECS host:{name}
+  }
+  return undefined;
+}
