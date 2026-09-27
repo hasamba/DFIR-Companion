@@ -1502,6 +1502,32 @@
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note" data-essential>⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" data-safe-style="color:var(--accent-solid)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
+        <div class="settings-group-head" data-essential>Provider keys and base URLs</div>
+        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Save one key and base URL per provider. Each model below uses the settings of the provider it is set to, so you can switch providers without typing them again. A value typed in a model's own <b>API key</b> or <b>Base URL</b> field wins over these; leave that field blank to use the provider setting. Leave a base URL blank for the provider default.</p>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_OPENAI">OpenAI key<span class="sfield-hint">DFIR_AI_KEY_OPENAI</span></label><input id="env-DFIR_AI_KEY_OPENAI" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_OPENROUTER">OpenRouter key<span class="sfield-hint">DFIR_AI_KEY_OPENROUTER</span></label><input id="env-DFIR_AI_KEY_OPENROUTER" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_GEMINI">Gemini key<span class="sfield-hint">DFIR_AI_KEY_GEMINI</span></label><input id="env-DFIR_AI_KEY_GEMINI" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_ANTHROPIC">Anthropic key<span class="sfield-hint">DFIR_AI_KEY_ANTHROPIC</span></label><input id="env-DFIR_AI_KEY_ANTHROPIC" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_OLLAMA">Ollama Cloud key<span class="sfield-hint">DFIR_AI_KEY_OLLAMA</span></label><input id="env-DFIR_AI_KEY_OLLAMA" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_LITELLM">LiteLLM key<span class="sfield-hint">DFIR_AI_KEY_LITELLM</span></label><input id="env-DFIR_AI_KEY_LITELLM" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_OPENAI">OpenAI base URL<span class="sfield-hint">DFIR_AI_BASE_URL_OPENAI</span></label><input id="env-DFIR_AI_BASE_URL_OPENAI" placeholder="(provider default)" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_OPENROUTER">OpenRouter base URL<span class="sfield-hint">DFIR_AI_BASE_URL_OPENROUTER</span></label><input id="env-DFIR_AI_BASE_URL_OPENROUTER" placeholder="(provider default)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_GEMINI">Gemini base URL<span class="sfield-hint">DFIR_AI_BASE_URL_GEMINI</span></label><input id="env-DFIR_AI_BASE_URL_GEMINI" placeholder="(provider default)" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_ANTHROPIC">Anthropic base URL<span class="sfield-hint">DFIR_AI_BASE_URL_ANTHROPIC</span></label><input id="env-DFIR_AI_BASE_URL_ANTHROPIC" placeholder="(provider default)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_OLLAMA">Ollama Cloud base URL<span class="sfield-hint">DFIR_AI_BASE_URL_OLLAMA</span></label><input id="env-DFIR_AI_BASE_URL_OLLAMA" placeholder="(provider default)" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_BASE_URL_LITELLM">LiteLLM base URL<span class="sfield-hint">DFIR_AI_BASE_URL_LITELLM</span></label><input id="env-DFIR_AI_BASE_URL_LITELLM" placeholder="(provider default)" /></div>
+        </div>
         <div class="settings-group-head" data-essential>Screenshot model (vision)</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Screenshots only. Synthesis and imports use the <b>Text model — synthesis and imports</b> further down. When that is not set, they use this model too.</p>
         <div class="sfield-row" data-essential>
