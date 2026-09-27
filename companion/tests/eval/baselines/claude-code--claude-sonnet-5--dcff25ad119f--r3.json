@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "key": "claude-code/claude-sonnet-5/dcff25ad119f584cdbeb58f4c4641507d9af9a1117f9c0c30f9fd7436ddbfbb3/r3",
+  "identity": {
+    "provider": "claude-code",
+    "model": "claude-sonnet-5",
+    "promptHash": "dcff25ad119f584cdbeb58f4c4641507d9af9a1117f9c0c30f9fd7436ddbfbb3",
+    "sourceHash": "8924706e91dd64367624edc6525a5a5dfc85a4064896ed29457b7fdfddd18221",
+    "corpusHash": "438504a0124a9f411bb33b7b4b1f4124251500d970105384a456f9f0f48749f5",
+    "vision": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-5",
+      "setHash": "298849f8ce5fc935edf27939b9227f536d5c5ca39f35e2de51ff509dca42b133"
+    },
+    "judge": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-5",
+      "contractHash": "8b1c2d9fabc544e77d1ee0a6cad76a4823194a458bb2c014db0f0b074ff70c13"
+    }
+  },
+  "recordedAt": "2026-09-27T18:52:20.413Z",
+  "summary": {
+    "claimPrecision": 0.8366666666666667,
+    "claimRecall": 0.9666666666666667,
+    "eventPrecision": 0.5382716049382716,
+    "eventRecall": 1,
+    "iocPrecision": 0.31388888888888894,
+    "iocRecall": 0.95,
+    "abstentionRate": 1,
+    "forbiddenConclusions": 0,
+    "danglingEvidenceRefs": 0,
+    "confidenceIssues": 0,
+    "uncertaintyRecall": 0.8,
+    "nextStepRecall": 0.7,
+    "durationMs": 1764521.115489333,
+    "inputTokens": 81.33333333333333,
+    "outputTokens": 192417.33333333334,
+    "costUsd": 3.1682390666666653
+  },
+  "runs": 3,
+  "mode": "all"
+}
