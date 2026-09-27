@@ -769,8 +769,8 @@ export interface InvestigationState {
   // file by loadFilteredState so the report can render the analyst's recorded status. Never saved
   // with the state; absent everywhere else.
   remediationBoundaries?: RemediationBoundaryView[];
-  // READ-TIME projection only (#930 item 4): the case's served locations, loaded from their side
-  // file by loadFilteredState so the report can read the served exposure. Never saved with state.
+  // READ-TIME projection only (#930 item 4): served locations from their side file. Never saved.
+  rejectedTechniques?: string[]; // #1742: removed by an accepted second-opinion delta (rejectedTechniques.ts)
   servedLocations?: ServedLocationView[];
   /** Sensitive locations the analyst declared (#930 item 7), projected for the report. */
   sensitiveLocations?: SensitiveLocationView[];
