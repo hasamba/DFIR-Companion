@@ -500,17 +500,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Investigator comments on case entities (collaboration). GET lists them; POST adds one
-  // to a `(targetType, targetId)` entity; DELETE removes by id. Add/remove ping live clients.
-  app.get("/cases/:id/comments", async (req: Request, res: Response) => {
-    if (!options.commentsStore) return res.status(501).json({ error: "comments not configured" });
-    try {
-      return res.status(200).json(await options.commentsStore.load(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
+  // Investigator comments on case entities (collaboration). GET lists them (routes/entityAnnotations.ts,
+  // #1715); POST adds one to a `(targetType, targetId)` entity; DELETE removes by id. Both ping clients.
   app.post("/cases/:id/comments", async (req: Request, res: Response) => {
     if (!options.commentsStore) return res.status(501).json({ error: "comments not configured" });
     const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";
@@ -572,18 +563,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Analyst triage tags on case entities (hand labels). GET lists them; POST attaches one to a
-  // `(targetType, targetId)` entity (label normalized + deduped server-side); DELETE removes by
-  // id. Add/remove ping live clients. Survives synthesis (side file, not InvestigationState).
-  app.get("/cases/:id/tags", async (req: Request, res: Response) => {
-    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
-    try {
-      return res.status(200).json(await options.tagsStore.load(req.params.id));
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
+  // Analyst triage tags on case entities (hand labels). GET lists them (routes/entityAnnotations.ts,
+  // #1715); POST attaches one to a `(targetType, targetId)` entity (label normalized + deduped
+  // server-side); DELETE removes by id. Add/remove ping live clients. Survives synthesis (side file).
   app.post("/cases/:id/tags", async (req: Request, res: Response) => {
     if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
     const targetType = typeof req.body?.targetType === "string" ? req.body.targetType.trim() : "";

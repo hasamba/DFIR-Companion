@@ -28,6 +28,8 @@ import type { DwellWindowStore } from "../dwellWindowStore.js";
 import type { HostScopeStore } from "../hostScopeStore.js";
 import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
+import { stateEventResolver, withResolvedTargets, type EventResolver } from "../eventAliasLookup.js";
+import { resolveHypothesisLinks } from "../hypothesisLineage.js";
 import type { NotebookStore } from "../notebookStore.js";
 import type { TagsStore } from "../tags.js";
 import type { AskTurn } from "../askHistory.js";
@@ -124,6 +126,7 @@ async function analystDecisionBlocks(
   ctx: AnalystQueryContext,
   caseId: string,
   history: readonly AskTurn[],
+  resolve: EventResolver,
 ): Promise<string> {
   const o = ctx.opts;
   const [hypotheses, decisions, windows, outcomes, tags, comments, notebook] = await Promise.all([
@@ -135,12 +138,15 @@ async function analystDecisionBlocks(
     o.commentsStore?.load(caseId) ?? [],
     loadNotebookIfOptedIn(ctx, caseId),
   ]);
+  // The model is told to cite these ids, so each one names the event it lives on today (#1715).
+  const onLiveEvent = <T extends { targetType: string; targetId: string }>(list: readonly T[]) =>
+    withResolvedTargets(list, resolve).map((r) => ({ ...r, targetId: r.resolvedTargetId ?? r.targetId }));
   return (
-    renderAskHypothesesBlock(hypotheses) +
+    renderAskHypothesesBlock(hypotheses.map((h) => resolveHypothesisLinks(h, resolve))) +
     renderHostScopeBlock(decisions) +
     renderDwellWindowsBlock(windows) +
     renderPriorHuntsBlock(outcomes) +
-    renderAnalystMarksBlock(tags, comments) +
+    renderAnalystMarksBlock(onLiveEvent(tags), onLiveEvent(comments)) +
     renderAskNotebookBlock(notebook) +
     renderAskHistoryBlock(history)
   );
@@ -163,7 +169,12 @@ export async function ask(
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("case questions");
   const loaded = await ctx.opts.stateStore.load(caseId);
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
-  const decisionBlocks = await analystDecisionBlocks(ctx, caseId, options.history ?? []);
+  const decisionBlocks = await analystDecisionBlocks(
+    ctx,
+    caseId,
+    options.history ?? [],
+    stateEventResolver(loaded),
+  );
 
   const renderEvent = (e: ForensicEvent): string =>
     `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;

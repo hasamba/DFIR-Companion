@@ -50,12 +50,17 @@
     const starred = [];
     starredTagIds = new Map();
     // eachTagList() rather than the Map itself — see js/dashboard-tags.js.
+    // A star on an event correlation folded into another (#1715) stars the survivor too, and an event
+    // can then hold several star tags — every one of them is kept, so unstarring removes them all.
     (typeof eachTagList === "function" ? eachTagList : () => {})((list) =>
       list.forEach((t) => {
-        if (t.targetType === "event" && t.label === "starred") {
-          starred.push(t.targetId);
-          starredTagIds.set(t.targetId, t.id);
-        }
+        if (t.targetType !== "event" || t.label !== "starred") return;
+        [t.targetId, t.resolvedTargetId].filter(Boolean).forEach((id) => {
+          const ids = starredTagIds.get(id) || [];
+          if (ids.includes(t.id)) return;
+          starredTagIds.set(id, [...ids, t.id]);
+          starred.push(id);
+        });
       }),
     );
     DfirStarred.replace(starred);
@@ -94,6 +99,15 @@
     } // retry on the next loadTags
   }
 
+  // Delete every star tag on the event (#1715); resolves like one fetch, failing on the first bad answer.
+  function unstarAll(caseId, id) {
+    const del = (tagId) =>
+      fetch(`/cases/${caseId}/tags/${encodeURIComponent(tagId)}`, { method: "DELETE" });
+    return Promise.all((starredTagIds.get(id) || [""]).map(del)).then(
+      (all) => all.find((r) => !r.ok && r.status !== 404) || all[0],
+    );
+  }
+
   function toggleStar(caseId, id) {
     const wasStarred = DfirStarred.has(id);
     // Optimistic flip for instant feedback; loadTags() re-derives the truth after the server call.
@@ -106,10 +120,7 @@
       refreshSuperRows();
     };
     const req = wasStarred
-      ? fetch(
-          `/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id) || "")}`,
-          { method: "DELETE" },
-        )
+      ? unstarAll(caseId, id)
       : fetch(`/cases/${caseId}/tags`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -133,6 +144,7 @@
   // Bulk finding operations + hunt-query builders live in public/js/dashboard-bulk-findings.js.
 
   window.deriveStarred = deriveStarred;
+  window.unstarAll = unstarAll;
   window.isSystemPathIoc = isSystemPathIoc;
   window.migrateLocalStars = migrateLocalStars;
   window.toggleStar = toggleStar;

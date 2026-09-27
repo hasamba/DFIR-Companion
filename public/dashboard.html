@@ -4330,7 +4330,7 @@
     // IOC view state, moved out of the "Starred events" banner (#415). Not that feature's: read by
     // renderIocs (core machinery), reset by the case-switch path, toggled from two places, and read
     // by dashboard-search-scope.js and dashboard-bulk-select.js. Same call as veloEnabled above.
-    let starredTagIds = new Map();   // eventId -> tag id (needed for DELETE /cases/:id/tags/:tagId)
+    let starredTagIds = new Map();   // eventId -> [tag id] (every star tag it holds, #1715; for DELETE)
     let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
     const _boolPref = (k, dflt) => { const v = localStorage.getItem("dfir.ioc." + k); return v === null ? dflt : v === "1"; };
     let hideFpNoIntel = _boolPref("hideNoise", true);

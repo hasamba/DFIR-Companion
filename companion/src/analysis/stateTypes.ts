@@ -763,8 +763,8 @@ export interface InvestigationState {
   // consumed by every later import and by the settle-time carry pass. Optional so old state loads.
   hostRenames?: HostRenameRecord[];
   collectorHostnames?: string[];
-  // Analyst decisions on the intel retirement review (#1024), keyed by finding id; newest wins.
-  intelRetirementDecisions?: IntelRetirementDecision[];
+  intelRetirementDecisions?: IntelRetirementDecision[]; // #1024 review decisions by finding id, newest wins
+  eventAliases?: Readonly<Record<string, string>>; // #1715 correlation lineage — see eventAliases.ts
   // READ-TIME projection only (#969): the case's remediation boundaries, loaded from their side
   // file by loadFilteredState so the report can render the analyst's recorded status. Never saved
   // with the state; absent everywhere else.

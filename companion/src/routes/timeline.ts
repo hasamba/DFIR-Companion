@@ -4,6 +4,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import { mapForensicEvent, timesketchDate } from "../integrations/timesketch/timesketchMap.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
+import { storedEventResolver } from "../analysis/eventAliasLookup.js";
 import type { RouteContext } from "./context.js";
 import { registerHuntWorkbenchRoutes } from "./huntWorkbench.js";
 import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
@@ -197,13 +198,18 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       // Mark rows already pulled into the forensic timeline (promote's mergeDelta dedups by id, so
       // "promoted" means this event's id is already there) so the UI can show persistent state instead
       // of a fire-and-forget button that gives no lasting feedback.
+      const rowIds = result.events.map((event) => event.id);
       const promotedIds = options.stateStore
-        ? await options.stateStore.hasForensicEventIds(
-            req.params.id,
-            result.events.map((event) => event.id),
-          )
+        ? await options.stateStore.hasForensicEventIds(req.params.id, rowIds)
         : new Set<string>();
-      const events = result.events.map((e) => ({ ...e, promoted: promotedIds.has(e.id) }));
+      // A promoted row correlation later folded into another event is still in the forensic timeline,
+      // under the survivor's id (#1715) — it must not offer "Promote" again.
+      const missing = rowIds.filter((id) => !promotedIds.has(id));
+      const resolve = await storedEventResolver(options.stateStore, req.params.id, missing);
+      const events = result.events.map((e) => ({
+        ...e,
+        promoted: promotedIds.has(e.id) || resolve(e.id) !== e.id,
+      }));
       return res.status(200).json({ ...result, events });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

@@ -7,6 +7,8 @@ import { mergeIntelState } from "../intelHistory.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "../labIntel.js";
 import { mergeHostRenameRecords } from "../hostRenameRecord.js";
 import { carryHostRenames } from "../hostRenameCarry.js";
+import { recordEventAliases } from "../eventAliases.js";
+import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -132,7 +134,7 @@ export function mergeConcurrentAdditions(
   // rename carry is re-run for the same reason (#1495): a row an import re-homed while synthesis
   // ran is taken from `next` too, and the unioned ledger below would otherwise be saved beside the
   // old asset — the pass recomputes every eligible row from its record name, so it lands the same.
-  return carryHostRenames(
+  const merged = carryHostRenames(
     annotateSightingsWithLabIntel({
       ...next,
       forensicTimeline: addedEvents.length
@@ -160,8 +162,43 @@ export function mergeConcurrentAdditions(
         next.intelRetirementDecisions,
         latest.intelRetirementDecisions,
       ),
+      // The correlation lineage an import recorded while synthesis ran is kept (#1715): it only grows.
+      ...mergedLineage(next, latest),
     }),
   ).state;
+  return withoutFoldedSnapshotEvents(merged, loaded, latest);
+}
+
+/**
+ * An import that ran during synthesis may have folded an event the snapshot still holds into another
+ * (#1715). `next` carries the snapshot's copy and the addition-only merge above carries the import's
+ * survivor, so both would be saved and the fold undone. Drop the snapshot's copy of every event the
+ * import newly folded into a survivor this state holds, and point its citations at that survivor.
+ */
+function withoutFoldedSnapshotEvents(
+  merged: InvestigationState,
+  loaded: InvestigationState,
+  latest: InvestigationState,
+): InvestigationState {
+  const before = loaded.eventAliases ?? {};
+  const live = new Set(merged.forensicTimeline.map((e) => e.id));
+  const liveNow = new Set(latest.forensicTimeline.map((e) => e.id)); // an id the import re-added stays
+  const folded = new Map(
+    Object.entries(latest.eventAliases ?? {}).filter(
+      ([from, to]) => before[from] !== to && live.has(from) && live.has(to) && !liveNow.has(from),
+    ),
+  );
+  if (folded.size === 0) return merged;
+  return remapAbsorbedEventIds(
+    { ...merged, forensicTimeline: merged.forensicTimeline.filter((e) => !folded.has(e.id)) },
+    folded,
+  );
+}
+
+/** Both sides' correlation lineage, unioned; absent when neither has one. */
+function mergedLineage(next: InvestigationState, latest: InvestigationState) {
+  const merged = recordEventAliases(next.eventAliases, new Map(Object.entries(latest.eventAliases ?? {})));
+  return merged ? { eventAliases: merged } : {};
 }
 
 /** Union two decision lists by finding id, the newest `decidedAt` winning. */

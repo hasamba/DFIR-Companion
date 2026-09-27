@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { projectAlignment } from "../analysis/clockSkew.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
+import { withoutEventAliases } from "../analysis/eventAliases.js";
 import { searchForensicTimeline } from "../analysis/forensicSearch.js";
 import type { RouteContext } from "./context.js";
 
@@ -47,7 +48,7 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
       const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
       const forensicTimeline = projectAlignment(skew, timeline.entities);
       return res.status(200).json({
-        ...state,
+        ...withoutEventAliases(state), // #1715: lineage is server bookkeeping
         forensicTimeline,
         forensicTimelineTotal: timeline.total,
         // Set only when the match count gave up at its ceiling (#928) — the total is then a floor,

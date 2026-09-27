@@ -1457,7 +1457,7 @@ export const FEATURES: Feature[] = [
     // Starred events. No initializer. Reported five escapes until the IOC view state that shared
     // its banner — and belongs to renderIocs, not to starring — moved out to the page's shared state.
     file: "dashboard-starred.js",
-    publish: ["deriveStarred", "isSystemPathIoc", "migrateLocalStars", "toggleStar"],
+    publish: ["deriveStarred", "isSystemPathIoc", "migrateLocalStars", "toggleStar", "unstarAll"],
     private: ["starredKey", "SYSTEM_PATH_RE"],
   },
   {

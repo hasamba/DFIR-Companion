@@ -107,6 +107,16 @@ describe("a merged host reaches every case-report generator as one machine", () 
     expect(prompts[0]).not.toContain("- WIN11 (host)");
   });
 
+  // #1715: a hypothesis link to an event correlation folded into another names the survivor.
+  it("hypothesisReview names the surviving event for a folded-away link", async () => {
+    const s = await stateStore.load("c1");
+    await stateStore.save({ ...s, eventAliases: { "gone-1": "a" } });
+    await hypothesisStore.add("c1", { title: "Attacker ran a tool", relatedEventIds: ["gone-1"] });
+    await buildPipeline().hypothesisReview("c1");
+    expect(prompts[0]).toContain("currently-supporting events: a");
+    expect(prompts[0]).not.toContain("gone-1");
+  });
+
   // Constraint from the host-alias-index feature: an install with NEITHER assetOverridesStore NOR
   // velociraptorClientStore wired (older tests, CLI scripts) must behave exactly as before —
   // loadHostAliasIndex degrades to a usable empty index rather than failing the report. That empty
