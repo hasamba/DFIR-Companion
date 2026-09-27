@@ -254,10 +254,12 @@ describe("every moved function still resolves at its call sites", () => {
   // undecodedBinaryImportHint, the client mirror of the server's "known but not decoded" refusal
   // for the v1 SessionLoginItems.sfl (#1360); 117 with jobBarPercent, the Background jobs
   // popover's "how full is the bar" rule shared by the row builder and the in-place patch (#1428); 119
-  // with iocFilterKey and resolveIocPage, the IOC pager's "a refresh keeps the page" rule (#1649).
+  // with iocFilterKey and resolveIocPage, the IOC pager's "a refresh keeps the page" rule (#1649); 124
+  // with execSummaryHtml and its four helpers, the Executive Summary's fact strip and ledger; 128
+  // with narrativeHtml and its three helpers, the Narrative Timeline's time rail.
   // The number is a vacuity guard, not a budget.
-  it("moved 119 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(119);
+  it("moved 128 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(128);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

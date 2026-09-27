@@ -371,3 +371,83 @@ describe("parseHayabusaTimeline — structured commandLine and dstIp", () => {
     expect(b.dstIp).toBeUndefined();
   });
 });
+
+// ── #1726: Velociraptor's Windows.Hayabusa.Rules export in artifact-map form. Auto-detect routes it
+// here by name; the rows sit under the artifact key, with Details as the "Key: value ¦ …" string.
+function veloHayabusaRow(i: number, extra: object = {}): object {
+  return {
+    Timestamp: `2026-01-02T03:04:0${i}.000Z`,
+    Computer: "WS01.example.com",
+    Channel: "Security",
+    EID: 4720 + i,
+    Level: "high",
+    Title: `Rule number ${i}`,
+    RecordID: 100 + i,
+    Details: `User: alice${i} ¦ Proc: C:\\Windows\\System32\\net${i}.exe`,
+    ...extra,
+  };
+}
+
+describe("parseHayabusaTimeline — Velociraptor artifact-map export (#1726)", () => {
+  it("reads the rows under the Windows.Hayabusa.Rules key instead of one root record", () => {
+    const text = JSON.stringify({
+      "Windows.Hayabusa.Rules": [veloHayabusaRow(1), veloHayabusaRow(2), veloHayabusaRow(3)],
+    });
+    const r = parseHayabusaTimeline(text, { aggregate: false });
+    expect(r.total).toBe(3);
+    expect(r.events).toHaveLength(3);
+    const e = r.events.find((x) => x.description.includes("Rule number 2"));
+    expect(e).toBeDefined();
+    expect(e!.severity).toBe("High");
+    expect(e!.asset).toBe("WS01.example.com");
+    expect(e!.description).toContain("(EID 4722 Security)");
+    expect(e!.processName).toBe("net2.exe");
+  });
+
+  it("reads a pretty-printed map and merges ExtraFieldInfo into the details", () => {
+    const row = veloHayabusaRow(4, { ExtraFieldInfo: { TgtIP: "203.0.113.7" } });
+    const text = JSON.stringify({ "Windows.Hayabusa.Rules": [row] }, null, 2);
+    const r = parseHayabusaTimeline(text, { aggregate: false });
+    expect(r.events).toHaveLength(1);
+    expect(r.iocs.map((i) => i.value)).toContain("203.0.113.7");
+  });
+
+  it("never maps rows from another artifact in the same map as Hayabusa detections", () => {
+    const foreign = {
+      Timestamp: "2026-01-02T03:05:00.000Z",
+      EID: 4624,
+      Title: "Not a Hayabusa rule",
+      Computer: "WS01.example.com",
+    };
+    const text = JSON.stringify({
+      "Windows.Hayabusa.Rules": [veloHayabusaRow(1)],
+      "Windows.EventLogs.Evtx": [foreign],
+    });
+    const r = parseHayabusaTimeline(text, { aggregate: false });
+    expect(r.total).toBe(1);
+    expect(r.events).toHaveLength(1);
+    expect(r.events.some((x) => x.description.includes("Not a Hayabusa rule"))).toBe(false);
+  });
+
+  it("keeps rows that carry their own _Source (the real export stamps Windows.Sigma.Base)", () => {
+    const text = JSON.stringify({
+      "Windows.Hayabusa.Rules": [
+        veloHayabusaRow(1, { _Source: "Windows.Sigma.Base" }),
+        veloHayabusaRow(2, { _Source: "Windows.Sigma.Base" }),
+      ],
+    });
+    const r = parseHayabusaTimeline(text, { aggregate: false });
+    expect(r.total).toBe(2);
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("reads a generic wrapper that also holds a Hayabusa-named array as before", () => {
+    const text = JSON.stringify({ data: [jsonProc()], hayabusa: [] });
+    expect(parseHayabusaTimeline(text, { aggregate: false }).events).toHaveLength(1);
+  });
+
+  it("reads a single native record with a Hayabusa-named array field as one event", () => {
+    const text = JSON.stringify({ ...jsonProc(), HayabusaTags: ["x"] });
+    expect(parseHayabusaTimeline(text, { aggregate: false }).events).toHaveLength(1);
+  });
+});
