@@ -191,6 +191,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_SPRAY_",
   "DFIR_REPORT_",
   "DFIR_LOG_LEVEL",
+  // Size cap of the always-on debug log (#1735). Read at startup; it bounds disk use, nothing more.
+  "DFIR_DEBUG_LOG_MAX_MB",
   "DFIR_UPDATE_CHECK",
   "DFIR_STATE_BACKUP_",
   "DFIR_DEMO_RESET_HOURS",

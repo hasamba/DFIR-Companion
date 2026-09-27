@@ -1,4 +1,13 @@
 import { describe, it, expect } from "vitest";
+import * as fs from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, isAbsolute } from "node:path";
+import {
+  createRotatingDebugLog,
+  type DebugLogSink,
+  type DebugLogFs,
+} from "../../src/logging/debugLogSink.js";
 import {
   LoggerImpl,
   shouldLog,
@@ -148,5 +157,113 @@ describe("LoggerImpl routing", () => {
     expect(c.warn).toEqual(["T WARN  w"]);
     expect(c.error).toEqual(["T ERROR e"]);
     expect(c.log).toEqual(["T INFO  i"]);
+  });
+});
+
+// A DebugLogSink that records lines instead of touching the filesystem.
+function fakeDebugSink() {
+  const lines: string[] = [];
+  let closed = false;
+  const sink: DebugLogSink = {
+    write: (line) => lines.push(line),
+    files: () => ({ previous: "/logs/debug.1.log", current: "/logs/debug.log" }),
+    close: () => {
+      closed = true;
+    },
+  };
+  return { sink, lines, isClosed: () => closed };
+}
+
+describe("LoggerImpl always-on debug log (#1735)", () => {
+  const at = () => "T";
+
+  it("writes every level to the debug sink even at level info", () => {
+    const { writer, lines } = fakeWriter();
+    const dbg = fakeDebugSink();
+    const log = new LoggerImpl({
+      level: "info",
+      sessionLogPath: "/s.log",
+      caseLogPath: (id) => `/cases/${id}/case.log`,
+      console: false,
+      writer,
+      debugLog: dbg.sink,
+      now: at,
+    });
+    log.debug("detail", { caseId: "INC-1" });
+    log.info("i");
+    log.warn("w");
+    log.error("e");
+    expect(dbg.lines).toEqual(["T DEBUG [INC-1] detail", "T INFO  i", "T WARN  w", "T ERROR e"]);
+    // The live threshold still governs the session and case sinks.
+    expect(lines.map((l) => l.line)).toEqual(["T INFO  i", "T WARN  w", "T ERROR e"]);
+    expect(lines.some((l) => l.path.startsWith("/cases/"))).toBe(false);
+  });
+
+  it("keeps the console quiet below the threshold", () => {
+    const c = fakeConsole();
+    const dbg = fakeDebugSink();
+    const log = new LoggerImpl({ level: "warn", consoleFns: c.fns, debugLog: dbg.sink, now: at });
+    log.debug("d");
+    log.info("i");
+    expect(c.log).toEqual([]);
+    expect(dbg.lines).toEqual(["T DEBUG d", "T INFO  i"]);
+  });
+
+  it("reports its log paths, and closes the debug sink", async () => {
+    const dbg = fakeDebugSink();
+    const log = new LoggerImpl({ sessionLogPath: "/s.log", console: false, debugLog: dbg.sink });
+    expect(log.paths()).toEqual({
+      sessionLogPath: "/s.log",
+      debugLog: { previous: "/logs/debug.1.log", current: "/logs/debug.log" },
+    });
+    await log.close();
+    expect(dbg.isClosed()).toBe(true);
+  });
+
+  it("reports a null debug log when none is configured", () => {
+    const log = new LoggerImpl({ console: false });
+    expect(log.paths()).toEqual({ sessionLogPath: null, debugLog: null });
+  });
+
+  it("never writes the debug log inside a case folder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "logger-dbg-"));
+    try {
+      const casesDir = join(root, "cases");
+      const logsDir = join(root, "logs");
+      const opened: string[] = [];
+      const spyFs: DebugLogFs = {
+        ...(fs as unknown as DebugLogFs),
+        openSync: (path, flags, mode) => {
+          opened.push(path);
+          return fs.openSync(path, flags, mode);
+        },
+        mkdirSync: (path, opts) => {
+          opened.push(path);
+          return fs.mkdirSync(path, opts);
+        },
+      };
+      const { writer } = fakeWriter();
+      const log = new LoggerImpl({
+        level: "info",
+        sessionLogPath: join(logsDir, "session.log"),
+        caseLogPath: (id) => join(casesDir, id, "logs", "session.log"),
+        console: false,
+        writer,
+        debugLog: createRotatingDebugLog({ dir: logsDir, maxBytes: 10_000, fs: spyFs }),
+      });
+      log.debug("case detail", { caseId: "INC-9" });
+      log.info("case info", { caseId: "INC-9" });
+      await log.close();
+      expect(opened.length).toBeGreaterThan(0);
+      for (const p of opened) {
+        const rel = relative(casesDir, p);
+        expect(rel.startsWith("..") || isAbsolute(rel)).toBe(true);
+      }
+      expect(existsSync(casesDir)).toBe(false);
+      expect(readdirSync(logsDir)).toEqual(["debug.log"]);
+      expect(readFileSync(join(logsDir, "debug.log"), "utf8")).toContain("DEBUG [INC-9] case detail");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

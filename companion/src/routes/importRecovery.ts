@@ -83,6 +83,15 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         at: new Date().toISOString(),
         detail: `resuming ${parameters.kind} import after committed batch ${startBatch}`,
       });
+      // #1735: counts and kinds only — the always-on debug log keeps these at any live level.
+      const debug = (step: string): void =>
+        ctx.serverLogger.debug(`[import-debug] ${caseId}: resume kind=${parameters.kind} ${step}`, {
+          caseId,
+        });
+      debug(
+        `start startBatch=${startBatch} streaming=${parameters.streaming} ` +
+          `forensicBefore=${before.forensicTimeline.length}`,
+      );
       try {
         let text: string | undefined;
         if (parameters.streaming && parameters.kind === "plaso") {
@@ -95,6 +104,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         const imported = await options.stateStore.load(job.caseId);
         const allArtifactEvents = imported.forensicTimeline.filter((event) =>
           event.sourceScreenshots.includes(parameters.storedName),
+        );
+        debug(
+          `parsed artifactEvents=${allArtifactEvents.length} forensicNow=${imported.forensicTimeline.length}`,
         );
         let superTimelineAddedCount = 0;
         let superTimelineEvicted: SuperEviction | undefined;
@@ -133,6 +145,10 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           }
         }
         const finalState = await ctx.demoteForensicForCase(job.caseId);
+        debug(
+          `settled superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
+            `forensicAfterDemote=${finalState.forensicTimeline.length}`,
+        );
         const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
         const iocDiff = diffIocs(before.iocs, finalState.iocs);
         // This handler settles inline rather than through settleForensicImport; the done line is

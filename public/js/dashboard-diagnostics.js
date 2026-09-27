@@ -618,6 +618,54 @@
     URL.revokeObjectURL(url);
   }
 
+  // Redacted support bundle (#1735): the server builds the zip — logs, the always-on debug log and
+  // failed-import shapes, every name replaced by a placeholder. The page sends only the choice of
+  // case log; the server regenerates the diagnostics text itself, so the page never feeds the zip.
+  function diagDownloadBundle() {
+    const btn = document.getElementById("diagBundleBtn");
+    const msg = document.getElementById("diagBundleMsg");
+    const withCase = document.getElementById("diagBundleCaseLog");
+    const caseEl = document.getElementById("caseId");
+    const caseId = caseEl ? caseEl.value.trim() : "";
+    if (btn) btn.disabled = true;
+    if (msg) msg.textContent = "building the redacted bundle…";
+    fetch("/diagnostics/support-bundle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        caseId: caseId || undefined,
+        includeCaseLog: !!(withCase && withCase.checked && caseId),
+      }),
+    })
+      .then((r) => {
+        if (!r.ok)
+          return r
+            .json()
+            .catch(() => ({}))
+            .then((j) => {
+              throw new Error(j.error || `HTTP ${r.status}`);
+            });
+        const cd = r.headers.get("Content-Disposition") || "";
+        const m = /filename="([^"]+)"/.exec(cd);
+        return r.blob().then((blob) => ({ blob, name: m ? m[1] : "dfir-companion-support.zip" }));
+      })
+      .then(({ blob, name }) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        if (msg) msg.textContent = "saved — open the zip and read it before you send it";
+      })
+      .catch((e) => {
+        if (msg) msg.textContent = `could not build the bundle: ${e.message}`;
+      })
+      .finally(() => {
+        if (btn) btn.disabled = false;
+      });
+  }
+
   // The five Settings → Diagnostics controls. These were bound in the page's Settings block; they
   // move here because the handlers are this module's own functions, and binding them from the page
   // meant five bare names evaluated at load time — a 404 here would have taken the page down before
@@ -636,6 +684,8 @@
     document
       .getElementById("diagSizesBtn")
       .addEventListener("click", diagComputeSizes);
+    const bundleBtn = document.getElementById("diagBundleBtn");
+    if (bundleBtn) bundleBtn.addEventListener("click", diagDownloadBundle);
   }
 
   window.initDiagnostics = initDiagnostics;
