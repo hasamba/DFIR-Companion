@@ -306,6 +306,7 @@ export interface ValuesApi {
 
 export interface FragmentsApi {
   proseHtml(text: unknown): string;
+  execSummaryHtml(state: unknown): string;
   mentionHtml(text: string): string;
   ticketPushChips(id: string): string;
   renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;

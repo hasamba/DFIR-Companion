@@ -233,11 +233,114 @@ function ntfTargetSummary(ch) {
   return ch.hasWebhookUrl ? "webhook configured" : "<span data-safe-style='color:var(--tag-red-text)'>no webhook URL</span>";
 }
 
+// The Executive Summary panel: a fact strip, the AI summary on the left and the synthesis's
+// known-vs-unknown ledger (state.uncertainties, #73) on the right. Every piece is read from state
+// the dashboard already holds, so the layout needs no AI call and applies to existing cases at once.
+// The facts come from the High/Critical events — the attack, not the whole collection — and fall
+// back to every event only when nothing is graded that high.
+const EXEC_KEY_SEVERITIES = new Set(["Critical", "High"]);
+const EXEC_MAX_NAMES = 2;
+
+function execSummaryHtml(state) {
+  const s = state || {};
+  const summary = String(s.lastSummary || "").trim();
+  const facts = execFactsHtml(s);
+  const ledger = execLedgerHtml(Array.isArray(s.uncertainties) ? s.uncertainties : []);
+  if (!summary && !facts && !ledger) return '<div class="prose">—</div>';
+  const what = `<div class="exec-what"><div class="prose">${summary ? proseHtml(summary) : "—"}</div></div>`;
+  const body = ledger
+    ? `<div class="exec-cols">${what}<div class="exec-assess">${ledger}</div></div>`
+    : what;
+  return facts + body;
+}
+
+// "A, B +2": the most frequent names first, then alphabetical so a tie renders the same each time.
+function execTopNames(values) {
+  const counts = new Map();
+  for (const v of values) if (v) counts.set(v, (counts.get(v) || 0) + 1);
+  const ranked = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+  const more = ranked.length - EXEC_MAX_NAMES;
+  return ranked.length ? ranked.slice(0, EXEC_MAX_NAMES).join(", ") + (more > 0 ? ` +${more}` : "") : "";
+}
+
+// "2026-09-24 08:49:00 → 09:04:47 UTC" plus its span. The date shows once when both ends share it.
+// UTC on purpose: the forensic timeline and the report state times in UTC, not in the viewer's zone.
+function execWindow(events) {
+  const times = [];
+  for (const e of events) {
+    for (const t of [e.timestamp, e.endTimestamp]) {
+      const ms = Date.parse(t || "");
+      if (Number.isFinite(ms)) times.push(ms);
+    }
+  }
+  if (!times.length) return null;
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  const fmt = (ms) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+  const a = fmt(first);
+  const b = fmt(last);
+  const label = `${a} → ${a.slice(0, 10) === b.slice(0, 10) ? b.slice(11) : b} UTC`;
+  const min = Math.floor((last - first) / 60000);
+  const span =
+    min < 60 ? `${min} min` : min < 1440 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${Math.floor(min / 1440)} d ${Math.floor((min % 1440) / 60)} h`;
+  return { label, span };
+}
+
+function execFactsHtml(s) {
+  const all = Array.isArray(s.forensicTimeline) ? s.forensicTimeline : [];
+  const key = all.filter((e) => e && EXEC_KEY_SEVERITIES.has(e.severity));
+  const events = key.length ? key : all.filter(Boolean);
+  const chip = (k, v, cls) =>
+    `<span class="exec-chip${cls ? " " + cls : ""}"><span class="exec-k">${esc(k)}</span><span class="exec-v">${esc(v)}</span></span>`;
+  const chips = [];
+  const hosts = execTopNames(events.map((e) => e.asset));
+  if (hosts) chips.push(chip(hosts.includes(",") ? "Hosts" : "Host", hosts));
+  const accounts = execTopNames(
+    events.map((e) => (e.canonical?.actor?.kind === "account" ? e.canonical.actor.name : "")),
+  );
+  if (accounts) chips.push(chip(accounts.includes(",") ? "Accounts" : "Account", accounts));
+  const win = execWindow(events);
+  if (win) chips.push(chip(key.length ? "High+ activity" : "Activity", win.label), chip("Span", win.span));
+  const live = (Array.isArray(s.findings) ? s.findings : []).filter((f) => f && f.status !== "dismissed");
+  const crit = live.filter((f) => f.severity === "Critical").length;
+  const high = live.filter((f) => f.severity === "High").length;
+  if (crit || high) {
+    const parts = [crit ? `${crit} Critical` : "", high ? `${high} High` : ""].filter(Boolean);
+    chips.push(chip("Findings", parts.join(" · "), crit ? "exec-crit" : ""));
+  }
+  return chips.length ? `<div class="exec-facts">${chips.join("")}</div>` : "";
+}
+
+// Confirmed and inferred claims are the assessment, strongest first. Speculated and unknown ones are
+// what the case still cannot say, each with the gap that would settle it.
+function execLedgerHtml(uncertainties) {
+  const rank = { confirmed: 0, inferred: 1 };
+  const valid = uncertainties.filter((u) => u && String(u.topic || "").trim());
+  const known = valid.filter((u) => u.status in rank).sort((a, b) => rank[a.status] - rank[b.status]);
+  const open = valid.filter((u) => !(u.status in rank));
+  const item = (u, detail) =>
+    `<li class="exec-u exec-${escAttr(u.status || "unknown")}"${u.basis ? ` title="${escAttr(u.basis)}"` : ""}>` +
+    `<span class="exec-status">${esc(u.status || "unknown")}</span><span>${esc(u.topic)}</span>` +
+    (detail ? `<span class="exec-gap">${esc(detail)}</span>` : "") +
+    `</li>`;
+  const block = (title, rows) =>
+    rows.length ? `<div class="exec-block"><h4>${title}</h4><ul>${rows.join("")}</ul></div>` : "";
+  return (
+    block("Assessment", known.map((u) => item(u, ""))) +
+    block("Still unconfirmed", open.map((u) => item(u, u.gap)))
+  );
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
 window.DfirFragments = {
   proseHtml,
+  execSummaryHtml,
+  execTopNames,
+  execWindow,
+  execFactsHtml,
+  execLedgerHtml,
   mentionHtml,
   ticketPushChips,
   renderVqlRows,

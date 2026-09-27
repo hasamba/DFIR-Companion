@@ -39,6 +39,125 @@ describe("proseHtml", () => {
   });
 });
 
+// The Executive Summary panel: a fact strip read from the case, the AI summary on the left, and the
+// synthesis's own known-vs-unknown ledger on the right. Everything here is built from state the
+// dashboard already holds, so no AI call and no re-synthesis is needed to get the layout.
+describe("execSummaryHtml", () => {
+  const ev = (over: Record<string, unknown>) => ({
+    id: String(Math.random()),
+    timestamp: "2026-09-24T08:49:00Z",
+    description: "x",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
+  });
+  const account = (name: string) => ({ actor: { kind: "account", name } });
+
+  it("keeps the dash placeholder for a case with nothing yet", () => {
+    expect(f.execSummaryHtml({})).toBe('<div class="prose">—</div>');
+    expect(f.execSummaryHtml(null)).toBe('<div class="prose">—</div>');
+  });
+
+  it("shows the summary alone when there are no events and no ledger", () => {
+    const html = f.execSummaryHtml({ lastSummary: "One.\n\nTwo." });
+    expect(html).toContain("<p>One.</p><p>Two.</p>");
+    expect(html).not.toContain("exec-facts");
+    expect(html).not.toContain("exec-assess");
+  });
+
+  it("builds the fact strip from the High+ events: hosts, accounts, window and span", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [
+        ev({ asset: "DESKTOP-1", timestamp: "2026-09-24T08:49:00Z", canonical: account("vagrant") }),
+        ev({ asset: "DESKTOP-1", timestamp: "2026-09-24T09:00:00Z", canonical: account("vagrant") }),
+        ev({ asset: "SRV-2", timestamp: "2026-09-24T08:55:00Z", endTimestamp: "2026-09-24T09:04:47Z" }),
+        // Medium rows fall outside the attack window and do not name hosts.
+        ev({ asset: "NOISE", severity: "Medium", timestamp: "2026-09-20T00:00:00Z" }),
+      ],
+    });
+    expect(html).toContain("DESKTOP-1, SRV-2");
+    expect(html).not.toContain("NOISE");
+    expect(html).toContain("vagrant");
+    expect(html).toContain("2026-09-24 08:49:00 → 09:04:47 UTC");
+    expect(html).toContain("15 min");
+  });
+
+  it("falls back to every event when none is High or Critical", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [ev({ asset: "HOST-A", severity: "Low" })],
+    });
+    expect(html).toContain("HOST-A");
+  });
+
+  it("names the first two hosts and counts the rest", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: ["A", "B", "C", "D"].map((h) => ev({ asset: h })),
+    });
+    expect(html).toContain("A, B +2");
+  });
+
+  it("puts the day on both ends of a window that crosses midnight", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [
+        ev({ timestamp: "2026-09-24T23:50:00Z" }),
+        ev({ timestamp: "2026-09-26T01:10:00Z" }),
+      ],
+    });
+    expect(html).toContain("2026-09-24 23:50:00 → 2026-09-26 01:10:00 UTC");
+    expect(html).toContain("1 d 1 h");
+  });
+
+  it("counts Critical and High findings, but not dismissed ones", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      findings: [
+        { severity: "Critical", status: "open" },
+        { severity: "High", status: "confirmed" },
+        { severity: "High", status: "dismissed" },
+        { severity: "Medium", status: "open" },
+      ],
+    });
+    expect(html).toContain("1 Critical · 1 High");
+  });
+
+  it("splits the ledger: confirmed/inferred are the assessment, speculated/unknown are still open", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      uncertainties: [
+        { topic: "Adversary emulation", status: "inferred", basis: "sim script", gap: "" },
+        { topic: "Credential dumping", status: "confirmed", basis: "LSASS dump", gap: "" },
+        { topic: "Initial access", status: "unknown", basis: "", gap: "No VPN or mail logs" },
+        { topic: "C2", status: "speculated", basis: "", gap: "No network capture" },
+      ],
+    });
+    const [assess, open] = html.split("Still unconfirmed");
+    expect(assess).toContain("Adversary emulation");
+    expect(assess).toContain("Credential dumping");
+    expect(assess).not.toContain("Initial access");
+    expect(open).toContain("Initial access");
+    expect(open).toContain("No VPN or mail logs");
+    expect(open).toContain("C2");
+    // Confirmed sorts ahead of inferred, so the strongest claim reads first.
+    expect(assess.indexOf("Credential dumping")).toBeLessThan(assess.indexOf("Adversary emulation"));
+  });
+
+  it("escapes every model- and evidence-derived string", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: XSS,
+      forensicTimeline: [ev({ asset: XSS, canonical: account(XSS) })],
+      uncertainties: [{ topic: XSS, status: "unknown", basis: ATTR_BREAK, gap: XSS }],
+    });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('" onmouseover');
+  });
+});
+
 describe("mentionHtml", () => {
   it("chips a handle", () => {
     expect(f.mentionHtml("ping @bob")).toBe('ping <span class="mention-chip">@bob</span>');

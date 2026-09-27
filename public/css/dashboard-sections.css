@@ -580,3 +580,28 @@
   @media (min-width:2200px){
     .prose{max-width:calc(82ch * 3 + 88px);column-count:3}
   }
+  /* EXECUTIVE SUMMARY: fact strip on top, the prose left, the known-vs-unknown ledger right.
+     Built by execSummaryHtml (js/dashboard-fragments.js). With a ledger beside it the prose keeps ONE
+     column — the multi-column rule above assumes the prose owns the full row width. */
+  .exec-facts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+  .exec-chip{display:inline-flex;align-items:baseline;gap:6px;padding:3px 10px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-secondary);font-size:13px}
+  .exec-k{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+  .exec-v{font-family:var(--font-code);color:var(--text-bright);font-variant-numeric:tabular-nums}
+  .exec-crit{border-color:var(--sev-critical)}
+  .exec-crit .exec-v{color:var(--sev-critical);font-family:inherit;font-weight:600}
+  .exec-cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:28px}
+  .exec-cols .prose{column-count:1;max-width:82ch}
+  .exec-assess{border-left:1px solid var(--border-subtle);padding-left:24px;display:grid;gap:16px;align-content:start}
+  .exec-block h4{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+  .exec-block ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+  .exec-u{display:grid;grid-template-columns:100px minmax(0,1fr);column-gap:10px;font-size:14px;line-height:1.5;color:var(--text-primary)}
+  .exec-status{padding-top:2px;font-family:var(--font-code);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  .exec-confirmed .exec-status{color:var(--sev-low)}
+  .exec-inferred .exec-status{color:var(--accent)}
+  .exec-speculated .exec-status{color:var(--badge-warning-text)}
+  .exec-unknown .exec-status{color:var(--text-muted)}
+  .exec-gap{grid-column:2;font-size:12.5px;color:var(--text-muted)}
+  @media (max-width:900px){
+    .exec-cols{grid-template-columns:1fr}
+    .exec-assess{border-left:0;padding-left:0;border-top:1px solid var(--border-subtle);padding-top:14px}
+  }

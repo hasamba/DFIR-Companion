@@ -65,9 +65,9 @@
     // rather than one unbroken block of text at full page width. The RAW text stays on the element
     // as data-raw because the narrative editor loads it back into its textarea, and reading
     // .textContent off the paragraphs would silently drop every paragraph break the split added.
-    document.getElementById("summary").innerHTML = proseHtml(
-      state.lastSummary || "—",
-    );
+    // The Executive Summary adds a fact strip and the known-vs-unknown ledger around the same prose
+    // (execSummaryHtml, js/dashboard-fragments.js); the other two panels stay prose only.
+    document.getElementById("summary").innerHTML = execSummaryHtml(state);
     document.getElementById("attackerPath").innerHTML = proseHtml(
       state.attackerPath || "—",
     );
