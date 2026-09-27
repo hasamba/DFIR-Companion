@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 // The analyst's font choices (theme menu → "Text"). Three files must agree or a choice silently
@@ -18,7 +19,7 @@ function registry(): Registry {
   const src = read("js/dashboard-theme.js");
   const m = /const DFIR_FONTS = (\{[\s\S]*?\n {2}\});/.exec(src);
   if (!m) throw new Error("DFIR_FONTS literal not found in js/dashboard-theme.js");
-  return new Function(`return ${m[1]};`)() as Registry;
+  return runInNewContext(`(${m[1]})`) as Registry;
 }
 
 function cssRules(kind: string): Set<string> {
@@ -54,7 +55,7 @@ describe("font choices", () => {
     const src = read("js/dashboard-theme.js");
     const m = /const TEXT_SIZE = (\{[^}]*\});/.exec(src);
     expect(m, "TEXT_SIZE literal not found").not.toBeNull();
-    const size = new Function(`return ${m![1]};`)() as {
+    const size = runInNewContext(`(${m![1]})`) as {
       min: number;
       max: number;
       step: number;
