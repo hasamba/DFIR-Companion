@@ -15,6 +15,13 @@
 //
 // NOT AN ES MODULE: the inline script calls the published names below by bare name.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
   // Purely visual, no refetch: collapse every session card to its one-line header for a
   // high-level read of the intrusion, expand for the detail.
   let sessionsCollapsed = false;
@@ -51,7 +58,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(sessionsTimer);
-    sessionsTimer = setTimeout(() => loadSessions(caseId), 800);
+    sessionsTimer = setTimeout(() => panelReload("sessions", () => loadSessions(caseId)), 800);
   }
 
   function renderSessions() {

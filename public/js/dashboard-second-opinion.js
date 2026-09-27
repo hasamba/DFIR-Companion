@@ -16,6 +16,13 @@
 // dead one on screen. That is the safe direction for a capability gate.
 (function () {
   "use strict";
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
 
   // A DIFFERENT model re-synthesizes the case; we surface where it disagrees with the primary
   // synthesis (findings it adds/drops, severity, ATT&CK technique) and the analyst accepts/rejects
@@ -45,7 +52,7 @@
   function scheduleSecondOpinionReload(caseId) {
     if (!caseId || !hasTargetedDecision(lastSecondOpinionRec)) return;
     clearTimeout(soReloadTimer);
-    soReloadTimer = setTimeout(() => loadSecondOpinion(caseId), 800);
+    soReloadTimer = setTimeout(() => panelReload("secondOpinion", () => loadSecondOpinion(caseId)), 800);
   }
   // Accepted decisions that match no finding right now — the server marks them (#1590).
   const SO_UNAPPLIED_WHY = {

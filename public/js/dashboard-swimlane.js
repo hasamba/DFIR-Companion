@@ -23,6 +23,13 @@
 // back. swCanvasXY is likewise not ours: it lives in js/dashboard-values.js.
 
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
     // Data comes from GET /cases/:id/swimlane?groupBy=... (server applies scope+FP filtering).
@@ -94,7 +101,7 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       clearTimeout(swTimer);
-      swTimer = setTimeout(() => loadSwimlane(caseId), 800);
+      swTimer = setTimeout(() => panelReload("swimlane", () => loadSwimlane(caseId)), 800);
     }
 
     function swRenderLabels() {

@@ -13,6 +13,13 @@
 // hasEvidenceGraph() rather than reaching for the variable.
 (function () {
   "use strict";
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
 
   let evGraphData = null; // { nodes, edges }
   let evPathsData = null; // ordered lateral-movement chains (#92)
@@ -90,7 +97,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(evGraphTimer);
-    evGraphTimer = setTimeout(() => loadEvidenceGraph(caseId), 800);
+    evGraphTimer = setTimeout(() => panelReload("evidenceGraph", () => loadEvidenceGraph(caseId)), 800);
   }
 
   // The colour a node is drawn in under the current mode: by severity (default) or by kill-chain tactic.

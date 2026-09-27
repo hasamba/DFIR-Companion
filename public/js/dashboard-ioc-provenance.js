@@ -15,6 +15,13 @@
 // Both call sites therefore default to a value that does not exclude, never to zero.
 (function () {
   "use strict";
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
 
   // Split out of the "Attack Phases" banner (#415). Nothing here is Attack Phases: these are
   // the provenance chains, the per-IOC source map, the risk ranking and the three filters that
@@ -111,7 +118,7 @@
     const caseId = iocMetaReloadCaseId();
     if (!caseId) return;
     clearTimeout(iocSourcesTimer);
-    iocSourcesTimer = setTimeout(() => loadIocSources(caseId), 800);
+    iocSourcesTimer = setTimeout(() => panelReload("iocSources", () => loadIocSources(caseId)), 800);
   }
 
   // Per-IOC provenance (#): { iocId: "detection" | "telemetry" }, derived server-side. DISTINCT
@@ -155,7 +162,7 @@
       iocProvenanceDeferred = true;
       return;
     }
-    iocProvenanceTimer = setTimeout(() => loadIocProvenance(caseId), 800);
+    iocProvenanceTimer = setTimeout(() => panelReload("iocProvenance", () => loadIocProvenance(caseId)), 800);
   }
   let iocProvenanceChainTimer = null;
   function scheduleIocProvenanceChainReload() {
@@ -166,10 +173,7 @@
       iocProvenanceChainDeferred = true;
       return;
     }
-    iocProvenanceChainTimer = setTimeout(
-      () => loadIocProvenanceChains(caseId),
-      800,
-    );
+    iocProvenanceChainTimer = setTimeout(() => panelReload("iocProvenanceChain", () => loadIocProvenanceChains(caseId)), 800);
   }
   function flushDeferredIocProvenanceReloads() {
     if (importRunning()) return;
@@ -251,7 +255,7 @@
     const caseId = iocMetaReloadCaseId();
     if (!caseId) return;
     clearTimeout(iocRiskTimer);
-    iocRiskTimer = setTimeout(() => loadIocRisk(caseId), 800);
+    iocRiskTimer = setTimeout(() => panelReload("iocRisk", () => loadIocRisk(caseId)), 800);
   }
   function iocRiskRankOf(iocId) {
     const r = iocMetaOwned(iocRiskSlot, iocRisk)[iocId];

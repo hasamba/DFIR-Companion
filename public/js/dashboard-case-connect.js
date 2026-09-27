@@ -72,6 +72,13 @@
   // to 86 queued requests — ~8 seconds on an 82 MB case, on routes the server answered in 2ms.
   const PANEL_LOAD_CONCURRENCY = 4;
 
+  // A debounced panel reload queued for the case being left must neither paint nor hold one of the
+  // shared lanes the next case load needs (#1713).
+  function retirePanelReloads() {
+    const api = clpApi();
+    if (api && typeof api.retirePanelReloads === "function") api.retirePanelReloads();
+  }
+
   function connect() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -201,6 +208,7 @@
     // Detach BEFORE closing (js/dashboard-live-socket.js): close() fires onclose asynchronously,
     // and a still-attached handler would overwrite the cancel message below — or, since #1675,
     // schedule a reconnect to the case the analyst just walked out of. It also drops a pending retry.
+    retirePanelReloads();
     if (typeof closeCaseSocket === "function") closeCaseSocket();
     if (typeof retireCount === "function") retireCount();
     activeCaseId = null;
@@ -233,6 +241,7 @@
     // The old case's socket must never reconnect (#1675). Guarded: a missing socket module must
     // cost live updates, never the case load itself.
     if (typeof closeCaseSocket === "function") closeCaseSocket();
+    retirePanelReloads();
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
     if (typeof syncCasePicker === "function") syncCasePicker();
@@ -445,7 +454,13 @@
         (tally) => {
           if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
         },
-        { signal: loadSignal, concurrency: PANEL_LOAD_CONCURRENCY },
+        // The page-wide pool (#1713), shared with the catch-up and the debounced panel reloads;
+        // `concurrency` is the fallback for a cached case-load-progress.js without one.
+        {
+          signal: loadSignal,
+          lanes: panelApi.panelLanes,
+          concurrency: PANEL_LOAD_CONCURRENCY,
+        },
       );
     } else {
       for (const [, run] of CASE_PANEL_LOADERS) {

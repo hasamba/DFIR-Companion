@@ -8,6 +8,13 @@
 // the page parses — the panel is refreshed from the reload chain and from the WebSocket handler,
 // both of which are calls rather than bindings.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+  };
   // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
   // Suspiciously long silent periods in the forensic timeline. A COMPLETE gap (every source dark)
   // is the classic signature of cleared logs / a stopped collector → High; a PARTIAL gap is one tool
@@ -29,7 +36,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(timelineGapsTimer);
-    timelineGapsTimer = setTimeout(() => loadTimelineGaps(caseId), 800);
+    timelineGapsTimer = setTimeout(() => panelReload("timelineGaps", () => loadTimelineGaps(caseId)), 800);
   }
 
   function renderTimelineGaps() {
