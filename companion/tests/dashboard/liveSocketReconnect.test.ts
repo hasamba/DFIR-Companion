@@ -345,8 +345,8 @@ describe("a frame that is not a live message is skipped (#1707)", () => {
     FakeSocket.made[0].open();
     FakeSocket.made[0].drop();
     await vi.advanceTimersByTimeAsync(1000);
-    FakeSocket.made[1].open(); // catch-up GET now in flight
-    await vi.advanceTimersByTimeAsync(0);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS); // catch-up GET now in flight
     raw(FakeSocket.made[1], '{"type":"state"}');
     raw(FakeSocket.made[1], '{"type":"state","state":null}');
     raw(FakeSocket.made[1], '{"type":"state","state":[]}');
