@@ -331,6 +331,23 @@ export interface FragmentsApi {
   ntfTargetSummary(ch: Record<string, unknown>): string;
 }
 
+/** js/dashboard-attack-path.js — the Attack Path panel's steps, host-hop line and swimlanes. */
+export interface AttackStep {
+  title: string;
+  summary: string;
+  techniques: string[];
+  year: number | null;
+  month: number | null;
+  day: number | null;
+  time: string | null;
+  timeEnd: string | null;
+  desc: string;
+}
+export interface AttackPathApi {
+  attackSteps(text: string): AttackStep[];
+  attackPathHtml(text: unknown, events: unknown, view: string): string;
+}
+
 /** A cell as js/dashboard-state.js publishes it. */
 export interface Cell<T> {
   get(): T;

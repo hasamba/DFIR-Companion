@@ -582,6 +582,7 @@
     "ROUTE GET /js/dashboard-ioc.js",
     "ROUTE GET /js/dashboard-values.js",
     "ROUTE GET /js/dashboard-fragments.js",
+    "ROUTE GET /js/dashboard-attack-path.js",
     "ROUTE GET /js/dashboard-scope.js",
     "ROUTE GET /js/dashboard-selection.js",
     "ROUTE GET /js/dashboard-facets.js",

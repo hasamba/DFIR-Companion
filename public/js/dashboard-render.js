@@ -68,8 +68,12 @@
     // The Executive Summary adds a fact strip and the known-vs-unknown ledger around the same prose
     // (execSummaryHtml, js/dashboard-fragments.js); the other two panels stay prose only.
     document.getElementById("summary").innerHTML = execSummaryHtml(state);
-    document.getElementById("attackerPath").innerHTML = proseHtml(
+    // Steps / Hosts tabs when the path reads as steps (attackPathHtml, js/dashboard-attack-path.js);
+    // plain prose otherwise.
+    document.getElementById("attackerPath").innerHTML = attackPathHtml(
       state.attackerPath || "—",
+      state.forensicTimeline,
+      attackPathStoredView(),
     );
     const narrative = state.narrativeTimeline || "—";
     const narrativeView = document.getElementById("narrativeView");

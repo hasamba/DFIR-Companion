@@ -153,6 +153,20 @@
     playbookJumpToEvent: (el) => jumpToEvent(el.dataset.id),
     // Narrative Timeline rail: a time in the story opens the event it was read from.
     narrativeJumpToEvent: (el) => jumpToEvent(el.dataset.id),
+    // Attack Path: a step's time opens its event; the two tabs switch Steps / Hosts and the choice
+    // is remembered per browser (storage may throw — the switch still works for this page).
+    attackPathJumpToEvent: (el) => jumpToEvent(el.dataset.id),
+    attackPathView: (el) => {
+      const box = el.closest(".ap");
+      if (!box) return;
+      box.dataset.apView = el.dataset.view;
+      for (const tab of box.querySelectorAll(".ap-tab")) tab.setAttribute("aria-selected", String(tab === el));
+      try {
+        localStorage.setItem("dfir.attackPathView", el.dataset.view);
+      } catch {
+        /* per-browser convenience only */
+      }
+    },
     playbookJumpToGaps: (el) => {
       const g = document.getElementById("sec-evidence-gaps");
       if (g) {

@@ -44,6 +44,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-ioc.js": "application/javascript; charset=utf-8",
   "/js/dashboard-values.js": "application/javascript; charset=utf-8",
   "/js/dashboard-fragments.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-attack-path.js": "application/javascript; charset=utf-8",
   // Tier 2's first owner: the investigation scope window, its projection, and its controls (#415).
   // Unlike the helpers above this one holds state, so a 404 here is not a missing helper — every
   // scope read would throw and the dashboard would not render at all.
