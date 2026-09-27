@@ -1,20 +1,21 @@
 // What the shared SIEM mapping path DECIDED, for the per-import debug recorder (#1736): the key each
 // record's host and time came from, which mapper handled it, and where the aggregation step removed
-// rows. Tallied locally and flushed once, so a 100k-row export costs a few map bumps per row.
+// rows. Tallied locally and flushed once, so a 100k-row export costs a few map bumps per row. The
+// keys come from the mapper's own pickers through siemFieldPick's sink — nothing re-scans a record.
 //
 // Records only KEY NAMES the pickers selected and code-authored slugs — never a value. The recorder
 // passes each key through the support bundle's column allowlist on top of that.
 import type { ImportDebugRecorder } from "./importDebug.js";
-import { hostSource, isObject, timestampSource, windowsEventDataRaw } from "./siemFieldPick.js";
+import { setFieldPickSink, type FieldPickSink } from "./siemFieldPick.js";
 import type { EventAggregator } from "./eventAggregate.js";
 import type { MappedEvent } from "./siemImport.js";
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 
-type Row = Record<string, unknown>;
-
 export interface SiemDebugTally {
+  /** Call just before a record's host pick: the pickers report the keys they select until `row`. */
+  begin(): void;
   /** One mapped record: `windows` is true when the per-EID Windows mapper handled it. */
-  row(rec: Row, windows: boolean, m: MappedEvent): void;
+  row(windows: boolean, m: MappedEvent): void;
   /** Rows that went through the aggregator (after it ran on them), to count the severity floor. */
   floored(rows: Iterable<MappedEvent>): void;
   /** The same count for a streaming aggregator: wraps its add. */
@@ -24,6 +25,7 @@ export interface SiemDebugTally {
 }
 
 const NOOP: SiemDebugTally = {
+  begin() {},
   row() {},
   floored() {},
   watch: (agg) => agg,
@@ -35,6 +37,7 @@ function bump(map: Map<string, number>, key: string): void {
 }
 
 export function createSiemDebugTally(debug?: ImportDebugRecorder, minSeverity?: Severity): SiemDebugTally {
+  setFieldPickSink(undefined); // a sink left behind by a mapping that threw belongs to a dead tally
   if (!debug) return NOOP;
   const floorRank = minSeverity ? SEVERITY_RANK[minSeverity] : Infinity;
   const hostKeys = new Map<string, number>();
@@ -45,19 +48,28 @@ export function createSiemDebugTally(debug?: ImportDebugRecorder, minSeverity?: 
     if (SEVERITY_RANK[m.severity] > floorRank) belowFloor++;
   };
 
+  // One closure for the whole import, so a record costs no allocation beyond two variable writes.
+  let [hostKey, timeKey]: (string | undefined)[] = [undefined, undefined];
+  const sink: FieldPickSink = (target, key) => {
+    if (target === "host") hostKey = key;
+    else timeKey = key;
+  };
+
   return {
-    row(rec, isWindows, m) {
+    begin() {
+      hostKey = timeKey = undefined;
+      setFieldPickSink(sink);
+    },
+    row(isWindows, m) {
+      setFieldPickSink(undefined);
       if (isWindows) windows++;
       else generic++;
-      const host = hostSource(rec);
-      if (host) bump(hostKeys, host.key);
+      if (hostKey) bump(hostKeys, hostKey);
       else noHost++;
-      // The Windows mapper reads EventData's UtcTime first; the generic mapper never does.
-      const edRaw = isWindows ? windowsEventDataRaw(rec) : undefined;
-      const time = timestampSource(rec, isWindows ? (isObject(edRaw) ? edRaw : {}) : undefined);
-      if (time) bump(timeKeys, time.key);
+      // The mapper that handled the record picked its time last (Windows: EventData's UtcTime first).
+      if (timeKey) bump(timeKeys, timeKey);
       else noTime++;
-      if (time && !m.timestamp) emptyTime++;
+      if (timeKey && !m.timestamp) emptyTime++;
     },
     floored(rows) {
       for (const m of rows) floorOne(m);

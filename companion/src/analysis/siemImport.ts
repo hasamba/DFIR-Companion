@@ -351,9 +351,7 @@ function parseKibanaDate(t: string): string {
 function pickTimestamp(rec: Row, ed: Row | undefined): string {
   return normalizeTime(timestampSource(rec, ed)?.value ?? "");
 }
-export function pickHost(rec: Row): string {
-  return hostSource(rec)?.value ?? "";
-}
+export const pickHost = (rec: Row): string => hostSource(rec)?.value ?? "";
 
 // ───────────────────────────── IOC / hash helpers ─────────────────────────────
 
@@ -1405,12 +1403,13 @@ export function buildSiemResult(
   const dnsIocs: HeldDnsIocs = new Map(); // #1642 — a DNS row links its IOCs once its key is final
   const tally = createSiemDebugTally(opts.debug, opts.minSeverity);
   for (const [recordIndex, rec] of records.entries()) {
+    tally.begin();
     const host = pickHost(rec);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
     const w = mapWindows(rec, host, rowSink, { source: format, recordIndex });
     const m = w ?? mapGeneric(rec, host, rowSink);
-    tally.row(rec, w !== null, m);
+    tally.row(w !== null, m);
     mergeRowIocsHoldingDns(iocSink, rowSink, m, dnsIocs);
     mapped.push(m);
   }

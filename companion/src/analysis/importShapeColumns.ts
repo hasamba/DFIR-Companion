@@ -415,6 +415,12 @@ const IMPORTER_FIELD_KEYS = [
   "winlog.computer_name",
   "DeviceName",
   "EventData.UtcTime",
+  "timestamp_ms",
+  "threat_level",
+  "ImageFileName",
+  "kMDItemDisplayName",
+  "_kMDItemFileName",
+  "kMDItemLastUsedDate",
 ];
 
 /** The raw allowlist, as the tools spell it. Normalized into a set by `importShape.ts`. */

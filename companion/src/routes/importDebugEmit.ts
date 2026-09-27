@@ -17,7 +17,19 @@ export function emitImportDebug(
   debug: ImportDebugRecorder | undefined,
   outcome: ImportOutcome,
 ): void {
-  if (!debug) return;
-  debug.finish(outcome);
+  if (!debug || !debug.finish(outcome)) return; // an attempt already closed writes no second line
   getServerLogger().debug(formatImportDebugLine(debug.summary()), { caseId });
+}
+
+/**
+ * An attempt the route refused after detection (#1736): unknown format, no AI provider, budget, AI
+ * off. The reason is a code literal; the refusal closes the recorder so the line is written once.
+ */
+export function emitImportRefused(
+  caseId: string,
+  debug: ImportDebugRecorder | undefined,
+  reason: string,
+): void {
+  debug?.observed(reason);
+  emitImportDebug(caseId, debug, "refused");
 }

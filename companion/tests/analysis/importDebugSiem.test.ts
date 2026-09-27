@@ -3,7 +3,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createImportDebugRecorder } from "../../src/analysis/importDebug.js";
-import { parseSiemExport } from "../../src/analysis/siemImport.js";
+import { buildSiemResult, parseSiemExport } from "../../src/analysis/siemImport.js";
+import { WindowsEventBuilder } from "../../src/analysis/siemBuildProgress.js";
 import { parseEvtxXml, parseEvtxXmlProgress } from "../../src/analysis/evtxXmlImport.js";
 import { noteParsed } from "../../src/analysis/ingest/importState.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -187,5 +188,59 @@ describe("the deterministic wrappers' shared tail (#1736)", () => {
     expect(s.observations.no_events).toBe(1);
     expect(s.counts).toMatchObject({ total: 1, kept: 0 });
     noMarker(s);
+  });
+});
+
+// The debug tally must learn each selected key from the mapper's OWN lookup, never by re-running the
+// 14 host and 17 time candidates. A case-insensitive miss enumerates every key of the record, so a
+// second scan of a wide hostless, timeless record costs thousands of extra property reads per row.
+describe("SIEM import debug adds no second candidate scan (#1736)", () => {
+  const WIDE = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`col_${i}`, `v${i}`]));
+
+  // Every read the importer makes of the record: property gets, `in` checks, key enumeration and
+  // the per-key descriptor reads that Object.keys performs on a Proxy.
+  function counted(): { rec: Record<string, unknown>; reads: () => number } {
+    let n = 0;
+    const rec = new Proxy(
+      { ...WIDE },
+      {
+        get: (t, k, r) => (n++, Reflect.get(t, k, r)),
+        has: (t, k) => (n++, Reflect.has(t, k)),
+        ownKeys: (t) => (n++, Reflect.ownKeys(t)),
+        getOwnPropertyDescriptor: (t, k) => (n++, Reflect.getOwnPropertyDescriptor(t, k)),
+      },
+    );
+    return { rec, reads: () => n };
+  }
+
+  it("buildSiemResult reads the record as often with a recorder as without", () => {
+    const plain = counted();
+    buildSiemResult([plain.rec], "ndjson");
+    const traced = counted();
+    const debug = createImportDebugRecorder();
+    buildSiemResult([traced.rec], "ndjson", { debug });
+    expect(plain.reads()).toBeGreaterThan(1000); // the proxy sees the mapper's own scans
+    expect(traced.reads() - plain.reads()).toBeLessThanOrEqual(4);
+    expect(debug.summary().observations).toMatchObject({ missing_host: 1, no_timestamp: 1 });
+  });
+
+  it("the WindowsEventBuilder path reads the record as often with a recorder as without", () => {
+    const plain = counted();
+    new WindowsEventBuilder("xml").add(plain.rec, 0);
+    const traced = counted();
+    const debug = createImportDebugRecorder();
+    const builder = new WindowsEventBuilder("xml", { debug });
+    builder.add(traced.rec, 0);
+    builder.finish();
+    expect(traced.reads() - plain.reads()).toBeLessThanOrEqual(4);
+    expect(debug.summary().fallbacks).toEqual({ generic_mapper: 1 });
+  });
+
+  it("a later import without a recorder does not feed an earlier recorder", () => {
+    const debug = createImportDebugRecorder();
+    parseSiemExport(ndjson([GENERIC_BOTH]), { debug });
+    const before = JSON.stringify(debug.summary());
+    parseSiemExport(ndjson([SYSMON, GENERIC_NO_TIME]));
+    expect(JSON.stringify(debug.summary())).toBe(before);
   });
 });

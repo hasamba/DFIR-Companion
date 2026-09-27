@@ -100,6 +100,24 @@ describe("import debug recorder", () => {
   });
 });
 
+describe("import debug outcomes", () => {
+  it("lets a final outcome follow parsed, and keeps the first final outcome", () => {
+    const r = createImportDebugRecorder();
+    expect(r.finish("parsed")).toBe(true);
+    expect(r.finish("failed")).toBe(true); // a later step failed: not a contradiction
+    expect(r.finish("succeeded")).toBe(false); // already final
+    expect(r.finish("cancelled")).toBe(false);
+    expect(r.summary().outcome).toBe("failed");
+  });
+
+  it("keeps refused as final", () => {
+    const r = createImportDebugRecorder();
+    r.finish("refused");
+    expect(r.finish("failed")).toBe(false);
+    expect(r.summary().outcome).toBe("refused");
+  });
+});
+
 describe("sanitizeImportDebugSummary", () => {
   it("strips anything a hand-built summary tries to smuggle", () => {
     const dirty = {

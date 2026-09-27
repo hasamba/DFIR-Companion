@@ -209,7 +209,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     try {
       const result = await work;
       getServerLogger().info(formatImportMerged(caseId, label, Date.now() - startedAt), { caseId });
-      emitImportDebug(caseId, debug, "succeeded");
+      // "parsed", not "succeeded": the caller still settles, tags and demotes. A failure there
+      // is recorded as "failed" afterwards; an entry point that owns the end may emit "succeeded".
+      emitImportDebug(caseId, debug, "parsed");
       return result;
     } catch (err) {
       if ((err as { name?: unknown } | null)?.name === "AbortError") {

@@ -314,12 +314,12 @@ const push = (app: Awaited<ReturnType<typeof makePushApp>>["app"]) =>
     .send({ source: "siem-webhook", filename: "thor.json", events: [THOR_EVENT] });
 
 describe("/push: one recorder from detection to the terminal seam (#1736)", () => {
-  it("writes one succeeded line that carries the push's own detection decision", async () => {
+  it("writes one parsed line that carries the push's own detection decision", async () => {
     const { app } = await makePushApp();
     expect((await push(app)).status).toBe(202);
     const line = await pollFor("a thor import-debug line", async () => importerLines("thor")[0]);
     const summary = summaryOf(line);
-    expect(summary.outcome).toBe("succeeded");
+    expect(summary.outcome).toBe("parsed");
     // Only the resolver sets a decision: its presence proves the same recorder reached the import.
     expect(summary.detection).toMatchObject({ decision: expect.any(String) });
     expect(importerLines("thor")).toHaveLength(1);

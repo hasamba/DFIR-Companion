@@ -57,7 +57,8 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
-import { hasParseProgress, isAiDependent, rejectIfAiImportOverBudget } from "./importKinds.js";
+import { hasParseProgress, isAiDependent, refuseDetectedImport } from "./importKinds.js";
+import { emitImportRefused } from "./importDebugEmit.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
@@ -287,14 +288,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
     const kind = ctx.resolveImportKind()(originalName, text, debug);
-    if (kind === "unknown") {
-      return res.status(400).json(unknownImportResponse(originalName, text, UNIFIED_IMPORT_UNKNOWN_MESSAGE));
-    }
-    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
-      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
-    }
-    // A CSV/log import is an LLM call, so meter it against the per-case AI budget (see importKinds).
-    if (rejectIfAiImportOverBudget(kind, caseId, res)) return;
+    // Unknown format / no AI provider / AI budget (a CSV/log import is an LLM call) — see importKinds.
+    const unknown = () => unknownImportResponse(originalName, text, UNIFIED_IMPORT_UNKNOWN_MESSAGE);
+    const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
+    if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
     // Cross-case signal: tell every dashboard an artifact import landed for THIS case, so one viewing
     // a different case warns "artifacts are arriving for another case" — parity with screenshots. The
@@ -331,6 +328,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           at: new Date().toISOString(),
           detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
         });
+        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
         return res
           .status(202)
           .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
@@ -561,14 +559,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
     const kind = ctx.resolveImportKind()(originalName, sample, debug);
-    if (kind === "unknown") {
-      // best-effort: a truncated head gives no capa hint
-      return res.status(400).json(unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE));
-    }
-    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
-      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
-    }
-    if (rejectIfAiImportOverBudget(kind, caseId, res)) return; // CSV/log = LLM call; meter AI budget
+    // best-effort unknown hint: a truncated head gives no capa hint; then no provider / AI budget.
+    const unknown = () => unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE);
+    const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
+    if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
     // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines); every other kind is
     // read into one string. A non-Plaso file over DFIR_MAX_IMPORT_FILE_MB is refused by the read
@@ -624,6 +618,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           at: new Date().toISOString(),
           detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
         });
+        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
         return res
           .status(202)
           .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });

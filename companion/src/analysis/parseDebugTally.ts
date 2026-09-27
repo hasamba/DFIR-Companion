@@ -1,4 +1,5 @@
 import type { DebugTarget, ImportDebugRecorder } from "./importDebug.js";
+import { safeColumnName } from "./importShape.js";
 
 /**
  * Small helpers for importers that report their decisions to an import debug recorder (#1736).
@@ -12,21 +13,52 @@ export interface FieldTally {
   add(target: DebugTarget, source: string): void;
   /** Report the tallied selections to the recorder (no-op without one). */
   flush(debug: ImportDebugRecorder | undefined): void;
+  /** Distinct source keys held for `target` — for the bounds tests. */
+  size(target: DebugTarget): number;
 }
 
+/** The recorder's own per-target source cap (importDebug.ts MAX_SOURCES_PER_TARGET). */
+export const MAX_FIELD_SOURCES = 16;
+/** The recorder's own code cap (importDebug.ts MAX_CODES). */
+export const MAX_TALLY_CODES = 32;
+const UNLISTED = "<unlisted>";
+const OVERFLOW_CODE = "other";
+
+function bumpCount(map: Map<string, number>, key: string, n: number): void {
+  map.set(key, Math.min((map.get(key) ?? 0) + n, Number.MAX_SAFE_INTEGER));
+}
+
+/**
+ * A source key is input-controlled (Velociraptor's fallback time scan reports any time-like column
+ * name), so it is reduced to the recorder's allowlist BEFORE it becomes a map key: every other
+ * name collapses to `<unlisted>`. At most MAX_FIELD_SOURCES keys are held per target —
+ * `<unlisted>` always keeps a slot, and a name past the cap is counted there. The overflow is
+ * reported as the `field_sources_truncated` observation.
+ */
 export function createFieldTally(): FieldTally {
   const tally = new Map<DebugTarget, Map<string, number>>();
+  let overflow = 0;
   return {
     add(target, source) {
       let bySource = tally.get(target);
       if (!bySource) tally.set(target, (bySource = new Map()));
-      bySource.set(source, (bySource.get(source) ?? 0) + 1);
+      let key = safeColumnName(source);
+      if (key !== UNLISTED && !bySource.has(key)) {
+        const named = bySource.size - (bySource.has(UNLISTED) ? 1 : 0);
+        if (named >= MAX_FIELD_SOURCES - 1) {
+          key = UNLISTED;
+          overflow += 1;
+        }
+      }
+      bumpCount(bySource, key, 1);
     },
     flush(debug) {
       if (!debug) return;
       for (const [target, bySource] of tally)
         for (const [source, n] of bySource) debug.field(target, source, n);
+      if (overflow > 0) debug.observed("field_sources_truncated", overflow);
     },
+    size: (target) => tally.get(target)?.size ?? 0,
   };
 }
 
@@ -36,11 +68,14 @@ export interface CodeTally {
   flush(record: ((code: string, n: number) => void) | undefined): void;
 }
 
+/** Codes are literals, but the map is still held to the recorder's cap; the rest count as `other`. */
 export function createCodeTally(): CodeTally {
   const tally = new Map<string, number>();
   return {
     add(code, n = 1) {
-      if (n > 0) tally.set(code, (tally.get(code) ?? 0) + n);
+      if (!(n > 0)) return;
+      const key = tally.has(code) || tally.size < MAX_TALLY_CODES - 1 ? code : OVERFLOW_CODE;
+      bumpCount(tally, key, n);
     },
     flush(record) {
       if (!record) return;

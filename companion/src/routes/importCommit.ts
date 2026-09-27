@@ -9,7 +9,7 @@ import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 import { formatImportMerged, formatImportStart } from "../logging/importLog.js";
-import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 
 /**
@@ -129,7 +129,7 @@ export function commitDedicatedImport(
     });
     // #1735: counts and kinds only, never file or row content — the always-on debug log keeps it.
     ctx.serverLogger.debug(
-      `[import-debug] ${caseId}: commit kind=${kind} path=${commit.path} linesIn=${commit.linesIn} ` +
+      `[import-debug] ${caseId}: commit kind=${safeKind(kind)} path=${commit.path} linesIn=${commit.linesIn} ` +
         `forensicBefore=${section.stateBefore?.forensicTimeline.length ?? "unknown"} minSeverity=${commit.minSeverity ?? "none"}`,
       { caseId },
     );
@@ -148,7 +148,7 @@ export function commitDedicatedImport(
         const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
         ctx.serverLogger.debug(
-          `[import-debug] ${caseId}: commit kind=${kind} settled forensicNow=${settled.state.forensicTimeline.length} ` +
+          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.state.forensicTimeline.length} ` +
             `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
           { caseId },
         );
@@ -203,9 +203,12 @@ export function commitDedicatedImport(
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
         }
       } else {
-        ctx.serverLogger.debug(`[import-debug] ${caseId}: commit kind=${kind} not settled (no settle deps)`, {
-          caseId,
-        });
+        ctx.serverLogger.debug(
+          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} not settled (no settle deps)`,
+          {
+            caseId,
+          },
+        );
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       }
       await recordImportRun(ctx, {

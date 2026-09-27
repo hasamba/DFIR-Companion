@@ -55,6 +55,7 @@ const OTHER = "other";
 const MAX_TARGETS = DEBUG_TARGETS.length;
 const MAX_SOURCES_PER_TARGET = 16;
 const MAX_CODES = 32;
+const OUTCOMES: ReadonlySet<string> = new Set(["parsed", "succeeded", "failed", "cancelled", "refused"]);
 const PHASES = new Set(["detect", "read", "parse", "map", "merge", "settle", "ai"]);
 
 export type { ImportDebugSummary, ImportOutcome } from "./importDebugTypes.js";
@@ -69,7 +70,8 @@ export interface ImportDebugRecorder {
   fallback(code: string, n?: number): void;
   counts(c: { total?: number; kept?: number; dropped?: number }): void;
   failedAt(phase: string, row?: number): void;
-  finish(outcome: ImportOutcome): void;
+  /** Returns false (and changes nothing) once a FINAL outcome is set — see ImportOutcome. */
+  finish(outcome: ImportOutcome): boolean;
   summary(): ImportDebugSummary;
 }
 
@@ -153,7 +155,9 @@ export function createImportDebugRecorder(): ImportDebugRecorder {
       failure = { phase: PHASES.has(phase) ? phase : OTHER, ...(r !== undefined ? { row: r } : {}) };
     },
     finish(o) {
+      if (outcome !== undefined && outcome !== "parsed") return false;
       outcome = o;
+      return true;
     },
     summary() {
       const f = Object.create(null) as Record<string, Record<string, number>>;
@@ -231,9 +235,7 @@ export function sanitizeImportDebugSummary(input: unknown): ImportDebugSummary |
           },
         }
       : {}),
-    ...(s.outcome === "succeeded" || s.outcome === "failed" || s.outcome === "cancelled"
-      ? { outcome: s.outcome }
-      : {}),
+    ...(typeof s.outcome === "string" && OUTCOMES.has(s.outcome) ? { outcome: s.outcome } : {}),
     truncated: s.truncated === true,
   };
 }

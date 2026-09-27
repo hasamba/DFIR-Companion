@@ -62,6 +62,16 @@ export const TIME_KEYS = [
   "@time",
 ];
 
+// Which key each picker SELECTED (#1736), reported during the mapper's own lookup — never by a
+// second scan. A synchronous hook: the import debug tally sets it around ONE record's mapping and
+// clears it after, so two imports never share it. Unset (the default), a pick costs one check.
+// `undefined` is a miss: the last pick of a record wins, so a stale key never survives a later miss.
+export type FieldPickSink = (target: "host" | "timestamp", key: string | undefined) => void;
+let pickSink: FieldPickSink | undefined;
+export function setFieldPickSink(sink: FieldPickSink | undefined): void {
+  pickSink = sink;
+}
+
 /** A Windows record's EventData, under any of its three spellings. */
 export function windowsEventDataRaw(rec: Row): unknown {
   return getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
@@ -72,7 +82,9 @@ export function windowsEventDataRaw(rec: Row): unknown {
 // Never the import time. The value is raw: siemImport's pickTimestamp normalizes it.
 export function timestampSource(rec: Row, ed: Row | undefined): { key: string; value: string } | undefined {
   const sysmonUtc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
-  return sysmonUtc ? { key: "UtcTime", value: sysmonUtc } : firstKeyed(rec, TIME_KEYS);
+  const picked = sysmonUtc ? { key: "UtcTime", value: sysmonUtc } : firstKeyed(rec, TIME_KEYS);
+  pickSink?.("timestamp", picked?.key);
+  return picked;
 }
 
 const HOST_KEYS = [
@@ -94,6 +106,11 @@ const HOST_KEYS = [
 
 /** The record's host, and the key it came from (`host.name` for an ECS host:{name} object). */
 export function hostSource(rec: Row): { key: string; value: string } | undefined {
+  const picked = findHost(rec);
+  pickSink?.("host", picked?.key);
+  return picked;
+}
+function findHost(rec: Row): { key: string; value: string } | undefined {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
     if (typeof v === "string" && v.trim()) return { key: k, value: v.trim() };

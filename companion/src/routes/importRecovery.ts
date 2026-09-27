@@ -13,7 +13,7 @@ import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
-import { createImportDebugRecorder } from "../analysis/importDebug.js";
+import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -90,7 +90,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       });
       // #1735: counts and kinds only — the always-on debug log keeps these at any live level.
       const debug = (step: string): void =>
-        ctx.serverLogger.debug(`[import-debug] ${caseId}: resume kind=${parameters.kind} ${step}`, {
+        ctx.serverLogger.debug(`[import-debug] ${caseId}: resume kind=${safeKind(parameters.kind)} ${step}`, {
           caseId,
         });
       debug(

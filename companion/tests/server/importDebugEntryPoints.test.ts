@@ -110,7 +110,7 @@ afterEach(async () => {
 });
 
 describe("import entry points carry a per-attempt debug recorder (#1736)", () => {
-  it("the generic /import-file route writes one succeeded line with the detection decision", async () => {
+  it("the generic /import-file route writes one parsed line with the detection decision", async () => {
     const app = await makeApp();
     const res = await request(app)
       .post(`/cases/${CASE_ID}/import-file`)
@@ -120,11 +120,43 @@ describe("import entry points carry a per-attempt debug recorder (#1736)", () =>
 
     const line = await pollFor("a chainsaw import-debug line", async () => importerLines("chainsaw")[0]);
     const summary = summaryOf(line);
-    expect(summary.outcome).toBe("succeeded");
+    expect(summary.outcome).toBe("parsed");
     expect(summary.kind).toBe("chainsaw");
     expect(summary.detection).toMatchObject({ decision: expect.any(String) });
     expect(importerLines("chainsaw")).toHaveLength(1);
     for (const value of [MARK_HOST, MARK_CMD]) expect(line).not.toContain(value);
+  });
+
+  it("a CSV/log with no AI provider writes one refused line with its reason, and no row value", async () => {
+    const app = await makeApp();
+    const res = await request(app)
+      .post(`/cases/${CASE_ID}/import`)
+      .send({ text: `zq-not-a-known-format ${MARK_HOST}\n`, filename: "zqmark.bin" });
+    expect(res.status).toBe(501);
+    const line = await pollFor("a refused log import-debug line", async () => importerLines("log")[0]);
+    const summary = summaryOf(line);
+    expect(summary.outcome).toBe("refused");
+    expect(summary.observations).toMatchObject({ no_ai_provider: 1 });
+    expect(importerLines("log")).toHaveLength(1);
+    expect(line).not.toContain(MARK_HOST);
+    expect(line).not.toContain("zqmark");
+  });
+
+  it("an unknown format writes one refused line with its reason", async () => {
+    const app = await makeApp();
+    const res = await request(app)
+      .post(`/cases/${CASE_ID}/import`)
+      .send({ text: "bplist00 zqmark", filename: "zqmark.plist" });
+    expect(res.status).toBe(400);
+    const line = await pollFor(
+      "a refused unknown import-debug line",
+      async () => importerLines("unknown")[0],
+    );
+    const summary = summaryOf(line);
+    expect(summary.outcome).toBe("refused");
+    expect(summary.observations).toMatchObject({ unknown_format: 1 });
+    expect(summary.detection).toMatchObject({ decision: "refused_binary_plist" });
+    expect(line).not.toContain("zqmark");
   });
 
   it("a failed import stores the importer detail on the diagnostics ring entry", async () => {

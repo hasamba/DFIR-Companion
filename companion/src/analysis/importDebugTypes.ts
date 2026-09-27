@@ -2,7 +2,12 @@
 // diagnostics ring (analysis/case) can carry one without importing the import layer. Built and
 // sanitized by analysis/importDebug.ts — see there for the privacy rules each field obeys.
 
-export type ImportOutcome = "succeeded" | "failed" | "cancelled";
+/**
+ * `parsed`: the importer itself finished, but the attempt still has steps to run (settle, tag, demote).
+ * It is NOT final — a later failure is recorded as `failed` without contradicting it. The other four
+ * are final, and the first final outcome wins: a second one is ignored and writes no second line.
+ */
+export type ImportOutcome = "parsed" | "succeeded" | "failed" | "cancelled" | "refused";
 
 export interface ImportDebugSummary {
   /** A built-in import kind, `custom` for an analyst's importer, or `unknown`. */

@@ -80,12 +80,13 @@ export class WindowsEventBuilder {
 
   add(record: Row, recordIndex: number): void {
     this.total++;
+    this.tally.begin();
     const host = pickHost(record);
     if (host) this.hostTally.set(host, (this.hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
     const windows = mapWindows(record, host, rowSink, { source: this.format, recordIndex });
     const mapped = windows ?? mapGeneric(record, host, rowSink);
-    this.tally.row(record, windows !== null, mapped);
+    this.tally.row(windows !== null, mapped);
     this.os.note(record, [mapped]);
     collectWindowsConnCandidate(this.conns, mapped);
     if (isOsBehaviourCandidateRow(record)) {
