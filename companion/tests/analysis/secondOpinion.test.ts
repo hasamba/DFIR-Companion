@@ -350,6 +350,30 @@ describe("applyAcceptedSecondOpinion", () => {
     expect(out2.findings.filter((f) => f.title === "Cobalt Strike C2 beacon")).toHaveLength(1);
   });
 
+  it("an accepted b_only finding cites the event a folded-away one lives on now (#1715)", () => {
+    let so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
+    const bOnly = so.deltas.find((d) => d.kind === "b_only")!;
+    const cited = ["e1"];
+    so = {
+      ...so,
+      deltas: so.deltas.map((d) =>
+        d.id === bOnly.id ? { ...d, finding: { ...d.finding!, relatedEventIds: cited } } : d,
+      ),
+    };
+    so = setDeltaStatus(so, bOnly.id, "accepted");
+    // Since the second opinion ran, correlation folded its first cited event into a new survivor.
+    const folded: InvestigationState = {
+      ...A,
+      forensicTimeline: [event("survivor")],
+      eventAliases: { [cited[0]]: "survivor" },
+    };
+    const added = applyAcceptedSecondOpinion(folded, so).findings.find(
+      (f) => f.title === "Cobalt Strike C2 beacon",
+    )!;
+    expect(added.relatedEventIds).toContain("survivor");
+    expect(added.relatedEventIds).not.toContain(cited[0]);
+  });
+
   it("dismisses an accepted a_only finding in place (keeps the finding, marks it dismissed)", () => {
     let so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
     const aOnly = so.deltas.find((d) => d.kind === "a_only")!;

@@ -245,8 +245,10 @@
     tagTarget = { bulk: true, ids, targetType: targetType || "event" };
   }
   // js/dashboard-starred.js, deriving the starred set from every tag list.
+  // Each tag ONCE, like eachCommentList: a tag on a folded event sits in two buckets (#1715).
   function eachTagList(fn) {
-    tagsByTarget.forEach(fn);
+    const seen = new Set();
+    tagsByTarget.forEach((list) => fn(list.filter((t) => !seen.has(t.id) && seen.add(t.id))));
   }
   // js/dashboard-super-timeline.js, rendering one row's pills.
   function tagsForTarget(key) {

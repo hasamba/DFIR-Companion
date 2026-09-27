@@ -124,8 +124,11 @@
   // tagsForTarget()/eachTagList() rather than the Map, so a reader cannot reshape another
   // feature's index. dashboard-render.js walks every thread looking for audit-marked comments;
   // this is the same read, without the map escaping.
+  // Each comment ONCE: one on an event correlation folded into another sits in two buckets (#1715),
+  // and the Investigation Log must not show the analyst's one action twice.
   function eachCommentList(fn) {
-    commentsByTarget.forEach((list) => fn(list || []));
+    const seen = new Set();
+    commentsByTarget.forEach((list) => fn((list || []).filter((c) => !seen.has(c.id) && seen.add(c.id))));
   }
 
   // The names the inline script calls by bare name. Everything else — this feature's state

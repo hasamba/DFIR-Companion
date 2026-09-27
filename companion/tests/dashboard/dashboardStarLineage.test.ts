@@ -65,3 +65,37 @@ describe("stars follow a folded event (#1715)", () => {
     expect(fetched.sort()).toEqual(["/cases/c1/tags/tag1", "/cases/c1/tags/tag2"]);
   });
 });
+
+interface CommentApi {
+  loadComments(caseId: string): void;
+  eachCommentList(fn: (list: Array<{ id: string }>) => void): void;
+  commentChip(type: string, id: string): string;
+}
+
+describe("comments follow a folded event, and are enumerated once (#1715)", () => {
+  it("shows the comment on both ids but hands the Investigation Log one row", async () => {
+    const comment = {
+      id: "c-1",
+      targetType: "event",
+      targetId: "m1e1",
+      resolvedTargetId: "t2e5",
+      text: "⚑ checked with the owner",
+      author: "an",
+      createdAt: "2026-05-28T09:00:00Z",
+    };
+    const api = loadDashboardModule<CommentApi>("dashboard-comments.js", ["dashboard-escape.js"], {
+      ICON_COMMENT: "",
+      targetKey: (type: string, id: string) => `${type}:${id}`,
+      refreshSuperRows: () => {},
+      DfirState: { lastState: () => null },
+      fetch: async () => ({ json: async () => [comment] }),
+    });
+    api.loadComments("c1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.commentChip("event", "m1e1")).toContain(" 1");
+    expect(api.commentChip("event", "t2e5")).toContain(" 1");
+    const seen: string[] = [];
+    api.eachCommentList((list) => list.forEach((c) => seen.push(c.id)));
+    expect(seen).toEqual(["c-1"]);
+  });
+});

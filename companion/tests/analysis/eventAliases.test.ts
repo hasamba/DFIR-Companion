@@ -143,3 +143,59 @@ describe("withoutEventAliases (#1715)", () => {
     expect(state.eventAliases).toEqual({ a: "b" });
   });
 });
+
+describe("a synthesis write does not undo a fold an import made while it ran (#1715)", () => {
+  const withFinding = (s: ReturnType<typeof emptyState>, cites: string) => ({
+    ...s,
+    findings: [
+      {
+        id: "f1",
+        severity: "High" as const,
+        title: "t",
+        description: "d",
+        status: "open" as const,
+        relatedIocs: [],
+        mitreTechniques: [],
+        relatedEventIds: [cites],
+        firstSeen: "",
+        lastUpdated: "",
+        sourceScreenshots: [],
+      },
+    ],
+  });
+
+  it("drops the snapshot's copy of the folded event and cites the survivor", () => {
+    const loaded = { ...emptyState("c"), forensicTimeline: [velo() as ForensicEvent] };
+    const next = withFinding(loaded, "m1e1");
+    const latest = {
+      ...emptyState("c"),
+      forensicTimeline: [thor() as ForensicEvent],
+      eventAliases: { m1e1: "t2e5" },
+    };
+    const out = mergeConcurrentAdditions(loaded, next, latest);
+    expect(out.forensicTimeline.map((e) => e.id)).toEqual(["t2e5"]);
+    expect(out.findings[0].relatedEventIds).toEqual(["t2e5"]);
+    expect(out.eventAliases).toEqual({ m1e1: "t2e5" });
+  });
+
+  it("keeps an event the import folded and then brought back", () => {
+    const loaded = { ...emptyState("c"), forensicTimeline: [velo() as ForensicEvent] };
+    const latest = {
+      ...emptyState("c"),
+      forensicTimeline: [thor() as ForensicEvent, velo() as ForensicEvent],
+      eventAliases: { m1e1: "t2e5" },
+    };
+    const out = mergeConcurrentAdditions(loaded, loaded, latest);
+    expect(out.forensicTimeline.map((e) => e.id).sort()).toEqual(["m1e1", "t2e5"]);
+  });
+
+  it("leaves lineage the snapshot already had alone", () => {
+    const loaded = {
+      ...emptyState("c"),
+      forensicTimeline: [velo() as ForensicEvent, thor() as ForensicEvent],
+      eventAliases: { m1e1: "t2e5" },
+    };
+    const out = mergeConcurrentAdditions(loaded, loaded, loaded);
+    expect(out.forensicTimeline.map((e) => e.id).sort()).toEqual(["m1e1", "t2e5"]);
+  });
+});
