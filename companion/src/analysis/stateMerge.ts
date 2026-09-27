@@ -16,7 +16,8 @@ import type {
 } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
-import { correlateEvents } from "./correlate.js";
+import { correlateEventsTracked } from "./correlate.js";
+import { remapAbsorbedEventIds } from "./absorbedCitations.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
@@ -529,7 +530,8 @@ export function mergeDelta(
   // because a container-originated change to host persistence only reads as one event when both
   // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
   const withEscape = markContainerEscape(withServiceBrowsing);
-  const correlatedOnly = correlateEvents(withEscape).sort(byEventTime);
+  const { events: folded, absorbedInto } = correlateEventsTracked(withEscape);
+  const correlatedOnly = folded.sort(byEventTime);
   // Attach each sample's sandbox detonations to the incident events that carry its hash (#932
   // item 5). AFTER correlation, on the registry this merge will persist, so a sighting arriving in
   // this delta and a report imported last week annotate the same way regardless of order. Derived
@@ -595,7 +597,7 @@ export function mergeDelta(
   const uncertainties =
     delta.uncertainties !== undefined ? sanitizeUncertainties(delta.uncertainties) : state.uncertainties;
 
-  return {
+  const merged: InvestigationState = {
     caseId: state.caseId,
     findings,
     iocs,
@@ -626,6 +628,8 @@ export function mergeDelta(
     intelRetirementDecisions: state.intelRetirementDecisions ?? [],
     updatedAt: ctx.timestamp,
   };
+  // Every citation of an event correlation folded away follows it to the survivor (#1714).
+  return remapAbsorbedEventIds(merged, absorbedInto);
 }
 
 function uniqCaseless(names: readonly string[]): string[] {
