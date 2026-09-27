@@ -164,6 +164,22 @@
     }, delay);
   }
 
+  // The message a frame carries, or null when it is not one. The hub accepts any value, so the shape
+  // is checked here: a string `type`, and for `state` an object to render.
+  function parseLiveMessage(data) {
+    let msg;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return null;
+    }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
+    if (typeof msg.type !== "string") return null;
+    const s = msg.state;
+    if (msg.type === "state" && (!s || typeof s !== "object" || Array.isArray(s))) return null;
+    return msg;
+  }
+
   function openSocket(isReconnect) {
     const caseId = liveCaseId;
     let sock;
@@ -205,10 +221,19 @@
       setConnStatus("disconnected — reconnecting…");
       scheduleReconnect();
     };
+    let warnedBadFrame = false;
     sock.onmessage = (ev) => {
       if (sock !== ws || !liveOnMessage) return;
-      const msg = JSON.parse(ev.data);
-      if (msg && msg.type === "state") statePushes++;
+      // A frame that is not a live message is skipped before it can count as a state push (#1707).
+      // One fixed warning per socket, never echoing the frame: a broken producer must not flood
+      // DevTools, and the frame's content is not ours to log.
+      const msg = parseLiveMessage(ev.data);
+      if (!msg) {
+        if (!warnedBadFrame) console.warn("live update skipped: a frame was not a live message");
+        warnedBadFrame = true;
+        return;
+      }
+      if (msg.type === "state") statePushes++;
       liveOnMessage(msg);
     };
   }
