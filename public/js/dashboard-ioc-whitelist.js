@@ -26,7 +26,7 @@
         return (
           `<div data-safe-style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border-subtle);font-size:12px">` +
           `<span data-safe-style="color:var(--accent);flex:0 0 46px">${esc(r.match)}</span>` +
-          `<span data-safe-style="flex:1;font-family:monospace;word-break:break-all">${esc(r.pattern)}</span>` +
+          `<span data-safe-style="flex:1;font-family:var(--font-code);word-break:break-all">${esc(r.pattern)}</span>` +
           `<span data-safe-style="flex:0 0 auto">${type}${note}</span>` +
           `<button class="wl-del" data-id="${escAttr(r.id)}" title="Delete rule" data-safe-style="background:transparent;border:1px solid var(--danger-border);color:var(--tag-red-text);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>` +
           `</div>`

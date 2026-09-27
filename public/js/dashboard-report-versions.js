@@ -143,7 +143,7 @@
               const supersedes = r.supersedesReleaseId
                 ? ` · supersedes ${esc(r.supersedesReleaseId)}`
                 : "";
-              return `<div data-safe-style="padding:3px 0;border-bottom:1px solid var(--border-color)"><strong>${esc(r.id)}</strong> · ${esc(r.reportVersion)} · released ${esc(new Date(r.releasedAt).toLocaleString())} by ${esc(r.releasedBy.displayName)}${supersedes}<br><span data-safe-style="font-family:monospace;color:var(--text-muted)">SHA-256 ${esc(r.manifestHash)}</span></div>`;
+              return `<div data-safe-style="padding:3px 0;border-bottom:1px solid var(--border-color)"><strong>${esc(r.id)}</strong> · ${esc(r.reportVersion)} · released ${esc(new Date(r.releasedAt).toLocaleString())} by ${esc(r.releasedBy.displayName)}${supersedes}<br><span data-safe-style="font-family:var(--font-code);color:var(--text-muted)">SHA-256 ${esc(r.manifestHash)}</span></div>`;
             })
             .join("")
         : `<span data-safe-style="color:var(--text-muted)">No formal releases yet.</span>`;

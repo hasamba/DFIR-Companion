@@ -65,6 +65,8 @@ const goldenSchema = z
         .object({
           id: z.string().min(1),
           terms: z.array(z.string().min(1)).min(1),
+          // #1704: what asserting this conclusion means, in one sentence, for the semantic judge.
+          claim: z.string().trim().min(10),
         })
         .strict(),
     ),

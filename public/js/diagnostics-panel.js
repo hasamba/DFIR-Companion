@@ -43,7 +43,7 @@ function diagAiCostBucketRow(label, bucket) {
   const models = Object.entries(bucket.byModel);
   const modelRows = models.length
     ? `<details data-safe-style="margin:2px 0 4px 12px"><summary data-safe-style="cursor:pointer;color:#6aa9ff;font-size:11.5px">${models.length} model(s)</summary>` +
-      models.map(([key, m]) => `<div data-safe-style="font-size:11.5px;color:#9aa4b2;margin:2px 0 2px 8px;font-family:monospace">
+      models.map(([key, m]) => `<div data-safe-style="font-size:11.5px;color:#9aa4b2;margin:2px 0 2px 8px;font-family:var(--font-code)">
         ${esc(key)} — ${m.calls} call(s), ${m.hasCost ? diagFmtCost(m.costUSD) : "n/a"}, ${m.hasTokens ? `${m.inputTokens.toLocaleString()}/${m.outputTokens.toLocaleString()} tok` : "n/a tok"}
       </div>`).join("") + `</details>`
     : "";
@@ -130,7 +130,7 @@ function renderPerImporterHealth(im) {
       const statusText = p.lastStatus == null ? "never run" : ok ? "ok" : "failed";
       const age = p.lastRunAt ? diagFmtAge(Date.now() - Date.parse(p.lastRunAt)) + " ago" : "—";
       const rows = p.lastStatus != null ? `${p.kept ?? 0}/${p.total ?? 0} kept, ${p.dropped ?? 0} dropped` : "—";
-      return `<div data-safe-style="border-left:2px solid ${ok ? "#2a5a3a" : p.lastStatus ? "#5a2a2a" : "#3a3f4a"};padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+      return `<div data-safe-style="border-left:2px solid ${ok ? "#2a5a3a" : p.lastStatus ? "#5a2a2a" : "#3a3f4a"};padding:2px 0 2px 8px;margin:3px 0;font-family:var(--font-code);font-size:11.5px">
         <span data-safe-style="color:#cbd3df">${esc(p.label)}</span> <span data-safe-style="color:#7e8aa0">(${esc(p.id)})</span>
         — <span data-safe-style="color:${statusColor}">${statusText}</span> · ${age} · ${rows}
         ${p.lastError ? `<br><span data-safe-style="color:#ffb0b0">${esc(p.lastError)}</span>` : ""}</div>`;
@@ -139,7 +139,7 @@ function renderPerImporterHealth(im) {
   if (loadErrors.length) {
     html += `<div data-safe-style="margin-top:6px;color:#9aa4b2">Spec load errors (${loadErrors.length}):</div>`;
     html += `<div data-safe-style="max-height:160px;overflow:auto;margin-top:3px">` + loadErrors.map(e =>
-      `<div data-safe-style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+      `<div data-safe-style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:var(--font-code);font-size:11.5px">
         <span data-safe-style="color:#ff9f9f">${esc(e.file)}</span><br>
         ${e.errors.map(x => `<span data-safe-style="color:#ffb0b0">${esc(x.path)}: ${esc(x.message)}</span>`).join("<br>")}</div>`).join("") + `</div>`;
   }

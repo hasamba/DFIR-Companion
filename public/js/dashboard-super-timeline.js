@@ -529,12 +529,13 @@
     });
     document.body.appendChild(menu);
     // Anchor below the ⌖, clamped into the viewport (flip above if it would overflow the bottom).
-    const r = btn.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom (js/dashboard-theme.js)
+    const r = btn.getBoundingClientRect(), mw = menu.offsetWidth * z, mh = menu.offsetHeight * z;
     let left = r.left, top = r.bottom + 4;
     if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
     if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
-    menu.style.left = Math.max(8, left) + "px";
-    menu.style.top = Math.max(8, top) + "px";
+    menu.style.left = Math.max(8, left) / z + "px";
+    menu.style.top = Math.max(8, top) / z + "px";
     // Click anywhere outside the menu (or the ⌖ itself) closes it.
     menu.__outside = (ev) => {
       if (menu.contains(ev.target) || (ev.target.closest && ev.target.closest(".st-ctx"))) return;

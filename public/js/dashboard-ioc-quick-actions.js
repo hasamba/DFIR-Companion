@@ -104,19 +104,20 @@
       qaAction(b.getAttribute("data-qa"), b);
     });
     document.body.appendChild(tray);
+    const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom (js/dashboard-theme.js)
     const r = anchor.getBoundingClientRect();
     const top = r.bottom + window.scrollY + 4;
     const maxLeft =
       window.scrollX +
       document.documentElement.clientWidth -
-      tray.offsetWidth -
+      tray.offsetWidth * z -
       8;
     const left = Math.max(
       window.scrollX + 8,
       Math.min(r.left + window.scrollX, maxLeft),
     );
-    tray.style.left = left + "px";
-    tray.style.top = top + "px";
+    tray.style.left = left / z + "px";
+    tray.style.top = top / z + "px";
     qaTrayEl = tray;
   }
 

@@ -37,6 +37,13 @@ describe("versioned production golden corpus (#378)", () => {
     expect(traits.has("prompt-injection")).toBe(true);
   });
 
+  it("gives every forbidden conclusion a claim sentence for the semantic judge (#1704)", async () => {
+    const corpus = await loadGoldenCorpus();
+    const forbidden = corpus.cases.flatMap((fixture) => fixture.golden.forbiddenConclusions);
+    expect(forbidden).toHaveLength(8);
+    expect(forbidden.every((item) => (item.claim ?? "").trim().length > 10)).toBe(true);
+  });
+
   for (const scenario of REQUIRED_SCENARIOS) {
     it(`${scenario}: canned output passes exact evidence-grounded quality gates`, async () => {
       const corpus = await loadGoldenCorpus();
