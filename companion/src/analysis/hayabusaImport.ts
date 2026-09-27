@@ -302,6 +302,44 @@ function mapRecord(
 
 // ───────────────────────────── record extraction ─────────────────────────────
 
+// A JSON row → a record whose Details and ExtraFieldInfo are merged into one field map.
+function jsonRecord(rec: Row): HayabusaRecord {
+  const details: Row = {
+    ...detailObj(getCI(rec, "Details")),
+    ...detailObj(getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info")),
+  };
+  return { rec, details };
+}
+
+// A Velociraptor artifact name: dotted segments, as in Windows.Hayabusa.Rules. A plain key such as
+// `data` or `HayabusaTags` is never an artifact name.
+const ARTIFACT_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+// An artifact that carries Hayabusa verdict rows (Windows.Hayabusa.Rules and variants).
+const HAYABUSA_ARTIFACT = /hayabusa/i;
+
+// Velociraptor exports a flow as an artifact map, {"Windows.Hayabusa.Rules":[row, …]} (#1726).
+// Auto-detect routes it here by name, and the generic JSON reader would see the map as ONE record
+// with no rule title — zero events. Read the rows under the Hayabusa key(s) only: a row from any
+// other artifact in the same map is not a Hayabusa verdict and must not be mapped as one. Select by
+// the map KEY: the rows carry their own `_Source` (the artifact builds on Windows.Sigma.Base), so
+// the row field does not name the artifact. null = not an artifact map; the caller reads it as before.
+function artifactMapRows(text: string): Row[] | null {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return null; // NDJSON or concatenated objects — not a single map
+  }
+  if (!isObject(root)) return null;
+  // An artifact map only: every key an artifact name holding an array. Anything else (a `{data:[…]}`
+  // wrapper, a native record with an array field) stays on the generic reader.
+  const all = Object.keys(root);
+  if (all.length === 0 || !all.every((k) => ARTIFACT_NAME.test(k) && Array.isArray(root[k]))) return null;
+  const keys = all.filter((k) => HAYABUSA_ARTIFACT.test(k));
+  if (keys.length === 0) return null;
+  return keys.flatMap((k) => (root[k] as unknown[]).filter(isObject));
+}
+
 // JSON/JSONL → records (Details already an object). CSV → records (Details a parsed map).
 function extractHayabusaRecords(text: string): { records: HayabusaRecord[]; format: string } {
   const trimmed = text.trim();
@@ -309,14 +347,8 @@ function extractHayabusaRecords(text: string): { records: HayabusaRecord[]; form
 
   // A JSON timeline (array or NDJSON) starts with [ or { (or NDJSON of objects).
   if (trimmed[0] === "[" || trimmed[0] === "{") {
-    const { records } = extractRecords(trimmed);
-    const out = records.map((rec) => {
-      const details: Row = {
-        ...detailObj(getCI(rec, "Details")),
-        ...detailObj(getCI(rec, "ExtraFieldInfo") ?? getCI(rec, "Extra Field Info")),
-      };
-      return { rec, details };
-    });
+    const rows = (trimmed[0] === "{" ? artifactMapRows(trimmed) : null) ?? extractRecords(trimmed).records;
+    const out = rows.map(jsonRecord);
     // Rejoin any PowerShell 4104 script block Windows split across several events, so one script
     // yields one alert carrying the whole text instead of one alert per fragment.
     return { records: consolidateHayabusaScriptBlocks(out), format: "json" };
