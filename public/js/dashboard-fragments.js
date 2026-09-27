@@ -363,7 +363,9 @@ function narrativeHtml(text, events) {
       ? `Most severe event at ${top.t}: ${top.hit.severity}`
       : hits.length
         ? `No event in the forensic timeline at ${hits.map((h) => h.t).join(" or ")}`
-        : "No time in this paragraph";
+        : lead && lead.date
+          ? "Starts with a date but no time, so there is no event to match"
+          : "Does not start with a time, so there is no event to match";
     const link = (h, bold) => {
       const label = bold ? `<b>${esc(h.t)}</b>` : esc(h.t);
       return h.hit

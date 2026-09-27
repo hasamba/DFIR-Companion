@@ -222,7 +222,11 @@ describe("narrativeHtml", () => {
     const html = f.narrativeHtml(story, events);
     expect(html).toContain('nt-spine nt-sev-critical" title="Most severe event at 08:49: Critical"');
     expect(html).toContain('title="No event in the forensic timeline at 08:55"');
-    expect(html).toContain('title="No time in this paragraph"');
+    // The story's first paragraph opens with a date only.
+    expect(html).toContain('title="Starts with a date but no time, so there is no event to match"');
+    // A paragraph that opens with no time. A time later in the sentence does not count.
+    const loose = f.narrativeHtml(`${story}\n\nThe script ran again at 09:10.`, events);
+    expect(loose).toContain('title="Does not start with a time, so there is no event to match"');
   });
 
   it("finds the day from the case's events when the text never names one", () => {
