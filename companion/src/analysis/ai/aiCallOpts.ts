@@ -117,6 +117,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get synthesisFallback() {
       return opts.synthesisFallback;
     },
+    get synthesisSafetyRetries() {
+      return opts.synthesisSafetyRetries;
+    },
     get synthMetaStore() {
       return opts.synthMetaStore;
     },
