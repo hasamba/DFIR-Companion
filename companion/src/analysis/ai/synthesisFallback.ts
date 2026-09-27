@@ -27,6 +27,22 @@ export function safetyRetriesFromEnv(raw: string | undefined): number {
 }
 
 /**
+ * The error a synthesis call throws when the primary's safety filter used up the retry budget and
+ * no fallback is set (#1740). Only synthesis says this: the provider's own safety_stop reaches every
+ * AI path and must not claim retries that other paths never run.
+ */
+export function synthesisSafetyExhaustedError(label: string, stops: number, retries: number): ProviderError {
+  const times = stops === 1 ? "once" : `${stops} times`;
+  return new ProviderError(
+    `${label}'s safety filter stopped the synthesis answer ${times} ` +
+      `(DFIR_AI_SYNTH_SAFETY_RETRIES allows ${retries} ${retries === 1 ? "retry" : "retries"}). ` +
+      "Set a fallback synthesis model (DFIR_AI_SYNTH_FALLBACK_MODEL) in Settings, or choose another " +
+      "synthesis model.",
+    "safety_stop",
+  );
+}
+
+/**
  * Which model answers ONE synthesis call. It starts on the primary. A safety_stop from the primary
  * is retried on the primary while the call's budget lasts (#1740); after that, the call switches to
  * the fallback for good, so a later parse retry stays on the fallback and the primary is not
@@ -75,8 +91,9 @@ export class SynthesisModelChoice {
   /**
    * Run `call` on the active model. On the primary's safety_stop: count it, run `beforeNext` (the
    * caller's cancellation check, so a cancelled run starts no further call), then ask the primary
-   * again while the budget lasts (`onRetry`), else switch to the fallback (`onSwitch`), else
-   * rethrow. A stop from the fallback, and every other error, is rethrown unchanged.
+   * again while the budget lasts (`onRetry`), else switch to the fallback (`onSwitch`), else throw
+   * synthesisSafetyExhaustedError. A stop from the fallback, and every other error, is rethrown
+   * unchanged.
    */
   async ask<T>(
     call: (provider: AIProvider) => Promise<T>,
@@ -96,7 +113,8 @@ export class SynthesisModelChoice {
           onRetry(err, this.stops);
           continue;
         }
-        if (!this.fallback) throw err;
+        if (!this.fallback)
+          throw synthesisSafetyExhaustedError(this.primaryLabel, this.stops, this.safetyRetries);
         beforeNext();
         this.stopped = this.primaryLabel;
         this.active = this.fallback.provider;

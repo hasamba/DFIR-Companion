@@ -9,7 +9,7 @@ import {
   keepFailedAnswer,
   synthesisRetryNote,
 } from "./synthesisAnswerRepair.js";
-import { SynthesisModelChoice, safetyRetriesFromEnv } from "./synthesisFallback.js";
+import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
@@ -64,12 +64,12 @@ export async function callSynthesisModel(
   // so a failed attempt's model never labels an answer that came back without one.
   let resolvedModel: string | undefined;
   // #1734/#1740: a safety-filter stop is retried on the same model, then moves THIS call to the
-  // fallback — never for a caller's own provider. The retry count is read live, like the thinking budget.
+  // fallback — never for a caller's own provider. The retry count is fixed at startup, like the fallback.
   const choice = new SynthesisModelChoice(
     provider,
     ctx.opts.synthesisModelLabel ?? `${provider.name}/${provider.model}`,
     opts.provider ? undefined : ctx.opts.synthesisFallback,
-    safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),
+    ctx.opts.synthesisSafetyRetries,
   );
   const ask = (p: AIProvider) =>
     collectServedModel(() =>

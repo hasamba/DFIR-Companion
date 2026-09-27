@@ -56,15 +56,14 @@ export type ProviderErrorKind =
 /**
  * The model's safety filter stopped the answer partway (#1734). Claude Code then asks the model not
  * to repeat the content, and whatever it writes next is not the answer that was asked for. The
- * generic retry never retries this kind; synthesis asks the same model again up to
- * DFIR_AI_SYNTH_SAFETY_RETRIES times (#1740), then falls back to DFIR_AI_SYNTH_FALLBACK_* when set.
- * This message is what the analyst sees when both run out.
+ * generic retry never retries this kind, so this message names no retry setting: it reaches every
+ * AI path. Synthesis runs its own retries and fallback (#1740) and, when they run out, replaces this
+ * error with synthesisSafetyExhaustedError.
  */
 export function safetyStopError(label: string): ProviderError {
   return new ProviderError(
-    `${label}'s safety filter stopped the answer partway, and the retries allowed by ` +
-      "DFIR_AI_SYNTH_SAFETY_RETRIES stopped too. Set a fallback synthesis model " +
-      "(DFIR_AI_SYNTH_FALLBACK_MODEL) in Settings, or choose another model for this work.",
+    `${label}'s safety filter stopped the answer partway. The same evidence can stop it again. ` +
+      "Choose another model for this work.",
     "safety_stop",
   );
 }

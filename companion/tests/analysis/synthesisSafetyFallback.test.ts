@@ -72,7 +72,7 @@ function provider(name: string, model: string, answers: Array<string | Error | (
 
 let metrics: Array<Record<string, unknown>>;
 
-function pipeline(primary: AIProvider, fallback?: AIProvider): AnalysisPipeline {
+function pipeline(primary: AIProvider, fallback?: AIProvider, safetyRetries?: number): AnalysisPipeline {
   return new AnalysisPipeline({
     operationalMetrics: { record: async (m: Record<string, unknown>) => void metrics.push(m) } as never,
     stateStore,
@@ -80,6 +80,7 @@ function pipeline(primary: AIProvider, fallback?: AIProvider): AnalysisPipeline 
     synthesisProvider: primary,
     synthesisModelLabel: "opus",
     ...(fallback ? { synthesisFallback: { provider: fallback, label: "gpt-6-sol" } } : {}),
+    ...(safetyRetries !== undefined ? { synthesisSafetyRetries: safetyRetries } : {}),
     imageLoader: async () => ({ data: Buffer.from(""), mediaType: "image/png" }) as never,
     logger: logger as never,
     retries: 3,
@@ -95,7 +96,6 @@ beforeEach(async () => {
   synthMetaStore = new SynthMetaStore(cases);
   warns = [];
   metrics = [];
-  delete process.env.DFIR_AI_SYNTH_SAFETY_RETRIES;
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("a"), ev("b"));
   await stateStore.save(s);
@@ -182,12 +182,31 @@ describe("one safety retry on the same model before the fallback (#1740)", () =>
   });
 
   it("falls back at once when the setting is 0", async () => {
-    process.env.DFIR_AI_SYNTH_SAFETY_RETRIES = "0";
     const primary = provider("claude-code", "opus", [safetyStopError("Claude Code (opus)"), GOOD]);
     const fallback = provider("codex", "gpt-6-sol", [GOOD]);
-    await pipeline(primary, fallback).synthesize("c1");
+    await pipeline(primary, fallback, 0).synthesize("c1");
     expect(primary.analyze).toHaveBeenCalledTimes(1);
     expect(fallback.analyze).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the retry count at startup, not from a later env change (Settings says restart)", async () => {
+    const run = pipeline(provider("claude-code", "opus", [safetyStopError("Claude Code (opus)"), GOOD]));
+    process.env.DFIR_AI_SYNTH_SAFETY_RETRIES = "0"; // saved in Settings after startup
+    const state = await run.synthesize("c1");
+    expect(state.lastSummary).toBe("fallback summary"); // the startup default of 1 retry still holds
+  });
+
+  it("says the retries ran out only on the synthesis path", async () => {
+    const primary = provider("claude-code", "opus", [safetyStopError("Claude Code (opus)")]);
+    const err = await pipeline(primary)
+      .synthesize("c1")
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: "safety_stop" });
+    expect((err as Error).message).toContain("stopped the synthesis answer 2 times");
+    expect((err as Error).message).toContain("DFIR_AI_SYNTH_SAFETY_RETRIES allows 1 retry");
+    expect((err as Error).message).toContain("DFIR_AI_SYNTH_FALLBACK_MODEL");
+    // The provider's own error reaches every AI path, so it names no synthesis setting.
+    expect(safetyStopError("Claude Code (opus)").message).not.toMatch(/DFIR_AI_SYNTH/);
   });
 
   it("counts the budget across the whole synthesis, not per attempt", async () => {

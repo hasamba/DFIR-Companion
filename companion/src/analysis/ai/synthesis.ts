@@ -111,6 +111,7 @@ export interface SynthesisContext
       stateLock?: StateLock;
       synthesisModelLabel?: string;
       synthesisFallback?: SynthesisFallback; // #1734
+      synthesisSafetyRetries?: number; // #1740
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;
