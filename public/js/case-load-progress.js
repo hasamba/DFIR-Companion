@@ -570,18 +570,25 @@ export function runPanelLoaders(entries, onProgress, options) {
  * connections. Each helper keeps its own debounce (so a state push and a scope apply still coalesce
  * per panel); only the moment it fires changes: `run(key, loader)` starts the loader under `lanes`.
  *
- * `retire()` abandons every queued and in-flight reload — a case switch or a cancelled load, where
- * a reload for the old case must neither paint nor hold a lane. An abandoned loader is handed a
- * promise that never settles (see runPanelLoaders), so it draws nothing. There is no running flag
- * to reset: the next `run` simply uses the fresh signal.
+ * `retire(caseId)` abandons every queued and in-flight reload — a case switch or a cancelled load,
+ * where a reload for the old case must neither paint nor hold a lane — and names the case now on
+ * screen (`null` after a cancel). An abandoned loader is handed a promise that never settles (see
+ * runPanelLoaders), so it draws nothing. There is no running flag to reset.
+ *
+ * `run` takes the case its loader is for. A helper's 800 ms timer armed BEFORE the switch fires
+ * after it, under the fresh signal, so the signal alone cannot catch it; the case id does. Until
+ * the first retire nothing is known, and every run goes ahead.
  */
 export function createPanelReloader(lanes) {
   let gen = typeof AbortController === "function" ? new AbortController() : null;
+  let onScreen; // undefined: not told yet; null: no case; else the case id
   return {
-    run(key, loader) {
+    run(key, caseId, loader) {
+      if (onScreen !== undefined && caseId !== onScreen) return;
       runPanelLoaders([[key, loader]], null, { lanes, signal: gen ? gen.signal : undefined });
     },
-    retire() {
+    retire(caseId) {
+      onScreen = caseId === undefined ? null : caseId;
       if (!gen) return;
       gen.abort();
       gen = new AbortController();

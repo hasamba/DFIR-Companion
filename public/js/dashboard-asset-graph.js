@@ -17,9 +17,11 @@
   // #1713: a debounced reload fires through the page's shared request cap
   // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
   // module it runs at once, as before — a reload must never be dropped.
-  const panelReload = (key, run) => {
+  const panelReload = (key, caseId, run) => {
     const clp = window.DfirCaseLoadProgress;
-    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
   };
 
   // Moved here from dashboard.html (#415). The graph's own payload, its overrides, the two loaders
@@ -90,7 +92,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(assetGraphTimer);
-    assetGraphTimer = setTimeout(() => panelReload("assetGraph", () => loadAssetGraph(caseId)), 800);
+    assetGraphTimer = setTimeout(() => panelReload("assetGraph", caseId, () => loadAssetGraph(caseId)), 800);
   }
 
   // The layer filter this graph renders through.

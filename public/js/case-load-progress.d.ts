@@ -120,10 +120,11 @@ export declare const PAGE_PANEL_LANES: number;
 /** A lane pool of `limit` lanes; a non-positive limit is unbounded. */
 export declare function createLanePool(limit: number): LanePool;
 
-/** Debounced panel reloads run one loader each under `lanes`; `retire` abandons them all. */
+/** Debounced panel reloads run one loader each under `lanes`. `retire` abandons them all and names
+ *  the case now on screen (`null`: none), after which a reload for any other case is dropped. */
 export declare function createPanelReloader(lanes: LanePool): {
-  run(key: string, loader: () => void): void;
-  retire(): void;
+  run(key: string, caseId: string, loader: () => void): void;
+  retire(caseId?: string | null): void;
 };
 
 /**

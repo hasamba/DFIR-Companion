@@ -17,9 +17,11 @@
   // #1713: a debounced reload fires through the page's shared request cap
   // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
   // module it runs at once, as before — a reload must never be dropped.
-  const panelReload = (key, run) => {
+  const panelReload = (key, caseId, run) => {
     const clp = window.DfirCaseLoadProgress;
-    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
   };
   // ── Geographic Map (#133) ───────────────────────────────────────────────────────────────
   // Derived server-side (GET /cases/:id/geo-map) from IP IOCs that carry GeoIP coordinates.
@@ -44,7 +46,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(geoMapTimer);
-    geoMapTimer = setTimeout(() => panelReload("geoMap", () => loadGeoMap(caseId)), 800);
+    geoMapTimer = setTimeout(() => panelReload("geoMap", caseId, () => loadGeoMap(caseId)), 800);
   }
   function geoFilteredMarkers() {
     if (!geoMapData) return [];

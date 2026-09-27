@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
+import { createLanePool, createPanelReloader } from "../../../public/js/case-load-progress.js";
 
 const JS = new URL("../../../public/js/", import.meta.url);
 const read = (f: string) => readFileSync(new URL(f, JS), "utf8").replace(/\r\n/g, "\n");
@@ -51,16 +52,16 @@ function bodyOf(name: string): { file: string; body: string } {
 describe("every debounced panel reload fires through the shared request cap (#1713)", () => {
   it.each(HELPERS)("%s hands its loader to panelReload", (name) => {
     const { body } = bodyOf(name);
-    expect(body).toMatch(/setTimeout\(\s*\(\) =>\s*panelReload\(\s*"[a-zA-Z0-9]+",/);
+    expect(body).toMatch(/setTimeout\(\s*\(\) =>\s*panelReload\(\s*"[a-zA-Z0-9]+",\s*caseId,/);
   });
 
   it("each module's panelReload falls back to running the loader when the cap is missing", () => {
     const files = [...new Set(HELPERS.map((n) => bodyOf(n).file))];
     for (const file of files) {
       const src = read(file);
-      expect(src, file).toMatch(/const panelReload = \(key, run\) => \{/);
+      expect(src, file).toMatch(/const panelReload = \(key, caseId, run\) => \{/);
       expect(src, file).toMatch(
-        /clp && typeof clp\.runPanelReload === "function"\s*\?\s*clp\.runPanelReload\(key, run\)\s*:\s*run\(\)/,
+        /clp && typeof clp\.runPanelReload === "function"\s*\?\s*clp\.runPanelReload\(key, caseId, run\)\s*:\s*run\(\)/,
       );
     }
   });
@@ -71,7 +72,8 @@ describe("the provenance reloads parked during an import still go through the ca
     vi.useRealTimers();
   });
 
-  function harness(opts: { withCap: boolean }) {
+  type Cap = { runPanelReload: (key: string, caseId: string, run: () => void) => void };
+  function harness(opts: { withCap: boolean; cap?: Cap }) {
     const fetched: string[] = [];
     const capped: string[] = [];
     let running = true;
@@ -98,8 +100,8 @@ describe("the provenance reloads parked during an import still go through the ca
       runningJob: (kind: string) => (kind === "import" && running ? { id: "imp-1" } : undefined),
       ...(opts.withCap
         ? {
-            DfirCaseLoadProgress: {
-              runPanelReload: (key: string, run: () => void) => {
+            DfirCaseLoadProgress: opts.cap ?? {
+              runPanelReload: (key: string, _caseId: string, run: () => void) => {
                 capped.push(key);
                 run();
               },
@@ -131,6 +133,17 @@ describe("the provenance reloads parked during an import still go through the ca
     expect(h.fetched).toEqual(["/cases/CASE-1/ioc-provenance", "/cases/CASE-1/ioc-provenance-chain"]);
   });
 
+  it("a reload armed before a case switch and firing after it sends nothing", () => {
+    vi.useFakeTimers();
+    const reloader = createPanelReloader(createLanePool(4));
+    const h = harness({ withCap: true, cap: { runPanelReload: reloader.run } });
+    h.finishImport();
+    h.api.scheduleIocProvenanceReload(); // armed for CASE-1
+    reloader.retire("CASE-2"); // the analyst switches case inside the 800 ms window
+    vi.advanceTimersByTime(800);
+    expect(h.fetched).toEqual([]);
+  });
+
   it("without the cap module the reload still runs — a reload is never dropped", () => {
     vi.useFakeTimers();
     const h = harness({ withCap: false });
@@ -156,7 +169,9 @@ describe("the case paths share the page's lanes and retire the reloads (#1713)",
 
   it("switching case and cancelling a load both retire the pending reloads", () => {
     for (const name of ["proceedConnect", "dismissCaseLoading"]) {
-      expect(fnBody(CONNECT, name), name).toMatch(/retirePanelReloads\(\)/);
+      expect(fnBody(CONNECT, name), name).toMatch(/retirePanelReloads\((caseId|null)\)/);
     }
+    expect(fnBody(CONNECT, "proceedConnect")).toMatch(/retirePanelReloads\(caseId\)/);
+    expect(fnBody(CONNECT, "dismissCaseLoading")).toMatch(/retirePanelReloads\(null\)/);
   });
 });

@@ -132,7 +132,7 @@ describe("the debounced panel reloader (#1713)", () => {
     const reloader = createPanelReloader(createLanePool(4));
     const loaded: string[] = [];
     for (let i = 0; i < 21; i++)
-      reloader.run(`p${i}`, () => void fetch(`/p${i}`).then(() => loaded.push(`p${i}`)));
+      reloader.run(`p${i}`, "C1", () => void fetch(`/p${i}`).then(() => loaded.push(`p${i}`)));
     expect(urls).toHaveLength(4);
     gates[0]();
     gates[1]();
@@ -145,12 +145,12 @@ describe("the debounced panel reloader (#1713)", () => {
     const { urls, gates, seen } = wire();
     const reloader = createPanelReloader(createLanePool(1));
     const painted: string[] = [];
-    reloader.run("old1", () => void fetch("/old1").then(() => painted.push("old1")));
-    reloader.run("old2", () => void fetch("/old2").then(() => painted.push("old2")));
-    reloader.retire();
+    reloader.run("old1", "C1", () => void fetch("/old1").then(() => painted.push("old1")));
+    reloader.run("old2", "C1", () => void fetch("/old2").then(() => painted.push("old2")));
+    reloader.retire("C1");
     await flush();
     expect(seen[0]?.aborted).toBe(true);
-    reloader.run("new", () => void fetch("/new").then(() => painted.push("new")));
+    reloader.run("new", "C1", () => void fetch("/new").then(() => painted.push("new")));
     await flush();
     // /old2 never reached the wire, and the aborted /old1 drew nothing.
     expect(urls).toEqual(["/old1", "/new"]);
@@ -159,11 +159,23 @@ describe("the debounced panel reloader (#1713)", () => {
     expect(painted).toEqual(["new"]);
   });
 
+  it("drops a reload for any case but the one retire() named — a timer armed before a switch", () => {
+    const { urls } = wire();
+    const reloader = createPanelReloader(createLanePool(4));
+    reloader.run("before", "OLD", () => void fetch("/before")); // nothing named yet: runs
+    reloader.retire("NEW");
+    reloader.run("stale", "OLD", () => void fetch("/stale"));
+    reloader.run("fresh", "NEW", () => void fetch("/fresh"));
+    reloader.retire(null); // a cancel: no case on screen
+    reloader.run("gone", "NEW", () => void fetch("/gone"));
+    expect(urls).toEqual(["/before", "/fresh"]);
+  });
+
   it("a loader that throws does not break the reloader", () => {
     wire();
     const reloader = createPanelReloader(createLanePool(4));
     expect(() =>
-      reloader.run("bad", () => {
+      reloader.run("bad", "C1", () => {
         throw new Error("boom");
       }),
     ).not.toThrow();

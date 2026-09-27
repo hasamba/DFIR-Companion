@@ -18,9 +18,11 @@
   // #1713: a debounced reload fires through the page's shared request cap
   // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
   // module it runs at once, as before — a reload must never be dropped.
-  const panelReload = (key, run) => {
+  const panelReload = (key, caseId, run) => {
     const clp = window.DfirCaseLoadProgress;
-    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
   };
   // Purely visual, no refetch: collapse every session card to its one-line header for a
   // high-level read of the intrusion, expand for the detail.
@@ -58,7 +60,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(sessionsTimer);
-    sessionsTimer = setTimeout(() => panelReload("sessions", () => loadSessions(caseId)), 800);
+    sessionsTimer = setTimeout(() => panelReload("sessions", caseId, () => loadSessions(caseId)), 800);
   }
 
   function renderSessions() {

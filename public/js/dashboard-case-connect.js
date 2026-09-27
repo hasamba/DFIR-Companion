@@ -73,10 +73,11 @@
   const PANEL_LOAD_CONCURRENCY = 4;
 
   // A debounced panel reload queued for the case being left must neither paint nor hold one of the
-  // shared lanes the next case load needs (#1713).
-  function retirePanelReloads() {
+  // shared lanes the next case load needs (#1713). `caseId` names the case now on screen — null
+  // after a cancel — so a helper timer armed before the switch is dropped when it fires after it.
+  function retirePanelReloads(caseId) {
     const api = clpApi();
-    if (api && typeof api.retirePanelReloads === "function") api.retirePanelReloads();
+    if (api && typeof api.retirePanelReloads === "function") api.retirePanelReloads(caseId);
   }
 
   function connect() {
@@ -208,7 +209,7 @@
     // Detach BEFORE closing (js/dashboard-live-socket.js): close() fires onclose asynchronously,
     // and a still-attached handler would overwrite the cancel message below — or, since #1675,
     // schedule a reconnect to the case the analyst just walked out of. It also drops a pending retry.
-    retirePanelReloads();
+    retirePanelReloads(null);
     if (typeof closeCaseSocket === "function") closeCaseSocket();
     if (typeof retireCount === "function") retireCount();
     activeCaseId = null;
@@ -241,7 +242,7 @@
     // The old case's socket must never reconnect (#1675). Guarded: a missing socket module must
     // cost live updates, never the case load itself.
     if (typeof closeCaseSocket === "function") closeCaseSocket();
-    retirePanelReloads();
+    retirePanelReloads(caseId);
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
     if (typeof syncCasePicker === "function") syncCasePicker();

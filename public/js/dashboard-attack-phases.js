@@ -13,9 +13,11 @@
   // #1713: a debounced reload fires through the page's shared request cap
   // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
   // module it runs at once, as before — a reload must never be dropped.
-  const panelReload = (key, run) => {
+  const panelReload = (key, caseId, run) => {
     const clp = window.DfirCaseLoadProgress;
-    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
   };
 
   let phasesData = [];
@@ -36,7 +38,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(phasesTimer);
-    phasesTimer = setTimeout(() => panelReload("phases", () => loadPhases(caseId)), 800);
+    phasesTimer = setTimeout(() => panelReload("phases", caseId, () => loadPhases(caseId)), 800);
   }
 
   // Per-IOC corroboration (#35 Phase 3): { iocId: [tools that observed it] }, derived server-side

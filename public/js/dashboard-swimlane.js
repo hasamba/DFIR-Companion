@@ -26,9 +26,11 @@
   // #1713: a debounced reload fires through the page's shared request cap
   // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
   // module it runs at once, as before — a reload must never be dropped.
-  const panelReload = (key, run) => {
+  const panelReload = (key, caseId, run) => {
     const clp = window.DfirCaseLoadProgress;
-    return clp && typeof clp.runPanelReload === "function" ? clp.runPanelReload(key, run) : run();
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
   };
     // ── Timeline Swimlane ───────────────────────────────────────────────────────────────
     // Canvas-based swimlane chart: assets/severity/tactics on Y-axis, time on X-axis.
@@ -101,7 +103,7 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       clearTimeout(swTimer);
-      swTimer = setTimeout(() => panelReload("swimlane", () => loadSwimlane(caseId)), 800);
+      swTimer = setTimeout(() => panelReload("swimlane", caseId, () => loadSwimlane(caseId)), 800);
     }
 
     function swRenderLabels() {
