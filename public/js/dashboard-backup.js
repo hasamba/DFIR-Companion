@@ -39,7 +39,7 @@
             return `<div data-safe-style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 8px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;margin-bottom:5px;flex-wrap:wrap">
               <span data-safe-style="display:flex;gap:8px;align-items:center;min-width:0">
                 <span data-safe-style="color:${col};font-size:11px;white-space:nowrap">${esc(b.trigger)}</span>
-                <span data-safe-style="color:#cbd3df;font-family:monospace;font-size:11.5px">${esc(ts)}</span>
+                <span data-safe-style="color:#cbd3df;font-family:var(--font-code);font-size:11.5px">${esc(ts)}</span>
                 <span data-safe-style="color:#7e8aa0;font-size:11px">${diagFmtBytes(b.sizeBytes)}</span>
               </span>
               <button type="button" class="bk-restore-btn" data-filename="${esc(b.filename)}" data-safe-style="padding:2px 10px;font-size:11px;background:#2a1a1a;border:1px solid #5a2a2a;border-radius:4px;color:#ffb05a;cursor:pointer;white-space:nowrap">↩ Restore</button>

@@ -418,8 +418,9 @@
             swTooltip.textContent = `[${hit.severity}] ${hit.timestamp}` +
               (hit.count&&hit.count>1 ? ` (×${hit.count})` : "") + `\n${d}`;
             swTooltip.style.display = "block";
-            swTooltip.style.left = (e.clientX+14)+"px";
-            swTooltip.style.top  = (e.clientY-10)+"px";
+            const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom
+            swTooltip.style.left = (e.clientX+14)/z+"px";
+            swTooltip.style.top  = (e.clientY-10)/z+"px";
             if (swHoverEvId !== hit.id) { swHoverEvId = hit.id; swRenderCanvas(); }
           } else {
             swTooltip.style.display = "none";

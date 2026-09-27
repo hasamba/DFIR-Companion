@@ -33,6 +33,20 @@ html.theme-anim .finding, html.theme-anim .kc-phase, html.theme-anim .ph-row {
    before it is applied. Values are generated per theme alongside the palette blocks. */
 .theme-swatch { width: 14px; height: 14px; border-radius: 4px; flex: 0 0 auto;
   border: 1px solid var(--border-strong); }
+/* The font block at the top of the theme menu: a text-size slider and two font pickers. */
+.font-size { margin: 0 6px 8px; }
+.font-size-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+.font-size-head output { margin-left: auto; color: var(--text-bright); font-variant-numeric: tabular-nums; }
+/* Quiet, not the global blue action button: resetting the size is a minor action. */
+.font-size-head button { padding: 1px 7px; font-size: 11px; background: none; color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 5px; }
+.font-size-head button:disabled { opacity: .45; cursor: default; }
+/* The global input rule pads and borders every input; a range needs none of that. */
+.font-size input[type="range"] { display: block; box-sizing: border-box; width: 100%; margin: 6px 0 0;
+  padding: 0; border: 0; background: none; accent-color: var(--accent); }
+.font-pick { display: flex; flex-direction: column; gap: 2px; margin: 0 6px 6px; font-size: 11px;
+  color: var(--text-muted); }
+.font-pick select { width: 100%; font-size: 12px; }
 /* Light mode: the neutral toolbar icons are baked light-grey data-URIs — darken them so they
    read on the now-light control faces. The white-on-blue action icons keep their buttons, so
    they are left alone. */
@@ -46,7 +60,30 @@ html.theme-anim .finding, html.theme-anim .kc-phase, html.theme-anim .ph-row {
   url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
 /* The generic toolbar-select chevron (used before the per-select overrides win) also darkens. */
 :root[data-theme="light"] .toolbar-select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
-body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg-primary); color: var(--text-bright); }
+/* Analyst font choices, set from the theme menu (js/dashboard-theme.js) and applied before first
+   paint by the <head> bootstrap. Each font choice is an attribute on <html>; an unknown value matches
+   no rule below, so it falls back to the defaults rather than reaching a style. Text size is not
+   here: it is a zoom on <html>, set from script because the slider allows any 5% step. Only locally installed
+   fonts are listed: the dashboard runs offline and its CSP loads no web fonts. */
+:root { --font-ui: system-ui, sans-serif; --font-code: ui-monospace, Menlo, Consolas, monospace; }
+:root[data-font-ui="sans"] { --font-ui: "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif; }
+:root[data-font-ui="inter"] { --font-ui: Inter, system-ui, sans-serif; }
+:root[data-font-ui="atkinson"] { --font-ui: "Atkinson Hyperlegible", "Atkinson Hyperlegible Next", system-ui, sans-serif; }
+:root[data-font-ui="verdana"] { --font-ui: Verdana, "DejaVu Sans", sans-serif; }
+:root[data-font-ui="tahoma"] { --font-ui: Tahoma, "DejaVu Sans", sans-serif; }
+:root[data-font-ui="serif"] { --font-ui: Georgia, "Times New Roman", "DejaVu Serif", serif; }
+:root[data-font-ui="mono"] { --font-ui: var(--font-code); }
+:root[data-font-code="consolas"] { --font-code: Consolas, ui-monospace, monospace; }
+:root[data-font-code="cascadia"] { --font-code: "Cascadia Mono", "Cascadia Code", ui-monospace, monospace; }
+:root[data-font-code="jetbrains"] { --font-code: "JetBrains Mono", ui-monospace, monospace; }
+:root[data-font-code="fira"] { --font-code: "Fira Code", "Fira Mono", ui-monospace, monospace; }
+:root[data-font-code="source"] { --font-code: "Source Code Pro", ui-monospace, monospace; }
+:root[data-font-code="dejavu"] { --font-code: "DejaVu Sans Mono", ui-monospace, monospace; }
+:root[data-font-code="courier"] { --font-code: "Courier New", Courier, monospace; }
+body { font-family: var(--font-ui); margin: 0; background: var(--bg-primary); color: var(--text-bright); }
+/* Form controls do not inherit the page font by default; code-like text follows the code font. */
+:where(button, input, select, textarea) { font-family: inherit; }
+:where(code, pre, kbd, samp) { font-family: var(--font-code); }
 
 /* Skip link, focus ring, reduced motion and .visually-hidden are in /css/a11y.css. */
 header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
@@ -211,7 +248,7 @@ h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-c
 .finding-sev-cell { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 12px; }
 .finding-sev-cell .fsq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
 .finding-id-cell {
-  grid-column: 4; grid-row: 1; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+  grid-column: 4; grid-row: 1; font-family: var(--font-code); font-size: 11px;
   color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .finding-main-cell { grid-column: 5; grid-row: 1; min-width: 0; }
@@ -253,7 +290,7 @@ h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-c
 .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
 .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
 .finding-conf-cell .fcbar > span { display: block; height: 100%; }
-.finding-conf-cell .fcpct { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-muted); }
+.finding-conf-cell .fcpct { font-family: var(--font-code); font-size: 10.5px; color: var(--text-muted); }
 .finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 2px; }
 .finding-evidence-body {
   display: none; grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
@@ -265,16 +302,16 @@ h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-c
   color: var(--text-faint); padding-top: 2px;
 }
 .finding-evidence-body .fev-v { flex: 1; min-width: 0; color: var(--text-muted); }
-.finding-evidence-body .fev-iocs { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+.finding-evidence-body .fev-iocs { font-family: var(--font-code); font-size: 11.5px; word-break: break-all; }
 .finding-evidence-body .fev-timeline { display: flex; flex-direction: column; }
 .finding-evidence-body .fev-tl-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border-subtle); }
 .finding-evidence-body .fev-tl-item:first-child { border-top: none; padding-top: 0; }
 .finding-evidence-body .fev-tl-time {
-  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-faint);
+  font-family: var(--font-code); font-size: 11px; color: var(--text-faint);
   flex-shrink: 0; white-space: nowrap;
 }
 .finding-evidence-body .fev-tl-desc { flex: 1; min-width: 0; }
-.finding-evidence-body .fev-tl-cite { flex-shrink: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.finding-evidence-body .fev-tl-cite { flex-shrink: 0; font-family: var(--font-code); font-size: 11px; }
 button { background: var(--accent-solid); color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 input { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); padding: 6px; border-radius: 6px; }
 #status { font-size: 12px; color: var(--text-muted); }

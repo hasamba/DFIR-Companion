@@ -1373,8 +1373,8 @@ export const FEATURES: Feature[] = [
     // theme feature. Moving the boundary past the menu left this with no escapes.
     file: "dashboard-theme.js",
     initializer: "initTheme",
-    publish: ["initTheme", "applyTheme", "storedTheme", "systemTheme", "themeColor"],
-    private: ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
+    publish: ["initTheme", "applyTheme", "storedTheme", "systemTheme", "themeColor", "pageZoom"],
+    private: ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER", "DFIR_FONTS", "TEXT_SIZE"],
   },
   {
     // Setup-wizard step definitions — pure data, split out when moving the wizard's state home put

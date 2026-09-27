@@ -48,7 +48,7 @@
 .ev-geo { background: none; border: none; cursor: pointer; padding: 0 4px; color: var(--text-faint); display: inline-flex; align-items: center; }
 .ev-geo:hover { color: var(--accent); }
 .ev-geo svg { width: 12px; height: 12px; }
-.ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; align-self: center; color: var(--text-muted); }
+.ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: var(--font-code); align-self: center; color: var(--text-muted); }
 .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
 .ev-origin { color: var(--text-dim); white-space: nowrap; font-size: 11px; }
 .ev-more-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
@@ -137,12 +137,12 @@
 .ioc-row.ioc-new { border-color: var(--accent-solid); }
 .ioc-row > .ioc-cb { margin-top: 3px; }
 .ioc-type-cell {
-  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; text-transform: uppercase;
+  font-family: var(--font-code); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: .03em; color: var(--text-muted); padding-top: 2px;
 }
 .ioc-main-cell { min-width: 0; line-height: 1.5; }
 .ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+.ioc-value-line .qa-val { font-family: var(--font-code); font-size: 12.5px; word-break: break-all; }
 /* Context that must NOT live inside the indicator itself (#177) — the host a private IP belongs
    to, an observed port, why the analyst added it. Shown beside the value, never part of it. */
 .ioc-note-chip { font-size: 10.5px; color: var(--text-muted); font-style: italic; }
@@ -324,7 +324,7 @@
 .job-label { color: var(--text-bright); word-break: break-all; flex: 1 1 140px; min-width: 0; }
 /* Its own line, below the header: at 340px the kind + label + status already fill line 1, and
    sharing it pushed the status badge — the first thing an analyst scans for — down a row. */
-.job-model { flex: 0 0 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px;
+.job-model { flex: 0 0 100%; font-family: var(--font-code); font-size: 10.5px;
   color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-model::before { content: "model "; font-family: inherit; color: var(--text-faint); }
 .job-st { border-radius: 3px; padding: 0 6px; font-size: 10px; font-weight: bold; white-space: nowrap; flex: 0 0 auto; align-self: center; }
@@ -432,7 +432,7 @@
   display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-top: 1px solid var(--border-subtle); font-size: 12.5px;
 }
 .log-row:first-child, .mitre-row:first-child { border-top: none; }
-.log-time { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-faint); flex-shrink: 0; white-space: nowrap; }
+.log-time { font-family: var(--font-code); font-size: 11px; color: var(--text-faint); flex-shrink: 0; white-space: nowrap; }
 .mitre-findings { color: var(--text-muted); }
 /* Generic bordered box for one-off free-flowing AI output (Ask-the-Case answer, Executive
    Summary draft) — same card look as Findings/IOCs without the grid-column constraints. */

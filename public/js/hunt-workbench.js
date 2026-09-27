@@ -127,14 +127,14 @@ function installStyle() {
   if (runtimeStyles?.nonce) style.nonce = runtimeStyles.nonce;
   style.textContent = `
     #sec-hunt-workbench .hq-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:12px}
-    #sec-hunt-workbench textarea{width:100%;min-height:116px;box-sizing:border-box;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:9px;font:12px ui-monospace,Menlo,Consolas,monospace;resize:vertical}
+    #sec-hunt-workbench textarea{width:100%;min-height:116px;box-sizing:border-box;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:9px;font:12px var(--font-code);resize:vertical}
     #sec-hunt-workbench .hq-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:7px}
     #sec-hunt-workbench .hq-row input,#sec-hunt-workbench .hq-row select{min-width:120px}
     #sec-hunt-workbench .hq-help{font-size:11px;color:var(--text-muted);line-height:1.5}
     #sec-hunt-workbench .hq-status{font-size:12px;color:var(--text-muted);white-space:pre-wrap;margin:8px 0}
     #sec-hunt-workbench .hq-error{color:var(--badge-danger-text)}
     #sec-hunt-workbench .hq-suggestions{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-    #sec-hunt-workbench .hq-suggestions button{font:11px ui-monospace,Menlo,Consolas,monospace;padding:2px 6px}
+    #sec-hunt-workbench .hq-suggestions button{font:11px var(--font-code);padding:2px 6px}
     #sec-hunt-workbench .hq-results{overflow:auto;max-height:520px;border-top:1px solid var(--border-subtle);margin-top:8px;padding-top:8px}
     #sec-hunt-workbench table{border-collapse:collapse;width:100%;font-size:12px}
     #sec-hunt-workbench th,#sec-hunt-workbench td{text-align:left;vertical-align:top;border-bottom:1px solid var(--border-subtle);padding:5px 7px}

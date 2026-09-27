@@ -451,7 +451,7 @@
   <script type="module" src="/js/a11y/tooltips.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
-       explicit localStorage choice, else the OS preference.
+       explicit localStorage choice, else the OS preference. The analyst's font choices ride along.
 
        The stored value is untrusted (any script that ever ran on this origin could have written
        it) and goes straight into a DOM attribute, so it is checked against a strict character
@@ -464,6 +464,12 @@
         var s = localStorage.getItem('dfir-theme');
         var sys = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
         document.documentElement.setAttribute('data-theme', /^[a-z][a-z0-9-]{0,31}$/.test(s || '') ? s : sys);
+        ['ui', 'code'].forEach(function (k) { // font choices, same allowlist rule
+          var v = localStorage.getItem('dfir-font-' + k);
+          if (/^[a-z0-9][a-z0-9-]{0,31}$/.test(v || '')) document.documentElement.setAttribute('data-font-' + k, v);
+        });
+        var z = Number(localStorage.getItem('dfir-font-size')); // text size %, TEXT_SIZE bounds
+        if (z % 1 === 0 && z >= 80 && z <= 150 && z !== 100) document.documentElement.style.zoom = z / 100;
       } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
     })();
   </script>
@@ -1187,15 +1193,15 @@
         Ctrl+K works anywhere, always. The rest are active on the Forensic Timeline whenever you're
         not typing in a field, and can be switched off in Settings → General.</p>
       <table data-safe-style="width:100%; border-collapse:collapse; font-size:13px;">
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace; white-space:nowrap;">Ctrl+K / ⌘K</td><td data-safe-style="padding:4px 0;">Command palette — fuzzy-search every action (<code>&gt;exports</code> filters by category)</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace; white-space:nowrap;">j / k</td><td data-safe-style="padding:4px 0;">Next / previous event</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">f</td><td data-safe-style="padding:4px 0;">Flag (star) the focused event</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">i</td><td data-safe-style="padding:4px 0;">Add the focused event's IP/host as an IOC</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">/</td><td data-safe-style="padding:4px 0;">Focus global search</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">p</td><td data-safe-style="padding:4px 0;">Pin / unpin the focused event's finding (only when it cites exactly one)</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">n</td><td data-safe-style="padding:4px 0;">Add a note (comment) to the focused event</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">?</td><td data-safe-style="padding:4px 0;">Show this cheat sheet</td></tr>
-        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:monospace;">Esc</td><td data-safe-style="padding:4px 0;">Close this cheat sheet, or clear the focused row</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code); white-space:nowrap;">Ctrl+K / ⌘K</td><td data-safe-style="padding:4px 0;">Command palette — fuzzy-search every action (<code>&gt;exports</code> filters by category)</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code); white-space:nowrap;">j / k</td><td data-safe-style="padding:4px 0;">Next / previous event</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">f</td><td data-safe-style="padding:4px 0;">Flag (star) the focused event</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">i</td><td data-safe-style="padding:4px 0;">Add the focused event's IP/host as an IOC</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">/</td><td data-safe-style="padding:4px 0;">Focus global search</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">p</td><td data-safe-style="padding:4px 0;">Pin / unpin the focused event's finding (only when it cites exactly one)</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">n</td><td data-safe-style="padding:4px 0;">Add a note (comment) to the focused event</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">?</td><td data-safe-style="padding:4px 0;">Show this cheat sheet</td></tr>
+        <tr><td data-safe-style="padding:4px 8px 4px 0; color:var(--accent); font-family:var(--font-code);">Esc</td><td data-safe-style="padding:4px 0;">Close this cheat sheet, or clear the focused row</td></tr>
       </table>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="kbdHelpClose">Close</button>
@@ -2292,12 +2298,12 @@
               <summary data-safe-style="cursor:pointer;font-size:12px;color:var(--text-muted)">Advanced: per-artifact tuning (optional)</summary>
               <div data-safe-style="margin-top:8px">
                 <div data-safe-style="font-size:12px;color:var(--text-primary);margin-bottom:3px">Parameters <span data-safe-style="color:var(--text-dim)">(passed to the artifact via the hunt <code>spec</code>)</span></div>
-                <textarea id="veloBundleParams" rows="3" spellcheck="false" placeholder='{ "Windows.Hayabusa.Rules": { "RuleLevel": "Critical, High, and Medium" } }' data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+                <textarea id="veloBundleParams" rows="3" spellcheck="false" placeholder='{ "Windows.Hayabusa.Rules": { "RuleLevel": "Critical, High, and Medium" } }' data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:var(--font-code);font-size:12px"></textarea>
                 <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:3px">JSON map of <code>artifact → { param: value }</code> so a heavy artifact emits less at the source (e.g. Hayabusa at high+critical). Only what you set is sent.</div>
               </div>
               <div data-safe-style="margin-top:10px">
                 <div data-safe-style="font-size:12px;color:var(--text-primary);margin-bottom:3px">Exclude filters <span data-safe-style="color:var(--text-dim)">(VQL <code>WHERE</code> applied to results before the row cap)</span></div>
-                <textarea id="veloBundleFilters" rows="3" spellcheck="false" placeholder='{ "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ &#39;pagefile&#39;" }' data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+                <textarea id="veloBundleFilters" rows="3" spellcheck="false" placeholder='{ "DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ &#39;pagefile&#39;" }' data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:var(--font-code);font-size:12px"></textarea>
                 <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:3px">JSON map of <code>artifact → VQL WHERE expression</code> (no <code>WHERE</code> keyword) to drop noisy rows at the source — e.g. exclude pagefile YARA hits, or a specific detection name. Leave blank for none.</div>
               </div>
             </details>
@@ -2507,7 +2513,7 @@
         <div class="sfield-row">
           <div class="sfield" data-safe-style="flex:1">
             <label for="wlImportText">Import (paste CSV or JSON)</label>
-            <textarea id="wlImportText" rows="3" spellcheck="false" placeholder="match,pattern,type,note&#10;cidr,10.0.0.0/8,ip,internal" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+            <textarea id="wlImportText" rows="3" spellcheck="false" placeholder="match,pattern,type,note&#10;cidr,10.0.0.0/8,ip,internal" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:var(--font-code);font-size:12px"></textarea>
             <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:4px">
               <button id="wlImportBtn" type="button">Import</button>
               <button id="wlExportCsvBtn" type="button" data-safe-style="background:var(--border-color)">Export CSV</button>
@@ -2546,7 +2552,7 @@
         <div class="sfield-row">
           <div class="sfield" data-safe-style="flex:1">
             <label for="nsrlImportText">Import known-good hashes</label>
-            <textarea id="nsrlImportText" rows="4" spellcheck="false" placeholder="Paste an NSRLFile.txt (RDS CSV), a hashdeep CSV, or a hash-per-line list — MD5 / SHA-1 / SHA-256" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+            <textarea id="nsrlImportText" rows="4" spellcheck="false" placeholder="Paste an NSRLFile.txt (RDS CSV), a hashdeep CSV, or a hash-per-line list — MD5 / SHA-1 / SHA-256" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:var(--font-code);font-size:12px"></textarea>
             <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
               <button id="nsrlImportBtn" type="button">Import</button>
               <button id="nsrlExportBtn" type="button" data-safe-style="background:#2a2f3a">Export</button>
@@ -2559,7 +2565,7 @@
         <div class="sfield">
           <label>…or load from a file on the server</label>
           <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <input id="nsrlFilePath" placeholder="C:\rds\NSRLFile.txt   ( ; -separate multiple )" data-safe-style="flex:1 1 280px;font-family:monospace" />
+            <input id="nsrlFilePath" placeholder="C:\rds\NSRLFile.txt   ( ; -separate multiple )" data-safe-style="flex:1 1 280px;font-family:var(--font-code)" />
             <button id="nsrlFileBtn" type="button">Load file</button>
           </div>
           <span id="nsrlFileMsg" class="manual-msg"></span>
@@ -2574,7 +2580,7 @@
           <label>NSRL RDS database (SQLite) <span id="nsrlDbBadge" class="sfield-hint" data-safe-style="display:inline"></span></label>
           <div id="nsrlDbStatus" data-safe-style="font-size:12px;color:#9aa4b2;padding:2px 0">Loading…</div>
           <div id="nsrlDbControls" data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
-            <input id="nsrlDbPath" placeholder="D:\NSRL\RDS_2026.03.1_modern.db" data-safe-style="flex:1 1 300px;font-family:monospace" />
+            <input id="nsrlDbPath" placeholder="D:\NSRL\RDS_2026.03.1_modern.db" data-safe-style="flex:1 1 300px;font-family:var(--font-code)" />
             <button id="nsrlDbConnectBtn" type="button">Connect</button>
             <button id="nsrlDbDisconnectBtn" type="button" data-safe-style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Disconnect</button>
           </div>
@@ -2636,7 +2642,7 @@
         <hr class="settings-hr" />
         <div class="sfield">
           <label for="impPasteBox">Add an importer (paste JSON)</label>
-          <textarea id="impPasteBox" rows="6" spellcheck="false" placeholder="Paste an importer JSON definition… (use the prompt button to generate one with any LLM)" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:monospace;font-size:12px"></textarea>
+          <textarea id="impPasteBox" rows="6" spellcheck="false" placeholder="Paste an importer JSON definition… (use the prompt button to generate one with any LLM)" data-safe-style="width:100%;box-sizing:border-box;padding:6px;font-family:var(--font-code);font-size:12px"></textarea>
           <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:4px">
             <button id="impAddBtn" type="button">Add importer</button>
             <span id="impMsg" class="manual-msg"></span>
@@ -2673,7 +2679,7 @@
         <div class="sfield">
           <label>Load from server file</label>
           <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
-            <input id="kevFilePath" placeholder="C:\dfir\known_exploited_vulnerabilities.json" data-safe-style="flex:1 1 320px;font-family:monospace" />
+            <input id="kevFilePath" placeholder="C:\dfir\known_exploited_vulnerabilities.json" data-safe-style="flex:1 1 320px;font-family:var(--font-code)" />
             <button id="kevFileBtn" type="button">Load file</button>
           </div>
           <span id="kevFileMsg" class="manual-msg"></span>
@@ -3907,14 +3913,14 @@
         <div id="taggerSuggestResult" hidden data-safe-style="margin-top:6px">
           <div id="taggerSuggestExplain" data-safe-style="font-size:12px;color:var(--text-muted);margin-bottom:4px"></div>
           <textarea id="taggerSuggestYaml" spellcheck="false"
-            data-safe-style="width:100%;min-height:140px;font-family:monospace;font-size:12px;background:var(--bg-secondary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:8px"></textarea>
+            data-safe-style="width:100%;min-height:140px;font-family:var(--font-code);font-size:12px;background:var(--bg-secondary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:8px"></textarea>
           <div data-safe-style="display:flex;gap:6px;align-items:center;margin-top:4px">
             <button class="ev-bulk-btn" data-act="previewTaggerRule" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
             <button class="ev-bulk-btn" data-act="addSuggestedTaggerRule" title="Add this rule to the ruleset">Add rule</button>
             <button class="ev-bulk-btn" data-act="discardSuggestedTaggerRule">Discard</button>
             <span id="taggerSuggestResultMsg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
           </div>
-          <div id="taggerSuggestMatches" hidden data-safe-style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:6px;font-size:11px;font-family:monospace;color:var(--text-muted)"></div>
+          <div id="taggerSuggestMatches" hidden data-safe-style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:6px;font-size:11px;font-family:var(--font-code);color:var(--text-muted)"></div>
         </div>
       </div>
       <!-- Active rules with per-rule remove + reset-to-defaults. -->
@@ -3930,7 +3936,7 @@
       </div><!-- /taggerSuggestWrap -->
       <div id="taggerRulesPane" hidden data-safe-style="margin-bottom:8px">
         <div data-safe-style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
-        <textarea id="taggerRulesText" spellcheck="false" data-safe-style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--bg-secondary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:8px"></textarea>
+        <textarea id="taggerRulesText" spellcheck="false" data-safe-style="width:100%;min-height:220px;font-family:var(--font-code);font-size:12px;background:var(--bg-secondary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:8px"></textarea>
         <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:4px">
           <button class="ev-bulk-btn" data-act="saveTaggerRules" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
           <button class="ev-bulk-btn" data-act="toggleTaggerRules">Close</button>
@@ -4080,7 +4086,7 @@
             <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
           </div>
           <label data-safe-style="display:block;margin-top:6px;font-size:12px;color:var(--text-muted)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
-            <textarea id="mcpRunArgs" rows="4" data-safe-style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
+            <textarea id="mcpRunArgs" rows="4" data-safe-style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-family:var(--font-code);font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
           </label>
           <div data-safe-style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="mcpRunBtn" type="button">&#9654; Run manual call</button>
@@ -4580,7 +4586,7 @@
       if (title.length > DESC_TITLE_LIMIT) parts.push(esc(title));   // the title itself got truncated on display
       const msg = e.message != null ? String(e.message).trim() : "";
       if (msg && msg !== desc.trim()) {
-        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">${esc(e.message)}</div>`);
+        parts.push(`<div data-safe-style="font-family:var(--font-code);white-space:pre-wrap;word-break:break-all">${esc(e.message)}</div>`);
       }
       if (show("mitre") && e.mitreTechniques && e.mitreTechniques.length) parts.push(`MITRE: ${mitreLinks(e.mitreTechniques)}`);
       if (show("findings") && e.relatedFindingIds && e.relatedFindingIds.length) {
@@ -4603,7 +4609,7 @@
         const partial = e.deobfuscated.partial
           ? `<div data-safe-style="opacity:.9">Partial decode - a limit was reached or an expression could not be resolved without running it. Treat what follows as incomplete.</div>`
           : "";
-        parts.push(`<div data-safe-style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">${via}${partial}Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
+        parts.push(`<div data-safe-style="font-family:var(--font-code);white-space:pre-wrap;word-break:break-all">${via}${partial}Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
       }
       // Second-look provenance (#11): this raw row was pulled up from the super-timeline by the
       // post-synthesis re-query — show WHY (which open question/hypothesis it answers).

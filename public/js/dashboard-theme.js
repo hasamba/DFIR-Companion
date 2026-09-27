@@ -50,6 +50,37 @@
   const THEME_GROUP_LABELS = { dark: "Dark", light: "Light", fun: "Fun" };
   const THEME_GROUP_ORDER = ["dark", "light", "fun"];
 
+  // Font choices (the two pickers at the top of the theme menu). Each value becomes a
+  // data-font-<kind> attribute on <html>; css/dashboard-layout.css maps it to a font stack. The
+  // first entry of each list is the default and is applied by removing the attribute.
+  // `probe` names the fonts that make an entry worth offering: an entry whose fonts are all
+  // missing is hidden, because picking it would change nothing. An empty probe always shows.
+  const DFIR_FONTS = {
+    ui: [
+      { id: "system", label: "System default", probe: [] },
+      { id: "sans", label: "Sans (Segoe UI / Roboto)", probe: ["Segoe UI", "Roboto", "Noto Sans"] },
+      { id: "inter", label: "Inter", probe: ["Inter"] },
+      { id: "atkinson", label: "Atkinson Hyperlegible", probe: ["Atkinson Hyperlegible", "Atkinson Hyperlegible Next"] },
+      { id: "verdana", label: "Verdana (wide)", probe: ["Verdana", "DejaVu Sans"] },
+      { id: "tahoma", label: "Tahoma", probe: ["Tahoma"] },
+      { id: "serif", label: "Serif", probe: [] },
+      { id: "mono", label: "Same as code font", probe: [] },
+    ],
+    code: [
+      { id: "default", label: "System monospace", probe: [] },
+      { id: "consolas", label: "Consolas", probe: ["Consolas"] },
+      { id: "cascadia", label: "Cascadia Mono", probe: ["Cascadia Mono", "Cascadia Code"] },
+      { id: "jetbrains", label: "JetBrains Mono", probe: ["JetBrains Mono"] },
+      { id: "fira", label: "Fira Code", probe: ["Fira Code", "Fira Mono"] },
+      { id: "source", label: "Source Code Pro", probe: ["Source Code Pro"] },
+      { id: "dejavu", label: "DejaVu Sans Mono", probe: ["DejaVu Sans Mono"] },
+      { id: "courier", label: "Courier New", probe: [] },
+    ],
+  };
+  // Text size (the slider), in percent. The <head> bootstrap repeats min and max, because it runs
+  // before this file parses; tests/theme/fontChoices.test.ts keeps the two in step.
+  const TEXT_SIZE = { min: 80, max: 150, step: 5, def: 100 };
+
   let _themeColorCache = {};
   function themeColor(token, fallback) {
     if (token in _themeColorCache) return _themeColorCache[token];
@@ -125,6 +156,147 @@
     } catch (e) {}
   }
 
+  // Same trust rule as themes: a stored or attribute value is applied only if the registry has it.
+  function fontEntry(kind, id) {
+    return (DFIR_FONTS[kind] || []).find((f) => f.id === id) || null;
+  }
+  function currentFont(kind) {
+    const v = document.documentElement.getAttribute("data-font-" + kind);
+    return fontEntry(kind, v) ? v : DFIR_FONTS[kind][0].id;
+  }
+  function applyFont(kind, id) {
+    const root = document.documentElement;
+    if (!fontEntry(kind, id) || id === DFIR_FONTS[kind][0].id) {
+      root.removeAttribute("data-font-" + kind);
+    } else {
+      root.setAttribute("data-font-" + kind, id);
+    }
+    rethemeCanvases(); // a zoom or font change moves what the swimlane canvas measured
+  }
+  function setFont(kind, id) {
+    if (!fontEntry(kind, id)) return;
+    try {
+      localStorage.setItem("dfir-font-" + kind, id);
+    } catch (e) {}
+    applyFont(kind, id);
+  }
+  // A font is installed when text set in it measures differently from the generic fallback.
+  // Checked against three fallbacks, because an installed font can match any one of them.
+  const _fontSeen = {};
+  function fontInstalled(families) {
+    if (!families.length) return true;
+    const key = families.join("|");
+    if (key in _fontSeen) return _fontSeen[key];
+    let found = true; // no canvas → offer the entry rather than hide a font that may exist
+    try {
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (ctx) {
+        const sample = "mmmmmmmmmmlli1WW@#0Oo";
+        const width = (font) => ((ctx.font = "72px " + font), ctx.measureText(sample).width);
+        found = families.some((fam) =>
+          ["monospace", "serif", "sans-serif"].some(
+            (base) => width('"' + fam + '", ' + base) !== width(base),
+          ),
+        );
+      }
+    } catch (e) {}
+    return (_fontSeen[key] = found);
+  }
+  function fontSelect(kind, label) {
+    const wrap = document.createElement("label");
+    wrap.className = "font-pick";
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    const sel = document.createElement("select");
+    sel.dataset.fontKind = kind;
+    const active = currentFont(kind);
+    for (const f of DFIR_FONTS[kind]) {
+      const installed = fontInstalled(f.probe);
+      if (!installed && f.id !== active) continue;
+      const opt = document.createElement("option");
+      opt.value = f.id;
+      opt.textContent = installed ? f.label : f.label + " (not installed)";
+      opt.selected = f.id === active;
+      sel.appendChild(opt);
+    }
+    wrap.append(caption, sel);
+    return wrap;
+  }
+  // Text size zooms <html>: every size in the page is in px (about 1,200 of them), so a root
+  // font-size would scale nothing. The value is a whole percent inside TEXT_SIZE, or it is ignored.
+  function textSizeOrNull(v) {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= TEXT_SIZE.min && n <= TEXT_SIZE.max ? n : null;
+  }
+  function storedTextSize() {
+    try {
+      return textSizeOrNull(localStorage.getItem("dfir-font-size")) || TEXT_SIZE.def;
+    } catch (e) {
+      return TEXT_SIZE.def;
+    }
+  }
+  function applyTextSize(n) {
+    document.documentElement.style.zoom = n === TEXT_SIZE.def ? "" : String(n / 100);
+    rethemeCanvases(); // the swimlane canvas measured the old size
+  }
+  function setTextSize(n) {
+    if (textSizeOrNull(n) === null) return;
+    try {
+      localStorage.setItem("dfir-font-size", String(n));
+    } catch (e) {}
+    applyTextSize(n);
+  }
+  function textSizeRow() {
+    const n = storedTextSize();
+    const wrap = document.createElement("div");
+    wrap.className = "font-size";
+    const head = document.createElement("div");
+    head.className = "font-size-head";
+    const caption = document.createElement("label");
+    caption.htmlFor = "fontSizeRange";
+    caption.textContent = "Text size";
+    const value = document.createElement("output");
+    value.id = "fontSizeValue";
+    value.htmlFor = "fontSizeRange";
+    value.textContent = n + "%";
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.id = "fontSizeReset";
+    reset.textContent = "Reset";
+    reset.disabled = n === TEXT_SIZE.def;
+    head.append(caption, value, reset);
+    const range = document.createElement("input");
+    range.type = "range";
+    range.id = "fontSizeRange";
+    range.min = String(TEXT_SIZE.min);
+    range.max = String(TEXT_SIZE.max);
+    range.step = String(TEXT_SIZE.step);
+    range.value = String(n);
+    wrap.append(head, range);
+    return wrap;
+  }
+  function showTextSize(n) {
+    const value = document.getElementById("fontSizeValue");
+    if (value) value.textContent = n + "%";
+    const reset = document.getElementById("fontSizeReset");
+    if (reset) reset.disabled = n === TEXT_SIZE.def;
+  }
+  function renderFontControls(menu) {
+    const h = document.createElement("h3");
+    h.textContent = "Text";
+    menu.append(h, textSizeRow(), fontSelect("ui", "Font"), fontSelect("code", "Code font (hashes, paths, commands)"));
+  }
+  // The text-size choice zooms <html>. Measured positions (getBoundingClientRect, clientX,
+  // innerWidth) come back in screen px, but a px written into a style is multiplied by the zoom.
+  // Code that places a popup at a measured spot divides by this before it writes the style.
+  function pageZoom() {
+    try {
+      return parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    } catch (e) {
+      return 1;
+    }
+  }
+
   // Entries are built with createElement and textContent rather than innerHTML: the labels come
   // from a generated file today, but this menu is the one place a theme name reaches the DOM and
   // it should not become an injection sink if that file ever takes a less trusted source.
@@ -133,6 +305,7 @@
     if (!menu) return;
     const active = currentTheme();
     menu.replaceChildren();
+    renderFontControls(menu);
     for (const group of THEME_GROUP_ORDER) {
       const names = Object.keys(DFIR_THEMES)
         .filter((k) => DFIR_THEMES[k].group === group)
@@ -189,6 +362,9 @@
     // as bare top-level statements in the page, which the facade gate flagged the moment the
     // functions moved out — an unguarded read at load, thrown before anything could report it.
     applyTheme(storedTheme() || systemTheme());
+    // The bootstrap applied any syntactically safe stored font value; drop one the registry lacks.
+    for (const kind of Object.keys(DFIR_FONTS)) applyFont(kind, currentFont(kind));
+    applyTextSize(storedTextSize());
     // Follow the OS only while the user hasn't picked an explicit theme.
     try {
       window
@@ -206,7 +382,28 @@
       e.stopPropagation();
       themeMenuOpen() ? closeThemeMenu() : openThemeMenu();
     });
+    // The slider lives inside the page it zooms, so zooming on every "input" would move the
+    // thumb out from under the pointer mid-drag. A drag shows the number and applies on release
+    // ("change"); arrow keys fire "change" on every step, so the keyboard applies at once.
+    document.getElementById("themeMenu").addEventListener("input", (e) => {
+      if (e.target.id === "fontSizeRange") showTextSize(Number(e.target.value));
+    });
+    document.getElementById("themeMenu").addEventListener("change", (e) => {
+      if (e.target.id === "fontSizeRange") {
+        setTextSize(Number(e.target.value));
+        return;
+      }
+      const sel = e.target.closest("select[data-font-kind]");
+      if (sel) setFont(sel.dataset.fontKind, sel.value);
+    });
     document.getElementById("themeMenu").addEventListener("click", (e) => {
+      if (e.target.closest("#fontSizeReset")) {
+        setTextSize(TEXT_SIZE.def);
+        const range = document.getElementById("fontSizeRange");
+        if (range) range.value = String(TEXT_SIZE.def);
+        showTextSize(TEXT_SIZE.def);
+        return; // the menu stays open, so the analyst can keep adjusting
+      }
       const item = e.target.closest(".theme-item");
       if (!item) return;
       setTheme(item.dataset.theme);
@@ -227,6 +424,7 @@
         return;
       }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      if (e.target.closest && e.target.closest("select, input")) return; // arrows step the control
       const items = [...document.querySelectorAll("#themeMenu .theme-item")];
       const at = items.indexOf(document.activeElement);
       const next = e.key === "ArrowDown" ? at + 1 : at - 1;
@@ -242,4 +440,5 @@
   window.storedTheme = storedTheme;
   window.systemTheme = systemTheme;
   window.themeColor = themeColor;
+  window.pageZoom = pageZoom;
 })();

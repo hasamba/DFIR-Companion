@@ -118,7 +118,7 @@
         im.recentFailures
           .map(
             (f) =>
-              `<div data-safe-style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+              `<div data-safe-style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:var(--font-code);font-size:11.5px">
           <span data-safe-style="color:#7e8aa0">${esc((f.at || "").replace("T", " ").slice(0, 19))}</span>
           <span data-safe-style="color:#ff9f9f">${esc(f.kind)}</span> ${esc(f.caseId)}/${esc(f.filename)}<br>
           <span data-safe-style="color:#ffb0b0">${esc(f.error)}</span></div>`,
@@ -526,7 +526,7 @@
           (j.largestFiles || [])
             .map(
               (f) =>
-                `<div data-safe-style="display:flex;justify-content:space-between;gap:12px;font-family:monospace;font-size:11.5px;padding:1px 0">
+                `<div data-safe-style="display:flex;justify-content:space-between;gap:12px;font-family:var(--font-code);font-size:11.5px;padding:1px 0">
           <span data-safe-style="color:#9aa4b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.caseId)}/${esc(f.path)}</span>
           <span>${diagFmtBytes(f.bytes)}</span></div>`,
             )
