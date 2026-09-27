@@ -15,6 +15,7 @@ import {
   type SupportLogPart,
 } from "../analysis/supportBundleZip.js";
 import type { ImporterFailure } from "../analysis/diagnostics.js";
+import { sanitizeImportDebugSummary } from "../analysis/importDebug.js";
 import type { LogPaths } from "../logging/logger.js";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
@@ -213,6 +214,10 @@ async function importReports(
       reports.push({ ...base, shapeUnavailable: "the case is password-protected and locked." });
       continue;
     }
+    // Importer detail follows the same lock decision as the shape. It is NOT run through the text
+    // redactor (field paths such as host.name would read as domains); it is re-validated instead.
+    const importer = sanitizeImportDebugSummary(f.importer);
+    if (importer) base.importer = importer;
     if (budget.left <= 0) {
       reports.push({ ...base, shapeUnavailable: "the scan budget for this bundle was used up." });
       continue;

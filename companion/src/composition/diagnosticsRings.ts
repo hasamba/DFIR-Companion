@@ -22,6 +22,8 @@ import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diagnostics.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportFailed } from "../logging/importLog.js";
+import { sanitizeImportDebugSummary, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 
 /** How many entries each error ring keeps. Old entries fall off the end. */
 const DIAG_RING = 50;
@@ -40,7 +42,13 @@ export interface DiagnosticsRings {
   readonly importerRunStats: Map<string, ImporterRunStat>;
   /** Redact absolute paths out of an error message. Exposed for callers that record their own text. */
   redactErr(err: unknown): string;
-  recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void;
+  recordImportFailure(
+    caseId: string,
+    kind: string,
+    filename: string,
+    err: unknown,
+    debug?: ImportDebugRecorder,
+  ): void;
   recordAiError(caseId: string, phase: string, err: unknown): void;
   recordImporterRun(id: string, patch: Omit<ImporterRunStat, "lastRunAt">): void;
 }
@@ -58,14 +66,18 @@ export function createDiagnosticsRings(casesRoot: string): DiagnosticsRings {
     recentAiErrors,
     importerRunStats,
     redactErr,
-    recordImportFailure(caseId, kind, filename, err) {
+    recordImportFailure(caseId, kind, filename, err, debug) {
       const message = redactErr(err);
+      // The attempt's own recorder, handed over by the caller — never looked up by name (#1736).
+      emitImportDebug(caseId, debug, "failed");
+      const importer = debug ? sanitizeImportDebugSummary(debug.summary()) : undefined;
       recentImportFailures.unshift({
         at: new Date().toISOString(),
         caseId,
         kind,
         filename,
         error: message,
+        ...(importer ? { importer } : {}),
       });
       if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
       getServerLogger().warn(formatImportFailed({ caseId, label: basename(filename), kind, message }), {

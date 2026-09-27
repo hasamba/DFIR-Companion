@@ -32,7 +32,7 @@ import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { isKapeCopyLog, isKapeSkipLog } from "./kapeAcquisitionLog.js";
 import { looksLikeSyslog } from "./syslogImport.js";
 import { IMPORT_KINDS } from "./importerSpec.js";
-import type { EngineDetectContext, ExternalImporter } from "./declarativeImporter.js";
+import type { EngineDetectContext } from "./declarativeImporter.js";
 // Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
 import {
   isOkta,
@@ -749,33 +749,4 @@ export function detectImportKindEx(filename: string, text: string): { kind: Impo
     return { kind, confident: sample ? isSiem(sample) : false };
   }
   return { kind, confident: true };
-}
-
-// Resolve a file to a built-in ImportKind OR a custom importer id, honoring the user's precedence.
-export function detectImportWithCustom(
-  filename: string,
-  text: string,
-  importers: Map<string, ExternalImporter>,
-  precedence: "builtin-first" | "external-first",
-): string {
-  const tryCustom = (): string | null => {
-    if (importers.size === 0) return null;
-    const ctx = buildDetectContext(filename, text);
-    const ordered = [...importers.values()].sort((a, b) => a.priority - b.priority);
-    for (const imp of ordered) {
-      try {
-        if (imp.detect(ctx)) return imp.id;
-      } catch {
-        /* skip a throwing importer */
-      }
-    }
-    return null;
-  };
-
-  if (precedence === "external-first") {
-    return tryCustom() ?? detectImportKind(filename, text);
-  }
-  const { kind, confident } = detectImportKindEx(filename, text);
-  if (confident) return kind; // a specific built-in wins
-  return tryCustom() ?? kind; // else custom fills the gap, else the generic fallback
 }

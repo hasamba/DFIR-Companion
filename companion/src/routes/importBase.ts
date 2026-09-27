@@ -1,3 +1,4 @@
+import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import type { Request } from "express";
 import { resolveTrailerProfile } from "../analysis/webRecordFields.js";
 import type { Severity } from "../analysis/stateTypes.js";
@@ -54,6 +55,7 @@ export function buildImportBase(o: {
   return {
     label: o.storedName,
     idPrefix: `${o.seq}`,
+    debug: createImportDebugRecorder(), // one per attempt (#1736)
     importedAt: o.importedAt,
     onProgress: o.tracking.onProgress,
     ...(hasParseProgress(o.kind) ? { onParseProgress: o.tracking.onParseProgress } : {}),

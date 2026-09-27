@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
@@ -56,6 +57,9 @@ export type ImportBase = {
   // Analyst-declared host for this import (#1496) — read only by the Windows-log importers
   // (Chainsaw, Hayabusa, Velociraptor) as the collector fallback; every other kind ignores it.
   assetHost?: string;
+  // This attempt's debug recorder (#1736): importers report column mapping, skipped-row reasons and
+  // fallbacks to it. Owned by whoever started the attempt; see analysis/importDebug.ts.
+  debug?: ImportDebugRecorder;
 };
 
 export interface RouteContext {
@@ -75,7 +79,13 @@ export interface RouteContext {
 
   // ── Stable helper methods ────────────────────────────────────────────────────────────
   // Pure/stateless-facing helpers bound at construction; safe to destructure at registration scope.
-  recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void;
+  recordImportFailure(
+    caseId: string,
+    kind: string,
+    filename: string,
+    err: unknown,
+    debug?: ImportDebugRecorder,
+  ): void;
   recordAiError(caseId: string, phase: string, err: unknown): void;
   readUnlockState(req: Request, id: string, salt: string): { unlocked: boolean; remembered: boolean };
   hasAiProvider(): boolean;
@@ -351,7 +361,7 @@ export interface RouteContext {
   // Detect the importer kind for a filename+text (honours user-authored custom importers). A `const`
   // arrow defined in createApp AFTER this ctx literal, so it's exposed as a live accessor — call
   // ctx.resolveImportKind() INSIDE the handler to reach the current binding, then invoke the result.
-  resolveImportKind(): (filename: string, text: string) => string;
+  resolveImportKind(): (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   // External-tool config + custom-tool list, both shared with the drop-folder code still in createApp
   // (resolveToolForExt/rawExtClaimed read customTools; the drop batch route + poller read
   // liveToolConfigs). Exposed as live accessors because they're built AFTER this ctx literal:

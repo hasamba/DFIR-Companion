@@ -3,6 +3,7 @@
 // state, import audit timestamps) and feeds them to these functions, which aggregate,
 // classify, and REDACT them into a shareable report. Keeping the transforms pure makes the
 // whole surface unit-testable without spinning up a server or touching the filesystem.
+import type { ImportDebugSummary } from "./importDebugTypes.js";
 import { isLocalAiProvider } from "./anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
@@ -146,6 +147,8 @@ export interface ImporterFailure {
   kind: string;
   filename: string;
   error: string;
+  // What the importer decided before it failed (#1736) — already sanitized; see importDebug.ts.
+  importer?: ImportDebugSummary;
 }
 
 // A recorded background AI failure (analysis/synthesis), classified by ProviderError kind

@@ -1,5 +1,6 @@
 import { createZip, type ZipEntry } from "./zipArchive.js";
 import type { ImportShape } from "./importShape.js";
+import type { ImportDebugSummary } from "./importDebug.js";
 
 // Pure pieces of the redacted support bundle (#1735): the line-safe log tail, the README, and the
 // archive layout. The I/O and the redaction order live in reports/supportBundleBuilder.ts. Nothing
@@ -49,6 +50,8 @@ export interface SupportImportReport {
   error: string;
   row?: number;
   shape?: ImportShape;
+  /** What the importer decided before it failed (#1736). Sanitized at record time and again here. */
+  importer?: ImportDebugSummary;
   /** Why no shape: the file is gone, the case is locked, the scan budget ran out, … */
   shapeUnavailable?: string;
 }

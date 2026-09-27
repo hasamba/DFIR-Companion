@@ -28,7 +28,9 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
-import { detectImportWithCustom } from "../analysis/importDetect.js";
+import { detectImportWithCustomEx } from "../analysis/importDecision.js";
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 import {
   looksLikeMacLoginItemFilename,
   looksLikeUndecodedMacLoginItemFilename,
@@ -177,12 +179,18 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   // the login-item containers only, and any other bplist — an MRU .sfl2, an app's .plist — reached
   // the same sniffer and got the same wrong launchd row. No text importer can read one, so the
   // honest answer is a refusal that names the plutil conversion (importKindHints.ts).
-  const resolveImportKind = (filename: string, text: string): string =>
-    looksLikeMacLoginItemFilename(filename) ||
-    looksLikeUndecodedMacLoginItemFilename(filename) ||
-    isBinaryPlist(text)
-      ? "unknown"
-      : detectImportWithCustom(filename, text, registry.importers, precedence);
+  // `debug` (#1736) records the decision where it is made — confidence and rule — for the attempt.
+  const resolveImportKind = (filename: string, text: string, debug?: ImportDebugRecorder): string => {
+    const refused =
+      looksLikeMacLoginItemFilename(filename) ||
+      looksLikeUndecodedMacLoginItemFilename(filename) ||
+      isBinaryPlist(text);
+    const d = refused
+      ? { kind: "unknown", confident: true, decision: "refused_binary_plist" }
+      : detectImportWithCustomEx(filename, text, registry.importers, precedence);
+    debug?.detected(d.kind, d);
+    return d.kind;
+  };
 
   // The import log's start/merged/cancelled lines (#1438), written with `{ caseId }` so they land in
   // the session log AND the case's own log. This is the seam every text import crosses on the way
@@ -194,14 +202,18 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     label: string,
     startedAt: number,
     work: Promise<T>,
+    debug?: ImportDebugRecorder,
   ): Promise<T> {
     try {
       const result = await work;
       getServerLogger().info(formatImportMerged(caseId, label, Date.now() - startedAt), { caseId });
+      emitImportDebug(caseId, debug, "succeeded");
       return result;
     } catch (err) {
-      if ((err as { name?: unknown } | null)?.name === "AbortError")
+      if ((err as { name?: unknown } | null)?.name === "AbortError") {
         getServerLogger().info(formatImportCancelled(caseId, label, Date.now() - startedAt), { caseId });
+        emitImportDebug(caseId, debug, "cancelled");
+      }
       throw err;
     }
   }
@@ -222,7 +234,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         base.label,
         startedAt,
         observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work),
+        base.debug,
       );
+    base.debug?.detected(kind);
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = registry.importers.get(kind);
     if (custom) {
@@ -234,6 +248,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             ...base,
             onParsed: (r) => {
               parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
+              base.debug?.counts(parsed);
               recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
             },
           })
@@ -249,6 +264,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
           }),
       );
     }
+    // No deterministic importer reads a generic csv/log: the AI extracts its events (#1736).
+    if (kind === "csv" || kind === "log") base.debug?.fallback("ai_extraction");
     switch (kind) {
       case "thor":
         return observe(pipeline.importThor(caseId, text, base));
