@@ -28,7 +28,14 @@ const PROVIDERS = new Set<ModelCatalogProvider>([
   "claude-code",
   "codex",
 ]);
-const ROLES = new Set<ModelRole>(["vision", "synthesis", "velociraptor", "second-opinion", "reconcile"]);
+const ROLES = new Set<ModelRole>([
+  "vision",
+  "synthesis",
+  "synthesis-fallback",
+  "velociraptor",
+  "second-opinion",
+  "reconcile",
+]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)

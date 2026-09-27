@@ -89,7 +89,8 @@ export function resolveRoleSetting(
 // builds the running roles from this table, the model picker reads saved credentials through it,
 // and the per-provider key migration checks every role against it — one reader, so the three
 // cannot drift apart.
-export type AiRoleId = "vision" | "synthesis" | "velociraptor" | "second-opinion" | "reconcile";
+export type AiRoleId =
+  "vision" | "synthesis" | "synthesis-fallback" | "velociraptor" | "second-opinion" | "reconcile";
 
 /** The Velociraptor role's provider when DFIR_AI_VELO_PROVIDER is unset or blank. */
 export const DEFAULT_VELO_PROVIDER = "openrouter";
@@ -112,6 +113,15 @@ export const AI_ROLE_SOURCES: Readonly<Record<AiRoleId, AiRoleSource>> = {
     role: "synthesis",
     provider: (env) => env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(env, "PROVIDER"),
     ownNames: (s) => [`DFIR_AI_SYNTH_${s}`],
+  },
+  // #1734: the model synthesis switches to when a safety filter stops it. A blank provider runs on
+  // the synthesis provider, the same fallback the running role uses (synthesisFallbackConfig).
+  "synthesis-fallback": {
+    role: "synthesis-fallback",
+    provider: (env) =>
+      env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim() ||
+      (env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(env, "PROVIDER")),
+    ownNames: (s) => [`DFIR_AI_SYNTH_FALLBACK_${s}`],
   },
   velociraptor: {
     role: "velociraptor",
@@ -148,10 +158,10 @@ export function resolveAiRoleSetting(
   role: AiRoleId,
   setting: ProviderEnvSetting,
 ): string | undefined {
-  return resolveRoleSetting(
-    env,
-    AI_ROLE_SOURCES[role].provider(env),
-    setting,
-    roleOwnSetting(env, role, setting),
-  );
+  const own = roleOwnSetting(env, role, setting);
+  // #1734: a fallback on the synthesis provider (its own provider blank) sends what synthesis
+  // sends, so a blank fallback key never swaps the synthesis key for another value.
+  if (role === "synthesis-fallback" && !own?.trim() && !env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim())
+    return resolveAiRoleSetting(env, "synthesis", setting);
+  return resolveRoleSetting(env, AI_ROLE_SOURCES[role].provider(env), setting, own);
 }
