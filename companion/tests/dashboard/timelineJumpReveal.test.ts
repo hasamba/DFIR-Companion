@@ -33,7 +33,11 @@ function setup(withReveal: boolean) {
       _srcMenuSig: "",
       _originMenuSig: "",
       _hostMenuSig: "",
-      DfirState: { lastFt: () => [{ id: "e1", severity: "High" }], lastState: () => null, activeView: () => null },
+      DfirState: {
+        lastFt: () => [{ id: "e1", severity: "High" }],
+        lastState: () => null,
+        activeView: () => null,
+      },
       DfirFacets: { sources: facet, origins: facet, hosts: facet },
       DfirTimelineView: { clearFilters: noop, corrobTimeline: () => 0 },
       sortTimelineEvents: (list: unknown[]) => list,
