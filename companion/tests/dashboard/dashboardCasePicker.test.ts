@@ -94,12 +94,21 @@ describe("dashboard-case-picker.js", () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     expect(h.options.map((o) => o.value)).toEqual(["Acme ransomware", "Payroll BEC", "test9"]);
-    expect(h.options[1].label).toBe("\u{1F512} Payroll BEC");
-    expect(h.options[0].label).toBeUndefined(); // nothing to annotate — the name stands alone
+    // the label is the line under the name in the dropdown: the case id, after any markers
+    expect(h.options[0].label).toBe("INC-2026-001");
+    expect(h.options[1].label).toBe("\u{1F512} INC-2026-002");
+    expect(h.options[2].label).toBeUndefined(); // name == id — nothing to add under it
     h.archived.checked = true;
     await h.mod.loadCaseList();
     expect(h.options.map((o) => o.value)).toContain("Old audit");
-    expect(h.options.find((o) => o.value === "Old audit")?.label).toBe("[Archived] Old audit");
+    expect(h.options.find((o) => o.value === "Old audit")?.label).toBe("[Archived] INC-2026-003");
+  });
+
+  it("a case with no name keeps its markers on the id it already shows", async () => {
+    const h = harness([{ caseId: "raw-1", hasPassword: true }]);
+    await h.mod.loadCaseList();
+    expect(h.options[0].value).toBe("raw-1");
+    expect(h.options[0].label).toBe("\u{1F512} raw-1");
   });
 
   it("a pick puts the ID in #caseId and replays input+change for its listeners", async () => {

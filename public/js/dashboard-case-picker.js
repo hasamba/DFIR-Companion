@@ -56,11 +56,13 @@
           if (c.status === "archived" && !showArchived) continue;
           const o = document.createElement("option");
           o.value = text;
-          // a lock prefix marks password-protected cases, an [Archived] prefix marks cases moved
-          // to _archived/ (both can apply at once); shown beside the name, never typed into it
-          const lockPrefix = c.hasPassword ? "\u{1F512} " : "";
-          if (c.status === "archived") o.label = `[Archived] ${lockPrefix}${text}`;
-          else if (c.hasPassword) o.label = lockPrefix + text;
+          // The label is the second line under the name in the dropdown: the case id, so two
+          // similar names are told apart. A lock prefix marks password-protected cases, an
+          // [Archived] prefix marks cases moved to _archived/ (both can apply at once). Shown
+          // beside the name, never typed into it. A case whose name IS its id adds no id line.
+          const prefix =
+            (c.status === "archived" ? "[Archived] " : "") + (c.hasPassword ? "\u{1F512} " : "");
+          if (text !== c.caseId || prefix) o.label = prefix + c.caseId;
           dl.appendChild(o);
         }
         byId = nextById;
