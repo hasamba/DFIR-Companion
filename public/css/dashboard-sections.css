@@ -601,7 +601,34 @@
   .exec-speculated .exec-status{color:var(--badge-warning-text)}
   .exec-unknown .exec-status{color:var(--text-muted)}
   .exec-gap{grid-column:2;font-size:12.5px;color:var(--text-muted)}
+  /* NARRATIVE TIMELINE rail (narrativeHtml, js/dashboard-fragments.js): time column, a spine with one
+     dot per paragraph, the paragraph. The rail is one column, so the multi-column .prose rule is off. */
+  #narrativeView:has(.nt-rail){column-count:1;max-width:none}
+  .nt-rail{list-style:none;margin:0;padding:0;display:grid}
+  .nt-rail li{display:grid;grid-template-columns:120px 22px minmax(0,1fr);column-gap:10px}
+  .nt-when{display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding-top:3px;text-align:right;font-family:var(--font-code);font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+  .nt-when b{font-weight:600;font-size:13.5px;color:var(--text-bright)}
+  .nt-day,.nt-sub{font-size:11.5px}
+  .nt-jump{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;border-bottom:1px dashed currentColor}
+  .nt-jump b{color:inherit}
+  .nt-jump:hover{border-bottom-style:solid}
+  .nt-jump:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .nt-spine{position:relative}
+  .nt-spine::before{content:"";position:absolute;left:10px;top:0;bottom:0;width:2px;background:var(--border-subtle)}
+  .nt-rail li:first-child .nt-spine::before{top:10px}
+  .nt-rail li:last-child .nt-spine::before{bottom:auto;height:10px}
+  .nt-spine::after{content:"";position:absolute;left:5px;top:6px;width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:var(--bg-secondary);border:2px solid var(--text-muted)}
+  .nt-sev-critical::after{background:var(--sev-critical);border-color:var(--sev-critical)}
+  .nt-sev-high::after{border-color:var(--sev-high)}
+  .nt-sev-medium::after{border-color:var(--sev-medium)}
+  .nt-sev-low::after{border-color:var(--sev-low)}
+  .nt-body{max-width:82ch;padding-bottom:18px;overflow-wrap:break-word}
+  .nt-rail li:last-child .nt-body{padding-bottom:0}
+  .nt-lede{font-weight:600;color:var(--text-bright)}
   @media (max-width:900px){
+    .nt-rail li{grid-template-columns:22px minmax(0,1fr)}
+    .nt-when{grid-column:2;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:8px;text-align:left;padding-top:0}
+    .nt-spine{grid-column:1;grid-row:1 / span 2}
     .exec-cols{grid-template-columns:1fr}
     .exec-assess{border-left:0;padding-left:0;border-top:1px solid var(--border-subtle);padding-top:14px}
   }

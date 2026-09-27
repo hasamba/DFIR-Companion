@@ -238,8 +238,9 @@ function ntfTargetSummary(ch) {
 // the dashboard already holds, so the layout needs no AI call and applies to existing cases at once.
 // The facts come from the High/Critical events — the attack, not the whole collection — and fall
 // back to every event only when nothing is graded that high.
-const EXEC_KEY_SEVERITIES = new Set(["Critical", "High"]);
-const EXEC_MAX_NAMES = 2;
+//
+// No module-level constants: a top-level `const` in a classic script joins the page's global
+// lexical scope (see proseSentences in js/dashboard-text.js), so the limits live in the functions.
 
 function execSummaryHtml(state) {
   const s = state || {};
@@ -258,9 +259,10 @@ function execSummaryHtml(state) {
 function execTopNames(values) {
   const counts = new Map();
   for (const v of values) if (v) counts.set(v, (counts.get(v) || 0) + 1);
+  const maxNames = 2;
   const ranked = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
-  const more = ranked.length - EXEC_MAX_NAMES;
-  return ranked.length ? ranked.slice(0, EXEC_MAX_NAMES).join(", ") + (more > 0 ? ` +${more}` : "") : "";
+  const more = ranked.length - maxNames;
+  return ranked.length ? ranked.slice(0, maxNames).join(", ") + (more > 0 ? ` +${more}` : "") : "";
 }
 
 // "2026-09-24 08:49:00 → 09:04:47 UTC" plus its span. The date shows once when both ends share it.
@@ -288,7 +290,7 @@ function execWindow(events) {
 
 function execFactsHtml(s) {
   const all = Array.isArray(s.forensicTimeline) ? s.forensicTimeline : [];
-  const key = all.filter((e) => e && EXEC_KEY_SEVERITIES.has(e.severity));
+  const key = all.filter((e) => e && (e.severity === "Critical" || e.severity === "High"));
   const events = key.length ? key : all.filter(Boolean);
   const chip = (k, v, cls) =>
     `<span class="exec-chip${cls ? " " + cls : ""}"><span class="exec-k">${esc(k)}</span><span class="exec-v">${esc(v)}</span></span>`;
@@ -331,6 +333,114 @@ function execLedgerHtml(uncertainties) {
   );
 }
 
+// The Narrative Timeline as a time rail. The model writes one moment per paragraph and opens most of
+// them with a time ("At 08:49, …", "From 08:55 onward, …"); the rail moves that time into its own
+// column, makes the first sentence the lead, and links each time to the most severe event of that
+// minute, so a claim in the story is one click from its evidence. Times are read as UTC, the zone
+// the forensic timeline and the report use. Text the reader cannot place — fewer than two
+// paragraphs opening with a time — keeps the plain prose layout, so nothing is lost or reordered.
+function narrativeHtml(text, events) {
+  const paras = proseParagraphs(text);
+  const leads = paras.map(narrativeLead);
+  if (leads.filter(Boolean).length < 2) return proseHtml(text);
+  const timed = [];
+  for (const e of Array.isArray(events) ? events : []) {
+    const ms = Date.parse((e && e.timestamp) || "");
+    if (Number.isFinite(ms)) timed.push({ ms, e });
+  }
+  timed.sort((a, b) => a.ms - b.ms);
+  const caseDates = [...new Set(timed.map((t) => new Date(t.ms).toISOString().slice(0, 10)))];
+  let day = null; // the day the story last named; later bare times belong to it
+  const items = paras.map((para, i) => {
+    const lead = leads[i];
+    if (lead && lead.date) day = lead.date;
+    const dates = day ? [day, ...caseDates.filter((d) => d > day)] : caseDates;
+    const hits = (lead ? lead.times : []).map((t) => ({ t, hit: narrativeEventAt(timed, dates, t) }));
+    const sev = narrativeTopSeverity(hits.map((h) => h.hit && h.hit.severity));
+    const link = (h, bold) => {
+      const label = bold ? `<b>${esc(h.t)}</b>` : esc(h.t);
+      return h.hit
+        ? `<button type="button" class="nt-jump" data-act="narrativeJumpToEvent" data-id="${escAttr(h.hit.id)}" title="Open the Forensic Timeline at ${escAttr(h.hit.at)} UTC">${label}</button>`
+        : `<span class="nt-time">${label}</span>`;
+    };
+    let when = "";
+    if (lead && lead.dateLabel) when += hits.length ? `<span class="nt-day">${esc(lead.dateLabel)}</span>` : `<b>${esc(lead.dateLabel)}</b>`;
+    if (hits.length) when += link(hits[0], true) + hits.slice(1).map((h) => link(h, false)).join("");
+    if (lead && lead.sub) when += `<span class="nt-sub">${esc(lead.sub)}</span>`;
+    const [first, ...more] = proseSentences(lead ? lead.rest : para);
+    const body = `<span class="nt-lede">${esc(first || "")}</span>${more.length ? " " + esc(more.join(" ")) : ""}`;
+    return `<li><div class="nt-when">${when}</div><div class="nt-spine${sev ? " nt-sev-" + sev : ""}"></div><div class="nt-body">${body}</div></li>`;
+  });
+  return `<ol class="nt-rail">${items.join("")}</ol>`;
+}
+
+// A paragraph's opening time phrase, split from the rest — or null when it opens with none. Only
+// the OPENING is read: a time in the middle of a sentence is part of the claim, not its place on
+// the rail. `sub` is the qualifier worth keeping beside the time ("onward", "shortly after").
+function narrativeLead(para) {
+  const text = String(para || "");
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const T = "\\d{1,2}:\\d{2}(?::\\d{2})?";
+  let pos = 0;
+  let date = null;
+  const dm = /^On\s+(?:(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})|([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})|(\d{4})-(\d{2})-(\d{2}))(?:,\s*|\s+(?=at\s)|\s+)/.exec(text);
+  if (dm) {
+    const mon = months.indexOf(String(dm[2] || dm[4] || "").slice(0, 3).toLowerCase());
+    const y = dm[3] || dm[6] || dm[7];
+    const mo = dm[8] || (mon >= 0 ? String(mon + 1).padStart(2, "0") : "");
+    const d = String(dm[1] || dm[5] || dm[9] || "").padStart(2, "0");
+    if (mo) {
+      date = `${y}-${mo}-${d}`;
+      pos = dm[0].length;
+    }
+  }
+  const tm = new RegExp(
+    `^(At|By|Around|From|Between|After|Before|Until|Shortly after|Just after|Just before|Soon after|Starting at|Beginning at)\\s+(${T})(?:\\s*(?:UTC|Z)\\b)?((?:\\s*,?\\s*(?:and|to|until|through|-|–)\\s+(?:again\\s+)?(?:at\\s+)?${T}(?:\\s*(?:UTC|Z)\\b)?)*)(\\s+onwards?)?(?:,\\s*|\\s+)`,
+    "i",
+  ).exec(text.slice(pos));
+  const times = [];
+  let sub = "";
+  if (tm) {
+    times.push(tm[2], ...(tm[3].match(new RegExp(T, "g")) || []));
+    const kw = tm[1].toLowerCase();
+    const keep = !["at", "from", "starting at", "beginning at"].includes(kw);
+    const tail = tm[4] || (kw === "from" ? " onward" : "");
+    sub = [keep ? kw : "", tail.trim()].filter(Boolean).join(" · ");
+    pos += tm[0].length;
+  }
+  if (!date && !times.length) return null;
+  const rest = text.slice(pos);
+  const dateLabel = date ? `${Number(date.slice(8))} ${months[Number(date.slice(5, 7)) - 1].replace(/^./, (c) => c.toUpperCase())} ${date.slice(0, 4)}` : "";
+  return { date, dateLabel, times, sub, rest: rest.charAt(0).toUpperCase() + rest.slice(1) };
+}
+
+// The most severe event in that minute (or that second, when the text gives seconds) on the first
+// of `dates` that has one. `timed` is sorted by time, so a tie goes to the earliest event.
+function narrativeEventAt(timed, dates, hhmm) {
+  const rank = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+  const [h, m, sec] = hhmm.split(":");
+  for (const d of dates) {
+    const start = Date.parse(`${d}T${h.padStart(2, "0")}:${m}:${sec || "00"}Z`);
+    if (!Number.isFinite(start)) continue;
+    const end = start + (sec ? 1000 : 60000);
+    let best = null;
+    for (const t of timed) {
+      if (t.ms < start || t.ms >= end) continue;
+      if (!best || (rank[t.e.severity] ?? -1) > (rank[best.e.severity] ?? -1)) best = t;
+    }
+    if (best) {
+      return { id: String(best.e.id), severity: best.e.severity, at: new Date(best.ms).toISOString().slice(0, 19).replace("T", " ") };
+    }
+  }
+  return null;
+}
+
+function narrativeTopSeverity(severities) {
+  const order = ["Critical", "High", "Medium", "Low"];
+  const top = order.find((s) => severities.includes(s));
+  return top ? top.toLowerCase() : "";
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
@@ -341,6 +451,10 @@ window.DfirFragments = {
   execWindow,
   execFactsHtml,
   execLedgerHtml,
+  narrativeHtml,
+  narrativeLead,
+  narrativeEventAt,
+  narrativeTopSeverity,
   mentionHtml,
   ticketPushChips,
   renderVqlRows,

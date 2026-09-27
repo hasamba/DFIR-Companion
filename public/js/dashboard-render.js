@@ -74,7 +74,9 @@
     const narrative = state.narrativeTimeline || "—";
     const narrativeView = document.getElementById("narrativeView");
     narrativeView.dataset.raw = narrative;
-    narrativeView.innerHTML = proseHtml(narrative);
+    // A time rail with links into the timeline when the story opens its paragraphs with times
+    // (narrativeHtml, js/dashboard-fragments.js); plain prose otherwise.
+    narrativeView.innerHTML = narrativeHtml(narrative, state.forensicTimeline);
 
     const PRIO = {
       critical: "#ff5c5c",

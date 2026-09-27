@@ -158,6 +158,99 @@ describe("execSummaryHtml", () => {
   });
 });
 
+// The Narrative Timeline: the model writes one moment per paragraph and opens most of them with a
+// time ("At 08:49, …"). The rail moves that time into its own column and links it to the first
+// event of that minute, so the story becomes an index into the evidence. No AI change: it reads the
+// text as written, and text it cannot read keeps its old prose layout.
+describe("narrativeHtml", () => {
+  const ev = (id: string, timestamp: string, severity = "High") => ({ id, timestamp, severity });
+  const events = [
+    ev("e1", "2026-09-24T08:49:12Z", "Medium"),
+    ev("e2", "2026-09-24T08:49:40Z", "Critical"),
+    ev("e3", "2026-09-24T08:58:00Z"),
+    ev("e4", "2026-09-24T09:04:15Z"),
+    // Same time of day on another date: must not be picked once the text names the day.
+    ev("other-day", "2026-09-23T08:49:00Z", "Critical"),
+  ];
+  const story = [
+    "On 24 September 2026, a workstation went through a scripted attack. The activity was real.",
+    "At 08:49 and again at 08:58, the script turned off Defender. It copied tools into C:\\e.",
+    "From 08:55 onward, it kept trying weak passwords.",
+    "At 09:04:15 the attacker started stealing credentials.",
+  ].join("\n\n");
+
+  it("keeps plain prose when fewer than two paragraphs open with a time", () => {
+    const text = "At 08:49, one thing happened.\n\nThen another.";
+    expect(f.narrativeHtml(text, events)).toBe(f.proseHtml(text));
+    expect(f.narrativeHtml("—", events)).toBe("<p>—</p>");
+  });
+
+  it("moves each opening time into the rail and restarts the sentence with a capital", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain('class="nt-rail"');
+    expect(html).toContain("24 Sep 2026");
+    expect(html).not.toContain("At 08:49");
+    expect(html).not.toContain("From 08:55");
+    expect(html).toContain('<span class="nt-lede">The script turned off Defender.</span> It copied tools');
+    expect(html).toContain('<span class="nt-lede">A workstation went through a scripted attack.</span>');
+    expect(html).toContain("onward");
+  });
+
+  it("links a time to the most severe event of that minute on the day the text names", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toMatch(/data-act="narrativeJumpToEvent" data-id="e2"[^>]*>(?:<b>)?08:49</);
+    expect(html).toMatch(/data-id="e3"[^>]*>(?:<b>)?08:58</);
+    expect(html).not.toContain("other-day");
+  });
+
+  it("matches a time with seconds to that second", () => {
+    expect(f.narrativeHtml(story, events)).toMatch(/data-id="e4"[^>]*>(?:<b>)?09:04:15</);
+  });
+
+  it("leaves a time with no event as plain text", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).not.toMatch(/data-act="narrativeJumpToEvent"[^>]*>(?:<b>)?08:55</);
+    expect(html).toContain("08:55");
+  });
+
+  it("colors the dot with the most severe event at that time", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain("nt-spine nt-sev-critical");
+  });
+
+  it("finds the day from the case's events when the text never names one", () => {
+    const text = "At 08:58, one.\n\nAt 09:04:15, two.";
+    const html = f.narrativeHtml(text, events);
+    expect(html).toMatch(/data-id="e3"/);
+    expect(html).toMatch(/data-id="e4"/);
+  });
+
+  it("escapes the text and the event ids", () => {
+    const text = `At 08:49, ${XSS}.\n\nAt 08:58, two.`;
+    const html = f.narrativeHtml(text, [ev(ATTR_BREAK, "2026-09-24T08:49:00Z")]);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('" onmouseover');
+  });
+});
+
+describe("narrativeLead", () => {
+  it("reads the common opening shapes", () => {
+    expect(f.narrativeLead("At 08:49, x")).toMatchObject({ times: ["08:49"], rest: "X" });
+    expect(f.narrativeLead("At 08:49 and again at 08:58, x")).toMatchObject({ times: ["08:49", "08:58"] });
+    expect(f.narrativeLead("Shortly after 09:04 the host rebooted")).toMatchObject({
+      times: ["09:04"],
+      rest: "The host rebooted",
+    });
+    expect(f.narrativeLead("On 2026-09-24 at 08:49, x")).toMatchObject({ date: "2026-09-24", times: ["08:49"] });
+    expect(f.narrativeLead("On September 24, 2026, x")).toMatchObject({ date: "2026-09-24", times: [] });
+  });
+
+  it("does not read a time that is not at the start", () => {
+    expect(f.narrativeLead("The script ran at 08:49.")).toBeNull();
+    expect(f.narrativeLead("At home, the user slept.")).toBeNull();
+  });
+});
+
 describe("mentionHtml", () => {
   it("chips a handle", () => {
     expect(f.mentionHtml("ping @bob")).toBe('ping <span class="mention-chip">@bob</span>');

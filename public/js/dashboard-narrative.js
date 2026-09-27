@@ -27,7 +27,8 @@
   function setNarrativeView(text) {
     const view = document.getElementById("narrativeView");
     view.dataset.raw = text;
-    view.innerHTML = proseHtml(text);
+    const state = DfirState.lastState();
+    view.innerHTML = narrativeHtml(text, state && state.forensicTimeline);
   }
 
   function genNarrative() {

@@ -151,6 +151,8 @@
     // Playbook Match (#230): a matched step jumps to the event that evidences it; an unobserved
     // step sends the analyst to Evidence Gaps, which carries the collection directive for it.
     playbookJumpToEvent: (el) => jumpToEvent(el.dataset.id),
+    // Narrative Timeline rail: a time in the story opens the event it was read from.
+    narrativeJumpToEvent: (el) => jumpToEvent(el.dataset.id),
     playbookJumpToGaps: (el) => {
       const g = document.getElementById("sec-evidence-gaps");
       if (g) {
