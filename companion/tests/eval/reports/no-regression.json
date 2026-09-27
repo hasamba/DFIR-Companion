@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "sourceHash": "8924706e91dd64367624edc6525a5a5dfc85a4064896ed29457b7fdfddd18221",
+  "runs": 3,
+  "status": "passed",
+  "reportPath": "eval-report.json",
+  "reportSha256": "674b8e1ea91fa63a0bacc538b26260d9c24bd0551327c24c9d7383357f7b0c2c",
+  "baselineKey": "claude-code/claude-sonnet-5/e0e41325d3b3999f488112a2cb2ee4c6a7a2d9e1537759b6395a86fc359054a2/r3",
+  "evaluatedAt": "2026-09-27T13:13:45.630Z"
+}
