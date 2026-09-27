@@ -53,7 +53,7 @@ type LiveMsg = { type: string; state?: unknown; start?: unknown; end?: unknown }
 type PanelRunner = (
   entries: Array<[string, () => void]>,
   onProgress: unknown,
-  options: { concurrency?: number },
+  options: { concurrency?: number; signal?: AbortSignal },
 ) => unknown;
 
 // How long a reopened socket must stay up before its catch-up runs (#1709).
@@ -102,6 +102,7 @@ function harness(opts: { runner?: PanelRunner } = {}) {
     clearTimeout: (id: unknown) => globalThis.clearTimeout(id as number),
     setInterval: (fn: () => void, ms: number) => globalThis.setInterval(fn, ms),
     clearInterval: (id: unknown) => globalThis.clearInterval(id as number),
+    AbortController,
     ...(opts.runner ? { DfirCaseLoadProgress: { runPanelLoaders: opts.runner } } : {}),
   });
   const onMessage = (msg: LiveMsg, ctx?: CatchUpCtx) => {
@@ -598,6 +599,42 @@ describe("the reconnect catch-up is one bounded, deduplicated run (#1709)", () =
     expect(h.jobsLoaded).toEqual([1]);
     expect(stateFetches(h)).toBe(1);
     for (const t of MISSED_TYPES) expect(h.messages.filter((m) => m.type === t), t).toHaveLength(1);
+  });
+
+  it("abandons a catch-up already running on a drop, a case switch and a cancel", async () => {
+    const signals: AbortSignal[] = [];
+    const runner: PanelRunner = (_entries, _p, options) => {
+      signals.push(options.signal!);
+      return {}; // requests stay queued: nothing runs
+    };
+    const started = async (h: ReturnType<typeof harness>) => {
+      await firstRetry(h);
+      FakeSocket.made[1].open();
+      await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+      expect(signals.at(-1)?.aborted).toBe(false);
+    };
+
+    const drop = harness({ runner });
+    await started(drop);
+    FakeSocket.made[1].drop();
+    expect(signals.at(-1)?.aborted, "drop").toBe(true);
+    // The next socket that stays up owes, and runs, a fresh catch-up.
+    await vi.advanceTimersByTimeAsync(2000);
+    FakeSocket.made[2].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+    expect(signals).toHaveLength(2);
+    expect(signals[1].aborted).toBe(false);
+
+    const sw = harness({ runner });
+    await started(sw);
+    sw.api.activeCaseId = "INC-2";
+    sw.api.openCaseSocket("INC-2", sw.onMessage);
+    expect(signals.at(-1)?.aborted, "case switch").toBe(true);
+
+    const cancel = harness({ runner });
+    await started(cancel);
+    cancel.api.closeCaseSocket();
+    expect(signals.at(-1)?.aborted, "cancel").toBe(true);
   });
 
   it("runs each shared loader once per catch-up with the real handler, and again on a real push", async () => {

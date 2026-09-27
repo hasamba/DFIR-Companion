@@ -53,6 +53,8 @@
   let stableTimer = null;
   let connectTimer = null;
   let catchUpTimer = null;
+  // Aborts the running catch-up's requests that are still queued for a lane.
+  let catchUpAbort = null;
   // When the first reopened socket that owed a catch-up opened; 0 when none is owed.
   let catchUpOwedSince = 0;
   let hiddenAt = 0;
@@ -84,6 +86,12 @@
     clearTimeout(connectTimer);
     clearTimeout(catchUpTimer);
     reconnectTimer = stableTimer = connectTimer = catchUpTimer = null;
+    // A drop, a wake, a case switch and a cancel all come through here. A catch-up already running
+    // is abandoned too: its queued requests would otherwise reach the wire after a case switch and
+    // paint the old case into panels that do not check which case is on screen, and the next
+    // reconnect's catch-up would run beside it, two lane caps at once. The next open owes a fresh one.
+    if (catchUpAbort) catchUpAbort.abort();
+    catchUpAbort = null;
   }
 
   function detach(sock) {
@@ -184,13 +192,18 @@
         },
       ]),
     ];
-    // No abort signal: an aborted panel request hands its loader a promise that never settles, and
-    // the loaders already drop an answer for a case no longer on screen.
+    // The signal is the case load's own contract: an abandoned request hands its loader a promise
+    // that never settles, so it draws nothing. Every loader here already runs under it on a case
+    // switch, and none keeps an in-flight flag that a never-settling promise would leave stuck.
     const runner =
       window.DfirCaseLoadProgress && window.DfirCaseLoadProgress.runPanelLoaders;
-    if (typeof runner === "function")
-      runner(entries, null, { concurrency: CATCH_UP_CONCURRENCY });
-    else
+    if (typeof runner === "function" && typeof AbortController === "function") {
+      catchUpAbort = new AbortController();
+      runner(entries, null, {
+        concurrency: CATCH_UP_CONCURRENCY,
+        signal: catchUpAbort.signal,
+      });
+    } else
       for (const [, run] of entries) {
         if (!stillCurrent(sock, caseId)) return;
         try {
