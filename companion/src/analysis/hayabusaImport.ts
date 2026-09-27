@@ -311,7 +311,10 @@ function jsonRecord(rec: Row): HayabusaRecord {
   return { rec, details };
 }
 
-// A Velociraptor artifact name that carries Hayabusa verdict rows (Windows.Hayabusa.Rules and variants).
+// A Velociraptor artifact name: dotted segments, as in Windows.Hayabusa.Rules. A plain key such as
+// `data` or `HayabusaTags` is never an artifact name.
+const ARTIFACT_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+// An artifact that carries Hayabusa verdict rows (Windows.Hayabusa.Rules and variants).
 const HAYABUSA_ARTIFACT = /hayabusa/i;
 
 // Velociraptor exports a flow as an artifact map, {"Windows.Hayabusa.Rules":[row, …]} (#1726).
@@ -328,7 +331,11 @@ function artifactMapRows(text: string): Row[] | null {
     return null; // NDJSON or concatenated objects — not a single map
   }
   if (!isObject(root)) return null;
-  const keys = Object.keys(root).filter((k) => HAYABUSA_ARTIFACT.test(k) && Array.isArray(root[k]));
+  // An artifact map only: every key an artifact name holding an array. Anything else (a `{data:[…]}`
+  // wrapper, a native record with an array field) stays on the generic reader.
+  const all = Object.keys(root);
+  if (all.length === 0 || !all.every((k) => ARTIFACT_NAME.test(k) && Array.isArray(root[k]))) return null;
+  const keys = all.filter((k) => HAYABUSA_ARTIFACT.test(k));
   if (keys.length === 0) return null;
   return keys.flatMap((k) => (root[k] as unknown[]).filter(isObject));
 }

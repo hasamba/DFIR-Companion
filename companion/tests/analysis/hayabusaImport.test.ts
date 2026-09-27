@@ -441,8 +441,13 @@ describe("parseHayabusaTimeline — Velociraptor artifact-map export (#1726)", (
     expect(r.events).toHaveLength(2);
   });
 
-  it("leaves a generic wrapper object on the old path", () => {
-    const text = JSON.stringify({ data: [jsonProc()] });
-    expect(() => parseHayabusaTimeline(text)).not.toThrow();
+  it("reads a generic wrapper that also holds a Hayabusa-named array as before", () => {
+    const text = JSON.stringify({ data: [jsonProc()], hayabusa: [] });
+    expect(parseHayabusaTimeline(text, { aggregate: false }).events).toHaveLength(1);
+  });
+
+  it("reads a single native record with a Hayabusa-named array field as one event", () => {
+    const text = JSON.stringify({ ...jsonProc(), HayabusaTags: ["x"] });
+    expect(parseHayabusaTimeline(text, { aggregate: false }).events).toHaveLength(1);
   });
 });
