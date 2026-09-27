@@ -88,7 +88,18 @@ function jobRowHtml(view) {
     + cancel + resume + model + bar
     + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span>`
     // Always the LAST line of the row, below the detail, so every row reads the same way.
-    + `<span class="job-when"${view.when ? "" : ' data-safe-style="display:none"'}>${esc(view.when || "")}</span></div>`;
+    + `<span class="job-when"${view.when ? "" : ' data-safe-style="display:none"'}>${esc(view.when || "")}</span>`
+    + jobFilesHtml(j.files) + `</div>`;
+}
+
+// Every file a drop sweep covers, folded. The label counts them and the detail names only the last
+// one processed, so without this list "drop import (24 files)" showed one name. The list is fixed
+// at registration, so the in-place patch never needs to touch it.
+function jobFilesHtml(files) {
+  if (!Array.isArray(files) || !files.length) return "";
+  const n = files.length;
+  return `<details class="job-files"><summary>${n} file${n === 1 ? "" : "s"}</summary><ol>`
+    + files.map((name) => `<li>${esc(name)}</li>`).join("") + `</ol></details>`;
 }
 
 function qaSpan(type, val, ctx) {
@@ -475,6 +486,7 @@ window.DfirFragments = {
   ticketPushChips,
   renderVqlRows,
   askStatusBadge,
+  jobFilesHtml,
   jobRowHtml,
   qaSpan,
   citeFindings,

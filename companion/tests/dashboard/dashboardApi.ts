@@ -230,7 +230,14 @@ export interface JobProgressLike {
 }
 
 export interface JobView {
-  job: JobProgressLike & { id?: string; kind: string; label?: string; model?: string; modelLabel?: string };
+  job: JobProgressLike & {
+    id?: string;
+    kind: string;
+    label?: string;
+    model?: string;
+    modelLabel?: string;
+    files?: string[];
+  };
   cancel?: boolean;
   resume?: boolean;
   detail: string;

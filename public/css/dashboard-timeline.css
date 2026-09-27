@@ -315,7 +315,7 @@
 .dp-partial .dp-partial-hd { color: #ff8f8f; font-weight: bold; }
 /* Background jobs widget (#225) — badge + popover in the toolbar. */
 #jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #6aa9ff22; border: 1px solid #6aa9ff55; }
-.jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto;
+.jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto; overflow-x: hidden;
   background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px #0009; }
 .jobs-menu h3 { margin: 2px 4px 8px; font-size: 12px; color: var(--text-muted); font-weight: normal; text-transform: uppercase; letter-spacing: .04em; }
 .job-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; background: var(--bg-primary); border: 1px solid var(--border-subtle);
@@ -349,7 +349,12 @@
    job reports progress. Width is the one thing the patch path writes; everything else is here. */
 .job-bar { flex: 0 0 100%; display: block; height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
 .job-bar-fill { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
-.job-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; }
+.job-detail { flex-basis: 100%; min-width: 0; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+/* A drop sweep's file list. Names have no spaces, so they break anywhere rather than widen the popover. */
+.job-files { flex-basis: 100%; min-width: 0; font-size: 11px; color: var(--text-muted); }
+.job-files summary { cursor: pointer; color: var(--accent); }
+.job-files ol { margin: 4px 0 0; padding-left: 22px; max-height: 180px; overflow-y: auto; }
+.job-files li { overflow-wrap: anywhere; font-family: var(--font-code); font-size: 10.5px; }
 .job-when { flex-basis: 100%; color: var(--text-faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .jobs-last-synth { margin: -4px 4px 8px; font-size: 11px; color: var(--text-muted); }
 .jobs-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }

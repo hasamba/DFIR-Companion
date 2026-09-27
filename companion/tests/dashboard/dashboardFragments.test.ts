@@ -373,6 +373,19 @@ describe("jobRowHtml", () => {
     expect(html).not.toContain("Resume");
   });
 
+  // A drop sweep covers many files; the row lists them all behind a fold, escaped.
+  it("lists a job's files behind a fold, escaped", () => {
+    const html = f.jobRowHtml({ ...view, job: { ...view.job, files: ["a.csv", XSS] } });
+    expect(html).toContain('<details class="job-files">');
+    expect(html).toContain("2 files");
+    expect(html).toContain("<li>a.csv</li>");
+    expect(html).not.toContain("<img");
+  });
+
+  it("draws no file list for a job without files", () => {
+    expect(f.jobRowHtml(view)).not.toContain("job-files");
+  });
+
   it("hides the detail span when there is no detail", () => {
     expect(f.jobRowHtml({ ...view, detail: "" })).toContain('data-safe-style="display:none"');
   });

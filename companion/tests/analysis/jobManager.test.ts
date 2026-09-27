@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { JobManager } from "../../src/analysis/jobManager.js";
+import { JOB_FILES_MAX } from "../../src/analysis/jobRegistry.js";
 import { createImportJobTracking } from "../../src/routes/importJobTracking.js";
 
 function mkClock(): () => string {
@@ -16,6 +17,15 @@ describe("JobManager", () => {
     expect(signal).toBeUndefined(); // not cancellable
     expect(m.get(jobId)!.status).toBe("running");
     expect(onJob).toHaveBeenCalledWith("c1");
+  });
+
+  it("keeps the files a job covers, capped, and a job without files carries none", () => {
+    const m = new JobManager({ now: mkClock() });
+    const many = Array.from({ length: JOB_FILES_MAX + 5 }, (_, i) => `f${i}.csv`);
+    const { jobId } = m.register({ caseId: "c1", kind: "import", files: many });
+    expect(m.get(jobId)!.files).toEqual(many.slice(0, JOB_FILES_MAX));
+    const plain = m.register({ caseId: "c1", kind: "import" });
+    expect(m.get(plain.jobId)!.files).toBeUndefined();
   });
 
   it("a cancellable job hands out an AbortSignal", () => {
