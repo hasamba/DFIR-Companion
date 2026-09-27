@@ -24,9 +24,11 @@
 //   2. CLUSTERS  — consecutive markers no more than CLUSTER_GAP_MS apart, spanning no more than
 //                  MAX_MARKER_SPAN_MS in total. A cluster that runs longer than that is not a build
 //                  and is discarded rather than grown, so growth cannot walk across a busy host.
-//   3. CORROBORATION — a cluster becomes a window only when an observed rename bound falls inside
-//                  it, or it holds at least MIN_MARKERS rows of at least two different marker kinds.
-//                  One stray `\Windows\Installer\` row never opens a window.
+//   3. CORROBORATION — a cluster becomes a window only when it holds at least one PROVISIONER marker
+//                  (not just servicing), AND either an observed rename bound falls inside it or it
+//                  holds at least MIN_MARKERS rows naming at least two different provisioners.
+//                  Windows Update and servicing run on every live host, so they add to a window but
+//                  never open one (#1695). One stray `\Windows\Installer\` row never opens a window.
 //   4. VETO      — a window holding a hard attacker signal (NTDS.dit, an LSASS dump, recovery
 //                  inhibition, coercion tooling, a ransomware signal, an analyst-promoted row) is
 //                  dropped whole, the same way gapHostHistory.ts leaves a host whole when its
@@ -44,11 +46,20 @@ import { hostBuildMarkers, type HostHistoryMarker } from "./gapHostHistory.js";
 import { assetKey } from "./gapEdgeClass.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
-import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
+import { BUILD_TIME_MARKER } from "./buildTimeMerge.js";
+import {
+  SEVERITY_RANK,
+  worstSeverity,
+  type ForensicEvent,
+  type InvestigationState,
+  type Severity,
+} from "./stateTypes.js";
 
-/** The derived note this module writes; registered in derivedNote.ts DERIVED_NOTE_NAMES. */
-export const BUILD_TIME_MARKER = "[build-time:";
+// The derived note this module writes lives in buildTimeMerge.ts (analysis/timeline), where
+// correlation reads it too; re-exported so every existing reader keeps its import.
+export { BUILD_TIME_MARKER };
 const BUILD_TIME_NOTE_RE = /\s*\[build-time:[^\]]*\]/gu;
+const HAS_BUILD_TIME_NOTE = /\[build-time:[^\]]*\]/u;
 
 /** The severity a row inside a provisioning window is capped at. Never a raise, never below Low. */
 export const BUILD_TIME_SEVERITY_CAP: Severity = "Low";
@@ -60,6 +71,11 @@ const CLUSTER_GAP_MS = 30 * MINUTE;
 const WINDOW_MARGIN_MS = 30 * MINUTE;
 // A "build" that runs longer than this is not a build. The cluster is discarded, never trimmed.
 const MAX_MARKER_SPAN_MS = 6 * 60 * MINUTE;
+// How far from a row its window's evidence can sit: a window's markers lie within one span of each
+// other plus the margin, and one more span on either side is what it takes to see that a longer burst
+// is NOT a build (a cluster over MAX_MARKER_SPAN_MS is discarded). A caller that reads only part of the
+// record reads this far around the rows it asks about (#1700).
+export const BUILD_WINDOW_REACH_MS = 2 * MAX_MARKER_SPAN_MS + WINDOW_MARGIN_MS;
 // Markers needed to corroborate a cluster that contains no rename bound.
 const MIN_MARKERS = 3;
 const MIN_MARKER_KINDS = 2;
@@ -71,8 +87,12 @@ const MIN_MARKER_KINDS = 2;
 // reused — it refuses any row graded above Low, and recognising a Medium Chocolatey script block as
 // a build marker is exactly what this needs.
 const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
-  { kind: "packer", re: /\bpacker\b|\bautounattend\b|autounattend-first-logon/ },
-  { kind: "vagrant", re: /\bvagrant\b/ },
+  // Anchored on what the provisioner writes, never a bare word: on a Vagrant box the interactive
+  // account IS `vagrant` (and could be `packer`), so a user name or profile path matched the whole
+  // user session as "build" (#1695). Packer's temp tree and build names; Vagrant's synced folder and
+  // the shell provisioner's upload path.
+  { kind: "packer", re: /\\temp\\packer\\|\bpacker-[0-9a-f]{8}\b|\bautounattend\b|autounattend-first-logon/ },
+  { kind: "vagrant", re: /c:\\vagrant\\|\\tmp\\vagrant-(?:elevated-)?shell\.ps1\b/ },
   { kind: "chocolatey", re: /\\programdata\\chocolatey\\|\bchoco(?:latey)?(?:\.exe)?\b/ },
   { kind: "sysprep/unattend", re: /\bsysprep\b|\\windows\\panther\\|\bunattend\.xml\b|\boobe\b/ },
   {
@@ -84,6 +104,9 @@ const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
     re: /\\windows\\servicing\\|\\windows\\winsxs\\|\btiworker\.exe\b|\btrustedinstaller\.exe\b|\\windows\\installer\\|\\windows\\system32\\driverstore\\/,
   },
 ];
+
+// Kinds every live host produces on its own. They extend a window but never open one (#1695).
+const SERVICING_KINDS: ReadonlySet<string> = new Set(["windows-update", "servicing"]);
 
 // Account-management records. A build creates its own accounts, and Windows records the machine
 // account as the SUBJECT when it does.
@@ -249,14 +272,16 @@ export function buildTimeWindows(
     // Only THIS host's own observed bounds corroborate it: another machine's rename, or an analyst's
     // manual attribution, says nothing about what this one was doing.
     const hasBound = (bounds.get(c.chain.host) ?? []).some((ms) => ms >= start && ms <= end);
-    const dense = count >= MIN_MARKERS && c.kinds.size >= MIN_MARKER_KINDS;
+    const provisioners = new Map([...c.kinds].filter(([kind]) => !SERVICING_KINDS.has(kind)));
+    if (provisioners.size === 0) continue;
+    const dense = count >= MIN_MARKERS && provisioners.size >= MIN_MARKER_KINDS;
     if (!hasBound && !dense) continue;
     windows.push({
       host: c.chain.host,
       names: [...c.chain.names],
       start: iso(start),
       end: iso(end),
-      marker: dominant(c.kinds),
+      marker: dominant(provisioners),
       markerCount: count,
     });
   }
@@ -302,6 +327,12 @@ function withNote(e: ForensicEvent, w: BuildTimeWindow): ForensicEvent {
   return next;
 }
 
+// The row with every build-time note removed and nothing else changed. For a note that arrived without
+// its record (#1698) — a correlated row that unioned a capped member's note — so no grade is touched.
+function stripNote(e: ForensicEvent): ForensicEvent {
+  return { ...e, description: e.description.replace(BUILD_TIME_NOTE_RE, "").trim() };
+}
+
 function withoutNote(e: ForensicEvent): ForensicEvent {
   const { buildTime, ...rest } = e;
   return {
@@ -329,9 +360,12 @@ export function capBuildTimeRows(state: InvestigationState): {
   const forensicTimeline = state.forensicTimeline.map((e) => {
     const found = windowFor(windows, e);
     const w = found && !protectedFromCap(e) ? found : undefined;
+    // One rule whatever path produced the row (#1698): inside a window, one note and nothing above
+    // Low; outside every window, no note. A merge can bring a note without its record, or a record
+    // with a grade it raised, and every branch below exists because one of those reached a case.
     if (w && !e.buildTime) {
       changed++;
-      return withNote(e, w);
+      return withNote(HAS_BUILD_TIME_NOTE.test(e.description) ? stripNote(e) : e, w);
     }
     // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
     // so the note and the recorded pre-cap severity describe the window that exists now.
@@ -339,11 +373,51 @@ export function capBuildTimeRows(state: InvestigationState): {
       changed++;
       return withNote(withoutNote(e), w);
     }
+    // A merge raised a capped row inside its own window. Re-cap it and keep the WORSE of the two
+    // original grades, so a later un-cap restores the grade the evidence actually carries.
+    if (w && e.buildTime && capped(e.severity) !== e.severity) {
+      changed++;
+      const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+      return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
+    }
     if (!w && e.buildTime) {
       changed++;
       return withoutNote(e);
     }
+    if (!w && HAS_BUILD_TIME_NOTE.test(e.description)) {
+      changed++;
+      return stripNote(e);
+    }
     return e;
+  });
+  return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
+ * The consistency repair synthesis runs after its own correlation (#1698) — never window discovery.
+ *
+ * The import seam finds windows BEFORE demote, while the build's Info markers are still in the forensic
+ * timeline. Synthesis sees only what demote kept, so recomputing windows there would find a window
+ * "gone" and lift a valid cap (Codex review of #1698). This pass therefore never un-caps and never
+ * opens a window. It only makes a row agree with itself: a note with no record is removed (grade
+ * untouched), and a recorded row a merge raised above the cap is capped again with the worse original
+ * grade kept. Protected rows (a hard attacker signal, an analyst's pull) are left as they are.
+ */
+export function repairBuildTimeRows(state: InvestigationState): {
+  state: InvestigationState;
+  changed: number;
+} {
+  let changed = 0;
+  const forensicTimeline = state.forensicTimeline.map((e) => {
+    if (!e.buildTime) {
+      if (!HAS_BUILD_TIME_NOTE.test(e.description)) return e;
+      changed++;
+      return stripNote(e);
+    }
+    if (protectedFromCap(e) || capped(e.severity) === e.severity) return e;
+    changed++;
+    const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+    return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
 }

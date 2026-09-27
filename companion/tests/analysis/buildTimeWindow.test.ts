@@ -7,6 +7,7 @@ import {
   buildTimeWindows,
   capBuildTimeRows,
   hardAttackerSignal,
+  repairBuildTimeRows,
   protectedFromCap,
   renderBuildTimeTag,
 } from "../../src/analysis/buildTimeWindow.js";
@@ -419,5 +420,209 @@ describe("the adversarial cases a code review found (#1529)", () => {
     });
     const block = buildTimeContextBlock(state.forensicTimeline, multi);
     expect(block).toContain("2026-01-15T22:10:00Z");
+  });
+});
+
+// Scenario 022 (#1695): the Vagrant box's interactive account is `vagrant`, so the emulation's own
+// rows named the provisioner, and the Windows Update churn of the same hour supplied a second marker
+// kind. A 12:33–14:06 "build" window on the run day capped every attack finding at Low.
+describe("a user session is not a build (#1695)", () => {
+  const RUN = "2026-09-26T13:10";
+
+  // The emulation: the `vagrant` user runs renamed tools out of C:\Users\Public.
+  const emulation = (): ForensicEvent[] =>
+    Array.from({ length: 10 }, (_, i) =>
+      ev(`e${i}`, `${RUN}:${String(40 + i).padStart(2, "0")}Z`, {
+        severity: "High",
+        path: "C:\\Users\\Public\\BlackSuit15DaySim\\beachhead\\operator.exe",
+        description: `Sigma: HackTool - Bloodhound/Sharphound Execution - User: ${HOST}\\vagrant - CurrentDirectory: C:\\Users\\vagrant\\Desktop\\`,
+      }),
+    );
+
+  // Routine servicing in the same hour: Windows Update and an MSI install.
+  const servicing = (): ForensicEvent[] => [
+    ev("w1", "2026-09-26T13:03:00Z", {
+      severity: "Medium",
+      processName: "C:\\Windows\\System32\\wuauclt.exe",
+    }),
+    ev("w2", "2026-09-26T13:12:00Z", {
+      severity: "Medium",
+      path: "C:\\Windows\\SoftwareDistribution\\Download\\x.cab",
+    }),
+    ev("w3", "2026-09-26T13:20:00Z", {
+      severity: "Medium",
+      processName: "C:\\Windows\\System32\\MoUsoCoreWorker.exe",
+    }),
+    ev("w4", "2026-09-26T13:30:00Z", { severity: "Medium", path: "C:\\Windows\\Installer\\1a2b3c.msi" }),
+    ev("w5", "2026-09-26T13:36:00Z", { severity: "Medium", path: "C:\\Windows\\Installer\\4d5e6f.msi" }),
+  ];
+
+  it("does not read a user name or profile path as the Vagrant provisioner", () => {
+    expect(buildMarkerKind(ev("u1", RUN, { description: `Logon - User: ${HOST}\\vagrant` }))).toBeNull();
+    expect(buildMarkerKind(ev("u2", RUN, { path: "C:\\Users\\vagrant\\Downloads\\tool.exe" }))).toBeNull();
+    expect(
+      buildMarkerKind(ev("u3", RUN, { path: "C:\\Users\\vagrant\\Downloads\\vagrant-shell.ps1" })),
+    ).toBeNull();
+  });
+
+  it("still reads what the Vagrant provisioner itself writes", () => {
+    expect(buildMarkerKind(ev("v1", RUN, { path: "C:\\vagrant\\provision.ps1" }))).toBe("vagrant");
+    expect(buildMarkerKind(ev("v2", RUN, { path: "C:\\tmp\\vagrant-elevated-shell.ps1" }))).toBe("vagrant");
+    expect(
+      buildMarkerKind(ev("v3", RUN, { commandLine: "powershell -File C:\\tmp\\vagrant-shell.ps1" })),
+    ).toBe("vagrant");
+  });
+
+  it("does not read a user named packer as the Packer provisioner", () => {
+    expect(buildMarkerKind(ev("k1", RUN, { path: "C:\\Users\\packer\\Desktop\\notes.txt" }))).toBeNull();
+    expect(buildMarkerKind(ev("k2", RUN, { description: `Logon - User: ${HOST}\\packer` }))).toBeNull();
+    expect(buildMarkerKind(ev("k3", RUN, { path: "C:\\Windows\\Temp\\packer\\Autounattend.ps1" }))).toBe(
+      "packer",
+    );
+  });
+
+  it("opens no window over an emulation run by the vagrant user during Windows Update", () => {
+    const events = [...emulation(), ...servicing()];
+    expect(buildTimeWindows(events, renames)).toEqual([]);
+    const { state } = capBuildTimeRows(stateWith(events));
+    for (const e of state.forensicTimeline.filter((x) => x.id.startsWith("e"))) {
+      expect(e.severity).toBe("High");
+      expect(e.buildTime).toBeUndefined();
+    }
+  });
+
+  it("opens no window from routine servicing alone, even beside the host's own rename", () => {
+    const renamedToday: HostRenameRecord[] = [
+      ...renames,
+      {
+        formerName: "WIN-0NNTB2RTNB1",
+        currentName: HOST,
+        until: "2026-09-26T13:15:00.000Z",
+        basis: "collector",
+      },
+    ];
+    expect(buildTimeWindows(servicing(), renamedToday)).toEqual([]);
+  });
+
+  it("opens no unbounded window from one provisioner kind plus servicing", () => {
+    const lateChoco = [
+      ev("c1", "2026-09-26T13:05:00Z", {
+        severity: "Medium",
+        path: "C:\\ProgramData\\chocolatey\\lib\\git\\tools\\x.ps1",
+      }),
+      ev("c2", "2026-09-26T13:06:00Z", { severity: "Medium", commandLine: "choco upgrade all -y" }),
+      ...servicing(),
+    ];
+    expect(buildTimeWindows(lateChoco, renames)).toEqual([]);
+  });
+
+  it("still opens an unbounded window from two different provisioners, labelled by the provisioner", () => {
+    const build = [
+      ev("b1", "2027-02-01T10:00:00Z", { path: "C:\\ProgramData\\chocolatey\\tools\\7z.exe" }),
+      ev("b2", "2027-02-01T10:05:00Z", { path: "C:\\Windows\\Temp\\packer\\Autounattend.ps1" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        ev(`b${3 + i}`, `2027-02-01T10:1${i}:00Z`, {
+          path: "C:\\Windows\\SoftwareDistribution\\Download\\y.cab",
+        }),
+      ),
+    ];
+    const windows = buildTimeWindows(build, renames);
+    expect(windows).toHaveLength(1);
+    expect(["chocolatey", "packer"]).toContain(windows[0].marker);
+  });
+});
+
+// #1698: a row can carry the build-time note without the record, or the record with a grade a merge
+// raised. On INC-2026-014 a correlated row kept a capped member's note and lost its record, and the
+// synthesis quoted a window that no longer existed. The pass now enforces one rule, whatever produced
+// the row: inside a window, one note and nothing above Low; outside every window, no note.
+describe("the cap pass repairs a row whose note and record disagree (#1698)", () => {
+  const STALE = " [build-time: vagrant, 2026-09-26T12:34Z–13:59Z]";
+
+  it("strips a stray note from a row outside every window and leaves its grade", () => {
+    const stray = ev("x1", "2026-09-26T13:03:24Z", { severity: "High", description: `Defender row${STALE}` });
+    const { state, changed } = capBuildTimeRows(stateWith([...decemberBuild(), stray]));
+    const row = state.forensicTimeline.find((e) => e.id === "x1")!;
+    expect(changed).toBeGreaterThan(0);
+    expect(row.description).toBe("Defender row");
+    expect(row.severity).toBe("High");
+    expect(row.buildTime).toBeUndefined();
+    expect(capBuildTimeRows(state).changed).toBe(0);
+  });
+
+  it("gives a row inside a window exactly one note when it arrived with a stray one", () => {
+    const stray = ev("x2", "2025-12-05T03:20:00Z", { severity: "High", description: `firewall row${STALE}` });
+    const { state } = capBuildTimeRows(stateWith([...decemberBuild(), stray]));
+    const row = state.forensicTimeline.find((e) => e.id === "x2")!;
+    expect((row.description.match(/\[build-time:/g) ?? []).length).toBe(1);
+    expect(row.description).not.toContain("vagrant");
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High");
+    expect(capBuildTimeRows(state).changed).toBe(0);
+  });
+
+  it("re-caps a row a merge raised inside its own window, keeping the worse original grade", () => {
+    const first = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const raised = first.state.forensicTimeline.map((e) =>
+      e.id === "d4" ? { ...e, severity: "High" as const } : e,
+    );
+    const { state } = capBuildTimeRows({ ...first.state, forensicTimeline: raised });
+    const row = state.forensicTimeline.find((e) => e.id === "d4")!;
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High"); // was Medium before the merge raised it
+    expect((row.description.match(/\[build-time:/g) ?? []).length).toBe(1);
+  });
+
+  it("never lowers the recorded original grade when a merge brings a milder one", () => {
+    const first = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const d6 = first.state.forensicTimeline.find((e) => e.id === "d6")!; // Critical, capped
+    const merged = first.state.forensicTimeline.map((e) =>
+      e.id === "d6" ? { ...e, severity: "Medium" as const } : e,
+    );
+    const { state } = capBuildTimeRows({ ...first.state, forensicTimeline: merged });
+    expect(d6.buildTime?.cappedFrom).toBe("Critical");
+    expect(state.forensicTimeline.find((e) => e.id === "d6")!.buildTime?.cappedFrom).toBe("Critical");
+  });
+
+  it("leaves an Info row inside a window Info", () => {
+    const info = ev("i2", "2025-12-05T03:00:00Z", { description: `session logoff${STALE}` });
+    const { state } = capBuildTimeRows(stateWith([...decemberBuild(), info]));
+    expect(state.forensicTimeline.find((e) => e.id === "i2")!.severity).toBe("Info");
+  });
+});
+
+// Synthesis only repairs (#1698, Codex review): the import seam opened the window while the build's
+// Info markers were still in the forensic timeline; synthesis sees what demote kept, so it must never
+// conclude that a window is gone.
+describe("the synthesis-time repair never lifts a cap (#1698)", () => {
+  it("keeps a capped row capped when the markers that opened its window are gone", () => {
+    const capped = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const markersDemoted = capped.state.forensicTimeline.filter((e) => e.id === "d6");
+    const { state, changed } = repairBuildTimeRows({ ...capped.state, forensicTimeline: markersDemoted });
+    expect(changed).toBe(0);
+    expect(state.forensicTimeline[0].severity).toBe("Low");
+    expect(state.forensicTimeline[0].buildTime?.cappedFrom).toBe("Critical");
+  });
+
+  it("removes a note that has no record, and leaves the grade", () => {
+    const stray = ev("x1", "2026-09-26T13:03:24Z", {
+      severity: "High",
+      description: "Defender row [build-time: vagrant, 2026-09-26T12:34Z–13:59Z]",
+    });
+    const { state } = repairBuildTimeRows(stateWith([stray]));
+    expect(state.forensicTimeline[0].description).toBe("Defender row");
+    expect(state.forensicTimeline[0].severity).toBe("High");
+  });
+
+  it("re-caps a recorded row a merge raised, keeping the worse original grade", () => {
+    const capped = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const raised = capped.state.forensicTimeline.map((e) =>
+      e.id === "d4" ? { ...e, severity: "High" as const } : e,
+    );
+    const { state } = repairBuildTimeRows({ ...capped.state, forensicTimeline: raised });
+    const row = state.forensicTimeline.find((e) => e.id === "d4")!;
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High");
+    expect(repairBuildTimeRows(state).changed).toBe(0);
   });
 });

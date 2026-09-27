@@ -211,7 +211,68 @@ export async function readBodyWithProgress(state, response, onProgress) {
   return new TextDecoder().decode(joined);
 }
 
+// Four of the browser's six HTTP/1.1 connections per origin, leaving two for whatever the analyst
+// does next — see runPanelLoaders for the measurements. The page-wide pool below is this size.
+export const PAGE_PANEL_LANES = 4;
+
 // ── Panel runner ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A semaphore over the browser's per-origin HTTP/1.1 connections — see runPanelLoaders.
+ *
+ * `take(signal)` returns null when a lane is granted now, or a promise of whether one was: `true`
+ * once a lane frees up for it, `false` when its signal aborted first. Under-cap requests are
+ * deliberately NOT deferred by even a microtask: that would change when the common case hits the
+ * wire, and the point is to hold back the over-cap ones only. A non-positive limit is unbounded.
+ *
+ * A queued waiter is released on ITS OWN signal's abort, not by a run-wide drain (#1713). One pool
+ * now serves several runs, so its queue holds other runs' waiters too, and those must keep their
+ * place. A released waiter gets NO lane, so it must not free one: granting it a lane just so its
+ * cleanup could free it handed that lane to the next waiter while the cap was already full.
+ */
+export function createLanePool(limit) {
+  const raw = Number(limit);
+  const cap = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0; // 0 = unbounded
+  let used = 0;
+  const waiting = [];
+  return {
+    take(signal) {
+      if (cap === 0) return null;
+      if (used < cap) {
+        used++;
+        return null;
+      }
+      // Already abandoned: do not wait behind live requests for a lane it will never use.
+      if (signal && signal.aborted) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        const w = { resolve, signal, stop: null };
+        // Guarded because `signal` only has to be signal-SHAPED for runPanelLoaders' injection to
+        // work, and a test double need not be an EventTarget.
+        if (signal && typeof signal.addEventListener === "function") {
+          w.stop = () => {
+            const at = waiting.indexOf(w);
+            if (at < 0) return;
+            waiting.splice(at, 1);
+            resolve(false);
+          };
+          signal.addEventListener("abort", w.stop, { once: true });
+        }
+        waiting.push(w);
+      });
+    },
+    free() {
+      if (cap === 0) return;
+      const next = waiting.shift();
+      if (!next) {
+        used--;
+        return;
+      }
+      // Handed straight to whoever was waiting, so `used` does not change.
+      if (next.stop) next.signal.removeEventListener("abort", next.stop);
+      next.resolve(true);
+    },
+  };
+}
 
 /**
  * Run every panel loader, tallying each one as its requests settle.
@@ -307,28 +368,13 @@ export function runPanelLoaders(entries, onProgress, options) {
   // the cap exists to prevent. And a lane came back when `fetch` fulfilled, which is when the
   // HEADERS arrive: the body is still streaming down the connection at that point, so the next
   // loader was admitted against a lane that was not free yet.
-  let lanesUsed = 0;
-  const laneQueue = [];
-  // null means "granted, go now". A promise means "queued". Under-cap requests are deliberately
-  // NOT deferred by even a microtask: that would change when the common case hits the wire, and
-  // the point here is to hold back the over-cap ones only.
-  const takeLane = () => {
-    if (limit === 0) return null;
-    if (lanesUsed < limit) {
-      lanesUsed++;
-      return null;
-    }
-    return new Promise((resolve) => laneQueue.push(resolve));
-  };
-  const freeLane = () => {
-    if (limit === 0) return;
-    lanesUsed--;
-    const next = laneQueue.shift();
-    if (next) {
-      lanesUsed++; // re-taken immediately by whoever was waiting; every grant pairs with a release
-      next();
-    }
-  };
+  //
+  // `options.lanes` shares one pool between several runs (#1713): the page's case load, its
+  // reconnect catch-up and its debounced panel reloads each ran under their own four lanes, so
+  // together they could still fill the connection pool. Without it the run gets a private pool.
+  const lanes = opts.lanes || createLanePool(limit);
+  const takeLane = () => lanes.take(signal);
+  const freeLane = () => lanes.free();
 
   // Hold the lane until the BODY has been read, not until the headers land.
   //
@@ -410,10 +456,11 @@ export function runPanelLoaders(entries, onProgress, options) {
     const self = this;
     // Counted against its loader NOW, synchronously, so attribution survives a lane wait.
     outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
-    const issue = () => {
+    // `held` is false only for a waiter its own abort released: it never got a lane to free.
+    const issue = (held = true) => {
       // Abandoned while queued — never put it on the wire at all.
       if (signal && signal.aborted) {
-        freeLane();
+        if (held) freeLane();
         throw new Error("panel request abandoned");
       }
       let out;
@@ -443,7 +490,7 @@ export function runPanelLoaders(entries, onProgress, options) {
         p = Promise.reject(err);
       }
     } else {
-      p = queued.then(issue);
+      p = queued.then((granted) => issue(granted !== false));
     }
     // The TALLY watches this promise, so the strip still settles every panel on abort.
     p.then(
@@ -507,30 +554,46 @@ export function runPanelLoaders(entries, onProgress, options) {
     finish(owner);
   }
 
-  // Release everything still waiting for a lane so it can observe the abort and reject, instead of
-  // queueing behind lanes that are themselves being torn down. Each resolved waiter runs issue(),
-  // sees signal.aborted and never reaches the wire — so the tally completes without a single extra
-  // request. Granting a lane per waiter keeps the accounting balanced, since each one's issue()
-  // path frees a lane on its way out.
-  const releaseLaneQueue = () => {
-    while (laneQueue.length) {
-      lanesUsed++;
-      laneQueue.shift()();
-    }
-  };
-
-  // Guarded because `signal` only has to be signal-SHAPED for the injection above to work, and a
-  // test double need not be an EventTarget.
-  if (signal && typeof signal.addEventListener === "function") {
-    signal.addEventListener("abort", releaseLaneQueue, { once: true });
-  }
-
   // Every loader starts now. There is no loader-level throttle any more and there should not be:
   // starting a loader costs nothing until it asks for a connection, and the lane semaphore above
   // is what gates those. One gate, on the resource that is actually scarce.
   if (signal && signal.aborted) abandonRemaining();
   else while (next < list.length) startLoader(...list[next++]);
   return tally;
+}
+
+/**
+ * The page's debounced panel reloads, run under a shared lane pool (#1713).
+ *
+ * A live `state` push arms ~21 debounced reloads in the same tick, one timer per panel, so they
+ * all fire together ~800 ms later — outside the cap the case load runs under, and on the same six
+ * connections. Each helper keeps its own debounce (so a state push and a scope apply still coalesce
+ * per panel); only the moment it fires changes: `run(key, loader)` starts the loader under `lanes`.
+ *
+ * `retire(caseId)` abandons every queued and in-flight reload — a case switch or a cancelled load,
+ * where a reload for the old case must neither paint nor hold a lane — and names the case now on
+ * screen (`null` after a cancel). An abandoned loader is handed a promise that never settles (see
+ * runPanelLoaders), so it draws nothing. There is no running flag to reset.
+ *
+ * `run` takes the case its loader is for. A helper's 800 ms timer armed BEFORE the switch fires
+ * after it, under the fresh signal, so the signal alone cannot catch it; the case id does. Until
+ * the first retire nothing is known, and every run goes ahead.
+ */
+export function createPanelReloader(lanes) {
+  let gen = typeof AbortController === "function" ? new AbortController() : null;
+  let onScreen; // undefined: not told yet; null: no case; else the case id
+  return {
+    run(key, caseId, loader) {
+      if (onScreen !== undefined && caseId !== onScreen) return;
+      runPanelLoaders([[key, loader]], null, { lanes, signal: gen ? gen.signal : undefined });
+    },
+    retire(caseId) {
+      onScreen = caseId === undefined ? null : caseId;
+      if (!gen) return;
+      gen.abort();
+      gen = new AbortController();
+    },
+  };
 }
 
 // ── Browser glue ────────────────────────────────────────────────────────────────────────────────
@@ -616,7 +679,14 @@ function hidePanelStrip() {
 
 // Guarded so the pure exports above can be imported in node (Vitest) with no DOM present.
 if (typeof document !== "undefined" && typeof window !== "undefined") {
+  // ONE pool for the page (#1713): the case load, the reconnect catch-up and every debounced panel
+  // reload take their lanes from it, so together they keep two of the six connections free.
+  const panelLanes = createLanePool(PAGE_PANEL_LANES);
+  const panelReloader = createPanelReloader(panelLanes);
   window.DfirCaseLoadProgress = {
+    panelLanes,
+    runPanelReload: panelReloader.run,
+    retirePanelReloads: panelReloader.retire,
     createLoadState,
     advanceStage,
     setEventCount,

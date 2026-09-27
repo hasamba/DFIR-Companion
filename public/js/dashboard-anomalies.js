@@ -11,6 +11,15 @@
 //
 // NOT AN ES MODULE: the inline script calls the published names below by bare name.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, caseId, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
+  };
   // ── Timeline Anomalies (#175) ─────────────────────────────────────────────────────────
   // Per-asset event-rate spikes: assets whose count in a time bucket exceeds spikeFactor × the
   // per-bucket median across all assets. Derived server-side (GET /cases/:id/anomalies) from the
@@ -28,7 +37,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(anomaliesTimer);
-    anomaliesTimer = setTimeout(() => loadAnomalies(caseId), 800);
+    anomaliesTimer = setTimeout(() => panelReload("anomalies", caseId, () => loadAnomalies(caseId)), 800);
   }
   function renderAnomalies() {
     const el = document.getElementById("anomalies");

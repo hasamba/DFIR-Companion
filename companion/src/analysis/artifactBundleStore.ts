@@ -212,18 +212,20 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
   {
     id: "hayabusa-full",
     name: "Hayabusa Full",
-    description: "Hayabusa alone: every rule level and status, excluding only rules marked noisy",
+    description:
+      "All Hayabusa rules from Low severity up, with no Sysmon exclusions. Run it once the attack timeframe is known, and scope the hunt to that timeframe",
     builtIn: true,
     artifacts: ["Windows.Hayabusa.Rules"],
     defaultWaitMinutes: 10,
     timeoutSeconds: 6000, // the full ruleset over every event log runs well past the 600s default
-    // The opposite of Best Practice's narrowed Hayabusa. Level and status match the artifact's own
-    // defaults, but are set here so a server with different defaults still runs the full set.
+    // The opposite of Best Practice's narrowed Hayabusa. Level stops at Low: Informational rules
+    // fire on routine activity and flood a full-log run. Status is set here so a server with
+    // different defaults still runs every rule.
     // RuleExclusions REPLACES the artifact's default list, which also drops eight per-event
     // Sysmon/WMI rules (Proc Exec, File Created, DNS Query, …); only the noisy-tagged rules stay out.
     params: {
       "Windows.Hayabusa.Rules": {
-        RuleLevel: "All",
+        RuleLevel: "Critical, High, Medium, and Low",
         RuleStatus: "All Rules",
         RuleExclusions:
           "RuleTitleRegex,Reason\nnoisy,All rules marked noisy should be disabled by default.\n",

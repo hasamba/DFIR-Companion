@@ -11,6 +11,15 @@
 //
 // NOT AN ES MODULE: the inline script calls the published names below by bare name.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, caseId, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
+  };
   // ── Compliance Impact (#234 / #336) — control failures & regulatory obligations ─────────────
   // Derived server-side from the case's CONFIRMED findings; offline, no AI. Two rules this
   // renderer exists to keep:
@@ -33,7 +42,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(complianceTimer);
-    complianceTimer = setTimeout(() => loadCompliance(caseId), 800);
+    complianceTimer = setTimeout(() => panelReload("compliance", caseId, () => loadCompliance(caseId)), 800);
   }
   function patchComplianceControl(patch) {
     const caseId = document.getElementById("caseId").value.trim();

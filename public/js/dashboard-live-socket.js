@@ -13,6 +13,10 @@
 //  - A REconnect catches up on what the gap missed: the pill, the jobs chip, the case state (handed
 //    to the same message handler a `state` push uses, so the same panels refresh), the scope, and
 //    one bare message per other push-driven panel (CATCH_UP_TYPES, #1681).
+//  - That catch-up is ~30 requests, so it runs ONCE per outage, not once per open (#1709). It waits
+//    until a reopened socket has stayed up, which collapses a flapping server into one run — but
+//    never longer than CATCH_UP_MAX_DEFER_MS, so a flap cannot put it off forever. It is never
+//    skipped: the server keeps no replay buffer, so any gap, however short, can lose a push.
 //  - A tab that becomes visible re-derives the pill. A closed socket is reopened at once. After a
 //    long hide (a sleep) even an OPEN socket is replaced, because a half-open socket reads OPEN and
 //    never fires onclose; the server's 30 s ping reaper cleans up its end.
@@ -32,6 +36,14 @@
   const CONNECT_TIMEOUT_MS = 10000;
   // Hidden this long, the tab probably slept: replace the socket even if it still reads OPEN.
   const LONG_HIDE_MS = 60000;
+  // A reopened socket must stay up this long before its catch-up runs (#1709) …
+  const CATCH_UP_SETTLE_MS = 2000;
+  // … unless a catch-up has been owed this long already: then the next open runs it at once.
+  const CATCH_UP_MAX_DEFER_MS = 10000;
+  // The catch-up's requests share the case load's cap: four of the browser's six HTTP/1.1 lanes,
+  // leaving two for whatever the analyst clicks meanwhile (PANEL_LOAD_CONCURRENCY in
+  // js/dashboard-case-connect.js explains the number).
+  const CATCH_UP_CONCURRENCY = 4;
 
   let liveCaseId = null; // the case the live socket serves; null when none is wanted
   let liveOnMessage = null;
@@ -40,6 +52,11 @@
   let reconnectTimer = null;
   let stableTimer = null;
   let connectTimer = null;
+  let catchUpTimer = null;
+  // Aborts the running catch-up's requests that are still queued for a lane.
+  let catchUpAbort = null;
+  // When the first reopened socket that owed a catch-up opened; 0 when none is owed.
+  let catchUpOwedSince = 0;
   let hiddenAt = 0;
   let visibilityBound = false;
   // Wake detector. Timers do not run while the machine sleeps, so a tick that lands long after the
@@ -67,7 +84,14 @@
     clearTimeout(reconnectTimer);
     clearTimeout(stableTimer);
     clearTimeout(connectTimer);
-    reconnectTimer = stableTimer = connectTimer = null;
+    clearTimeout(catchUpTimer);
+    reconnectTimer = stableTimer = connectTimer = catchUpTimer = null;
+    // A drop, a wake, a case switch and a cancel all come through here. A catch-up already running
+    // is abandoned too: its queued requests would otherwise reach the wire after a case switch and
+    // paint the old case into panels that do not check which case is on screen, and the next
+    // reconnect's catch-up would run beside it, two lane caps at once. The next open owes a fresh one.
+    if (catchUpAbort) catchUpAbort.abort();
+    catchUpAbort = null;
   }
 
   function detach(sock) {
@@ -122,34 +146,89 @@
   // What the page missed while the socket was down. AI state and jobs are cheap reads; the case
   // state goes through the `state` handler so its panel fan-out runs exactly as a push would, and
   // every other push-driven panel is re-read the same way (#1681).
+  //
+  // Every message carries one shared catch-up context (#1709). Several types reload the same panel
+  // — /cockpit alone was fetched five times — and the handler uses `ctx.ran` to run each of those
+  // loaders once per catch-up. A real push carries no context, so it always reloads.
   function catchUp(sock, caseId) {
-    if (typeof loadJobs === "function") loadJobs(caseId);
     const base = `/cases/${encodeURIComponent(caseId)}`;
     const pushesAtStart = statePushes;
-    fetch(`${base}/state`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((state) => {
-        if (pushesAtStart !== statePushes) return; // a newer state already arrived by push
-        if (state && stillCurrent(sock, caseId))
-          liveOnMessage({ type: "state", state });
-      })
-      .catch(() => {});
-    for (const type of CATCH_UP_TYPES) {
-      if (!stillCurrent(sock, caseId)) return;
-      try {
-        liveOnMessage({ type });
-      } catch (err) {
-        console.warn(`live catch-up for ${type} failed:`, err);
+    const ctx = { source: "catch-up", ran: new Set() };
+    const send = (msg) => {
+      if (stillCurrent(sock, caseId)) liveOnMessage(msg, ctx);
+    };
+    const entries = [
+      ["jobs", () => typeof loadJobs === "function" && loadJobs(caseId)],
+      [
+        "state",
+        () =>
+          fetch(`${base}/state`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((state) => {
+              if (pushesAtStart !== statePushes) return; // a newer state already arrived by push
+              if (state) send({ type: "state", state });
+            })
+            .catch(() => {}),
+      ],
+      // The scope branch redraws with the window it is given, which loadScope alone would not do.
+      [
+        "scope",
+        () =>
+          fetch(`${base}/scope`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((s) => {
+              if (s) send({ type: "scope_changed", start: s.start, end: s.end });
+            })
+            .catch(() => {}),
+      ],
+      ...CATCH_UP_TYPES.map((type) => [
+        type,
+        () => {
+          try {
+            send({ type });
+          } catch (err) {
+            console.warn(`live catch-up for ${type} failed:`, err);
+          }
+        },
+      ]),
+    ];
+    // The signal is the case load's own contract: an abandoned request hands its loader a promise
+    // that never settles, so it draws nothing. Every loader here already runs under it on a case
+    // switch, and none keeps an in-flight flag that a never-settling promise would leave stuck.
+    const runner =
+      window.DfirCaseLoadProgress && window.DfirCaseLoadProgress.runPanelLoaders;
+    if (typeof runner === "function" && typeof AbortController === "function") {
+      catchUpAbort = new AbortController();
+      runner(entries, null, {
+        // The page-wide pool (#1713), shared with the case load and the debounced panel reloads.
+        lanes: window.DfirCaseLoadProgress.panelLanes,
+        concurrency: CATCH_UP_CONCURRENCY,
+        signal: catchUpAbort.signal,
+      });
+    } else
+      for (const [, run] of entries) {
+        if (!stillCurrent(sock, caseId)) return;
+        try {
+          run();
+        } catch {}
       }
-    }
-    // The scope branch redraws with the window it is given, which loadScope alone would not do.
-    fetch(`${base}/scope`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((s) => {
-        if (s && stillCurrent(sock, caseId))
-          liveOnMessage({ type: "scope_changed", start: s.start, end: s.end });
-      })
-      .catch(() => {});
+  }
+
+  // Run the catch-up once the reopened socket has stayed up — or at once, if one has been owed for
+  // CATCH_UP_MAX_DEFER_MS. A close before then cancels it (clearTimers), and the next open owes it.
+  function scheduleCatchUp(sock, caseId) {
+    const now = Date.now();
+    if (!catchUpOwedSince) catchUpOwedSince = now;
+    const wait = Math.max(
+      0,
+      Math.min(CATCH_UP_SETTLE_MS, catchUpOwedSince + CATCH_UP_MAX_DEFER_MS - now),
+    );
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null;
+      if (!stillCurrent(sock, caseId)) return;
+      catchUpOwedSince = 0;
+      catchUp(sock, caseId);
+    }, wait);
   }
 
   function scheduleReconnect() {
@@ -162,6 +241,22 @@
       reconnectTimer = null;
       if (gen === sockGen && stillWanted(caseId)) openSocket(true);
     }, delay);
+  }
+
+  // The message a frame carries, or null when it is not one. The hub accepts any value, so the shape
+  // is checked here: a string `type`, and for `state` an object to render.
+  function parseLiveMessage(data) {
+    let msg;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return null;
+    }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
+    if (typeof msg.type !== "string") return null;
+    const s = msg.state;
+    if (msg.type === "state" && (!s || typeof s !== "object" || Array.isArray(s))) return null;
+    return msg;
   }
 
   function openSocket(isReconnect) {
@@ -198,17 +293,26 @@
       // Anything that happened while the socket was down was never delivered, so the pill may be
       // holding a state the case left behind. Re-derive rather than assume the gap was quiet.
       refreshAiState(caseId);
-      if (isReconnect) catchUp(sock, caseId);
+      if (isReconnect) scheduleCatchUp(sock, caseId);
     };
     sock.onclose = () => {
       if (sock !== ws || !stillWanted(caseId)) return;
       setConnStatus("disconnected — reconnecting…");
       scheduleReconnect();
     };
+    let warnedBadFrame = false;
     sock.onmessage = (ev) => {
       if (sock !== ws || !liveOnMessage) return;
-      const msg = JSON.parse(ev.data);
-      if (msg && msg.type === "state") statePushes++;
+      // A frame that is not a live message is skipped before it can count as a state push (#1707).
+      // One fixed warning per socket, never echoing the frame: a broken producer must not flood
+      // DevTools, and the frame's content is not ours to log.
+      const msg = parseLiveMessage(ev.data);
+      if (!msg) {
+        if (!warnedBadFrame) console.warn("live update skipped: a frame was not a live message");
+        warnedBadFrame = true;
+        return;
+      }
+      if (msg.type === "state") statePushes++;
       liveOnMessage(msg);
     };
   }
@@ -250,6 +354,7 @@
   function closeCaseSocket() {
     sockGen++;
     liveCaseId = null;
+    catchUpOwedSince = 0;
     liveOnMessage = null;
     clearTimers();
     clearInterval(wakeTimer);

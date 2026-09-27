@@ -72,6 +72,8 @@
     // the shortfall is still checked against the numbers before the panel calls it full coverage.
     const matched = result.matched || 0;
     const analyzed = result.alreadyAnalyzed || 0;
+    const buildWindow = result.buildWindow || 0;
+    const read = result.read || 0;
     const graded = result.graded || 0;
     const unread = unreadRows(result);
     const total = Array.isArray(result.rows) ? result.rows.length : 0;
@@ -83,11 +85,37 @@
     // draws and the stored timeline is bigger than the view. So the caption no longer invites a
     // comparison with a number on another screen: it accounts for the rows it read, and states
     // the total it is accounting for, so the arithmetic closes here (#1547).
+    //
+    // The sum closes on the rows READ: graded + already analysed + build window = read, and a capped
+    // read names what it never reached below. It used to claim "all N that matched" even when the cap
+    // had held rows back (Codex review of #1700). The build-window clause is #1700: the review sets
+    // the host's own provisioning rows aside before it grades anything.
     let line = `Graded ${num(graded)} archive row(s).`;
-    if (analyzed > 0) {
+    const skipped = [];
+    if (analyzed > 0)
+      skipped.push(`${num(analyzed)} were skipped because the case has already analysed them — the AI can see those`);
+    if (buildWindow > 0) {
+      // WHERE, not just how many (Codex review of #1700): the analyst can open these ranges in the
+      // super-timeline and check a set-aside row by hand. Host names come from the case's own data
+      // and still go through esc().
+      const windows = Array.isArray(result.buildWindows) ? result.buildWindows : [];
+      const where = windows
+        .slice(0, 3)
+        .map((w) => `${esc(w.host)} ${when(w.start).slice(0, 16)}–${when(w.end).slice(11, 16)} UTC`)
+        .join("; ");
+      const more = windows.length > 3 ? `; ${num(windows.length - 3)} more` : "";
+      skipped.push(
+        `${num(buildWindow)} were set aside because they sit inside the host's own build window` +
+          ` — the machine being built, not the incident` +
+          (where ? ` (${where}${more}; open that range in the super-timeline to check them)` : ""),
+      );
+    }
+    if (skipped.length) {
+      line += ` Another ${skipped.join(". Another ")}.`;
       line +=
-        ` Another ${num(analyzed)} were skipped because the case has already analysed them` +
-        ` — the AI can see those. That accounts for all ${num(matched)} row(s) that matched.`;
+        unread > 0
+          ? ` That accounts for all ${num(read)} row(s) read.`
+          : ` That accounts for all ${num(matched)} row(s) that matched.`;
     } else {
       line += ` That is every row that matched, out of ${num(matched)}.`;
     }
@@ -105,7 +133,7 @@
         ` <span class="jev-truncated">The ${num(result.cap || 0)}-row cap stopped the read — ` +
         `${num(unread)} matching row(s) were never read, so this is not full coverage of the case.</span>`;
     }
-    if (graded === 0 && analyzed > 0 && result.capped !== true) {
+    if (graded === 0 && analyzed + buildWindow > 0 && result.capped !== true) {
       line += " Nothing was left for this review to grade.";
     }
 

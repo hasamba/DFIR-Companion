@@ -22,7 +22,13 @@ import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
-import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
+import {
+  isDeterministicFindingId,
+  renameForgedFindingIds,
+  resolveCitedEventIds,
+  type deltaSchema,
+} from "../responseSchema.js";
+import { autoFindingSupport, coveredEventIds, dropAutoCoveredByDismissal } from "./groupedCitation.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -117,6 +123,12 @@ export interface DeltaFoldInput {
   inventory?: CollectionInventory;
   /** Canonical host for a raw asset spelling — the same resolution the inventory was built with. */
   hostOf?: (raw: string) => string;
+  /**
+   * The prompt's grouped rows (#1702): representative event id → every event id it stood for. The
+   * model saw one row per burst, so a finding citing the representative covers the whole burst.
+   * Absent → each finding covers exactly the ids it cites.
+   */
+  membersOf?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface DeltaFoldResult {
@@ -146,19 +158,29 @@ export async function foldSynthesisDelta(
   ctx: DeltaFoldContext,
   input: DeltaFoldInput,
 ): Promise<DeltaFoldResult> {
-  const { caseId, state, markers, scopedEvents, playbookTasks, inventory, hostOf } = input;
+  const { caseId, state, markers, scopedEvents, playbookTasks, inventory, hostOf, membersOf } = input;
   // ONE normalization for the whole fold (#787). Everything below reads the delta again — the event
   // back-links here, the relevance verdict in grading — and each read matches the model's ids
   // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
   // looking for an id that no longer exists, silently dropping both.
-  const delta = renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id)));
+  // The same holds for the events a finding or hypothesis cites (#1693): a decorated id (`e_cld-e1`,
+  // `~[cld-e1]`) resolves here, once, against the events this run was shown — never onto one outside
+  // the window or one the analyst rejected.
+  const shownIds = new Set(scopedEvents.map((e) => e.id));
+  const delta = resolveCitedEventIds(
+    renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id))),
+    shownIds,
+  );
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
-  const merged = await replaceConclusions(ctx, state, delta, ts);
+  const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
   // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
   const filtered = applyFalsePositive(merged, markers);
   const surviving = new Set(filtered.findings.map((f) => f.id));
-  const linked = linkEventsToFindings(filtered, delta, surviving);
+  const linked = dropAutoCoveredByDismissal(
+    linkEventsToFindings(filtered, delta, surviving, membersOf),
+    autoFindingSupport(state),
+  );
 
   // The backfills are restricted to the events synthesis actually considered.
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
@@ -206,6 +228,7 @@ function replaceConclusions(
   state: InvestigationState,
   delta: DeltaFoldInput["delta"],
   ts: string,
+  shownIds: ReadonlySet<string>,
 ): Promise<InvestigationState> {
   const base = { ...state, findings: [], mitreTechniques: [] };
   return ctx.mergeWithAliases(base, delta, {
@@ -217,6 +240,9 @@ function replaceConclusions(
     // been normalized at the top of the fold, so its ids are settled: passing them here is what
     // stops the merge renaming an id the fold just assigned a second time.
     knownFindingIds: new Set([...state.findings.map((f) => f.id), ...delta.findings.map((f) => f.id)]),
+    // Event citations were resolved at the top of the fold too (#1693), against the events this run
+    // was shown; the merge must not widen that to the whole timeline.
+    knownEventIds: shownIds,
   });
 }
 
@@ -228,11 +254,15 @@ function linkEventsToFindings(
   filtered: InvestigationState,
   delta: DeltaFoldInput["delta"],
   surviving: Set<string>,
+  membersOf?: ReadonlyMap<string, readonly string[]>,
 ): InvestigationState {
   const eventToFindings = new Map<string, string[]>();
+  const eventById = new Map(filtered.forensicTimeline.map((e) => [e.id, e] as const));
   for (const f of delta.findings) {
     if (!surviving.has(f.id)) continue;
-    for (const eid of f.relatedEventIds ?? []) {
+    // A cited grouped row stands for its burst (#1702): a live finding covers every member, a
+    // dismissed one only the members that are the same act (groupedCitation.ts).
+    for (const eid of coveredEventIds(f, membersOf, eventById)) {
       const arr = eventToFindings.get(eid) ?? [];
       if (!arr.includes(f.id)) arr.push(f.id);
       eventToFindings.set(eid, arr);

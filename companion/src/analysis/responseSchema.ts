@@ -496,6 +496,94 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
   };
 }
 
+// A model citing an event sometimes decorates its id (#1693): it echoes the prompt row's own
+// punctuation (`~[id]`, synthesisPromptEvents.ts), prefixes it (`e_cld-e1`), or changes its case.
+// Every reader downstream matches ids exactly, so an undecorated miss drops the finding's evidence
+// and the High backfill raises the same events again as a second, auto finding.
+const MODEL_EVENT_ID_PREFIX = /^(?:e_|evt[-_]|event[-_])/i;
+
+/**
+ * A resolver from a cited id to the known event it names, or the id unchanged. Three tiers, first
+ * hit wins:
+ *  1. the id exactly — a real id is never rewritten, even when a stripped form also exists;
+ *  2. the id without prompt punctuation (`~`, one `[...]`), exactly — the model copied the row;
+ *  3. every looser reading (case-folded, prefix-stripped, both) must name ONE event. Two readings
+ *     naming different events (`E_X` with `e_x` and `x` both present) is a guess, and a wrong
+ *     evidence link is worse than a dangling one, so the id stays as sent.
+ * The case-folded index is built once, and only when some id reaches tier 3.
+ */
+function citedEventIdResolver(known: ReadonlySet<string>): (cited: string) => string {
+  let byLower: Map<string, string | null> | undefined;
+  const folded = (id: string): string | null | undefined => {
+    if (!byLower) {
+      byLower = new Map();
+      for (const k of known) {
+        const key = k.toLowerCase();
+        byLower.set(key, byLower.has(key) ? null : k); // null: two ids differ only by case
+      }
+    }
+    return byLower.get(id.toLowerCase());
+  };
+  return (cited) => {
+    if (known.has(cited)) return cited;
+    const bare = cited
+      .trim()
+      .replace(/^~/, "")
+      .replace(/^\[(.*)\]$/, "$1")
+      .replace(/^~/, "")
+      .trim();
+    if (!bare) return cited;
+    if (known.has(bare)) return bare;
+    const unprefixed = bare.replace(MODEL_EVENT_ID_PREFIX, "");
+    const readings = [folded(bare)];
+    if (unprefixed && unprefixed !== bare) {
+      readings.push(known.has(unprefixed) ? unprefixed : undefined, folded(unprefixed));
+    }
+    const hits = new Set(readings.filter((r): r is string => typeof r === "string"));
+    const ambiguous = readings.some((r) => r === null);
+    return hits.size === 1 && !ambiguous ? [...hits][0] : cited;
+  };
+}
+
+/** The known event a single cited id names, or the id unchanged (see `citedEventIdResolver`). */
+export function resolveCitedEventId(cited: string, known: ReadonlySet<string>): string {
+  return citedEventIdResolver(known)(cited);
+}
+
+/**
+ * Resolve every event a finding or hypothesis cites against `known` (#1693). Unresolvable ids stay
+ * as sent — dangling, exactly as before — and a rewrite that duplicates a sibling is dropped.
+ * Idempotent: an id already resolved matches exactly, so a second pass is a no-op. Returns the same
+ * delta when nothing changed.
+ */
+export function resolveCitedEventIds(delta: AnalysisDelta, known: ReadonlySet<string>): AnalysisDelta {
+  const resolveOne = citedEventIdResolver(known);
+  let changed = false;
+  const resolve = (ids: string[]): string[] => {
+    const out = [...new Set(ids.map(resolveOne))];
+    if (out.length !== ids.length || out.some((id, i) => id !== ids[i])) changed = true;
+    return out;
+  };
+  const findings = delta.findings.map((f) =>
+    f.relatedEventIds ? { ...f, relatedEventIds: resolve(f.relatedEventIds) } : f,
+  );
+  const hypotheses = delta.hypotheses?.map((h) => ({
+    ...h,
+    relatedEventIds: resolve(h.relatedEventIds),
+    contradictingEventIds: resolve(h.contradictingEventIds),
+  }));
+  if (!changed) return delta;
+  return { ...delta, findings, ...(hypotheses ? { hypotheses } : {}) };
+}
+
+/** True when some finding or hypothesis cites an event, so a merge seam knows resolving can matter. */
+export function citesEvents(delta: AnalysisDelta): boolean {
+  return (
+    delta.findings.some((f) => (f.relatedEventIds?.length ?? 0) > 0) ||
+    (delta.hypotheses ?? []).some((h) => h.relatedEventIds.length + h.contradictingEventIds.length > 0)
+  );
+}
+
 // AI synthesis/extraction responses must never carry extractedFrom — that field asserts an
 // authoritative, stored source-event link, which only the deterministic importers (pipeline.ts)
 // are allowed to set. Without this, a model response (or prompt-injected content it read from

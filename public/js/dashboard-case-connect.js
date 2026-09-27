@@ -72,6 +72,14 @@
   // to 86 queued requests — ~8 seconds on an 82 MB case, on routes the server answered in 2ms.
   const PANEL_LOAD_CONCURRENCY = 4;
 
+  // A debounced panel reload queued for the case being left must neither paint nor hold one of the
+  // shared lanes the next case load needs (#1713). `caseId` names the case now on screen — null
+  // after a cancel — so a helper timer armed before the switch is dropped when it fires after it.
+  function retirePanelReloads(caseId) {
+    const api = clpApi();
+    if (api && typeof api.retirePanelReloads === "function") api.retirePanelReloads(caseId);
+  }
+
   function connect() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -201,6 +209,7 @@
     // Detach BEFORE closing (js/dashboard-live-socket.js): close() fires onclose asynchronously,
     // and a still-attached handler would overwrite the cancel message below — or, since #1675,
     // schedule a reconnect to the case the analyst just walked out of. It also drops a pending retry.
+    retirePanelReloads(null);
     if (typeof closeCaseSocket === "function") closeCaseSocket();
     if (typeof retireCount === "function") retireCount();
     activeCaseId = null;
@@ -233,6 +242,7 @@
     // The old case's socket must never reconnect (#1675). Guarded: a missing socket module must
     // cost live updates, never the case load itself.
     if (typeof closeCaseSocket === "function") closeCaseSocket();
+    retirePanelReloads(caseId);
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
     if (typeof syncCasePicker === "function") syncCasePicker();
@@ -445,7 +455,13 @@
         (tally) => {
           if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
         },
-        { signal: loadSignal, concurrency: PANEL_LOAD_CONCURRENCY },
+        // The page-wide pool (#1713), shared with the catch-up and the debounced panel reloads;
+        // `concurrency` is the fallback for a cached case-load-progress.js without one.
+        {
+          signal: loadSignal,
+          lanes: panelApi.panelLanes,
+          concurrency: PANEL_LOAD_CONCURRENCY,
+        },
       );
     } else {
       for (const [, run] of CASE_PANEL_LOADERS) {
@@ -512,18 +528,32 @@
 
     // The live socket, its reconnect and its catch-up live in js/dashboard-live-socket.js (#1675).
     if (typeof openCaseSocket === "function")
-      openCaseSocket(caseId, (msg) => handleCaseMessage(caseId, msg));
+      openCaseSocket(caseId, (msg, ctx) =>
+        handleCaseMessage(caseId, msg, ctx),
+      );
     else
       document.getElementById("status").textContent =
         "live updates unavailable (js/dashboard-live-socket.js did not load)";
   }
 
   // Every push the case socket delivers. Named so a reconnected socket reuses it (#1675).
-  function handleCaseMessage(caseId, msg) {
+  //
+  // `ctx` is set only on a reconnect catch-up (#1709), which sends ~25 messages in one go. Several
+  // of them reload the same panel, so `once` runs each shared loader a single time per catch-up.
+  // A real push has no ctx and always reloads — each one is a real change.
+  function handleCaseMessage(caseId, msg, ctx) {
+    const once = (key, run) => {
+      if (ctx && ctx.ran) {
+        if (ctx.ran.has(key)) return;
+        ctx.ran.add(key);
+      }
+      run();
+    };
+    const cockpit = () => once("cockpit", () => loadCockpit(caseId));
     if (msg.type === "state") {
       typeof render === "function" && render(msg.state);
-      loadCockpit(caseId);
-      scheduleAssetGraphReload();
+      cockpit();
+      once("assetGraph", () => scheduleAssetGraphReload());
       scheduleEvidenceGraphReload();
       schedulePhasesReload();
       scheduleTimelineGapsReload();
@@ -547,7 +577,7 @@
       loadSynthMeta(caseId);
       loadPlaybook(caseId);
       loadHypotheses(caseId);
-      loadSuperTimeline(caseId);
+      once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
     } else if (msg.type === "second_opinion_changed")
       loadSecondOpinion(caseId);
@@ -568,14 +598,14 @@
     } else if (msg.type === "comments_changed") loadComments(caseId);
     else if (msg.type === "activity_changed") {
       loadActivityLog(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "tags_changed") loadTags(caseId);
     else if (msg.type === "pins_changed") {
       loadPins(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "finding_workflow_changed") {
       loadFindingWorkflow(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "finding_outcome_changed") {
       loadFindingOutcome(caseId);
     } else if (msg.type === "notebook_changed") {
@@ -583,19 +613,19 @@
       loadNbAiToggle(caseId);
     } else if (msg.type === "hypotheses_changed") {
       loadHypotheses(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "dwell_window_changed")
       loadSavedTimeframes(caseId);
     else if (msg.type === "super_timeline_changed") {
-      loadSuperTimeline(caseId);
+      once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleLoginGraphReload(caseId);
     } else if (msg.type === "playbook_changed") loadPlaybook(caseId);
     else if (msg.type === "asset_overrides_changed") {
-      loadAssetGraph(caseId);
+      once("assetGraph", () => loadAssetGraph(caseId));
       loadAssetOverrides(caseId);
     } else if (msg.type === "import_meta_changed") {
       loadImportMeta(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
     else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
     else if (msg.type === "velo_hunt_changed") {

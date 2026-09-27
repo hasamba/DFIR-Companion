@@ -129,6 +129,7 @@
     }
   },
   "flatAnalysisFiles": {
+    "absorbedCitations.ts": "analysis/timeline",
     "accountUsageImport.ts": "analysis/ingest",
     "activityLog.ts": "analysis/workflow",
     "activityWaves.ts": "analysis/detect",
@@ -198,6 +199,7 @@
     "bplistReader.ts": "analysis/ingest",
     "bulkExtractorUrlImport.ts": "analysis/ingest",
     "bulkExtractorCarvedImport.ts": "analysis/ingest",
+    "buildTimeMerge.ts": "analysis/timeline",
     "buildTimeWindow.ts": "analysis/detect",
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
@@ -300,6 +302,7 @@
     "confidenceControl.ts": "analysis/findings",
     "containerEscape.ts": "analysis/timeline",
     "correlate.ts": "analysis/timeline",
+    "correlateSpans.ts": "analysis/timeline",
     "correlateUnion.ts": "analysis/timeline",
     "correlationProfile.ts": "analysis/detect",
     "countryCentroids.ts": "analysis/intel",

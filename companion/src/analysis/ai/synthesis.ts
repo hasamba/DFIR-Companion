@@ -18,7 +18,9 @@ import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js"
 import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
-import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
+import { correlateEventsTracked, correlationGroups, type CorrelateOptions } from "../correlate.js";
+import { remapAbsorbedEventIds } from "../absorbedCitations.js";
+import { repairBuildTimeRows } from "../buildTimeWindow.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
@@ -452,18 +454,19 @@ async function correlateForSynthesis(
   const trustOverrides = ctx.opts.sourceTrustStore ? await ctx.opts.sourceTrustStore.load(caseId) : undefined;
   const sourceTrust = effectiveTrustMap(trustOverrides);
   const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
-  return {
+  // The case's own window and clock-skew alignment can fold rows the import did not; every citation
+  // of a folded-away id follows it to the survivor before grading reads it (#1714).
+  const { events, absorbedInto } = correlateEventsTracked(loaded.forensicTimeline, {
     windowSeconds,
     sourceTrust,
-    state: {
-      ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, {
-        windowSeconds,
-        sourceTrust,
-        epochOf: skew,
-      }),
-    },
-  };
+    epochOf: skew,
+  });
+  const correlated = remapAbsorbedEventIds({ ...loaded, forensicTimeline: events }, absorbedInto);
+  // Correlation merges rows, and this timeline is persisted (#1698). A repair, not the import-time cap:
+  // windows are found at the import seam before demote, and this record no longer holds the Info
+  // markers that opened them, so recomputing here could lift a valid cap. It also repairs a case
+  // correlated before this rule, on its next synthesis rather than its next import.
+  return { windowSeconds, sourceTrust, state: repairBuildTimeRows(correlated).state };
 }
 
 /**
@@ -714,6 +717,7 @@ export async function synthesize(
     playbookTasks: run.playbookTasks,
     inventory: run.inventory,
     hostOf: (raw) => resolveHost(aliasIndex, raw),
+    membersOf: prompt.membersOf,
   });
   let next = folded;
   if (opts.dryRun) return next;
@@ -762,7 +766,7 @@ export async function synthesize(
   });
   // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);
-  await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
+  await autoGenerateHypotheses(ctx, caseId, foldedDelta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
   await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });
 

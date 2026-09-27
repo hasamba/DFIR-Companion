@@ -452,6 +452,65 @@ export function isCollectorServiceChild(m: MappedEvent): boolean {
   return tradecraftSignal(image, cmd)?.weight !== "strong";
 }
 
+/**
+ * Rule 2e — the ONE inline artifact whose children are the collector's too (#1699).
+ *
+ * Rule 2d claims an inline-script row alone, and that stays the rule. One artifact needs more: the
+ * client's klist collection captures `(& klist sessions 2>&1 | Out-String)` (or a bare `klist`) and
+ * then runs `cmd.exe /c "klist -li 0x<session>"` per logon session. On INC-2026-014 that cmd.exe child
+ * stayed Medium and synthesis reported "Kerberos ticket enumeration" in the attacker path.
+ *
+ * isCollectorKlistScript marks the script that may seed that lineage; isKlistSessionCommand is the
+ * only thing it may claim. collectorChildren.ts joins the two by process GUID alone. Both halves are
+ * exact: the system-directory binaries (a same-named copy in a writable folder is refused), and the
+ * whole argument list with the executable token removed — one extra argument, redirection or chained
+ * command and the row keeps its grade.
+ */
+const KLIST_CAPTURES = [
+  /\(\s*&\s*klist\s+sessions\s+2>&1\s*\|\s*out-string\s*\)/i,
+  /\(\s*&\s*klist\s+2>&1\s*\|\s*out-string\s*\)/i,
+];
+const POWERSHELL_IMAGE = /\\windowspowershell\\v1\.0\\powershell\.exe$/i;
+const SYSTEM_KLIST = /^[a-z]:\\windows\\(?:system32|syswow64)\\klist\.exe$/i;
+const SYSTEM_CMD = /^[a-z]:\\windows\\(?:system32|syswow64)\\cmd\.exe$/i;
+const SESSION = String.raw`(?:sessions|-li\s+0x[0-9a-f]{1,16})`;
+const KLIST_ARGS = new RegExp(`^${SESSION}?$`, "i");
+const CMD_KLIST_ARGS = new RegExp(`^/c\\s+("?)klist(?:\\.exe)?\\s+${SESSION}\\1$`, "i");
+
+/** Is this the client's inline klist collection, already claimed by rule 2d? */
+export function isCollectorKlistScript(m: MappedEvent): boolean {
+  if (!isCollectorServiceChild(m) || !POWERSHELL_IMAGE.test(processImage(m))) return false;
+  const cmd = commandLineOf(m);
+  return KLIST_CAPTURES.some((re) => re.test(cmd));
+}
+
+/** Is this row exactly one of the klist commands that collection runs, from the system directory? */
+export function isKlistSessionCommand(m: MappedEvent): boolean {
+  if (!isProcessRow(m)) return false;
+  const image = processImage(m);
+  const args = argsAfterExecutable(commandLineOf(m));
+  if (SYSTEM_KLIST.test(image)) return KLIST_ARGS.test(args);
+  if (SYSTEM_CMD.test(image)) return CMD_KLIST_ARGS.test(args);
+  return false;
+}
+
+function processImage(m: MappedEvent): string {
+  return (m.canonical?.process?.executable ?? "").trim() || imagePath(m).trim();
+}
+
+// The arguments after the executable token: a quoted path, a bare word, or the mapper's "…" elision
+// of argv[0]. The image is judged separately, so the token itself carries no trust.
+function argsAfterExecutable(commandLine: string): string {
+  const cmd = commandLine.trim();
+  if (cmd.startsWith("\u2026")) return cmd.slice(1).trim();
+  if (cmd.startsWith('"')) {
+    const end = cmd.indexOf('"', 1);
+    return end < 0 ? "" : cmd.slice(end + 1).trim();
+  }
+  const space = cmd.search(/\s/);
+  return space < 0 ? "" : cmd.slice(space).trim();
+}
+
 function commandLineOf(m: MappedEvent): string {
   return m.commandLine || descriptionField(m.description, "CommandLine");
 }

@@ -270,14 +270,14 @@ describe("ArtifactBundleStore", () => {
     expect(bp?.params?.["Windows.Hayabusa.Rules"]?.RuleStatus).toBe("Stable and Experimental");
   });
 
-  it("ships Hayabusa Full with every level and status, excluding only the noisy rules", async () => {
+  it("ships Hayabusa Full from Low severity up, every status, excluding only the noisy rules", async () => {
     const full = await store.get("hayabusa-full");
     expect(full).not.toBeNull();
     expect(full?.builtIn).toBe(true);
     expect(full?.artifacts).toEqual(["Windows.Hayabusa.Rules"]);
     expect(full?.superTimelineOnly).toBeFalsy();
     const params = full?.params?.["Windows.Hayabusa.Rules"];
-    expect(params?.RuleLevel).toBe("All");
+    expect(params?.RuleLevel).toBe("Critical, High, Medium, and Low");
     expect(params?.RuleStatus).toBe("All Rules");
     // Replaces the artifact's default list, which also drops eight per-event Sysmon/WMI rules.
     expect(params?.RuleExclusions).toBe(
