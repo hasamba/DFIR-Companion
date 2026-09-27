@@ -4,11 +4,12 @@
 // and the High backfill could raise the same events again as a duplicate auto finding. This rewrites
 // every such citation in the case state to the event that survived, in the same step that folded it.
 //
-// Only core state is rewritten here. Stores keyed by event id outside the state (false-positive
-// markers, tags, comments, hypotheses, promotion stamps) still point at a folded-away id; they need a
-// durable alias map, which is a separate change.
+// Only core state is rewritten here. Stores keyed by event id outside the state (tags, comments,
+// hypotheses …) are never rewritten; the same step records the fold in the case lineage, and their
+// readers resolve through it (#1715, eventAliases.ts).
 
 import type { InvestigationState } from "./stateTypes.js";
+import { recordEventAliases } from "./eventAliases.js";
 
 type Absorbed = ReadonlyMap<string, string>;
 
@@ -51,5 +52,6 @@ export function remapAbsorbedEventIds(state: InvestigationState, absorbed: Absor
     findings: state.findings.map((f) => remapFinding(f, absorbed)),
     iocs: state.iocs.map((i) => remapIoc(i, absorbed)),
     keyQuestions: state.keyQuestions.map((q) => remapQuestion(q, absorbed)),
+    eventAliases: recordEventAliases(state.eventAliases, absorbed),
   };
 }

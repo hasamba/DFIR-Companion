@@ -17,6 +17,7 @@ import {
 import { heldForAnalyst } from "./secondOpinionGuard.js";
 import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
+import { stateEventResolver } from "./eventAliasLookup.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -507,20 +508,26 @@ export function applyAcceptedSecondOpinion(
 
   let findings = state.findings;
   let techniques = state.mitreTechniques;
+  // A saved finding cites events as they were when the second opinion ran; an event correlation has
+  // folded since is cited as the one it lives on now (#1715), before matching and before adoption.
+  const resolve = stateEventResolver(state);
 
   for (const d of accepted) {
     if (d.kind === "b_only" && d.finding) {
+      const bFinding = d.finding.relatedEventIds
+        ? { ...d.finding, relatedEventIds: [...new Set(d.finding.relatedEventIds.map(resolve))] }
+        : d.finding;
       // Present already by the id it was adopted under (the model may have retitled it), or by key.
-      const key = matchKey(d.finding);
+      const key = matchKey(bFinding);
       const adoptedId = `so:${slug(d.title)}`;
       if (findings.some((f) => f.id === adoptedId || matchKey(f) === key)) continue;
       // #1682 — B's finding cites mostly the same events as a live finding: it is that finding
       // under another title. Accepting B takes B's severity on it; the finding count never grows.
-      const dup = overlappingFinding(findings, d.finding);
-      const sev = d.bSeverity ?? d.finding.severity;
+      const dup = overlappingFinding(findings, bFinding);
+      const sev = d.bSeverity ?? bFinding.severity;
       findings = dup
         ? findings.map((f) => (f.id === dup.id ? { ...f, severity: sev } : f))
-        : [...findings, { ...d.finding, id: adoptedId, status: "open" }];
+        : [...findings, { ...bFinding, id: adoptedId, status: "open" }];
     } else if (d.kind === "a_only") {
       findings = mapTargets(findings, d, (f) => ({ ...f, status: "dismissed" as const }));
     } else if (d.kind === "severity" && d.bSeverity) {

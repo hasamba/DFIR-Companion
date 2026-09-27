@@ -1,4 +1,7 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { withoutEventAliases } from "../analysis/eventAliases.js";
+import { stateEventResolver } from "../analysis/eventAliasLookup.js";
+import { resolveHypothesisLinks } from "../analysis/hypothesisLineage.js";
 import type { AssetGraph } from "../analysis/assetGraph.js";
 import type { CustodyRecord } from "../analysis/custody.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
@@ -53,6 +56,9 @@ export function renderReportContents(
   custody?: CustodyRecord[],
   hostScope?: HostScopeLedger | null,
 ): RedactedReportContents {
+  // Each hypothesis link read on the event it lives on today (#1715), as the dashboard reads it.
+  const resolve = stateEventResolver(state);
+  const linkedHypotheses = hypotheses?.map((h) => resolveHypothesisLinks(h, resolve));
   const scopeSection = hostScope ? `\n\n${renderScopeSection(hostScope)}` : "";
   // Defanged after the scope section is appended — see html.ts for why this sits at the seam.
   const markdown = defangIndicators(
@@ -65,7 +71,7 @@ export function renderReportContents(
       playbookTasks,
       template,
       kevCatalog,
-      hypotheses,
+      linkedHypotheses,
       secondLookLeads,
       coverage,
       lateralPaths,
@@ -83,7 +89,7 @@ export function renderReportContents(
     notebookEntries,
     playbookTasks,
     template,
-    hypotheses,
+    linkedHypotheses,
     custody,
     hostScope,
   );
@@ -101,6 +107,7 @@ export function renderReportContents(
     iocsCsv: iocsCsv(state),
     timelineCsv: timelineCsv(state),
     forensicTimelineCsv: forensicTimelineCsv(state),
-    stateJson: JSON.stringify(state, null, 2),
+    // The correlation lineage (#1715) is server bookkeeping, not a finding of the report.
+    stateJson: JSON.stringify(withoutEventAliases(state), null, 2),
   };
 }

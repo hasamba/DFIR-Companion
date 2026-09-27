@@ -626,6 +626,8 @@ export function mergeDelta(
     // Analyst decisions on the intel retirement review (#1024): kept across every merge, keyed by
     // finding id, newest wins — a field this literal does not name is gone after the first merge.
     intelRetirementDecisions: state.intelRetirementDecisions ?? [],
+    // The correlation lineage (#1715) only grows; the remap below adds this merge's folds to it.
+    ...(state.eventAliases ? { eventAliases: state.eventAliases } : {}),
     updatedAt: ctx.timestamp,
   };
   // Every citation of an event correlation folded away follows it to the survivor (#1714).

@@ -290,3 +290,54 @@ describe("caseSqliteRowStateHint (#1290 Part B)", () => {
     }
   });
 });
+
+// #1715 — an analyst-authored hypothesis is frozen against the synthesis refresh, so a link to an
+// event correlation later folded into another kept naming the gone id. It reads on the survivor now.
+describe("hypothesis links follow an event correlation folded away (#1715)", () => {
+  async function folded() {
+    const made = await makeApp();
+    const { app, stateStore } = made;
+    const h = (
+      await request(app)
+        .post("/cases/c1/hypotheses")
+        .send({ title: "Initial access was phishing", relatedEventIds: ["e1", "e2"] })
+    ).body;
+    // Correlation kept e3 and recorded that e1 and e2 went into it.
+    const s = await stateStore.load("c1");
+    await stateStore.save({
+      ...s,
+      forensicTimeline: [ev("e3")],
+      eventAliases: { e1: "e3", e2: "e3" },
+    });
+    return { ...made, h };
+  }
+
+  it("the GET reads both stored links as the one surviving observation", async () => {
+    const { app, h } = await folded();
+    const got = (await request(app).get("/cases/c1/hypotheses")).body.find(
+      (x: { id: string }) => x.id === h.id,
+    );
+    expect(got.relatedEventIds).toEqual(["e3"]);
+    expect(got.evidence.find((r: { eventId: string }) => r.eventId === "e3")?.present).toBe(true);
+  });
+
+  it("excluding and restoring that observation acts on every stored link it stands for", async () => {
+    const { app, h, hypothesisStore } = await folded();
+    const ex = await request(app)
+      .post(`/cases/c1/hypotheses/${h.id}/exclusions`)
+      .send({ eventId: "e3", reason: "same host, other user", by: "ana" });
+    expect(ex.status).toBe(200);
+    const stored = (await hypothesisStore.load("c1")).find((x) => x.id === h.id)!;
+    expect(stored.excludedEvidence.filter((x) => !x.restoredAt).map((x) => x.eventId)).toEqual(["e1", "e2"]);
+    // The GET shows the exclusion on the surviving event and keeps the id it was recorded against.
+    const got = (await request(app).get("/cases/c1/hypotheses")).body.find(
+      (x: { id: string }) => x.id === h.id,
+    );
+    expect(got.excludedEvidence[0]).toMatchObject({ eventId: "e3", recordedEventId: "e1" });
+
+    expect((await request(app).delete(`/cases/c1/hypotheses/${h.id}/exclusions/e3?by=ana`)).status).toBe(200);
+    const after = (await hypothesisStore.load("c1")).find((x) => x.id === h.id)!;
+    expect(after.excludedEvidence.every((x) => x.restoredAt)).toBe(true);
+    expect(after.relatedEventIds).toEqual(["e1", "e2"]); // the stored hypothesis is never rewritten
+  });
+});

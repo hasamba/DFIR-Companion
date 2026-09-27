@@ -67,7 +67,7 @@ async function makeCase(timeline: ForensicEvent[]) {
     imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     ...stores,
   });
-  return { pipeline, provider, stores };
+  return { pipeline, provider, stores, stateStore };
 }
 
 const ORDER = [
@@ -187,5 +187,25 @@ describe("ask() analyst-decision context (#1411)", () => {
     expect(trimmed.eventCount).toBe(3);
     expect(trimmed.usedEvents).toBe(1);
     expect(trimmed.answer).toBe("ok"); // the model's own fields survive alongside the counts
+  });
+});
+
+// #1715: the model is told to cite the marked ids, so a mark on an event correlation folded into
+// another must name the event it lives on today, never the gone id.
+describe("ask() analyst marks after a fold (#1715)", () => {
+  it("names the surviving event for a mark made on a folded-away one", async () => {
+    const { pipeline, provider, stores, stateStore } = await makeCase([ev({ id: "e9" })]);
+    const s = await stateStore.load("c1");
+    await stateStore.save({ ...s, eventAliases: { e1: "e9" } });
+    await stores.tagsStore.add("c1", {
+      targetType: "event",
+      targetId: "e1",
+      label: "starred",
+      author: "bob",
+    });
+    await pipeline.ask("c1", "Anything?");
+    const prompt = provider.lastReq!.userPrompt;
+    expect(prompt).toContain("- [event e9] tags: starred");
+    expect(prompt).not.toContain("[event e1]");
   });
 });

@@ -1,5 +1,6 @@
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { withoutEventAliases } from "../analysis/eventAliases.js";
 
 export interface SocketLike {
   readyState: number;
@@ -79,7 +80,11 @@ export class LiveHub {
   // socket-gate tests do), and a throw here would surface inside a route that has already saved.
   broadcast(state: InvestigationState): void {
     const techniqueNames = techniqueNamesFor(state.mitreTechniques ?? [], state.forensicTimeline ?? []);
-    this.broadcastTo(state.caseId, { type: "state", state: { ...state, techniqueNames } });
+    // The correlation lineage (#1715) is server bookkeeping; the dashboard gets resolved records instead.
+    this.broadcastTo(state.caseId, {
+      type: "state",
+      state: { ...withoutEventAliases(state), techniqueNames },
+    });
   }
 
   // The jobs push carries the case's job list (#1453). It used to be a bare nudge that sent the

@@ -32,6 +32,8 @@ import {
   type AiCallContext,
 } from "./aiContext.js";
 import { promptDescription } from "./promptDescription.js";
+import { stateEventResolver } from "../eventAliasLookup.js";
+import { resolveHypothesisLinks } from "../hypothesisLineage.js";
 
 /**
  * The four "write me a document about this case" AI calls (#418).
@@ -206,7 +208,11 @@ export async function hypothesisReview(
   const allHypotheses = await ctx.opts.hypothesisStore.load(caseId);
   // Review OPEN, non-exhausted hypotheses (analyst- or synthesis-authored). Resolved/exhausted ones
   // are already settled, so re-litigating them wastes tokens and invites status churn.
-  const open = allHypotheses.filter((h) => h.status === "open" && !h.exhausted);
+  // Each link named on the event it lives on today (#1715): the prompt must not cite a folded-away id.
+  const resolve = stateEventResolver(loaded);
+  const open = allHypotheses
+    .filter((h) => h.status === "open" && !h.exhausted)
+    .map((h) => resolveHypothesisLinks(h, resolve));
   if (!open.length) return { reviews: [] };
 
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
