@@ -22,7 +22,12 @@ import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
-import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
+import {
+  isDeterministicFindingId,
+  renameForgedFindingIds,
+  resolveCitedEventIds,
+  type deltaSchema,
+} from "../responseSchema.js";
 import { autoFindingSupport, coveredEventIds, dropAutoCoveredByDismissal } from "./groupedCitation.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
@@ -158,7 +163,13 @@ export async function foldSynthesisDelta(
   // back-links here, the relevance verdict in grading — and each read matches the model's ids
   // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
   // looking for an id that no longer exists, silently dropping both.
-  const delta = renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id)));
+  // The same holds for the events a finding or hypothesis cites (#1693): a decorated id (`e_cld-e1`,
+  // `~[cld-e1]`) resolves here, once, against the events this run was shown — never onto one outside
+  // the window or one the analyst rejected.
+  const delta = resolveCitedEventIds(
+    renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id))),
+    new Set(scopedEvents.map((e) => e.id)),
+  );
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts);
