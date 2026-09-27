@@ -218,6 +218,13 @@ describe("narrativeHtml", () => {
     expect(html).toContain("nt-spine nt-sev-critical");
   });
 
+  it("explains each dot in a tooltip", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain('nt-spine nt-sev-critical" title="Most severe event at 08:49: Critical"');
+    expect(html).toContain('title="No event in the forensic timeline at 08:55"');
+    expect(html).toContain('title="No time in this paragraph"');
+  });
+
   it("finds the day from the case's events when the text never names one", () => {
     const text = "At 08:58, one.\n\nAt 09:04:15, two.";
     const html = f.narrativeHtml(text, events);

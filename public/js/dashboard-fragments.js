@@ -357,6 +357,13 @@ function narrativeHtml(text, events) {
     const dates = day ? [day, ...caseDates.filter((d) => d > day)] : caseDates;
     const hits = (lead ? lead.times : []).map((t) => ({ t, hit: narrativeEventAt(timed, dates, t) }));
     const sev = narrativeTopSeverity(hits.map((h) => h.hit && h.hit.severity));
+    // The dot's tooltip names what its color means: the severity and the time it came from.
+    const top = sev ? hits.find((h) => h.hit && h.hit.severity.toLowerCase() === sev) : null;
+    const dotTip = top
+      ? `Most severe event at ${top.t}: ${top.hit.severity}`
+      : hits.length
+        ? `No event in the forensic timeline at ${hits.map((h) => h.t).join(" or ")}`
+        : "No time in this paragraph";
     const link = (h, bold) => {
       const label = bold ? `<b>${esc(h.t)}</b>` : esc(h.t);
       return h.hit
@@ -369,7 +376,7 @@ function narrativeHtml(text, events) {
     if (lead && lead.sub) when += `<span class="nt-sub">${esc(lead.sub)}</span>`;
     const [first, ...more] = proseSentences(lead ? lead.rest : para);
     const body = `<span class="nt-lede">${esc(first || "")}</span>${more.length ? " " + esc(more.join(" ")) : ""}`;
-    return `<li><div class="nt-when">${when}</div><div class="nt-spine${sev ? " nt-sev-" + sev : ""}"></div><div class="nt-body">${body}</div></li>`;
+    return `<li><div class="nt-when">${when}</div><div class="nt-spine${sev ? " nt-sev-" + sev : ""}" title="${escAttr(dotTip)}"></div><div class="nt-body">${body}</div></li>`;
   });
   return `<ol class="nt-rail">${items.join("")}</ol>`;
 }
