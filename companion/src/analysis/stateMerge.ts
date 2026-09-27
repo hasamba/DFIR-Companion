@@ -1,4 +1,9 @@
-import { renameForgedFindingIds, type AnalysisDelta } from "./responseSchema.js";
+import {
+  citesEvents,
+  renameForgedFindingIds,
+  resolveCitedEventIds,
+  type AnalysisDelta,
+} from "./responseSchema.js";
 import { combineMarkings } from "./tlp.js";
 import { vendorNote } from "./ipHygiene.js";
 import type {
@@ -78,6 +83,11 @@ export interface WindowContext {
   // this it would read every prior deterministic finding as newly invented and rename the model's
   // legitimate update to one — losing the finding the carry-forward exists to protect (#751).
   knownFindingIds?: ReadonlySet<string>;
+  // The events a cited id may resolve onto (#1693). Defaults to what the merge will hold. Synthesis
+  // passes the events its run was SHOWN — it already resolved against them at the top of the fold,
+  // and resolving again against the whole timeline would link an out-of-window or analyst-rejected
+  // event the fold deliberately left unresolved.
+  knownEventIds?: ReadonlySet<string>;
 }
 
 function uniq(values: string[]): string[] {
@@ -105,10 +115,24 @@ export function mergeDelta(
   ctx: WindowContext,
 ): InvestigationState {
   // A model may update a deterministic finding by id, but it may not MINT one (#787).
-  const delta = renameForgedFindingIds(
+  const renamed = renameForgedFindingIds(
     incoming,
     ctx.knownFindingIds ?? new Set(state.findings.map((f) => f.id)),
   );
+  // A decorated event citation (`e_cld-e1`) resolves to the event it names (#1693) — the import and
+  // MCP-agent paths meet here. Known = what this merge will hold: the case's events plus the incoming
+  // ones that pass the same work-log guard as below. Skipped when nothing cites an event, which is
+  // every deterministic importer.
+  const delta = citesEvents(renamed)
+    ? resolveCitedEventIds(
+        renamed,
+        ctx.knownEventIds ??
+          new Set([
+            ...state.forensicTimeline.map((e) => e.id),
+            ...(renamed.forensicEvents ?? []).filter((e) => !isAnalystWorkLog(e)).map((e) => e.id),
+          ]),
+      )
+    : renamed;
   // IOCs first — we need the id remap before processing findings so their
   // relatedIocs cross-references (e.g. the model's "i1") can be rewritten to
   // our canonical ids ("i001", "i002", ...).

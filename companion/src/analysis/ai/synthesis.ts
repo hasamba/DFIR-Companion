@@ -765,7 +765,7 @@ export async function synthesize(
   });
   // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);
-  await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
+  await autoGenerateHypotheses(ctx, caseId, foldedDelta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
   await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });
 

@@ -22,7 +22,12 @@ import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
-import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
+import {
+  isDeterministicFindingId,
+  renameForgedFindingIds,
+  resolveCitedEventIds,
+  type deltaSchema,
+} from "../responseSchema.js";
 import { autoFindingSupport, coveredEventIds, dropAutoCoveredByDismissal } from "./groupedCitation.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
@@ -158,10 +163,17 @@ export async function foldSynthesisDelta(
   // back-links here, the relevance verdict in grading — and each read matches the model's ids
   // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
   // looking for an id that no longer exists, silently dropping both.
-  const delta = renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id)));
+  // The same holds for the events a finding or hypothesis cites (#1693): a decorated id (`e_cld-e1`,
+  // `~[cld-e1]`) resolves here, once, against the events this run was shown — never onto one outside
+  // the window or one the analyst rejected.
+  const shownIds = new Set(scopedEvents.map((e) => e.id));
+  const delta = resolveCitedEventIds(
+    renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id))),
+    shownIds,
+  );
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
-  const merged = await replaceConclusions(ctx, state, delta, ts);
+  const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
   // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
   const filtered = applyFalsePositive(merged, markers);
   const surviving = new Set(filtered.findings.map((f) => f.id));
@@ -216,6 +228,7 @@ function replaceConclusions(
   state: InvestigationState,
   delta: DeltaFoldInput["delta"],
   ts: string,
+  shownIds: ReadonlySet<string>,
 ): Promise<InvestigationState> {
   const base = { ...state, findings: [], mitreTechniques: [] };
   return ctx.mergeWithAliases(base, delta, {
@@ -227,6 +240,9 @@ function replaceConclusions(
     // been normalized at the top of the fold, so its ids are settled: passing them here is what
     // stops the merge renaming an id the fold just assigned a second time.
     knownFindingIds: new Set([...state.findings.map((f) => f.id), ...delta.findings.map((f) => f.id)]),
+    // Event citations were resolved at the top of the fold too (#1693), against the events this run
+    // was shown; the merge must not widen that to the whole timeline.
+    knownEventIds: shownIds,
   });
 }
 
