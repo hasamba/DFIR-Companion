@@ -30,6 +30,7 @@ import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
 import { mergeDerivedNotes } from "./buildTimeMerge.js";
 import { collectorRecordGrade } from "./collectorMerge.js";
 import { partlyReadArtifactOf, promotionMarks } from "./promotionMerge.js";
+import { scannedText } from "./correlateSpans.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -59,25 +60,6 @@ const MD5_RE = /\b[a-f0-9]{32}\b/i;
 // URL/host, not a filesystem path — matching it falsely correlated unrelated detections that merely
 // shared a vendor URL in their text. (#102)
 const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
-// A span an importer shows VERBATIM from a client- or resolver-written field — a web-log line's
-// appended trailer (#933 item 1), a DNS record's queried name and returned values (#933 item 2), a
-// TLS record's SNI and certificate names (#933 item 6), a quarantine record's agent, URLs, origin
-// title and sender (#933 item 7) —
-// is a label, never an artifact: nothing inside it may become a fallback hash or path, or an
-// attacker who appends `/tmp/payload.exe` to a request, or answers a TXT query with 32 hex, would
-// union that row with the endpoint event that really carries the file or the hash. Each span is
-// well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
-// A web request or transfer row (#993) shows the request target, the MIME type, the filename, the
-// user, the Referer, the User-Agent, the proxy headers and the server's stated redirect target the
-// same way — each in its own span. A TLS relationship row (#997) shows names, subjects, issuers,
-// chain-check strings and its leads (which name SNIs) in the spans listed last; a quarantine
-// attribute row (#1037) shows the file's path and the joined download facts the same way, and the
-// merge-time persistence link (quarantinePersistenceLink.ts) its program path and download facts.
-const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)|name|subject|issuer|presented under|presented by|presented to|under|served with|chain check|lead|certificate records for this identity disagree|file|local file|local files|download event|download record|persisted as|origin page visited|download URL visited|preceded a quarantine record|ran a quarantine-marked file|quarantine-marked file used|a quarantine-marked file|path): [^\]]*\]/g;
-function scannedText(description: string): string {
-  return description.replace(UNTRUSTED_SPAN_RE, " ");
-}
 
 function eventHashes(e: ForensicEvent): string[] {
   const out = new Set<string>();
@@ -317,9 +299,11 @@ function realSources(events: ForensicEvent[]): string[] {
   return [...new Set(events.flatMap((e) => e.sources ?? []).filter((s) => s && s !== "unknown source"))];
 }
 
-// Merge a group of events (≥1) into one canonical event. The lowest-index event's id is
-// kept (stable); severity is the most severe; evidence/links/sources are unioned. The
-// description is NOT mutated — corroboration is conveyed only via the `sources` field.
+// Merge a group of events (≥1) into one canonical event. The PRIMARY's id is kept — the member whose
+// text is shown, so an exact-id re-import of it restates the same content — and every other member's
+// id is dropped (correlateEventsTracked reports which, #1714). Severity is the most severe;
+// evidence/links/sources are unioned. The description is NOT mutated — corroboration is conveyed
+// only via the `sources` field.
 function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): ForensicEvent {
   // Primary (its description is the canonical shown text): most SEVERE first — a Critical detection's
   // wording must win over an Info row of the same fact — then highest TRUST (#66: prefer the reliable
@@ -767,33 +751,43 @@ export function correlationGroups(
   return groups.map((members) => members.map((m) => evs[m]));
 }
 
-export function correlateEvents(
+/** correlateEvents, plus every folded-away member id → the id of the event that kept it (#1714). */
+export function correlateEventsTracked(
   events: readonly ForensicEvent[],
   opts: CorrelateOptions = {},
-): ForensicEvent[] {
+): { events: ForensicEvent[]; absorbedInto: Map<string, string> } {
+  const absorbedInto = new Map<string, string>();
   // Always strip any legacy corroboration note from descriptions, even for a single
   // event, so old polluted state self-heals on the next merge/synthesis.
   if (events.length < 2)
-    return events.map((e) =>
-      withSignature(
-        CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e,
+    return {
+      events: events.map((e) =>
+        withSignature(
+          CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e,
+        ),
       ),
-    );
+      absorbedInto,
+    };
   const { evs, groups } = groupEvents(events, opts);
   const out: ForensicEvent[] = [];
   for (const members of groups) {
     if (members.length > 1) {
-      out.push(
-        mergeGroup(
-          members.map((m) => evs[m]),
-          opts.sourceTrust,
-        ),
-      );
+      const group = members.map((m) => evs[m]);
+      const merged = mergeGroup(group, opts.sourceTrust);
+      for (const e of group) if (e.id !== merged.id) absorbedInto.set(e.id, merged.id);
+      out.push(merged);
     } else {
       // Singleton: still strip any legacy corroboration note so old state self-heals.
       const e = evs[members[0]];
       out.push(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e);
     }
   }
-  return out;
+  return { events: out, absorbedInto };
+}
+
+export function correlateEvents(
+  events: readonly ForensicEvent[],
+  opts: CorrelateOptions = {},
+): ForensicEvent[] {
+  return correlateEventsTracked(events, opts).events;
 }
