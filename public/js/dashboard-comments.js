@@ -10,6 +10,14 @@
   let commentsByTarget = new Map(); // "type:id" -> [comment]
   let commentTarget = null; // currently-open { type, id } in the modal
 
+  // An annotation's keys (#1715): its own `type:id`, plus the event it lives on today when correlation
+  // folded the one it was made on into another (the server adds resolvedTargetId for that case only).
+  function annotationKeys(a) {
+    const keys = [targetKey(a.targetType, a.targetId)];
+    if (a.resolvedTargetId) keys.push(targetKey(a.targetType, a.resolvedTargetId));
+    return keys;
+  }
+
   function commentChip(type, id) {
     const list = commentsByTarget.get(targetKey(type, id)) || [];
     return (
@@ -23,13 +31,15 @@
       .then((list) => {
         commentsByTarget = new Map();
         (list || []).forEach((c) => {
-          const k = targetKey(c.targetType, c.targetId);
-          let arr = commentsByTarget.get(k);
-          if (!arr) {
-            arr = [];
-            commentsByTarget.set(k, arr);
-          }
-          arr.push(c);
+          // Indexed under the event it now lives on as well (#1715) — see annotationKeys().
+          annotationKeys(c).forEach((k) => {
+            let arr = commentsByTarget.get(k);
+            if (!arr) {
+              arr = [];
+              commentsByTarget.set(k, arr);
+            }
+            arr.push(c);
+          });
         });
         if (DfirState.lastState())
           typeof render === "function" && render(DfirState.lastState()); // refresh chip counts

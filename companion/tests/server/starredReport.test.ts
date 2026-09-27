@@ -54,7 +54,7 @@ async function harness(opts: { ai?: boolean } = {}) {
     starredReportStore: new StarredReportStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, superStore, provider };
+  return { app, superStore, provider, stateStore };
 }
 
 describe("POST /cases/:id/starred-report", () => {
@@ -85,6 +85,28 @@ describe("POST /cases/:id/starred-report", () => {
     expect(r.body.eventCount).toBe(1);
     expect(provider!.lastReq!.userPrompt).toContain("mimikatz.exe executed");
     expect(provider!.lastReq!.userPrompt).not.toContain("benign chrome update");
+  });
+});
+
+describe("POST /cases/:id/starred-report after a fold (#1715)", () => {
+  it("reports the event a starred one was folded into", async () => {
+    const { app, provider, stateStore } = await harness();
+    const loaded = await stateStore.load("c1");
+    // The analyst starred sv1; correlation later kept sv9 and recorded where sv1 went.
+    await stateStore.save({
+      ...loaded,
+      forensicTimeline: [
+        { ...sev("sv9", "2026-06-01T09:00:00Z", "mimikatz.exe executed"), severity: "High" },
+      ],
+      eventAliases: { sv1: "sv9" },
+    });
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "sv1", label: "starred", author: "an" });
+    const r = await request(app).post("/cases/c1/starred-report").send({});
+    expect(r.status).toBe(200);
+    expect(r.body.eventCount).toBe(1);
+    expect(provider!.lastReq!.userPrompt).toContain("mimikatz.exe executed");
   });
 });
 

@@ -67,10 +67,7 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           DfirStarred.toggle(id, true);
         } else if (!anyUnstarred && starredTagIds.has(id)) {
-          const r = await fetch(
-            `/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`,
-            { method: "DELETE" },
-          );
+          const r = await unstarAll(caseId, id); // every star tag the event holds (#1715)
           if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status); // 404 = already gone
           DfirStarred.toggle(id, false);
         }

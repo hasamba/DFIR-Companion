@@ -34,6 +34,7 @@ import { registerTimelineRoutes } from "../routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "../routes/analysisGraph.js";
 import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation.js";
 import { registerFindingsRoutes } from "../routes/findings.js";
+import { registerEntityAnnotationRoutes } from "../routes/entityAnnotations.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
 import { registerRemediationRoutes } from "../routes/remediation.js";
 import { registerCampaignScopeRoutes } from "../routes/campaignScope.js";
@@ -150,6 +151,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerTimelineRoutes(app, ctx);
   registerAnalysisGraphRoutes(app, ctx);
   registerSessionSegmentationRoutes(app, ctx);
+  registerEntityAnnotationRoutes(app, ctx); // the comment + tag lists moved out of findings.ts (#1715)
   registerFindingsRoutes(app, ctx);
   registerFindingOutcomeRoutes(app, ctx);
   registerRemediationRoutes(app, ctx);

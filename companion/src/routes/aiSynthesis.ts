@@ -21,6 +21,7 @@ import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTyp
 import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { sendSynthesisRouteFailure } from "./analystGate.js";
+import { resolveStoredTargets } from "../analysis/eventAliasLookup.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
@@ -310,11 +311,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
     try {
       const tags = await options.tagsStore.load(req.params.id);
-      const starredIds = [
-        ...new Set(
-          tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL).map((t) => t.targetId),
-        ),
-      ];
+      const starred = tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL);
+      // A star on an event correlation folded into another reports the event it lives on (#1715).
+      const resolved = await resolveStoredTargets(options.stateStore, req.params.id, starred);
+      const starredIds = [...new Set(resolved.map((t) => t.resolvedTargetId ?? t.targetId))];
       if (!starredIds.length)
         return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
       const result = await options.pipeline.starredReport(req.params.id, starredIds);

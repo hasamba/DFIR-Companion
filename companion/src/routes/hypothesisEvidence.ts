@@ -10,6 +10,12 @@ import {
 } from "../analysis/hypothesisDiagnostics.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { stateEventResolver, storedEventResolver, type EventResolver } from "../analysis/eventAliasLookup.js";
+import {
+  activeExclusionsFor,
+  resolveHypothesisLinks,
+  storedLinksFor,
+} from "../analysis/hypothesisLineage.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
@@ -90,9 +96,28 @@ export function withAssessments(
   });
 }
 
+/** The single answer for one analyst action applied to several stored ids: the last hypothesis, else the first refusal. */
+function lastWritten<T>(results: readonly (T | string | null)[]): T | string | null {
+  const written = results.filter((r): r is T => r !== null && typeof r !== "string");
+  return written.length ? written[written.length - 1] : (results[0] ?? null);
+}
+
 export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
   const falsePositives = new FalsePositiveStore(store);
+
+  // The hypothesis `hid` and a resolver over every id it names (#1715): the dashboard shows each
+  // link on the event it lives on today, and posts THAT id back.
+  async function hypothesisAndResolver(
+    caseId: string,
+    hid: string,
+  ): Promise<{ h?: Hypothesis; resolve: EventResolver }> {
+    const h = (await options.hypothesisStore!.load(caseId)).find((x) => x.id === hid);
+    const ids = h
+      ? [...h.relatedEventIds, ...h.contradictingEventIds, ...h.excludedEvidence.map((x) => x.eventId)]
+      : [];
+    return { h, resolve: await storedEventResolver(options.stateStore, caseId, ids) };
+  }
 
   app.get("/cases/:id/hypotheses", async (req: Request, res: Response) => {
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
@@ -106,7 +131,10 @@ export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext
         eligibleEventIds: state ? new Set(events.map((e) => e.id)) : undefined,
         falsePositiveEventIds: falsePositiveEventIds(await falsePositives.load(req.params.id)),
       };
-      return res.status(200).json(withAssessments(hypotheses, events, elig));
+      // Each link read on the event it lives on today (#1715); the stored hypothesis is not rewritten.
+      const resolve = state ? stateEventResolver(state) : (id: string) => id;
+      const resolved = hypotheses.map((h) => resolveHypothesisLinks(h, resolve));
+      return res.status(200).json(withAssessments(resolved, events, elig));
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -122,13 +150,15 @@ export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext
     if (!reason) return res.status(400).json({ error: "a reason is required — it is the audit trail" });
     const by = typeof req.body?.by === "string" ? req.body.by : "analyst";
     try {
-      const out = await options.hypothesisStore.excludeEvidence(
-        req.params.id,
-        req.params.hid,
-        eventId,
-        reason,
-        by,
-      );
+      // One observation on screen can stand for several stored links (#1715): exclude each of them.
+      const { h, resolve } = await hypothesisAndResolver(req.params.id, req.params.hid);
+      const ids = h ? storedLinksFor(h, eventId, resolve) : [eventId];
+      const results = [];
+      for (const id of ids)
+        results.push(
+          await options.hypothesisStore.excludeEvidence(req.params.id, req.params.hid, id, reason, by),
+        );
+      const out = lastWritten(results);
       if (out === "not-found") return res.status(404).json({ error: "hypothesis not found" });
       if (out === "not-linked")
         return res.status(400).json({ error: "that observation is not linked to this hypothesis" });
@@ -144,12 +174,12 @@ export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
     const by = typeof req.query?.by === "string" ? req.query.by : "analyst";
     try {
-      const out = await options.hypothesisStore.restoreEvidence(
-        req.params.id,
-        req.params.hid,
-        req.params.eventId,
-        by,
-      );
+      const { h, resolve } = await hypothesisAndResolver(req.params.id, req.params.hid);
+      const ids = h ? activeExclusionsFor(h, req.params.eventId, resolve) : [req.params.eventId];
+      const results = [];
+      for (const id of ids)
+        results.push(await options.hypothesisStore.restoreEvidence(req.params.id, req.params.hid, id, by));
+      const out = lastWritten(results);
       if (!out) return res.status(404).json({ error: "no active exclusion for that observation" });
       options.onHypotheses?.(req.params.id);
       return res.status(200).json(out);

@@ -485,6 +485,22 @@ describe("super-timeline promote route", () => {
     expect(state2.forensicTimeline.filter((e) => e.id === id)).toHaveLength(1);
   });
 
+  it("a promoted row correlation later folded into another event stays promoted (#1715)", async () => {
+    const { app, stateStore } = await makePromoteApp();
+    await request(app)
+      .post(`/cases/c1/super-timeline/promote`)
+      .send({ eventIds: ["e-promote"] });
+    const promoted = await stateStore.load("c1");
+    // A later fold kept another event and recorded where this one went.
+    await stateStore.save({
+      ...promoted,
+      forensicTimeline: [{ ...promoted.forensicTimeline[0], id: "survivor" }],
+      eventAliases: { "e-promote": "survivor" },
+    });
+    const listed = await request(app).get(`/cases/c1/super-timeline`);
+    expect(listed.body.events.find((e: { id: string }) => e.id === "e-promote").promoted).toBe(true);
+  });
+
   it("promote 400s without eventIds and 404s when none match", async () => {
     const { app } = await makePromoteApp();
     const bad = await request(app).post(`/cases/c1/super-timeline/promote`).send({});

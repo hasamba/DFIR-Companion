@@ -7,6 +7,7 @@ import { mergeIntelState } from "../intelHistory.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "../labIntel.js";
 import { mergeHostRenameRecords } from "../hostRenameRecord.js";
 import { carryHostRenames } from "../hostRenameCarry.js";
+import { recordEventAliases } from "../eventAliases.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -160,8 +161,16 @@ export function mergeConcurrentAdditions(
         next.intelRetirementDecisions,
         latest.intelRetirementDecisions,
       ),
+      // The correlation lineage an import recorded while synthesis ran is kept (#1715): it only grows.
+      ...mergedLineage(next, latest),
     }),
   ).state;
+}
+
+/** Both sides' correlation lineage, unioned; absent when neither has one. */
+function mergedLineage(next: InvestigationState, latest: InvestigationState) {
+  const merged = recordEventAliases(next.eventAliases, new Map(Object.entries(latest.eventAliases ?? {})));
+  return merged ? { eventAliases: merged } : {};
 }
 
 /** Union two decision lists by finding id, the newest `decidedAt` winning. */

@@ -32,9 +32,20 @@
     "initial-access",
   ];
 
+  // An annotation's keys (#1715): its own `type:id`, plus the event it lives on today when correlation
+  // folded the one it was made on into another (the server adds resolvedTargetId for that case only).
+  function annotationKeys(a) {
+    const keys = [targetKey(a.targetType, a.targetId)];
+    if (a.resolvedTargetId) keys.push(targetKey(a.targetType, a.resolvedTargetId));
+    return keys;
+  }
+
   function tagPills(type, id) {
+    // One pill per label: a tag on an event correlation folded into this one (#1715) may repeat a label.
     const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(
-      (t) => !(t.label === "starred" && t.targetType === "event"),
+      (t, i, all) =>
+        !(t.label === "starred" && t.targetType === "event") &&
+        all.findIndex((o) => o.label === t.label) === i,
     );
     return list
       .map((t) => {
@@ -56,13 +67,16 @@
       .then((list) => {
         tagsByTarget = new Map();
         (list || []).forEach((t) => {
-          const k = targetKey(t.targetType, t.targetId);
-          let arr = tagsByTarget.get(k);
-          if (!arr) {
-            arr = [];
-            tagsByTarget.set(k, arr);
-          }
-          arr.push(t);
+          // A tag on an event correlation later folded into another (#1715) shows on both: the raw
+          // super-timeline row keeps its own id, and the forensic event lives on as resolvedTargetId.
+          annotationKeys(t).forEach((k) => {
+            let arr = tagsByTarget.get(k);
+            if (!arr) {
+              arr = [];
+              tagsByTarget.set(k, arr);
+            }
+            arr.push(t);
+          });
         });
         deriveStarred(); // stars are tags — rebuild the star lookup with every tag load
         migrateLocalStars(caseId); // one-time: push legacy localStorage stars up as tags
