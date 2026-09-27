@@ -297,3 +297,86 @@ describe("ClaudeCodeProvider — thinking budget → --effort (#1468)", () => {
     expect(await argsFor({ thinkingTokens: 0 })).not.toContain("--effort");
   });
 });
+
+// #1734: Opus 5.5's safety classifier stops an answer partway. The CLI then says so, tells the model
+// not to repeat the content, and the model writes a short second message. That second message must
+// never be returned as the answer.
+describe("ClaudeCodeProvider — safety-classifier stop (#1734)", () => {
+  const cut = '{"summary":"Across 1,400 events the account ran mimikatz.exe and lazagne';
+  const after = '{"status":"not_completed","message":"A safety classifier stopped my previous answer."}';
+  const noticeLine = JSON.stringify({
+    type: "system",
+    subtype: "informational",
+    content: "Opus 5.5's safeguards stopped the response above · continuing once with that noted",
+    level: "notice",
+  });
+  const injectedUserLine = JSON.stringify({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "Your response above was stopped by a safety classifier — this is not a tool or API error. Do not produce that content again, even reworded.",
+        },
+      ],
+    },
+  });
+  const run = (lines: string[]) =>
+    new ClaudeCodeProvider({ model: "opus", runner: fakeRunner({ stdout: lines.join("\n") }) }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
+
+  it("rejects the reproduced stream with a non-retryable safety_stop error", async () => {
+    await expect(
+      run([
+        assistantLine([{ type: "text", text: cut }]),
+        noticeLine,
+        injectedUserLine,
+        assistantLine([{ type: "text", text: after }], "end_turn"),
+        resultLine({ result: after }),
+      ]),
+    ).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("detects the CLI notice on its own", async () => {
+    await expect(
+      run([assistantLine([{ type: "text", text: after }]), noticeLine, resultLine({ result: after })]),
+    ).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("detects the injected user turn on its own", async () => {
+    await expect(
+      run([assistantLine([{ type: "text", text: after }]), injectedUserLine, resultLine({ result: after })]),
+    ).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("keeps safety_stop when the stream has no result event", async () => {
+    await expect(run([assistantLine([{ type: "text", text: cut }]), noticeLine])).rejects.toMatchObject({
+      kind: "safety_stop",
+    });
+  });
+
+  it("keeps safety_stop when the terminal result is an error", async () => {
+    await expect(
+      run([noticeLine, resultLine({ is_error: true, subtype: "error_during_execution", result: "boom" })]),
+    ).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("does not treat an ordinary notice or a quoted phrase in the answer as a stop", async () => {
+    const answer = '{"summary":"the log says a response was stopped by a safety classifier"}';
+    const other = JSON.stringify({
+      type: "system",
+      subtype: "informational",
+      content: "Using cached prompt",
+    });
+    const out = await run([
+      other,
+      assistantLine([{ type: "text", text: answer }]),
+      resultLine({ result: answer }),
+    ]);
+    expect(out.rawText).toBe(answer);
+  });
+});

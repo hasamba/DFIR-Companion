@@ -13,6 +13,7 @@ import { type KnownUnknownItem } from "./knownUnknowns.js";
 import * as ingest from "./ingest/index.js";
 // The options bag and the retry policy moved out with the families that read them (#418).
 import type { PipelineOptions } from "./ai/pipelineOptions.js";
+import { buildAiCallOpts } from "./ai/aiCallOpts.js";
 export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
 import { buildImportOpts, type ImportContext } from "./ingest/importContext.js";
@@ -90,147 +91,7 @@ export class AnalysisPipeline {
       mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),
     };
     this.aiCtx = {
-      opts: {
-        get synthesisProvider() {
-          return opts.synthesisProvider;
-        },
-        get stateStore() {
-          return opts.stateStore;
-        },
-        get falsePositiveStore() {
-          return opts.falsePositiveStore;
-        },
-        get scopeStore() {
-          return opts.scopeStore;
-        },
-        get superTimelineStore() {
-          return opts.superTimelineStore;
-        },
-        get hypothesisStore() {
-          return opts.hypothesisStore;
-        },
-        get velociraptorProvider() {
-          return opts.velociraptorProvider;
-        },
-        get huntOutcomeStore() {
-          return opts.huntOutcomeStore;
-        },
-        get importMetaStore() {
-          return opts.importMetaStore;
-        },
-        get cloudCoverageStore() {
-          return opts.cloudCoverageStore;
-        },
-        get provider() {
-          return opts.provider;
-        },
-        get imageLoader() {
-          return opts.imageLoader;
-        },
-        get onState() {
-          return opts.onState;
-        },
-        get anonStore() {
-          return opts.anonStore;
-        },
-        get customEntitiesStore() {
-          return opts.customEntitiesStore;
-        },
-        get discoveredStore() {
-          return opts.discoveredStore;
-        },
-        get ocrRunner() {
-          return opts.ocrRunner;
-        },
-        get presidio() {
-          return opts.presidio;
-        },
-        get presidioPendingStore() {
-          return opts.presidioPendingStore;
-        },
-        get presidioScanCapsOverride() {
-          return opts.presidioScanCapsOverride;
-        },
-        get aiCostStore() {
-          return opts.aiCostStore;
-        },
-        get operationalMetrics() {
-          return opts.operationalMetrics;
-        },
-        get correlationProfileStore() {
-          return opts.correlationProfileStore;
-        },
-        get sourceTrustStore() {
-          return opts.sourceTrustStore;
-        },
-        get clockSkewStore() {
-          return opts.clockSkewStore;
-        },
-        get notebookStore() {
-          return opts.notebookStore;
-        },
-        get aiControlStore() {
-          return opts.aiControlStore;
-        },
-        get playbookStore() {
-          return opts.playbookStore;
-        },
-        get incidentTypeStore() {
-          return opts.incidentTypeStore;
-        },
-        get learnedPatternStore() {
-          return opts.learnedPatternStore;
-        },
-        get secondOpinionStore() {
-          return opts.secondOpinionStore;
-        },
-        get secondOpinionProvider() {
-          return opts.secondOpinionProvider;
-        },
-        get secondOpinionModelLabel() {
-          return opts.secondOpinionModelLabel;
-        },
-        get referee() {
-          return opts.referee;
-        },
-        get synthesisModelLabel() {
-          return opts.synthesisModelLabel;
-        },
-        get synthMetaStore() {
-          return opts.synthMetaStore;
-        },
-        get veloHuntStore() {
-          return opts.veloHuntStore;
-        },
-        get analysisRunStore() {
-          return opts.analysisRunStore;
-        },
-        get stateLock() {
-          return opts.stateLock;
-        },
-        get onSynth() {
-          return opts.onSynth;
-        },
-        get assetOverridesStore() {
-          return opts.assetOverridesStore;
-        },
-        get velociraptorClientStore() {
-          return opts.velociraptorClientStore;
-        },
-        get hostDuplicateDismissalStore() {
-          return opts.hostDuplicateDismissalStore;
-        },
-        get evidenceAttestationStore() {
-          return opts.evidenceAttestationStore;
-        },
-        ...analystQueries.analystDecisionOpts(opts),
-        get retries() {
-          return opts.retries;
-        },
-        get backoffMs() {
-          return opts.backoffMs;
-        },
-      },
+      opts: buildAiCallOpts(opts),
       log: this.log,
       requireProvider: (purpose) => this.requireProvider(purpose),
       withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),

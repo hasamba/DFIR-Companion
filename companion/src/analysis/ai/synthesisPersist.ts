@@ -44,6 +44,8 @@ export interface SynthesisPersistInput {
    * thinking is not overwritten by this run's stale answer.
    */
   reconcile?: (merged: InvestigationState) => Promise<InvestigationState>;
+  /** #1734: appended to the Investigation-Log line — e.g. that a fallback model wrote this run. */
+  logNote?: string;
 }
 
 /**
@@ -67,7 +69,7 @@ export async function persistSynthesis(
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
     persisted = {
       ...merged,
-      timeline: [...merged.timeline, buildSynthesisLogEntry(merged, input.findingsDiff)],
+      timeline: [...merged.timeline, buildSynthesisLogEntry(merged, input.findingsDiff, input.logNote)],
     };
     await ctx.opts.stateStore.save(persisted);
   };
@@ -214,14 +216,15 @@ export function mergeRetirementDecisions(
   return [...byId.values()];
 }
 
-function buildSynthesisLogEntry(state: InvestigationState, diff: FindingsDiff): TimelineEntry {
+function buildSynthesisLogEntry(state: InvestigationState, diff: FindingsDiff, note?: string): TimelineEntry {
   return {
     timestamp: new Date().toISOString(),
     windowSequence: 0,
     description:
       `Synthesis: ${state.findings.length} finding(s) (${diff.added.length} new, ` +
       `${diff.severityChanged.length} reclassified), ${state.forensicTimeline.length} event(s), ` +
-      `${state.iocs.length} IOC(s)`,
+      `${state.iocs.length} IOC(s)` +
+      (note ? ` · ${note}` : ""),
     sourceScreenshots: [],
   };
 }

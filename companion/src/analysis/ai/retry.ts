@@ -14,12 +14,15 @@ import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 // process, a prompt or reply that does not fit) rather than a transient blip — retrying just re-runs
 // into the same wall, tripling the wait before the analyst sees the same error.
 // "output_limit": the model hit its output-token cap; the identical request hits it again.
+// "safety_stop": the model's safety filter stopped the answer (#1734); the same evidence is likely to
+// stop it again, and each Opus attempt costs about $2. Synthesis falls back to another model instead.
 const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>([
   "auth",
   "rate_limit",
   "timeout",
   "context",
   "output_limit",
+  "safety_stop",
 ]);
 
 function isRetryableError(err: unknown): boolean {

@@ -1660,6 +1660,27 @@
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_SYNTH_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label for="env-DFIR_AI_SYNTH_FALLBACK_PROVIDER">Fallback provider (safety stop)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_PROVIDER — used only when the synthesis model's safety filter stops a synthesis; blank = synthesis provider</span></label>
+            <select id="env-DFIR_AI_SYNTH_FALLBACK_PROVIDER">
+              <option value="">— same as synthesis —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
+            </select>
+          </div>
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_FALLBACK_MODEL">Fallback model (safety stop)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_MODEL — blank = no fallback; synthesis only, not imports or reports</span></label><input id="env-DFIR_AI_SYNTH_FALLBACK_MODEL" placeholder="e.g. gpt-6-sol" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_FALLBACK_KEY">Fallback key (optional)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SYNTH_FALLBACK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_FALLBACK_BASE_URL">Fallback base URL (optional)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SYNTH_FALLBACK_BASE_URL" /></div>
+        </div>
         <div id="codex-status" class="sfield" data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span id="cx-status-dot" data-safe-style="width:9px;height:9px;border-radius:50%;background:#6b7280"></span>

@@ -5,6 +5,7 @@ import {
   type ProviderUsage,
   type ProviderErrorKind,
   ProviderError,
+  safetyStopError,
 } from "./provider.js";
 import { type ClaudeRunner, defaultClaudeRunner } from "./claudeRunner.js";
 import { extractJsonText } from "../analysis/extractJson.js";
@@ -53,6 +54,28 @@ function eventText(e: ClaudeAssistantEvent): string {
     .filter((b) => b.type === "text" && typeof b.text === "string")
     .map((b) => b.text as string)
     .join("");
+}
+
+// #1734: the two stream events Claude Code emits when a model's safety classifier stops an answer —
+// a notice ("Opus 5.5's safeguards stopped the response above · continuing once with that noted")
+// and an injected user turn ("Your response above was stopped by a safety classifier …"). Either
+// one is enough. Matched narrowly, on the event type as well as the text, so an answer that merely
+// quotes the phrase is never read as a stop.
+const SAFETY_NOTICE = /safeguards stopped the response/i;
+const SAFETY_USER_TURN = /^\s*your response above was stopped by a safety classifier/i;
+
+function isSafetyStopEvent(evt: unknown): boolean {
+  if (!evt || typeof evt !== "object") return false;
+  const e = evt as { type?: string; subtype?: string; content?: unknown; message?: { content?: unknown } };
+  if (e.type === "system" && e.subtype === "informational") {
+    return typeof e.content === "string" && SAFETY_NOTICE.test(e.content);
+  }
+  if (e.type === "user" && Array.isArray(e.message?.content)) {
+    return (e.message.content as { type?: string; text?: unknown }[]).some(
+      (b) => b?.type === "text" && typeof b.text === "string" && SAFETY_USER_TURN.test(b.text),
+    );
+  }
+  return false;
 }
 
 // Reassemble an answer the CLI split across assistant messages. When a response hits the model's
@@ -177,6 +200,7 @@ export class ClaudeCodeProvider implements AIProvider {
     // (for the continuation stitch below), and note any rejected rate limit.
     let resultEvent: ClaudeResultEvent | undefined;
     let rateLimited = false;
+    let safetyStopped = false;
     const assistantTexts: string[] = [];
     for (const line of run.stdout.split("\n")) {
       const t = line.trim();
@@ -188,6 +212,7 @@ export class ClaudeCodeProvider implements AIProvider {
         continue;
       }
       const e = evt as { type?: string; rate_limit_info?: { status?: string } };
+      if (isSafetyStopEvent(evt)) safetyStopped = true;
       if (e.type === "result") resultEvent = evt as ClaudeResultEvent;
       else if (e.type === "assistant") {
         const text = eventText(evt as ClaudeAssistantEvent);
@@ -200,6 +225,10 @@ export class ClaudeCodeProvider implements AIProvider {
         rateLimited = true;
       }
     }
+
+    // Checked before the result: a stop is the real cause even when the CLI then reports no result
+    // or an error, and only safety_stop keeps the retry loop from resending the same evidence.
+    if (safetyStopped) throw safetyStopError(`Claude Code (${this.model || "default model"})`);
 
     if (!resultEvent) {
       const snip = (run.stderr || run.stdout).replace(/\s+/g, " ").trim().slice(0, 200);
