@@ -9,6 +9,15 @@
 // per-row because the rows are re-rendered on every refresh — but it is still bound at module
 // scope, which in a <head> script queries #hostRanking before the markup exists and binds nothing.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, caseId, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
+  };
   // ── Host & Account Ranking (#202) ─────────────────────────────────────────────────────
   // Which hosts/accounts carry the attack — scored by SIGNAL (severity-weighted events +
   // techniques + connective IOCs), not volume, so benign-but-chatty hosts sink. Derived
@@ -29,7 +38,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(hostRankingTimer);
-    hostRankingTimer = setTimeout(() => loadHostRanking(caseId), 800);
+    hostRankingTimer = setTimeout(() => panelReload("hostRanking", caseId, () => loadHostRanking(caseId)), 800);
   }
   function applyHostRankingScope() {
     const caseId = document.getElementById("caseId").value.trim();
