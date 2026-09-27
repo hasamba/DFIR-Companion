@@ -59,6 +59,7 @@ function apStep(chunk, listed) {
   desc = desc.trim();
   return {
     title,
+    label: title || apLabel(desc, listed ? null : when),
     techniques,
     group: tactic ? tactic.group : "",
     year: when ? when.year : null,
@@ -68,6 +69,23 @@ function apStep(chunk, listed) {
     timeEnd: when ? when.timeEnd : null,
     desc: desc.charAt(0).toUpperCase() + desc.slice(1),
   };
+}
+
+// A short name for a step that names no tactic: its own words with the time taken out, cut at a
+// word near 60 characters — so no card and no heading is ever drawn empty.
+function apLabel(desc, when) {
+  let text = desc;
+  if (when) {
+    const before = text.slice(0, when.index).replace(/\b(?:at|on|by|around)\s*$/i, "");
+    text = `${before} ${text.slice(when.index + when.length)}`;
+  }
+  text = text.replace(/\s+/g, " ").replace(/^[\s,;:—–-]+/, "").replace(/[\s.,;:]+$/, "");
+  if (text.length > 60) {
+    let cut = text.slice(0, 60);
+    if (text[60] !== " ") cut = cut.slice(0, cut.lastIndexOf(" "));
+    text = cut.trimEnd() + "…";
+  }
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // The first date/time in the text. A time never matches inside an address ("203.0.113.47:443").
@@ -222,7 +240,8 @@ function apStepsHtml(placed) {
     return (
       header +
       `<li class="ap-step">${apNumHtml(s, i + 1)}<span class="ap-when">${apTimeHtml(p)}</span>` +
-      `<div class="ap-what"><div class="ap-head"><b>${esc(s.title)}</b>${target}${tags}</div>` +
+      `<div class="ap-what">` +
+      (s.title || target || tags ? `<div class="ap-head">${s.title ? `<b>${esc(s.title)}</b>` : ""}${target}${tags}</div>` : "") +
       (s.desc ? `<div class="ap-desc">${esc(s.desc)}</div>` : "") +
       `</div></li>`
     );
@@ -280,7 +299,7 @@ function apCardHtml(p) {
   const tip = p.assumed
     ? ` title="${escAttr(`Host assumed: this step names no host and has no matching event, so it stays on ${p.host} with the step before it`)}"`
     : "";
-  return `<div class="ap-card${cls}${p.assumed ? " ap-assumed" : ""}"${tip}><span class="ap-ct">${apTimeHtml(p)}</span><b>${esc(s.title)}</b></div>`;
+  return `<div class="ap-card${cls}${p.assumed ? " ap-assumed" : ""}"${tip}><span class="ap-ct">${apTimeHtml(p)}</span><b>${esc(s.label)}</b></div>`;
 }
 
 // The tab the analyst last picked, per browser. Storage can throw or be empty (private window,
@@ -300,6 +319,7 @@ window.DfirAttackPath = {
   apListItems,
   apClauses,
   apStep,
+  apLabel,
   apWhen,
   apMonth,
   apTactic,

@@ -61,6 +61,15 @@ describe("attackSteps", () => {
     expect(steps[1]).toMatchObject({ time: "09:48", desc: "Execution of powershell.exe at 09:48" });
   });
 
+  it("labels a step that names no tactic with its own words, without the time", () => {
+    const steps = ap.attackSteps(
+      "Initial access at 02:03:38 via a dropped script; at 09:04:18 the script copied PsTools and a scanner into C:\\e and started them with elevated rights; files were encrypted at 09:04:21.",
+    );
+    expect(steps[1].title).toBe("");
+    expect(steps[1].label).toBe("The script copied PsTools and a scanner into C:\\e and…");
+    expect(steps[0].label).toBe("Initial Access");
+  });
+
   it("finds no steps in plain prose", () => {
     expect(ap.attackSteps("The attacker got in and moved around.")).toHaveLength(0);
   });
@@ -115,6 +124,14 @@ describe("attackPathHtml", () => {
     expect(html).toContain('ap-n ap-g-entry" title="Entry into the environment"');
     expect(html).toContain('ap-n ap-g-move" title="Movement between hosts"');
     expect(html).toContain('ap-n ap-g-harm" title="Credential theft, data theft or impact"');
+  });
+
+  it("never draws an empty card or an empty heading", () => {
+    const text =
+      "Initial access at 02:03:38 via a script; at 09:04:18 the script copied tools; files were encrypted at 09:04:21.";
+    const html = ap.attackPathHtml(text, EVENTS, "hosts");
+    expect(html).not.toMatch(/<b><\/b>/);
+    expect(html).toContain("<b>The script copied tools</b>");
   });
 
   it("escapes the model's text", () => {

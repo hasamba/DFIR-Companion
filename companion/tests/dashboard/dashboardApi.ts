@@ -334,6 +334,7 @@ export interface FragmentsApi {
 /** js/dashboard-attack-path.js — the Attack Path panel's steps, host-hop line and swimlanes. */
 export interface AttackStep {
   title: string;
+  label: string;
   techniques: string[];
   year: number | null;
   month: number | null;
