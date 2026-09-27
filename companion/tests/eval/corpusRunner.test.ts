@@ -21,8 +21,12 @@ function provider(canned: string, judgeReply: (request: AnalyzeRequest) => strin
 }
 
 function everyPair(request: AnalyzeRequest, asserts: boolean): string {
-  const statements = [...request.userPrompt.matchAll(/^(S\d+):/gm)].map((match) => match[1]);
-  const findings = [...request.userPrompt.matchAll(/^(F\d+) /gm)].map((match) => match[1]);
+  const doc = JSON.parse(request.userPrompt.slice(request.userPrompt.indexOf("{"))) as {
+    statements: { label: string }[];
+    findings: { label: string }[];
+  };
+  const statements = doc.statements.map((statement) => statement.label);
+  const findings = doc.findings.map((finding) => finding.label);
   return JSON.stringify({
     verdicts: statements.flatMap((statement) =>
       findings.map((finding) => ({ statement, finding, asserts, reason: "graded" })),

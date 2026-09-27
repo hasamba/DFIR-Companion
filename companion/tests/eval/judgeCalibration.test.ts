@@ -10,6 +10,10 @@ describe("judge calibration set (#1704)", () => {
     ).toBeGreaterThanOrEqual(9);
     expect(items.filter((item) => item.expected).length).toBeGreaterThanOrEqual(5);
     expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+    // Codex review (#1704): a hedged assertion and a data-block escape attempt must both be flagged.
+    for (const id of ["synthetic-nightfall-hedged-assertion", "synthetic-nightfall-block-escape"]) {
+      expect(items.find((item) => item.id === id)?.expected).toBe(true);
+    }
   });
 
   it("reports every item a judge gets wrong", async () => {
@@ -19,7 +23,10 @@ describe("judge calibration set (#1704)", () => {
       name: "stub",
       model: "stub",
       async analyze(request: AnalyzeRequest) {
-        const findings = [...request.userPrompt.matchAll(/^(F\d+) /gm)].map((match) => match[1]);
+        const doc = JSON.parse(request.userPrompt.slice(request.userPrompt.indexOf("{"))) as {
+          findings: { label: string }[];
+        };
+        const findings = doc.findings.map((finding) => finding.label);
         return {
           rawText: JSON.stringify({
             verdicts: findings.map((finding) => ({ statement: "S1", finding, asserts: false, reason: "no" })),
