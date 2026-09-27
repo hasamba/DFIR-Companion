@@ -517,7 +517,7 @@
 #ocrSearchResults[hidden] { display: none; }
 #ocrSearchResults .ocr-hit { display: block; padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 5px; margin-bottom: 5px; text-decoration: none; color: var(--text-primary); }
 #ocrSearchResults .ocr-hit:hover { border-color: var(--accent); background: var(--bg-secondary); }
-#ocrSearchResults .ocr-hit .ocr-file { color: var(--accent); font-size: 11px; font-family: monospace; }
+#ocrSearchResults .ocr-hit .ocr-file { color: var(--accent); font-size: 11px; font-family: var(--font-code); }
 #ocrSearchResults .ocr-hit .ocr-snippet { font-size: 12px; margin-top: 2px; }
 #ocrSearchResults .ocr-hit mark { background: var(--sev-medium); color: #000; padding: 0 1px; border-radius: 2px; }
 #ocrSearchResults .ocr-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }

@@ -89,7 +89,7 @@
      layout handed most of the width to the criteria column while the other five squeezed. */
   #sec-host-scope h4{margin:16px 0 7px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
   #sec-host-scope .hs-empty{color:var(--text-muted);font-size:12px}
-  #sec-host-scope code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--text-bright)}
+  #sec-host-scope code{font-family:var(--font-code);font-size:12px;color:var(--text-bright)}
   /* The board is the table's filter, so the tiles are real buttons and inherit the page's solid
      accent fill. Every one of those inherited properties is overridden here, not reset globally. */
   #sec-host-scope .hs-board{display:flex;flex-wrap:wrap;gap:7px}
@@ -172,7 +172,7 @@
   #sec-mem-nextsteps .mns-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
   #sec-mem-nextsteps .mns-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
   #sec-mem-nextsteps .mns-tech:hover{text-decoration:underline}
-  #sec-mem-nextsteps .mns-cmd{width:100%;box-sizing:border-box;min-height:34px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;padding:6px;margin-top:4px}
+  #sec-mem-nextsteps .mns-cmd{width:100%;box-sizing:border-box;min-height:34px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:12px;padding:6px;margin-top:4px}
   #sec-mem-nextsteps .mns-actions{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
   #sec-mem-nextsteps .mns-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-mem-nextsteps .mns-copy.copied{background:var(--success)}
@@ -250,7 +250,7 @@
   #sec-gaps .gh-art-name{color:var(--text-bright);font-weight:bold;font-size:12px}
   #sec-gaps .gh-art-rec-badge{background:var(--success-bg);color:var(--sev-low);border:1px solid var(--success-border);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold}
   #sec-gaps .gh-art-why{color:var(--text-muted);font-size:11px;margin:3px 0}
-  #sec-gaps textarea.gh-vql{width:100%;box-sizing:border-box;min-height:44px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:6px;margin-top:4px}
+  #sec-gaps textarea.gh-vql{width:100%;box-sizing:border-box;min-height:44px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:6px;margin-top:4px}
   #sec-gaps .gh-art-actions{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
   #sec-gaps .gh-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-gaps .gh-copy.copied{background:var(--success)}
@@ -407,7 +407,7 @@
   #sec-velohunts .vhs-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
   #sec-velohunts .vhs-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
   #sec-velohunts .vhs-tech:hover{text-decoration:underline}
-  #sec-velohunts textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+  #sec-velohunts textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:8px;margin-top:4px}
   #sec-velohunts .vhs-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
   #sec-velohunts .vhs-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-velohunts .vhs-copy.copied{background:var(--success)}
@@ -459,7 +459,7 @@
   #sec-nlquery .nlq-na{background:var(--c-6b758522);color:var(--text-muted);border:1px solid var(--c-6b758555);border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
   #sec-nlquery .nlq-expl{color:var(--text-primary);font-size:12px;margin:6px 0}
   #sec-nlquery .nlq-caveat{color:var(--badge-warning-text);font-size:11px;margin:4px 0}
-  #sec-nlquery textarea.nlq-query{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+  #sec-nlquery textarea.nlq-query{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:8px;margin-top:4px}
   #sec-nlquery .nlq-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
   #sec-nlquery .nlq-copy, #sec-nlquery .nlq-sigma-compile{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-nlquery .nlq-copy.copied{background:var(--success)}
@@ -508,7 +508,7 @@
   .pb-pri-medium{background:var(--bg-drop-active);color:var(--accent)}
   .pb-pri-low{background:var(--bg-drop-active);color:var(--text-muted)}
   .pb-src{font-size:10px;color:var(--text-faint)}
-  .pb-shortid{font-size:11px;font-family:monospace;color:var(--accent);user-select:all;flex-shrink:0}
+  .pb-shortid{font-size:11px;font-family:var(--font-code);color:var(--accent);user-select:all;flex-shrink:0}
   .pb-finding-link{font-size:10px;color:var(--accent);text-decoration:none}
   .pb-finding-link:hover{text-decoration:underline}
   .pb-move{display:flex;gap:3px;margin-left:auto}
@@ -543,7 +543,7 @@
   #sec-playbook .pbh-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
   #sec-playbook .pbh-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
   #sec-playbook .pbh-tech:hover{text-decoration:underline}
-  #sec-playbook textarea.pbh-vql{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;padding:8px;margin-top:4px}
+  #sec-playbook textarea.pbh-vql{width:100%;box-sizing:border-box;min-height:80px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:8px;margin-top:4px}
   #sec-playbook .pbh-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
   #sec-playbook .pbh-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-playbook .pbh-copy.copied{background:var(--success)}

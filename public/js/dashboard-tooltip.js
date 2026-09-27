@@ -22,14 +22,16 @@
         if (!t) return;
         tip.textContent = t;
         tip.style.display = "block";
+        const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom (js/dashboard-theme.js)
         const r = el.getBoundingClientRect();
-        let left = Math.min(r.left, window.innerWidth - tip.offsetWidth - 8);
+        const tw = tip.offsetWidth * z,
+          th = tip.offsetHeight * z;
+        let left = Math.min(r.left, window.innerWidth - tw - 8);
         if (left < 8) left = 8;
         let top = r.bottom + 6;
-        if (top + tip.offsetHeight > window.innerHeight - 8)
-          top = r.top - tip.offsetHeight - 6;
-        tip.style.left = left + "px";
-        tip.style.top = Math.max(8, top) + "px";
+        if (top + th > window.innerHeight - 8) top = r.top - th - 6;
+        tip.style.left = left / z + "px";
+        tip.style.top = Math.max(8, top) / z + "px";
       }
       function hide() {
         tip.style.display = "none";

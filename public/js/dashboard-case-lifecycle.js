@@ -78,9 +78,10 @@
         menu.style.display = "none";
         return;
       }
+      const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom (js/dashboard-theme.js)
       const r = btn.getBoundingClientRect();
-      menu.style.top = r.bottom + 4 + "px";
-      menu.style.left = r.left + "px";
+      menu.style.top = (r.bottom + 4) / z + "px";
+      menu.style.left = r.left / z + "px";
       menu.style.display = "block";
     });
 
