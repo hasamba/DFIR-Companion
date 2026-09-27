@@ -19,7 +19,7 @@ import { validateEnvUpdates } from "../../src/settings/envManager.js";
 /** The env keys each Settings tab shows in Essential mode. One entry per tab that has any. */
 const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
   general: [], // the Essential General view is the setup-wizard button + investigator name, no env fields
-  // The three models you can point somewhere. Timeouts, token caps, prompt-file overrides and the
+  // The four models you can point somewhere. Timeouts, token caps, prompt-file overrides and the
   // VQL hunt model are All-only — each has a working default or falls back to the synthesis model.
   ai: [
     // One key per provider: every model uses the key of the provider it is set to, so these are
@@ -38,6 +38,10 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_AI_SYNTH_MODEL",
     "DFIR_AI_SECOND_OPINION_PROVIDER",
     "DFIR_AI_SECOND_OPINION_MODEL",
+    // The referee judges model A against model B, so it sits beside the 2nd-opinion model. Its
+    // override key and base URL stay All-only like every other model's.
+    "DFIR_AI_RECONCILE_PROVIDER",
+    "DFIR_AI_RECONCILE_MODEL",
   ],
   // Credentials, plus each self-hostable source's "Skip TLS verify" flag. `_CA` (finding a bundle
   // path is a deliberate trip), the keyless hashlookup/RDAP/GeoIP endpoint URLs, the GeoIP map
