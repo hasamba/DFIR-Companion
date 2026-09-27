@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Importer debug detail** — every import records the columns it used, skipped-row reasons, fallbacks and parse-failure location to the debug log and the support bundle (closes #1736)
+- **Redacted support bundle** — Diagnostics downloads one zip of redacted logs, an always-on capped debug log and failed-import layouts for bug reports (closes #1735)
 - **Per-model AI keys become overrides** — per-model key and base-URL fields move to the full Settings view, and a one-click notice moves saved values into the provider fields
 - **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
 - **Case ID in the case list** — the case dropdown shows each case ID under its name

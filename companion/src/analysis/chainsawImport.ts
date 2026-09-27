@@ -58,6 +58,12 @@ import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { loadCollectorInfrastructure } from "./collectorDeployment.js";
 import { CollectorFootprintLedger } from "./collectorChildren.js";
+import {
+  createDecisionTally,
+  tallyRowHost,
+  type DecisionTally,
+  type ImportDebugRecorder,
+} from "./rowDecisionDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -79,6 +85,7 @@ export interface ChainsawImportOptions {
   // differing Computer becomes a former name. `hostFallbackBasis` records who said so.
   hostFallback?: string;
   hostFallbackBasis?: "collector" | "analyst";
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 export interface ChainsawParseResult {
@@ -193,6 +200,24 @@ function systemTime(sys: Row): string {
 
 // Normalize an EVTX `Event` document into the flat record `mapWindows` consumes
 // (`event_id` / `channel` / `event_data` / `@timestamp`) plus the host (System.Computer).
+// Which System keys dated and labelled an embedded event (#1736): the order systemTime and
+// toFlatRecord read them in. Key names only.
+function tallyEventKeys(t: DecisionTally, event: Row): void {
+  const sys = isObject(getCI(event, "System")) ? (getCI(event, "System") as Row) : {};
+  const timeKey = str(getPath(sys, "TimeCreated.#attributes.SystemTime"))
+    ? "System.TimeCreated.#attributes.SystemTime"
+    : str(getPath(sys, "TimeCreated.SystemTime"))
+      ? "System.TimeCreated.SystemTime"
+      : str(getCI(sys, "TimeCreated"))
+        ? "System.TimeCreated"
+        : "";
+  if (timeKey) t.fields.add("timestamp", timeKey);
+  else t.observed.add("empty_timestamp");
+  if (str(getCI(sys, "Channel"))) t.fields.add("channel", "System.Channel");
+  else if (providerName(sys)) t.fallbacks.add("channel_from_provider");
+  if (getCI(sys, "EventID") != null) t.fields.add("event_id", "System.EventID");
+}
+
 function toFlatRecord(event: Row): { rec: Row; host: string } {
   const sys = isObject(getCI(event, "System")) ? (getCI(event, "System") as Row) : {};
   const channel = str(getCI(sys, "Channel")) || providerName(sys);
@@ -306,6 +331,15 @@ function readFlatSigmaMeta(rec: Row): SigmaMeta {
 // given a resolved host (the caller's own host-picking convention may differ from ours).
 // Always returns a MappedEvent — falls back to genericDetection() when the row's EventID/
 // Channel don't resolve through mapWindows (e.g. a non-Windows-shaped edge case).
+// The flat hunt row's own columns (#1736): EventTime dates it when the record carries no time.
+function tallyFlatRow(t: DecisionTally, rec: Row, rh: RowHost): void {
+  t.fallbacks.add("flat_chainsaw_row");
+  t.fields.add("rule", "Detection");
+  if (getCI(rec, "Channel")) t.fields.add("channel", "Channel");
+  t.fields.add("event_id", "EventID");
+  tallyRowHost(t, rec, rh);
+}
+
 export function mapFlatChainsawRow(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
   const meta = readFlatSigmaMeta(rec);
   const win = mapWindows(rec, host, iocSink);
@@ -341,6 +375,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   const renames = new HostRenameLedger();
   let detections = 0;
   let sawEvtx = false;
+  const tally = opts.debug ? createDecisionTally() : undefined;
 
   // Every event of one record carries the same host verdict: the collector's identity when the row
   // has one (a Velociraptor hunt export routed here), else the record's own Computer. A record
@@ -385,6 +420,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
       sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
       push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh, rec);
+      if (tally) tallyFlatRow(tally, rec, rh);
       continue;
     }
     const detection = isDetection(rec);
@@ -399,7 +435,9 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
         const rh = hostOf(rec);
         if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
         push(genericDetection(readSigmaMeta(rec), rh.asset), rh, rec);
-      }
+        tally?.fallbacks.add("verdict_only_detection");
+        if (tally) tallyRowHost(tally, rec, rh);
+      } else tally?.skipped.add("no_event_document");
       continue;
     }
     const meta = detection ? readSigmaMeta(rec) : null;
@@ -411,10 +449,15 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);
       const raw: Row = { Event: event };
+      if (tally)
+        tallyRowHost(tally, { ...rec, Event: event }, rh, recordName ? "System.Computer" : undefined);
       if (!win) {
         if (meta) push(genericDetection(meta, host), rh, raw);
+        if (meta) tally?.fallbacks.add("generic_detection");
+        else tally?.skipped.add("unmapped_windows_event");
         continue;
       }
+      if (tally) tallyEventKeys(tally, event);
       sawEvtx = true;
       if (meta) push(applySigma(win, meta), rh, raw);
       else {
@@ -424,6 +467,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     }
   }
   ledger.resolve();
+  tally?.flush(opts.debug);
 
   const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,

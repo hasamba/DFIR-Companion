@@ -22,6 +22,8 @@
 // siemImport's aggregation + IOC sink.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   aggregateEvents,
   addIoc,
@@ -41,6 +43,7 @@ export interface CiscoAsaImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   assumeYear?: number; // year stamped onto the year-less timestamps (default: current UTC year)
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export type CiscoAsaParseResult = SiemParseResult;
@@ -167,14 +170,19 @@ export function parseCiscoAsaLog(text: string, opts: CiscoAsaImportOptions = {})
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let total = 0;
+  let [notAsa, unmapped] = [0, 0];
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
-    if (!ASA_LINE.test(line)) continue;
+    if (!ASA_LINE.test(line)) {
+      notAsa++;
+      continue;
+    }
     total++;
     const m = mapCiscoAsaLine(line, year, sink);
     if (m) mapped.push(m);
+    else unmapped++;
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -183,6 +191,9 @@ export function parseCiscoAsaLog(text: string, opts: CiscoAsaImportOptions = {})
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  opts.debug?.skipped("not_asa_line", notAsa);
+  opts.debug?.skipped("unmapped_message", unmapped);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

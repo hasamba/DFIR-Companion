@@ -42,6 +42,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -50,6 +51,8 @@ export interface AwsImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface AwsParseResult {
@@ -569,10 +572,14 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   for (const [recordIndex, rec] of records.entries()) {
     const m = mapRecord(rec, iocSink, recordIndex);
     if (m) candidates.push(m);
+    // No eventName or eventSource: the record is never mapped (#1736).
+    else opts.debug?.skipped("missing_required_field");
   }
   // The two records of one cross-account action are one row (awsReplicas.ts), before and
   // independent of the optional aggregation.
   const mapped = mergeReplicas(candidates);
+  if (candidates.length > mapped.length)
+    opts.debug?.omitted("merged_replica", candidates.length - mapped.length);
   if (mapped.length === 0) {
     return {
       events: [],

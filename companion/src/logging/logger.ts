@@ -1,5 +1,6 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
+import type { DebugLogSink } from "./debugLogSink.js";
 
 // Leveled, greppable logging that tees to the console AND to log files. A single shared
 // instance is created at server startup and threaded into the pipeline so the dashboard's
@@ -9,6 +10,10 @@ import { dirname } from "node:path";
 // lines carrying a caseId ALSO go to that case's own log (the per-investigation audit trail).
 // The pure helpers (shouldLog/formatLogLine/normalizeLogLevel) are unit-tested independently
 // of any I/O; the file sink is a thin, fail-safe wrapper that never throws into a caller.
+//
+// The always-on debug log (#1735, logging/debugLogSink.ts) sits BEFORE the level threshold: every
+// line at every level lands there, so a support bundle has debug detail no matter what the live
+// level was. It is global only — it is never written inside a case folder.
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -49,6 +54,12 @@ export interface LogContext {
   caseId?: string;
 }
 
+/** Where this logger writes. `debugLog` is null when the always-on debug log is off. */
+export interface LogPaths {
+  sessionLogPath: string | null;
+  debugLog: { previous: string; current: string } | null;
+}
+
 export interface Logger {
   debug(message: string, ctx?: LogContext): void;
   info(message: string, ctx?: LogContext): void;
@@ -57,6 +68,8 @@ export interface Logger {
   getLevel(): LogLevel;
   setLevel(level: LogLevel): void;
   close(): Promise<void>;
+  /** Optional so every existing fake logger keeps compiling. */
+  paths?(): LogPaths;
 }
 
 // A destination for formatted log lines, keyed by file path. Injectable so tests capture
@@ -86,6 +99,9 @@ export interface LoggerOptions {
   now?: () => string;
   // Injectable console (tests) — defaults to the real console.
   consoleFns?: ConsoleFns;
+  // Always-on, size-capped debug log in the GLOBAL log dir: receives every line at every level,
+  // regardless of the live level. Absent/null → no debug log.
+  debugLog?: DebugLogSink | null;
 }
 
 // Lazy append-only file writer: one WriteStream per path, parent dirs created on first use.
@@ -138,6 +154,7 @@ export class LoggerImpl implements Logger {
   private readonly writer: LogWriter;
   private readonly now: () => string;
   private readonly out: ConsoleFns;
+  private readonly debugLog: DebugLogSink | null;
 
   constructor(opts: LoggerOptions = {}) {
     this.level = opts.level ?? "info";
@@ -146,6 +163,7 @@ export class LoggerImpl implements Logger {
     this.useConsole = opts.console ?? true;
     this.writer = opts.writer ?? new FileLogWriter();
     this.now = opts.now ?? (() => new Date().toISOString());
+    this.debugLog = opts.debugLog ?? null;
     this.out = opts.consoleFns ?? {
       log: (s) => console.log(s),
       warn: (s) => console.warn(s),
@@ -160,9 +178,17 @@ export class LoggerImpl implements Logger {
     this.level = level;
   }
 
+  paths(): LogPaths {
+    return { sessionLogPath: this.sessionLogPath, debugLog: this.debugLog?.files() ?? null };
+  }
+
   private emit(level: LogLevel, message: string, ctx?: LogContext): void {
-    if (!shouldLog(this.level, level)) return;
+    const passes = shouldLog(this.level, level);
+    if (!passes && !this.debugLog) return;
     const line = formatLogLine(level, message, { at: this.now(), caseId: ctx?.caseId });
+    // Before the threshold, on purpose: the debug log keeps every level (#1735).
+    this.debugLog?.write(line);
+    if (!passes) return;
     if (this.useConsole) {
       if (level === "error") this.out.error(line);
       else if (level === "warn") this.out.warn(line);
@@ -186,6 +212,7 @@ export class LoggerImpl implements Logger {
   }
 
   async close(): Promise<void> {
+    this.debugLog?.close();
     await this.writer.close();
   }
 }

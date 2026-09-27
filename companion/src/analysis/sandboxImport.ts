@@ -16,6 +16,8 @@ import { createHash } from "node:crypto";
 import type { LabIntelRecord, Severity } from "./stateTypes.js";
 import { SANDBOX_PREFIX } from "./labIntel.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordAggregation } from "./parseDebugTally.js";
 import type { SampleAssociationFact, ReportMembership } from "./canonicalSampleLineage.js";
 import {
   aggregateEvents,
@@ -70,6 +72,7 @@ export interface SandboxImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // this attempt's import debug recorder (#1736)
 }
 
 export interface SandboxParseResult {
@@ -557,6 +560,20 @@ function isCape(r: Row): boolean {
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
+// Which report mapper(s) ran, and how many reports matched neither (#1736). Codes only.
+function recordSandboxMappers(
+  debug: ImportDebugRecorder | undefined,
+  total: number,
+  matched: number,
+  sawFalcon: boolean,
+  sawCape: boolean,
+): void {
+  if (!debug) return;
+  if (total > matched) debug.skipped("unknown_report_format", total - matched);
+  if (sawFalcon) debug.fallback("falcon_mapper");
+  if (sawCape) debug.fallback("cape_mapper");
+}
+
 export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}): SandboxParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   let root: unknown;
@@ -564,9 +581,11 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
     root = JSON.parse(text.trim());
   } catch {
     root = null;
+    opts.debug?.skipped("unparseable_json");
   }
   const reports: Row[] = Array.isArray(root) ? root.filter(isObject) : isObject(root) ? [root] : [];
   const total = reports.length;
+  if (Array.isArray(root) && root.length > total) opts.debug?.skipped("not_an_object", root.length - total);
   if (total === 0) {
     return {
       events: [],
@@ -603,7 +622,9 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
       matched++;
     }
   }
+  recordSandboxMappers(opts.debug, total, matched, sawFalcon, sawCape);
   if (mapped.length === 0) {
+    opts.debug?.counts({ total, kept: 0, dropped: total });
     return {
       events: [],
       iocs: [],
@@ -640,6 +661,9 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   const events = [...otherEvents, ...lineageEvents];
   const groups = otherGroups + lineageGroups;
 
+  opts.debug?.counts({ total, kept: events.length, dropped: Math.max(0, total - matched) });
+  recordAggregation(opts.debug, otherMapped.length, otherGroups, otherEvents.length);
+  recordAggregation(opts.debug, lineageMapped.length, lineageGroups, lineageEvents.length);
   const format = sawCape && sawFalcon ? "mixed" : sawCape ? "capev2" : sawFalcon ? "falcon" : "empty";
   return {
     events,

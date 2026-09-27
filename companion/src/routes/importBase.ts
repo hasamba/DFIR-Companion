@@ -1,3 +1,4 @@
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import type { Request } from "express";
 import { resolveTrailerProfile } from "../analysis/webRecordFields.js";
 import type { Severity } from "../analysis/stateTypes.js";
@@ -48,12 +49,15 @@ export function buildImportBase(o: {
   tracking: ReturnType<typeof createImportJobTracking>;
   job: RegisteredJob | undefined;
   req: Request;
+  /** The attempt's recorder when the route made one first, to record detection (#1736). */
+  debug?: ImportDebugRecorder;
 }): ImportBase {
   const trailerProfile =
     o.kind === "combinedlog" ? resolveTrailerProfile(o.req.body?.webLogFormat) : undefined;
   return {
     label: o.storedName,
     idPrefix: `${o.seq}`,
+    debug: o.debug ?? createImportDebugRecorder(), // one per attempt (#1736)
     importedAt: o.importedAt,
     onProgress: o.tracking.onProgress,
     ...(hasParseProgress(o.kind) ? { onParseProgress: o.tracking.onParseProgress } : {}),

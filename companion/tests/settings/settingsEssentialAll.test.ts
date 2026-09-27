@@ -36,6 +36,9 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_VISION_MODEL",
     "DFIR_AI_SYNTH_PROVIDER",
     "DFIR_AI_SYNTH_MODEL",
+    // #1734: the model a safety-stopped synthesis falls back to. Key and base URL stay All-only.
+    "DFIR_AI_SYNTH_FALLBACK_PROVIDER",
+    "DFIR_AI_SYNTH_FALLBACK_MODEL",
     "DFIR_AI_SECOND_OPINION_PROVIDER",
     "DFIR_AI_SECOND_OPINION_MODEL",
     // The referee judges model A against model B, so it sits beside the 2nd-opinion model. Its

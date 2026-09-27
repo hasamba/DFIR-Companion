@@ -44,6 +44,11 @@ import { WIN_EVENTS, channelTable, windowsDnsOverlay, type WinEventDef } from ".
 export { WIN_EVENTS, type WinEventDef };
 import { processGuid, processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
+import { firstStr, getCI, getPath, hostSource, isObject, str, TIME_KEYS } from "./siemFieldPick.js";
+import { timestampSource, windowsEventDataRaw } from "./siemFieldPick.js";
+export { firstStr, getCI, getPath, isObject, str };
+import { createSiemDebugTally } from "./siemImportDebug.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
@@ -64,6 +69,7 @@ export interface SiemImportOptions {
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — what the mapping decided, per import attempt
 }
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
@@ -136,42 +142,11 @@ export {
 
 // ───────────────────────────── small value helpers ─────────────────────────────
 
-export function isObject(v: unknown): v is Row {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-export function str(v: unknown): string {
-  return typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? "" : String(v);
-}
 export function oneLine(s: string): string {
   return s.replace(/\s*[\r\n]+\s*/g, " ").trim();
 }
 export function baseName(p: string): string {
   return p.trim().split(/[\\/]/).pop() || p.trim();
-}
-// Case-insensitive single-key lookup.
-export function getCI(row: Row, key: string): unknown {
-  if (key in row) return row[key];
-  const lower = key.toLowerCase();
-  for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
-  return undefined;
-}
-// First non-empty string across candidate keys (case-insensitive), supporting dotted paths.
-export function firstStr(row: Row, keys: string[]): string {
-  for (const k of keys) {
-    const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
-    const s = str(v).trim();
-    if (s) return s;
-  }
-  return "";
-}
-// Dotted-path getter ("host.name", "event.action"), case-insensitive per segment.
-export function getPath(row: Row, path: string): unknown {
-  let cur: unknown = row;
-  for (const seg of path.split(".")) {
-    if (!isObject(cur)) return undefined;
-    cur = getCI(cur, seg);
-  }
-  return cur;
 }
 
 // Pull MITRE technique ids out of any tactic/tag/meta/classification text. Shared across importers
@@ -372,62 +347,11 @@ function parseKibanaDate(t: string): string {
   return `${m[3]}-${mon}-${m[2].padStart(2, "0")}T${m[4]}:${m[5]}:${m[6]}.${ms || "000"}Z`;
 }
 
-const TIME_KEYS = [
-  "@timestamp",
-  "timestamp",
-  "_time",
-  "eventTime",
-  "EventTime",
-  "event_time",
-  "DeviceEventTime",
-  "createdAt",
-  "created",
-  "event.created",
-  "ingested",
-  "generated_time",
-  "received_time",
-  "observed_timestamp",
-  "time",
-  "date",
-  "@time",
-];
-
-// The event's own time. For Sysmon prefer the structured UtcTime (the in-event clock —
-// the artifact's own time); otherwise the record's @timestamp / common time fields.
-// Never the import time.
+// The event's own time (Sysmon's UtcTime first), normalized; the pick lives in siemFieldPick.ts.
 function pickTimestamp(rec: Row, ed: Row | undefined): string {
-  const sysmonUtc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
-  return normalizeTime(sysmonUtc || firstStr(rec, TIME_KEYS));
+  return normalizeTime(timestampSource(rec, ed)?.value ?? "");
 }
-
-const HOST_KEYS = [
-  "computer_name",
-  "Computer",
-  "hostname",
-  "host.name",
-  "host",
-  "host_name",
-  "agent.hostname",
-  "beat.hostname",
-  "device.hostname",
-  "endpoint.name",
-  "MachineName",
-  "src_host",
-  "source.host",
-  "winlog.computer_name",
-];
-
-export function pickHost(rec: Row): string {
-  for (const k of HOST_KEYS) {
-    const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
-    if (typeof v === "string" && v.trim()) return v.trim();
-    if (isObject(v)) {
-      const n = str(getCI(v, "name")).trim();
-      if (n) return n;
-    } // ECS host:{name}
-  }
-  return "";
-}
+export const pickHost = (rec: Row): string => hostSource(rec)?.value ?? "";
 
 // ───────────────────────────── IOC / hash helpers ─────────────────────────────
 
@@ -737,7 +661,7 @@ export function mapWindows(
   const channel = firstStr(rec, ["log_name", "channel", "Channel", "winlog.channel", "source_name"]);
   if (!Number.isFinite(eid) || !channel) return null;
 
-  const edRaw = getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
+  const edRaw = windowsEventDataRaw(rec);
   const defender = decodeDefenderEvent(channel, eid, isObject(edRaw) ? edRaw : {}); // #930 item 1
   const ed: Row = isObject(edRaw) ? edRaw : {};
   const [isSysmon, isPwsh] = [/sysmon/i.test(channel), /powershell/i.test(channel)];
@@ -1477,13 +1401,15 @@ export function buildSiemResult(
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
   const dnsIocs: HeldDnsIocs = new Map(); // #1642 — a DNS row links its IOCs once its key is final
-
+  const tally = createSiemDebugTally(opts.debug, opts.minSeverity);
   for (const [recordIndex, rec] of records.entries()) {
+    tally.begin();
     const host = pickHost(rec);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
-    const m =
-      mapWindows(rec, host, rowSink, { source: format, recordIndex }) ?? mapGeneric(rec, host, rowSink);
+    const w = mapWindows(rec, host, rowSink, { source: format, recordIndex });
+    const m = w ?? mapGeneric(rec, host, rowSink);
+    tally.row(w !== null, m);
     mergeRowIocsHoldingDns(iocSink, rowSink, m, dnsIocs);
     mapped.push(m);
   }
@@ -1499,7 +1425,8 @@ export function buildSiemResult(
   const finalEvents = sourceText ? stampSourceArtifactHash(events, sourceText) : events;
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-
+  tally.floored(mapped);
+  tally.flush({ total, kept: events.length, groups, dropped: Math.max(0, total - represented) });
   return {
     events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),

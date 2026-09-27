@@ -29,6 +29,7 @@ import { aggregateEvents, addIoc, maxEventsDefault, type MappedEvent, type SiemI
 import { filePathIoc } from "./memoryFields.js";
 import { boundedAggKey } from "./aggKey.js";
 import type { MemoryImportOptions, MemoryParseResult } from "./memoryImport.js";
+import { createCodeTally, recordAggregation } from "./parseDebugTally.js";
 
 interface ModifiedCounts {
   total?: number;
@@ -245,15 +246,25 @@ export function parseMemoryPeSieve(text: string, opts: MemoryImportOptions): Mem
   const mapped: MappedEvent[] = [];
 
   let flaggedCount = 0;
+  const skipped = createCodeTally();
   for (let i = 0; i < scans.length; i++) {
     const entry = scans[i];
     // A scans[] entry is untrusted input — a malformed report can carry null/non-object elements
     // here, and Object.entries(null) throws rather than returning [], which would otherwise crash
     // the whole parse over one bad entry.
-    if (typeof entry !== "object" || entry === null) continue;
+    if (typeof entry !== "object" || entry === null) {
+      skipped.add("not_an_object");
+      continue;
+    }
     const [scanType, detail] = Object.entries(entry)[0] ?? [];
-    if (!scanType || !detail || typeof detail !== "object" || detail === null) continue;
-    if (num(detail.status) !== 1) continue;
+    if (!scanType || !detail || typeof detail !== "object" || detail === null) {
+      skipped.add("missing_scan_detail");
+      continue;
+    }
+    if (num(detail.status) !== 1) {
+      skipped.add("not_flagged");
+      continue;
+    }
     flaggedCount++;
 
     const moduleFile = str(detail.module_file);
@@ -295,6 +306,8 @@ export function parseMemoryPeSieve(text: string, opts: MemoryImportOptions): Mem
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  skipped.flush((code, n) => opts.debug?.skipped(code, n));
+  recordAggregation(opts.debug, mapped.length, groups, events.length);
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const total = 1 + flaggedCount;

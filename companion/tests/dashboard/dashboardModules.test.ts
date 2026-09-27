@@ -256,10 +256,12 @@ describe("every moved function still resolves at its call sites", () => {
   // popover's "how full is the bar" rule shared by the row builder and the in-place patch (#1428); 119
   // with iocFilterKey and resolveIocPage, the IOC pager's "a refresh keeps the page" rule (#1649); 124
   // with execSummaryHtml and its four helpers, the Executive Summary's fact strip and ledger; 128
-  // with narrativeHtml and its three helpers, the Narrative Timeline's time rail.
+  // with narrativeHtml and its three helpers, the Narrative Timeline's time rail; 131 with jobTime,
+  // jobWhen and lastSynthesisLine, the Background jobs popover's "when did it run" line; 132 with
+  // jobFilesHtml, the popover's list of every file a drop sweep covers.
   // The number is a vacuity guard, not a budget.
-  it("moved 128 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(128);
+  it("moved 132 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(132);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

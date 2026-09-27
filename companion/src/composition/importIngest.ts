@@ -28,7 +28,9 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
-import { detectImportWithCustom } from "../analysis/importDetect.js";
+import { detectImportWithCustomEx } from "../analysis/importDecision.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 import {
   looksLikeMacLoginItemFilename,
   looksLikeUndecodedMacLoginItemFilename,
@@ -62,15 +64,10 @@ export interface ImportIngestDeps {
   resynthesizeInBackground: (caseId: string) => void;
 }
 
-/**
- * A job-bound caller's hooks for the model call (#1629). Used only for an AI kind (csv/log) and only
- * past the AI-off gate, so the row names a model exactly when one runs: `beforeModelRun` pins it,
- * and `signal` rides on the model calls so the served-model stamp (#1601) finds the job.
- */
-export interface ModelCallHooks {
-  signal?: AbortSignal;
-  beforeModelRun?: (kind: string) => void;
-}
+// Declared in routes/context.ts (#1736) so RouteContext.ingestStreamed can name it without an upward
+// import; re-exported here for the callers that have always taken it from this module.
+import type { ModelCallHooks } from "../routes/context.js";
+export type { ModelCallHooks } from "../routes/context.js";
 
 export interface ImportIngest {
   /** The live declarative-importer registry. An accessor: it is loaded async and reloaded on CRUD. */
@@ -112,12 +109,19 @@ export interface ImportIngest {
     provenance?: ArtifactProvenance,
     assetHost?: string,
     modelCall?: ModelCallHooks,
+    /**
+     * The attempt's debug recorder (#1736). A caller that detected the kind itself passes the one it
+     * gave resolveImportKind, and hands the same one to recordImportFailure on a throw; without one
+     * ingestStreamed makes its own, so the success line is still written.
+     */
+    debug?: ImportDebugRecorder,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
   ingestMacLoginItemStreamed(
     caseId: string,
     bytes: Buffer,
     originalName: string,
+    debug?: ImportDebugRecorder,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 }
 
@@ -177,12 +181,18 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   // the login-item containers only, and any other bplist — an MRU .sfl2, an app's .plist — reached
   // the same sniffer and got the same wrong launchd row. No text importer can read one, so the
   // honest answer is a refusal that names the plutil conversion (importKindHints.ts).
-  const resolveImportKind = (filename: string, text: string): string =>
-    looksLikeMacLoginItemFilename(filename) ||
-    looksLikeUndecodedMacLoginItemFilename(filename) ||
-    isBinaryPlist(text)
-      ? "unknown"
-      : detectImportWithCustom(filename, text, registry.importers, precedence);
+  // `debug` (#1736) records the decision where it is made — confidence and rule — for the attempt.
+  const resolveImportKind = (filename: string, text: string, debug?: ImportDebugRecorder): string => {
+    const refused =
+      looksLikeMacLoginItemFilename(filename) ||
+      looksLikeUndecodedMacLoginItemFilename(filename) ||
+      isBinaryPlist(text);
+    const d = refused
+      ? { kind: "unknown", confident: true, decision: "refused_binary_plist" }
+      : detectImportWithCustomEx(filename, text, registry.importers, precedence);
+    debug?.detected(d.kind, d);
+    return d.kind;
+  };
 
   // The import log's start/merged/cancelled lines (#1438), written with `{ caseId }` so they land in
   // the session log AND the case's own log. This is the seam every text import crosses on the way
@@ -194,14 +204,20 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     label: string,
     startedAt: number,
     work: Promise<T>,
+    debug?: ImportDebugRecorder,
   ): Promise<T> {
     try {
       const result = await work;
       getServerLogger().info(formatImportMerged(caseId, label, Date.now() - startedAt), { caseId });
+      // "parsed", not "succeeded": the caller still settles, tags and demotes. A failure there
+      // is recorded as "failed" afterwards; an entry point that owns the end may emit "succeeded".
+      emitImportDebug(caseId, debug, "parsed");
       return result;
     } catch (err) {
-      if ((err as { name?: unknown } | null)?.name === "AbortError")
+      if ((err as { name?: unknown } | null)?.name === "AbortError") {
         getServerLogger().info(formatImportCancelled(caseId, label, Date.now() - startedAt), { caseId });
+        emitImportDebug(caseId, debug, "cancelled");
+      }
       throw err;
     }
   }
@@ -222,7 +238,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         base.label,
         startedAt,
         observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work),
+        base.debug,
       );
+    base.debug?.detected(kind);
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = registry.importers.get(kind);
     if (custom) {
@@ -234,6 +252,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             ...base,
             onParsed: (r) => {
               parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
+              base.debug?.counts(parsed);
               recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
             },
           })
@@ -249,6 +268,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
           }),
       );
     }
+    // No deterministic importer reads a generic csv/log: the AI extracts its events (#1736).
+    if (kind === "csv" || kind === "log") base.debug?.fallback("ai_extraction");
     switch (kind) {
       case "thor":
         return observe(pipeline.importThor(caseId, text, base));
@@ -483,6 +504,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     provenance?: ArtifactProvenance,
     assetHost?: string, // the analyst-declared host (#1496): a drop subfolder named asset=<HOST>
     modelCall?: ModelCallHooks,
+    debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -541,6 +563,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         importedAt,
         onProgress,
         minSeverity,
+        debug, // dispatchImport writes its succeeded / cancelled line
         ...(assetHost ? { assetHost } : {}),
         ...(signal ? { signal } : {}),
       });
@@ -635,10 +658,13 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     caseId: string,
     bytes: Buffer,
     originalName: string,
+    debug: ImportDebugRecorder = createImportDebugRecorder(), // this attempt's (#1736)
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     options.onImport?.(caseId);
+    // Only a login-item container reaches this path, so the kind is fixed, not sniffed.
+    debug.detected("macloginitem", { confident: true, decision: "explicit_route" });
 
     const preview = parseMacLoginItemBtm(bytes);
     if (!preview) {
@@ -692,7 +718,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
           label: storedName,
           idPrefix: `bt${seq}`,
           importedAt,
+          debug,
         }),
+        debug,
       );
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 

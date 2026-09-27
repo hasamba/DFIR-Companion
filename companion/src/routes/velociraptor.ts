@@ -681,6 +681,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
             ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
               label: `velo-hunt_${ref.huntId}_${art}.json`,
               ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
+              debug: read.debug, // #1736
               // Namespaced per artifact: a running index across the whole hunt would collide now that
               // each artifact imports in its own pass.
               idBase: `${ref.huntId}-${art}`,
@@ -749,6 +750,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
             label: `velo-flow_${ref.flowId}_${art}.json`,
             ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
+            debug: read.debug, // #1736
             idBase: `${ref.flowId}-${art}`,
             superOnly,
             minSeverity,

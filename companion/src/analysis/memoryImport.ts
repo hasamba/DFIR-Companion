@@ -41,7 +41,6 @@ import {
   getCI,
   normalizeTime,
   type MappedEvent,
-  type SiemEvent,
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
@@ -53,6 +52,8 @@ import {
   malfindDescription,
   malfindRegion,
   pickTime,
+  PROC_NAME_KEYS,
+  PROCESS_CREATE_KEYS,
   serviceImagePath,
 } from "./memoryFields.js";
 import { pstreeChildren } from "./pstreeDepth.js";
@@ -90,30 +91,10 @@ import { psxviewSignal, ldrModulesSignal, hasLdrColumns, hasPsxviewColumns } fro
 
 type Row = Record<string, unknown>;
 
-export interface MemoryImportOptions {
-  aggregate?: boolean;
-  minSeverity?: Severity;
-  maxEvents?: number;
-  maxIocs?: number;
-  dllTelemetry?: boolean; // include dlllist/ldrmodules rows as Info events (default false — paths only)
-  filename?: string; // weak plugin hint for a bare Volatility array carrying no plugin name
-}
-
-export interface MemoryParseResult {
-  events: SiemEvent[];
-  iocs: SiemIoc[];
-  total: number; // rows across all tables
-  kept: number; // events emitted (after aggregation + cap)
-  dropped: number; // rows not represented (dll/handle telemetry / below floor / capped)
-  groups: number; // distinct event groups before the cap
-  tables: number; // plugin tables parsed
-  injected: number; // malfind (injected-code) rows seen
-  processes: number; // process-listing rows seen
-  connections: number; // network-connection rows seen
-  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
-  tool: string; // "Volatility" | "Rekall" | ""
-  note?: string; // the export's SHAPE (memoryExportShape.ts) — for the import note, never a completion claim
-}
+import type { MemoryImportOptions, MemoryParseResult } from "./memoryImportTypes.js";
+export type { MemoryImportOptions, MemoryParseResult } from "./memoryImportTypes.js";
+import { counted, recordProcessFields, routed } from "./memoryParseDebug.js";
+import { recordAggregation } from "./parseDebugTally.js";
 
 type Category =
   | "process"
@@ -241,8 +222,6 @@ function displayLabel(plugin: string, category: Category, rows: Row[]): string {
 
 // ───────────────────────────── per-category mappers ─────────────────────────────
 
-const PROC_NAME_KEYS = ["ImageFileName", "COMM", "Comm", "Process", "Name", "name", "_EPROCESS"];
-
 function procName(row: Row): string {
   return baseName(pick(row, PROC_NAME_KEYS));
 }
@@ -270,13 +249,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
       const name = procName(r);
       const pid = pickPid(r);
       const ppid = pick(r, ["PPID", "ppid"]);
-      const created = pickTime(r, [
-        "CreateTime",
-        "process_create_time",
-        "CreatedTime",
-        "create_time",
-        "start_time",
-      ]);
+      const created = pickTime(r, PROCESS_CREATE_KEYS);
       const exited = pick(r, ["ExitTime", "process_exit_time"]).trim();
       const cmd = pick(r, ["Cmd", "CommandLine", "Args"]);
       const path = pick(r, ["Path", "path"]);
@@ -1441,8 +1414,9 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
 
 export function parseMemory(text: string, opts: MemoryImportOptions = {}): MemoryParseResult {
   const envelope = runEnvelopeRoot(text); // a run envelope (#1016): embedded exports import as exports, one run row each
-  if (envelope !== undefined) return parseMemoryRunBundle(envelope, text, opts);
-  return parseMemoryExport(text, opts);
+  if (envelope !== undefined)
+    return counted(opts, routed(opts, "run_envelope", parseMemoryRunBundle(envelope, text, opts)));
+  return counted(opts, parseMemoryExport(text, opts));
 }
 
 /** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
@@ -1450,23 +1424,25 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   if (text.trimStart().startsWith("{") && text.includes('"scans"')) {
     // PE-sieve's own report (#933-15)
     try {
-      if (isPeSieveReport(JSON.parse(text))) return parseMemoryPeSieve(text, opts);
+      if (isPeSieveReport(JSON.parse(text)))
+        return routed(opts, "pesieve_report", parseMemoryPeSieve(text, opts));
     } catch {
       /* fall through */
     }
   }
 
-  if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts); // check before JSON/text Volatility
+  if (looksLikeMemprocfsFindevil(text))
+    return routed(opts, "memprocfs_findevil", parseMemoryFindevil(text, opts)); // before JSON/text Volatility
 
   const cols = csvCols(text); // MemProcFS CSV variants, by distinctive header columns
   if (cols.has("value32") && cols.has("value64") && cols.has("action")) {
-    return parseMemoryMemprocfsTimeline(text, opts);
+    return routed(opts, "memprocfs_timeline", parseMemoryMemprocfsTimeline(text, opts));
   }
   if (cols.has("matchindex") && cols.has("memorytype") && cols.has("processname")) {
-    return parseMemoryYaraCsv(text, opts);
+    return routed(opts, "memprocfs_yara_csv", parseMemoryYaraCsv(text, opts));
   }
   if (cols.has("processname") && cols.has("type") && cols.has("address") && !cols.has("matchindex")) {
-    return parseMemoryFindevilCsv(text, opts);
+    return routed(opts, "memprocfs_findevil_csv", parseMemoryFindevilCsv(text, opts));
   }
 
   const maxIocs = opts.maxIocs ?? 5000;
@@ -1540,6 +1516,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
       ? "imageinfo"
       : classify(t.plugin, cols);
     if (category === "process") {
+      recordProcessFields(opts.debug, t.rows);
       for (const r of t.rows) {
         const nm = procName(r);
         if (!nm) continue;
@@ -1592,6 +1569,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
         mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
         break;
       default:
+        opts.debug?.fallback("generic_table_mapper");
         mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
   }
@@ -1630,7 +1608,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const finalEvents = stampSourceArtifactHash(events, text);
-
+  recordAggregation(opts.debug, mapped.length, groups, events.length);
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const handleNote = handleResult.truncated // a capped fact family is a sample — disclose it, don't just track it
     ? "handle-ownership analysis reached its own evidence cap — some facts were not reported."

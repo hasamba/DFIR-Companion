@@ -59,6 +59,12 @@ export interface AiCallContext {
     backoffMs: number,
   ): Promise<T>;
 
+  /**
+   * Count one retry the caller ran itself (#1740: a safety-stopped synthesis asked again) in the
+   * same ai_retry metric the module-level retry records. Optional: test contexts omit it.
+   */
+  recordRetry?(caseId: string, label: string, err: unknown): void;
+
   /** The anonymise → OCR-redact → Presidio-gate → call → restore chain. See the note above. */
   analyzeRestored(
     caseId: string,

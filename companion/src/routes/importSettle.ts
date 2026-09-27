@@ -107,6 +107,17 @@ export async function settleForensicImport(
   // id before this runs, so a new id is a genuinely new row.
   const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
   let added = imported.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+  // #1735: the always-on debug log keeps these at any live level. Counts only, never row content.
+  // Silent when the import added nothing and carried no rename: a Velociraptor monitor settles on
+  // every poll, and empty polls must not push real history out of the capped debug log.
+  const traced = added.length > 0 || carried.changed;
+  const debug = (step: string): void => {
+    if (traced) getServerLogger().debug(`[import-debug] ${caseId}: settle ${step}`, { caseId });
+  };
+  debug(
+    `start forensicBefore=${stateBefore.forensicTimeline.length} merged=${imported.forensicTimeline.length} ` +
+      `added=${added.length} renameCarry=${carried.changed}`,
+  );
 
   // #1157: stamp rows genuinely new to this case with WHEN the case received them and WHICH import
   // action did it — distinct from `timestamp`, the artifact's own recorded time. One instant, one
@@ -177,6 +188,12 @@ export async function settleForensicImport(
       // record. What this failure costs is the count above, which stays 0.
     }
     await deps.autoTagImported(caseId, added);
+    debug(
+      `dual-write superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
+        `taggerOffered=${added.length}`,
+    );
+  } else {
+    debug(`dual-write skipped store=${deps.superTimelineStore ? "yes" : "no"} added=${added.length}`);
   }
   // Merge-all → tagger → CAP → demote (#1529). The tagger has had its one promotion window above;
   // now the rows inside a corroborated provisioning window are capped at Low with a stated reason,
@@ -189,6 +206,10 @@ export async function settleForensicImport(
     deps.onState?.(capped.state);
   }
   const state = await deps.demoteForensicForCase(caseId);
+  debug(
+    `demote buildTimeCapped=${capped.changed} forensicBeforeDemote=${capped.state.forensicTimeline.length} ` +
+      `forensicAfterDemote=${state.forensicTimeline.length}`,
+  );
   const timelineDiff = diffTimeline(stateBefore.forensicTimeline, state.forensicTimeline);
   const iocsDiff = diffIocs(stateBefore.iocs, state.iocs);
   logImportSettled(caseId, label, {

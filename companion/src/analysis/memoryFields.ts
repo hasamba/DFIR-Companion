@@ -32,24 +32,58 @@ export function cellStr(v: unknown): string {
 
 // The artifact's own time. Handles a Rekall time object ({epoch}) and a Volatility naive/ISO string;
 // "N/A" / "-" / "0" / null render as undated. Never the import time.
-export function pickTime(row: Row, keys: string[]): string {
+export function pickTime(row: Row, keys: readonly string[]): string {
   for (const k of keys) {
-    const v = getCI(row, k);
-    if (isObject(v)) {
-      const ep = getCI(v, "epoch") ?? getCI(v, "value");
-      const n = typeof ep === "number" ? ep : Number(cellStr(ep));
-      if (Number.isFinite(n) && n > 1e8) {
-        const d = new Date(n > 1e12 ? n : n * 1000);
-        if (!Number.isNaN(d.getTime())) return d.toISOString();
-      }
-    }
-    const raw = cellStr(v).trim();
-    if (!raw || raw === "0" || isPlaceholderCell(raw)) continue; // "0" is a placeholder for a TIME only
-    const t = normalizeTime(raw);
+    const t = timeAt(row, k);
     if (t) return t;
   }
   return "";
 }
+
+/** The key `pickTime` reads its value from ("" when none): a column NAME for the import debug log. */
+export function pickTimeKey(row: Row, keys: readonly string[]): string {
+  return keys.find((k) => timeAt(row, k) !== "") ?? "";
+}
+
+function timeAt(row: Row, k: string): string {
+  const v = getCI(row, k);
+  if (isObject(v)) {
+    const ep = getCI(v, "epoch") ?? getCI(v, "value");
+    const n = typeof ep === "number" ? ep : Number(cellStr(ep));
+    if (Number.isFinite(n) && n > 1e8) {
+      const d = new Date(n > 1e12 ? n : n * 1000);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  const raw = cellStr(v).trim();
+  if (!raw || raw === "0" || isPlaceholderCell(raw)) return ""; // "0" is a placeholder for a TIME only
+  return normalizeTime(raw);
+}
+
+/**
+ * The key memoryImport.ts's `pick` reads its value from ("" when none) — the same rule: the first
+ * key whose cell is non-empty and not a placeholder. A column NAME for the import debug log.
+ */
+export function pickKey(row: Row, keys: readonly string[]): string {
+  return (
+    keys.find((k) => {
+      const s = cellStr(getCI(row, k)).trim();
+      return s !== "" && !isPlaceholderCell(s);
+    }) ?? ""
+  );
+}
+
+/** Where a process listing keeps the process name, most specific first. */
+export const PROC_NAME_KEYS = ["ImageFileName", "COMM", "Comm", "Process", "Name", "name", "_EPROCESS"];
+
+/** Where a process listing keeps the process start time, most specific first. */
+export const PROCESS_CREATE_KEYS = [
+  "CreateTime",
+  "process_create_time",
+  "CreatedTime",
+  "create_time",
+  "start_time",
+];
 
 /**
  * Time columns an UNCLASSIFIED plugin table may carry.

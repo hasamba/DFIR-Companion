@@ -13,6 +13,7 @@ import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -49,8 +50,12 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         job.lastCheckpoint?.progress.done ?? 0,
         lastCommittedImportBatch(before.timeline, parameters.storedName),
       );
+      // This attempt's own recorder (#1736): the kind is the saved one, so nothing was sniffed.
+      const recorder = createImportDebugRecorder();
+      recorder.detected(parameters.kind, { confident: true, decision: "resumed_job" });
       const base: ImportBase = {
         label: parameters.storedName,
+        debug: recorder,
         idPrefix: String(parameters.sequence),
         importedAt: parameters.importedAt,
         ...(minSeverity ? { minSeverity } : {}),
@@ -83,6 +88,15 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         at: new Date().toISOString(),
         detail: `resuming ${parameters.kind} import after committed batch ${startBatch}`,
       });
+      // #1735: counts and kinds only — the always-on debug log keeps these at any live level.
+      const debug = (step: string): void =>
+        ctx.serverLogger.debug(`[import-debug] ${caseId}: resume kind=${safeKind(parameters.kind)} ${step}`, {
+          caseId,
+        });
+      debug(
+        `start startBatch=${startBatch} streaming=${parameters.streaming} ` +
+          `forensicBefore=${before.forensicTimeline.length}`,
+      );
       try {
         let text: string | undefined;
         if (parameters.streaming && parameters.kind === "plaso") {
@@ -95,6 +109,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         const imported = await options.stateStore.load(job.caseId);
         const allArtifactEvents = imported.forensicTimeline.filter((event) =>
           event.sourceScreenshots.includes(parameters.storedName),
+        );
+        debug(
+          `parsed artifactEvents=${allArtifactEvents.length} forensicNow=${imported.forensicTimeline.length}`,
         );
         let superTimelineAddedCount = 0;
         let superTimelineEvicted: SuperEviction | undefined;
@@ -133,6 +150,10 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           }
         }
         const finalState = await ctx.demoteForensicForCase(job.caseId);
+        debug(
+          `settled superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
+            `forensicAfterDemote=${finalState.forensicTimeline.length}`,
+        );
         const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
         const iocDiff = diffIocs(before.iocs, finalState.iocs);
         // This handler settles inline rather than through settleForensicImport; the done line is
@@ -202,7 +223,8 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
         // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
         // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
-        if (!cancelled) ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error);
+        if (!cancelled)
+          ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error, recorder);
         options.onAiStatus?.(
           job.caseId,
           cancelled

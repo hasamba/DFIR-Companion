@@ -27,6 +27,8 @@ import {
 } from "../integrations/velociraptor/clientMonitoringTable.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 
 export interface VeloMonitorsDeps {
   store: CaseStore;
@@ -37,6 +39,10 @@ export interface VeloMonitorsDeps {
     text: string,
     originalName: string,
     minSeverity?: Severity,
+    provenance?: undefined,
+    assetHost?: undefined,
+    modelCall?: undefined,
+    debug?: ImportDebugRecorder, // this poll's import-debug recorder (#1736)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 }
 
@@ -104,8 +110,26 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       .replace(/[^\w.\-]+/g, "_")
       .slice(0, 40);
     const filename = `velo-monitor_${monitor.artifact}_${shortHost}.json`;
-    const r = await ingestStreamed(caseId, "velociraptor", json, filename, monitor.minSeverity);
-    return r.addedEvents;
+    // Each poll's batch is its own import attempt (#1736). A monitor has no failure ring of its own
+    // (pollMonitorOnce records the error on the monitor), so the failed line is written here.
+    const debug = createImportDebugRecorder();
+    try {
+      const r = await ingestStreamed(
+        caseId,
+        "velociraptor",
+        json,
+        filename,
+        monitor.minSeverity,
+        undefined,
+        undefined,
+        undefined,
+        debug,
+      );
+      return r.addedEvents;
+    } catch (err) {
+      emitImportDebug(caseId, debug, "failed");
+      throw err;
+    }
   }
 
   // One poll cycle for a monitor: load it, poll (pure pollMonitorOnce), persist the updated monitor,

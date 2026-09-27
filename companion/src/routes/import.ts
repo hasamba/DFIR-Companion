@@ -30,9 +30,10 @@ import { parseTheHive } from "../analysis/theHiveImport.js";
 import { parseAuditdLog, type AuditdImportOptions } from "../analysis/auditdImport.js";
 import { parseJournald, type JournaldImportOptions } from "../analysis/journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
-import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
+import { registerWazuhImportRoute } from "./importWazuh.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { buildImportBase, importJobParameters } from "./importBase.js";
+import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
@@ -56,7 +57,8 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
-import { hasParseProgress, isAiDependent, rejectIfAiImportOverBudget } from "./importKinds.js";
+import { hasParseProgress, isAiDependent, refuseDetectedImport } from "./importKinds.js";
+import { emitImportRefused } from "./importDebugEmit.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
@@ -284,15 +286,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = String(req.body?.filename ?? "import.dat");
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
 
-    const kind = ctx.resolveImportKind()(originalName, text);
-    if (kind === "unknown") {
-      return res.status(400).json(unknownImportResponse(originalName, text, UNIFIED_IMPORT_UNKNOWN_MESSAGE));
-    }
-    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
-      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
-    }
-    // A CSV/log import is an LLM call, so meter it against the per-case AI budget (see importKinds).
-    if (rejectIfAiImportOverBudget(kind, caseId, res)) return;
+    const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
+    const kind = ctx.resolveImportKind()(originalName, text, debug);
+    // Unknown format / no AI provider / AI budget (a CSV/log import is an LLM call) — see importKinds.
+    const unknown = () => unknownImportResponse(originalName, text, UNIFIED_IMPORT_UNKNOWN_MESSAGE);
+    const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
+    if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
     // Cross-case signal: tell every dashboard an artifact import landed for THIS case, so one viewing
     // a different case warns "artifacts are arriving for another case" — parity with screenshots. The
@@ -329,6 +328,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           at: new Date().toISOString(),
           detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
         });
+        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
         return res
           .status(202)
           .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
@@ -362,7 +362,17 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           detail: `${kind} import — ${done}/${total}`,
         }),
       );
-      const base = buildImportBase({ storedName, seq, importedAt, kind, minSeverity, tracking, job, req });
+      const base = buildImportBase({
+        storedName,
+        seq,
+        importedAt,
+        kind,
+        minSeverity,
+        tracking,
+        job,
+        req,
+        debug,
+      });
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "extracting",
@@ -495,7 +505,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             return;
           }
           if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
-          recordImportFailure(caseId, kind, storedName, err);
+          recordImportFailure(caseId, kind, storedName, err, debug);
           recordAiError(caseId, "import", err);
           options.onAiStatus?.(caseId, {
             status: "error",
@@ -510,7 +520,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         });
       return;
     } catch (err) {
-      recordImportFailure(caseId, kind, originalName, err);
+      recordImportFailure(caseId, kind, originalName, err, debug);
       return sendPipelineError(res, err);
     }
   });
@@ -547,15 +557,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     if (!sample.trim()) return res.status(400).json({ error: "file is empty" });
 
     const originalName = basename(filePath);
-    const kind = ctx.resolveImportKind()(originalName, sample);
-    if (kind === "unknown") {
-      // best-effort: a truncated head gives no capa hint
-      return res.status(400).json(unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE));
-    }
-    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
-      return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
-    }
-    if (rejectIfAiImportOverBudget(kind, caseId, res)) return; // CSV/log = LLM call; meter AI budget
+    const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
+    const kind = ctx.resolveImportKind()(originalName, sample, debug);
+    // best-effort unknown hint: a truncated head gives no capa hint; then no provider / AI budget.
+    const unknown = () => unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE);
+    const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
+    if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
     // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines); every other kind is
     // read into one string. A non-Plaso file over DFIR_MAX_IMPORT_FILE_MB is refused by the read
@@ -611,6 +618,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           at: new Date().toISOString(),
           detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
         });
+        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
         return res
           .status(202)
           .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
@@ -636,7 +644,17 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           detail: `${kind} import — ${done}/${total}`,
         }),
       );
-      const base = buildImportBase({ storedName, seq, importedAt, kind, minSeverity, tracking, job, req });
+      const base = buildImportBase({
+        storedName,
+        seq,
+        importedAt,
+        kind,
+        minSeverity,
+        tracking,
+        job,
+        req,
+        debug,
+      });
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "extracting",
@@ -756,7 +774,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             return;
           }
           if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
-          recordImportFailure(caseId, kind, storedName, err);
+          recordImportFailure(caseId, kind, storedName, err, debug);
           recordAiError(caseId, "import", err);
           options.onAiStatus?.(caseId, {
             status: "error",
@@ -771,7 +789,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         });
       return;
     } catch (err) {
-      recordImportFailure(caseId, kind, originalName, err);
+      recordImportFailure(caseId, kind, originalName, err, debug);
       return sendPipelineError(res, err);
     }
   });
@@ -818,9 +836,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         importedAt,
         linesIn: csv.split(/\r?\n/).length,
         path: "ai",
-        run: () =>
+        run: (withDebug) =>
           pipeline.analyzeCsv(caseId, csv, {
             label: storedName,
+            ...withDebug,
             idPrefix: `m${seq}`,
             importedAt,
             onProgress: (done, total) =>
@@ -879,9 +898,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         importedAt,
         linesIn: text.split(/\r?\n/).length,
         path: "ai",
-        run: () =>
+        run: (withDebug) =>
           pipeline.analyzeLog(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `l${seq}`,
             importedAt,
             onProgress: (done, total) =>
@@ -969,9 +989,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: json.split(/\r?\n/).length,
         path: "deterministic",
         parameters: { thor: importerParameter(thorOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importThor(caseId, json, {
             label: storedName,
+            ...withDebug,
             idPrefix: `t${seq}`,
             importedAt,
             thor: thorOpts,
@@ -1072,9 +1093,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { siem: importerParameter(siemOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importSiem(caseId, json, {
             label: storedName,
+            ...withDebug,
             idPrefix: `s${seq}`,
             importedAt,
             siem: siemOpts,
@@ -1176,9 +1198,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { chainsaw: importerParameter(chainsawOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importChainsaw(caseId, json, {
             label: storedName,
+            ...withDebug,
             idPrefix: `c${seq}`,
             importedAt,
             chainsaw: chainsawOpts,
@@ -1276,9 +1299,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { hayabusa: importerParameter(hayabusaOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importHayabusa(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `h${seq}`,
             importedAt,
             hayabusa: hayabusaOpts,
@@ -1376,9 +1400,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { velociraptor: importerParameter(vrOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importVelociraptor(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `v${seq}`,
             importedAt,
             velociraptor: vrOpts,
@@ -1476,9 +1501,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { network: importerParameter(netOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importNetwork(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `n${seq}`,
             importedAt,
             network: netOpts,
@@ -1574,9 +1600,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { kape: importerParameter(kapeOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importKape(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `k${seq}`,
             importedAt,
             kape: kapeOpts,
@@ -1680,9 +1707,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { cybertriage: importerParameter(ctOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importCybertriage(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `ct${seq}`,
             importedAt,
             cybertriage: ctOpts,
@@ -1783,9 +1811,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { m365: importerParameter(m365Opts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importM365(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `m${seq}`,
             importedAt,
             m365: m365Opts,
@@ -1877,9 +1906,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { aws: importerParameter(awsOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importAws(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `a${seq}`,
             importedAt,
             aws: awsOpts,
@@ -1971,9 +2001,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { cloud: importerParameter(cloudOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importCloudActivity(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `g${seq}`,
             importedAt,
             cloud: cloudOpts,
@@ -2069,9 +2100,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { plaso: importerParameter(plasoOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importPlaso(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `p${seq}`,
             importedAt,
             plaso: plasoOpts,
@@ -2162,9 +2194,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { sandbox: importerParameter(sandboxOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importSandbox(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `sb${seq}`,
             importedAt,
             sandbox: sandboxOpts,
@@ -2264,9 +2297,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { memory: importerParameter(memoryOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importMemory(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `mem${seq}`,
             importedAt,
             memory: memoryOpts,
@@ -2357,9 +2391,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { email: importerParameter(emailOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importEmail(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `em${seq}`,
             importedAt,
             email: emailOpts,
@@ -2427,9 +2462,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         importedAt,
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
-        run: () =>
+        run: (withDebug) =>
           pipeline.importTheHive(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `th${seq}`,
             importedAt,
             onProgress: (done, total) =>
@@ -2506,9 +2542,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { auditd: importerParameter(auditdOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importAuditd(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `ad${seq}`,
             importedAt,
             auditd: auditdOpts,
@@ -2586,9 +2623,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { journald: importerParameter(journaldOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importJournald(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `jd${seq}`,
             importedAt,
             journald: journaldOpts,
@@ -2667,9 +2705,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         path: "deterministic",
         minSeverity,
         parameters: { sysdig: importerParameter(sysdigOpts) },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importSysdig(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `sd${seq}`,
             importedAt,
             sysdig: sysdigOpts,
@@ -2688,85 +2727,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export envelope).
-  // Evidence-first; mapped DETERMINISTICALLY (no AI call): rule.level drives severity,
-  // rule.mitre.technique → MITRE, agent.name → asset, data fields → IOCs.
-  app.post("/cases/:id/import-wazuh", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
-    const pipeline = options.pipeline;
-    const caseId = req.params.id;
-    const text =
-      typeof req.body?.text === "string"
-        ? req.body.text
-        : typeof req.body?.json === "string"
-          ? req.body.json
-          : "";
-    const originalName = String(req.body?.filename ?? "wazuh-alerts.json");
-    if (!text.trim()) return res.status(400).json({ error: "text is required" });
-
-    const minSeverity = parseMinSeverity(req.body?.minSeverity);
-    const wazuhOpts: WazuhImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
-
-    try {
-      const preview = parseWazuhAlerts(text, wazuhOpts);
-      if (preview.format === "empty" && preview.kept === 0)
-        return res.status(400).json({
-          error:
-            "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })",
-        });
-
-      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
-        text: text,
-        originalName,
-        fallbackName: "wazuh-alerts.json",
-        rows: preview.kept,
-      });
-
-      res.status(202).json({
-        accepted: true,
-        file: storedName,
-        format: preview.format,
-        events: preview.kept,
-        records: preview.total,
-        groups: preview.groups,
-        iocs: preview.iocs.length,
-      });
-
-      options.onAiStatus?.(caseId, {
-        status: "analyzing",
-        phase: "extracting",
-        at: importedAt,
-        detail: `importing ${preview.kept} Wazuh alert(s)`,
-      });
-      commitDedicatedImport(ctx, settleDeps, {
-        caseId,
-        kind: "wazuh",
-        storedName,
-        importedAt,
-        linesIn: text.split(/\r?\n/).length,
-        path: "deterministic",
-        minSeverity,
-        parameters: { wazuh: importerParameter(wazuhOpts) },
-        run: () =>
-          pipeline.importWazuh(caseId, text, {
-            label: storedName,
-            idPrefix: `wz${seq}`,
-            importedAt,
-            wazuh: wazuhOpts,
-            onProgress: (done, total) =>
-              options.onAiStatus?.(caseId, {
-                status: "analyzing",
-                phase: "extracting",
-                at: new Date().toISOString(),
-                detail: `Wazuh import — ${done}/${total}`,
-              }),
-          }),
-      });
-      return;
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
+  registerWazuhImportRoute(app, ctx, settleDeps); // moved to routes/importWazuh.ts (#1736)
 
   // Last-import metadata: when the last import ran + what it added to the forensic timeline.
   // Backs the dashboard's "last import N ago - +N new events" banner and per-row "new" highlight.

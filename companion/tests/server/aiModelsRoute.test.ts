@@ -9,6 +9,7 @@ import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 
 const originalSynthKey = process.env.DFIR_AI_SYNTH_KEY;
 const originalReconcileKey = process.env.DFIR_AI_RECONCILE_KEY;
+const originalFallbackKey = process.env.DFIR_AI_SYNTH_FALLBACK_KEY;
 const originalGeminiKey = process.env.DFIR_AI_KEY_GEMINI;
 const originalLitellmUrl = process.env.DFIR_AI_BASE_URL_LITELLM;
 const originalSynthUrl = process.env.DFIR_AI_SYNTH_BASE_URL;
@@ -24,6 +25,8 @@ afterEach(() => {
   else process.env.DFIR_AI_SYNTH_KEY = originalSynthKey;
   if (originalReconcileKey === undefined) delete process.env.DFIR_AI_RECONCILE_KEY;
   else process.env.DFIR_AI_RECONCILE_KEY = originalReconcileKey;
+  if (originalFallbackKey === undefined) delete process.env.DFIR_AI_SYNTH_FALLBACK_KEY;
+  else process.env.DFIR_AI_SYNTH_FALLBACK_KEY = originalFallbackKey;
   if (originalGeminiKey === undefined) delete process.env.DFIR_AI_KEY_GEMINI;
   else process.env.DFIR_AI_KEY_GEMINI = originalGeminiKey;
   if (originalLitellmUrl === undefined) delete process.env.DFIR_AI_BASE_URL_LITELLM;
@@ -72,6 +75,23 @@ describe("POST /settings/ai-models", () => {
     expect(res.body.models).toEqual(["o3"]);
     expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
       "Bearer saved-referee-secret",
+    );
+  });
+
+  it("lists models for the synthesis fallback role with its own saved key (#1734)", async () => {
+    process.env.DFIR_AI_SYNTH_FALLBACK_KEY = "saved-fallback-secret";
+    const fetchFn = fetchMock(async () => jsonResponse({ data: [{ id: "gpt-6-sol" }] }));
+    vi.stubGlobal("fetch", fetchFn);
+    const app = await harness();
+
+    const res = await request(app)
+      .post("/settings/ai-models")
+      .send({ provider: "openai", role: "synthesis-fallback" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual(["gpt-6-sol"]);
+    expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
+      "Bearer saved-fallback-secret",
     );
   });
 

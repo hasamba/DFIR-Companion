@@ -22,6 +22,7 @@ import { StateLock } from "../analysis/stateLock.js";
 import { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 import { startOperationalCapacityMonitor } from "../analysis/operationalCapacity.js";
 import { LoggerImpl, normalizeLogLevel } from "../logging/logger.js";
+import { createRotatingDebugLog, parseDebugLogMaxMb } from "../logging/debugLogSink.js";
 import { logLine, setServerLogger } from "../logging/serverLogger.js";
 import { createTeamAuthRuntime } from "../auth/authFactory.js";
 import { assertSlashCommandSecretLengths } from "../analysis/slashCommandAuth.js";
@@ -140,13 +141,23 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   // Timestamp punctuation is stripped for Windows-compatible filenames.
   const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
   const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
+  // The always-on debug log (#1735) keeps every level, capped, in the GLOBAL log dir only — never
+  // under a case folder. Read once at startup; 0 turns it off.
+  const debugLogMaxMb = parseDebugLogMaxMb(process.env.DFIR_DEBUG_LOG_MAX_MB);
+  const debugLog = createRotatingDebugLog({ dir: globalLogDir, maxBytes: debugLogMaxMb * 1024 * 1024 });
   const logger = new LoggerImpl({
     level: normalizeLogLevel(process.env.DFIR_LOG_LEVEL),
     sessionLogPath: join(globalLogDir, `session-${sessionStamp}.log`),
     caseLogPath: (caseId) => join(store.caseDir(caseId), "logs", `session-${sessionStamp}.log`),
+    debugLog,
   });
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
+  logLine(
+    debugLog
+      ? `[DFIR] debug log: ${debugLog.files().current} (all levels, capped at ${debugLogMaxMb} MB)`
+      : "[DFIR] debug log: off (DFIR_DEBUG_LOG_MAX_MB=0)",
+  );
   const stateLock = new StateLock();
   const operationalMetrics = new OperationalMetricsStore(
     join(dirname(casesRoot), "diagnostics", "operational-metrics.json"),

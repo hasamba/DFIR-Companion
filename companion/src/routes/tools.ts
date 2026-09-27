@@ -13,6 +13,7 @@ import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { createImportDebugRecorder } from "../analysis/importDebug.js";
 
 /**
  * External-tool runner + forensic-gate routes: the top-level /tools* config/registry and custom-tool
@@ -109,22 +110,22 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
       return res.status(404).json({ error: `case ${caseId} does not exist` });
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!path) return res.status(400).json({ error: "path is required" });
+    const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
     try {
       const r = await runToolAndIngest(caseId, toolId, path, {
         undoLabel: `Tool: ${toolId} — ${basename(path)}`,
+        debug,
       });
-      return res
-        .status(200)
-        .json({
-          ok: true,
-          tool: toolId,
-          storedName: r.storedName,
-          addedEvents: r.addedEvents,
-          addedIocs: r.addedIocs,
-          analyzed: r.analyzed,
-        });
+      return res.status(200).json({
+        ok: true,
+        tool: toolId,
+        storedName: r.storedName,
+        addedEvents: r.addedEvents,
+        addedIocs: r.addedIocs,
+        analyzed: r.analyzed,
+      });
     } catch (err) {
-      recordImportFailure(caseId, toolId, path, err);
+      recordImportFailure(caseId, toolId, path, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
   });
@@ -198,6 +199,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         .replace(/[^\w.\-]+/g, "_")
         .slice(0, 120) || "raw.bin";
     let stageDir = "";
+    const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
     try {
       await mkdir(toolWork, { recursive: true });
       stageDir = await mkdtemp(join(toolWork, "up-"));
@@ -207,18 +209,17 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
       const r = await runToolAndIngest(caseId, toolId, staged, {
         undoLabel: `Tool: ${toolId} — ${basename(filename)}`,
         preserveOriginal: { bytes, originalName: basename(filename) },
+        debug,
       });
-      return res
-        .status(200)
-        .json({
-          ok: true,
-          tool: toolId,
-          addedEvents: r.addedEvents,
-          addedIocs: r.addedIocs,
-          analyzed: r.analyzed,
-        });
+      return res.status(200).json({
+        ok: true,
+        tool: toolId,
+        addedEvents: r.addedEvents,
+        addedIocs: r.addedIocs,
+        analyzed: r.analyzed,
+      });
     } catch (err) {
-      recordImportFailure(caseId, toolId, filename, err);
+      recordImportFailure(caseId, toolId, filename, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     } finally {
       if (stageDir)

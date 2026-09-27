@@ -24,6 +24,7 @@ import { analyzeLinuxCollection, type LinuxSignal } from "./linuxPersistRules.js
 import { classifyMacArtifact, isBinaryPlist, isXmlPlist } from "./macosPersistence.js";
 import { gradeLaunchd, type MacContext } from "./macosPersistRules.js";
 import { withQuarantineEnvelope } from "./macosPersistQuarantine.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 import {
   collectionNote,
   iocsFromSignals,
@@ -74,6 +75,7 @@ export function parseMacPersist(
   text: string,
   ctx: MacContext = {},
   fallbackTime = new Date().toISOString(),
+  debug?: ImportDebugRecorder, // this attempt's import debug recorder (#1736)
 ): MacPersistParse {
   const files = readMacCollection(filename, text);
   const signals = analyzeMacCollection(files, ctx);
@@ -87,6 +89,7 @@ export function parseMacPersist(
     "macOS persistence",
     "macospersist",
   );
+  recordMacPersist(debug, files, events.length);
   return {
     files,
     signals,
@@ -94,4 +97,19 @@ export function parseMacPersist(
     iocs: iocsFromSignals(signals),
     note: collectionNote(files, signals, "macOS persistence"),
   };
+}
+
+// What a macOS collection parse decided (#1736): collected files in, signal events out, and the
+// members it read but could not grade. Counts and code-authored slugs only.
+function recordMacPersist(
+  debug: ImportDebugRecorder | undefined,
+  files: readonly CollectedFile[],
+  events: number,
+): void {
+  if (!debug) return;
+  debug.counts({ total: files.length, kept: events });
+  const unknown = files.filter((f) => f.kind === "unknown").length;
+  if (unknown) debug.skipped("unknown_artifact", unknown);
+  const suid = files.filter((f) => f.kind === "suid").length;
+  if (suid) debug.skipped("suid_listing_not_graded", suid);
 }

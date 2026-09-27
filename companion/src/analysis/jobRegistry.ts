@@ -67,6 +67,8 @@ export interface Job {
   runManifestId?: string;
   progress?: JobProgress;
   detail?: string;
+  /** The files this job covers (a drop-folder sweep), capped at JOB_FILES_MAX. The row lists them. */
+  files?: string[];
   queuedAt: string;
   startedAt?: string;
   updatedAt: string;
@@ -84,6 +86,9 @@ export interface Job {
   cancellable: boolean;
   cancelRequestedAt?: string;
 }
+
+/** The most file names one job row carries. A sweep of more still runs them all; the row lists the first. */
+export const JOB_FILES_MAX = 500;
 
 export interface JobTable {
   jobs: Job[];
@@ -107,6 +112,7 @@ export interface CreateJobInput {
   model?: string;
   modelProvider?: string;
   detail?: string;
+  files?: string[];
   priority?: JobPriority;
   parentJobId?: string;
   idempotencyKey?: string;
@@ -131,6 +137,7 @@ export function createJob(table: JobTable, input: CreateJobInput): JobTable {
     ...(input.model !== undefined ? { model: input.model } : {}),
     ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    ...(input.files?.length ? { files: input.files.slice(0, JOB_FILES_MAX) } : {}),
     status,
     priority: input.priority ?? "normal",
     ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
@@ -476,6 +483,7 @@ export const jobSchema: z.ZodType<Job> = z.object({
   runManifestId: z.string().optional(),
   progress: progressSchema.optional(),
   detail: z.string().optional(),
+  files: z.array(z.string()).max(JOB_FILES_MAX).optional(),
   queuedAt: z.string().datetime(),
   startedAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime(),

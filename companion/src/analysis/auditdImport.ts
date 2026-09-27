@@ -21,6 +21,8 @@
 // rows so a summary report still lands on the timeline rather than being dropped.
 
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   aggregateEvents,
@@ -42,6 +44,7 @@ export interface AuditdImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface AuditdParseResult {
@@ -539,6 +542,7 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
   const hostTally = new Map<string, number>();
   const bySerial = new Map<string, AuditEvent>();
   const aureportRows: RegExpMatchArray[] = [];
+  let unparsed = 0;
 
   for (const line of lines) {
     const l = line.trim();
@@ -549,6 +553,7 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
     if (!parsed) {
       const am = RE_AUREPORT.exec(l);
       if (am) aureportRows.push(am);
+      else unparsed++; // neither an audit record nor an aureport row
       continue;
     }
 
@@ -584,6 +589,9 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const finalEvents = stampSourceArtifactHash(events, text);
+  opts.debug?.skipped("unparseable_line", unparsed);
+  opts.debug?.fallback("aureport_rows", aureportRows.length);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";

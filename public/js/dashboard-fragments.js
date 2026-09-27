@@ -86,7 +86,20 @@ function jobRowHtml(view) {
     + `<span class="job-label">${esc(j.label || "")}</span>`
     + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
     + cancel + resume + model + bar
-    + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span></div>`;
+    + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span>`
+    // Always the LAST line of the row, below the detail, so every row reads the same way.
+    + `<span class="job-when"${view.when ? "" : ' data-safe-style="display:none"'}>${esc(view.when || "")}</span>`
+    + jobFilesHtml(j.files) + `</div>`;
+}
+
+// Every file a drop sweep covers, folded. The label counts them and the detail names only the last
+// one processed, so without this list "drop import (24 files)" showed one name. The list is fixed
+// at registration, so the in-place patch never needs to touch it.
+function jobFilesHtml(files) {
+  if (!Array.isArray(files) || !files.length) return "";
+  const n = files.length;
+  return `<details class="job-files"><summary>${n} file${n === 1 ? "" : "s"}</summary><ol>`
+    + files.map((name) => `<li>${esc(name)}</li>`).join("") + `</ol></details>`;
 }
 
 function qaSpan(type, val, ctx) {
@@ -438,7 +451,12 @@ function narrativeEventAt(timed, dates, hhmm) {
       if (!best || (rank[t.e.severity] ?? -1) > (rank[best.e.severity] ?? -1)) best = t;
     }
     if (best) {
-      return { id: String(best.e.id), severity: best.e.severity, at: new Date(best.ms).toISOString().slice(0, 19).replace("T", " ") };
+      return {
+        id: String(best.e.id),
+        severity: best.e.severity,
+        asset: String(best.e.asset || ""),
+        at: new Date(best.ms).toISOString().slice(0, 19).replace("T", " "),
+      };
     }
   }
   return null;
@@ -468,6 +486,7 @@ window.DfirFragments = {
   ticketPushChips,
   renderVqlRows,
   askStatusBadge,
+  jobFilesHtml,
   jobRowHtml,
   qaSpan,
   citeFindings,

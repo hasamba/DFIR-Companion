@@ -14,6 +14,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Deterministic importer for the Okta System Log (API v1 `/api/v1/logs`) — the identity ingest path
 // for orgs that federate through Okta rather than Entra. Sibling of m365Import.ts; no AI call.
@@ -37,6 +38,8 @@ export interface OktaImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface OktaParseResult {
@@ -164,9 +167,11 @@ function targetLabel(rec: Row): string {
   return text(getCI(pick, "displayName") || getCI(pick, "alternateId"));
 }
 
-function mapEvent(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
+function mapEvent(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent {
   const eventType = text(getCI(rec, "eventType"));
-  const actor = text(getPath(rec, "actor.alternateId") || getPath(rec, "actor.displayName"));
+  const alternateId = getPath(rec, "actor.alternateId");
+  const actor = text(alternateId || getPath(rec, "actor.displayName"));
+  if (actor) debug?.field("user", alternateId ? "actor.alternateId" : "actor.displayName");
   const ip = cleanIp(text(getPath(rec, "client.ipAddress")));
   const city = text(getPath(rec, "client.geographicalContext.city"));
   const country = text(getPath(rec, "client.geographicalContext.country"));
@@ -229,10 +234,16 @@ export function parseOktaSystemLog(input: string, opts: OktaImportOptions = {}):
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   for (const raw of records) {
-    if (!isObject(raw)) continue;
+    if (!isObject(raw)) {
+      opts.debug?.skipped("not_an_object");
+      continue;
+    }
     const rec = raw;
-    if (!isOktaEvent(rec)) continue;
-    mapped.push(mapEvent(rec, iocSink));
+    if (!isOktaEvent(rec)) {
+      opts.debug?.skipped("unrecognized_record");
+      continue;
+    }
+    mapped.push(mapEvent(rec, iocSink, opts.debug));
   }
 
   const { events, groups } = aggregateEvents(mapped, {

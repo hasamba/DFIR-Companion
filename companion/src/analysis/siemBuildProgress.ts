@@ -21,6 +21,7 @@ import {
   type HeldDnsIocs,
   type SiemConnCandidate,
 } from "./siemDnsConnJoin.js";
+import { createSiemDebugTally, type SiemDebugTally } from "./siemImportDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -61,26 +62,31 @@ export class WindowsEventBuilder {
   private dnsOrdinals: number[] = [];
   private readonly conns: SiemConnCandidate[] = [];
   private total = 0;
+  private readonly tally: SiemDebugTally; // #1736 — per-attempt mapping decisions
 
   constructor(
     private readonly format: string,
     private readonly opts: SiemImportOptions = {},
   ) {
-    this.aggregator = createEventAggregator({
-      aggregate: opts.aggregate,
-      minSeverity: opts.minSeverity,
-      maxEvents: opts.maxEvents ?? maxEventsDefault(),
-    });
+    this.tally = createSiemDebugTally(opts.debug, opts.minSeverity);
+    this.aggregator = this.tally.watch(
+      createEventAggregator({
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: opts.maxEvents ?? maxEventsDefault(),
+      }),
+    );
   }
 
   add(record: Row, recordIndex: number): void {
     this.total++;
+    this.tally.begin();
     const host = pickHost(record);
     if (host) this.hostTally.set(host, (this.hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
-    const mapped =
-      mapWindows(record, host, rowSink, { source: this.format, recordIndex }) ??
-      mapGeneric(record, host, rowSink);
+    const windows = mapWindows(record, host, rowSink, { source: this.format, recordIndex });
+    const mapped = windows ?? mapGeneric(record, host, rowSink);
+    this.tally.row(windows !== null, mapped);
     this.os.note(record, [mapped]);
     collectWindowsConnCandidate(this.conns, mapped);
     if (isOsBehaviourCandidateRow(record)) {
@@ -128,12 +134,14 @@ export class WindowsEventBuilder {
     const finalEvents = sourceText ? stampSourceArtifactHash(events, sourceText) : events;
     const represented = finalEvents.reduce((count, event) => count + (event.count ?? 1), 0);
     const hostname = [...this.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+    const dropped = Math.max(0, this.total - represented);
+    this.tally.flush({ total: this.total, kept: events.length, groups, dropped });
     return {
       events: finalEvents,
       iocs: [...this.iocSink.values()].slice(0, this.opts.maxIocs ?? 5000),
       total: this.total,
       kept: events.length,
-      dropped: Math.max(0, this.total - represented),
+      dropped,
       groups,
       format: this.format,
       hostname,

@@ -26,7 +26,8 @@ import { bamFields } from "./bamRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 // The expandable full-detail message, and the cap that bounds it — see truncatedRemainder.ts.
 import { cappedMessage } from "./truncatedRemainder.js";
-import { parseCsv } from "./csvImport.js";
+import { csvToRows } from "./veloCsvRows.js";
+import { VrDebugTally, type ImportDebugRecorder } from "./rowDecisionDebug.js";
 import { scrapeEvidence } from "./veloTextIocs.js";
 import {
   extractRecords,
@@ -108,6 +109,7 @@ export interface VelociraptorImportOptions {
   knownRenames?: readonly HostRenameRecord[]; // renames the case learned earlier (#1495), seeded before any row
   collectorHostnames?: readonly string[]; // collector identities the case has seen — never a former name
   partlyReadArtifact?: string; // the read had no source list (#1635): stamp every row-derived event (#1651)
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736): time column, host source, generic route
 }
 
 export interface VelociraptorParseResult {
@@ -1434,22 +1436,6 @@ function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): M
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
 // (tagging each row's _Source), else delegates to the shared extractor (array/jsonl/wrapped).
-// Parse a CSV export (Elastic Discover "Download CSV") into flat row objects keyed by header,
-// dropping Kibana's "-" empty-cell placeholder. Returns null when it doesn't look tabular.
-function csvToRows(text: string): { rows: Row[]; format: string } | null {
-  const { headers, rows } = parseCsv(text);
-  if (headers.length < 2 || rows.length === 0) return null;
-  const out: Row[] = rows.map((cells) => {
-    const o: Row = {};
-    headers.forEach((h, i) => {
-      const v = cells[i];
-      if (v != null && v !== "" && v !== "-") o[h] = v;
-    });
-    return o;
-  });
-  return { rows: out, format: "csv" };
-}
-
 // Exported for collectionGenerationStore.ts (#1108): the SAME raw rows the live import path uses, without re-deriving the full mapped/dispatched event output.
 export function extractRows(text: string): { rows: Row[]; format: string } {
   const trimmed = text.trim();
@@ -1506,6 +1492,7 @@ interface VrParseCtx {
   aliases: HostRenameMap; // the file's own rename evidence, learned before any row is mapped (#1489)
   lineage: CollectorFootprintLedger; // the collector's spawn and what it did, resolved in finalizeVrParse (#1477, #1488, #1500)
   partlyReadArtifact: string; // "" on a full read; else stamped on every row-derived event (#1651)
+  dbg: VrDebugTally; // per-row decisions for the import debug record (#1736); inert without a recorder
 }
 
 // Map ONE raw row to its forensic event(s) — one per row, or one per distinct MACB timestamp for an
@@ -1519,12 +1506,14 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
   ctx.renames.note(rh, pickTime(row));
+  ctx.dbg.host(row, rh);
 
   const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
   const out: MappedEvent[] = [];
   {
     const kind = classify(row, artifact);
+    ctx.dbg.beginRow(); // hears which time column the mapper below picks (#1736)
     // Most mappers yield one event per row; MFT yields one per DISTINCT MACB timestamp, so the
     // dispatch produces an array (usually length 1). An empty array = the row produced nothing.
     let ms: MappedEvent[];
@@ -1600,6 +1589,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // A FLAT Windows row (bare EventID, no wrapper) also lands here — see overlayFlatWindowsEid.
       if (!rdpArt) for (const m of ms) if (m) overlayFlatWindowsEid(row, m);
     }
+    ctx.dbg.endRow(kind, ms);
 
     // A 4104 script block that is generated or signed module scaffolding is detection content, not
     // attacker content — the rule matched the shape of compiled PowerShell. Applied after the
@@ -1679,6 +1669,7 @@ function finalizeVrParse(
 ): VelociraptorParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   ctx.lineage.resolve(); // the whole file has been read: attribute the spawn's children (#1500)
+  ctx.dbg.flush();
   // Sample-host demotion happens per row in mapRowToEvents (hostIdentity.ts); the rename markers join here.
   const { events, groups } = aggregateEvents([...markSharedSourceMtime(mapped), ...ctx.renames.events()], {
     aggregate: opts.aggregate,
@@ -1728,6 +1719,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
     lineage: new CollectorFootprintLedger(),
     partlyReadArtifact: (opts.partlyReadArtifact ?? "").trim(),
+    dbg: new VrDebugTally(opts.debug),
   };
 }
 

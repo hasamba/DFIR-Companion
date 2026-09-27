@@ -11,6 +11,21 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { persistPlasoParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { applySeverityFloor } from "../severityFloor.js";
+import { recordParsedImport } from "./parsedDebug.js";
+
+// The Plaso decisions for the import debug record (#1736). persistPlasoParsed applies the floor
+// itself (importState.ts); the same floor is applied here to count what it removes. Counts only.
+function recordPlasoParse(
+  debug: ImportDebugRecorder | undefined,
+  parsed: PlasoParseResult,
+  min?: Severity,
+): void {
+  if (!debug) return;
+  const post = applySeverityFloor(parsed.events, min).length;
+  recordParsedImport(debug, parsed, parsed.events.length, post);
+}
 import { isLabProduced, PROMOTED_MARKER } from "../labIntel.js";
 
 /**
@@ -37,9 +52,11 @@ export async function importPlaso(
     plaso?: PlasoImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parsePlasoCsv(text, opts.plaso);
+  const parsedRaw = parsePlasoCsv(text, { ...opts.plaso, debug: opts.debug });
+  recordPlasoParse(opts.debug, parsedRaw, opts.minSeverity);
   return persistPlasoParsed(ctx, caseId, parsedRaw, opts);
 }
 
@@ -59,6 +76,7 @@ export async function importPlasoFile(
     plaso?: PlasoImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const rl = createInterface({
@@ -67,10 +85,11 @@ export async function importPlasoFile(
   });
   let parsedRaw: PlasoParseResult;
   try {
-    parsedRaw = await parsePlasoFromLines(rl, opts.plaso);
+    parsedRaw = await parsePlasoFromLines(rl, { ...opts.plaso, debug: opts.debug });
   } finally {
     rl.close();
   }
+  recordPlasoParse(opts.debug, parsedRaw, opts.minSeverity);
   return persistPlasoParsed(ctx, caseId, parsedRaw, opts);
 }
 

@@ -11,6 +11,7 @@
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { maxEventsDefault } from "./siemImport.js";
 import { isDetectionToolLocation } from "./veloDetectionNoise.js";
+import { createDecisionTally, type ImportDebugRecorder } from "./rowDecisionDebug.js";
 
 // Modules that report scan lifecycle / app status, not host findings — dropped by default.
 const LIFECYCLE_MODULES = new Set(["Init", "Startup", "Control", "ThorDB", "Report"]);
@@ -38,6 +39,7 @@ export interface ThorImportOptions {
   minLevel?: ThorLevel;
   // Safety cap on emitted events. Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxEvents?: number;
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
@@ -92,8 +94,13 @@ function firstStr(row: Row, keys: string[]): string {
 // time the file had where the archive was built. Mimikatz's 2013 build time came through that way and
 // dated the hit nine years before the intrusion (#1603). `archive_created` is the containing
 // archive's own creation time on the scanned host, so it outranks the member's inherited `modified`.
+const TIME_KEYS = ["created", "archive_created", "modified", "log_modified", "log_created", "time"];
 function pickTimestamp(row: Row): string {
-  return firstStr(row, ["created", "archive_created", "modified", "log_modified", "log_created", "time"]);
+  return firstStr(row, TIME_KEYS);
+}
+// The key pickTimestamp read (#1736), for the import debug record. Key names only.
+function timestampKey(row: Row): string {
+  return TIME_KEYS.find((k) => str(row[k]).trim()) ?? "";
 }
 
 // Pull MITRE technique ids out of THOR tag/class fields (e.g. "ATTACK.T1059").
@@ -186,6 +193,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
   // Dedup identical findings (same module/message/subject/rule), accumulating a count.
   const bySig = new Map<string, ThorEvent>();
   const order: string[] = [];
+  const tally = opts.debug ? createDecisionTally() : undefined;
 
   for (const line of lines) {
     let row: Row;
@@ -193,6 +201,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
       row = JSON.parse(line) as Row;
     } catch {
       dropped++;
+      tally?.skipped.add("unparseable_json");
       continue;
     }
     total++;
@@ -202,14 +211,17 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
     const module = str(row.module);
     if (dropInfo && level === "Info") {
       dropped++;
+      tally?.skipped.add("info_level");
       continue;
     }
     if (opts.minLevel && levelRank(level) < LEVEL_RANK[opts.minLevel]) {
       dropped++;
+      tally?.skipped.add("below_min_level");
       continue;
     }
     if (dropLifecycle && LIFECYCLE_MODULES.has(module)) {
       dropped++;
+      tally?.skipped.add("lifecycle_module");
       continue;
     }
 
@@ -250,9 +262,17 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
       (path ?? "");
     if (severity !== "Info" && (isDetectionToolLocation(flaggedLoc) || isDetectionToolLocation(path ?? ""))) {
       severity = "Info";
+      tally?.observed.add("detection_tool_location");
     }
 
     const host = str(row.hostname).trim() || hostname;
+    if (tally) {
+      const timeKey = timestampKey(row);
+      if (timeKey) tally.fields.add("timestamp", timeKey);
+      else tally.observed.add("empty_timestamp");
+      if (str(row.hostname).trim()) tally.fields.add("host", "hostname");
+      else tally.observed.add(host ? "host_from_earlier_row" : "missing_host");
+    }
 
     const existing = bySig.get(sig);
     if (existing) {
@@ -261,6 +281,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
         existing.endTimestamp = timestamp;
       if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
       if (!existing.asset && host) existing.asset = host;
+      tally?.omitted.add("aggregated");
     } else {
       bySig.set(sig, {
         id: "",
@@ -285,6 +306,8 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
   const events = order.map((s) => bySig.get(s)!);
   events.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
   const capped = events.slice(0, maxEvents);
+  tally?.omitted.add("over_event_cap", events.length - capped.length);
+  tally?.flush(opts.debug);
 
   return {
     events: capped,

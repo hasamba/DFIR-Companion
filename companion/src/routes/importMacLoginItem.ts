@@ -179,9 +179,10 @@ async function acceptMacLoginItemBytes(
       importedAt,
       linesIn: preview.total,
       path: "deterministic",
-      run: () =>
+      run: (withDebug) =>
         pipeline.importMacLoginItem(caseId, bytes, {
           label: storedName,
+          ...withDebug,
           idPrefix: `bt${seq}`,
           importedAt,
         }),

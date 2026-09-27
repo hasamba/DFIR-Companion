@@ -8,6 +8,23 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { recordParsedImport } from "./parsedDebug.js";
+
+// The shared debug record of a recovery-tool report (#1736): rows the scan could not read, the
+// scan's own upload cap, distinct values past the per-upload cap, then the parse and floor counts.
+function recordRecoveryParse(
+  debug: ImportDebugRecorder | undefined,
+  raw: Parameters<typeof recordParsedImport>[1] & { malformedRows: number; notCitedValues?: number },
+  truncatedScan: boolean,
+  post: number,
+): void {
+  if (!debug) return;
+  if (raw.malformedRows) debug.skipped("malformed_row", raw.malformedRows);
+  if (truncatedScan) debug.observed("scan_truncated");
+  if (raw.notCitedValues) debug.omitted("over_value_cap", raw.notCitedValues);
+  recordParsedImport(debug, raw, raw.events.length, post);
+}
 
 /**
  * External carving/recovery-tool reports (#932 items 4, 8): what a tool that already ran against
@@ -29,11 +46,14 @@ export async function importBulkExtractorUrl(
     bulkExtractorUrl?: BulkExtractorUrlOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseBulkExtractorUrl(text, opts.bulkExtractorUrl);
+  if (!parsedRaw) opts.debug?.failedAt("detect");
   if (!parsedRaw) throw new Error("not a bulk_extractor url.txt feature file");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordRecoveryParse(opts.debug, parsedRaw, parsedRaw.truncatedScan, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
@@ -106,11 +126,15 @@ export async function importBulkExtractorCarved(
     bulkExtractorCarved?: BulkExtractorCarvedOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseBulkExtractorCarved(text, opts.bulkExtractorCarved);
+  if (!parsedRaw) opts.debug?.failedAt("detect");
   if (!parsedRaw) throw new Error("not a bulk_extractor carved-object feature file");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordRecoveryParse(opts.debug, parsedRaw, parsedRaw.truncatedScan, parsed.events.length);
+  if (parsedRaw.unpromotedValues) opts.debug?.observed("digest_not_promoted", parsedRaw.unpromotedValues);
   if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
@@ -193,11 +217,15 @@ export async function importSqliteRowState(
     sqliteRowState?: SqliteRowStateOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseSqliteRowStateCsv(text, { ...opts.sqliteRowState, sourceLabel: opts.label });
+  if (!parsedRaw) opts.debug?.failedAt("detect");
   if (!parsedRaw) throw new Error("not a sqlite-dissect commit-history CSV");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordRecoveryParse(opts.debug, parsedRaw, parsedRaw.rowsTruncated, parsed.events.length);
+  if (parsedRaw.tableNameSource === "unavailable") opts.debug?.fallback("table_name_unavailable");
   if (parsed.events.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",

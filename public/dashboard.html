@@ -179,6 +179,7 @@
   <script src="/js/dashboard-ioc.js"></script>
   <script src="/js/dashboard-values.js"></script>
   <script src="/js/dashboard-fragments.js"></script>
+  <script src="/js/dashboard-attack-path.js"></script>
   <!-- Tier 2's first owner (#415). After dashboard-state.js, whose cell() it builds on at load
        time, and after dashboard-time.js, whose isoToUtcInput it calls (at call time, so this is
        documentation rather than a constraint). -->
@@ -588,7 +589,7 @@
     <button id="hostDuplicatesBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="This case has hosts that appear under more than one name. AI analysis is on hold until you confirm whether they are the same machine.">⚠ Duplicate hosts: 0</button>
     <span id="captureCount" data-safe-style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
     <span id="veloMonitorBadge" title="Live Velociraptor monitoring active — click to manage in Settings → Velociraptor" data-safe-style="display:none;cursor:pointer;font-weight:bold;color:#ff5a5a;"></span>
-    <span id="jobsBadge" title="Background jobs — click to view or cancel running work" data-safe-style="display:none;cursor:pointer;font-weight:bold;color:#6aa9ff;"></span>
+    <span id="jobsBadge" title="Background jobs — click to view or cancel running work" data-safe-style="cursor:pointer;font-weight:bold;color:#6aa9ff;">⚙ 0 jobs</span>
     <div id="jobsMenu" class="jobs-menu" data-safe-style="display:none"></div>
     </div>
     <div id="themeMenu" class="theme-menu" role="menu" aria-label="Theme" data-safe-style="display:none"></div>
@@ -1363,6 +1364,7 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOG_DIR">Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_DEBUG_LOG_MAX_MB">Debug log cap (MB)<span class="sfield-hint">DFIR_DEBUG_LOG_MAX_MB — always-on debug log (<code>debug.log</code> + <code>debug.1.log</code> in the log directory) that keeps every level for the support bundle; never inside a case folder. Default 50; 0 = off. Applies after a restart.</span></label><input id="env-DFIR_DEBUG_LOG_MAX_MB" placeholder="50" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_HOST">Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing. <b>Read-only here</b>: widening the bind address from a web page is exactly what the allowlist prevents. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" readonly /></div>
@@ -1658,6 +1660,30 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_SYNTH_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
+        </div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential>
+            <label for="env-DFIR_AI_SYNTH_FALLBACK_PROVIDER">Fallback provider (safety stop)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_PROVIDER — used only when the synthesis model's safety filter stops a synthesis; blank = synthesis provider</span></label>
+            <select id="env-DFIR_AI_SYNTH_FALLBACK_PROVIDER">
+              <option value="">— same as synthesis —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
+            </select>
+          </div>
+          <div class="sfield" data-essential><label>Fallback model (safety stop)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_MODEL — blank = no fallback; synthesis only, not imports or reports</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-synthesis-fallback" aria-label="Available fallback synthesis models" aria-describedby="ai-model-status-synthesis-fallback" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SYNTH_FALLBACK_MODEL" aria-label="Manually entered fallback synthesis model ID" aria-describedby="ai-model-status-synthesis-fallback" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-6-sol" /><button type="button" id="load-ai-models-synthesis-fallback" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-synthesis-fallback" class="sfield-hint" role="status"></span></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_FALLBACK_KEY">Fallback key (optional)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SYNTH_FALLBACK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_FALLBACK_BASE_URL">Fallback base URL (optional)<span class="sfield-hint">DFIR_AI_SYNTH_FALLBACK_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SYNTH_FALLBACK_BASE_URL" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_SAFETY_RETRIES">Safety-stop retries<span class="sfield-hint">DFIR_AI_SYNTH_SAFETY_RETRIES — times a safety-stopped synthesis asks the same model again before the fallback (0–3, default 1). 0 = no same-model retry: switch to the fallback if set, otherwise fail</span></label><input id="env-DFIR_AI_SYNTH_SAFETY_RETRIES" type="number" min="0" max="3" step="1" placeholder="1" /></div>
         </div>
         <div id="codex-status" class="sfield" data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3110,6 +3136,24 @@
           <button id="diagSizesBtn" type="button">📁 Compute case sizes</button>
           <span id="diagMsg" class="manual-msg"></span>
         </div>
+        <!-- Redacted support bundle (#1735) -->
+        <div data-safe-style="margin-bottom:12px;padding:10px;background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:6px">
+          <div data-safe-style="font-weight:600;color:var(--text-muted);font-size:12.5px;margin-bottom:6px">Support bundle for a bug report</div>
+          <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
+            Saves one <code>.zip</code> you can send with a bug report: this report, the server log, the
+            always-on debug log, and the layout of each failed import (format, row count, column types —
+            never a cell value). Case names, file names, hosts, users, IPs, emails, paths, URLs and
+            secrets are replaced by placeholders such as <code>ANON_HOST_3</code>. Open the zip and read
+            it before you send it.
+          </div>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label data-safe-style="display:flex;gap:5px;align-items:center;font-size:12px;color:var(--text-primary);cursor:pointer">
+              <input type="checkbox" id="diagBundleCaseLog" /> Include the open case's log
+            </label>
+            <button id="diagBundleBtn" type="button">⬇ Download redacted support bundle (.zip)</button>
+            <span id="diagBundleMsg" class="manual-msg"></span>
+          </div>
+        </div>
         <div id="diagBody" data-safe-style="font-size:12.5px;color:var(--text-primary)">Loading…</div>
         <pre id="diagSupportPreview" hidden data-safe-style="max-height:300px;overflow:auto;white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;padding:10px;font-size:11px"></pre>
         <div class="settings-group-head" data-safe-style="margin-top:14px">Automatic state backup configuration<span data-safe-style="color:var(--text-dim);font-weight:400"> — created before each synthesis + on an interval</span></div>
@@ -3353,7 +3397,7 @@
     <section id="sec-host-duplicates" data-gate-open="" data-safe-style="grid-column: 1 / -1; display:none"><h2>Duplicate Hosts<span class="ev-sub">hosts seen under more than one name — analysis is on hold until each pair is confirmed as one machine or two (derived, no AI)</span></h2><div id="hostDuplicatesBody"></div></section>
     <!-- Collection generation diff (#1128): adjacent-pair diffs over #1108's own persistence-collection ledger. -->
     <section id="sec-collection-generation-diff" data-safe-style="grid-column: 1 / -1"><h2>Collection Generation Diff<span class="ev-sub">what changed between two recorded collections of the same host's persistence entries, or the same device's installed-app presence across two examiner-attested backups — an observed difference, never an exact add/remove time (derived, no AI)</span></h2><div id="collectionGenerationDiffBody">—</div></section>
-    <section id="sec-attack-path" data-safe-style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath" class="prose">—</div></section>
+    <section id="sec-attack-path" data-safe-style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath" class="prose attack-path">—</div></section>
     <section id="sec-narrative" data-safe-style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView" class="prose">—</div><div id="narrativeEditWrap" data-safe-style="display:none"><textarea id="narrativeText" data-safe-style="width:100%;min-height:200px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div data-safe-style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" data-safe-style="background:var(--bg-tertiary);border-color:var(--border-color);color:var(--text-muted)">Cancel</button><span id="saveNarrativeMsg" data-safe-style="align-self:center;font-size:11px;color:var(--text-muted)"></span></div></div></section>
     <section id="sec-findings" data-safe-style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" data-safe-style="color:var(--text-muted);font-size:12px;font-weight:normal"></span><span class="ev-sub" data-safe-style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" data-safe-style="display:none"></div><div id="secondOpinionPanel" class="so-panel" data-safe-style="display:none"></div><div data-safe-style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--text-muted)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" data-safe-style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" data-safe-style="color:var(--text-muted)">% (0 = all)</span><label data-safe-style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Hide the deterministic findings the companion backfills for any Critical/High event the AI left unlinked — leaves only what AI synthesis concluded. A lens; nothing is deleted."><input type="checkbox" id="hideAutoFindings"> Hide auto-flagged</label><label data-safe-style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Hide the deterministic findings raised for windows where every log source went silent. A lens; nothing is deleted."><input type="checkbox" id="hideGapFindings"> Hide coverage-gap</label></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" data-safe-style="font-weight:600;color:var(--accent)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkJiraBtn" title="File a Jira issue for every selected finding in one call. Re-pushing UPDATES the issues already created instead of duplicating; a finding Jira refuses is reported, the rest still go.">🎫 Push to Jira</button> <button class="finding-bulk-btn" id="findingBulkSnowBtn" title="Open a ServiceNow incident for every selected finding in one call. Re-pushing UPDATES the incidents already opened instead of duplicating; a finding ServiceNow refuses is reported, the rest still go.">🎫 Push to ServiceNow</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" data-safe-style="color:var(--text-muted)">✕ Clear</button></div>

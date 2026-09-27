@@ -164,6 +164,8 @@ export function effectiveRoleSetting(
   setting: ProviderEnvSetting,
 ): string | undefined {
   if (!slotProvider(env, role)) return undefined;
+  // #1734: a fallback with no model is off and sends nothing.
+  if (role === "synthesis-fallback" && !env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim()) return undefined;
   return resolveAiRoleSetting(env, role, setting)?.trim() || undefined;
 }
 

@@ -41,6 +41,7 @@ import { findingEventsFromDiff } from "../analysis/notifications.js";
 import {
   buildProvider,
   buildSynthesisProvider,
+  buildSynthesisFallbackProvider,
   buildVelociraptorProvider,
   buildSecondOpinionProvider,
   buildRuntimePipeline,
@@ -48,6 +49,7 @@ import {
   resolveRefereeModel,
 } from "./aiProviders.js";
 import { logLine } from "../logging/serverLogger.js";
+import { safetyRetriesFromEnv } from "../analysis/ai/synthesisFallback.js";
 
 export interface AiRuntimeDeps {
   store: CaseStore;
@@ -87,6 +89,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   } = deps;
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
+  const synthesisFallback = buildSynthesisFallbackProvider(); // #1734: used when a safety filter stops synthesis
   const velociraptorProvider = buildVelociraptorProvider(); // dedicated VQL-hunt model (#70)
   const secondOpinionProvider = buildSecondOpinionProvider(); // dedicated second-opinion model (#116)
   // Model labels for the second-opinion comparison header (fall back to provider name in the pipeline).
@@ -129,9 +132,21 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
       `[presidio] enabled — scanning masked AI prompts via ${presidioUrl} ` +
         `(minScore ${presidio.minScore}, ${presidioTimeoutMs}ms per request)`,
     );
+  if (!synthesisFallback && process.env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim())
+    logLine(
+      "[synthesis] fallback model ignored — it names the synthesis model itself, or no provider can " +
+        "be resolved for it (DFIR_AI_SYNTH_FALLBACK_*)",
+    );
+  if (synthesisFallback)
+    logLine(
+      `[synthesis] fallback model "${synthesisFallback.label}" (${synthesisFallback.provider.name}) — used when a safety filter stops a synthesis`,
+    );
   const wiredPipeline = buildRuntimePipeline({
     provider,
     synthesisProvider,
+    ...(synthesisFallback ? { synthesisFallback } : {}),
+    // #1740: read once, like the fallback model, so Settings' "restart required" stays true.
+    synthesisSafetyRetries: safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),
     velociraptorProvider,
     stateStore,
     store,

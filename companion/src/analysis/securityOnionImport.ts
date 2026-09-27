@@ -32,6 +32,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -40,6 +41,8 @@ export interface SecurityOnionImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface SecurityOnionParseResult {
@@ -151,31 +154,40 @@ function addFile(sink: Map<string, SiemIoc>, v: string): void {
   if (f && f !== "-" && f.length > 1) addIoc(sink, "file", f.slice(0, 300));
 }
 
-function pickHost(row: Row): string {
-  return (
-    fstr(row, "observer.name") ||
-    fstr(row, "host.name") ||
-    fstr(row, "host.hostname") ||
-    fstr(row, "agent.name") ||
-    fstr(row, "agent.hostname")
-  );
+// The first populated key's value; `onKey` hears which key it was (#1736) — the name, never the value.
+function firstOf(row: Row, keys: readonly string[], onKey?: (key: string) => void): string {
+  for (const k of keys) {
+    const v = fstr(row, k);
+    if (v) {
+      onKey?.(k);
+      return v;
+    }
+  }
+  return "";
 }
 
-function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
-  const ruleName =
-    fstr(row, "rule.name") ||
-    fstr(row, "signal.rule.name") ||
-    fstr(row, "message") ||
-    fstr(row, "event.action");
+const HOST_KEYS = ["observer.name", "host.name", "host.hostname", "agent.name", "agent.hostname"];
+
+function pickHost(row: Row, onKey?: (key: string) => void): string {
+  return firstOf(row, HOST_KEYS, onKey);
+}
+
+function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent {
+  const ruleName = firstOf(row, ["rule.name", "signal.rule.name", "message", "event.action"], (k) =>
+    debug?.field("rule", k),
+  );
   const moduleName = fstr(row, "event.module") || fstr(row, "event.dataset");
   const category = fstr(row, "rule.category");
   const severity = securityOnionSeverity(row);
 
-  const src = cleanIp(fstr(row, "source.ip") || fstr(row, "src_ip"));
-  const dst = cleanIp(fstr(row, "destination.ip") || fstr(row, "dest_ip"));
+  const srcRaw = firstOf(row, ["source.ip", "src_ip"], (k) => debug?.field("source_ip", k));
+  const dstRaw = firstOf(row, ["destination.ip", "dest_ip"], (k) => debug?.field("dest_ip", k));
+  const src = cleanIp(srcRaw);
+  const dst = cleanIp(dstRaw);
   const sp = fstr(row, "source.port");
   const dp = fstr(row, "destination.port");
-  const host = pickHost(row);
+  const host = pickHost(row, (k) => debug?.field("host", k));
+  if (!host) debug?.observed("missing_host");
 
   // IOCs.
   addIp(sink, src);
@@ -199,8 +211,11 @@ function mapSecurityOnionRow(row: Row, sink: Map<string, SiemIoc>): MappedEvent 
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
+  const atTimestamp = field(row, "@timestamp");
+  const timeValue = atTimestamp ?? getCI(row, "timestamp");
+  if (timeValue != null) debug?.field("timestamp", atTimestamp != null ? "@timestamp" : "timestamp");
   return {
-    timestamp: soTime(field(row, "@timestamp") ?? getCI(row, "timestamp")),
+    timestamp: soTime(timeValue),
     description,
     severity,
     mitre: soMitre(row),
@@ -234,11 +249,14 @@ export function parseSecurityOnion(
   const mapped: MappedEvent[] = [];
 
   for (const row of records) {
-    if (!isObject(row)) continue;
+    if (!isObject(row)) {
+      opts.debug?.skipped("not_an_object");
+      continue;
+    }
     const host = pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapSecurityOnionRow(row, rowSink);
+    const m = mapSecurityOnionRow(row, rowSink, opts.debug);
     mergeRowIocs(iocSink, rowSink, m.aggKey);
     mapped.push(m);
   }

@@ -58,6 +58,8 @@ import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../anal
 import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "../routes/importDebugEmit.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
@@ -93,9 +95,15 @@ export interface DropFolderDeps {
   options: AppOptions;
   hasAiProvider: () => boolean;
   getControl: (caseId: string) => Promise<AiControl>;
-  recordImportFailure: (caseId: string, kind: string, filename: string, err: unknown) => void;
+  recordImportFailure: (
+    caseId: string,
+    kind: string,
+    filename: string,
+    err: unknown,
+    debug?: ImportDebugRecorder,
+  ) => void;
   dispatchNotify: (event: NotificationEvent) => void;
-  resolveImportKind: (filename: string, text: string) => string;
+  resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   ingestStreamed: (
     caseId: string,
     kind: string,
@@ -105,6 +113,7 @@ export interface DropFolderDeps {
     provenance?: undefined,
     assetHost?: string, // the declared host of a file under drop/asset=<HOST>/ (#1496)
     modelCall?: ModelCallHooks, // names the sweep job's model when a CSV/log runs one (#1629)
+    debug?: ImportDebugRecorder, // this attempt's import-debug recorder (#1736)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
   // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
@@ -114,6 +123,7 @@ export interface DropFolderDeps {
     caseId: string,
     bytes: Buffer,
     originalName: string,
+    debug?: ImportDebugRecorder,
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // External-tool routing for raw (non-text) inputs.
   liveToolConfigs: () => Map<string, ToolConfig>;
@@ -123,7 +133,7 @@ export interface DropFolderDeps {
     caseId: string,
     toolId: string,
     fullPath: string,
-    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
+    opts: { name: string; dropRelpath?: string; cache?: ToolRunCache; debug?: ImportDebugRecorder },
   ) => Promise<boolean>;
   // A dropped image joins the SAME capture + vision path as POST /captures.
   indexCaptureText: (metadata: CaptureMetadata) => void;
@@ -345,6 +355,8 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
+    // One recorder per file attempt (#1736): detection, the importer's decisions, and the failure.
+    const debug = createImportDebugRecorder();
     try {
       // The link guard travels WITH each read rather than preceding it: every read below goes
       // through storage/noFollowRead.ts, which opens with O_NOFOLLOW and reads from the descriptor
@@ -401,7 +413,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // No analyzed-false branch here (unlike the text path below): this importer is fully
         // deterministic, with no AI-off gate to ever report through it (Ollama code review
         // finding — the ternary this replaced was dead code).
-        await ingestMacLoginItemBinary(caseId, bytes, name);
+        await ingestMacLoginItemBinary(caseId, bytes, name, debug);
         return { ok: true };
       }
 
@@ -432,6 +444,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           name,
           dropRelpath: file.relpath,
           cache,
+          debug,
         });
         // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
         // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
@@ -452,17 +465,19 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // BOM-aware: a Report.wer is UTF-16LE, and utf8 turns it into NUL-interleaved mojibake.
       const text = decodeImportedText(await readDropFileBounded(full, dropMaxBytes));
       if (!text.trim()) return { ok: false, reason: "empty file" };
-      const kind = resolveImportKind(name, text);
+      const kind = resolveImportKind(name, text, debug);
       // Same named reason the /import routes give (#1302): a capa-shaped report whose flavor isn't
       // "static" is real upstream but unsupported, and the analyst should read that, not a generic
       // "unrecognized" — in the status record, the notification and drop-log.txt alike (#1308).
       // The same helper names a binary plist and the login-item containers (#1301, #1360, #1392).
-      if (kind === "unknown")
+      if (kind === "unknown") {
+        emitImportDebug(caseId, debug, "failed"); // the refusal's detection decision (#1736)
         return {
           ok: false,
           reason:
             unknownImportHintFor(name, text) ?? "unrecognized file type (not a supported import format)",
         };
+      }
       // A file under drop/asset=<HOST>/ imports with that host declared (#1496).
       const assetHost = assetHostFromDropRelpath(file.relpath);
       const r = await ingestStreamed(
@@ -474,6 +489,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         undefined,
         assetHost || undefined,
         modelCall,
+        debug,
       );
       if (!r.analyzed)
         return {
@@ -492,7 +508,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           reason: `too large at read time (${err.size} bytes > ${err.maxBytes}-byte cap; the file changed after the sweep listed it) — use Import-from-path`,
         };
       }
-      recordImportFailure(caseId, "drop", name, err);
+      recordImportFailure(caseId, "drop", name, err, debug);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
     }
   }
@@ -523,6 +539,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         caseId,
         kind: "import",
         label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
+        files: ready.map((f) => f.relpath),
         modelCallSignal: true,
       });
       if (job) await job.ready;

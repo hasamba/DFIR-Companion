@@ -477,6 +477,27 @@ Operator health view:
 - **Previewed support bundle** — inspect the aggregate-only JSON before copying or downloading it.
   Secrets, absolute paths, case identifiers and evidence are excluded by default; nothing is sent
   externally.
+- **Redacted support bundle (.zip)** — one file to send with a bug report when you cannot share
+  evidence. It holds the Diagnostics report, the server log, the always-on debug log, optionally the
+  open case's log, and the layout of each failed import: format, encoding, row count and column
+  *types*. Column *names* appear only when they are generic forensic names from a fixed list; no
+  cell value from any file is included. Case names and IDs, investigators, file names, hostnames,
+  usernames, IP addresses (internal and public), emails, domains, paths, URLs and configured secrets
+  are replaced by placeholders such as `ANON_HOST_3`. The same value gets the same placeholder in
+  every file, so you can follow one host across logs. The map from placeholders back to real values
+  is never written. A password-protected case that is locked contributes no log and no import
+  layout. Open the zip and read it before you send it.
+  This is **not** a case export: a full case export carries real evidence and is never a support
+  artifact.
+  For each failed import the bundle also shows what the importer decided: which column it used for
+  the time, host, user and other fields; how many rows it skipped, removed or kept as unusual, and
+  why; which fallback it took; and where parsing stopped when the parser knows the row. Column names
+  appear only from the same fixed list of generic names, and a custom importer shows as `custom`.
+- **Always-on debug log** — every log line at every level, including debug, goes to `debug.log` and
+  `debug.1.log` in the global logs folder, whatever the Log verbosity is. You do not need to switch
+  to debug and repeat a problem before you build a support bundle. The two files together never pass
+  `DFIR_DEBUG_LOG_MAX_MB` (default 50); the oldest lines go first. The debug log is never written
+  inside a case folder, so it never travels with a case export. `0` turns it off; read at startup.
 - **Compute case sizes** button
 - **Live AI test** — connectivity test with latency
 - **Pre-flight check** — re-run startup diagnostics on demand

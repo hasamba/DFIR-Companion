@@ -9,6 +9,8 @@ import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 import { formatImportMerged, formatImportStart } from "../logging/importLog.js";
+import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportDebug } from "./importDebugEmit.js";
 
 /**
  * The commit spine every dedicated `import-*` route runs after it has answered 202 (#956).
@@ -48,8 +50,12 @@ export interface DedicatedImportCommit {
    * manifest. Build the value with `importerParameter` so an `undefined` option reads as null.
    */
   parameters?: Record<string, ManifestValue>;
-  /** The importer call. Runs inside the section; a throw is recorded as an import failure. */
-  run: () => Promise<unknown>;
+  /**
+   * The importer call. Runs inside the section; a throw is recorded as an import failure. It gets
+   * this attempt's debug recorder (#1736) as `{ debug }`, to spread into the importer's options. A
+   * spread, not a named property, so an importer that does not read `debug` yet still type-checks.
+   */
+  run: (withDebug: { debug: ImportDebugRecorder }) => Promise<unknown>;
 }
 
 /**
@@ -105,6 +111,9 @@ export function commitDedicatedImport(
   } = ctx;
   const { caseId, kind, storedName } = commit;
   const label = `${kind} (${storedName})`;
+  // One recorder per attempt (#1736). A dedicated route names its format, so nothing was sniffed.
+  const debug = createImportDebugRecorder();
+  debug.detected(kind, { confident: true, decision: "explicit_route" });
 
   // Both assigned by run(), once this import owns the case. The section is taken INSIDE the
   // background task so the 202 never waited on another import, and released in the `finally`.
@@ -118,8 +127,14 @@ export function commitDedicatedImport(
     ctx.serverLogger.info(formatImportStart({ caseId, label: storedName, kind, lines: commit.linesIn }), {
       caseId,
     });
+    // #1735: counts and kinds only, never file or row content — the always-on debug log keeps it.
+    ctx.serverLogger.debug(
+      `[import-debug] ${caseId}: commit kind=${safeKind(kind)} path=${commit.path} linesIn=${commit.linesIn} ` +
+        `forensicBefore=${section.stateBefore?.forensicTimeline.length ?? "unknown"} minSeverity=${commit.minSeverity ?? "none"}`,
+      { caseId },
+    );
     const startedAt = Date.now();
-    await commit.run();
+    await commit.run({ debug });
     ctx.serverLogger.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
   };
 
@@ -132,6 +147,11 @@ export function commitDedicatedImport(
         // line and the checkpoint after it are best-effort.
         const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
+        ctx.serverLogger.debug(
+          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.state.forensicTimeline.length} ` +
+            `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
+          { caseId },
+        );
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         try {
           // Proactive FP-pattern propagation (#15b), as the generic route does it: do the NEW
@@ -183,6 +203,12 @@ export function commitDedicatedImport(
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
         }
       } else {
+        ctx.serverLogger.debug(
+          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} not settled (no settle deps)`,
+          {
+            caseId,
+          },
+        );
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       }
       await recordImportRun(ctx, {
@@ -196,9 +222,11 @@ export function commitDedicatedImport(
         parameters: commit.parameters,
       });
       resynthesizeInBackground(caseId);
+      // Last, so a settle or record failure above reports this attempt as failed, not succeeded.
+      emitImportDebug(caseId, debug, "succeeded");
     })
     .catch((err) => {
-      recordImportFailure(caseId, kind, storedName, err);
+      recordImportFailure(caseId, kind, storedName, err, debug);
       recordAiError(caseId, "import", err);
       options.onAiStatus?.(caseId, {
         status: "error",

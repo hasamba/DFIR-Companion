@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { projectAlignment } from "../analysis/clockSkew.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
+import { withoutRejectedEventTags, withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import { searchForensicTimeline } from "../analysis/forensicSearch.js";
 import type { RouteContext } from "./context.js";
 
@@ -41,12 +42,16 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
       const timeline = search
         ? await searchForensicTimeline(options.stateStore, req.params.id, search, timelineQuery)
         : await options.stateStore.queryForensicTimeline(req.params.id, timelineQuery);
-      const state = await options.stateStore.loadOverview(req.params.id);
+      // The analyst's technique removals (#1742) are hidden from the state and its events alike.
+      const state = withoutRejectedTechniques(await options.stateStore.loadOverview(req.params.id));
       // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
       // while state/state.json keeps the evidence exactly as imported.
       const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
-      const forensicTimeline = projectAlignment(skew, timeline.entities);
+      const forensicTimeline = withoutRejectedEventTags(
+        projectAlignment(skew, timeline.entities),
+        state.rejectedTechniques,
+      );
       return res.status(200).json({
         ...withoutEventAliases(state), // #1715: lineage is server bookkeeping
         forensicTimeline,

@@ -76,6 +76,7 @@ import {
   aggregateEvents,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -84,6 +85,8 @@ export interface AzureFlowLogImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface AzureFlowLogParseResult {
@@ -288,7 +291,10 @@ export function parseAzureFlowLog(
       legacyNsg++;
       return;
     }
-    if (category !== FLOW_CATEGORY) return;
+    if (category !== FLOW_CATEGORY) {
+      opts.debug?.skipped("non_flow_category");
+      return;
+    }
     if (Number(getCI(rec, "flowLogVersion")) !== SUPPORTED_VERSION) {
       unsupportedVersion++;
       return;

@@ -17,8 +17,9 @@ import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
 import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport } from "./importState.js";
+import { noteEmptyImport, noteParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
  * Line-oriented host and appliance logs, where each record is one line of text.
@@ -42,11 +43,13 @@ export async function importBashHistory(
     importedAt: string;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
   const user = userFromHistoryFilename(opts.label);
-  const parsedRaw = parseShellHistoryFile(text, { user });
+  const parsedRaw = parseShellHistoryFile(text, { user, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Shell history", parsed.total);
 
@@ -97,10 +100,12 @@ export async function importCombinedLog(
     combinedLog?: CombinedLogImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
+  const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Web/proxy access-log", parsed.total);
 
@@ -159,6 +164,7 @@ export async function importCiscoAsa(
     ciscoAsa?: CiscoAsaImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
   // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
@@ -168,9 +174,11 @@ export async function importCiscoAsa(
   const assumeYear = opts.ciscoAsa?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
   const parsedRaw = parseCiscoAsaLog(text, {
     ...opts.ciscoAsa,
+    debug: opts.debug,
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Cisco ASA", parsed.total);
 
@@ -226,6 +234,7 @@ export async function importSyslog(
     syslog?: SyslogImportOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
     onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>;
     signal?: AbortSignal;
   },
@@ -237,11 +246,12 @@ export async function importSyslog(
   const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
   const parsedRaw = await parseSyslogProgress(
     text,
-    { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) },
+    { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}), debug: opts.debug },
     (done, total) => opts.onParseProgress?.(done, total, "reading syslog lines"),
     opts.signal,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Syslog", parsed.total);
 
@@ -298,10 +308,12 @@ export async function importAuditd(
     auditd?: AuditdImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseAuditdLog(text, opts.auditd);
+  const parsedRaw = parseAuditdLog(text, { ...opts.auditd, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "auditd", parsed.total);
 
@@ -355,10 +367,12 @@ export async function importJournald(
     journald?: JournaldImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseJournald(text, opts.journald);
+  const parsedRaw = parseJournald(text, { ...opts.journald, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "journald", parsed.total);
 
@@ -412,10 +426,12 @@ export async function importSysdig(
     sysdig?: SysdigImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSysdig(text, opts.sysdig);
+  const parsedRaw = parseSysdig(text, { ...opts.sysdig, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "sysdig/Falco", parsed.total);
 
@@ -469,11 +485,16 @@ export async function importDiskImageLog(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseDiskImageLog(text);
-  if (!parsedRaw) return noteEmptyImport(ctx, caseId, opts, "disk-image-log", 0);
+  if (!parsedRaw) {
+    opts.debug?.fallback("layout_not_recognized");
+    return noteEmptyImport(ctx, caseId, opts, "disk-image-log", 0);
+  }
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, parsed.artifact, parsed.total);
 
   const raw = {
