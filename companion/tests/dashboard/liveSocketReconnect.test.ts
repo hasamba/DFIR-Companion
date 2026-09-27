@@ -481,7 +481,8 @@ function realCaseHandler(calls: string[]) {
 }
 
 describe("the reconnect catch-up is one bounded, deduplicated run (#1709)", () => {
-  const stateFetches = (h: ReturnType<typeof harness>) => h.fetched.filter((u) => u.endsWith("/state")).length;
+  const stateFetches = (h: ReturnType<typeof harness>) =>
+    h.fetched.filter((u) => u.endsWith("/state")).length;
   /** Open the first socket, drop it, and let the 1 s retry open the second. */
   async function firstRetry(h: ReturnType<typeof harness>) {
     h.api.openCaseSocket("INC-1", h.onMessage);
@@ -598,7 +599,11 @@ describe("the reconnect catch-up is one bounded, deduplicated run (#1709)", () =
     expect(runs[0].names).toEqual(expect.arrayContaining(["jobs", "state", "scope", ...MISSED_TYPES]));
     expect(h.jobsLoaded).toEqual([1]);
     expect(stateFetches(h)).toBe(1);
-    for (const t of MISSED_TYPES) expect(h.messages.filter((m) => m.type === t), t).toHaveLength(1);
+    for (const t of MISSED_TYPES)
+      expect(
+        h.messages.filter((m) => m.type === t),
+        t,
+      ).toHaveLength(1);
   });
 
   it("abandons a catch-up already running on a drop, a case switch and a cancel", async () => {
