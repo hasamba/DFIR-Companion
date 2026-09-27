@@ -48,15 +48,26 @@ class FakeSocket {
   }
 }
 
+type CatchUpCtx = { source: string; ran: Set<string> };
+type LiveMsg = { type: string; state?: unknown; start?: unknown; end?: unknown };
+type PanelRunner = (
+  entries: Array<[string, () => void]>,
+  onProgress: unknown,
+  options: { concurrency?: number; signal?: AbortSignal },
+) => unknown;
+
+// How long a reopened socket must stay up before its catch-up runs (#1709).
+const CATCH_UP_SETTLE_MS = 2000;
+
 interface LiveApi {
-  openCaseSocket: (caseId: string, onMessage: (msg: { type: string; state?: unknown }) => void) => void;
+  openCaseSocket: (caseId: string, onMessage: (msg: LiveMsg, ctx?: CatchUpCtx) => void) => void;
   closeCaseSocket: () => void;
   ws: FakeSocket | null;
   activeCaseId: string | null;
   fetch: (url: string) => Promise<unknown>;
 }
 
-function harness() {
+function harness(opts: { runner?: PanelRunner } = {}) {
   FakeSocket.made = [];
   const status = { textContent: "" };
   const listeners = new Map<string, Array<() => void>>();
@@ -70,7 +81,8 @@ function harness() {
   const aiRefreshed: string[] = [];
   const jobsLoaded: number[] = [];
   const fetched: string[] = [];
-  const messages: Array<{ type: string; state?: unknown; start?: unknown; end?: unknown }> = [];
+  const messages: LiveMsg[] = [];
+  const contexts: Array<CatchUpCtx | undefined> = [];
   const api = loadDashboardModule<LiveApi>("dashboard-live-socket.js", [], {
     document: doc,
     location: { protocol: "http:", host: "127.0.0.1:4773" },
@@ -90,13 +102,18 @@ function harness() {
     clearTimeout: (id: unknown) => globalThis.clearTimeout(id as number),
     setInterval: (fn: () => void, ms: number) => globalThis.setInterval(fn, ms),
     clearInterval: (id: unknown) => globalThis.clearInterval(id as number),
+    AbortController,
+    ...(opts.runner ? { DfirCaseLoadProgress: { runPanelLoaders: opts.runner } } : {}),
   });
-  const onMessage = (msg: { type: string; state?: unknown }) => messages.push(msg);
+  const onMessage = (msg: LiveMsg, ctx?: CatchUpCtx) => {
+    messages.push(msg);
+    contexts.push(ctx);
+  };
   const setVisibility = (v: "visible" | "hidden") => {
     doc.visibilityState = v;
     for (const fn of listeners.get("visibilitychange") ?? []) fn();
   };
-  return { api, status, aiRefreshed, jobsLoaded, fetched, messages, onMessage, setVisibility };
+  return { api, status, aiRefreshed, jobsLoaded, fetched, messages, contexts, onMessage, setVisibility };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -203,7 +220,7 @@ describe("the case socket reconnects after it drops (#1675)", () => {
     FakeSocket.made[0].drop();
     await vi.advanceTimersByTimeAsync(1000);
     FakeSocket.made[1].open();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
     expect(h.aiRefreshed).toEqual(["INC-1", "INC-1"]);
     expect(h.jobsLoaded).toEqual([1]);
     expect(h.fetched).toEqual(["/cases/INC-1/state", "/cases/INC-1/scope"]);
@@ -221,8 +238,8 @@ describe("the case socket reconnects after it drops (#1675)", () => {
     FakeSocket.made[0].open();
     FakeSocket.made[0].drop();
     await vi.advanceTimersByTimeAsync(1000);
-    FakeSocket.made[1].open(); // catch-up GET now in flight
-    await vi.advanceTimersByTimeAsync(0);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS); // catch-up GET now in flight
     FakeSocket.made[1].push({ type: "state", state: { caseId: "INC-1", v: "newer" } });
     answer({ caseId: "INC-1", v: "older" });
     await vi.advanceTimersByTimeAsync(0);
@@ -258,6 +275,86 @@ describe("the case socket reconnects after it drops (#1675)", () => {
     h.status.textContent = "report written: case.md";
     FakeSocket.made[0].drop();
     expect(h.status.textContent).toBe("report written: case.md");
+  });
+});
+
+// #1707: onmessage parsed every frame with a bare JSON.parse and handed the result straight on. A
+// frame that is not JSON threw inside the handler; one that parses to null, an array or a primitive
+// reached handleCaseMessage, which reads msg.type and renders msg.state. The hub accepts `unknown`,
+// so nothing upstream enforces the shape. A bad frame is now skipped, with one fixed warning per
+// socket that never echoes the frame, and it is skipped before it can count as a state push.
+describe("a frame that is not a live message is skipped (#1707)", () => {
+  const BAD_FRAMES = [
+    "<html>502 Bad Gateway</html>",
+    '{"type":"state",',
+    "null",
+    "[1,2]",
+    '"state"',
+    "42",
+    "true",
+    "{}",
+    '{"type":42}',
+    '{"type":"state"}',
+    '{"type":"state","state":null}',
+    '{"type":"state","state":[]}',
+  ];
+
+  function raw(sock: FakeSocket, data: string) {
+    sock.onmessage?.({ data });
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("skips each bad frame without throwing and still delivers the next good one", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    const sock = FakeSocket.made[0];
+    sock.open();
+    for (const data of BAD_FRAMES) expect(() => raw(sock, data)).not.toThrow();
+    expect(h.messages).toEqual([]);
+    sock.push({ type: "ai_status", status: "idle" });
+    expect(h.messages).toEqual([{ type: "ai_status", status: "idle" }]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns once per socket with a fixed message that never echoes the frame", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    raw(FakeSocket.made[0], "secret-looking-frame");
+    raw(FakeSocket.made[0], "null");
+    expect(warn.mock.calls).toEqual([["live update skipped: a frame was not a live message"]]);
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open();
+    raw(FakeSocket.made[1], "{}");
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a bad frame make an in-flight catch-up snapshot look stale", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    let answer: (v: unknown) => void = () => {};
+    h.api.fetch = (url: string) =>
+      url.endsWith("/state")
+        ? Promise.resolve({ ok: true, json: () => new Promise((resolve) => (answer = resolve)) })
+        : Promise.resolve({ ok: false });
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS); // catch-up GET now in flight
+    raw(FakeSocket.made[1], '{"type":"state"}');
+    raw(FakeSocket.made[1], '{"type":"state","state":null}');
+    raw(FakeSocket.made[1], '{"type":"state","state":[]}');
+    answer({ caseId: "INC-1", v: "snapshot" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.filter((m) => m.type === "state")).toEqual([
+      { type: "state", state: { caseId: "INC-1", v: "snapshot" } },
+    ]);
   });
 });
 
@@ -303,7 +400,7 @@ describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", 
     const h = harness();
     await reconnect(h);
     FakeSocket.made[1].open();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
     const types = h.messages.map((m) => m.type);
     for (const t of MISSED_TYPES)
       expect(
@@ -335,7 +432,7 @@ describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", 
     h.api.activeCaseId = "INC-2";
     h.api.openCaseSocket("INC-2", h.onMessage);
     onopen?.(); // a late open on the retired socket
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
     expect(h.messages).toEqual([]);
   });
 
@@ -348,7 +445,7 @@ describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", 
         : Promise.resolve({ ok: false });
     await reconnect(h);
     FakeSocket.made[1].open();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
     h.messages.length = 0;
     h.api.activeCaseId = "INC-2";
     h.api.openCaseSocket("INC-2", h.onMessage);
@@ -426,6 +523,228 @@ describe("handleCaseMessage reloads each catch-up type's panel from a bare messa
         if (c.name !== "loadImporters") expect(c.args, `${t} → ${c.name}`).toEqual(["INC-1"]);
       }
     }
+  });
+});
+
+// #1709: every reconnect fired the whole catch-up at once — ~35 requests, /cockpit five times — and a
+// flapping server re-fired it on every open. The catch-up now waits until a reopened socket has
+// stayed up, collapses a flap into one run (bounded, so a flap cannot starve it), sends each
+// loader once per run, and goes through the case load's four-lane request cap.
+const CONNECT_SRC = readFileSync(
+  new URL("../../../public/js/dashboard-case-connect.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
+
+/** The REAL handleCaseMessage, with every free name it touches recorded instead of run. */
+function realCaseHandler(calls: string[]) {
+  const src = CONNECT_SRC.slice(
+    CONNECT_SRC.indexOf("function handleCaseMessage("),
+    CONNECT_SRC.indexOf("// Case templates and incident types moved"),
+  );
+  const env = new Proxy(
+    {},
+    {
+      has: (_t, k) => k !== "handleCaseMessage" && k !== "caseId" && k !== "msg" && k !== "ctx",
+      get: (_t, k) => {
+        if (k === Symbol.unscopables) return undefined;
+        if (k === "document") return { getElementById: () => null };
+        return () => calls.push(String(k));
+      },
+    },
+  );
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function("env", `with (env) { ${src}; return handleCaseMessage; }`)(env) as (
+    caseId: string,
+    msg: LiveMsg,
+    ctx?: CatchUpCtx,
+  ) => void;
+}
+
+describe("the reconnect catch-up is one bounded, deduplicated run (#1709)", () => {
+  const stateFetches = (h: ReturnType<typeof harness>) =>
+    h.fetched.filter((u) => u.endsWith("/state")).length;
+  /** Open the first socket, drop it, and let the 1 s retry open the second. */
+  async function firstRetry(h: ReturnType<typeof harness>) {
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+  }
+
+  it("waits until the reopened socket has stayed up before catching up", async () => {
+    const h = harness();
+    await firstRetry(h);
+    FakeSocket.made[1].open();
+    expect(h.aiRefreshed, "the pill is still re-derived at once").toEqual(["INC-1", "INC-1"]);
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS - 1);
+    expect(h.fetched).toEqual([]);
+    expect(h.messages).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stateFetches(h)).toBe(1);
+  });
+
+  it("collapses a flapping server into one catch-up once a socket stays up", async () => {
+    const h = harness();
+    await firstRetry(h);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].drop(); // up 1 s, gone — retry in 2 s
+    await vi.advanceTimersByTimeAsync(2000);
+    FakeSocket.made[2].open();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[2].drop(); // again — retry in 4 s
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(stateFetches(h), "no catch-up while the server flaps").toBe(0);
+    FakeSocket.made[3].open();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stateFetches(h)).toBe(1);
+    expect(h.messages.filter((m) => m.type === "comments_changed")).toHaveLength(1);
+  });
+
+  it("still catches up during a long flap, within the 10 s bound", async () => {
+    const h = harness();
+    await firstRetry(h);
+    const t0 = Date.now();
+    // Every socket stays up 1.9 s — never long enough to settle — and the flap never ends.
+    for (let i = 1; stateFetches(h) === 0 && i < 12; i++) {
+      FakeSocket.made[i].open();
+      await vi.advanceTimersByTimeAsync(1900);
+      if (stateFetches(h) > 0) break;
+      FakeSocket.made[i].drop();
+      while (FakeSocket.made.length === i + 1) await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(stateFetches(h)).toBe(1);
+    expect(Date.now() - t0).toBeLessThanOrEqual(10_000 + 1900);
+  });
+
+  it("runs one catch-up when the tab wakes during the settle wait", async () => {
+    const h = harness();
+    await firstRetry(h);
+    FakeSocket.made[1].open(); // catch-up now waiting
+    h.setVisibility("hidden");
+    vi.setSystemTime(Date.now() + 13 * 60_000);
+    h.setVisibility("visible"); // a sleep: the socket is replaced
+    expect(FakeSocket.made).toHaveLength(3);
+    FakeSocket.made[2].open();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stateFetches(h)).toBe(1);
+  });
+
+  it("drops a pending catch-up on a case switch and on a cancel", async () => {
+    const h = harness();
+    await firstRetry(h);
+    FakeSocket.made[1].open();
+    h.api.activeCaseId = "INC-2";
+    h.api.openCaseSocket("INC-2", h.onMessage);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetched).toEqual([]);
+
+    const c = harness();
+    await firstRetry(c);
+    FakeSocket.made[1].open();
+    c.api.closeCaseSocket();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(c.fetched).toEqual([]);
+    expect(c.messages).toEqual([]);
+  });
+
+  it("marks every catch-up message with one shared context, and a real push with none", async () => {
+    const h = harness();
+    await firstRetry(h);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+    const ctx = h.contexts[0];
+    expect(ctx?.source).toBe("catch-up");
+    expect(h.contexts.every((c) => c === ctx)).toBe(true);
+    expect(h.messages.map((m) => m.type)).toContain("state");
+    expect(h.messages.map((m) => m.type)).toContain("scope_changed");
+    FakeSocket.made[1].push({ type: "pins_changed" });
+    expect(h.contexts.at(-1)).toBeUndefined();
+  });
+
+  it("puts the catch-up through the case load's request cap of four", async () => {
+    const runs: Array<{ names: string[]; concurrency?: number }> = [];
+    const h = harness({
+      runner: (entries, _onProgress, options) => {
+        runs.push({ names: entries.map(([n]) => n), concurrency: options.concurrency });
+        for (const [, run] of entries) run();
+        return {};
+      },
+    });
+    await firstRetry(h);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].concurrency).toBe(4);
+    expect(runs[0].names).toEqual(expect.arrayContaining(["jobs", "state", "scope", ...MISSED_TYPES]));
+    expect(h.jobsLoaded).toEqual([1]);
+    expect(stateFetches(h)).toBe(1);
+    for (const t of MISSED_TYPES)
+      expect(
+        h.messages.filter((m) => m.type === t),
+        t,
+      ).toHaveLength(1);
+  });
+
+  it("abandons a catch-up already running on a drop, a case switch and a cancel", async () => {
+    const signals: AbortSignal[] = [];
+    const runner: PanelRunner = (_entries, _p, options) => {
+      signals.push(options.signal!);
+      return {}; // requests stay queued: nothing runs
+    };
+    const started = async (h: ReturnType<typeof harness>) => {
+      await firstRetry(h);
+      FakeSocket.made[1].open();
+      await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+      expect(signals.at(-1)?.aborted).toBe(false);
+    };
+
+    const drop = harness({ runner });
+    await started(drop);
+    FakeSocket.made[1].drop();
+    expect(signals.at(-1)?.aborted, "drop").toBe(true);
+    // The next socket that stays up owes, and runs, a fresh catch-up.
+    await vi.advanceTimersByTimeAsync(2000);
+    FakeSocket.made[2].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+    expect(signals).toHaveLength(2);
+    expect(signals[1].aborted).toBe(false);
+
+    const sw = harness({ runner });
+    await started(sw);
+    sw.api.activeCaseId = "INC-2";
+    sw.api.openCaseSocket("INC-2", sw.onMessage);
+    expect(signals.at(-1)?.aborted, "case switch").toBe(true);
+
+    const cancel = harness({ runner });
+    await started(cancel);
+    cancel.api.closeCaseSocket();
+    expect(signals.at(-1)?.aborted, "cancel").toBe(true);
+  });
+
+  it("runs each shared loader once per catch-up with the real handler, and again on a real push", async () => {
+    const calls: string[] = [];
+    const handle = realCaseHandler(calls);
+    const h = harness();
+    h.api.openCaseSocket("INC-1", (msg, ctx) => handle("INC-1", msg, ctx));
+    FakeSocket.made[0].open();
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open();
+    await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
+    const n = (name: string) => calls.filter((c) => c === name).length;
+    expect(calls, "the state replay ran").toContain("render");
+    expect(n("loadCockpit")).toBe(1);
+    expect(n("loadSuperTimeline")).toBe(1);
+    expect(n("loadAssetGraph") + n("scheduleAssetGraphReload")).toBe(1);
+    // Loaders only one branch runs are untouched.
+    expect(n("loadPins")).toBe(1);
+    expect(n("loadHypotheses")).toBe(1);
+    // A real push is a real change: the catch-up's bookkeeping must not swallow it.
+    FakeSocket.made[1].push({ type: "activity_changed" });
+    expect(n("loadCockpit")).toBe(2);
+    FakeSocket.made[1].push({ type: "activity_changed" });
+    expect(n("loadCockpit")).toBe(3);
   });
 });
 
@@ -650,7 +969,7 @@ describe("the case-load path hands its socket to js/dashboard-live-socket.js (#1
 
   it("opens the socket through openCaseSocket with the named message handler", () => {
     expect(body("function proceedConnect(", "function restoreCaseFromUrl(")).toMatch(
-      /openCaseSocket\(caseId, \(msg\) => handleCaseMessage\(caseId, msg\)\)/,
+      /openCaseSocket\(caseId, \(msg, ctx\) =>\s*handleCaseMessage\(caseId, msg, ctx\),?\s*\)/,
     );
     expect(connect).not.toMatch(/new WebSocket\(/);
   });

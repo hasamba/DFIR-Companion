@@ -512,18 +512,32 @@
 
     // The live socket, its reconnect and its catch-up live in js/dashboard-live-socket.js (#1675).
     if (typeof openCaseSocket === "function")
-      openCaseSocket(caseId, (msg) => handleCaseMessage(caseId, msg));
+      openCaseSocket(caseId, (msg, ctx) =>
+        handleCaseMessage(caseId, msg, ctx),
+      );
     else
       document.getElementById("status").textContent =
         "live updates unavailable (js/dashboard-live-socket.js did not load)";
   }
 
   // Every push the case socket delivers. Named so a reconnected socket reuses it (#1675).
-  function handleCaseMessage(caseId, msg) {
+  //
+  // `ctx` is set only on a reconnect catch-up (#1709), which sends ~25 messages in one go. Several
+  // of them reload the same panel, so `once` runs each shared loader a single time per catch-up.
+  // A real push has no ctx and always reloads — each one is a real change.
+  function handleCaseMessage(caseId, msg, ctx) {
+    const once = (key, run) => {
+      if (ctx && ctx.ran) {
+        if (ctx.ran.has(key)) return;
+        ctx.ran.add(key);
+      }
+      run();
+    };
+    const cockpit = () => once("cockpit", () => loadCockpit(caseId));
     if (msg.type === "state") {
       typeof render === "function" && render(msg.state);
-      loadCockpit(caseId);
-      scheduleAssetGraphReload();
+      cockpit();
+      once("assetGraph", () => scheduleAssetGraphReload());
       scheduleEvidenceGraphReload();
       schedulePhasesReload();
       scheduleTimelineGapsReload();
@@ -547,7 +561,7 @@
       loadSynthMeta(caseId);
       loadPlaybook(caseId);
       loadHypotheses(caseId);
-      loadSuperTimeline(caseId);
+      once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
     } else if (msg.type === "second_opinion_changed")
       loadSecondOpinion(caseId);
@@ -568,14 +582,14 @@
     } else if (msg.type === "comments_changed") loadComments(caseId);
     else if (msg.type === "activity_changed") {
       loadActivityLog(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "tags_changed") loadTags(caseId);
     else if (msg.type === "pins_changed") {
       loadPins(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "finding_workflow_changed") {
       loadFindingWorkflow(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "finding_outcome_changed") {
       loadFindingOutcome(caseId);
     } else if (msg.type === "notebook_changed") {
@@ -583,19 +597,19 @@
       loadNbAiToggle(caseId);
     } else if (msg.type === "hypotheses_changed") {
       loadHypotheses(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "dwell_window_changed")
       loadSavedTimeframes(caseId);
     else if (msg.type === "super_timeline_changed") {
-      loadSuperTimeline(caseId);
+      once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleLoginGraphReload(caseId);
     } else if (msg.type === "playbook_changed") loadPlaybook(caseId);
     else if (msg.type === "asset_overrides_changed") {
-      loadAssetGraph(caseId);
+      once("assetGraph", () => loadAssetGraph(caseId));
       loadAssetOverrides(caseId);
     } else if (msg.type === "import_meta_changed") {
       loadImportMeta(caseId);
-      loadCockpit(caseId);
+      cockpit();
     } else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
     else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
     else if (msg.type === "velo_hunt_changed") {
