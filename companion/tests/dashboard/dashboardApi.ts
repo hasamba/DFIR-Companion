@@ -306,6 +306,11 @@ export interface ValuesApi {
 
 export interface FragmentsApi {
   proseHtml(text: unknown): string;
+  execSummaryHtml(state: unknown): string;
+  narrativeHtml(text: unknown, events: unknown): string;
+  narrativeLead(
+    para: string,
+  ): { date: string | null; dateLabel: string; times: string[]; sub: string; rest: string } | null;
   mentionHtml(text: string): string;
   ticketPushChips(id: string): string;
   renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;

@@ -39,6 +39,232 @@ describe("proseHtml", () => {
   });
 });
 
+// The Executive Summary panel: a fact strip read from the case, the AI summary on the left, and the
+// synthesis's own known-vs-unknown ledger on the right. Everything here is built from state the
+// dashboard already holds, so no AI call and no re-synthesis is needed to get the layout.
+describe("execSummaryHtml", () => {
+  const ev = (over: Record<string, unknown>) => ({
+    id: String(Math.random()),
+    timestamp: "2026-09-24T08:49:00Z",
+    description: "x",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...over,
+  });
+  const account = (name: string) => ({ actor: { kind: "account", name } });
+
+  it("keeps the dash placeholder for a case with nothing yet", () => {
+    expect(f.execSummaryHtml({})).toBe('<div class="prose">—</div>');
+    expect(f.execSummaryHtml(null)).toBe('<div class="prose">—</div>');
+  });
+
+  it("shows the summary alone when there are no events and no ledger", () => {
+    const html = f.execSummaryHtml({ lastSummary: "One.\n\nTwo." });
+    expect(html).toContain("<p>One.</p><p>Two.</p>");
+    expect(html).not.toContain("exec-facts");
+    expect(html).not.toContain("exec-assess");
+  });
+
+  it("builds the fact strip from the High+ events: hosts, accounts, window and span", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [
+        ev({ asset: "DESKTOP-1", timestamp: "2026-09-24T08:49:00Z", canonical: account("vagrant") }),
+        ev({ asset: "DESKTOP-1", timestamp: "2026-09-24T09:00:00Z", canonical: account("vagrant") }),
+        ev({ asset: "SRV-2", timestamp: "2026-09-24T08:55:00Z", endTimestamp: "2026-09-24T09:04:47Z" }),
+        // Medium rows fall outside the attack window and do not name hosts.
+        ev({ asset: "NOISE", severity: "Medium", timestamp: "2026-09-20T00:00:00Z" }),
+      ],
+    });
+    expect(html).toContain("DESKTOP-1, SRV-2");
+    expect(html).not.toContain("NOISE");
+    expect(html).toContain("vagrant");
+    expect(html).toContain("2026-09-24 08:49:00 → 09:04:47 UTC");
+    expect(html).toContain("15 min");
+  });
+
+  it("falls back to every event when none is High or Critical", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [ev({ asset: "HOST-A", severity: "Low" })],
+    });
+    expect(html).toContain("HOST-A");
+  });
+
+  it("names the first two hosts and counts the rest", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: ["A", "B", "C", "D"].map((h) => ev({ asset: h })),
+    });
+    expect(html).toContain("A, B +2");
+  });
+
+  it("puts the day on both ends of a window that crosses midnight", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      forensicTimeline: [
+        ev({ timestamp: "2026-09-24T23:50:00Z" }),
+        ev({ timestamp: "2026-09-26T01:10:00Z" }),
+      ],
+    });
+    expect(html).toContain("2026-09-24 23:50:00 → 2026-09-26 01:10:00 UTC");
+    expect(html).toContain("1 d 1 h");
+  });
+
+  it("counts Critical and High findings, but not dismissed ones", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      findings: [
+        { severity: "Critical", status: "open" },
+        { severity: "High", status: "confirmed" },
+        { severity: "High", status: "dismissed" },
+        { severity: "Medium", status: "open" },
+      ],
+    });
+    expect(html).toContain("1 Critical · 1 High");
+  });
+
+  it("splits the ledger: confirmed/inferred are the assessment, speculated/unknown are still open", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: "s",
+      uncertainties: [
+        { topic: "Adversary emulation", status: "inferred", basis: "sim script", gap: "" },
+        { topic: "Credential dumping", status: "confirmed", basis: "LSASS dump", gap: "" },
+        { topic: "Initial access", status: "unknown", basis: "", gap: "No VPN or mail logs" },
+        { topic: "C2", status: "speculated", basis: "", gap: "No network capture" },
+      ],
+    });
+    const [assess, open] = html.split("Still unconfirmed");
+    expect(assess).toContain("Adversary emulation");
+    expect(assess).toContain("Credential dumping");
+    expect(assess).not.toContain("Initial access");
+    expect(open).toContain("Initial access");
+    expect(open).toContain("No VPN or mail logs");
+    expect(open).toContain("C2");
+    // Confirmed sorts ahead of inferred, so the strongest claim reads first.
+    expect(assess.indexOf("Credential dumping")).toBeLessThan(assess.indexOf("Adversary emulation"));
+  });
+
+  it("escapes every model- and evidence-derived string", () => {
+    const html = f.execSummaryHtml({
+      lastSummary: XSS,
+      forensicTimeline: [ev({ asset: XSS, canonical: account(XSS) })],
+      uncertainties: [{ topic: XSS, status: "unknown", basis: ATTR_BREAK, gap: XSS }],
+    });
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('" onmouseover');
+  });
+});
+
+// The Narrative Timeline: the model writes one moment per paragraph and opens most of them with a
+// time ("At 08:49, …"). The rail moves that time into its own column and links it to the first
+// event of that minute, so the story becomes an index into the evidence. No AI change: it reads the
+// text as written, and text it cannot read keeps its old prose layout.
+describe("narrativeHtml", () => {
+  const ev = (id: string, timestamp: string, severity = "High") => ({ id, timestamp, severity });
+  const events = [
+    ev("e1", "2026-09-24T08:49:12Z", "Medium"),
+    ev("e2", "2026-09-24T08:49:40Z", "Critical"),
+    ev("e3", "2026-09-24T08:58:00Z"),
+    ev("e4", "2026-09-24T09:04:15Z"),
+    // Same time of day on another date: must not be picked once the text names the day.
+    ev("other-day", "2026-09-23T08:49:00Z", "Critical"),
+  ];
+  const story = [
+    "On 24 September 2026, a workstation went through a scripted attack. The activity was real.",
+    "At 08:49 and again at 08:58, the script turned off Defender. It copied tools into C:\\e.",
+    "From 08:55 onward, it kept trying weak passwords.",
+    "At 09:04:15 the attacker started stealing credentials.",
+  ].join("\n\n");
+
+  it("keeps plain prose when fewer than two paragraphs open with a time", () => {
+    const text = "At 08:49, one thing happened.\n\nThen another.";
+    expect(f.narrativeHtml(text, events)).toBe(f.proseHtml(text));
+    expect(f.narrativeHtml("—", events)).toBe("<p>—</p>");
+  });
+
+  it("moves each opening time into the rail and restarts the sentence with a capital", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain('class="nt-rail"');
+    expect(html).toContain("24 Sep 2026");
+    expect(html).not.toContain("At 08:49");
+    expect(html).not.toContain("From 08:55");
+    expect(html).toContain('<span class="nt-lede">The script turned off Defender.</span> It copied tools');
+    expect(html).toContain('<span class="nt-lede">A workstation went through a scripted attack.</span>');
+    expect(html).toContain("onward");
+  });
+
+  it("links a time to the most severe event of that minute on the day the text names", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toMatch(/data-act="narrativeJumpToEvent" data-id="e2"[^>]*>(?:<b>)?08:49</);
+    expect(html).toMatch(/data-id="e3"[^>]*>(?:<b>)?08:58</);
+    expect(html).not.toContain("other-day");
+  });
+
+  it("matches a time with seconds to that second", () => {
+    expect(f.narrativeHtml(story, events)).toMatch(/data-id="e4"[^>]*>(?:<b>)?09:04:15</);
+  });
+
+  it("leaves a time with no event as plain text", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).not.toMatch(/data-act="narrativeJumpToEvent"[^>]*>(?:<b>)?08:55</);
+    expect(html).toContain("08:55");
+  });
+
+  it("colors the dot with the most severe event at that time", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain("nt-spine nt-sev-critical");
+  });
+
+  it("explains each dot in a tooltip", () => {
+    const html = f.narrativeHtml(story, events);
+    expect(html).toContain('nt-spine nt-sev-critical" title="Most severe event at 08:49: Critical"');
+    expect(html).toContain('title="No event in the forensic timeline at 08:55"');
+    // The story's first paragraph opens with a date only.
+    expect(html).toContain('title="Starts with a date but no time, so there is no event to match"');
+    // A paragraph that opens with no time. A time later in the sentence does not count.
+    const loose = f.narrativeHtml(`${story}\n\nThe script ran again at 09:10.`, events);
+    expect(loose).toContain('title="Does not start with a time, so there is no event to match"');
+  });
+
+  it("finds the day from the case's events when the text never names one", () => {
+    const text = "At 08:58, one.\n\nAt 09:04:15, two.";
+    const html = f.narrativeHtml(text, events);
+    expect(html).toMatch(/data-id="e3"/);
+    expect(html).toMatch(/data-id="e4"/);
+  });
+
+  it("escapes the text and the event ids", () => {
+    const text = `At 08:49, ${XSS}.\n\nAt 08:58, two.`;
+    const html = f.narrativeHtml(text, [ev(ATTR_BREAK, "2026-09-24T08:49:00Z")]);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('" onmouseover');
+  });
+});
+
+describe("narrativeLead", () => {
+  it("reads the common opening shapes", () => {
+    expect(f.narrativeLead("At 08:49, x")).toMatchObject({ times: ["08:49"], rest: "X" });
+    expect(f.narrativeLead("At 08:49 and again at 08:58, x")).toMatchObject({ times: ["08:49", "08:58"] });
+    expect(f.narrativeLead("Shortly after 09:04 the host rebooted")).toMatchObject({
+      times: ["09:04"],
+      rest: "The host rebooted",
+    });
+    expect(f.narrativeLead("On 2026-09-24 at 08:49, x")).toMatchObject({
+      date: "2026-09-24",
+      times: ["08:49"],
+    });
+    expect(f.narrativeLead("On September 24, 2026, x")).toMatchObject({ date: "2026-09-24", times: [] });
+  });
+
+  it("does not read a time that is not at the start", () => {
+    expect(f.narrativeLead("The script ran at 08:49.")).toBeNull();
+    expect(f.narrativeLead("At home, the user slept.")).toBeNull();
+  });
+});
+
 describe("mentionHtml", () => {
   it("chips a handle", () => {
     expect(f.mentionHtml("ping @bob")).toBe('ping <span class="mention-chip">@bob</span>');
