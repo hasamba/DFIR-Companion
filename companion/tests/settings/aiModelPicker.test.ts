@@ -7,6 +7,7 @@ const MODEL_FIELDS = [
   ["DFIR_AI_SYNTH_MODEL", "synthesis"],
   ["DFIR_AI_VELO_MODEL", "velociraptor"],
   ["DFIR_AI_SECOND_OPINION_MODEL", "second-opinion"],
+  ["DFIR_AI_SYNTH_FALLBACK_MODEL", "synthesis-fallback"],
 ] as const;
 
 describe("Settings AI model pickers", () => {
@@ -24,6 +25,17 @@ describe("Settings AI model pickers", () => {
       expect(field, `${key} has no custom-ID input`).not.toBe("");
       expect(picker, `${key} has no visible model dropdown`).not.toBe("");
       expect(alignedControls, `${key} model controls are not aligned in one row`).toBeDefined();
+    }
+  });
+
+  it("shows the fallback synthesis provider and model in Essential mode", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    for (const id of ["env-DFIR_AI_SYNTH_FALLBACK_PROVIDER", "ai-model-picker-synthesis-fallback"]) {
+      const field =
+        html.match(
+          new RegExp(`<div class="sfield"[^>]*>(?:(?!<div class="sfield)[\\s\\S])*?id="${id}"`),
+        )?.[0] ?? "";
+      expect(field, `${id} is not in an Essential field`).toMatch(/^<div class="sfield" data-essential/);
     }
   });
 

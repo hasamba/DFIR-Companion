@@ -17,7 +17,7 @@ import { AnalysisPipeline as AnalysisPipelineImpl } from "../analysis/pipeline.j
 import { makeImageLoader } from "../analysis/imageLoader.js";
 import { ProviderRegistry } from "../providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "../providers/provider.js";
-import { AI_ROLE_SOURCES, resolveAiRoleSetting, resolveRoleSetting, visionEnv } from "../config/aiEnv.js";
+import { AI_ROLE_SOURCES, resolveAiRoleSetting, visionEnv } from "../config/aiEnv.js";
 import { OpenAIProvider } from "../providers/openai.js";
 import { OpenRouterProvider } from "../providers/openrouter.js";
 import { OllamaCloudProvider } from "../providers/ollama.js";
@@ -174,14 +174,14 @@ export function synthesisFallbackConfig(env: NodeJS.ProcessEnv): SynthesisFallba
   if (!provider) return undefined;
   const synthModel = env.DFIR_AI_SYNTH_MODEL?.trim() || visionEnv(env, "MODEL")?.trim();
   if (provider.toLowerCase() === synthProvider?.toLowerCase() && model === synthModel) return undefined;
-  const setting = (s: "KEY" | "BASE_URL"): string | undefined => {
-    const own = env[`DFIR_AI_SYNTH_FALLBACK_${s}`];
-    if (own?.trim()) return own;
-    return ownProvider
-      ? resolveRoleSetting(env, ownProvider, s, own)
-      : resolveAiRoleSetting(env, "synthesis", s);
+  // One resolution rule for the running fallback, the model picker and the key migration.
+  return {
+    provider,
+    model,
+    label: model,
+    apiKey: resolveAiRoleSetting(env, "synthesis-fallback", "KEY"),
+    baseUrl: resolveAiRoleSetting(env, "synthesis-fallback", "BASE_URL"),
   };
-  return { provider, model, label: model, apiKey: setting("KEY"), baseUrl: setting("BASE_URL") };
 }
 
 export function buildSynthesisFallbackProvider(): { provider: AnalyzeProvider; label: string } | undefined {

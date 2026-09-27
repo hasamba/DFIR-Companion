@@ -33,6 +33,17 @@
       baseUrlId: "env-DFIR_AI_SYNTH_BASE_URL",
     },
     {
+      // #1734: blank fields borrow from synthesis, not vision — the same order the server uses.
+      role: "synthesis-fallback",
+      providerId: "env-DFIR_AI_SYNTH_FALLBACK_PROVIDER",
+      modelId: "env-DFIR_AI_SYNTH_FALLBACK_MODEL",
+      keyId: "env-DFIR_AI_SYNTH_FALLBACK_KEY",
+      baseUrlId: "env-DFIR_AI_SYNTH_FALLBACK_BASE_URL",
+      fallbackProviderId: "env-DFIR_AI_SYNTH_PROVIDER",
+      fallbackKeyId: "env-DFIR_AI_SYNTH_KEY",
+      fallbackBaseUrlId: "env-DFIR_AI_SYNTH_BASE_URL",
+    },
+    {
       role: "velociraptor",
       providerId: "env-DFIR_AI_VELO_PROVIDER",
       modelId: "env-DFIR_AI_VELO_MODEL",
@@ -272,6 +283,7 @@
   const MIGRATION_ROLE_NAMES = {
     vision: "Screenshot",
     synthesis: "Synthesis",
+    "synthesis-fallback": "Synthesis fallback",
     velociraptor: "Velociraptor",
     "second-opinion": "2nd opinion",
     reconcile: "Referee",
