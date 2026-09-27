@@ -21,6 +21,7 @@ import {
   type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import type { Severity } from "./stateTypes.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
@@ -303,6 +304,9 @@ export function parseShellHistoryFile(text: string, opts: BashHistoryImportOptio
 
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, ev) => n + (ev.count ?? 1), 0);
+  // A plain bash history stores no time: the row is kept and mergeDelta dates it at import.
+  opts.debug?.observed("no_timestamp", entries.filter((e) => !e.timestamp).length);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

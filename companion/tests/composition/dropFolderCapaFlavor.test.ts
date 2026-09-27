@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
-import { detectImportWithCustom } from "../../src/analysis/importDetect.js";
+import { detectImportWithCustom } from "../../src/analysis/importDecision.js";
 import { createDropFolder, dropDirOf } from "../../src/composition/dropFolder.js";
 
 // #1308. PR #1302 taught the HTTP import routes to name WHY a capa report was refused (a

@@ -44,6 +44,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import { createDecisionTally, firstPresentKey, type ImportDebugRecorder } from "./rowDecisionDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -53,6 +54,7 @@ export interface CybertriageImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   fileTelemetry?: boolean; // include unscored File (MFT) rows as Info evidence (default: false)
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 export interface CybertriageParseResult {
@@ -138,6 +140,15 @@ function ctTime(rec: Row): string {
     if (!Number.isNaN(d.getTime())) return d.toISOString();
   }
   return normalizeTime(firstStr(rec, ["event_timestamp", "datetime"]));
+}
+
+// The column ctTime read, for the import debug record (#1736): the same order, key names only.
+function ctTimeKey(rec: Row): string {
+  const ep = getCI(rec, "epoch_timestamp");
+  const n = typeof ep === "number" ? ep : Number(str(ep).trim());
+  if (Number.isFinite(n) && n > 0 && !Number.isNaN(new Date(n > 1e12 ? n : n * 1000).getTime()))
+    return "epoch_timestamp";
+  return firstPresentKey(rec, ["event_timestamp", "datetime"]);
 }
 
 function classify(rec: Row): Kind {
@@ -378,14 +389,29 @@ export function parseCybertriage(text: string, opts: CybertriageImportOptions = 
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
   let notable = 0;
+  const tally = opts.debug ? createDecisionTally() : undefined;
 
   for (const rec of rows) {
     const host = firstStr(rec, ["hostName", "Host DNS Name", "Host Display Name"]);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     if (readVerdict(rec).verdict !== "none") notable++;
-    const m = mapRow(rec, classify(rec), opts, sink);
+    const kind = classify(rec);
+    const m = mapRow(rec, kind, opts, sink);
     if (m) mapped.push(m);
+    if (tally) {
+      if (!m) {
+        tally.skipped.add(kind === "network" ? "network_row_ioc_only" : "unscored_file_telemetry");
+        continue;
+      }
+      const timeKey = m.timestamp ? ctTimeKey(rec) : "";
+      if (timeKey) tally.fields.add("timestamp", timeKey);
+      else tally.observed.add("empty_timestamp");
+      const hostKey = firstPresentKey(rec, ["hostName", "Host DNS Name", "Host Display Name"]);
+      if (hostKey) tally.fields.add("host", hostKey);
+      else tally.observed.add("missing_host");
+    }
   }
+  tally?.flush(opts.debug);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

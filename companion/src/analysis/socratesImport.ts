@@ -8,6 +8,8 @@
 // detection. Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
 
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -34,6 +36,7 @@ export interface SocratesImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface SocratesParseResult {
@@ -280,6 +283,10 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
     }
     // else: unknown shape → dropped
   }
+  opts.debug?.skipped("unknown_record_shape", total - eve.length - yaraRows.length - sigmaRows.length);
+  opts.debug?.fallback("network_mapper", eve.length);
+  opts.debug?.fallback("yara_mapper", yaraRows.length);
+  opts.debug?.fallback("sigma_mapper", sigmaRows.length);
 
   const iocSink = new Map<string, SiemIoc>();
 
@@ -319,6 +326,11 @@ export function parseSocrates(text: string, opts: SocratesImportOptions = {}): S
         (a.timestamp || "~").localeCompare(b.timestamp || "~"),
     )
     .slice(0, maxEvents);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, {
+    groups: fileGroups,
+    kept: fileEvents.length,
+  });
+  opts.debug?.omitted("over_event_cap", netEvents.length + fileEvents.length - combined.length);
 
   const present: string[] = [];
   if (eve.length) present.push("suricata");

@@ -51,6 +51,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -59,6 +60,8 @@ export interface M365ImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface M365ParseResult {
@@ -147,11 +150,15 @@ function opSeverity(op: string): OpDef {
 function arrFirst(v: unknown): unknown {
   return Array.isArray(v) ? v.find((x) => x != null && x !== "") : v;
 }
-function pickStr(row: Row, keys: string[]): string {
+// `onKey` hears which candidate key supplied the value (#1736) — the key name, never the value.
+function pickStr(row: Row, keys: string[], onKey?: (key: string) => void): string {
   for (const k of keys) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const s = str(arrFirst(v)).trim();
-    if (s) return s;
+    if (s) {
+      onKey?.(k);
+      return s;
+    }
   }
   return "";
 }
@@ -204,14 +211,18 @@ function classify(rec: Row): Kind {
 
 // ───────────────────────────── mappers ─────────────────────────────
 
-function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
-  const op = pickStr(rec, ["Operation", "Operations"]) || "operation";
+function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent {
+  const op = pickStr(rec, ["Operation", "Operations"], (k) => debug?.field("action", k)) || "operation";
   const workload = pickStr(rec, ["Workload"]);
-  const user = pickStr(rec, ["UserId", "UserKey", "UserIds"]);
+  const user = pickStr(rec, ["UserId", "UserKey", "UserIds"], (k) => debug?.field("user", k));
   // All four are Microsoft 365's own Unified Audit Log fields, recorded by Microsoft's own
   // service infrastructure from the authenticated session's real connection — edge-observed, not
   // client-asserted (#1184 audit).
-  const ip = extractIp(pickStr(rec, ["ClientIP", "ClientIPAddress", "ActorIpAddress", "ClientInfoString"]));
+  const ip = extractIp(
+    pickStr(rec, ["ClientIP", "ClientIPAddress", "ActorIpAddress", "ClientInfoString"], (k) =>
+      debug?.field("source_ip", k),
+    ),
+  );
   const target = pickStr(rec, ["ObjectId", "MailboxOwnerUPN", "SiteUrl", "TargetUserOrGroupName"]);
   const result = pickStr(rec, ["ResultStatus", "ResultStatusDetail"]);
   const failed = /fail/i.test(result);
@@ -231,7 +242,9 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   description = boundedTextTo(description, 600);
 
   return {
-    timestamp: normalizeTime(pickStr(rec, ["CreationTime", "CreationDate"])),
+    timestamp: normalizeTime(
+      pickStr(rec, ["CreationTime", "CreationDate"], (k) => debug?.field("timestamp", k)),
+    ),
     description,
     severity,
     mitre: [...(def.mitre ?? [])],
@@ -295,8 +308,13 @@ function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOu
   return { outcome: credential ? "credential-failure" : "other-failure", code };
 }
 
-function mapSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedEvent {
-  const upn = pickStr(rec, ["userPrincipalName", "userDisplayName"]);
+function mapSignIn(
+  rec: Row,
+  sink: Map<string, SiemIoc>,
+  index: number,
+  debug?: ImportDebugRecorder,
+): MappedEvent {
+  const upn = pickStr(rec, ["userPrincipalName", "userDisplayName"], (k) => debug?.field("user", k));
   const app = pickStr(rec, ["appDisplayName", "resourceDisplayName"]);
   const ip = extractIp(pickStr(rec, ["ipAddress"]));
   const failureReason = pickStr(rec, ["status.failureReason", "status.additionalDetails"]);
@@ -449,15 +467,17 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     if (kind === "ual" && isEntraUalRecord(rec)) {
       // An Entra directory change exported through the UAL: the same decoder as the Graph shape.
       mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
+      opts.debug?.fallback("entra_ual_decoder");
       sawUal = true;
     } else if (kind === "ual") {
       // An Exchange record the decoder narrates (rules, forwarding, permissions, access, items)
       // replaces the plain row; any other Exchange operation keeps it.
       const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, index) : null;
-      mapped.push(exchange ?? mapUal(rec, iocSink));
+      if (exchange) opts.debug?.fallback("exchange_decoder");
+      mapped.push(exchange ?? mapUal(rec, iocSink, opts.debug));
       sawUal = true;
     } else if (kind === "signin") {
-      mapped.push(mapSignIn(rec, iocSink, index));
+      mapped.push(mapSignIn(rec, iocSink, index, opts.debug));
       sawSignin = true;
       if (isEntraSignIn(rec)) {
         const s = readEntraSignIn(rec);
@@ -491,6 +511,9 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     } else if (kind === "audit") {
       mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
       sawAudit = true;
+    } else {
+      // Not a UAL, sign-in or directory-audit record by its own fields: never mapped (#1736).
+      opts.debug?.skipped("unrecognized_record");
     }
   });
 

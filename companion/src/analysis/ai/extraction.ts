@@ -10,6 +10,7 @@ import { applySeverityFloor } from "../severityFloor.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { InvestigationState, Severity } from "../stateTypes.js";
 import { tagNaiveAsUtc } from "../naiveTimestamp.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 import { buildStateSummary } from "../summary.js";
 import { detectTool } from "../toolDetect.js";
 import { getCsvPrompt, getLogPrompt, getSystemPrompt } from "./prompts/index.js";
@@ -59,6 +60,7 @@ interface ImportExtractionOptions {
   onProgress?: (done: number, total: number) => void | Promise<void>;
   signal?: AbortSignal; // #225: analyst cancel — aborts the in-flight AI call + stops between batches
   startBatch?: number;
+  debug?: ImportDebugRecorder; // #1736 — rows in, events out; a failed batch throws, so no skip code
 }
 
 export async function analyzeWindow(
@@ -281,17 +283,27 @@ async function runBatchedImport<T>(
     await preScanWholeImport(ctx, caseId, state, spec.payloadText);
     const batches = spec.planBatches(state);
 
+    let kept = 0;
     for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
-      if (opts.signal?.aborted) break; // #225: cancelled — stop before the next batch, keep prior batches
+      if (opts.signal?.aborted) {
+        opts.debug?.observed("cancelled_between_batches");
+        break; // #225: cancelled — stop before the next batch, keep prior batches
+      }
       const userPrompt = spec.buildPrompt(state, batches[b], b, batches.length);
 
-      const delta = await ctx.withRetry(
-        caseId,
-        spec.kind,
-        () => extractBatch(ctx, caseId, state, provider, opts, spec, userPrompt),
-        ctx.opts.retries ?? 3,
-        ctx.opts.backoffMs ?? 500,
-      );
+      const delta = await ctx
+        .withRetry(
+          caseId,
+          spec.kind,
+          () => extractBatch(ctx, caseId, state, provider, opts, spec, userPrompt),
+          ctx.opts.retries ?? 3,
+          ctx.opts.backoffMs ?? 500,
+        )
+        .catch((err: unknown) => {
+          // The batch failed after its retries, and the import with it. A cancel is an outcome, not this.
+          if (!opts.signal?.aborted) opts.debug?.failedAt("ai");
+          throw err;
+        });
 
       // Renumber event ids so chunked imports don't overwrite each other (merge dedupes forensic
       // events by id, and each batch independently emits e1, e2…).
@@ -315,6 +327,11 @@ async function runBatchedImport<T>(
         })),
       };
 
+      opts.debug?.omitted(
+        "below_severity_floor",
+        (delta.forensicEvents ?? []).length - renumbered.forensicEvents.length,
+      );
+      opts.debug?.counts({ kept: (kept += renumbered.forensicEvents.length) });
       state = await ctx.mergeWithAliases(state, renumbered, {
         windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
         timestamp: opts.importedAt,
@@ -343,6 +360,7 @@ export async function analyzeCsv(
   // Text model (same idiom as ask/explain/synthesis): CSV extraction is text reasoning, not OCR.
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("CSV analysis");
   const { headers, rows } = parseCsv(csvText);
+  opts.debug?.counts({ total: rows.length, kept: 0 });
   if (rows.length === 0) return ctx.opts.stateStore.load(caseId);
 
   return runBatchedImport(ctx, caseId, provider, opts, {
@@ -385,6 +403,7 @@ export async function analyzeLog(
   // Text model (same idiom as ask/explain/synthesis): log triage is text reasoning, not OCR.
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("log analysis");
   const { lines } = parseLogLines(logText);
+  opts.debug?.counts({ total: lines.length, kept: 0 });
   if (lines.length === 0) return ctx.opts.stateStore.load(caseId);
 
   // Collapse the raw lines into distinct, counted patterns (most frequent first). Capture the
@@ -394,6 +413,9 @@ export async function analyzeLog(
   const maxTemplates = Number(process.env.DFIR_LOG_MAX_TEMPLATES) || undefined; // else the built-in default
   const templates = aggregateLogLines(lines, { maxTemplates }, aggStats);
   ctx.recordImportTruncation(caseId, aggStats.distinctTemplates > aggStats.keptTemplates ? aggStats : null);
+  // Patterns, not rows: the model sees the kept ones; the rest are over the template cap.
+  opts.debug?.fallback("log_patterns", templates.length);
+  opts.debug?.omitted("over_template_cap", aggStats.distinctTemplates - aggStats.keptTemplates);
 
   return runBatchedImport(ctx, caseId, provider, opts, {
     kind: "log",

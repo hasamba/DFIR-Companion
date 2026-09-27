@@ -20,6 +20,8 @@ import {
 import { parseCsv } from "./csvImport.js";
 import type { ImporterSpec } from "./importerSpec.js";
 import { checkRegexSafety } from "./regexSafety.js";
+import type { DebugTarget, ImportDebugRecorder } from "./importDebug.js";
+import { createSiemDebugTally } from "./siemImportDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -37,7 +39,7 @@ export interface ExternalImporter {
   label: string;
   priority: number;
   detect(ctx: EngineDetectContext): boolean;
-  parse(text: string, opts?: { minSeverity?: Severity }): SiemParseResult;
+  parse(text: string, opts?: { minSeverity?: Severity; debug?: ImportDebugRecorder }): SiemParseResult;
 }
 
 // Compile a user regex defensively: invalid OR ReDoS-prone → null (never throws). The `slice(0, N)`
@@ -134,6 +136,31 @@ function bindStr(rec: Row, b: { from: string[]; transform?: string; join?: strin
   return "";
 }
 
+// The keys a binding actually read a value from (#1736): the first non-empty one, or every part of
+// a join. Key names only; the recorder passes them through the column allowlist.
+function boundKeys(rec: Row, b: { from: string[]; join?: string }): string[] {
+  const hit = (k: string): boolean => str(getField(rec, k)).trim() !== "";
+  if (b.join) return b.from.filter(hit);
+  const k = b.from.find(hit);
+  return k ? [k] : [];
+}
+
+// Per-target tally of the keys each binding used, flushed once into the recorder.
+function createKeyTally(debug: ImportDebugRecorder | undefined) {
+  const byTarget = new Map<DebugTarget, Map<string, number>>();
+  return {
+    note(target: DebugTarget, rec: Row, b: { from: string[]; join?: string } | undefined): void {
+      if (!debug || !b) return;
+      const keys = byTarget.get(target) ?? new Map<string, number>();
+      byTarget.set(target, keys);
+      for (const k of boundKeys(rec, b)) keys.set(k, (keys.get(k) ?? 0) + 1);
+    },
+    flush(): void {
+      for (const [target, keys] of byTarget) for (const [k, n] of keys) debug?.field(target, k, n);
+    },
+  };
+}
+
 // Column-aware {{name}} substitution — column names may contain spaces, so we cannot reuse the
 // reportTemplate {{\w+}} engine. No helpers, no nested logic → no injection surface.
 function renderDesc(template: string, rec: Row): string {
@@ -199,10 +226,21 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
     const iocSink = new Map<string, SiemIoc>();
     const mapped: MappedEvent[] = [];
     let host = "";
+    const debug = opts?.debug;
+    const keys = createKeyTally(debug);
+    let [noDescription, emptyTimestamp] = [0, 0];
 
     for (const rec of rows) {
       let description = renderDesc(m.description, rec);
-      if (!description) continue;
+      if (!description) {
+        noDescription++; // a row the template renders empty is not an event
+        continue;
+      }
+      if (debug) {
+        keys.note("timestamp", rec, m.timestamp);
+        keys.note("host", rec, m.asset);
+        keys.note("user", rec, m.user);
+      }
       const userVal = m.user ? bindStr(rec, m.user) : "";
       if (userVal) description = `${description} (user ${userVal})`;
       const severity = resolveSeverity(rec, m.severity);
@@ -216,8 +254,10 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
         return v ? { [name]: v } : {};
       };
 
+      const timestamp = resolveTs(rec, m.timestamp);
+      if (!timestamp) emptyTimestamp++; // kept: mergeDelta stamps an undated event at import time
       mapped.push({
-        timestamp: resolveTs(rec, m.timestamp),
+        timestamp,
         description,
         severity,
         mitre: resolveMitre(rec, m.mitre),
@@ -254,15 +294,25 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
       }
     }
 
+    const minSeverity = opts?.minSeverity ?? spec.options.minSeverity;
     const { events, groups } = aggregateEvents(mapped, {
       aggregate: spec.options.aggregate,
-      minSeverity: opts?.minSeverity ?? spec.options.minSeverity,
+      minSeverity,
       maxEvents: spec.options.maxEvents,
     });
     let iocs = [...iocSink.values()];
     if (spec.options.maxIocs && iocs.length > spec.options.maxIocs)
       iocs = iocs.slice(0, spec.options.maxIocs);
     const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+    if (debug) {
+      keys.flush();
+      debug.skipped("no_description", noDescription);
+      debug.observed("empty_timestamp", emptyTimestamp);
+      const tally = createSiemDebugTally(debug, minSeverity);
+      tally.floored(mapped);
+      const dropped = Math.max(0, rows.length - represented);
+      tally.flush({ total: rows.length, kept: events.length, groups, dropped });
+    }
     return {
       events,
       iocs,

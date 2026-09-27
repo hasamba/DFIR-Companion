@@ -46,6 +46,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -54,6 +55,8 @@ export interface CloudActivityImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface CloudActivityParseResult {
@@ -112,11 +115,15 @@ function matchRule(rules: Rule[], key: string): { severity: Severity; mitre: str
   return null;
 }
 
-function pickStr(row: Row, keys: string[]): string {
+// `onKey` hears which candidate key supplied the value (#1736) — the key name, never the value.
+function pickStr(row: Row, keys: string[], onKey?: (key: string) => void): string {
   for (const k of keys) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const s = str(v).trim();
-    if (s) return s;
+    if (s) {
+      onKey?.(k);
+      return s;
+    }
   }
   return "";
 }
@@ -192,16 +199,29 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
 
 // ───────────────────────────── Azure ─────────────────────────────
 
-function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): MappedEvent | null {
-  const op = pickStr(rec, ["operationName.value", "operationName", "OperationNameValue", "OperationName"]);
+function mapAzure(
+  rec: Row,
+  sink: Map<string, SiemIoc>,
+  recordIndex: number,
+  debug?: ImportDebugRecorder,
+): MappedEvent | null {
+  const op = pickStr(
+    rec,
+    ["operationName.value", "operationName", "OperationNameValue", "OperationName"],
+    (k) => debug?.field("action", k),
+  );
   if (!op) return null;
 
-  const caller = pickStr(rec, ["caller", "Caller", "identity.claims.name"]);
+  const caller = pickStr(rec, ["caller", "Caller", "identity.claims.name"], (k) => debug?.field("user", k));
   // All four are Azure's own activity-log fields (recorded by Azure's own infrastructure at call
   // time), across the three export shapes this codebase already reads from — edge-observed, not
   // client-asserted (#1184 audit).
   const ip = cleanIp(
-    pickStr(rec, ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"]),
+    pickStr(
+      rec,
+      ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"],
+      (k) => debug?.field("source_ip", k),
+    ),
   );
   const status = pickStr(rec, ["status.value", "status", "ActivityStatusValue", "resultType", "ResultType"]);
   // Microsoft's own schema reference documents subStatus as "usually the HTTP status code of the
@@ -269,7 +289,9 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
   description = logging
     ? renderLoggingDescription(description, "", logging)
     : boundedTextTo(description, 600); // an identity downstream — see mapGcp
-  const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"]);
+  const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"], (k) =>
+    debug?.field("timestamp", k),
+  );
 
   return {
     timestamp: normalizeTime(observed),
@@ -443,15 +465,17 @@ export function parseCloudActivity(
       gcpRecords.push(rec);
       const rows = mapGcp(rec, iocSink, `record:${recordIndex}`);
       if (rows.length) sawGcp = true;
+      // No methodName: the record is never mapped (#1736).
+      else opts.debug?.skipped("missing_required_field");
       mapped.push(...rows);
     } else if (isAzure(rec)) {
       azureRecords.push(rec);
-      const m = mapAzure(rec, iocSink, recordIndex);
+      const m = mapAzure(rec, iocSink, recordIndex, opts.debug);
       if (m) {
         sawAzure = true;
         mapped.push(m);
-      }
-    }
+      } else opts.debug?.skipped("missing_required_field");
+    } else opts.debug?.skipped("unrecognized_record");
   });
   // Coverage (#1063): every GCP/Azure record this upload states about itself, regardless of
   // whether it mapped to a timeline row.

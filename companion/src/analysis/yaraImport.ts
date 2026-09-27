@@ -19,6 +19,8 @@
 
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { createCodeTally, createFieldTally, recordAggregation } from "./parseDebugTally.js";
 import {
   aggregateEvents,
   addIoc,
@@ -34,6 +36,7 @@ export interface YaraImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // this attempt's import debug recorder (#1736)
 }
 
 export const YARA_SOURCE = "YARA";
@@ -142,6 +145,24 @@ export function severityFromMeta(meta: Record<string, string>): Severity {
   return "Medium";
 }
 
+// Which meta keys severityFromMeta and the hash columns actually read for one match (#1736): the
+// key NAMES only, tallied for the import debug recorder, never a value.
+function tallyYaraKeys(
+  meta: Record<string, string>,
+  sha: string | undefined,
+  md5: string | undefined,
+  fields: ReturnType<typeof createFieldTally>,
+  decisions: ReturnType<typeof createCodeTally>,
+): void {
+  const scoreKey = ["score", "severity_score"].find((k) => meta[k] !== undefined);
+  const levelKey = ["threat_level", "threatlevel", "severity"].find((k) => meta[k] !== undefined);
+  if (scoreKey) fields.add("severity", scoreKey);
+  if (levelKey) fields.add("severity", levelKey);
+  if (!scoreKey && !levelKey) decisions.add("default_severity");
+  if (sha) fields.add("hash", "sha256");
+  if (md5) fields.add("hash", "md5");
+}
+
 export function mitreFromYara(tags: string[], meta: Record<string, string>): string[] {
   const hay = [...tags, ...Object.values(meta)].join(" ");
   const out = new Set<string>();
@@ -167,6 +188,9 @@ function yaraAggKey(rule: string, file: string): string {
 export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): SiemParseResult {
   const matches: YaraMatch[] = [];
   let cur: YaraMatch | null = null;
+  let unrecognized = 0;
+  const fields = createFieldTally();
+  const decisions = createCodeTally();
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/\s+$/, "");
@@ -183,7 +207,9 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
       continue;
     }
     cur = null; // an unrecognized line ends the current match's string run
+    unrecognized += 1;
   }
+  if (unrecognized) opts.debug?.skipped("unrecognized_line", unrecognized);
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = matches.map((ev) => {
@@ -196,6 +222,7 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
       ? ev.meta.sha256.trim().toLowerCase()
       : undefined;
     const md5 = HEX_HASH.test((ev.meta.md5 ?? "").trim()) ? ev.meta.md5.trim().toLowerCase() : undefined;
+    tallyYaraKeys(ev.meta, sha, md5, fields, decisions);
     const desc =
       `YARA: ${ev.rule} matched ${ev.file}` +
       (ev.tags.length ? ` [${ev.tags.join(", ")}]` : "") +
@@ -220,6 +247,9 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  fields.flush(opts.debug);
+  decisions.flush((code, n) => opts.debug?.fallback(code, n));
+  recordAggregation(opts.debug, mapped.length, groups, events.length);
 
   return {
     events,

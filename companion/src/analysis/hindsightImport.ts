@@ -13,6 +13,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Deterministic importer for Hindsight (Ryan Benson) browser-artifact output — Chrome/Edge/Brave
 // history, downloads, cookies, autofill and local storage, parsed from a browser profile. No AI call.
@@ -36,6 +37,8 @@ export interface HindsightImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface HindsightParseResult {
@@ -52,10 +55,14 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
-function pick(rec: Row, keys: readonly string[]): string {
+// `onKey` hears which candidate key supplied the value (#1736) — the key name, never the value.
+function pick(rec: Row, keys: readonly string[], onKey?: (key: string) => void): string {
   for (const k of keys) {
     const v = getCI(rec, k);
-    if (v != null && text(v).trim() !== "") return text(v).trim();
+    if (v != null && text(v).trim() !== "") {
+      onKey?.(k);
+      return text(v).trim();
+    }
   }
   return "";
 }
@@ -70,13 +77,20 @@ function hostOf(url: string): string {
   }
 }
 
-function mapRow(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapRow(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent | null {
   const type = pick(rec, ["type", "row_type", "record_type"]).toLowerCase() || "url";
-  const timestamp = pick(rec, ["timestamp", "date", "datetime", "visit_time", "time"]);
-  const url = pick(rec, ["url", "target", "location"]);
+  let timeKey = "";
+  let urlKey = "";
+  const timestamp = pick(rec, ["timestamp", "date", "datetime", "visit_time", "time"], (k) => (timeKey = k));
+  const url = pick(rec, ["url", "target", "location"], (k) => (urlKey = k));
   // A row with neither a time nor a URL cannot be placed on a timeline or correlated; it is a
   // cookie/preference row whose value is the profile dump, not the case.
-  if (!timestamp || !url) return null;
+  if (!timestamp || !url) {
+    debug?.skipped(!timestamp ? "missing_timestamp" : "missing_url");
+    return null;
+  }
+  debug?.field("timestamp", timeKey);
+  debug?.field("url", urlKey);
 
   const title = pick(rec, ["title", "name"]);
   const interpretation = pick(rec, ["interpretation", "interpreted"]);
@@ -142,7 +156,7 @@ export function parseHindsight(input: string, opts: HindsightImportOptions = {})
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   for (const rec of rows) {
-    const event = mapRow(rec, iocSink);
+    const event = mapRow(rec, iocSink, opts.debug);
     if (event) mapped.push(event);
   }
 

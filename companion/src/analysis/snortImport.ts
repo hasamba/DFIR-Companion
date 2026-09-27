@@ -24,6 +24,7 @@ import {
   type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 export interface SnortImportOptions {
   aggregate?: boolean;
@@ -31,6 +32,8 @@ export interface SnortImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   assumeYear?: number; // year stamped onto the year-less timestamps (default: current UTC year)
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export type SnortParseResult = SiemParseResult;
@@ -133,7 +136,8 @@ export function parseSnortLog(text: string, opts: SnortImportOptions = {}): Snor
     if (m) {
       total++;
       mapped.push(m);
-    }
+      if (!m.timestamp) opts.debug?.observed("empty_timestamp");
+    } else opts.debug?.skipped("not_an_alert_line");
   }
 
   const { events, groups } = aggregateEvents(mapped, {

@@ -489,6 +489,10 @@ Operator health view:
   layout. Open the zip and read it before you send it.
   This is **not** a case export: a full case export carries real evidence and is never a support
   artifact.
+  For each failed import the bundle also shows what the importer decided: which column it used for
+  the time, host, user and other fields; how many rows it skipped, removed or kept as unusual, and
+  why; which fallback it took; and where parsing stopped when the parser knows the row. Column names
+  appear only from the same fixed list of generic names, and a custom importer shows as `custom`.
 - **Always-on debug log** — every log line at every level, including debug, goes to `debug.log` and
   `debug.1.log` in the global logs folder, whatever the Log verbosity is. You do not need to switch
   to debug and repeat a problem before you build a support bundle. The two files together never pass

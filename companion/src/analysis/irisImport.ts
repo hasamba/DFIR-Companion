@@ -16,6 +16,8 @@
 //   • assets          → evidence events (so nothing is lost and the asset graph picks them up)
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   addIoc,
   aggregateEvents,
@@ -49,6 +51,7 @@ export interface IrisImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   includeAssets?: boolean; // map IRIS assets to evidence events (default true)
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface IrisImportResult {
@@ -272,6 +275,8 @@ export function parseIrisCase(data: IrisCaseData, opts: IrisImportOptions = {}):
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const iocs = [...sink.values()].slice(0, maxIocs);
+  opts.debug?.fallback("asset_records", mappedTotal - data.timeline.filter(isObject).length);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

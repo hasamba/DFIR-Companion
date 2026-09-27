@@ -3,6 +3,8 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { recordParseResult } from "../parseDebugTally.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -24,11 +26,17 @@ export async function importMacLoginItem(
     macLoginItem?: MacLoginItemOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseMacLoginItemBtm(bytes, opts.macLoginItem);
-  if (!parsedRaw) throw new Error("not a recognized macOS Background Task Management file");
+  if (!parsedRaw) {
+    opts.debug?.failedAt("parse");
+    throw new Error("not a recognized macOS Background Task Management file");
+  }
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParseResult(opts.debug, parsed, parsed.events.length, { malformed_item: parsed.malformedItems });
+  if (parsed.malformedBookmarks) opts.debug?.observed("malformed_bookmark", parsed.malformedBookmarks);
   if (parsed.events.length === 0) {
     const gapDetail = parsed.malformedItems ? `${parsed.malformedItems} malformed item(s)` : undefined;
     return noteEmptyImport(ctx, caseId, opts, "macOS login item", parsed.total, gapDetail);

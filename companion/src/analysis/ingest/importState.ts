@@ -17,6 +17,7 @@ import {
 } from "../passwordSprayFanout.js";
 import type { StoredAuthObservation } from "../authObservationStore.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
  * The two shared tails every deterministic importer ends in (#418).
@@ -137,10 +138,32 @@ export function hostIdentityDelta(parsed: {
   };
 }
 
+/**
+ * Record a deterministic wrapper's parse for the import's debug recorder (#1736): records in, events
+ * kept after the gate-aware floor, the rows that floor removed, and the records no event represents.
+ * Counts only — never an event's content.
+ */
+export function noteParsed(
+  debug: ImportDebugRecorder | undefined,
+  total: number,
+  raw: readonly unknown[],
+  kept: readonly { count?: number }[],
+): void {
+  if (!debug) return;
+  debug.omitted("below_severity_floor", raw.length - kept.length);
+  const represented = kept.reduce((n, e) => n + (e.count ?? 1), 0);
+  debug.counts({ total, kept: kept.length, dropped: Math.max(0, total - represented) });
+}
+
 export async function noteEmptyImport(
   ctx: ImportContext,
   caseId: string,
-  opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
+  opts: {
+    label: string;
+    importedAt: string;
+    onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
+  },
   kind: string,
   total: number,
   // What the importer could still say about the upload's shape (a memory export that holds zero
@@ -150,6 +173,8 @@ export async function noteEmptyImport(
   // and read as an aside rather than the cause.
   detail?: string,
 ): Promise<InvestigationState> {
+  opts.debug?.counts({ total, kept: 0 });
+  opts.debug?.observed("no_events");
   const delta = deltaSchema.parse({
     findings: [],
     iocs: [],

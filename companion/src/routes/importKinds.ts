@@ -1,3 +1,5 @@
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import { emitImportRefused } from "./importDebugEmit.js";
 import type { Response } from "express";
 import { getAiLimiter } from "../http/rateLimiter.js";
 
@@ -35,6 +37,36 @@ export function isAiDependent(kind: string): boolean {
 export function rejectIfAiImportOverBudget(kind: string, caseId: string, res: Response): boolean {
   if (isAiDependent(kind) && !getAiLimiter().tryAcquire(caseId)) {
     res.status(429).json({ error: "AI-analysis import rate exceeded for this case, try again shortly" });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The refusals /import and /import-file make right after detection — an unknown format (400 with the
+ * route's own hint), a CSV/log with no AI provider (501), a CSV/log over the per-case AI budget (429).
+ * Each records its reason on the attempt's recorder (#1736). Returns true when it has answered.
+ */
+export function refuseDetectedImport(o: {
+  kind: string;
+  caseId: string;
+  res: Response;
+  hasSynthesisProvider: boolean;
+  unknown: () => object;
+  debug: ImportDebugRecorder;
+}): boolean {
+  if (o.kind === "unknown") {
+    emitImportRefused(o.caseId, o.debug, "unknown_format");
+    o.res.status(400).json(o.unknown());
+    return true;
+  }
+  if (isAiDependent(o.kind) && !o.hasSynthesisProvider) {
+    emitImportRefused(o.caseId, o.debug, "no_ai_provider");
+    o.res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+    return true;
+  }
+  if (rejectIfAiImportOverBudget(o.kind, o.caseId, o.res)) {
+    emitImportRefused(o.caseId, o.debug, "ai_budget_exceeded");
     return true;
   }
   return false;

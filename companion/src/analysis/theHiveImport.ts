@@ -16,6 +16,8 @@
 // object — skipped so we don't false-positive on Elasticsearch exports.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import { normalizeLegacyTlp } from "./tlp.js";
 import {
   addIoc,
@@ -38,6 +40,7 @@ export interface TheHiveImportOptions {
   maxEvents?: number;
   maxIocs?: number;
   allObservables?: boolean; // include observables not flagged ioc:true (default: false)
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface TheHiveParseResult {
@@ -261,7 +264,7 @@ export function parseTheHive(text: string, opts: TheHiveImportOptions = {}): The
   try {
     root = JSON.parse(t);
   } catch {
-    /* fall through to empty */
+    opts.debug?.skipped("unparseable_json"); // falls through to empty
   }
 
   if (root === undefined) {
@@ -296,6 +299,7 @@ export function parseTheHive(text: string, opts: TheHiveImportOptions = {}): The
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let observableCount = 0;
+  let unknown = 0;
 
   for (const rec of records) {
     const kind = classifyRecord(rec);
@@ -304,8 +308,10 @@ export function parseTheHive(text: string, opts: TheHiveImportOptions = {}): The
     } else if (kind === "observable") {
       observableCount++;
       mapObservable(rec, sink, opts.allObservables ?? false);
-    }
+    } else unknown++;
   }
+  opts.debug?.skipped("unknown_record_type", unknown);
+  opts.debug?.fallback("observable_records", observableCount);
 
   const caseAlertTotal = mapped.length;
 
@@ -317,6 +323,7 @@ export function parseTheHive(text: string, opts: TheHiveImportOptions = {}): The
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const iocs = [...sink.values()].slice(0, maxIocs);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   // Determine the true format label
   let finalFormat = format;

@@ -109,9 +109,10 @@ export function registerLeappImportRoute(
             excluded: preview.origin.excluded,
           },
         },
-        run: () =>
+        run: (withDebug) =>
           pipeline.importLeapp(caseId, text, {
             label: storedName,
+            ...withDebug,
             idPrefix: `lp${seq}`,
             importedAt,
             // The ORIGINAL name, not the stored one: the stored name is sequence-prefixed, and the

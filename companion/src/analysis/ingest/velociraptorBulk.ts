@@ -14,6 +14,7 @@ import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "..
 import { isCollectorEvidenceRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
  * The bounded Velociraptor import (#1439): rows in, one batch at a time; events out, one batch at a
@@ -266,6 +267,31 @@ function resolveBatchIocLinks(
   }
 }
 
+// The bulk run's decisions for the import debug record (#1736): the per-row tally the mapper kept,
+// then what the floor, the forensic gate and the event cap removed. Counts only.
+function recordBulkDebug(
+  debug: ImportDebugRecorder | undefined,
+  vrCtx: ReturnType<typeof vrBulkInternals.newVrCtx>,
+  t: {
+    rows: number;
+    forensicKept: number;
+    superAppended: number;
+    dropped: number;
+    belowFloor: number;
+    gateDemoted: number;
+  },
+  mode: "forensic" | "super-only",
+): void {
+  if (!debug) return;
+  vrCtx.dbg.flush();
+  debug.fallback("bulk_path");
+  if (t.belowFloor) debug.omitted("below_severity_floor", t.belowFloor);
+  if (t.dropped) debug.omitted("over_event_cap", t.dropped);
+  if (t.gateDemoted) debug.observed("super_timeline_only", t.gateDemoted);
+  const kept = mode === "forensic" ? t.forensicKept : t.superAppended;
+  debug.counts({ total: t.rows, kept, dropped: t.belowFloor + t.dropped });
+}
+
 function yieldToLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -278,6 +304,7 @@ interface BatchOutcome {
   events: ForensicEvent[];
   rowsIn: number;
   detections: number;
+  belowFloor: number; // grouped events the analyst's severity floor removed (#1736)
 }
 
 // Normalize + consolidate + map + aggregate ONE batch of rows into forensic-shaped events with ids
@@ -317,7 +344,7 @@ function mapBatch(
     if (e.aggKey) batchIdByAggKey.set(e.aggKey, id);
     events.push(toForensicEvent(e, id, opts, stamp));
   }
-  return { events, rowsIn: rows.length, detections };
+  return { events, rowsIn: rows.length, detections, belowFloor: grouped.length - floored.length };
 }
 
 /**
@@ -363,6 +390,8 @@ export async function runVelociraptorBulk(
     tagged: 0,
     detections: 0,
     dropped: 0,
+    belowFloor: 0,
+    gateDemoted: 0,
   };
 
   sink.log(
@@ -380,6 +409,7 @@ export async function runVelociraptorBulk(
     // super-timeline receives the graded copy.
     events = downgradeFirstPartyEgress(events).events;
     totals.detections += out.detections;
+    totals.belowFloor += out.belowFloor;
     if (tagger && events.length) {
       const tagged = await tagger.apply(caseId, events);
       events = tagged.events;
@@ -389,6 +419,7 @@ export async function runVelociraptorBulk(
     if (mode === "forensic" && events.length && gate) {
       const room = forensicBudget - totals.forensicKept;
       const { kept: graded } = demoteBelowSeverity(events, gate); // the demote pass's own cut
+      totals.gateDemoted += events.length - graded.length;
       const keep = room > 0 ? graded.slice(0, room) : [];
       totals.dropped += graded.length - keep.length;
       if (keep.length) kept = await sink.appendForensic(caseId, keep);
@@ -486,6 +517,7 @@ export async function runVelociraptorBulk(
     throw err;
   }
   opts.onProgress?.(totals.rows, totals.rows);
+  recordBulkDebug(vr.debug, vrCtx, totals, mode);
 
   const hostname = [...vrCtx.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   const finishedAt = new Date().toISOString();

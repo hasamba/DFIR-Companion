@@ -48,6 +48,8 @@
 // here (that cap is shared code, not specific to this format).
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   aggregateEvents,
   addIoc,
@@ -81,6 +83,7 @@ export interface CombinedLogImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
   /**
    * The file's trailer layout, declared by the caller. Without it every appended token stays
    * unlabelled: the layout is the deployment's, and a token's shape — the client's to choose
@@ -603,6 +606,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   // format. Without a declaration every appended token is shown unlabelled.
   const profile = opts.trailerProfile ?? null;
 
+  let unparsed = 0;
   for (const line of lines) {
     if (!line) continue;
     const rowSink = new Map<string, SiemIoc>();
@@ -611,8 +615,9 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
       total++;
       mergeRowIocs(sink, rowSink, m.aggKey);
       mapped.push(m);
-    }
+    } else unparsed++; // not a combined/common-format access-log line
   }
+  opts.debug?.skipped("unparseable_line", unparsed);
   // With aggregation off nothing is folded, so nothing may be rewritten either: every row keeps its
   // own payload — the no-aggregation mode exists to preserve exactly that.
   const rewritten =
@@ -633,6 +638,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

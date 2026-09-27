@@ -3,6 +3,7 @@ import { join, basename } from "node:path";
 import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { deliver, spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
+import { compactBytes, compactDuration } from "../integrations/mcp/mcpFormat.js";
 import { runMcpAgent, DEFAULT_AGENT_TIMEOUT_MS } from "../integrations/mcp/mcpAgentRunner.js";
 import { McpReportStore, type McpImportCounts } from "../integrations/mcp/mcpReportStore.js";
 import { mergeDelta } from "../analysis/stateMerge.js";
@@ -12,6 +13,7 @@ import { resolveContainedPath } from "../integrations/tools/runToolImport.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { registerMcpServerRoutes } from "./mcpServers.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 
@@ -47,24 +49,6 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     return Number.isFinite(configured) && configured >= 60_000 && configured <= 86_400_000
       ? Math.floor(configured)
       : DEFAULT_AGENT_TIMEOUT_MS;
-  }
-
-  function compactDuration(ms: number): string {
-    const seconds = Math.max(0, Math.floor(ms / 1000));
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-  }
-
-  function compactBytes(bytes: number): string {
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let value = Math.max(0, bytes);
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
   }
 
   // The server registry (status, CRUD, discovery, tools, reconnect) lives in routes/mcpServers.ts:
@@ -132,6 +116,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     kind: string,
     text: string,
     outName: string,
+    debug: ImportDebugRecorder, // the attempt's recorder, which the caller's failure ring also gets (#1736)
   ): Promise<{ addedEvents: number; addedIocs: number }> {
     let before: InvestigationState | null = null;
     if (options.stateStore) {
@@ -141,7 +126,17 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         /* keep null */
       }
     }
-    const r = await ingestStreamed(caseId, kind, text, outName);
+    const r = await ingestStreamed(
+      caseId,
+      kind,
+      text,
+      outName,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      debug,
+    );
     // An MCP tool can produce reference data as readily as evidence — a capability listing looks
     // exactly like a Volatility table to any detector — so the checkpoint matters more here than on
     // a path where the input was chosen from disk. One click puts the case back.
@@ -296,6 +291,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       cancellable: true,
     });
 
+    const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
     void (async () => {
       try {
         await job?.ready;
@@ -340,7 +336,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           throw new Error(`${server.id}/${tool}: returned no output — nothing to import`);
         }
         const outName = `${basename(targetPath ?? tool)}.${server.id}-${tool}.out`;
-        const kind = ctx.resolveImportKind()(outName, outcome.text);
+        const kind = ctx.resolveImportKind()(outName, outcome.text, debug);
         if (kind === "unknown") {
           throw new Error(
             `${server.id}/${tool}: returned ${outcome.text.length} byte(s) in no recognized format` +
@@ -371,7 +367,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           return;
         }
 
-        const r = await ingestMcpOutput(caseId, server.id, tool, label, kind, outcome.text, outName);
+        const r = await ingestMcpOutput(caseId, server.id, tool, label, kind, outcome.text, outName, debug);
         await reportStore.save(caseId, {
           server: server.id,
           tool,
@@ -398,7 +394,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         if (job) await options.jobManager?.fail(job.jobId, err);
         // A cancel is the analyst's decision, not a failure — no FAILED line, no ring entry (#1438).
-        if (!job?.signal?.aborted) recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
+        if (!job?.signal?.aborted) recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err, debug);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import",
           action: "mcp-run",
@@ -518,6 +514,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       });
     if (p.importedAt)
       return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
+    const debug = createImportDebugRecorder(); // the approval is its own import attempt (#1736)
     try {
       // An agent preview holds a delta, not tool output — merge it rather than routing it through
       // importers that have no format to detect.
@@ -539,7 +536,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         });
         return res.status(200).json({ ok: true, reportId: report.id, ...r });
       }
-      const r = await ingestMcpOutput(caseId, p.server, p.tool, p.label, p.kind, p.text, p.outName);
+      const r = await ingestMcpOutput(caseId, p.server, p.tool, p.label, p.kind, p.text, p.outName, debug);
       const counts: McpImportCounts = {
         addedFindings: 0,
         updatedFindings: 0,
@@ -564,7 +561,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       });
       return res.status(200).json({ ok: true, reportId: report.id, ...counts });
     } catch (err) {
-      recordImportFailure(caseId, `mcp:${p.server}/${p.tool}`, p.label, err);
+      recordImportFailure(caseId, `mcp:${p.server}/${p.tool}`, p.label, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
   });

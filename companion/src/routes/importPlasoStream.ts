@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import type { ImportBase, RouteContext } from "./context.js";
+import { emitImportDebug } from "./importDebugEmit.js";
 
 /**
  * The streamed Plaso import with its log lines (#1438). `/import-file` and the job resume handler
@@ -10,6 +11,7 @@ import type { ImportBase, RouteContext } from "./context.js";
  * callers use this in place of the pipeline call. The size comes from the stored file: the text was
  * never in memory. A cancelled import logs as cancelled and rethrows so the caller's own AbortError
  * handling still runs; a failure rethrows untouched, and recordImportFailure writes the FAILED line.
+ * The same two seams close the attempt's debug recorder (#1736), as dispatchImport does.
  */
 export async function importPlasoFileLogged(
   ctx: RouteContext,
@@ -28,10 +30,13 @@ export async function importPlasoFileLogged(
   try {
     const state = await options.pipeline.importPlasoFile(caseId, storedPath, base);
     log.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
+    emitImportDebug(caseId, base.debug, "succeeded");
     return state;
   } catch (err) {
-    if ((err as Error).name === "AbortError")
+    if ((err as Error).name === "AbortError") {
       log.info(formatImportCancelled(caseId, storedName, Date.now() - startedAt), { caseId });
+      emitImportDebug(caseId, base.debug, "cancelled");
+    }
     throw err;
   }
 }

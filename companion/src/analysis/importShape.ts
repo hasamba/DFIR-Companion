@@ -266,7 +266,7 @@ function classifyJson(value: unknown): ColumnType {
 }
 
 /** An allowlisted field keeps its spelling; anything else — including any value — is `<unlisted>`. */
-function columnName(field: string): string {
+export function safeColumnName(field: string): string {
   const name = field
     .trim()
     .replace(/^\uFEFF/, "")
@@ -345,7 +345,7 @@ function keysOf(obj: Record<string, unknown> | null): ColumnShape[] | undefined 
   if (!obj) return undefined;
   return Object.keys(obj)
     .slice(0, MAX_COLUMNS)
-    .map((k) => ({ name: columnName(k), type: classifyJson(obj[k]) }));
+    .map((k) => ({ name: safeColumnName(k), type: classifyJson(obj[k]) }));
 }
 
 // ── delimited text ───────────────────────────────────────────────────────────────────────────
@@ -416,7 +416,7 @@ function describeDelimited(text: string): DelimitedPart {
   if (!delimiter) return { format: "text" };
 
   const header = splitLine(rows[0] ?? "", delimiter);
-  const names = header.slice(0, MAX_COLUMNS).map(columnName);
+  const names = header.slice(0, MAX_COLUMNS).map((f) => safeColumnName(f));
   const headerRecognized = names.some((n) => n !== UNLISTED);
   const dataRows = headerRecognized ? rows.slice(1) : rows.slice(0, MAX_PROFILE_ROWS);
 

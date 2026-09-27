@@ -46,6 +46,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -54,6 +55,8 @@ export interface AzureStorageLogImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 // No `hostname` — this is a cloud control-plane-adjacent source, not an endpoint import; matches
@@ -155,12 +158,19 @@ export function mapAzureStorageLogRecord(
   rec: Row,
   sink: Map<string, SiemIoc>,
   recordIndex: number,
+  debug?: ImportDebugRecorder,
 ): MappedEvent | null {
   const category = str(getCI(rec, "category")).trim();
-  if (!/^storage(?:read|write|delete)$/i.test(category)) return null;
+  if (!/^storage(?:read|write|delete)$/i.test(category)) {
+    debug?.skipped("non_storage_category");
+    return null;
+  }
 
   const op = oneLine(str(getCI(rec, "operationName"))).trim();
-  if (!op) return null;
+  if (!op) {
+    debug?.skipped("missing_required_field");
+    return null;
+  }
 
   const observed = str(getCI(rec, "time")).trim();
   const timestamp = normalizeTime(observed);
@@ -282,7 +292,7 @@ export function parseAzureStorageLog(
   const mapped: MappedEvent[] = [];
 
   records.forEach((rec, index) => {
-    const m = mapAzureStorageLogRecord(rec, sink, index);
+    const m = mapAzureStorageLogRecord(rec, sink, index, opts.debug);
     if (m) mapped.push(m);
   });
 

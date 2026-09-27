@@ -2,6 +2,8 @@ import { ECAR_SOURCE, parseEcarJson, type EcarImportOptions } from "../ecarImpor
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { recordFloor } from "../parseDebugTally.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -31,9 +33,10 @@ export async function importEcar(
     ecar?: EcarImportOptions;
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseEcarJson(text, { ...opts.ecar });
+  const parsedRaw = parseEcarJson(text, { ...opts.ecar, debug: opts.debug });
   const { events: crossRows, retentionNote } = await crossUploadSprayRows(
     ctx,
     caseId,
@@ -49,6 +52,8 @@ export async function importEcar(
     ...parsedRaw,
     events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
   };
+  opts.debug?.counts({ total: parsed.total, kept: parsed.events.length, dropped: parsed.dropped });
+  recordFloor(opts.debug, parsedRaw.events.length + crossRows.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "ECAR", parsed.total, retentionNote || undefined);
 

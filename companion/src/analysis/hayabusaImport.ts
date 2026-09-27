@@ -47,11 +47,24 @@ import {
   isScriptBlockTextKey,
   type HayabusaRecord,
 } from "./scriptBlockFragments.js";
-import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
+import {
+  HostRenameLedger,
+  demoteSampleHost,
+  resolveRowHost,
+  withFormerHostSuffix,
+  type RowHost,
+} from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { applyOsBehaviourRules } from "./osBehaviourRules.js";
+import {
+  createDecisionTally,
+  firstPresentKey,
+  tallyRowHost,
+  type DecisionTally,
+  type ImportDebugRecorder,
+} from "./rowDecisionDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -66,6 +79,7 @@ export interface HayabusaImportOptions {
   // The host this file came from, when nothing in it says so (#1496) — see ChainsawImportOptions.
   hostFallback?: string;
   hostFallbackBasis?: "collector" | "analyst";
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 export interface HayabusaParseResult {
@@ -193,7 +207,7 @@ function mapRecord(
   aliases?: HostRenameMap,
   renames?: HostRenameLedger,
   fallback: { host: string; basis: "collector" | "analyst" } = { host: "", basis: "collector" },
-): { mapped: MappedEvent; host: string } | null {
+): { mapped: MappedEvent; host: string; rh: RowHost } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
   const eid = firstStr(rec, ["EventID", "Event ID", "EventId", "EID"]);
@@ -297,7 +311,25 @@ function mapRecord(
   // A sample-corpus host (veloDetectionNoise.ts) is demoted to Info — but only when the row has NO
   // collector identity, so a renamed host's own history is never mistaken for a foreign sample (#1417).
   demoteSampleHost(mapped, rh);
-  return { host, mapped };
+  return { host, mapped, rh };
+}
+
+// Which source keys fed this record's event (#1736): the same candidate lists mapRecord reads.
+function tallyRecord(t: DecisionTally, rec: Row, details: Row, rh: RowHost, timestamp: string): void {
+  const timeKey = timestamp ? firstPresentKey(rec, ["Timestamp", "@timestamp", "datetime"]) : "";
+  if (timeKey) t.fields.add("timestamp", timeKey);
+  else t.observed.add("empty_timestamp");
+  const ruleKey = firstPresentKey(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
+  if (ruleKey) t.fields.add("rule", ruleKey);
+  else t.fallbacks.add("event_id_title");
+  const eidKey = firstPresentKey(rec, ["EventID", "Event ID", "EventId", "EID"]);
+  if (eidKey) t.fields.add("event_id", eidKey);
+  if (firstPresentKey(rec, ["Channel"])) t.fields.add("channel", "Channel");
+  const procKey = firstPresentKey(details, PROC_KEYS);
+  if (procKey) t.fields.add("process", procKey);
+  const cmdKey = firstPresentKey(details, CMDLINE_KEYS);
+  if (cmdKey) t.fields.add("command_line", cmdKey);
+  tallyRowHost(t, rec, rh);
 }
 
 // ───────────────────────────── record extraction ─────────────────────────────
@@ -402,10 +434,15 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   aliases.learn(records.map((r) => r.rec));
   const fallback = { host: (opts.hostFallback ?? "").trim(), basis: opts.hostFallbackBasis ?? "collector" };
   const renames = new HostRenameLedger(); // one Info marker per (host, former name), as Chainsaw does
+  const tally = opts.debug ? createDecisionTally() : undefined;
 
   for (const { rec, details, fullMessage } of records) {
     const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback);
-    if (!r) continue;
+    if (!r) {
+      tally?.skipped.add("no_rule_or_event_id");
+      continue;
+    }
+    if (tally) tallyRecord(tally, rec, details, r.rh, r.mapped.timestamp);
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
     mapped.push(r.mapped);
     withRaw.push({ raw: rec, m: r.mapped });
@@ -415,6 +452,7 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   // the rules their fields; a plain csv/json timeline's rendered Details gives them none, and they
   // stay silent (osBehaviourRules.ts).
   applyOsBehaviourRules(withRaw);
+  tally?.flush(opts.debug);
 
   const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,

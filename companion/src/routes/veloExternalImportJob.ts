@@ -20,6 +20,7 @@ import { formatImportCancelled, formatImportFailed } from "../logging/importLog.
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import type { TruncatedArtifact, UnreadArtifact } from "../analysis/veloHuntStore.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 
 // The slice of the server's AiStatusEvent this loop emits, spelled out here: routes may not import
 // composition types (check:boundaries), and the server's own callback accepts this subset.
@@ -35,7 +36,13 @@ export interface ExternalImportDeps {
   onAiStatus?: (caseId: string, event: ExternalImportStatus) => void;
   logLine: (msg: string) => void;
   /** The diagnostics ring, which logs the FAILED line itself (#1438); without it the loop logs one. */
-  recordImportFailure?: (caseId: string, kind: string, filename: string, err: unknown) => void;
+  recordImportFailure?: (
+    caseId: string,
+    kind: string,
+    filename: string,
+    err: unknown,
+    debug?: ImportDebugRecorder,
+  ) => void;
 }
 
 export interface ArtifactIngestResult {
@@ -82,7 +89,13 @@ export async function importArtifactsUnderJob(
   artifacts: string[],
   readRows: (artifact: string) => Promise<ExternalArtifactRead>,
   // `partlyRead` (#1651): the read had no source list, so the ingest stamps every row it makes.
-  ingest: (artifact: string, rows: unknown[], read: { partlyRead: boolean }) => Promise<ArtifactIngestResult>,
+  // `debug` (#1736): this artifact's own import recorder — the ingest hands it to the importer and
+  // writes the success line; a failure reaches recordImportFailure below with the same recorder.
+  ingest: (
+    artifact: string,
+    rows: unknown[],
+    read: { partlyRead: boolean; debug: ImportDebugRecorder },
+  ) => Promise<ArtifactIngestResult>,
 ): Promise<ExternalImportOutcome> {
   const label = `velociraptor: ${what}`;
   const startedAt = performance.now();
@@ -108,6 +121,7 @@ export async function importArtifactsUnderJob(
   const unread: UnreadArtifact[] = [];
   let addedEvents = 0;
   let addedIocs = 0;
+  let inFlight: ImportDebugRecorder | undefined; // the artifact being ingested, for a failure (#1736)
   try {
     for (const [index, artifact] of artifacts.entries()) {
       // The popover's ✕ Cancel. Checked between artifacts — the one in flight finishes, so the
@@ -145,7 +159,9 @@ export async function importArtifactsUnderJob(
         at: new Date().toISOString(),
         detail: `importing ${what} — ${step}`,
       });
-      const one = await ingest(artifact, rows, { partlyRead: !!read.sourcesUnknown });
+      inFlight = createImportDebugRecorder(); // one recorder per artifact, not per hunt
+      const one = await ingest(artifact, rows, { partlyRead: !!read.sourcesUnknown, debug: inFlight });
+      inFlight = undefined;
       rows = []; // release before the next artifact is read
       imported.push(artifact);
       addedEvents += one.addedEvents;
@@ -158,7 +174,8 @@ export async function importArtifactsUnderJob(
     // A cancel is the analyst's decision, not a failure: one "cancelled" line, no ring entry.
     if ((err as Error).name === "AbortError")
       getServerLogger().info(formatImportCancelled(caseId, what, performance.now() - startedAt), { caseId });
-    else if (deps.recordImportFailure) deps.recordImportFailure(caseId, "velociraptor-external", what, err);
+    else if (deps.recordImportFailure)
+      deps.recordImportFailure(caseId, "velociraptor-external", what, err, inFlight);
     else
       getServerLogger().warn(
         formatImportFailed({

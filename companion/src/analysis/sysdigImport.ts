@@ -17,6 +17,8 @@
 // "Falco" / "sysdig" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -41,6 +43,7 @@ export interface SysdigImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface SysdigParseResult {
@@ -267,10 +270,14 @@ export function parseSysdig(text: string, opts: SysdigImportOptions = {}): Sysdi
   const mapped: MappedEvent[] = [];
   let alerts = 0,
     sawFalco = false,
-    sawSysdig = false;
+    sawSysdig = false,
+    ignored = 0;
 
   for (const rec of records) {
-    if (!isObject(rec)) continue;
+    if (!isObject(rec)) {
+      ignored++;
+      continue;
+    }
     if (isFalcoAlert(rec)) {
       sawFalco = true;
       alerts++;
@@ -280,9 +287,11 @@ export function parseSysdig(text: string, opts: SysdigImportOptions = {}): Sysdi
     } else if (isSysdigEvent(rec)) {
       sawSysdig = true;
       mapped.push(mapSysdigEvent(rec, iocSink));
-    }
-    // anything else is ignored (not a sysdig/Falco record)
+    } else ignored++; // anything else is ignored (not a sysdig/Falco record)
   }
+  opts.debug?.skipped("not_sysdig_or_falco", ignored);
+  opts.debug?.fallback("falco_mapper", alerts);
+  opts.debug?.fallback("sysdig_mapper", mapped.length - alerts);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
@@ -293,6 +302,7 @@ export function parseSysdig(text: string, opts: SysdigImportOptions = {}): Sysdi
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   const format = sawFalco && sawSysdig ? "mixed" : sawFalco ? "falco" : sawSysdig ? "sysdig" : "empty";
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
 
   return {
     events,

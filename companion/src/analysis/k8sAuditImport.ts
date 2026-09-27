@@ -28,6 +28,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -36,6 +37,8 @@ export interface K8sAuditImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface K8sAuditParseResult {
@@ -136,7 +139,7 @@ function classify(
   return { severity: "Info", mitre: [] };
 }
 
-function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapRecord(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent | null {
   const verb = str(getCI(rec, "verb"));
   const objectRef = getCI(rec, "objectRef");
   if (!verb || !isObject(objectRef)) return null;
@@ -167,8 +170,11 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (code >= 400) description += ` [${code}${reason ? ` ${reason}` : ""}]`;
   description = description.slice(0, 600);
 
+  const received = str(getCI(rec, "requestReceivedTimestamp"));
+  const stage = received ? "" : str(getCI(rec, "stageTimestamp"));
+  if (received || stage) debug?.field("timestamp", received ? "requestReceivedTimestamp" : "stageTimestamp");
   return {
-    timestamp: isoTime(str(getCI(rec, "requestReceivedTimestamp")) || str(getCI(rec, "stageTimestamp"))),
+    timestamp: isoTime(received || stage),
     description,
     severity,
     mitre,
@@ -190,8 +196,10 @@ export function parseK8sAudit(text: string, opts: K8sAuditImportOptions = {}): K
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   for (const rec of records) {
-    const m = mapRecord(rec, iocSink);
+    const m = mapRecord(rec, iocSink, opts.debug);
     if (m) mapped.push(m);
+    // No verb or no objectRef: the record is never mapped (#1736).
+    else opts.debug?.skipped("missing_required_field");
   }
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };

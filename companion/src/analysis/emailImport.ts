@@ -27,11 +27,9 @@ import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { addIoc, cleanIp, isInternalIpv4, type SiemEvent, type SiemIoc } from "./siemImport.js";
 
-export interface EmailImportOptions {
-  minSeverity?: Severity;
-  maxEvents?: number;
-  maxIocs?: number;
-}
+import type { EmailImportOptions, EmailParseResult } from "./emailImportTypes.js";
+export type { EmailImportOptions, EmailParseResult } from "./emailImportTypes.js";
+import { recordEmailParse, recordEmailUnrecoverable } from "./emailParseDebug.js";
 
 export interface EmailAddress {
   name: string;
@@ -100,18 +98,6 @@ export interface ParsedEmail {
   attachments: EmailAttachment[];
   hashes: string[]; // MD5 / SHA-1 / SHA-256 seen in headers or body
   headers: Map<string, string[]>;
-}
-
-export interface EmailParseResult {
-  events: SiemEvent[];
-  iocs: SiemIoc[];
-  total: number; // messages parsed (1 for a single .eml/.msg, 0 if nothing recoverable)
-  kept: number; // events emitted
-  dropped: number; // messages not represented
-  groups: number; // = kept (parity with the other importers)
-  format: string; // "eml" | "msg" | "empty"
-  subject: string; // best-effort, for the import banner
-  sender: string;
 }
 
 const IPV4_G = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
@@ -768,6 +754,7 @@ export function parseEmail(text: string, opts: EmailImportOptions = {}): EmailPa
     parsed.messageId
   );
   if (!recoverable) {
+    recordEmailUnrecoverable(opts.debug);
     return {
       events: [],
       iocs: [],
@@ -784,7 +771,7 @@ export function parseEmail(text: string, opts: EmailImportOptions = {}): EmailPa
   const severity = emailSeverity(parsed);
   const [event] = stampSourceArtifactHash([buildEvent(parsed, severity)], text);
   const iocs = collectIocs(parsed, maxIocs);
-
+  recordEmailParse(opts.debug, parsed);
   return {
     events: [event],
     iocs,

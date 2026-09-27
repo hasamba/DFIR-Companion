@@ -28,6 +28,12 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import {
+  createDecisionTally,
+  firstPresentKey,
+  type DecisionTally,
+  type ImportDebugRecorder,
+} from "./rowDecisionDebug.js";
 
 type Row = Record<string, unknown>;
 
@@ -36,6 +42,7 @@ export interface PlasoImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
 }
 
 export interface PlasoParseResult {
@@ -210,10 +217,24 @@ function aggKey(source: string, message: string): string {
 // Per-import mapping context shared by the in-memory and streaming entry points: a bounded IOC
 // sink + a row→MappedEvent mapper. Once the sink hits maxIocs it stops growing (a swap to a no-op
 // sink), so a file with millions of distinct indicators can't balloon memory.
+// Which columns fed a mapped row (#1736), for the import debug record. The flavor fixes most of
+// them; the l2tcsv message column and the host are the per-row choices. Key names only.
+function tallyPlasoRow(t: DecisionTally, flavor: Flavor["name"], row: Row, m: MappedEvent | null): void {
+  if (!m) {
+    t.skipped.add("no_message");
+    return;
+  }
+  if (!m.timestamp) t.observed.add("empty_timestamp");
+  else t.fields.add("timestamp", flavor === "dynamic" ? "datetime" : "date");
+  t.fields.add("message", flavor === "dynamic" ? "message" : firstPresentKey(row, ["desc", "short"]));
+  if (m.asset) t.fields.add("host", "host");
+}
+
 function makePlasoMapper(
   headers: string[],
   flavor: Flavor,
   maxIocs: number,
+  tally?: DecisionTally,
 ): {
   iocSink: Map<string, SiemIoc>;
   mapRow: (cols: string[]) => MappedEvent | null;
@@ -228,7 +249,9 @@ function makePlasoMapper(
       trimmedHeaders.forEach((h, i) => {
         row[h] = cols[i] ?? "";
       });
-      return flavor.map(row, iocSink.size >= maxIocs ? noopSink : iocSink);
+      const m = flavor.map(row, iocSink.size >= maxIocs ? noopSink : iocSink);
+      if (tally) tallyPlasoRow(tally, flavor.name, row, m);
+      return m;
     },
   };
 }
@@ -253,10 +276,12 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
   let total = 0;
   if (!flavor) {
     for (const _ of iter) total++; // drain to count rows for the "unknown format" report
+    opts.debug?.skipped("unrecognized_header", total);
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "unknown" };
   }
 
-  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs);
+  const tally = opts.debug ? createDecisionTally() : undefined;
+  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs, tally);
   function* mappedGen(): Generator<MappedEvent> {
     for (const cols of iter) {
       total++;
@@ -271,6 +296,7 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
+  tally?.flush(opts.debug);
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
     events,
@@ -302,10 +328,12 @@ export async function parsePlasoFromLines(
   let total = 0;
   if (!flavor) {
     for await (const _ of records) total++; // drain to count rows
+    opts.debug?.skipped("unrecognized_header", total);
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "unknown" };
   }
 
-  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs);
+  const tally = opts.debug ? createDecisionTally() : undefined;
+  const { iocSink, mapRow } = makePlasoMapper(headers, flavor, maxIocs, tally);
   const agg = createEventAggregator({
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -318,6 +346,7 @@ export async function parsePlasoFromLines(
   }
   const { events, groups } = agg.finish();
 
+  tally?.flush(opts.debug);
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
     events,

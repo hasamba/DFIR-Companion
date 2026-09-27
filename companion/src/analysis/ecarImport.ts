@@ -48,6 +48,8 @@ import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { createCodeTally, createFieldTally, recordAggregation } from "./parseDebugTally.js";
 
 type Row = Record<string, unknown>;
 
@@ -56,6 +58,7 @@ export interface EcarImportOptions {
   minSeverity?: Severity; // drop events below this floor. Default undefined = keep everything.
   maxEvents?: number; // safety cap on emitted events (most-severe first). Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxIocs?: number; // safety cap on emitted IOCs. Default 5000.
+  debug?: ImportDebugRecorder; // this attempt's import debug recorder (#1736)
 }
 
 export type EcarParseResult = SiemParseResult & {
@@ -486,14 +489,31 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
 
+  const fields = createFieldTally();
+  const skipped = createCodeTally();
+  const noted = createCodeTally();
   for (const [recordIndex, rec] of records.entries()) {
-    if (!rec || typeof rec !== "object") continue;
+    if (!rec || typeof rec !== "object") {
+      skipped.add("not_an_object");
+      continue;
+    }
     const r = rec;
     const host = oneLine(str(r["hostname"]));
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const m = mapEcarRecord(r, sink);
-    if (m) mapped.push(canonicalizeEcarRecord(r, m, recordIndex));
+    if (!m) skipped.add("no_object_or_action");
+    else {
+      mapped.push(canonicalizeEcarRecord(r, m, recordIndex));
+      if (m.timestamp) fields.add("timestamp", "timestamp_ms");
+      else noted.add("empty_timestamp");
+      if (m.asset) fields.add("host", "hostname");
+      else noted.add("missing_host");
+      if (m.aggKey.startsWith("ecar|other|")) noted.add("unknown_object_action");
+    }
   }
+  fields.flush(opts.debug);
+  skipped.flush((code, n) => opts.debug?.skipped(code, n));
+  noted.flush((code, n) => opts.debug?.observed(code, n));
 
   // Password-spray fan-out (930.5, #1086, #1100 item 1): built over `mapped` BEFORE
   // aggregateEvents folds distinct accounts from one source/host into one counted row — the
@@ -539,6 +559,7 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
       ).events
     : [];
   const finalEvents = stampSourceArtifactHash([...events, ...sprayRows], text);
+  recordAggregation(opts.debug, mapped.length, groups, events.length);
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";

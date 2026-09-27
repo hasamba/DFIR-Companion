@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
-import { detectImportWithCustom } from "../../src/analysis/importDetect.js";
+import { detectImportWithCustom } from "../../src/analysis/importDecision.js";
 import { createDropFolder, dropDirOf, type DropFolderDeps } from "../../src/composition/dropFolder.js";
 import { createImportIngest, type ImportIngestDeps } from "../../src/composition/importIngest.js";
 import type { ImportBase } from "../../src/routes/context.js";

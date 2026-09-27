@@ -4,6 +4,8 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import { recordParseResult } from "../parseDebugTally.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -26,11 +28,17 @@ export async function importMacFsEvent(
     macFsEvent?: MacFsEventOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseMacFsEventTsv(text, opts.macFsEvent);
-  if (!parsedRaw) throw new Error("not an FSEventsParser All_FSEVENTS.tsv report");
+  if (!parsedRaw) {
+    opts.debug?.failedAt("parse");
+    throw new Error("not an FSEventsParser All_FSEVENTS.tsv report");
+  }
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParseResult(opts.debug, parsed, parsed.events.length, { malformed_row: parsed.malformedRows });
+  if (parsed.rowsTruncated) opts.debug?.fallback("scan_stopped_at_size_cap");
   if (parsed.events.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
@@ -96,11 +104,24 @@ export async function importMacSpotlightUsage(
     macSpotlightUsage?: MacSpotlightUsageOptions;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseMacSpotlightUsageCsv(text, { ...opts.macSpotlightUsage, sourceLabel: opts.label });
-  if (!parsedRaw) throw new Error("not a mac_apt Spotlight store-item CSV");
+  const parsedRaw = parseMacSpotlightUsageCsv(text, {
+    ...opts.macSpotlightUsage,
+    sourceLabel: opts.label,
+    debug: opts.debug,
+  });
+  if (!parsedRaw) {
+    opts.debug?.failedAt("parse");
+    throw new Error("not a mac_apt Spotlight store-item CSV");
+  }
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParseResult(opts.debug, parsed, parsed.events.length, {
+    malformed_row: parsed.malformedRows,
+    no_usage_signal: parsed.filteredNoSignalRows,
+  });
+  if (parsed.rowsTruncated) opts.debug?.fallback("scan_stopped_at_size_cap");
   if (parsed.events.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",

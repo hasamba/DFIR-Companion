@@ -31,6 +31,7 @@ import {
 } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 import type { ForensicEvent } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 export const MAX_RECORDS_SCANNED = 20_000; // report-wide
 export const MAX_DUPLICATE_CHECK_BUCKET = 500; // pairwise-comparison bound per same-tuple bucket
@@ -62,6 +63,8 @@ interface MergedFlow extends RawRecord {
 export interface ExporterFlowOptions {
   aggregate?: boolean;
   maxEvents?: number;
+  /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
+  debug?: ImportDebugRecorder;
 }
 
 export interface ExporterFlowResult {
@@ -371,9 +374,11 @@ export function parseExporterFlowNdjson(
   let recordsTruncated = false;
   const parsed: RawRecord[] = [];
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     if (parsed.length + malformedRecords >= MAX_RECORDS_SCANNED) {
       recordsTruncated = true;
+      // Lines past the scan bound are never read (#1736).
+      opts.debug?.skipped("over_scan_cap", lines.length - index);
       break;
     }
     let root: unknown;
@@ -381,10 +386,12 @@ export function parseExporterFlowNdjson(
       root = JSON.parse(line);
     } catch {
       malformedRecords += 1;
+      opts.debug?.skipped("unparseable_json");
       continue;
     }
     if (!isNfdumpFlowRecord(root)) {
       malformedRecords += 1;
+      opts.debug?.skipped("unrecognized_record");
       continue;
     }
     firstValid = true;
@@ -392,6 +399,7 @@ export function parseExporterFlowNdjson(
     const rec = parseRecord(root);
     if (!rec) {
       malformedRecords += 1;
+      opts.debug?.skipped("missing_required_field");
       continue;
     }
     parsed.push(rec);
@@ -410,6 +418,8 @@ export function parseExporterFlowNdjson(
 
   const flows: MergedFlow[] = [];
   for (const records of byExporterTuple.values()) flows.push(...mergeGroup(records));
+  // Interim re-exports of one connection folded into one flow (#1736).
+  if (parsed.length > flows.length) opts.debug?.omitted("interim_flow_merge", parsed.length - flows.length);
 
   // Disclosure-only duplicate-exporter detection: same 5-tuple (ignoring exporter), overlapping
   // time window, reported by more than one exporter — never merged away (Codex design review

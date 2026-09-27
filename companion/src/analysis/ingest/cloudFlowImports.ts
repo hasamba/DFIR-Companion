@@ -13,6 +13,8 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import { recordCounts, recordParsedImport } from "./parsedDebug.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
 
 // Import AWS VPC Flow Logs, default (v2) format (#931 item 13). Deterministic (no AI call).
 export async function importAwsFlowLog(
@@ -25,11 +27,19 @@ export async function importAwsFlowLog(
     importedAt: string;
     awsFlowLog?: AwsFlowLogImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseAwsFlowLog(text, opts.awsFlowLog);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
+  // A NODATA / SKIPDATA line or a malformed one is counted by the parser and never mapped.
+  recordCounts(opts.debug, "skipped", [
+    ["flow_nodata", parsed.nodata],
+    ["flow_skipdata", parsed.skipdata],
+    ["malformed_record", parsed.malformed],
+  ]);
   if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     // Codex review (P2): an all-SKIPDATA/NODATA upload must not silently lose the coverage
     // disclosure just because it produced zero events — SKIPDATA in particular is a real AWS
@@ -98,11 +108,24 @@ export async function importAzureFlowLog(
     importedAt: string;
     azureFlowLog?: AzureFlowLogImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseAzureFlowLog(text, opts.azureFlowLog);
+  const parsedRaw = parseAzureFlowLog(text, { ...opts.azureFlowLog, debug: opts.debug });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
+  // Refused records and malformed tuples are never mapped; a no-target record and an
+  // encryption-denied group keep their rows, so they are observations, not skips.
+  recordCounts(opts.debug, "skipped", [
+    ["legacy_nsg_format", parsed.legacyNsg],
+    ["unsupported_version", parsed.unsupportedVersion],
+    ["malformed_record", parsed.malformed],
+  ]);
+  recordCounts(opts.debug, "observed", [
+    ["no_target", parsed.noTarget],
+    ["unspecified_rule", parsed.unspecifiedRule],
+  ]);
   const detail = [
     parsed.legacyNsg ? `${parsed.legacyNsg} retired NSG-format record(s) refused by name (not read)` : "",
     parsed.unsupportedVersion
@@ -173,11 +196,23 @@ export async function importGcpFlowLog(
     importedAt: string;
     gcpFlowLog?: GcpFlowLogImportOptions;
     minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseGcpFlowLog(text, opts.gcpFlowLog);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
+  // A DROPPED disposition is the provider's verdict on the flow, and the row is kept — an
+  // observation. Only non-flow and malformed entries are skipped.
+  recordCounts(opts.debug, "skipped", [
+    ["non_flow_entry", parsed.nonFlow],
+    ["malformed_record", parsed.malformed],
+  ]);
+  recordCounts(opts.debug, "observed", [
+    ["network_dropped_flow", parsed.droppedRecords],
+    ["no_reporter_instance", parsed.noReporterInstance],
+  ]);
   const detail = [
     parsed.nonFlow ? `${parsed.nonFlow} non-flow log entr(ies) skipped` : "",
     parsed.malformed ? `${parsed.malformed} malformed entr(ies)` : "",

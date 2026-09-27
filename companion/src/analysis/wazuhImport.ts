@@ -14,6 +14,8 @@
 // Reuses siemImport's extractRecords, aggregateEvents, addIoc, cleanIp.
 
 import type { Severity } from "./stateTypes.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
+import { recordMappedAggregation } from "./siemImportDebug.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -44,6 +46,7 @@ export interface WazuhImportOptions {
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
+  debug?: ImportDebugRecorder; // #1736 — this attempt's import debug recorder
 }
 
 export interface WazuhParseResult {
@@ -219,7 +222,7 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let noise = 0;
+  let [noise, belowLevel] = [0, 0];
 
   for (const rec of records) {
     // Drop low-level noise before mapping.
@@ -229,6 +232,7 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
       const level = typeof levelRaw === "number" ? levelRaw : Number(levelRaw);
       if (Number.isFinite(level) && level < minLevel) {
         noise++;
+        belowLevel++;
         continue;
       }
     }
@@ -237,6 +241,8 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
     else noise++;
   }
 
+  opts.debug?.skipped("below_rule_level", belowLevel);
+  opts.debug?.skipped("unmapped_alert", noise - belowLevel);
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format, hostname: "" };
   }
@@ -262,6 +268,7 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
   }
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  recordMappedAggregation(opts.debug, mapped, opts.minSeverity, { groups, kept: events.length });
   return {
     events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
