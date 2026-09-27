@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
+
 ## [0.38.0] - 2026-09-26
 
 ### Added

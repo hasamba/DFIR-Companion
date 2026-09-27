@@ -81,9 +81,12 @@
     return id ? fieldValue(id) : "";
   }
 
-  function requestBaseUrl(picker) {
+  function requestBaseUrl(picker, provider) {
     const value = fieldValue(picker.baseUrlId);
     if (value) return value;
+    // Same order as the server: the role's own URL, then the provider's URL, then the main URL.
+    const providerUrl = fieldValue("env-DFIR_AI_BASE_URL_" + provider.toUpperCase());
+    if (providerUrl) return providerUrl;
     const key = picker.envBaseUrlKey || picker.baseUrlId.replace(/^env-/, "");
     if (loadedEnvValues[key]) return "";
     const id = fallbackId(picker, "fallbackBaseUrlId", "env-DFIR_VISION_BASE_URL");
@@ -173,8 +176,11 @@
     const roleKey = fieldValue(picker.keyId);
     const keyFallback = fallbackId(picker, "fallbackKeyId", "env-DFIR_VISION_KEY");
     const mainKey = keyFallback ? fieldValue(keyFallback) : "";
-    const body = { provider, role: picker.role, apiKey: roleKey || mainKey };
-    const baseUrl = requestBaseUrl(picker);
+    // Same order the server uses: the role's own key, then the provider's key, then the main key.
+    // A key typed but not yet saved only exists here, so the browser must pick it the same way.
+    const providerKey = fieldValue("env-DFIR_AI_KEY_" + provider.toUpperCase());
+    const body = { provider, role: picker.role, apiKey: roleKey || providerKey || mainKey };
+    const baseUrl = requestBaseUrl(picker, provider);
     if (baseUrl !== undefined) body.baseUrl = baseUrl;
     try {
       const response = await fetch("/settings/ai-models", {
