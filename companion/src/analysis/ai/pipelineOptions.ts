@@ -184,6 +184,9 @@ export interface PipelineOptions {
   // #1734: the model synthesis switches to when the synthesis model's safety filter stops an answer.
   // Absent → a safety stop fails the synthesis once, with a message naming the setting.
   synthesisFallback?: { provider: AIProvider; label: string };
+  // #1740: how many times a safety-stopped synthesis model is asked again before the fallback.
+  // Read from DFIR_AI_SYNTH_SAFETY_RETRIES once at startup, like the fallback model. Absent → 1.
+  synthesisSafetyRetries?: number;
   secondOpinionModelLabel?: string;
   // Referee for the second-opinion verdicts (#1466). Absent → model A (synthesisProvider ?? provider)
   // referees; the run resolves that itself so the record can name whoever actually judged.

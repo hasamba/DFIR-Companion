@@ -111,6 +111,7 @@ export interface SynthesisContext
       stateLock?: StateLock;
       synthesisModelLabel?: string;
       synthesisFallback?: SynthesisFallback; // #1734
+      synthesisSafetyRetries?: number; // #1740
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;
@@ -508,6 +509,14 @@ async function resolveHostsOrThrow(
  * happens AFTER grading and BEFORE the run record. A reader who needs to know what synthesis does,
  * in order, should need exactly one screen and no jumps. That is what this is.
  */
+// #1734/#1740: the Investigation-Log note for a synthesis the safety filter stopped at least once.
+function safetyLogNote(call: SynthesisCall): string {
+  const times = `${call.safetyStops} ${call.safetyStops === 1 ? "time" : "times"}`;
+  if (call.fallbackFrom)
+    return `written by the fallback model ${call.answeredByLabel} after ${call.fallbackFrom}'s safety filter stopped the answer ${times}`;
+  return `${call.primaryLabel}'s safety filter stopped the answer ${times}; it passed on retry`;
+}
+
 export async function synthesize(
   ctx: SynthesisContext,
   caseId: string,
@@ -627,13 +636,7 @@ export async function synthesize(
     next,
     findingsDiff,
     reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
-    ...(call.fallbackFrom
-      ? {
-          logNote:
-            `written by the fallback model ${call.answeredByLabel} ` +
-            `after ${call.fallbackFrom}'s safety filter stopped the answer`,
-        }
-      : {}),
+    ...(call.safetyStops > 0 ? { logNote: safetyLogNote(call) } : {}),
   });
   // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);

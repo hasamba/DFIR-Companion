@@ -49,6 +49,7 @@ import {
   resolveRefereeModel,
 } from "./aiProviders.js";
 import { logLine } from "../logging/serverLogger.js";
+import { safetyRetriesFromEnv } from "../analysis/ai/synthesisFallback.js";
 
 export interface AiRuntimeDeps {
   store: CaseStore;
@@ -144,6 +145,8 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     provider,
     synthesisProvider,
     ...(synthesisFallback ? { synthesisFallback } : {}),
+    // #1740: read once, like the fallback model, so Settings' "restart required" stays true.
+    synthesisSafetyRetries: safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),
     velociraptorProvider,
     stateStore,
     store,

@@ -105,6 +105,7 @@ export class AnalysisPipeline {
       getKevCatalog: () => this.getKevCatalog(),
       withRetry: (caseId, label, fn, retries, backoffMs) =>
         this.withRetry(caseId, label, fn, retries, backoffMs),
+      recordRetry: (caseId, label, err) => this.recordRetry(label, err),
       analyzeRestored: (caseId, state, provider, req, label, skipPresidioGate) =>
         analyzeRestored(this.aiCtx, caseId, state, provider, req, label, skipPresidioGate),
       promoteSuperTimeline: (caseId, events, o) => this.promoteSuperTimeline(caseId, events, o),
@@ -142,12 +143,16 @@ export class AnalysisPipeline {
         `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
         { caseId },
       );
-      if (willRetry)
-        void this.opts.operationalMetrics?.record({
-          type: "ai_retry",
-          phase: safeAiPhase(label),
-          errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other"),
-        });
+      if (willRetry) this.recordRetry(label, err);
+    });
+  }
+
+  // The ai_retry metric, shared by withRetry and a caller's own retry (#1740 safety retries).
+  private recordRetry(label: string, err: unknown): void {
+    void this.opts.operationalMetrics?.record({
+      type: "ai_retry",
+      phase: safeAiPhase(label),
+      errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other"),
     });
   }
 

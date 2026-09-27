@@ -307,6 +307,7 @@ export interface RuntimePipelineParams {
   synthesisModelLabel?: string;
   // #1734: the fallback synthesis model and its label; absent → a safety stop fails once.
   synthesisFallback?: { provider: AnalyzeProvider; label: string };
+  synthesisSafetyRetries?: number; // #1740: DFIR_AI_SYNTH_SAFETY_RETRIES, read at startup
   secondOpinionModelLabel?: string;
   referee?: { provider: AnalyzeProvider; label: string };
   stateLock?: StateLock;
@@ -332,6 +333,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,
     synthesisFallback: params.synthesisFallback,
+    synthesisSafetyRetries: params.synthesisSafetyRetries,
     secondOpinionModelLabel: params.secondOpinionModelLabel,
     referee: params.referee,
     stateLock: params.stateLock,
