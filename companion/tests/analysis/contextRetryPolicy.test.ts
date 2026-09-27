@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { withRetry } from "../../src/analysis/ai/retry.js";
-import { ProviderError, outputLimitError } from "../../src/providers/provider.js";
+import { ProviderError, outputLimitError, safetyStopError } from "../../src/providers/provider.js";
 
 // A "context" failure is a size wall: the prompt alone overflows the window. An "output_limit" failure
 // is the other wall: the reply was cut off at max_tokens. The next attempt sends the same request and
@@ -35,6 +35,20 @@ describe("retry policy — context-size failures", () => {
     );
     await expect(run).rejects.toMatchObject({ kind: "output_limit" });
     expect(calls, "an output-limit error must be surfaced on the first throw").toBe(1);
+  });
+
+  it("does not retry a safety-filter stop (#1734)", async () => {
+    let calls = 0;
+    const run = withRetry(
+      async () => {
+        calls += 1;
+        throw safetyStopError("Claude Code (opus)");
+      },
+      3,
+      1,
+    );
+    await expect(run).rejects.toMatchObject({ kind: "safety_stop" });
+    expect(calls, "a safety stop must be surfaced on the first throw").toBe(1);
   });
 
   it("still retries an unclassified provider error", async () => {

@@ -181,6 +181,10 @@ export interface PipelineOptions {
   // Human-readable model labels for the second-opinion comparison header (e.g. "claude-opus-4-8"
   // vs "gpt-4o"). Fall back to the provider name when absent.
   synthesisModelLabel?: string;
+  // #1734: the model synthesis switches to when the synthesis model's safety filter stops an answer.
+  // Absent → a safety stop fails the synthesis once, with a message naming the setting.
+  synthesisFallbackProvider?: AIProvider;
+  synthesisFallbackLabel?: string;
   secondOpinionModelLabel?: string;
   // Referee for the second-opinion verdicts (#1466). Absent → model A (synthesisProvider ?? provider)
   // referees; the run resolves that itself so the record can name whoever actually judged.

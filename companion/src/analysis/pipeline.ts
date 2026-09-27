@@ -196,6 +196,12 @@ export class AnalysisPipeline {
         get synthesisModelLabel() {
           return opts.synthesisModelLabel;
         },
+        get synthesisFallbackProvider() {
+          return opts.synthesisFallbackProvider;
+        },
+        get synthesisFallbackLabel() {
+          return opts.synthesisFallbackLabel;
+        },
         get synthMetaStore() {
           return opts.synthMetaStore;
         },

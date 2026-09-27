@@ -17,7 +17,7 @@ import { AnalysisPipeline as AnalysisPipelineImpl } from "../analysis/pipeline.j
 import { makeImageLoader } from "../analysis/imageLoader.js";
 import { ProviderRegistry } from "../providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "../providers/provider.js";
-import { AI_ROLE_SOURCES, resolveAiRoleSetting, visionEnv } from "../config/aiEnv.js";
+import { AI_ROLE_SOURCES, resolveAiRoleSetting, resolveRoleSetting, visionEnv } from "../config/aiEnv.js";
 import { OpenAIProvider } from "../providers/openai.js";
 import { OpenRouterProvider } from "../providers/openrouter.js";
 import { OllamaCloudProvider } from "../providers/ollama.js";
@@ -150,6 +150,50 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Fallback synthesis model (#1734): the model synthesis switches to when the synthesis model's safety
+// filter stops an answer. Opt-in — DFIR_AI_SYNTH_FALLBACK_MODEL IS the switch. A blank provider runs
+// on the synthesis provider AND inherits the synthesis role's key/base URL; a named provider resolves
+// its own like any role (own value → that provider's saved value → vision). Naming the synthesis
+// model itself is refused: falling back to the model that just stopped cannot help. Pure in the env.
+export interface SynthesisFallbackConfig {
+  provider: string;
+  model: string;
+  label: string;
+  apiKey: string | undefined;
+  baseUrl: string | undefined;
+}
+
+export function synthesisFallbackConfig(env: NodeJS.ProcessEnv): SynthesisFallbackConfig | undefined {
+  const model = env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim();
+  if (!model) return undefined;
+  const synthProvider = AI_ROLE_SOURCES.synthesis.provider(env)?.trim();
+  const ownProvider = env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim();
+  const provider = ownProvider || synthProvider;
+  if (!provider) return undefined;
+  const synthModel = (env.DFIR_AI_SYNTH_MODEL ?? visionEnv(env, "MODEL"))?.trim();
+  if (provider.toLowerCase() === synthProvider?.toLowerCase() && model === synthModel) return undefined;
+  const setting = (s: "KEY" | "BASE_URL"): string | undefined => {
+    const own = env[`DFIR_AI_SYNTH_FALLBACK_${s}`];
+    if (own?.trim()) return own;
+    return ownProvider
+      ? resolveRoleSetting(env, ownProvider, s, own)
+      : resolveAiRoleSetting(env, "synthesis", s);
+  };
+  return { provider, model, label: model, apiKey: setting("KEY"), baseUrl: setting("BASE_URL") };
+}
+
+export function buildSynthesisFallbackProvider(): { provider: AnalyzeProvider; label: string } | undefined {
+  const cfg = synthesisFallbackConfig(process.env);
+  if (!cfg) return undefined;
+  const provider = buildProviderFrom({
+    provider: cfg.provider,
+    model: cfg.model,
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+  });
+  return provider ? { provider, label: cfg.label } : undefined;
+}
+
 // Second-opinion model (issue #116): a DEDICATED, DIFFERENT model for the on-demand QA cross-check.
 // Returns undefined UNLESS DFIR_AI_SECOND_OPINION_MODEL is set — that env var IS the opt-in, and its
 // absence disables the feature (route 501, dashboard button hidden). Recommend a model from a
@@ -259,6 +303,9 @@ export interface RuntimePipelineParams {
   secondOpinionProvider?: AnalyzeProvider;
   secondOpinionStore?: SecondOpinionStore;
   synthesisModelLabel?: string;
+  // #1734: the fallback synthesis model and its label; absent → a safety stop fails once.
+  synthesisFallbackProvider?: AnalyzeProvider;
+  synthesisFallbackLabel?: string;
   secondOpinionModelLabel?: string;
   referee?: { provider: AnalyzeProvider; label: string };
   stateLock?: StateLock;
@@ -283,6 +330,8 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionProvider: params.secondOpinionProvider,
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,
+    synthesisFallbackProvider: params.synthesisFallbackProvider,
+    synthesisFallbackLabel: params.synthesisFallbackLabel,
     secondOpinionModelLabel: params.secondOpinionModelLabel,
     referee: params.referee,
     stateLock: params.stateLock,

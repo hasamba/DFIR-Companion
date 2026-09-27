@@ -6,7 +6,7 @@ import {
   sanitizeHuntJobs,
   type CollectionInventory,
 } from "../collectionInventory.js";
-import type { AIProvider } from "../../providers/provider.js";
+import { ProviderError, type AIProvider } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import { noteSessionCommands } from "./sessionCommandNotes.js";
@@ -114,6 +114,8 @@ export interface SynthesisContext
       anonStore?: AnonControlStore;
       stateLock?: StateLock;
       synthesisModelLabel?: string;
+      synthesisFallbackProvider?: AIProvider; // #1734
+      synthesisFallbackLabel?: string;
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;
@@ -395,7 +397,7 @@ async function recordSynthesisOutcome(
       new Set(o.prompt.promptEvents.map((e) => e.id)),
     ),
     coverage: o.prompt.coverage, // #62: included/omitted coverage audit
-    synthModel: ctx.opts.synthesisModelLabel ?? `${o.synthProvider.name}/${o.synthProvider.model}`, // #74
+    synthModel: providerLabel(ctx, o.call.answeredBy, o.synthProvider), // #74; the fallback's after #1734
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
@@ -413,8 +415,8 @@ async function recordSynthesisOutcome(
   await recordSynthesisRun(ctx.opts.analysisRunStore, caseId, {
     parentRunId: o.parentRunId,
     startedAt: new Date(o.synthStart).toISOString(),
-    provider: o.synthProvider.name,
-    model: o.synthProvider.model,
+    provider: o.call.answeredBy.name, // #1734: the provider whose answer was accepted
+    model: o.call.answeredBy.model,
     ...(o.call.resolvedModel ? { resolvedModel: o.call.resolvedModel } : {}),
     eventIds: [...o.prompt.shownIds],
     inputState: o.run.state,
@@ -490,6 +492,14 @@ interface SynthesisCall {
   thinkingSource: SynthThinkingSource; // #1468: toggle / env / off, recorded on the run
   parseRetries: number;
   resolvedModel?: string; // #1601: the concrete model the provider reported, recorded on the run
+  answeredBy: AIProvider; // #1734: the provider whose answer was accepted — the fallback after a stop
+  fallbackFrom?: string; // #1734: the synthesis model whose safety filter stopped, when it fell back
+}
+
+// #1734: the label a synthesis provider is recorded under — the configured name for the primary.
+function providerLabel(ctx: SynthesisContext, p: AIProvider, primary: AIProvider): string {
+  if (p === primary) return ctx.opts.synthesisModelLabel ?? `${p.name}/${p.model}`;
+  return ctx.opts.synthesisFallbackLabel ?? `${p.name}/${p.model}`;
 }
 
 async function callSynthesisModel(
@@ -510,6 +520,29 @@ async function callSynthesisModel(
   // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
   // so a failed attempt's model never labels an answer that came back without one.
   let resolvedModel: string | undefined;
+  // #1734: a safety-filter stop switches to the fallback for the rest of THIS call — later parse
+  // retries stay on it, so the primary is never re-asked with evidence that already stopped it.
+  const fallback = ctx.opts.synthesisFallbackProvider;
+  let active = provider;
+  let fallbackFrom: string | undefined;
+  const ask = (p: AIProvider) =>
+    collectServedModel(() =>
+      ctx.analyzeRestored(
+        caseId,
+        state,
+        p,
+        {
+          systemPrompt: getSynthesisPrompt(),
+          // Appended at the END so the cached prompt prefix is unchanged on the retry.
+          userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
+          images: [],
+          ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
+          rejectTruncated: true, // a cut-off synthesis is never merged; say why instead
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        },
+        "synthesis",
+      ),
+    );
   const delta = await ctx.withRetry(
     caseId,
     "synthesis",
@@ -518,23 +551,22 @@ async function callSynthesisModel(
       attempt++;
       let parsed: unknown;
       try {
-        const served = await collectServedModel(() =>
-          ctx.analyzeRestored(
-            caseId,
-            state,
-            provider,
-            {
-              systemPrompt: getSynthesisPrompt(),
-              // Appended at the END so the cached prompt prefix is unchanged on the retry.
-              userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
-              images: [],
-              ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
-              rejectTruncated: true, // a cut-off synthesis is never merged; say why instead
-              ...(opts.signal ? { signal: opts.signal } : {}),
-            },
-            "synthesis",
-          ),
-        );
+        let served: Awaited<ReturnType<typeof ask>>;
+        try {
+          served = await ask(active);
+        } catch (err) {
+          const stopped = err instanceof ProviderError && err.kind === "safety_stop";
+          if (!stopped || !fallback || active !== provider) throw err;
+          throwIfSuperseded(opts.signal); // a cancelled run starts no second, expensive call
+          fallbackFrom = providerLabel(ctx, provider, provider);
+          active = fallback;
+          ctx.log.warn(
+            `[synthesis] ${fallbackFrom}'s safety filter stopped the answer — ` +
+              `running this synthesis on the fallback model ${providerLabel(ctx, fallback, provider)}`,
+            { caseId },
+          );
+          served = await ask(active);
+        }
         parsed = served.value;
         const answer = parseSynthesisAnswer(ctx, caseId, parsed);
         resolvedModel = served.resolvedModel;
@@ -556,7 +588,15 @@ async function callSynthesisModel(
     ctx.opts.retries ?? 3,
     ctx.opts.backoffMs ?? 500,
   );
-  return { delta, thinkingTokens, thinkingSource, parseRetries, ...(resolvedModel ? { resolvedModel } : {}) };
+  return {
+    delta,
+    thinkingTokens,
+    thinkingSource,
+    parseRetries,
+    ...(resolvedModel ? { resolvedModel } : {}),
+    answeredBy: active,
+    ...(fallbackFrom ? { fallbackFrom } : {}),
+  };
 }
 
 // #1602: default the often-empty parts of a partial answer, and say which ones, so a model that
@@ -763,6 +803,13 @@ export async function synthesize(
     next,
     findingsDiff,
     reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
+    ...(call.fallbackFrom
+      ? {
+          logNote:
+            `written by the fallback model ${providerLabel(ctx, call.answeredBy, synthProvider)} ` +
+            `after ${call.fallbackFrom}'s safety filter stopped the answer`,
+        }
+      : {}),
   });
   // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);

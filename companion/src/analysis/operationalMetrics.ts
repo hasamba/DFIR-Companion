@@ -82,6 +82,7 @@ export const AI_ERROR_KINDS = [
   "transport",
   "context",
   "parse",
+  "safety_stop",
   "other",
 ] as const;
 export type AiErrorKind = (typeof AI_ERROR_KINDS)[number];
