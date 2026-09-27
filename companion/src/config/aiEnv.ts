@@ -84,3 +84,74 @@ export function resolveRoleSetting(
   if (roleValue?.trim()) return roleValue;
   return providerEnv(env, provider, setting) ?? roleValue ?? visionEnv(env, setting);
 }
+
+// Where each of the five AI roles reads its provider and its own key / base URL. aiProviders.ts
+// builds the running roles from this table, the model picker reads saved credentials through it,
+// and the per-provider key migration checks every role against it — one reader, so the three
+// cannot drift apart.
+export type AiRoleId = "vision" | "synthesis" | "velociraptor" | "second-opinion" | "reconcile";
+
+/** The Velociraptor role's provider when DFIR_AI_VELO_PROVIDER is unset or blank. */
+export const DEFAULT_VELO_PROVIDER = "openrouter";
+
+export interface AiRoleSource {
+  readonly role: AiRoleId;
+  /** The provider the role runs on. */
+  readonly provider: (env: EnvSource) => string | undefined;
+  /** The env names that hold the role's own value, winner first (vision: new name, then legacy). */
+  readonly ownNames: (setting: ProviderEnvSetting) => readonly string[];
+}
+
+export const AI_ROLE_SOURCES: Readonly<Record<AiRoleId, AiRoleSource>> = {
+  vision: {
+    role: "vision",
+    provider: (env) => visionEnv(env, "PROVIDER"),
+    ownNames: (s) => [`DFIR_VISION_${s}`, `DFIR_AI_${s}`],
+  },
+  synthesis: {
+    role: "synthesis",
+    provider: (env) => env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(env, "PROVIDER"),
+    ownNames: (s) => [`DFIR_AI_SYNTH_${s}`],
+  },
+  velociraptor: {
+    role: "velociraptor",
+    provider: (env) => env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
+    ownNames: (s) => [`DFIR_AI_VELO_${s}`],
+  },
+  "second-opinion": {
+    role: "second-opinion",
+    provider: (env) => env.DFIR_AI_SECOND_OPINION_PROVIDER ?? visionEnv(env, "PROVIDER"),
+    ownNames: (s) => [`DFIR_AI_SECOND_OPINION_${s}`],
+  },
+  reconcile: {
+    role: "reconcile",
+    provider: (env) => env.DFIR_AI_RECONCILE_PROVIDER?.trim() || visionEnv(env, "PROVIDER"),
+    ownNames: (s) => [`DFIR_AI_RECONCILE_${s}`],
+  },
+};
+
+/** The role's own value: the first of its names that is set, `??` style like visionEnv. */
+export function roleOwnSetting(
+  env: EnvSource,
+  role: AiRoleId,
+  setting: ProviderEnvSetting,
+): string | undefined {
+  for (const name of AI_ROLE_SOURCES[role].ownNames(setting)) {
+    if (env[name] !== undefined) return env[name];
+  }
+  return undefined;
+}
+
+/** The key or base URL a role actually sends, on the provider it actually runs on. */
+export function resolveAiRoleSetting(
+  env: EnvSource,
+  role: AiRoleId,
+  setting: ProviderEnvSetting,
+): string | undefined {
+  return resolveRoleSetting(
+    env,
+    AI_ROLE_SOURCES[role].provider(env),
+    setting,
+    roleOwnSetting(env, role, setting),
+  );
+}

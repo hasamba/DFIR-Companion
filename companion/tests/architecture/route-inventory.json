@@ -36,6 +36,8 @@
     "ROUTE POST /diagnostics/preflight/control",
     "ROUTE GET /geo-tiles/:z/:x/:y.png",
     "ROUTE POST /settings/ai-models",
+    "ROUTE GET /settings/ai-key-migration",
+    "ROUTE POST /settings/ai-key-migration",
     "ROUTE GET /cases/:id/captures/count",
     "ROUTE GET /captures/recent",
     "ROUTE POST /captures",

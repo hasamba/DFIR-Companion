@@ -259,8 +259,125 @@
         loadedEnvValues[key] = el.value;
       }
       renderPresidioLocalWarning();
-      await Promise.all(AI_MODEL_PICKERS.map((picker) => refreshAiModels(picker)));
+      await Promise.all([
+        ...AI_MODEL_PICKERS.map((picker) => refreshAiModels(picker)),
+        refreshAiKeyMigration(),
+      ]);
     } catch {}
+  }
+
+  // Per-model keys and base URLs became optional overrides of the provider boxes. The notice under
+  // "Provider keys and base URLs" offers to move old per-model values up, when the server says a
+  // move changes nothing about how the models run. Server strings go in by textContent only.
+  const MIGRATION_ROLE_NAMES = {
+    vision: "Screenshot",
+    synthesis: "Synthesis",
+    velociraptor: "Velociraptor",
+    "second-opinion": "2nd opinion",
+    reconcile: "Referee",
+  };
+  const MIGRATION_PROVIDER_NAMES = {
+    openai: "OpenAI",
+    openrouter: "OpenRouter",
+    gemini: "Gemini",
+    anthropic: "Anthropic",
+    ollama: "Ollama Cloud",
+    litellm: "LiteLLM",
+  };
+  // The "Moved N settings" line. The reload after a move finds nothing left to move, and this keeps
+  // the result on screen instead of hiding the notice under the analyst.
+  let aiKeyMigrationResult = "";
+
+  function migrationSettingName(setting) {
+    return setting === "baseUrl" ? "base URL" : "key";
+  }
+
+  function migrationProviderName(provider) {
+    return MIGRATION_PROVIDER_NAMES[provider] || String(provider);
+  }
+
+  function migrationRoleName(role) {
+    return MIGRATION_ROLE_NAMES[role] || String(role);
+  }
+
+  function describeMigrationMove(m) {
+    const setting = migrationSettingName(m.setting);
+    return (
+      migrationRoleName(m.role) + " " + setting + " \u2192 " + migrationProviderName(m.provider) + " " + setting
+    );
+  }
+
+  function describeMigrationConflict(c) {
+    const roles = (Array.isArray(c.roles) ? c.roles : []).map(migrationRoleName).join(", ");
+    return roles + " (" + migrationProviderName(c.provider) + " " + migrationSettingName(c.setting) + ")";
+  }
+
+  function settingsCount(n) {
+    return n + (n === 1 ? " setting" : " settings");
+  }
+
+  function renderAiKeyMigration(plan) {
+    const box = document.getElementById("aiKeyMigration");
+    const text = document.getElementById("aiKeyMigrationText");
+    const conflictsEl = document.getElementById("aiKeyMigrationConflicts");
+    const btn = document.getElementById("aiKeyMigrationBtn");
+    if (!box || !text || !conflictsEl || !btn) return;
+    const moves = plan && Array.isArray(plan.moves) ? plan.moves : [];
+    const conflicts = plan && Array.isArray(plan.conflicts) ? plan.conflicts : [];
+    if (!moves.length) {
+      box.style.display = aiKeyMigrationResult ? "" : "none";
+      text.textContent = aiKeyMigrationResult;
+      conflictsEl.textContent = "";
+      btn.style.display = "none";
+      return;
+    }
+    aiKeyMigrationResult = "";
+    text.textContent =
+      moves.length +
+      (moves.length === 1 ? " saved setting" : " saved settings") +
+      " can move to the provider boxes: " +
+      moves.map(describeMigrationMove).join("; ") +
+      ". Nothing changes in how the models run.";
+    conflictsEl.textContent = conflicts.length
+      ? "Kept as overrides: " + conflicts.map(describeMigrationConflict).join("; ") + "."
+      : "";
+    btn.style.display = "";
+    btn.disabled = false;
+    box.style.display = "";
+  }
+
+  async function refreshAiKeyMigration() {
+    if (!document.getElementById("aiKeyMigration")) return;
+    let plan = null;
+    try {
+      const res = await fetch("/settings/ai-key-migration");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      plan = await res.json();
+    } catch (err) {
+      // Silent in the page on purpose: the notice is an offer, and a failed check offers nothing.
+      console.warn("AI key migration check failed:", err);
+    }
+    renderAiKeyMigration(plan);
+  }
+
+  async function runAiKeyMigration() {
+    const btn = document.getElementById("aiKeyMigrationBtn");
+    const text = document.getElementById("aiKeyMigrationText");
+    if (!btn || !text) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/settings/ai-key-migration", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) throw new Error(body.error || "HTTP " + res.status);
+      const moved = Array.isArray(body.moves) ? body.moves.length : 0;
+      aiKeyMigrationResult =
+        "Moved " + settingsCount(moved) + ". Restart the server for running analysis to use them.";
+      text.textContent = aiKeyMigrationResult;
+      await fetchEnvSettings();
+    } catch (err) {
+      text.textContent = "Could not move settings: " + (err && err.message ? err.message : String(err));
+      btn.disabled = false;
+    }
   }
 
   // Presidio receives case text — masked, but still the timeline. Warn when the typed URL isn't
@@ -555,6 +672,7 @@
   // The statements the inline block ran at module scope, in order.
   function initEnvSettings() {
     wireAiModelPickers();
+    document.getElementById("aiKeyMigrationBtn")?.addEventListener("click", runAiKeyMigration);
     // The Jev key hint is repainted on anything that changes its answer, and the probe runs once.
     // This belongs here, not at module scope: a DOM read that runs before the markup exists finds
     // nothing, attaches to nothing, and reports no error — which is what dashboardFeatureLifecycle
@@ -610,7 +728,7 @@
     }
     return (
       JEV_HINT_PREFIX +
-      "a key is required here: no OpenRouter key is set for any other AI role, so there is " +
+      "a key is required here: no OpenRouter key is saved for the provider or any other AI role, so there is " +
       "nothing to inherit. Get one at openrouter.ai/keys."
     );
   }

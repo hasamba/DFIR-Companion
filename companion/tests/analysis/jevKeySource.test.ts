@@ -20,7 +20,13 @@ describe("describeJevKeySource", () => {
     expect(r.inheritedFrom).toBe("DFIR_AI_SYNTH_KEY");
   });
 
-  it("follows the same precedence the provider factories use", () => {
+  it("prefers the saved OpenRouter provider key, then the provider factories' order", () => {
+    const withSlot = {
+      DFIR_AI_KEY_OPENROUTER: "slot",
+      DFIR_AI_VELO_KEY: "a",
+      DFIR_VISION_KEY: "c",
+    };
+    expect(describeJevKeySource(withSlot).inheritedFrom).toBe("DFIR_AI_KEY_OPENROUTER");
     const all = {
       DFIR_AI_VELO_KEY: "a",
       DFIR_AI_SYNTH_KEY: "b",
@@ -49,6 +55,7 @@ describe("describeJevKeySource", () => {
     const serialized = JSON.stringify(
       describeJevKeySource({
         DFIR_JEV_KEY: secret,
+        DFIR_AI_KEY_OPENROUTER: secret,
         DFIR_AI_VELO_KEY: secret,
         DFIR_AI_SYNTH_KEY: secret,
         DFIR_VISION_KEY: secret,
@@ -60,6 +67,7 @@ describe("describeJevKeySource", () => {
 
   it("exposes the chain it walks, so the hint can name every setting that would do", () => {
     expect([...JEV_KEY_INHERIT_CHAIN]).toEqual([
+      "DFIR_AI_KEY_OPENROUTER",
       "DFIR_AI_VELO_KEY",
       "DFIR_AI_SYNTH_KEY",
       "DFIR_VISION_KEY",

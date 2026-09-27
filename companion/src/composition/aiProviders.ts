@@ -17,7 +17,7 @@ import { AnalysisPipeline as AnalysisPipelineImpl } from "../analysis/pipeline.j
 import { makeImageLoader } from "../analysis/imageLoader.js";
 import { ProviderRegistry } from "../providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "../providers/provider.js";
-import { resolveRoleSetting, visionEnv } from "../config/aiEnv.js";
+import { AI_ROLE_SOURCES, resolveAiRoleSetting, visionEnv } from "../config/aiEnv.js";
 import { OpenAIProvider } from "../providers/openai.js";
 import { OpenRouterProvider } from "../providers/openrouter.js";
 import { OllamaCloudProvider } from "../providers/ollama.js";
@@ -131,18 +131,8 @@ export function buildProvider(): AnalyzeProvider | undefined {
   return buildProviderFrom({
     provider: visionEnv(process.env, "PROVIDER"),
     model: visionEnv(process.env, "MODEL"),
-    apiKey: resolveRoleSetting(
-      process.env,
-      visionEnv(process.env, "PROVIDER"),
-      "KEY",
-      visionEnv(process.env, "KEY"),
-    ),
-    baseUrl: resolveRoleSetting(
-      process.env,
-      visionEnv(process.env, "PROVIDER"),
-      "BASE_URL",
-      visionEnv(process.env, "BASE_URL"),
-    ),
+    apiKey: resolveAiRoleSetting(process.env, "vision", "KEY"),
+    baseUrl: resolveAiRoleSetting(process.env, "vision", "BASE_URL"),
     imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
@@ -151,12 +141,11 @@ export function buildProvider(): AnalyzeProvider | undefined {
 export function buildSynthesisProvider(): AnalyzeProvider | undefined {
   // Text model — DFIR_AI_SYNTH_*, falling back to the vision model's config (DFIR_VISION_*, legacy
   // DFIR_AI_* via visionEnv) when a dedicated synth var is unset.
-  const provider = process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
   return buildProviderFrom({
-    provider,
+    provider: AI_ROLE_SOURCES.synthesis.provider(process.env),
     model: process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL"),
-    apiKey: resolveRoleSetting(process.env, provider, "KEY", process.env.DFIR_AI_SYNTH_KEY),
-    baseUrl: resolveRoleSetting(process.env, provider, "BASE_URL", process.env.DFIR_AI_SYNTH_BASE_URL),
+    apiKey: resolveAiRoleSetting(process.env, "synthesis", "KEY"),
+    baseUrl: resolveAiRoleSetting(process.env, "synthesis", "BASE_URL"),
     imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
@@ -169,17 +158,11 @@ export function buildSynthesisProvider(): AnalyzeProvider | undefined {
 export function buildSecondOpinionProvider(): AnalyzeProvider | undefined {
   const model = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim();
   if (!model) return undefined;
-  const provider = process.env.DFIR_AI_SECOND_OPINION_PROVIDER ?? visionEnv(process.env, "PROVIDER");
   return buildProviderFrom({
-    provider,
+    provider: AI_ROLE_SOURCES["second-opinion"].provider(process.env),
     model,
-    apiKey: resolveRoleSetting(process.env, provider, "KEY", process.env.DFIR_AI_SECOND_OPINION_KEY),
-    baseUrl: resolveRoleSetting(
-      process.env,
-      provider,
-      "BASE_URL",
-      process.env.DFIR_AI_SECOND_OPINION_BASE_URL,
-    ),
+    apiKey: resolveAiRoleSetting(process.env, "second-opinion", "KEY"),
+    baseUrl: resolveAiRoleSetting(process.env, "second-opinion", "BASE_URL"),
   });
 }
 
@@ -198,15 +181,14 @@ export function resolveReconcileReferee(env: NodeJS.ProcessEnv): ReconcileRefere
   const alias = model.toLowerCase();
   if (!model || alias === RECONCILE_SAME_AS_A) return { kind: "a" };
   if (alias === RECONCILE_SAME_AS_B) return { kind: "b" };
-  const provider = env.DFIR_AI_RECONCILE_PROVIDER?.trim() || visionEnv(env, "PROVIDER");
   return {
     kind: "custom",
     label: model,
     provider: buildProviderFrom({
-      provider,
+      provider: AI_ROLE_SOURCES.reconcile.provider(env),
       model,
-      apiKey: resolveRoleSetting(env, provider, "KEY", env.DFIR_AI_RECONCILE_KEY),
-      baseUrl: resolveRoleSetting(env, provider, "BASE_URL", env.DFIR_AI_RECONCILE_BASE_URL),
+      apiKey: resolveAiRoleSetting(env, "reconcile", "KEY"),
+      baseUrl: resolveAiRoleSetting(env, "reconcile", "BASE_URL"),
     }),
   };
 }
@@ -232,15 +214,14 @@ export function resolveRefereeModel(
 // anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
 // AI key (so it works out of the box when the main provider is openrouter). The pipeline uses this
 // over the synthesis/main provider for hunt generation only.
-export const DEFAULT_VELO_PROVIDER = "openrouter";
+export { DEFAULT_VELO_PROVIDER } from "../config/aiEnv.js";
 export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5"; // latest Haiku; a VALID OpenRouter id (claude-haiku-latest 400s there)
 export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
-  const provider = process.env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER;
   return buildProviderFrom({
-    provider,
+    provider: AI_ROLE_SOURCES.velociraptor.provider(process.env),
     model: process.env.DFIR_AI_VELO_MODEL?.trim() || DEFAULT_VELO_MODEL,
-    apiKey: resolveRoleSetting(process.env, provider, "KEY", process.env.DFIR_AI_VELO_KEY),
-    baseUrl: resolveRoleSetting(process.env, provider, "BASE_URL", process.env.DFIR_AI_VELO_BASE_URL),
+    apiKey: resolveAiRoleSetting(process.env, "velociraptor", "KEY"),
+    baseUrl: resolveAiRoleSetting(process.env, "velociraptor", "BASE_URL"),
   });
 }
 
