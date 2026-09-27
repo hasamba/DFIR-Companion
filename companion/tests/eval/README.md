@@ -74,6 +74,32 @@ One exception, in the job log only: when a finding trips a forbidden-conclusion 
 that finding's title and description, so a reviewer can tell a real mistake from a scorer miss. The
 corpus is synthetic, so this text holds no real evidence. The uploaded report never contains it.
 
+### Forbidden conclusions are graded by meaning on a real run (#1704)
+
+A word list cannot tell "NIGHTFALL did this" from "this finding explicitly does NOT attribute the
+incident to NIGHTFALL", and every new wording of a correct refusal failed the gate. On a real run a
+judge model now grades them:
+
+- **What it asks:** for each synthesis case, one call grades every finding against every forbidden
+  statement of the case (the corpus `claim` sentence). There is no word prefilter, so a paraphrase
+  ("funds were transferred") is judged too. Quoting, reporting someone else's claim, refusing,
+  calling it unconfirmed or listing it as one possibility is not asserting.
+- **Which model:** the run's own text provider, so a local subscription run and a CI run each stay
+  self-contained. The report identity pins it (`identity.judge`: provider, model and a hash of the
+  judge's prompts, answer schema and policy version). A baseline graded by another judge is
+  incompatible.
+- **When it fails:** a provider error, or an answer that is still invalid after one retry, fails
+  the case as `provider_failed` (`judge-provider` / `judge-invalid-output`). The word list never
+  stands in for the judge on a real run.
+- **What the report keeps:** per case, counts only: `judge.pairs`, `judge.asserted` and
+  `judge.disagreements` (judge vs word list). The job log shows each disagreement with the finding
+  text and the judge's reason.
+- **Mock runs** keep the deterministic word list, unchanged.
+- **Calibration:** `npm run eval:judge-calibration -- --runs 3` runs the real judge over
+  `judgeCalibration.json` — real correct refusals the word list misread and real accusations,
+  including paraphrases — and exits non-zero on any wrong verdict. Run it after changing the judge
+  prompt or the judge model.
+
 The normal CI suite runs the deterministic corpus integration tests. Its `eval:change-gate` step
 fingerprints the four evaluated built-in prompts and active default provider/model lines. If that
 fingerprint changes, CI requires both `reports/no-regression.json` and its hash-pinned privacy-safe

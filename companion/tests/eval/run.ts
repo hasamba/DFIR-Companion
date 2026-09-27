@@ -412,11 +412,14 @@ async function execute(options: EvalCliOptions): Promise<EvaluationReport> {
   );
   // #1579: pin the vision model too, but only when real screenshots were actually graded with it.
   const vision = options.real && screenshot.length > 0 ? visionProvider : undefined;
+  // #1704: pin the forbidden-conclusion judge only when it actually graded synthesis cases.
+  const judge = options.real && cases.some((row) => row.judge) ? textProvider : undefined;
   const identity = await evaluationIdentity(
     identityProvider,
     corpus.hash,
     vision,
     vision ? await realScreenshotSetHash() : undefined,
+    judge,
   );
   return applyBaseline(
     {

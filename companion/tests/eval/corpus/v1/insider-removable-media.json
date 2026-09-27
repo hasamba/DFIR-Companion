@@ -87,7 +87,13 @@
       }
     ],
     "iocs": [],
-    "forbiddenConclusions": [{ "id": "invented-malicious-intent", "terms": ["malicious insider"] }],
+    "forbiddenConclusions": [
+      {
+        "id": "invented-malicious-intent",
+        "terms": ["malicious insider"],
+        "claim": "The user acted as a malicious insider: the data movement was intentionally malicious."
+      }
+    ],
     "uncertainties": [
       {
         "id": "intent-gap",

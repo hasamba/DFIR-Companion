@@ -200,6 +200,34 @@ describe("real-run tolerance and evaluation profile (#1579)", () => {
     expect(comparison.qualityRegressions).toEqual(["claimRecall"]);
   });
 
+  it("refuses to compare runs graded by different forbidden-conclusion judges (#1704)", () => {
+    const judged = (model: string): EvaluationIdentity => ({
+      ...IDENTITY,
+      judge: { provider: "p", model, contractHash: "d".repeat(64) },
+    });
+    const baseline = createBaseline(judged("m1"), SUMMARY, RECORDED, { runs: 3, mode: "all" });
+    expect(compareWithBaseline(baseline, SUMMARY, judged("m2"), REAL_3).reasons).toContain(
+      "forbidden-conclusion judge changed",
+    );
+    expect(compareWithBaseline(baseline, SUMMARY, IDENTITY, REAL_3).reasons).toContain(
+      "forbidden-conclusion judge changed",
+    );
+    expect(compareWithBaseline(baseline, SUMMARY, judged("m1"), REAL_3).status).toBe("passed");
+  });
+
+  it("reads back a baseline that pins its judge (#1704)", async () => {
+    const identity: EvaluationIdentity = {
+      ...IDENTITY,
+      judge: { provider: "p", model: "m", contractHash: "d".repeat(64) },
+    };
+    const dir = await tempDir();
+    const path = await writeBaseline(
+      dir,
+      createBaseline(identity, SUMMARY, RECORDED, { runs: 3, mode: "all" }),
+    );
+    expect((await readBaseline(path)).identity.judge).toEqual(identity.judge);
+  });
+
   it("keeps lower-is-better counts strict on a real run", () => {
     const baseline = createBaseline(IDENTITY, SUMMARY, RECORDED, { runs: 3, mode: "all" });
     const comparison = compareWithBaseline(

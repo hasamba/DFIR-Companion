@@ -95,7 +95,13 @@
       }
     ],
     "iocs": [],
-    "forbiddenConclusions": [{ "id": "invented-initial-access", "terms": ["initial access was phishing"] }],
+    "forbiddenConclusions": [
+      {
+        "id": "invented-initial-access",
+        "terms": ["initial access was phishing"],
+        "claim": "Initial access was achieved through phishing."
+      }
+    ],
     "uncertainties": [
       {
         "id": "initial-access-gap",

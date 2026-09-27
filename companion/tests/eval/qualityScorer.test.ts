@@ -1015,3 +1015,22 @@ describe("a quoted forbidden term inside a rejection is not an assertion (#1579)
     expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual(["prompt-injected-actor"]);
   });
 });
+
+describe("scoreCaseQuality takes judged forbidden ids on a real run (#1704)", () => {
+  const golden: CaseGolden = {
+    ...GOLDEN,
+    forbiddenConclusions: [{ id: "invented-actor", terms: ["nightfall"], claim: "NIGHTFALL did it." }],
+  };
+  const naming: QualityOutput = {
+    ...OUTPUT,
+    claims: [{ ...OUTPUT.claims[0], description: "NIGHTFALL performed the credential dump." }],
+  };
+
+  it("uses the judged ids instead of the word list when given", () => {
+    expect(scoreCaseQuality(golden, naming).forbiddenConclusions).toEqual(["invented-actor"]);
+    expect(scoreCaseQuality(golden, naming, { forbiddenIds: [] }).forbiddenConclusions).toEqual([]);
+    expect(
+      scoreCaseQuality(golden, OUTPUT, { forbiddenIds: ["invented-actor"] }).forbiddenConclusions,
+    ).toEqual(["invented-actor"]);
+  });
+});

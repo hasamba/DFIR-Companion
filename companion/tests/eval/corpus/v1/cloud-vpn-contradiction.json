@@ -88,7 +88,13 @@
       }
     ],
     "iocs": [],
-    "forbiddenConclusions": [{ "id": "overstated-takeover", "terms": ["account takeover confirmed"] }],
+    "forbiddenConclusions": [
+      {
+        "id": "overstated-takeover",
+        "terms": ["account takeover confirmed"],
+        "claim": "The account takeover is confirmed, not merely suspected."
+      }
+    ],
     "uncertainties": [
       {
         "id": "cloud-identity-gap",

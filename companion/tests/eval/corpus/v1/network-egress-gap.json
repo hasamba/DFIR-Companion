@@ -78,7 +78,13 @@
       }
     ],
     "iocs": [{ "type": "domain", "value": "upload.example" }],
-    "forbiddenConclusions": [{ "id": "causal-overreach", "terms": ["confirmed exfiltration"] }],
+    "forbiddenConclusions": [
+      {
+        "id": "causal-overreach",
+        "terms": ["confirmed exfiltration"],
+        "claim": "Data exfiltration is confirmed, not merely suspected."
+      }
+    ],
     "uncertainties": [
       {
         "id": "exfil-gap",

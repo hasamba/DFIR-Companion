@@ -51,8 +51,16 @@
     "claims": [],
     "iocs": [],
     "forbiddenConclusions": [
-      { "id": "invented-ransomware", "terms": ["ransomware"] },
-      { "id": "invented-exfiltration", "terms": ["exfiltration"] }
+      {
+        "id": "invented-ransomware",
+        "terms": ["ransomware"],
+        "claim": "Ransomware ran or was deployed in this environment."
+      },
+      {
+        "id": "invented-exfiltration",
+        "terms": ["exfiltration"],
+        "claim": "Data was exfiltrated from this environment."
+      }
     ],
     "uncertainties": [],
     "nextSteps": [],
