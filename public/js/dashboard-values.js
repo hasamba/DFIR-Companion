@@ -124,7 +124,11 @@ function jobMenuView(j) {
   const eta = j.etaAt ? ` · ETA ${new Date(j.etaAt).toLocaleTimeString()}` : "";
   const checkpoint = j.lastCheckpoint ? ` · durable checkpoint ${j.lastCheckpoint.progress.done}/${j.lastCheckpoint.progress.total}` : "";
   const warnings = Array.isArray(j.warnings) && j.warnings.length ? ` · ${j.warnings.length} warning(s)` : "";
-  const detail = j.detail || progress || j.error ? `${j.detail || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}` : "";
+  // A finished multi-file job's detail is only the LAST file it processed, and the file list already
+  // names them all. While the job runs, the name says which file it is on, so it stays.
+  const active = j.status === "running" || j.status === "queued";
+  const name = !active && Array.isArray(j.files) && j.files.length > 1 ? "" : j.detail;
+  const detail = name || progress || j.error ? `${name || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}`.trim() : "";
   return { job: j, cancel, resume, detail, when: jobWhen(j) };
 }
 

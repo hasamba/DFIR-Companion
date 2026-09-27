@@ -172,6 +172,14 @@ describe("jobMenuView", () => {
     expect(v.jobMenuView({ resumable: false, status: "interrupted" }).resume).toBe(false);
   });
 
+  // A finished drop sweep's detail was the last file's name, above a list that already names all 24.
+  it("drops the last file's name from a finished multi-file job, and keeps it while it runs", () => {
+    const j = { detail: "b.json", progress: { done: 2, total: 2 }, files: ["a.json", "b.json"] };
+    expect(v.jobMenuView({ ...j, status: "succeeded" }).detail).toBe("2/2");
+    expect(v.jobMenuView({ ...j, status: "running" }).detail).toBe("b.json 2/2");
+    expect(v.jobMenuView({ ...j, files: ["b.json"], status: "succeeded" }).detail).toBe("b.json 2/2");
+  });
+
   it("assembles progress, throughput, ETA, checkpoint and warnings into one detail line", () => {
     const view = v.jobMenuView({
       status: "running",

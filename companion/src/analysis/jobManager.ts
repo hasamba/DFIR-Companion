@@ -63,6 +63,7 @@ export interface RegisterInput {
   kind: JobKind;
   label?: string;
   detail?: string;
+  files?: string[];
   cancellable?: boolean;
   exclusive?: boolean;
   priority?: JobPriority;
@@ -310,6 +311,7 @@ export class JobManager {
         ...(input.label !== undefined ? { label: input.label } : {}),
         ...model,
         ...(input.detail !== undefined ? { detail: input.detail } : {}),
+        ...(input.files ? { files: input.files } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),

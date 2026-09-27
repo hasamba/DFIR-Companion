@@ -151,4 +151,11 @@ describe("drop-folder sweep job row (#1629)", () => {
     expect(job.model).toBeUndefined();
     expect(bases[0].base.signal).toBeUndefined();
   });
+
+  // The row said "drop import (24 files)" and showed one name — the last file's, in the detail.
+  it("lists every file the sweep imports, not only the last one", async () => {
+    const { job } = await sweep({ "a.json": THOR, "b.json": THOR, "c.json": THOR }, false);
+    expect(job.label).toBe("drop import (3 files)");
+    expect([...(job.files ?? [])].sort()).toEqual(["a.json", "b.json", "c.json"]);
+  });
 });

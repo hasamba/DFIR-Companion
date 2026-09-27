@@ -523,6 +523,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         caseId,
         kind: "import",
         label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
+        files: ready.map((f) => f.relpath),
         modelCallSignal: true,
       });
       if (job) await job.ready;
