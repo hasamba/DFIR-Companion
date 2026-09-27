@@ -438,7 +438,12 @@ function narrativeEventAt(timed, dates, hhmm) {
       if (!best || (rank[t.e.severity] ?? -1) > (rank[best.e.severity] ?? -1)) best = t;
     }
     if (best) {
-      return { id: String(best.e.id), severity: best.e.severity, at: new Date(best.ms).toISOString().slice(0, 19).replace("T", " ") };
+      return {
+        id: String(best.e.id),
+        severity: best.e.severity,
+        asset: String(best.e.asset || ""),
+        at: new Date(best.ms).toISOString().slice(0, 19).replace("T", " "),
+      };
     }
   }
   return null;

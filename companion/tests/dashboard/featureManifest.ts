@@ -1961,6 +1961,7 @@ export const NON_FEATURES = new Set([
   "dashboard-ioc.js",
   "dashboard-values.js",
   "dashboard-fragments.js",
+  "dashboard-attack-path.js", // pure helper: the Attack Path panel's steps, hop line and swimlanes, holds nothing
   "dashboard-scope.js",
   "dashboard-selection.js",
   "dashboard-facets.js",
