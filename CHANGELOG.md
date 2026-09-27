@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-model AI keys become overrides** — per-model key and base-URL fields move to the full Settings view, and a one-click notice moves saved values into the provider fields
 - **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
 
 ## [0.38.0] - 2026-09-26

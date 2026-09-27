@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { updateEnv } from "../../src/settings/envManager.js";
+import { updateEnv, updateEnvFrom } from "../../src/settings/envManager.js";
 
 /**
  * updateEnv is a read-modify-write over one file (#510).
@@ -36,6 +36,31 @@ describe("updateEnv — concurrent saves", () => {
     expect(written).toContain("DFIR_FIRST=one");
     expect(written).toContain("DFIR_SECOND=two");
     expect(written).toContain("DFIR_EXISTING=keep-me");
+  });
+
+  // The AI key move reads current values and writes from them. Planned outside the lock, a save
+  // landing between its read and its write would be overwritten.
+  it("keeps a save that overlaps a read-plan-write, and plans from the file it writes", async () => {
+    const seen: string[] = [];
+    await Promise.all([
+      updateEnvFrom((env) => {
+        seen.push(env.DFIR_EXISTING ?? "");
+        return { updates: { DFIR_EXISTING: "", DFIR_MOVED: env.DFIR_EXISTING ?? "" }, result: null };
+      }),
+      updateEnv({ DFIR_SECOND: "two" }),
+    ]);
+
+    const written = await readFile(envFile, "utf8");
+    expect(seen).toEqual(["keep-me"]);
+    expect(written).toContain("DFIR_MOVED=keep-me");
+    expect(written).toContain("DFIR_EXISTING=\n");
+    expect(written).toContain("DFIR_SECOND=two");
+  });
+
+  it("refuses a malformed record from a read-plan-write", async () => {
+    await expect(updateEnvFrom(() => ({ updates: { "BAD KEY": "x" }, result: null }))).rejects.toThrow(
+      /malformed/,
+    );
   });
 
   it("applies the later value when two saves race on the SAME key", async () => {
