@@ -80,7 +80,8 @@ describe("the background-jobs badge", () => {
     expect(badge.style.display).toBe("");
   });
 
-  it("still hides itself when the server genuinely answers with no jobs", async () => {
+  // Always shown (the analyst reads the last re-synthesis from it); a real empty answer is "0 jobs".
+  it("counts zero when the server genuinely answers with no jobs", async () => {
     const { api, badge } = harness([
       { ok: true, jobs: RUNNING },
       { ok: true, jobs: [] },
@@ -89,7 +90,8 @@ describe("the background-jobs badge", () => {
     await api.loadJobs();
     await api.loadJobs();
 
-    expect(badge.style.display).toBe("none");
+    expect(badge.style.display).toBe("");
+    expect(badge.textContent).toBe("⚙ 0 jobs");
   });
 
   // "Keep the last known answer" is only true for the case that answer describes. The cache is one
@@ -105,7 +107,7 @@ describe("the background-jobs badge", () => {
     caseIdInput.value = "INC-2"; // the analyst switches case; INC-2's jobs never load
     await api.loadJobs();
 
-    expect(badge.style.display).toBe("none");
+    expect(badge.textContent).toBe("⚙ 0 jobs");
     expect(menu.innerHTML).not.toContain("synth-1");
     expect(api.runningJob("synthesis")).toBeUndefined(); // and the deep-pass lock agrees
   });

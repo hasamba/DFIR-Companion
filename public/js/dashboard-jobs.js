@@ -141,9 +141,10 @@
       }
     }
   }
-  function rebuildJobsMenu(menu, views) {
+  function rebuildJobsMenu(menu, views, synthLine) {
     menu.innerHTML =
       `<h3>Background jobs</h3>` +
+      `<div class="jobs-last-synth">${esc(synthLine)}</div>` +
       (views.length
         ? views.map(jobRowHtml).join("")
         : `<div class="jobs-empty">No jobs yet.</div>`);
@@ -172,24 +173,21 @@
         (j.status === "interrupted" ||
           (j.status === "failed" && j.failure && j.failure.retryable)),
     );
-    const menuOpen = menu.style.display !== "none";
-    let badgeText = "";
+    // ALWAYS SHOWN, "⚙ 0 jobs" at rest. A chip that hid at zero could not answer "did the last
+    // re-synthesis run, and when?" — the history lived behind a button that was not there.
+    let badgeText;
     if (running.length) {
-      badge.style.display = "";
       badgeText = `⚙ ${running.length} job${running.length > 1 ? "s" : ""}`;
     } else if (attention.length) {
-      badge.style.display = "";
       badgeText = `⚠ ${attention.length} job${attention.length > 1 ? "s" : ""} need attention`;
-    } else if (menuOpen && cached.length) {
-      badge.style.display = "";
-      badgeText = "⚙ jobs";
-    } // keep it clickable while the popover is open so it can't vanish under the cursor
-    else {
-      badge.style.display = "none";
-      if (menuOpen && !cached.length) menu.style.display = "none";
+    } else {
+      badgeText = "⚙ 0 jobs";
     }
-    if (badgeText && badge.textContent !== badgeText)
-      badge.textContent = badgeText;
+    badge.style.display = "";
+    if (badge.textContent !== badgeText) badge.textContent = badgeText;
+    const synthLine = lastSynthesisLine(cached);
+    const badgeTitle = `Background jobs — click to view or cancel running work. ${synthLine}`;
+    if (badge.title !== badgeTitle) badge.title = badgeTitle;
     // EVERY job the badge counts, then the newest finished rows to fill the remaining budget.
     // Taking the newest 12 rows outright let a burst of finished rows fill all 12 and push the
     // work the badge was counting off the end — "⚙ 3 jobs" over a list with no queued row in it.
@@ -203,11 +201,14 @@
     const shape = JSON.stringify(
       views.map((v) => [v.job.id, v.cancel, v.resume]),
     );
-    if (shape !== _jobsMenuShape) rebuildJobsMenu(menu, views);
-    else
+    if (shape !== _jobsMenuShape) rebuildJobsMenu(menu, views, synthLine);
+    else {
       menu
         .querySelectorAll(".job-row")
         .forEach((row, i) => updateJobRow(row, views[i]));
+      const synthEl = menu.querySelector && menu.querySelector(".jobs-last-synth");
+      if (synthEl && synthEl.textContent !== synthLine) synthEl.textContent = synthLine;
+    }
     _jobsMenuShape = shape;
     applyHeavyAiJobLock(); // deep pass ↔ synthesis mutual lock + the deep-pass progress line (#204)
   }
