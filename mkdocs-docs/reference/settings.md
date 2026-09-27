@@ -122,6 +122,8 @@ identities, emergency access, and the one-writer deployment model.
 - **Re-run the setup wizard**
 - **Live AI test** — confirms the current key works right now
 
+**Provider keys and base URLs** — `DFIR_AI_KEY_<PROVIDER>` and `DFIR_AI_BASE_URL_<PROVIDER>` (for `OPENAI`, `OPENROUTER`, `GEMINI`, `ANTHROPIC`, `OLLAMA`, `LITELLM`) save one key and one base URL per provider. Every model uses the settings of the provider it is set to, so you can switch a model to another provider without typing them again. Order for each model: its own `_KEY` / `_BASE_URL` field, then the provider setting, then `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL`. Leave a model's own fields blank to use the provider settings.
+
 **Screenshot/vision provider** — `DFIR_VISION_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`/`_IMAGE_DETAIL` configure the screenshot-OCR-only model, renamed from `DFIR_AI_*` (legacy names still work as a fallback). Text-only AI features run off the synthesis provider and never need a vision provider configured.
 
 **Second opinion** — `DFIR_AI_SECOND_OPINION_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` configure model B, the rival model behind the **2nd opinion** button. Setting `_MODEL` turns the feature on; the other three fall back to the vision provider settings when blank.

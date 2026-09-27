@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { visionEnv } from "../config/aiEnv.js";
+import { resolveRoleSetting, visionEnv } from "../config/aiEnv.js";
 import {
   listProviderModels,
   ModelCatalogError,
@@ -64,31 +64,27 @@ function parseRequest(value: unknown): ModelListRequest | string {
   };
 }
 
-function savedCredentials(role: ModelRole): { apiKey?: string; baseUrl?: string } {
-  const visionKey = visionEnv(process.env, "KEY");
-  const visionUrl = visionEnv(process.env, "BASE_URL");
-  if (role === "vision") return { apiKey: visionKey, baseUrl: visionUrl };
-  if (role === "synthesis") {
-    return {
-      apiKey: process.env.DFIR_AI_SYNTH_KEY ?? visionKey,
-      baseUrl: process.env.DFIR_AI_SYNTH_BASE_URL ?? visionUrl,
-    };
-  }
-  if (role === "velociraptor") {
-    return {
-      apiKey: process.env.DFIR_AI_VELO_KEY ?? visionKey,
-      baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? visionUrl,
-    };
-  }
-  if (role === "reconcile") {
-    return {
-      apiKey: process.env.DFIR_AI_RECONCILE_KEY ?? visionKey,
-      baseUrl: process.env.DFIR_AI_RECONCILE_BASE_URL ?? visionUrl,
-    };
-  }
+const ROLE_KEY_ENV: Record<Exclude<ModelRole, "vision">, string> = {
+  synthesis: "DFIR_AI_SYNTH",
+  velociraptor: "DFIR_AI_VELO",
+  "second-opinion": "DFIR_AI_SECOND_OPINION",
+  reconcile: "DFIR_AI_RECONCILE",
+};
+
+// The saved key and base URL go through the same resolver the running roles use, keyed on the
+// provider the picker asked about, so a role switched to another provider lists that provider's
+// models.
+function savedCredentials(
+  role: ModelRole,
+  provider: ModelCatalogProvider,
+): { apiKey?: string; baseUrl?: string } {
+  const own =
+    role === "vision"
+      ? { key: visionEnv(process.env, "KEY"), url: visionEnv(process.env, "BASE_URL") }
+      : { key: process.env[`${ROLE_KEY_ENV[role]}_KEY`], url: process.env[`${ROLE_KEY_ENV[role]}_BASE_URL`] };
   return {
-    apiKey: process.env.DFIR_AI_SECOND_OPINION_KEY ?? visionKey,
-    baseUrl: process.env.DFIR_AI_SECOND_OPINION_BASE_URL ?? visionUrl,
+    apiKey: resolveRoleSetting(process.env, provider, "KEY", own.key),
+    baseUrl: resolveRoleSetting(process.env, provider, "BASE_URL", own.url),
   };
 }
 
@@ -96,7 +92,7 @@ export function registerAiModelRoutes(app: Express, ctx: RouteContext): void {
   app.post("/settings/ai-models", async (req: Request, res: Response) => {
     const parsed = parseRequest(req.body as unknown);
     if (typeof parsed === "string") return res.status(400).json({ error: parsed });
-    const saved = savedCredentials(parsed.role);
+    const saved = savedCredentials(parsed.role, parsed.provider);
     try {
       const result = await listProviderModels({
         provider: parsed.provider,

@@ -41,3 +41,46 @@ export function withVisionEnvAliases(env: EnvSource): EnvSource {
   }
   return out;
 }
+
+// One saved key and base URL per API provider (DFIR_AI_KEY_<PROVIDER>, DFIR_AI_BASE_URL_<PROVIDER>),
+// so switching a role to another provider needs nothing typed again. The per-role *_KEY and
+// *_BASE_URL slots are provider-agnostic: a role moved from openrouter to gemini kept sending the
+// OpenRouter key, and Google answered HTTP 400. The CLI providers (claude-code, codex) sign in on
+// their own and have no entry.
+export const PROVIDER_ENV_NAMES: Readonly<Record<string, string>> = {
+  openai: "OPENAI",
+  openrouter: "OPENROUTER",
+  ollama: "OLLAMA",
+  litellm: "LITELLM",
+  gemini: "GEMINI",
+  anthropic: "ANTHROPIC",
+};
+
+export type ProviderEnvSetting = "KEY" | "BASE_URL";
+
+/** The saved setting for one provider, or undefined when none is set. A blank value counts as unset. */
+export function providerEnv(
+  env: EnvSource,
+  provider: string | undefined,
+  setting: ProviderEnvSetting,
+): string | undefined {
+  const name = PROVIDER_ENV_NAMES[(provider ?? "").trim().toLowerCase()];
+  const value = name ? env[`DFIR_AI_${setting}_${name}`]?.trim() : undefined;
+  return value || undefined;
+}
+
+/**
+ * The key or base URL one AI role uses: its own value, then the saved value for the provider it
+ * uses, then the vision value. A blank role value yields to the provider value, because Settings
+ * saves an untouched field as an empty value. With no provider value the old `role ?? vision`
+ * result stands.
+ */
+export function resolveRoleSetting(
+  env: EnvSource,
+  provider: string | undefined,
+  setting: ProviderEnvSetting,
+  roleValue: string | undefined,
+): string | undefined {
+  if (roleValue?.trim()) return roleValue;
+  return providerEnv(env, provider, setting) ?? roleValue ?? visionEnv(env, setting);
+}

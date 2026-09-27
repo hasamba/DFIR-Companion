@@ -142,5 +142,29 @@ describe("Settings AI model pickers", () => {
     expect(element("ai-model-status-vision").textContent).toContain(
       "Could not load models: Provider model list returned HTTP 401",
     );
+
+    // A typed provider key is sent when the role's own key box is blank; a typed role key wins.
+    const lastKey = () => {
+      const bodies = requests.filter((r) => r.url === "/settings/ai-models");
+      return JSON.parse(String(bodies[bodies.length - 1]?.init?.body)).apiKey;
+    };
+    element("env-DFIR_AI_KEY_OPENAI").value = "typed-openai-key";
+    await listeners.get("env-DFIR_VISION_PROVIDER:change")?.[0]?.();
+    expect(lastKey()).toBe("typed-openai-key");
+    element("env-DFIR_VISION_KEY").value = "typed-role-key";
+    await listeners.get("env-DFIR_VISION_PROVIDER:change")?.[0]?.();
+    expect(lastKey()).toBe("typed-role-key");
+
+    // The provider base URL follows the same order.
+    const lastUrl = () => {
+      const bodies = requests.filter((r) => r.url === "/settings/ai-models");
+      return JSON.parse(String(bodies[bodies.length - 1]?.init?.body)).baseUrl;
+    };
+    element("env-DFIR_AI_BASE_URL_OPENAI").value = "https://openai-proxy.example.com/v1";
+    await listeners.get("env-DFIR_VISION_PROVIDER:change")?.[0]?.();
+    expect(lastUrl()).toBe("https://openai-proxy.example.com/v1");
+    element("env-DFIR_VISION_BASE_URL").value = "https://role.example.com/v1";
+    await listeners.get("env-DFIR_VISION_PROVIDER:change")?.[0]?.();
+    expect(lastUrl()).toBe("https://role.example.com/v1");
   });
 });
