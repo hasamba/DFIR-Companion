@@ -56,18 +56,19 @@ describe("the jobs chip renders from the job_changed push (#1453)", () => {
     vi.useRealTimers();
   });
 
-  it("hides the chip again when a push says the import is gone", () => {
+  it("drops the chip to zero when a push says the import is gone", () => {
     const { api, badge } = harness();
     api.scheduleJobUiRefresh("INC-1", RUNNING_IMPORT);
     api.scheduleJobUiRefresh("INC-1", [{ ...RUNNING_IMPORT[0], status: "succeeded" }]);
-    expect(badge.style.display).toBe("none");
+    expect(badge.style.display).toBe("");
+    expect(badge.textContent).toBe("⚙ 0 jobs");
     expect(api.runningJob("import")).toBeUndefined();
   });
 
   it("ignores a push for a case that is not on screen", () => {
     const { api, badge } = harness();
     api.scheduleJobUiRefresh("INC-2", [{ ...RUNNING_IMPORT[0], caseId: "INC-2" }]);
-    expect(badge.style.display).toBe("none");
+    expect(badge.textContent).not.toBe("⚙ 1 job");
     expect(api.runningJob("import")).toBeUndefined();
   });
 

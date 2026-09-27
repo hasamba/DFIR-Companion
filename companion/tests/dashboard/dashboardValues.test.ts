@@ -8,7 +8,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // for one: they never touch `document`, so a stub with the two properties they read is enough, and
 // that is exactly what makes them testable at all.
 
-const v = loadDashboardModule<ValuesApi>("dashboard-values.js");
+const v = loadDashboardModule<ValuesApi>("dashboard-values.js", ["dashboard-time.js"]);
 
 describe("_workflowInitials", () => {
   it.each([
@@ -190,6 +190,58 @@ describe("jobMenuView", () => {
 
   it("leaves the detail empty when there is nothing to say", () => {
     expect(v.jobMenuView({ status: "done" }).detail).toBe("");
+  });
+});
+
+// Every job row says when it ran, so the analyst can tell when (and whether) the last
+// re-synthesis happened.
+describe("job timestamps", () => {
+  const Q = "2026-09-27T10:00:00.000Z";
+  const S = "2026-09-27T10:00:05.000Z";
+  const E = "2026-09-27T10:01:34.000Z";
+
+  it("says queued, started, or started and ended with the run time", () => {
+    expect(v.jobWhen({ queuedAt: Q })).toBe(`queued ${v.jobTime(Q)}`);
+    expect(v.jobWhen({ queuedAt: Q, startedAt: S })).toBe(`started ${v.jobTime(S)}`);
+    expect(v.jobWhen({ queuedAt: Q, startedAt: S, endedAt: E })).toBe(
+      `started ${v.jobTime(S)} · ended ${v.jobTime(E)} (1m 29s)`,
+    );
+  });
+
+  it("shows nothing rather than 'Invalid Date' for a missing or bad time", () => {
+    expect(v.jobTime("not a date")).toBe("");
+    expect(v.jobWhen({})).toBe("");
+  });
+
+  it("puts the time on the menu view", () => {
+    expect(v.jobMenuView({ status: "succeeded", queuedAt: Q, startedAt: S, endedAt: E }).when).toContain(
+      "ended",
+    );
+  });
+});
+
+describe("lastSynthesisLine", () => {
+  const E = "2026-09-27T10:01:34.000Z";
+
+  it("names the newest synthesis job and its outcome", () => {
+    const line = v.lastSynthesisLine([
+      { kind: "import", status: "succeeded", endedAt: "2026-09-27T11:00:00.000Z" },
+      { kind: "synthesis", status: "failed", endedAt: E },
+      { kind: "synthesis", status: "succeeded", endedAt: "2026-09-26T10:00:00.000Z" },
+    ]);
+    expect(line).toBe(`Last synthesis: ${v.jobTime(E)} — failed`);
+  });
+
+  it("says when a synthesis is running now", () => {
+    expect(v.lastSynthesisLine([{ kind: "synthesis", status: "running", startedAt: E }])).toBe(
+      `Last synthesis: running since ${v.jobTime(E)}`,
+    );
+  });
+
+  it("says so when the job history holds no synthesis", () => {
+    expect(v.lastSynthesisLine([{ kind: "import", status: "succeeded" }])).toBe(
+      "Last synthesis: none in this case's job history",
+    );
   });
 });
 

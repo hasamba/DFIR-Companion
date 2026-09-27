@@ -24,6 +24,10 @@ type StubJob = {
   cancellable?: boolean;
   resumable?: boolean;
   failure?: { retryable: boolean };
+  queuedAt?: string;
+  startedAt?: string;
+  endedAt?: string;
+  detail?: string;
 };
 
 /** Minimal stand-ins for the page: one input, one badge, one menu, and inert everything else. */
@@ -59,7 +63,7 @@ function pageStubs(jobs: StubJob[]) {
   };
 }
 
-const PRELOAD = ["dashboard-escape.js", "dashboard-values.js", "dashboard-fragments.js"];
+const PRELOAD = ["dashboard-escape.js", "dashboard-time.js", "dashboard-values.js", "dashboard-fragments.js"];
 
 async function renderedRows(jobs: StubJob[]): Promise<{ ids: string[]; badge: string; html: string }> {
   const stubs = pageStubs(jobs);
@@ -132,5 +136,39 @@ describe("the background-jobs popover", () => {
 
     expect(badge).toBe("⚠ 1 job need attention");
     expect(ids).toContain("stalled");
+  });
+
+  it("stays visible at zero, and names the last synthesis in the popover and tooltip", async () => {
+    const stubs = pageStubs([
+      {
+        id: "synth-9",
+        kind: "synthesis",
+        status: "succeeded",
+        queuedAt: "2026-09-27T10:00:00.000Z",
+        startedAt: "2026-09-27T10:00:05.000Z",
+        endedAt: "2026-09-27T10:01:34.000Z",
+      },
+    ]);
+    const api = loadDashboardModule<JobsApi>("dashboard-jobs.js", PRELOAD, stubs.globals);
+    await api.loadJobs();
+
+    expect(stubs.badge.style.display).toBe("");
+    expect(stubs.badge.textContent).toBe("⚙ 0 jobs");
+    expect((stubs.badge as { title?: string }).title).toContain("Last synthesis:");
+    expect(stubs.menu.innerHTML).toContain('class="jobs-last-synth"');
+    expect(stubs.menu.innerHTML).toMatch(/class="job-when">started .* · ended .* \(1m 29s\)</);
+  });
+
+  it("puts the time below the detail line in every row", async () => {
+    const { html } = await renderedRows([
+      {
+        id: "imp-1",
+        kind: "import",
+        status: "running",
+        detail: "evtx import — 3/10",
+        startedAt: "2026-09-27T10:00:05.000Z",
+      },
+    ]);
+    expect(html.indexOf('class="job-when"')).toBeGreaterThan(html.indexOf('class="job-detail"'));
   });
 });

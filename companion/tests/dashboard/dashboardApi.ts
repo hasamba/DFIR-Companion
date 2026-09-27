@@ -234,6 +234,7 @@ export interface JobView {
   cancel?: boolean;
   resume?: boolean;
   detail: string;
+  when?: string;
 }
 
 export interface ValuesApi {
@@ -250,6 +251,9 @@ export interface ValuesApi {
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
   jobMenuView(j: Record<string, unknown>): JobView;
   jobBarPercent(j: JobProgressLike): number | null;
+  jobTime(iso: string | undefined): string;
+  jobWhen(j: Record<string, unknown>): string;
+  lastSynthesisLine(jobs: Array<Record<string, unknown>>): string;
   updateJobRow(row: ElementLike, view: JobView): void;
   deepPassResultKey(cid: string): string;
   swCanvasXY(

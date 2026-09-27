@@ -350,6 +350,8 @@
 .job-bar { flex: 0 0 100%; display: block; height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
 .job-bar-fill { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
 .job-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; }
+.job-when { flex-basis: 100%; color: var(--text-faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.jobs-last-synth { margin: -4px 4px 8px; font-size: 11px; color: var(--text-muted); }
 .jobs-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
 .ai-unknown { background: var(--border-color); color: var(--text-muted); }
 .ai-off { background: var(--border-color); color: var(--text-muted); }

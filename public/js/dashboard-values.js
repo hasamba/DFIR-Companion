@@ -125,7 +125,43 @@ function jobMenuView(j) {
   const checkpoint = j.lastCheckpoint ? ` · durable checkpoint ${j.lastCheckpoint.progress.done}/${j.lastCheckpoint.progress.total}` : "";
   const warnings = Array.isArray(j.warnings) && j.warnings.length ? ` · ${j.warnings.length} warning(s)` : "";
   const detail = j.detail || progress || j.error ? `${j.detail || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}` : "";
-  return { job: j, cancel, resume, detail };
+  return { job: j, cancel, resume, detail, when: jobWhen(j) };
+}
+
+// A job timestamp as the analyst reads it: date and time to the second, local zone. "" for a
+// missing or unparseable value, so a row from an older server shows nothing rather than "Invalid Date".
+function jobTime(iso) {
+  const t = Date.parse(iso || "");
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
+// When a job happened: queued, started, ended, and how long it ran. Every row carries
+// it, so the analyst can tell WHEN the last re-synthesis ran, not only that one did.
+function jobWhen(j) {
+  const queued = jobTime(j.queuedAt);
+  const started = jobTime(j.startedAt);
+  const ended = jobTime(j.endedAt);
+  if (!started) return queued ? `queued ${queued}` : "";
+  if (!ended) return `started ${started}`;
+  // mcpJobDuration is a global from js/dashboard-time.js, loaded before this file.
+  const ms = Date.parse(j.endedAt) - Date.parse(j.startedAt);
+  const took = Number.isFinite(ms) && ms >= 0 ? mcpJobDuration(ms) : "";
+  return `started ${started} · ended ${ended}${took ? ` (${took})` : ""}`;
+}
+
+// The newest synthesis job in the list (newest first, as the server sends it), as one line for the
+// popover header and the badge tooltip. The job list keeps a bounded history per case, so "none"
+// means none in that history — the sentence says so.
+function lastSynthesisLine(jobs) {
+  const j = (jobs || []).find((x) => x && x.kind === "synthesis");
+  if (!j) return "Last synthesis: none in this case's job history";
+  if (j.status === "running") return `Last synthesis: running since ${jobTime(j.startedAt) || "—"}`;
+  if (j.status === "queued") return `Last synthesis: queued ${jobTime(j.queuedAt) || "—"}`;
+  const at = jobTime(j.endedAt) || jobTime(j.startedAt) || jobTime(j.queuedAt) || "—";
+  return `Last synthesis: ${at} — ${j.status}`;
 }
 
 // The bar's fill, 0–100, for a RUNNING job that reports progress; null otherwise (#1428). Only while
@@ -159,6 +195,11 @@ function updateJobRow(row, view) {
     bar.style.display = pct === null ? "none" : "";
     bar.setAttribute("aria-valuenow", String(pct === null ? 0 : pct));
     fill.style.width = `${pct === null ? 0 : pct}%`;
+  }
+  const when = row.querySelector(".job-when");
+  if (when) {
+    when.textContent = view.when || "";
+    when.style.display = view.when ? "" : "none";
   }
   detail.textContent = view.detail;
   detail.style.display = view.detail ? "" : "none";
@@ -285,6 +326,9 @@ window.DfirValues = {
   toolsForExt,
   jobMenuView,
   jobBarPercent,
+  jobTime,
+  jobWhen,
+  lastSynthesisLine,
   updateJobRow,
   deepPassResultKey,
   swCanvasXY,

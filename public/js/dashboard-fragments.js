@@ -86,7 +86,9 @@ function jobRowHtml(view) {
     + `<span class="job-label">${esc(j.label || "")}</span>`
     + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
     + cancel + resume + model + bar
-    + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span></div>`;
+    + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span>`
+    // Always the LAST line of the row, below the detail, so every row reads the same way.
+    + `<span class="job-when"${view.when ? "" : ' data-safe-style="display:none"'}>${esc(view.when || "")}</span></div>`;
 }
 
 function qaSpan(type, val, ctx) {
