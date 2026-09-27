@@ -118,6 +118,12 @@ export function commitDedicatedImport(
     ctx.serverLogger.info(formatImportStart({ caseId, label: storedName, kind, lines: commit.linesIn }), {
       caseId,
     });
+    // #1735: counts and kinds only, never file or row content — the always-on debug log keeps it.
+    ctx.serverLogger.debug(
+      `[import-debug] ${caseId}: commit kind=${kind} path=${commit.path} linesIn=${commit.linesIn} ` +
+        `forensicBefore=${section.stateBefore?.forensicTimeline.length ?? "unknown"} minSeverity=${commit.minSeverity ?? "none"}`,
+      { caseId },
+    );
     const startedAt = Date.now();
     await commit.run();
     ctx.serverLogger.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
@@ -132,6 +138,11 @@ export function commitDedicatedImport(
         // line and the checkpoint after it are best-effort.
         const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
+        ctx.serverLogger.debug(
+          `[import-debug] ${caseId}: commit kind=${kind} settled forensicNow=${settled.state.forensicTimeline.length} ` +
+            `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
+          { caseId },
+        );
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         try {
           // Proactive FP-pattern propagation (#15b), as the generic route does it: do the NEW
@@ -183,6 +194,9 @@ export function commitDedicatedImport(
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
         }
       } else {
+        ctx.serverLogger.debug(`[import-debug] ${caseId}: commit kind=${kind} not settled (no settle deps)`, {
+          caseId,
+        });
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       }
       await recordImportRun(ctx, {

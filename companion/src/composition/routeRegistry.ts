@@ -18,6 +18,7 @@ import { mountCaseWriteExistsGate } from "./caseWriteExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
+import { registerSupportBundleRoutes } from "../routes/supportBundleRoutes.js";
 import { registerGeoTileRoutes } from "../routes/geoTiles.js";
 import { registerAiModelRoutes } from "../routes/aiModels.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
@@ -108,6 +109,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // never a new directory on disk (#1570). A gate only covers what is registered after it.
   mountCaseWriteExistsGate(app, store);
   registerSystemRoutes(app, ctx);
+  registerSupportBundleRoutes(app, ctx);
   // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`
   // (see routes/geoTiles.ts). Mounted with the other unauthenticated-cost reads and BEFORE
   // mountAiRateLimit: one map view fetches dozens of tiles, and a limiter sized for AI routes

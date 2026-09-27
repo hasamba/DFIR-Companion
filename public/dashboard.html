@@ -1364,6 +1364,7 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOG_DIR">Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_DEBUG_LOG_MAX_MB">Debug log cap (MB)<span class="sfield-hint">DFIR_DEBUG_LOG_MAX_MB — always-on debug log (<code>debug.log</code> + <code>debug.1.log</code> in the log directory) that keeps every level for the support bundle; never inside a case folder. Default 50; 0 = off. Applies after a restart.</span></label><input id="env-DFIR_DEBUG_LOG_MAX_MB" placeholder="50" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_HOST">Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing. <b>Read-only here</b>: widening the bind address from a web page is exactly what the allowlist prevents. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" readonly /></div>
@@ -3131,6 +3132,24 @@
           <button id="diagSupportDownloadBtn" class="diag-support-action" type="button" disabled>⬇ Download previewed bundle</button>
           <button id="diagSizesBtn" type="button">📁 Compute case sizes</button>
           <span id="diagMsg" class="manual-msg"></span>
+        </div>
+        <!-- Redacted support bundle (#1735) -->
+        <div data-safe-style="margin-bottom:12px;padding:10px;background:var(--bg-elevated);border:1px solid var(--border-color);border-radius:6px">
+          <div data-safe-style="font-weight:600;color:var(--text-muted);font-size:12.5px;margin-bottom:6px">Support bundle for a bug report</div>
+          <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
+            Saves one <code>.zip</code> you can send with a bug report: this report, the server log, the
+            always-on debug log, and the layout of each failed import (format, row count, column types —
+            never a cell value). Case names, file names, hosts, users, IPs, emails, paths, URLs and
+            secrets are replaced by placeholders such as <code>ANON_HOST_3</code>. Open the zip and read
+            it before you send it.
+          </div>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label data-safe-style="display:flex;gap:5px;align-items:center;font-size:12px;color:var(--text-primary);cursor:pointer">
+              <input type="checkbox" id="diagBundleCaseLog" /> Include the open case's log
+            </label>
+            <button id="diagBundleBtn" type="button">⬇ Download redacted support bundle (.zip)</button>
+            <span id="diagBundleMsg" class="manual-msg"></span>
+          </div>
         </div>
         <div id="diagBody" data-safe-style="font-size:12.5px;color:var(--text-primary)">Loading…</div>
         <pre id="diagSupportPreview" hidden data-safe-style="max-height:300px;overflow:auto;white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;padding:10px;font-size:11px"></pre>

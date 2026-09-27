@@ -34,6 +34,7 @@
     "ROUTE POST /diagnostics/preflight",
     "ROUTE GET /diagnostics/preflight/control",
     "ROUTE POST /diagnostics/preflight/control",
+    "ROUTE POST /diagnostics/support-bundle",
     "ROUTE GET /geo-tiles/:z/:x/:y.png",
     "ROUTE POST /settings/ai-models",
     "ROUTE GET /settings/ai-key-migration",
