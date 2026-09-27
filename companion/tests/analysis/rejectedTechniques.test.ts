@@ -6,6 +6,7 @@ import request from "supertest";
 import { rejectedTechniqueIds, withoutRejectedTechniques } from "../../src/analysis/rejectedTechniques.js";
 import { applyAcceptedSecondOpinion, type SecondOpinion } from "../../src/analysis/secondOpinion.js";
 import { mergeDelta } from "../../src/analysis/stateMerge.js";
+import { mergeConcurrentAdditions } from "../../src/analysis/ai/synthesisPersist.js";
 import {
   emptyState,
   type Finding,
@@ -150,6 +151,24 @@ describe("the decision survives the reducers that rebuild the state", () => {
       sourceScreenshots: [],
     });
     expect(merged.rejectedTechniques).toEqual(["T1105"]);
+  });
+
+  it("a synthesis save keeps a removal the analyst accepted while it ran", () => {
+    const snapshot = caseState();
+    const latest = { ...snapshot, rejectedTechniques: ["T1105"] };
+    expect(mergeConcurrentAdditions(snapshot, snapshot, latest).rejectedTechniques).toEqual(["T1105"]);
+  });
+
+  it("a synthesis save keeps a removal the analyst reversed while it ran", () => {
+    const snapshot = { ...caseState(), rejectedTechniques: ["T1105"] };
+    const { rejectedTechniques: _gone, ...latest } = snapshot;
+    expect(mergeConcurrentAdditions(snapshot, snapshot, latest)).not.toHaveProperty("rejectedTechniques");
+  });
+
+  it("a synthesis save keeps its own record when nothing changed during the run", () => {
+    const snapshot = caseState();
+    const next = { ...snapshot, rejectedTechniques: ["T1105"] };
+    expect(mergeConcurrentAdditions(snapshot, next, snapshot).rejectedTechniques).toEqual(["T1105"]);
   });
 
   it("the state store saves and loads it", async () => {

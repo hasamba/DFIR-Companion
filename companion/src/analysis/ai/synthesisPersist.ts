@@ -9,6 +9,7 @@ import { mergeHostRenameRecords } from "../hostRenameRecord.js";
 import { carryHostRenames } from "../hostRenameCarry.js";
 import { recordEventAliases } from "../eventAliases.js";
 import { remapAbsorbedEventIds } from "../absorbedCitations.js";
+import { concurrentRejections } from "../rejectedTechniques.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -168,7 +169,8 @@ export function mergeConcurrentAdditions(
       ...mergedLineage(next, latest),
     }),
   ).state;
-  return withoutFoldedSnapshotEvents(merged, loaded, latest);
+  // A technique removal the analyst accepted or reversed while synthesis ran is kept (#1742).
+  return concurrentRejections(loaded, withoutFoldedSnapshotEvents(merged, loaded, latest), latest);
 }
 
 /**

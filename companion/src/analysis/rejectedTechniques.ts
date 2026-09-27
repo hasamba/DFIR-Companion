@@ -46,6 +46,22 @@ export function withRejectedTechniqueIds(
 }
 
 /**
+ * The rejections a synthesis save keeps. The run applied the second-opinion record it read at the
+ * start; an analyst who accepted or reversed a removal while it ran saved a newer list. Newer wins:
+ * when `latest` differs from the snapshot, the decision changed during the run (Codex review, #1742).
+ */
+export function concurrentRejections(
+  loaded: Pick<InvestigationState, "rejectedTechniques">,
+  next: InvestigationState,
+  latest: Pick<InvestigationState, "rejectedTechniques">,
+): InvestigationState {
+  const a = loaded.rejectedTechniques ?? [];
+  const b = latest.rejectedTechniques ?? [];
+  const changed = a.length !== b.length || a.some((id, i) => id !== b[i]);
+  return changed ? withRejectedTechniqueIds(next, b) : next;
+}
+
+/**
  * The read-time view with every rejected id hidden: the MITRE table row, each finding's tags and each
  * forensic event's tags. Pure — the input is never modified. No rejections → the same object.
  */
