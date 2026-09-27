@@ -75,13 +75,25 @@ function isReservedFindingId(id: string): boolean {
   return isDeterministicFindingId(id) || id.startsWith(MODEL_FINDING_ID_PREFIX);
 }
 
+const MAX_CONFIDENCE_REASON = 500;
+
 export const deltaSchema = z.object({
   findings: z.array(
     z.object({
       id: z.string().min(1),
       severity: severity.catch("Medium"),
       confidence: z.number().min(0).max(100).optional().catch(undefined),
-      confidenceReason: z.string().max(500).optional().catch(undefined),
+      // #1579: a long reason is shortened, never silently deleted — claude-sonnet-5 writes reasons
+      // past 500 characters, and dropping them left a bare confidence number with no reason.
+      confidenceReason: z
+        .preprocess(
+          (v) =>
+            typeof v === "string" && v.length > MAX_CONFIDENCE_REASON
+              ? `${v.slice(0, MAX_CONFIDENCE_REASON - 1)}…`
+              : v,
+          z.string().max(MAX_CONFIDENCE_REASON).optional(),
+        )
+        .catch(undefined),
       title: z.string().min(1),
       description: z.string(),
       relatedIocs: z.array(z.string()),

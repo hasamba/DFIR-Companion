@@ -43,6 +43,43 @@ describe("deltaSchema", () => {
     ]);
   });
 
+  describe("a long confidence reason is shortened, never deleted (#1579)", () => {
+    const finding = (extra: Record<string, unknown>) => ({
+      id: "f1",
+      severity: "High",
+      title: "t",
+      description: "d",
+      relatedIocs: [],
+      mitreTechniques: [],
+      status: "open",
+      ...extra,
+    });
+    const parse = (extra: Record<string, unknown>) =>
+      deltaSchema.parse({
+        findings: [finding(extra)],
+        iocs: [],
+        mitreTechniques: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "",
+        summary: "",
+      }).findings[0];
+
+    it("shortens a reason over 500 characters instead of deleting it", () => {
+      const long = "Two corroborating events. ".repeat(40);
+      const parsed = parse({ confidence: 80, confidenceReason: long });
+      expect(parsed.confidence).toBe(80);
+      expect(parsed.confidenceReason?.length).toBe(500);
+      expect(parsed.confidenceReason?.endsWith("…")).toBe(true);
+      expect(long.startsWith(parsed.confidenceReason!.slice(0, -1))).toBe(true);
+    });
+
+    it("keeps a confidence with a normal reason unchanged", () => {
+      const parsed = parse({ confidence: 60, confidenceReason: "Single source." });
+      expect(parsed).toMatchObject({ confidence: 60, confidenceReason: "Single source." });
+    });
+  });
+
   it("degrades unexpected enum values instead of rejecting the whole response", () => {
     // A model returning a novel severity / IOC type must NOT nuke the entire synthesis.
     const delta = deltaSchema.parse({

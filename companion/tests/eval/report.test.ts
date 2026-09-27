@@ -242,6 +242,17 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
       expect(passesWithoutRecallFloor(report)).toBe(false);
     });
 
+    it("reports a provider failure as provider_failed, not as a regression it caused (#1579)", () => {
+      // Protected run 36233745167: OpenRouter ran out of credits mid-run; the dead rows dragged the
+      // summary below the baseline, and the outcome said quality_failed instead of provider_failed.
+      const dead: EvaluationCaseResult = { ...dirtyCase("dead"), status: "provider_failed" };
+      const report = buildEvaluationReport({
+        ...realInput([...belowFloor(), dead]),
+        baselineComparison: comparison("regressed"),
+      });
+      expect(report.outcome).toBe("provider_failed");
+    });
+
     it("a mock run is never recordable past a failed case", () => {
       const report = buildEvaluationReport({ ...realInput(belowFloor()), real: false });
       expect(passesWithoutRecallFloor(report)).toBe(false);

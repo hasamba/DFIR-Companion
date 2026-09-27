@@ -3,6 +3,7 @@ import { ProviderError, type AIProvider } from "../../src/providers/provider.js"
 import { runCorpusCase } from "./harness.js";
 import { MeteredProvider } from "./meter.js";
 import {
+  forbiddenConclusionFindings,
   formatCaseQualityReport,
   passesCaseQuality,
   scoreCaseQuality,
@@ -75,6 +76,9 @@ async function runOne(
     const output = await runCorpusCase(fixture, metered);
     const score = scoreCaseQuality(fixture.golden, output);
     console.log(formatCaseQualityReport(fixture.id, score, { real }));
+    for (const hit of forbiddenConclusionFindings(fixture.golden, output)) {
+      console.log(`  forbidden ${hit.forbiddenId} in ${hit.findingId}: ${JSON.stringify(hit.text)}`);
+    }
     return {
       id: fixture.id,
       scenario: fixture.scenario,

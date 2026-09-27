@@ -223,7 +223,6 @@ function determineOutcome(
   if (input.providerFailureReason) return "provider_failed";
   if (input.skippedReason) return "skipped";
   if (input.baselineComparison?.status === "incompatible") return "runner_failed";
-  if (input.baselineComparison?.status === "regressed") return "quality_failed";
 
   const caseStatuses = input.cases.map((result) => result.status);
   const otherStatuses = [
@@ -238,6 +237,9 @@ function determineOutcome(
   const allInfraStatuses = [...caseStatuses, ...otherStatuses];
   if (allInfraStatuses.includes("runner_failed")) return "runner_failed";
   if (allInfraStatuses.includes("provider_failed")) return "provider_failed";
+  // #1579: only after the infra checks — dead rows drag the summary below the baseline, and a
+  // provider outage must not read as a prompt regression.
+  if (input.baselineComparison?.status === "regressed") return "quality_failed";
 
   // On a real run, aggregate recall (mirroring scorer.ts's REAL_THRESHOLDS) replaces requiring
   // every case's own status to be "passed" — the exact bug #1224 was filed for. Mock/deterministic

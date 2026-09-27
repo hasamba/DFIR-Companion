@@ -70,6 +70,10 @@ turns an absent provider into exit `3` for the protected workflow instead of a c
 only metrics, status, hashes, timing, token counts and cost—never prompts, evidence, model output or
 credentials. A provider outage, missing optional run and quality regression remain separate outcomes.
 
+One exception, in the job log only: when a finding trips a forbidden-conclusion rule, the log prints
+that finding's title and description, so a reviewer can tell a real mistake from a scorer miss. The
+corpus is synthetic, so this text holds no real evidence. The uploaded report never contains it.
+
 The normal CI suite runs the deterministic corpus integration tests. Its `eval:change-gate` step
 fingerprints the four evaluated built-in prompts and active default provider/model lines. If that
 fingerprint changes, CI requires both `reports/no-regression.json` and its hash-pinned privacy-safe
@@ -101,6 +105,9 @@ How a real multi-run report is judged:
   reference, a confidence issue, a missed abstention or a case with zero recall on every dimension
   fails the report, whichever run it came from. A provider or runner failure in any run also
   decides the outcome.
+- **Precision is reported, not gated, on a real run.** Claim, event and IOC precision count every
+  extra finding as wrong, including correct ones the golden set does not list. Invention still fails
+  as a hard violation.
 - **Baseline tolerance:** a real run may fall at most **5 points** below its baseline on a quality
   ratio. A mock run keeps the **2-point** tolerance. Lower-is-better counts get no tolerance. A
   baseline recorded with a different run count, mode or vision model is incompatible.
