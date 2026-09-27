@@ -6,7 +6,8 @@ import {
   sanitizeHuntJobs,
   type CollectionInventory,
 } from "../collectionInventory.js";
-import { ProviderError, type AIProvider } from "../../providers/provider.js";
+import type { AIProvider } from "../../providers/provider.js";
+import type { SynthesisFallback } from "./synthesisFallback.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import { noteSessionCommands } from "./sessionCommandNotes.js";
@@ -33,12 +34,7 @@ import {
 } from "../hostDuplicateGate.js";
 import { autoGenerateHypotheses } from "./synthesisHypotheses.js";
 import type { PlaybookTask } from "../playbook.js";
-import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
-import {
-  fillOptionalSynthesisFields,
-  keepFailedAnswer,
-  synthesisRetryNote,
-} from "./synthesisAnswerRepair.js";
+import { stripAiExtractedFrom } from "../responseSchema.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
@@ -49,7 +45,7 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { SynthMetaStore } from "../synthMeta.js";
-import { resolveSynthThinking, type SynthThinkingInput, type SynthThinkingSource } from "../synthThinking.js";
+import type { SynthThinkingInput } from "../synthThinking.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
 import { type HuntContext } from "./hunts.js";
@@ -65,10 +61,10 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { callSynthesisModel, throwIfSuperseded, type SynthesisCall } from "./synthesisCall.js";
 import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
-import { collectServedModel } from "../servedModels.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
 /**
@@ -114,8 +110,7 @@ export interface SynthesisContext
       anonStore?: AnonControlStore;
       stateLock?: StateLock;
       synthesisModelLabel?: string;
-      synthesisFallbackProvider?: AIProvider; // #1734
-      synthesisFallbackLabel?: string;
+      synthesisFallback?: SynthesisFallback; // #1734
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;
@@ -397,7 +392,7 @@ async function recordSynthesisOutcome(
       new Set(o.prompt.promptEvents.map((e) => e.id)),
     ),
     coverage: o.prompt.coverage, // #62: included/omitted coverage audit
-    synthModel: providerLabel(ctx, o.call.answeredBy, o.synthProvider), // #74; the fallback's after #1734
+    synthModel: o.call.answeredByLabel, // #74; the fallback's label after a #1734 safety stop
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
@@ -471,151 +466,6 @@ async function correlateForSynthesis(
   return { windowSeconds, sourceTrust, state: repairBuildTimeRows(correlated).state };
 }
 
-/**
- * The synthesis model call, with its two per-run knobs.
- *
- * Chain-of-Thought / extended thinking (issue #121, feature 1) is resolved per run: an explicit
- * value or the dashboard "deep reasoning" toggle wins, else the global
- * DFIR_AI_SYNTH_THINKING_TOKENS default (off when unset). The Anthropic provider maps it to
- * extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
- * synthesis reasons step-by-step — extraction stays cheap.
- *
- * Per-model quality telemetry (#74) counts the retries this call actually needed (a failed
- * parse/schema-mismatch attempt increments it). Counted on catch INSIDE the retried closure rather
- * than via ctx.withRetry's onRetry hook, because that hook is the shared server-logging callback —
- * routing through ctx.withRetry keeps the per-attempt WARN logging intact while the local catch
- * keeps the count. Surfaced on synth-meta so a flaky model shows up empirically.
- */
-interface SynthesisCall {
-  delta: ReturnType<typeof stripAiExtractedFrom>;
-  thinkingTokens: number;
-  thinkingSource: SynthThinkingSource; // #1468: toggle / env / off, recorded on the run
-  parseRetries: number;
-  resolvedModel?: string; // #1601: the concrete model the provider reported, recorded on the run
-  answeredBy: AIProvider; // #1734: the provider whose answer was accepted — the fallback after a stop
-  fallbackFrom?: string; // #1734: the synthesis model whose safety filter stopped, when it fell back
-}
-
-// #1734: the label a synthesis provider is recorded under — the configured name for the primary.
-function providerLabel(ctx: SynthesisContext, p: AIProvider, primary: AIProvider): string {
-  if (p === primary) return ctx.opts.synthesisModelLabel ?? `${p.name}/${p.model}`;
-  return ctx.opts.synthesisFallbackLabel ?? `${p.name}/${p.model}`;
-}
-
-async function callSynthesisModel(
-  ctx: SynthesisContext,
-  caseId: string,
-  state: InvestigationState,
-  provider: AIProvider,
-  userPrompt: string,
-  // `provider` here is the CALLER's override (second-opinion model B, a replay): when set, the call
-  // runs on exactly that model and never falls back (#1734).
-  opts: { signal?: AbortSignal; provider?: AIProvider } & SynthThinkingInput,
-): Promise<SynthesisCall> {
-  const { tokens: thinkingTokens, source: thinkingSource } = resolveSynthThinking(
-    opts,
-    Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0,
-  );
-  let parseRetries = 0;
-  let retryNote: string | undefined; // #1602: what the last bad answer got wrong, for the next attempt
-  let attempt = 0;
-  // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
-  // so a failed attempt's model never labels an answer that came back without one.
-  let resolvedModel: string | undefined;
-  // #1734: a safety-filter stop switches to the fallback for the rest of THIS call — later parse
-  // retries stay on it, so the primary is never re-asked with evidence that already stopped it.
-  const fallback = opts.provider ? undefined : ctx.opts.synthesisFallbackProvider;
-  let active = provider;
-  let fallbackFrom: string | undefined;
-  const ask = (p: AIProvider) =>
-    collectServedModel(() =>
-      ctx.analyzeRestored(
-        caseId,
-        state,
-        p,
-        {
-          systemPrompt: getSynthesisPrompt(),
-          // Appended at the END so the cached prompt prefix is unchanged on the retry.
-          userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
-          images: [],
-          ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
-          rejectTruncated: true, // a cut-off synthesis is never merged; say why instead
-          ...(opts.signal ? { signal: opts.signal } : {}),
-        },
-        "synthesis",
-      ),
-    );
-  const delta = await ctx.withRetry(
-    caseId,
-    "synthesis",
-    async () => {
-      throwIfSuperseded(opts.signal); // #1608: a retry after a supersede calls no provider
-      attempt++;
-      let parsed: unknown;
-      try {
-        let served: Awaited<ReturnType<typeof ask>>;
-        try {
-          served = await ask(active);
-        } catch (err) {
-          const stopped = err instanceof ProviderError && err.kind === "safety_stop";
-          if (!stopped || !fallback || active !== provider) throw err;
-          throwIfSuperseded(opts.signal); // a cancelled run starts no second, expensive call
-          fallbackFrom = providerLabel(ctx, provider, provider);
-          active = fallback;
-          ctx.log.warn(
-            `[synthesis] ${fallbackFrom}'s safety filter stopped the answer — ` +
-              `running this synthesis on the fallback model ${providerLabel(ctx, fallback, provider)}`,
-            { caseId },
-          );
-          served = await ask(active);
-        }
-        parsed = served.value;
-        const answer = parseSynthesisAnswer(ctx, caseId, parsed);
-        resolvedModel = served.resolvedModel;
-        return answer;
-      } catch (err) {
-        throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
-        parseRetries++;
-        retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-        await keepFailedAnswer(
-          { log: ctx.log, store: ctx.opts.synthMetaStore },
-          caseId,
-          attempt,
-          err,
-          parsed,
-        );
-        throw err;
-      }
-    },
-    ctx.opts.retries ?? 3,
-    ctx.opts.backoffMs ?? 500,
-  );
-  return {
-    delta,
-    thinkingTokens,
-    thinkingSource,
-    parseRetries,
-    ...(resolvedModel ? { resolvedModel } : {}),
-    answeredBy: active,
-    ...(fallbackFrom ? { fallbackFrom } : {}),
-  };
-}
-
-// #1602: default the often-empty parts of a partial answer, and say which ones, so a model that
-// routinely skips fields shows up in the log. findings and summary stay required.
-function parseSynthesisAnswer(
-  ctx: SynthesisContext,
-  caseId: string,
-  parsed: unknown,
-): ReturnType<typeof stripAiExtractedFrom> {
-  const { value, filled } = fillOptionalSynthesisFields(parsed);
-  if (filled.length)
-    ctx.log.warn(`[synthesis] model answer omitted ${filled.join(", ")} — filled with empty values`, {
-      caseId,
-    });
-  return stripAiExtractedFrom(deltaSchema.parse(value));
-}
-
 // The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens
 // and writes no state.
 //
@@ -644,34 +494,6 @@ async function resolveHostsOrThrow(
   );
   if (pending.length) throw new HostMergeDecisionRequired(pending);
   return aliasIndex;
-}
-
-/**
- * Stop here if this run has been superseded or cancelled.
- *
- * THE SIGNAL IS NOT THE PROVIDER'S ALONE. `exclusive: true` on the synthesis job means a newer kick
- * aborts this run's signal, drops its row and frees the case's single concurrency slot so the newer
- * run can start — see JobManager.dropForExclusiveRegistration. That only works if this run then
- * stops. Handing `signal` to the model call is not enough: a provider that finishes the call anyway
- * (the claude-code provider completed a six-minute call after its signal was aborted) used to carry
- * on into the fold, the PERSIST — over the newer run's work — and the run record. When this run also
- * swept for a second look, it carried a whole extra synthesis behind it too: two top-level runs held
- * the whole case state at once, state loads went from 0.6 s to 140 s, and neither reached its
- * terminal `ai_status`, which left the header pill stuck on "AI: synthesizing…" with no job to
- * explain it. Only an analyst's run-now (Re-synthesize, /dfir, replay) supersedes one now (#1608).
- *
- * Called at the stage boundaries rather than inside the steps: a step that has begun should finish
- * or throw on its own, and the boundaries are where nothing is half-written.
- *
- * Throws an `AbortError`, which is what both callers already classify a cancellation by (see
- * captureAnalysis.settleSynthesisRejection and routes/analystGate.ts) — so a superseded run reports
- * "cancelled", never "synthesis failed".
- */
-function throwIfSuperseded(signal: AbortSignal | undefined): void {
-  if (!signal?.aborted) return;
-  const err = new Error("synthesis superseded by a newer run");
-  err.name = "AbortError";
-  throw err;
 }
 
 /**
@@ -808,7 +630,7 @@ export async function synthesize(
     ...(call.fallbackFrom
       ? {
           logNote:
-            `written by the fallback model ${providerLabel(ctx, call.answeredBy, synthProvider)} ` +
+            `written by the fallback model ${call.answeredByLabel} ` +
             `after ${call.fallbackFrom}'s safety filter stopped the answer`,
         }
       : {}),

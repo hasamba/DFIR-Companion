@@ -306,8 +306,7 @@ export interface RuntimePipelineParams {
   secondOpinionStore?: SecondOpinionStore;
   synthesisModelLabel?: string;
   // #1734: the fallback synthesis model and its label; absent → a safety stop fails once.
-  synthesisFallbackProvider?: AnalyzeProvider;
-  synthesisFallbackLabel?: string;
+  synthesisFallback?: { provider: AnalyzeProvider; label: string };
   secondOpinionModelLabel?: string;
   referee?: { provider: AnalyzeProvider; label: string };
   stateLock?: StateLock;
@@ -332,8 +331,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionProvider: params.secondOpinionProvider,
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,
-    synthesisFallbackProvider: params.synthesisFallbackProvider,
-    synthesisFallbackLabel: params.synthesisFallbackLabel,
+    synthesisFallback: params.synthesisFallback,
     secondOpinionModelLabel: params.secondOpinionModelLabel,
     referee: params.referee,
     stateLock: params.stateLock,

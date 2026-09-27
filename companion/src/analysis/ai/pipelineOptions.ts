@@ -183,8 +183,7 @@ export interface PipelineOptions {
   synthesisModelLabel?: string;
   // #1734: the model synthesis switches to when the synthesis model's safety filter stops an answer.
   // Absent → a safety stop fails the synthesis once, with a message naming the setting.
-  synthesisFallbackProvider?: AIProvider;
-  synthesisFallbackLabel?: string;
+  synthesisFallback?: { provider: AIProvider; label: string };
   secondOpinionModelLabel?: string;
   // Referee for the second-opinion verdicts (#1466). Absent → model A (synthesisProvider ?? provider)
   // referees; the run resolves that itself so the record can name whoever actually judged.

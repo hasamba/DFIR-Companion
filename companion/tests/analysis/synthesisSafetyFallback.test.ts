@@ -75,7 +75,7 @@ function pipeline(primary: AIProvider, fallback?: AIProvider): AnalysisPipeline 
     synthMetaStore,
     synthesisProvider: primary,
     synthesisModelLabel: "opus",
-    ...(fallback ? { synthesisFallbackProvider: fallback, synthesisFallbackLabel: "gpt-6-sol" } : {}),
+    ...(fallback ? { synthesisFallback: { provider: fallback, label: "gpt-6-sol" } } : {}),
     imageLoader: async () => ({ data: Buffer.from(""), mediaType: "image/png" }) as never,
     logger: logger as never,
     retries: 3,
@@ -103,7 +103,7 @@ describe("synthesis fallback on a safety-filter stop (#1734)", () => {
 
     expect(primary.analyze).toHaveBeenCalledTimes(1);
     expect(fallback.analyze).toHaveBeenCalledTimes(2);
-    expect(state.summary ?? state.lastSummary).toBeDefined();
+    expect(state.lastSummary).toBe("fallback summary");
     expect(state.findings.map((f) => f.title)).toContain("Credential dumping");
 
     const log = state.timeline[state.timeline.length - 1].description;

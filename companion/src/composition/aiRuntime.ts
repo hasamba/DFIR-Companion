@@ -143,12 +143,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   const wiredPipeline = buildRuntimePipeline({
     provider,
     synthesisProvider,
-    ...(synthesisFallback
-      ? {
-          synthesisFallbackProvider: synthesisFallback.provider,
-          synthesisFallbackLabel: synthesisFallback.label,
-        }
-      : {}),
+    ...(synthesisFallback ? { synthesisFallback } : {}),
     velociraptorProvider,
     stateStore,
     store,
