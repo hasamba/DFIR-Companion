@@ -9,7 +9,7 @@ import {
   keepFailedAnswer,
   synthesisRetryNote,
 } from "./synthesisAnswerRepair.js";
-import { SynthesisModelChoice } from "./synthesisFallback.js";
+import { SynthesisModelChoice, safetyRetriesFromEnv } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
@@ -39,6 +39,8 @@ export interface SynthesisCall {
   answeredBy: AIProvider; // #1734: the provider whose answer was accepted — the fallback after a stop
   answeredByLabel: string; // #1734: its recorded label
   fallbackFrom?: string; // #1734: the synthesis model whose safety filter stopped, when it fell back
+  safetyStops: number; // #1740: how many times that model's safety filter stopped an answer
+  primaryLabel: string; // #1740: the synthesis model's label, for the log line
 }
 
 export async function callSynthesisModel(
@@ -48,7 +50,7 @@ export async function callSynthesisModel(
   provider: AIProvider,
   userPrompt: string,
   // `provider` here is the CALLER's override (second-opinion model B, a replay): when set, the call
-  // runs on exactly that model and never falls back (#1734).
+  // runs on exactly that model — it keeps its safety retries (#1740) but never falls back (#1734).
   opts: { signal?: AbortSignal; provider?: AIProvider } & SynthThinkingInput,
 ): Promise<SynthesisCall> {
   const { tokens: thinkingTokens, source: thinkingSource } = resolveSynthThinking(
@@ -61,11 +63,13 @@ export async function callSynthesisModel(
   // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
   // so a failed attempt's model never labels an answer that came back without one.
   let resolvedModel: string | undefined;
-  // #1734: a safety-filter stop moves THIS call to the fallback — never for a caller's own provider.
+  // #1734/#1740: a safety-filter stop is retried on the same model, then moves THIS call to the
+  // fallback — never for a caller's own provider. The retry count is read live, like the thinking budget.
   const choice = new SynthesisModelChoice(
     provider,
     ctx.opts.synthesisModelLabel ?? `${provider.name}/${provider.model}`,
     opts.provider ? undefined : ctx.opts.synthesisFallback,
+    safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),
   );
   const ask = (p: AIProvider) =>
     collectServedModel(() =>
@@ -101,6 +105,13 @@ export async function callSynthesisModel(
               `[synthesis] ${from}'s safety filter stopped the answer — running this synthesis on the fallback model ${to}`,
               { caseId },
             ),
+          (err, stops) => {
+            ctx.log.warn(
+              `[synthesis] ${choice.primaryName}'s safety filter stopped the answer (${stops}) — asking it once more`,
+              { caseId },
+            );
+            ctx.recordRetry?.(caseId, "synthesis", err); // counted like any retry (ai_retry)
+          },
         );
         parsed = served.value;
         const answer = parseSynthesisAnswer(ctx, caseId, parsed);
@@ -132,6 +143,8 @@ export async function callSynthesisModel(
     answeredBy: choice.answeredBy,
     answeredByLabel: choice.answeredByLabel,
     ...(choice.fallbackFrom ? { fallbackFrom: choice.fallbackFrom } : {}),
+    safetyStops: choice.safetyStops,
+    primaryLabel: choice.primaryName,
   };
 }
 

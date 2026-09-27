@@ -14,8 +14,9 @@ import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 // process, a prompt or reply that does not fit) rather than a transient blip — retrying just re-runs
 // into the same wall, tripling the wait before the analyst sees the same error.
 // "output_limit": the model hit its output-token cap; the identical request hits it again.
-// "safety_stop": the model's safety filter stopped the answer (#1734); the same evidence is likely to
-// stop it again, and each Opus attempt costs about $2. Synthesis falls back to another model instead.
+// "safety_stop": the model's safety filter stopped the answer (#1734). Never retried HERE: synthesis
+// runs its own bounded same-model retry (DFIR_AI_SYNTH_SAFETY_RETRIES, #1740) and then its fallback,
+// and every other AI path fails fast rather than resending the same evidence.
 const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>([
   "auth",
   "rate_limit",
