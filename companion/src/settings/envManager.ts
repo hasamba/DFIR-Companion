@@ -374,6 +374,11 @@ function parseLines(raw: string): Record<string, string> {
   return result;
 }
 
+/** The .env file's values as saved, unmasked. Server-internal: never send the result to a browser. */
+export async function readEnvFile(): Promise<Record<string, string>> {
+  return parseLines(await readRaw());
+}
+
 /**
  * Re-read the .env file and apply every key starting with `prefix` into `process.env`, so a
  * runtime "reconnect" can pick up settings saved via POST /settings/env WITHOUT a full restart
@@ -442,29 +447,55 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
   }
   // Read and write as one step, or a concurrent save that read the same baseline overwrites us.
   return withEnvWriteLock(async () => {
+    await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(await readRaw(), updates));
+  });
+}
+
+/** The file text with `updates` applied in place; keys not already in the file are appended. */
+function applyEnvUpdates(raw: string, updates: Record<string, string>): string {
+  const lines = raw.split("\n");
+  const updatedKeys = new Set<string>();
+
+  const newLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) return line;
+    const key = trimmed.slice(0, eq).trim();
+    if (key in updates) {
+      updatedKeys.add(key);
+      return `${key}=${updates[key]}`;
+    }
+    return line;
+  });
+
+  for (const [key, val] of Object.entries(updates)) {
+    if (!updatedKeys.has(key) && val !== "") {
+      newLines.push(`${key}=${val}`);
+    }
+  }
+
+  return newLines.join("\n");
+}
+
+/**
+ * Read the file, decide the updates from what it holds, and write them — all under the write lock,
+ * so a Settings save cannot land between the read and the write and be lost (#510). For writes
+ * that depend on current values, such as the AI key move. Returns what `compute` returned.
+ */
+export async function updateEnvFrom<T>(
+  compute: (env: Record<string, string>) => { updates: Record<string, string>; result: T },
+): Promise<T> {
+  return withEnvWriteLock(async () => {
     const raw = await readRaw();
-    const lines = raw.split("\n");
-    const updatedKeys = new Set<string>();
-
-    const newLines = lines.map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) return line;
-      const eq = trimmed.indexOf("=");
-      if (eq < 0) return line;
-      const key = trimmed.slice(0, eq).trim();
-      if (key in updates) {
-        updatedKeys.add(key);
-        return `${key}=${updates[key]}`;
-      }
-      return line;
-    });
-
-    for (const [key, val] of Object.entries(updates)) {
-      if (!updatedKeys.has(key) && val !== "") {
-        newLines.push(`${key}=${val}`);
+    const { updates, result } = compute(parseLines(raw));
+    for (const [key, value] of Object.entries(updates)) {
+      if (!ENV_KEY_SYNTAX.test(key) || ENV_VALUE_CONTROL_CHAR.test(value)) {
+        throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
       }
     }
-
-    await atomicWrite(resolveEnvFilePath(), newLines.join("\n"));
+    if (Object.keys(updates).length > 0)
+      await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(raw, updates));
+    return result;
   });
 }

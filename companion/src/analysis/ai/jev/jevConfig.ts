@@ -4,9 +4,12 @@
  *
  * Jev on OpenRouter is the same account as every other DFIR_AI_* model, so asking an analyst to
  * paste the same key a fifth time is busywork: when DFIR_JEV_KEY is unset the OpenRouter route
- * inherits one, following the chain the repo's own provider factories already use
+ * inherits one. The saved OpenRouter provider key comes first: it is the one name guaranteed to hold
+ * an OpenRouter key, and the move of per-model keys into the provider slots blanks the per-model
+ * keys Jev used to borrow. After it, the chain the repo's own provider factories already use
  * (companion/src/composition/aiProviders.ts):
  *
+ *   DFIR_AI_KEY_OPENROUTER → the saved OpenRouter provider key
  *   DFIR_AI_VELO_KEY  → buildVelociraptorProvider's own key
  *   DFIR_AI_SYNTH_KEY → buildSynthesisProvider's own key
  *   DFIR_VISION_KEY   → visionEnv(KEY), the current vision name
@@ -78,12 +81,14 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 }
 
 /**
- * The inherited-key chain, in the order aiProviders.ts already falls back. The last two names are
+ * The inherited-key chain: the saved OpenRouter provider key, then the order aiProviders.ts already
+ * falls back in. The last two names are
  * visionEnv(env, "KEY") spelled out: that helper chains with `??`, so a blank DFIR_VISION_KEY would
  * shadow a real DFIR_AI_KEY. Walking both names with the blank-is-unset rule is the same order and
  * the kinder answer.
  */
 export const JEV_KEY_INHERIT_CHAIN = [
+  "DFIR_AI_KEY_OPENROUTER",
   "DFIR_AI_VELO_KEY",
   "DFIR_AI_SYNTH_KEY",
   "DFIR_VISION_KEY",
@@ -185,8 +190,8 @@ function resolveKey(
   const inherited = inheritedOpenRouterKey(env);
   if (!inherited)
     return unusable(
-      "No Jev API key. Set DFIR_JEV_KEY, or one of DFIR_AI_VELO_KEY / DFIR_AI_SYNTH_KEY / " +
-        "DFIR_VISION_KEY / DFIR_AI_KEY for the OpenRouter route.",
+      "No Jev API key. Set DFIR_JEV_KEY, or one of DFIR_AI_KEY_OPENROUTER / DFIR_AI_VELO_KEY / " +
+        "DFIR_AI_SYNTH_KEY / DFIR_VISION_KEY / DFIR_AI_KEY for the OpenRouter route.",
     );
   if (host !== OPENROUTER_HOST)
     return unusable(

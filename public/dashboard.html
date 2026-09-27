@@ -1503,7 +1503,12 @@
         <div class="srestart-note" data-essential>⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" data-safe-style="color:var(--accent-solid)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
         <div class="settings-group-head" data-essential>Provider keys and base URLs</div>
-        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Save one key and base URL per provider. Each model below uses the settings of the provider it is set to, so you can switch providers without typing them again. A value typed in a model's own <b>API key</b> or <b>Base URL</b> field wins over these; leave that field blank to use the provider setting. Leave a base URL blank for the provider default.</p>
+        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Save one key and base URL per provider. Each model below uses the settings of the provider it is set to, so you can switch providers without typing them again. A value typed in a model's own <b>Override key</b> or <b>Override base URL</b> field wins over these; leave that field blank to use the provider setting. Leave a base URL blank for the provider default.</p>
+        <div id="aiKeyMigration" data-essential data-safe-style="display:none;padding:8px 10px;margin:0 0 8px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
+          <div id="aiKeyMigrationText" role="status" data-safe-style="font-size:12px"></div>
+          <div id="aiKeyMigrationConflicts" data-safe-style="font-size:11px;color:var(--text-muted);margin-top:4px"></div>
+          <button type="button" id="aiKeyMigrationBtn" class="btn-mini" data-safe-style="margin-top:6px">Move them</button>
+        </div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_OPENAI">OpenAI key<span class="sfield-hint">DFIR_AI_KEY_OPENAI</span></label><input id="env-DFIR_AI_KEY_OPENAI" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield" data-essential><label for="env-DFIR_AI_KEY_OPENROUTER">OpenRouter key<span class="sfield-hint">DFIR_AI_KEY_OPENROUTER</span></label><input id="env-DFIR_AI_KEY_OPENROUTER" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
@@ -1600,9 +1605,9 @@
           toggle();
         })();
         </script>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_VISION_KEY">API key<span class="sfield-hint">DFIR_VISION_KEY</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_VISION_BASE_URL">Base URL override<span class="sfield-hint">DFIR_VISION_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_VISION_KEY">Override key (optional)<span class="sfield-hint">DFIR_VISION_KEY — blank = provider key</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_VISION_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_VISION_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label for="env-DFIR_AI_TIMEOUT_MS">Timeout (ms)<span class="sfield-hint">DFIR_AI_TIMEOUT_MS</span></label><input id="env-DFIR_AI_TIMEOUT_MS" placeholder="900000" /></div>
@@ -1644,9 +1649,9 @@
           </div>
           <div class="sfield" data-essential><label>Model (synthesis and imports)<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — synthesis, deep pass, CSV/log imports</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-synthesis" aria-label="Available synthesis models" aria-describedby="ai-model-status-synthesis" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SYNTH_MODEL" aria-label="Manually entered synthesis model ID" aria-describedby="ai-model-status-synthesis" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-synthesis" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-synthesis" class="sfield-hint" role="status"></span></div>
         </div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_AI_SYNTH_KEY">Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_AI_SYNTH_BASE_URL">Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_SYNTH_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_SYNTH_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
         <div id="codex-status" class="sfield" data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1720,8 +1725,8 @@
           <div class="sfield"><label>Velo model<span class="sfield-hint">DFIR_AI_VELO_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-velociraptor" aria-label="Available Velociraptor models" aria-describedby="ai-model-status-velociraptor" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_VELO_MODEL" aria-label="Manually entered Velociraptor model ID" aria-describedby="ai-model-status-velociraptor" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. anthropic/claude-haiku-4.5" /><button type="button" id="load-ai-models-velociraptor" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-velociraptor" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AI_VELO_KEY">Velo API key<span class="sfield-hint">DFIR_AI_VELO_KEY</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
-          <div class="sfield"><label for="env-DFIR_AI_VELO_BASE_URL">Velo base URL<span class="sfield-hint">DFIR_AI_VELO_BASE_URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_VELO_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_VELO_KEY — blank = provider key</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_VELO_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_VELO_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
         </div>
         <div class="settings-group-head" data-essential>Second opinion model (optional — a DIFFERENT model for the on-demand QA cross-check)</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key. Model B does not judge its own findings: a separate referee (model A by default — set below) annotates each disagreement.</p>
@@ -1742,12 +1747,12 @@
           </div>
           <div class="sfield" data-essential><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-second-opinion" aria-label="Available second-opinion models" aria-describedby="ai-model-status-second-opinion" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SECOND_OPINION_MODEL" aria-label="Manually entered second-opinion model ID" aria-describedby="ai-model-status-second-opinion" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-second-opinion" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-second-opinion" class="sfield-hint" role="status"></span></div>
         </div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_AI_SECOND_OPINION_KEY">2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_AI_SECOND_OPINION_BASE_URL">2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_SECOND_OPINION_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY — blank = provider key</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_SECOND_OPINION_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
         </div>
         <div class="settings-group-head">Referee for 2nd-opinion verdicts (optional — who judges each A-vs-B disagreement)</div>
-        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The referee writes the <strong>referee suggests</strong> line on every disagreement. It is shown the forensic events each disputed finding cites, so it judges from evidence, not from the two summaries alone. <strong>Leave the model blank</strong> to let model A (the synthesis model) referee — the default. Enter <code>same-as-b</code> to let the 2nd-opinion model referee (it then judges its own findings). Or pick a third model for a neutral referee. Provider, key and base URL fall back to the main AI settings when blank.</p>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The referee writes the <strong>referee suggests</strong> line on every disagreement. It is shown the forensic events each disputed finding cites, so it judges from evidence, not from the two summaries alone. <strong>Leave the model blank</strong> to let model A (the synthesis model) referee — the default. Enter <code>same-as-b</code> to let the 2nd-opinion model referee (it then judges its own findings). Or pick a third model for a neutral referee. A blank provider falls back to the main AI settings; a blank key or base URL uses the provider's saved key and base URL.</p>
         <div class="sfield-row">
           <div class="sfield">
             <label for="env-DFIR_AI_RECONCILE_PROVIDER">Referee provider<span class="sfield-hint">DFIR_AI_RECONCILE_PROVIDER</span></label>
@@ -1766,8 +1771,8 @@
           <div class="sfield"><label>Referee model<span class="sfield-hint">DFIR_AI_RECONCILE_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-reconcile" aria-label="Available referee models" aria-describedby="ai-model-status-reconcile" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_RECONCILE_MODEL" aria-label="Manually entered referee model ID" aria-describedby="ai-model-status-reconcile" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="blank = model A · same-as-b · or a model ID" /><button type="button" id="load-ai-models-reconcile" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-reconcile" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_KEY">Referee API key<span class="sfield-hint">DFIR_AI_RECONCILE_KEY</span></label><input id="env-DFIR_AI_RECONCILE_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
-          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_BASE_URL">Referee base URL<span class="sfield-hint">DFIR_AI_RECONCILE_BASE_URL</span></label><input id="env-DFIR_AI_RECONCILE_BASE_URL" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_RECONCILE_KEY — blank = provider key</span></label><input id="env-DFIR_AI_RECONCILE_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_RECONCILE_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_RECONCILE_BASE_URL" /></div>
         </div>
         <div class="settings-group-head">Missed evidence review (Jev) &mdash; off by default</div>
         <div class="sfield-row3">

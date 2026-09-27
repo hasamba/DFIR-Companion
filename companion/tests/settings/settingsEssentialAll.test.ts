@@ -22,8 +22,10 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
   // The three models you can point somewhere. Timeouts, token caps, prompt-file overrides and the
   // VQL hunt model are All-only — each has a working default or falls back to the synthesis model.
   ai: [
-    // One key per provider: every model uses the key of the provider it is set to. The
-    // per-provider base URLs beside them default and stay All-only.
+    // One key per provider: every model uses the key of the provider it is set to, so these are
+    // the Essential credential. The per-provider base URLs beside them default and stay All-only.
+    // Each model's own key and base URL are optional overrides of these, blank by default, so
+    // they are All-only too.
     "DFIR_AI_KEY_OPENAI",
     "DFIR_AI_KEY_OPENROUTER",
     "DFIR_AI_KEY_GEMINI",
@@ -32,16 +34,10 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_AI_KEY_LITELLM",
     "DFIR_VISION_PROVIDER",
     "DFIR_VISION_MODEL",
-    "DFIR_VISION_KEY",
-    "DFIR_VISION_BASE_URL",
     "DFIR_AI_SYNTH_PROVIDER",
     "DFIR_AI_SYNTH_MODEL",
-    "DFIR_AI_SYNTH_KEY",
-    "DFIR_AI_SYNTH_BASE_URL",
     "DFIR_AI_SECOND_OPINION_PROVIDER",
     "DFIR_AI_SECOND_OPINION_MODEL",
-    "DFIR_AI_SECOND_OPINION_KEY",
-    "DFIR_AI_SECOND_OPINION_BASE_URL",
   ],
   // Credentials, plus each self-hostable source's "Skip TLS verify" flag. `_CA` (finding a bundle
   // path is a deliberate trip), the keyless hashlookup/RDAP/GeoIP endpoint URLs, the GeoIP map

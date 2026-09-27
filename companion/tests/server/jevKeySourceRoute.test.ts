@@ -8,6 +8,7 @@ import { createApp } from "../../src/server.js";
 
 const KEYS = [
   "DFIR_JEV_KEY",
+  "DFIR_AI_KEY_OPENROUTER",
   "DFIR_AI_VELO_KEY",
   "DFIR_AI_SYNTH_KEY",
   "DFIR_VISION_KEY",
