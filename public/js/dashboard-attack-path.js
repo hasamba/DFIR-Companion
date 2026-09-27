@@ -59,7 +59,7 @@ function apStep(chunk, listed) {
   desc = desc.trim();
   return {
     title,
-    label: title || apLabel(desc, listed ? null : when),
+    summary: apLabel(desc, listed ? null : when),
     techniques,
     group: tactic ? tactic.group : "",
     year: when ? when.year : null,
@@ -71,8 +71,8 @@ function apStep(chunk, listed) {
   };
 }
 
-// A short name for a step that names no tactic: its own words with the time taken out, cut at a
-// word near 60 characters — so no card and no heading is ever drawn empty.
+// What happened, in the step's own words with the time taken out, cut at a word near 90
+// characters. A card shows it beside the tactic, so the two never read as the same kind of text.
 function apLabel(desc, when) {
   let text = desc;
   if (when) {
@@ -80,9 +80,9 @@ function apLabel(desc, when) {
     text = `${before} ${text.slice(when.index + when.length)}`;
   }
   text = text.replace(/\s+/g, " ").replace(/^[\s,;:—–-]+/, "").replace(/[\s.,;:]+$/, "");
-  if (text.length > 60) {
-    let cut = text.slice(0, 60);
-    if (text[60] !== " ") cut = cut.slice(0, cut.lastIndexOf(" "));
+  if (text.length > 90) {
+    let cut = text.slice(0, 90);
+    if (text[90] !== " ") cut = cut.slice(0, cut.lastIndexOf(" "));
     text = cut.trimEnd() + "…";
   }
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -120,12 +120,12 @@ function apTactic(text) {
   const table = [
     [/initial access|phish/i, "Initial Access", "entry"],
     [/lateral/i, "Lateral Movement", "move"],
-    [/credential|mimikatz|lsass/i, "Credential Access", "harm"],
+    [/credential|mimikatz|lsass|lazagne|password|hashdump/i, "Credential Access", "harm"],
     [/exfiltrat/i, "Exfiltration", "harm"],
     [/impact|ransom|encrypt|wiper/i, "Impact", "harm"],
     [/privilege|priv-?esc/i, "Privilege Escalation", ""],
     [/persist/i, "Persistence", ""],
-    [/evasion/i, "Defense Evasion", ""],
+    [/evasion|wevtutil|\bclear(?:ed|s|ing)?\b[^;.]*\blogs?\b|disabl\w* (?:microsoft )?defender/i, "Defense Evasion", ""],
     [/discover|enumerat|recon/i, "Discovery", ""],
     [/collect|staging|archiv/i, "Collection", ""],
     [/command and control|\bc2\b|beacon/i, "Command and Control", "c2"],
@@ -299,7 +299,15 @@ function apCardHtml(p) {
   const tip = p.assumed
     ? ` title="${escAttr(`Host assumed: this step names no host and has no matching event, so it stays on ${p.host} with the step before it`)}"`
     : "";
-  return `<div class="ap-card${cls}${p.assumed ? " ap-assumed" : ""}"${tip}><span class="ap-ct">${apTimeHtml(p)}</span><b>${esc(s.label)}</b></div>`;
+  return `<div class="ap-card${cls}${p.assumed ? " ap-assumed" : ""}"${tip}><span class="ap-ct">${apTimeHtml(p)}</span>${apCardText(s)}</div>`;
+}
+
+// The tactic as a small label, then what happened. A step that names no tactic shows only its
+// words; one with a tactic and no words of its own shows the tactic as its text.
+function apCardText(step) {
+  if (!step.summary) return `<span class="ap-txt">${esc(step.title)}</span>`;
+  const tac = step.title ? `<span class="ap-tac">${esc(step.title)}</span>` : "";
+  return `${tac}<span class="ap-txt">${esc(step.summary)}</span>`;
 }
 
 // The tab the analyst last picked, per browser. Storage can throw or be empty (private window,
@@ -336,5 +344,6 @@ window.DfirAttackPath = {
   apDayLabel,
   apLanesHtml,
   apCardHtml,
+  apCardText,
   attackPathStoredView,
 };

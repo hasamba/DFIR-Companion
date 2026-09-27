@@ -61,13 +61,33 @@ describe("attackSteps", () => {
     expect(steps[1]).toMatchObject({ time: "09:48", desc: "Execution of powershell.exe at 09:48" });
   });
 
-  it("labels a step that names no tactic with its own words, without the time", () => {
+  it("keeps the tactic and what happened apart, with the time taken out of the words", () => {
     const steps = ap.attackSteps(
       "Initial access at 02:03:38 via a dropped script; at 09:04:18 the script copied PsTools and a scanner into C:\\e and started them with elevated rights; files were encrypted at 09:04:21.",
     );
-    expect(steps[1].title).toBe("");
-    expect(steps[1].label).toBe("The script copied PsTools and a scanner into C:\\e and…");
-    expect(steps[0].label).toBe("Initial Access");
+    expect(steps[0]).toMatchObject({
+      title: "Initial Access",
+      summary: "Initial access via a dropped script",
+    });
+    expect(steps[1]).toMatchObject({
+      title: "",
+      summary: "The script copied PsTools and a scanner into C:\\e and started them with elevated rights",
+    });
+    expect(steps[2]).toMatchObject({ title: "Impact", summary: "Files were encrypted" });
+  });
+
+  it("cuts a long summary at a word", () => {
+    const long = `at 09:00 ${"word ".repeat(40)}end; at 09:05 x ran.`;
+    const [first] = ap.attackSteps(long);
+    expect(first.summary.length).toBeLessThanOrEqual(91);
+    expect(first.summary.endsWith("word…")).toBe(true);
+  });
+
+  it("reads the tactic from well-known tool and log names", () => {
+    const steps = ap.attackSteps(
+      "at 09:04:20 LaZagne 'all' ran; at 09:04:46 wevtutil cleared the Security log.",
+    );
+    expect(steps.map((x) => x.title)).toEqual(["Credential Access", "Defense Evasion"]);
   });
 
   it("finds no steps in plain prose", () => {
@@ -126,12 +146,16 @@ describe("attackPathHtml", () => {
     expect(html).toContain('ap-n ap-g-harm" title="Credential theft, data theft or impact"');
   });
 
-  it("never draws an empty card or an empty heading", () => {
+  it("shows a card's tactic as a label beside what happened, and never an empty card", () => {
     const text =
       "Initial access at 02:03:38 via a script; at 09:04:18 the script copied tools; files were encrypted at 09:04:21.";
     const html = ap.attackPathHtml(text, EVENTS, "hosts");
+    expect(html).toContain(
+      '<span class="ap-tac">Impact</span><span class="ap-txt">Files were encrypted</span>',
+    );
+    expect(html).toContain('</span><span class="ap-txt">The script copied tools</span>');
+    expect(html).not.toMatch(/<span class="ap-txt"><\/span>/);
     expect(html).not.toMatch(/<b><\/b>/);
-    expect(html).toContain("<b>The script copied tools</b>");
   });
 
   it("escapes the model's text", () => {
