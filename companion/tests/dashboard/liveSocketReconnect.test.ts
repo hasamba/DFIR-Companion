@@ -278,6 +278,86 @@ describe("the case socket reconnects after it drops (#1675)", () => {
   });
 });
 
+// #1707: onmessage parsed every frame with a bare JSON.parse and handed the result straight on. A
+// frame that is not JSON threw inside the handler; one that parses to null, an array or a primitive
+// reached handleCaseMessage, which reads msg.type and renders msg.state. The hub accepts `unknown`,
+// so nothing upstream enforces the shape. A bad frame is now skipped, with one fixed warning per
+// socket that never echoes the frame, and it is skipped before it can count as a state push.
+describe("a frame that is not a live message is skipped (#1707)", () => {
+  const BAD_FRAMES = [
+    "<html>502 Bad Gateway</html>",
+    '{"type":"state",',
+    "null",
+    "[1,2]",
+    '"state"',
+    "42",
+    "true",
+    "{}",
+    '{"type":42}',
+    '{"type":"state"}',
+    '{"type":"state","state":null}',
+    '{"type":"state","state":[]}',
+  ];
+
+  function raw(sock: FakeSocket, data: string) {
+    sock.onmessage?.({ data });
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("skips each bad frame without throwing and still delivers the next good one", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    const sock = FakeSocket.made[0];
+    sock.open();
+    for (const data of BAD_FRAMES) expect(() => raw(sock, data)).not.toThrow();
+    expect(h.messages).toEqual([]);
+    sock.push({ type: "ai_status", status: "idle" });
+    expect(h.messages).toEqual([{ type: "ai_status", status: "idle" }]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns once per socket with a fixed message that never echoes the frame", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    raw(FakeSocket.made[0], "secret-looking-frame");
+    raw(FakeSocket.made[0], "null");
+    expect(warn.mock.calls).toEqual([["live update skipped: a frame was not a live message"]]);
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open();
+    raw(FakeSocket.made[1], "{}");
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a bad frame make an in-flight catch-up snapshot look stale", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    let answer: (v: unknown) => void = () => {};
+    h.api.fetch = (url: string) =>
+      url.endsWith("/state")
+        ? Promise.resolve({ ok: true, json: () => new Promise((resolve) => (answer = resolve)) })
+        : Promise.resolve({ ok: false });
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open(); // catch-up GET now in flight
+    await vi.advanceTimersByTimeAsync(0);
+    raw(FakeSocket.made[1], '{"type":"state"}');
+    raw(FakeSocket.made[1], '{"type":"state","state":null}');
+    raw(FakeSocket.made[1], '{"type":"state","state":[]}');
+    answer({ caseId: "INC-1", v: "snapshot" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.filter((m) => m.type === "state")).toEqual([
+      { type: "state", state: { caseId: "INC-1", v: "snapshot" } },
+    ]);
+  });
+});
+
 // #1681: the state replay refreshes only the panels the `state` branch reloads. Every other
 // push-driven panel (comments, tags, pins, notebook, imports, hunts, scope …) stayed stale after a
 // reconnect until its next push or a reload.
