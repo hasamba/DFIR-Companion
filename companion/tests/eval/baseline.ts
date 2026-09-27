@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
 export interface EvaluationIdentity {
   provider: string;
   model: string;
@@ -282,6 +285,3 @@ export async function writeBaseline(directory: string, baseline: EvaluationBasel
   });
   return path;
 }
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { z } from "zod";
