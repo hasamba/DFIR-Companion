@@ -485,6 +485,18 @@ describe("detectImportKind — JSON formats", () => {
     };
     expect(detectImportKind("Velociraptor-Windows.Hayabusa.Rules-sample.json", ndjson(row))).toBe("hayabusa");
   });
+  it("hayabusa: Velociraptor artifact-map export routes to the native importer (#1726)", () => {
+    const row = {
+      Timestamp: "t",
+      Computer: "WIN11",
+      Channel: "Security",
+      EID: 1102,
+      Level: "high",
+      Title: "Log Cleared",
+    };
+    const text = JSON.stringify({ "Windows.Hayabusa.Rules": [row] });
+    expect(detectImportKind("0004_0002_velo-flow_F.X.H_Windows.Hayabusa.Rules.json", text)).toBe("hayabusa");
+  });
   it("velociraptor: artifact-named export with no content signature → filename hint (not 'siem')", () => {
     // Windows.Triage.HighValueMemory rows have no distinctive content keys → generic SIEM fallback,
     // but the Velociraptor-export filename routes them to the Velociraptor importer.
