@@ -15,6 +15,9 @@ const CSV = [
 
 test("imports a CSV and records it against the case", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  // The demo case starts with AI off, and a CSV import is an LLM call that honours the switch
+  // (#1806) — turn it on so this exercises the analysis path, not the "saved, not analyzed" one.
+  await page.request.post(`/cases/${demoCase}/ai-control`, { data: { enabled: true } });
 
   const res = await page.request.post(`/cases/${demoCase}/import-csv`, {
     data: { csv: CSV, filename: "e2e.csv" },
@@ -25,9 +28,10 @@ test("imports a CSV and records it against the case", async ({ page, demoCase })
   // Asserting the success status rather than tolerating 501 is what keeps a broken stub from
   // silently skipping this path.
   expect(res.status(), await res.text()).toBe(202);
-  const body = (await res.json()) as { accepted?: boolean; rows?: number };
+  const body = (await res.json()) as { accepted?: boolean; rows?: number; analyzed?: boolean };
   expect(body.accepted).toBe(true);
   expect(body.rows).toBe(2);
+  expect(body.analyzed).toBeUndefined();
 });
 
 test("refuses an empty CSV", async ({ page, demoCase }) => {

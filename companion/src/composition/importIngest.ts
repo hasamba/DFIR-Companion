@@ -36,6 +36,7 @@ import {
   looksLikeUndecodedMacLoginItemFilename,
 } from "../analysis/macBinaryDetect.js";
 import { isBinaryPlist } from "../analysis/macosPersistence.js";
+import { looksLikeBinaryText } from "../analysis/binaryText.js";
 import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { settleForensicImport } from "../routes/importSettle.js";
@@ -187,9 +188,11 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       looksLikeMacLoginItemFilename(filename) ||
       looksLikeUndecodedMacLoginItemFilename(filename) ||
       isBinaryPlist(text);
-    const d = refused
-      ? { kind: "unknown", confident: true, decision: "refused_binary_plist" }
-      : detectImportWithCustomEx(filename, text, registry.importers, precedence);
+    const binary = !refused && looksLikeBinaryText(text); // any other binary, on decoded text (#1802)
+    const d =
+      refused || binary
+        ? { kind: "unknown", confident: true, decision: refused ? "refused_binary_plist" : "refused_binary" }
+        : detectImportWithCustomEx(filename, text, registry.importers, precedence);
     debug?.detected(d.kind, d);
     return d.kind;
   };

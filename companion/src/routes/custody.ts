@@ -3,6 +3,7 @@ import { hashFile, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js
 import { buildCustodyManifest } from "../analysis/custodyManifest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
+import { refuseServerPath } from "./serverPathGuard.js";
 
 export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, instanceSecret } = ctx;
@@ -40,7 +41,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   // the server and is read as given — same intentional trust level as POST /import-file and
   // DFIR_NSRL_FILE: a localhost operator tool, not an internet-facing upload. Evidence commonly
   // lives outside the case directory (mounted images, tool output dirs), so the path is not
-  // constrained to it.
+  // constrained to it — only the deny-list in serverPathGuard.ts applies.
   app.post("/cases/:id/custody", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;
@@ -56,6 +57,14 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     }
     const artifactPath = typeof req.body?.artifactPath === "string" ? req.body.artifactPath.trim() : "";
     if (!artifactPath) return res.status(400).json({ error: "artifactPath is required" });
+    // Case-write, so in team mode this must not become an existence + SHA-256 oracle for the
+    // Companion's config or for other cases' files (#1792). This case's own files stay recordable.
+    const refusal = await refuseServerPath(artifactPath, {
+      casesRoot: store.casesRoot,
+      allowUnder: [store.caseDir(caseId)],
+      allowedLabel: "this case's own files",
+    });
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const collectedBy = typeof req.body?.collectedBy === "string" ? req.body.collectedBy.trim() : "";
     const source = typeof req.body?.source === "string" ? req.body.source.trim() : "";
     const trigger = typeof req.body?.trigger === "string" ? req.body.trigger.trim() : "";
