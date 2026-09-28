@@ -1243,6 +1243,7 @@ export const FEATURES: Feature[] = [
       "cockpitAction",
       "cockpitJumpEvent",
       "cockpitOpenTarget",
+      "cockpitShowLoading",
       "cockpitStoryFinding",
       "cockpitStoryOpen",
       "cockpitStoryStage",
