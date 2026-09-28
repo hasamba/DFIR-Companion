@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Evidence text no longer rewritten on screen** — the sanitizer stops deleting text like ` onload=1`, ` only=`, ` OneDrive=` or ` style=` from timeline rows, comments, tooltips and the exported deck (closes #1787)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
 
