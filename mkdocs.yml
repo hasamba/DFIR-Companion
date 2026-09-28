@@ -77,5 +77,6 @@ nav:
     - Live Monitoring & Push Ingest: reference/live-monitoring.md
     - Settings Reference: reference/settings.md
     - Team Accounts & Case Roles: reference/team-authentication.md
+    - Scripting & API: reference/api.md
     - Advanced Features: reference/advanced.md
   - Tips for Analysts: tips.md
