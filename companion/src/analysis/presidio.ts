@@ -1,4 +1,5 @@
 import { isAnonToken, type AnonTokenCategory, type CustomEntity } from "./anonymize.js";
+import { isStructuralNonPerson } from "./presidioPersonFilter.js";
 
 // Optional Presidio layer. Presidio runs AFTER the local anonymizer, on already-masked text, so
 // it only ever sees scrubbed data and reports only what the regex layer missed — principally
@@ -113,8 +114,11 @@ export function resolvePresidioMinScore(raw: string | undefined): number {
 
 /**
  * Filter and map raw Presidio findings into anonymizer custom entities.
- * Drops: below-threshold scores, unlisted entity types, blank values, and anything that fired on
- * an anonymization token (Presidio's NER can tag ANON_USER_1 as a PERSON or ORG).
+ * Drops: below-threshold scores, unlisted entity types, blank values, anything that fired on
+ * an anonymization token (Presidio's NER can tag ANON_USER_1 as a PERSON or ORG), and PERSON hits
+ * whose shape no name takes — tool names, timestamps, flags, file names, ATT&CK ids (#1799).
+ *
+ * The one mapping point for the call-time gate AND presidioPreScan, so both see the same list.
  */
 export function mapFindings(findings: PresidioFinding[], minScore: number): CustomEntity[] {
   const out: CustomEntity[] = [];
@@ -126,6 +130,7 @@ export function mapFindings(findings: PresidioFinding[], minScore: number): Cust
     const value = (f.value ?? "").trim();
     if (!value) continue;
     if (isAnonToken(value)) continue;
+    if (category === "PERSON" && isStructuralNonPerson(value)) continue;
     const key = `${category}:${value.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);

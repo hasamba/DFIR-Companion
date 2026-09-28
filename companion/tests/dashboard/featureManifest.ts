@@ -1672,6 +1672,7 @@ export const FEATURES: Feature[] = [
       "loadPresidioPending",
       "renderPresidioPending",
       "setPresidioPending",
+      "suppressAllPresidioPending",
       "addCustomEntity",
       "openAnonModal",
       "saveAnon",

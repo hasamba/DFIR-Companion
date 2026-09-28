@@ -52,6 +52,65 @@ describe("mapFindings", () => {
     expect(mapFindings([f("PERSON", "Jane Doe", 0.4)], 0.6)).toEqual([]);
   });
 
+  // #1799: spaCy NER gives these the same PERSON score (0.85) as a real name, so only their shape
+  // can tell them apart. Every value the QA run filed.
+  it("drops PERSON hits whose shape no name takes (#1799)", () => {
+    const filed = [
+      "Suricata",
+      "Chainsaw",
+      "Conti",
+      "-s",
+      "Linux",
+      "PsExec",
+      "Cobalt Strike",
+      "Beacon",
+      "Spearphishing Attachment",
+      "T1053.005",
+      "h. Sysmon,",
+      "stage1.sh",
+      "Documents",
+      "08:19:10Z",
+      "08:22:31Z",
+      "Cobalt Strike Beacon",
+      "the Cobalt Strike",
+      "2026-09-28T08:19:10Z",
+      "TA0008",
+      "--no-profile",
+      "payload.PS1",
+      "12:00",
+    ];
+    expect(
+      mapFindings(
+        filed.map((v) => f("PERSON", v, 0.85)),
+        0.6,
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps real names, including ones that share a word with the vocabulary or a list marker", () => {
+    const names = [
+      "Jane Doe",
+      "John Beacon",
+      "Jane.Doe",
+      "Dr. Smith",
+      "- Jane Doe",
+      "Linus Torvalds",
+      "Akira",
+    ];
+    expect(
+      mapFindings(
+        names.map((v) => f("PERSON", v, 0.85)),
+        0.6,
+      ).map((e) => e.value),
+    ).toEqual(names);
+  });
+
+  it("applies the PERSON shape rules to PERSON only", () => {
+    expect(mapFindings([f("EMAIL_ADDRESS", "linux@example.com")], 0.6)).toEqual([
+      { value: "linux@example.com", category: "EMAIL" },
+    ]);
+  });
+
   it("drops findings that fired on an anonymization token", () => {
     expect(mapFindings([f("PERSON", "ANON_USER_3"), f("PERSON", "ANON_EXTIP_1")], 0.6)).toEqual([]);
   });

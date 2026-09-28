@@ -81,3 +81,72 @@ describe("presidio approval row CSS", () => {
     );
   });
 });
+
+// #1799: the NER model tags tool names, timestamps and ATT&CK ids as PERSON in batches, and "Hide
+// from AI" on them masks those words in every later prompt. The panel says so, and offers one click
+// for a list that holds no real name. The per-row buttons are unchanged; nothing is left visible
+// without a click.
+describe("presidio approval: leave all visible (#1799)", () => {
+  const TOOL = { value: "Suricata", category: "PERSON" };
+  const TIME = { value: "08:19:10Z", category: "PERSON" };
+
+  it("tells the analyst tool names and timestamps are not PII", () => {
+    const { el } = render([TOOL]);
+    expect(el.innerHTML).toContain("timestamps, file names and ATT&amp;CK ids are not PII");
+  });
+
+  it("offers the bulk action only when two or more values are listed", () => {
+    expect(render([TOOL]).el.innerHTML).not.toContain("data-presidio-suppress-all");
+    const html = render([TOOL, TIME]).el.innerHTML;
+    expect(html).toContain("data-presidio-suppress-all");
+    expect(html).toContain("Leave all 2 visible — none are PII");
+  });
+
+  interface BulkApi extends Api {
+    suppressAllPresidioPending(caseId: string): Promise<void>;
+  }
+
+  function bulk(answers: Array<{ ok: boolean; pending?: unknown[] }>) {
+    const dom = stubDom();
+    const posted: string[] = [];
+    const events: string[] = [];
+    const api = loadDashboardModule<BulkApi>("dashboard-presidio.js", ["dashboard-escape.js"], {
+      document: dom.document,
+      refreshAiState: (id: string) => events.push(`refresh ${id}`),
+      fetch: (url: string, init?: { body?: string }) => {
+        if (url.endsWith("/presidio-pending")) {
+          events.push("reload");
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ pending: [TIME] }) });
+        }
+        posted.push(JSON.parse(init?.body ?? "{}").value);
+        const a = answers.shift() ?? { ok: false };
+        return Promise.resolve({
+          ok: a.ok,
+          status: a.ok ? 200 : 500,
+          json: () => Promise.resolve({ pending: a.pending }),
+        });
+      },
+    });
+    api.setPresidioPending([TOOL, TIME]);
+    return { api, dom, posted, events };
+  }
+
+  it("leaves every listed value visible, one request each, in order", async () => {
+    const { api, dom, posted, events } = bulk([
+      { ok: true, pending: [TIME] },
+      { ok: true, pending: [] },
+    ]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(posted).toEqual(["Suricata", "08:19:10Z"]);
+    expect(dom.el.innerHTML).toBe("");
+    expect(dom.badge.style.display).toBe("none");
+    expect(events).toEqual(["refresh INC-1"]);
+  });
+
+  it("stops at a refused request and re-reads what is still pending", async () => {
+    const { api, posted, events } = bulk([{ ok: true, pending: [TIME] }, { ok: false }]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(posted).toEqual(["Suricata", "08:19:10Z"]);
+    expect(events).toEqual(["reload", "refresh INC-1"]);
+  });
+});

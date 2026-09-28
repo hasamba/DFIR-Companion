@@ -223,7 +223,17 @@
       `<div data-safe-style="margin-top:10px;padding:8px;border-radius:6px;background:var(--warning-bg);color:var(--tag-orange-text);font-size:12px">` +
       `<b>Presidio found ${presidioPending.length} new value(s) in this case.</b> ` +
       `Decide each one: hide it from the AI from now on, or leave it visible because it isn't PII. ` +
-      `The AI call was not sent — re-run it once you have resolved these.</div>` +
+      `The AI call was not sent — re-run it once you have resolved these.` +
+      // #1799: the NER model tags tool names, timestamps and ATT&CK ids as PERSON at the same score
+      // as a real name. "Hide from AI" on those masks them in every later prompt, so say so.
+      `<div data-safe-style="margin-top:4px">Tool and malware names, timestamps, file names and ATT&amp;CK ids are ` +
+      `not PII — leave them visible, or the AI loses them in every later prompt.</div>` +
+      (presidioPending.length > 1
+        ? `<button data-presidio-suppress-all data-safe-style="margin-top:6px" ` +
+          `title="Leave every value listed here visible to the AI. Check the list first: hide any real person's name one by one.">` +
+          `Leave all ${presidioPending.length} visible — none are PII</button>`
+        : "") +
+      `</div>` +
       // Label the ACTION, not the verdict. "Approve" was ambiguous in the one direction that
       // matters: the gate is holding an AI call, so "Approve" reads as "approve the send" —
       // the exact opposite of what it does (it masks the value). "Not PII" then sounds like
@@ -276,13 +286,7 @@
       btn.addEventListener("click", () => {
         const caseId = document.getElementById("caseId").value.trim();
         if (!caseId) return;
-        fetch(`/cases/${caseId}/presidio-pending/suppress`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            value: btn.getAttribute("data-presidio-suppress"),
-          }),
-        })
+        postPresidioSuppress(caseId, btn.getAttribute("data-presidio-suppress"))
           .then((r) => (r.ok ? r.json() : { pending: presidioPending }))
           .then((d) => {
             presidioPending = d.pending || [];
@@ -292,6 +296,41 @@
           .catch(() => {});
       }),
     );
+    el.querySelectorAll("[data-presidio-suppress-all]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) suppressAllPresidioPending(caseId);
+      }),
+    );
+  }
+  function postPresidioSuppress(caseId, value) {
+    return fetch(`/cases/${caseId}/presidio-pending/suppress`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  }
+  // #1799: one click for a list that is all tool names and timestamps. One request per value, in
+  // order, through the same endpoint as the per-row button. A refused request stops the run, and the
+  // list is then re-read from the server so it shows exactly what is still pending.
+  function suppressAllPresidioPending(caseId) {
+    const values = presidioPending.map((e) => e.value);
+    return values
+      .reduce(
+        (chain, value) =>
+          chain
+            .then(() => postPresidioSuppress(caseId, value))
+            .then((r) => {
+              if (!r.ok) throw new Error("HTTP " + r.status);
+              return r.json();
+            })
+            .then((d) => {
+              presidioPending = d.pending || [];
+            }),
+        Promise.resolve(),
+      )
+      .then(renderPresidioPending, () => loadPresidioPending(caseId))
+      .then(() => refreshAiState(caseId));
   }
   function renderCustomEntities() {
     document.getElementById("anonCustom").innerHTML = anonCustom.length
@@ -571,6 +610,7 @@
   window.loadPresidioPending = loadPresidioPending;
   window.renderPresidioPending = renderPresidioPending;
   window.setPresidioPending = setPresidioPending;
+  window.suppressAllPresidioPending = suppressAllPresidioPending;
   window.addCustomEntity = addCustomEntity;
   window.openAnonModal = openAnonModal;
   window.saveAnon = saveAnon;
