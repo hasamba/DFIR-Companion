@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
 - **Presidio stops flagging tool names as people** — tool and malware names, timestamps, flags, file names and ATT&CK ids are no longer held as PERSON, and the approval panel offers one-click Leave all visible (closes #1799)
 - **Gate holds are not user cancels** — a Presidio or duplicate-host hold records its job as held for the analyst, not as a ✕ Cancel, on every AI route (closes #1801)
+- **Evidence text no longer rewritten on screen** — the sanitizer stops deleting text like ` onload=1`, ` only=`, ` OneDrive=` or ` style=` from timeline rows, comments, tooltips and the exported deck (closes #1787)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
 
