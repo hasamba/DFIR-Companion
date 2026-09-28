@@ -98,10 +98,10 @@ describe("status and password writes racing a delete (#1808)", () => {
     await seedClosedCase(app, store, "reopen");
     const original = store.deleteCaseFolder.bind(store);
     const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
-    patch.deleteCaseFolder = async (id, guard) => {
+    patch.deleteCaseFolder = async (id, opts) => {
       // A reopen that lands between the route's status check and the removal.
       await store.updateCaseMeta(id, { status: "open" });
-      return original(id, guard);
+      return original(id, opts);
     };
     try {
       const res = await request(app).post("/cases/reopen/delete").send({ archiveFirst: "none" });
@@ -144,5 +144,41 @@ describe("PATCH /status on an archived case (#1809)", () => {
     await store.archiveCaseFolder("one", "archived");
     const meta = JSON.parse(await readFile(join(root, "_archived", "one", "case.json"), "utf8"));
     expect(meta.status).toBe("archived");
+  });
+
+  it("restore recovers a case a pre-fix status change left in _archived/ labelled open", async () => {
+    const { app, store, root } = await harness();
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "stuck", name: "n", investigator: "i", aiProvider: "mock" });
+    await request(app).patch("/cases/stuck/status").send({ status: "closed" });
+    await request(app).post("/cases/stuck/archive").send({ removeFromList: true });
+    // The stranded state #1809 left behind: the folder in _archived/, its case.json saying open.
+    const metaPath = join(root, "_archived", "stuck", "case.json");
+    const meta = JSON.parse(await readFile(metaPath, "utf8"));
+    await writeFile(metaPath, JSON.stringify({ ...meta, status: "open" }));
+
+    const restored = await request(app).post("/cases/stuck/restore").send({});
+    expect(restored.status).toBe(200);
+    expect(await exists(join(root, "stuck", "case.json"))).toBe(true);
+    expect((await store.getCaseMeta("stuck"))?.status).toBe("closed");
+  });
+});
+
+describe("create racing a delete of the same id (#1808)", () => {
+  it("the create waits for the delete; the new case is whole and the delete succeeded", async () => {
+    const { app, store } = await harness();
+    await seedClosedCase(app, store, "reuse");
+    const del = request(app).post("/cases/reuse/delete").send({ archiveFirst: "none" });
+    const create = sleep(5).then(() =>
+      store.createCase({ caseId: "reuse", name: "second", investigator: "bob", aiProvider: null }).then(
+        () => "created",
+        (err: Error) => err.name,
+      ),
+    );
+    const [delRes, created] = await Promise.all([del, create]);
+    expect(delRes.body).toMatchObject({ deleted: true });
+    if (created === "created") expect((await store.getCaseMeta("reuse"))?.name).toBe("second");
+    else expect(created).toBe("CaseAlreadyExistsError");
   });
 });

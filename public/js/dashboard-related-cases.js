@@ -127,7 +127,7 @@
     }
   }
 
-  // Written by the page's /health poller, on every poll. Only the first "on" loads the case on
+  // Written from the /health answer on every case connect. Only the first "on" loads the case on
   // screen — the connect that ran while the flag was unknown skipped its request.
   function setCrossCaseCapability(on) {
     const was = crossCaseEnabled;

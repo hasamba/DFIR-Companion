@@ -1,12 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
-import {
-  isValidCaseId,
-  CaseAlreadyExistsError,
-  CaseArchivedError,
-  CaseNotFoundError,
-} from "../storage/caseStore.js";
+import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
@@ -192,16 +187,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const { status } = req.body ?? {};
       if (status !== "open" && status !== "closed")
         return res.status(400).json({ error: "status must be 'open' or 'closed'" });
-      // #1809 — an archived case lives in _archived/; relabelling it open or closed there left it
-      // where neither restore nor re-archive could reach it. Checked inside the metadata lock.
-      const updated = await store.updateCaseMeta(id, { status }, (current) => {
-        if (current.status === "archived") throw new CaseArchivedError(id);
-      });
+      const updated = await store.setCaseStatus(id, status); // 409 for an archived case (#1809)
       logLine(`[lifecycle] case=${id} status=${status}`);
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
-      if (err instanceof CaseArchivedError) return res.status(409).json({ error: err.message });
-      if (err instanceof CaseNotFoundError) return res.status(404).json({ error: err.message });
+      if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -277,7 +267,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
-      if (meta.status !== "archived") return res.status(400).json({ error: `case ${id} is not archived` });
+      if (meta.status !== "archived" && !store.isInArchive(id))
+        return res.status(400).json({ error: `case ${id} is not archived` });
       const updated = await store.restoreCaseFolder(id, "closed"); // move + status in one locked step
       logLine(`[restore] case=${id} restored from _archived/`);
       return res.status(200).json(updated);
@@ -293,12 +284,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     actor?: AuthIdentity,
   ): Promise<{ deleted: boolean; error?: string }> {
     try {
-      // Re-checked inside the delete's lock (#1808): an archive-first export can take long enough
-      // for the case to be reopened after the route's own status check.
-      await store.deleteCaseFolder(id, (current) => {
-        if (current.status !== "closed" && current.status !== "archived")
-          throw new Error(`case ${id} must be closed or archived before it can be deleted`);
-      });
+      await store.deleteCaseFolder(id, { closedOnly: true }); // re-checked under its lock (#1808)
     } catch (err) {
       const message = (err as Error).message;
       errLine(`[delete] case=${id} failed to delete: ${message}`);
