@@ -699,8 +699,16 @@ catalogue, error codes, safety limits, and examples.
 
 ## Hunting Profile
 
-What has already been hunted in this case, and whether each hunt found anything. Use it to avoid
-re-running a sweep that came back empty, and to show what ground has been covered.
+The Velociraptor hunts deployed in this case — flows, playbook and technique hunts, and
+triage bundles — and whether each one found anything. Use it to avoid re-running a sweep
+that came back empty, and to show what ground has been covered. Hunt Workbench queries are not
+listed here; they search events already in the case and deploy nothing.
+
+- Hunt title and VQL fingerprint
+- Status (hit / miss / deployed / pending)
+- Result row count and new events added to the case
+- **Re-collect** button to pull fresh results
+- **Expand** to view hunt rows inline
 
 ---
 
@@ -770,20 +778,6 @@ Each task has: status, assignee, due date, notes.
 **IR Templates mode** (Settings → Velociraptor → IR Templates): expands each Critical/High finding into phase-based steps (Critical → Contain / Investigate / Eradicate / Recover; High → Investigate / Contain). The Investigate step is tailored to the finding's dominant ATT&CK tactic.
 
 Push the playbook to **ClickUp** with one click (toolbar → Export → Push playbook to ClickUp).
-
----
-
-## Hunting Profile
-
-Shows what has been hunted in this case and whether each hunt found anything:
-
-- Hunt title and VQL fingerprint
-- Status (hit / miss / deployed / pending)
-- Result row count and new events added to the case
-- **Re-collect** button to pull fresh results
-- **Expand** to view hunt rows inline
-
-Used to track your hunting coverage and avoid running the same hunt twice.
 
 ---
 
