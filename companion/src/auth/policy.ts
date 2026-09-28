@@ -34,6 +34,10 @@ const AUTHENTICATED_GLOBAL_READ_PREFIXES = [
   "/bundles",
   "/tools/status",
   "/enrich-health",
+  // The bundled ATT&CK catalogue behind the MITRE panel's Matrix view (routes/attackMatrix.ts, #1764).
+  // Public reference data, the same for every user; unlisted, it would fall to the global-admin default
+  // and leave the matrix empty for every non-admin.
+  "/attack",
 ];
 const GLOBAL_ADMIN_PREFIXES = [
   "/settings",

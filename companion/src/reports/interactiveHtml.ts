@@ -13,6 +13,8 @@ import { emptyReportMeta } from "./reportMeta.js";
 import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 import { escapeHtml } from "./escapeHtml.js";
 import { caseDomains, defangIndicators } from "./defang.js";
+import { buildMatrixEmbed, MATRIX_SECTION_HTML, MATRIX_STYLES } from "./interactiveHtmlMatrix.js";
+import { MATRIX_SCRIPT } from "./interactiveHtmlMatrixScript.js";
 
 // A self-contained, interactive HTML report (#233). Unlike the canonical print-oriented HTML
 // report (html.ts), this is a single-page app: all case data is embedded as a JSON blob inside a
@@ -30,6 +32,8 @@ import { caseDomains, defangIndicators } from "./defang.js";
 // on the rendered page, so an analyst reviewing the report before sending it could not see what they
 // were about to disclose. Projecting to the two view-models below means anything not on screen is
 // not in the file. Adding a field here is therefore a deliberate act, which is the point.
+// The ATT&CK Matrix section (#1764) embeds a second blob, `__DFIR_MATRIX__`: public catalogue data
+// plus per-technique hit data (severity, finding ids, event ids) — see interactiveHtmlMatrix.ts.
 //
 // SIZE GUARD: the projection above removes the heavyweight per-event fields (`message` carries
 // untruncated ScriptBlock text), and then the timeline is capped twice over — by row count and by
@@ -277,7 +281,7 @@ const STYLES = `
   .conf-bar::-moz-progress-bar { background: #24314f; }
   .empty { color: #5a6675; font-style: italic; padding: 8px 0; }
   .count { color: #5a6675; font-size: 12.5px; }
-`;
+${MATRIX_STYLES}`;
 
 const SCRIPT = `
 (function () {
@@ -353,7 +357,7 @@ const SCRIPT = `
         if (hay.indexOf(q) === -1) return;
       }
       shown++;
-      var tr = el("tr", null, [
+      var tr = el("tr", { id: "event-" + ev.id }, [
         el("td", null, [el("span", { class: sevClass(ev.severity), text: ev.severity })]),
         el("td", { text: ev.timestamp }),
         el("td", { text: ev.asset || "—" }),
@@ -388,7 +392,7 @@ const SCRIPT = `
       return;
     }
     list.forEach(function (f) {
-      var card = el("div", { class: "finding-card" });
+      var card = el("div", { class: "finding-card", id: "finding-" + f.id });
       var head = el("div", { class: "finding-head" }, [
         el("span", { class: "chevron", text: "▶" }),
         el("span", { class: sevClass(f.severity), text: f.severity }),
@@ -457,6 +461,7 @@ export function renderInteractiveHtmlReport(
     `<span id="conf-value">0+</span>`,
     `</div>`,
     `<div id="findings"></div>`,
+    MATRIX_SECTION_HTML,
     `<h2>Forensic Timeline</h2>`,
     `<div class="controls">`,
     `<label>Severity <select id="sev-filter"><option value="all">All</option><option value="Critical">Critical</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Info">Info</option></select></label>`,
@@ -470,8 +475,10 @@ export function renderInteractiveHtmlReport(
     // Both blocks carry the CSP nonce placeholder. The route swaps in the per-response value via
     // withNonce() when serving over HTTP, where script-src forbids un-nonced inline script; a
     // downloaded copy is opened from file:// with no CSP, where the leftover attribute is inert.
-    `<script nonce="${CSP_NONCE_PLACEHOLDER}">window.__DFIR_CASE__ = ${safeJsonForScript(data)};</script>`,
-    `<script nonce="${CSP_NONCE_PLACEHOLDER}">${SCRIPT}</script>`,
+    // The matrix blob rides in the same element, first, so the two stay the only <script> elements.
+    `<script nonce="${CSP_NONCE_PLACEHOLDER}">window.__DFIR_MATRIX__ = ${safeJsonForScript(buildMatrixEmbed(state))};`,
+    `window.__DFIR_CASE__ = ${safeJsonForScript(data)};</script>`,
+    `<script nonce="${CSP_NONCE_PLACEHOLDER}">${SCRIPT}${MATRIX_SCRIPT}</script>`,
     "</body>",
     "</html>",
     "",

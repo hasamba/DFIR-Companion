@@ -353,7 +353,23 @@ Outbound network connections that are *too regular to be human* — suggesting a
 
 ## MITRE ATT&CK
 
-Shows all ATT&CK techniques identified across findings and events, grouped by tactic. Click a technique to jump to the events that evidence it.
+Shows the case's ATT&CK techniques from findings and forensic-timeline events. A **Matrix / List** switch picks the view. Your choice is remembered in this browser.
+
+**Matrix** (default) is a Navigator-style grid of ATT&CK Enterprise v19.1. It has one column per tactic, in MITRE order. It works offline. No data leaves the tool.
+
+- A technique the case hit takes the color of its worst severity. It also shows a count of its findings and events, and a severity letter. Techniques the case did not hit are gray.
+- A technique in several tactics shows in each of those columns.
+- Sub-techniques nest under their parent. A parent opens by itself when one of its sub-techniques is a hit, and shows the worst severity of the whole group.
+- **Platform** (Windows, Linux, macOS, Cloud, All) hides gray cells for other platforms. A case hit always shows, whatever the platform.
+- **Hits only** hides every gray cell and every tactic column without a hit.
+- A case technique that ATT&CK v19.1 does not know (a typo, or a newer ATT&CK version) shows in the **Unmapped** column. No hit is hidden.
+- Click a cell to see the technique, its MITRE link, its findings and its events. Each finding and event links to its place in the dashboard.
+
+The matrix shows exactly the techniques the List view and the ATT&CK Navigator export show. A finding you mark as a false positive drops its techniques at once.
+
+**List** shows one row per technique, with its supporting findings.
+
+The interactive HTML report contains the same matrix. To open the case in the MITRE Navigator website instead, use **Export → ATT&CK Navigator layer (JSON)**.
 
 ---
 

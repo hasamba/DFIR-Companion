@@ -275,6 +275,7 @@
     "ROUTE POST /cases/:id/dwell-windows",
     "ROUTE PUT /cases/:id/dwell-windows/:windowId",
     "ROUTE DELETE /cases/:id/dwell-windows/:windowId",
+    "ROUTE GET /attack/matrix",
     "ROUTE GET /cases/:id/sessions",
     "ROUTE POST /cases/:id/sessions/:sid/summary",
     "ROUTE GET /cases/:id/comments",
@@ -698,6 +699,7 @@
     "ROUTE GET /js/dashboard-velo-triage.js",
     "ROUTE GET /js/dashboard-live-socket.js",
     "ROUTE GET /js/dashboard-case-connect.js",
+    "ROUTE GET /js/dashboard-mitre-matrix.js",
     "ROUTE GET /js/dashboard-render.js",
     "ROUTE GET /js/dashboard-facet-filters.js",
     "ROUTE GET /js/dashboard-hunts-jumps.js",
@@ -754,6 +756,7 @@
     "ROUTE GET /css/dashboard-timeline.css",
     "ROUTE GET /css/dashboard-toolbar.css",
     "ROUTE GET /css/dashboard-sections.css",
+    "ROUTE GET /css/mitre-matrix.css",
     "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
 }

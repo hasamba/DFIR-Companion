@@ -31,6 +31,8 @@
   <link rel="stylesheet" href="/css/dashboard-timeline.css" />
   <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
   <link rel="stylesheet" href="/css/dashboard-sections.css" />
+  <!-- The MITRE panel's Matrix view (#1764). A feature sheet, not one of the eight parts above. -->
+  <link rel="stylesheet" href="/css/mitre-matrix.css" />
   <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
        Linked after the dashboard sheets so it is last in the cascade. It was already last against the
        inline block that used to sit here, and #415 made it last against the other thirteen too —
@@ -378,6 +380,8 @@
   <!-- Vim-style keyboard navigation. initKeyboardNav() binds its four controls. -->
   <script src="/js/dashboard-live-socket.js"></script>
   <script src="/js/dashboard-case-connect.js"></script>
+  <!-- MITRE ATT&CK matrix (#1764). initMitreMatrix() wires the switch and publishes DfirMitreMatrix. -->
+  <script src="/js/dashboard-mitre-matrix.js"></script>
   <script src="/js/dashboard-render.js"></script>
   <script src="/js/dashboard-facet-filters.js"></script>
   <script src="/js/dashboard-hunts-jumps.js"></script>
@@ -3720,7 +3724,15 @@
     <section id="sec-uncertainties" data-safe-style="grid-column: 1 / -1"><h2>Uncertainty Ledger<span class="ev-sub">what the analysis KNOWS vs INFERRED vs SPECULATED — treat anything below Confirmed as provisional, not fact</span></h2><div id="uncertainties">—</div></section>
     <section id="sec-huntprofile" data-safe-style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads<span class="ev-sub">open leads the AI tracks across re-synthesis runs — closed automatically once the evidence resolves them</span></h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
-    <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
+    <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2>
+      <div id="mitreControls" class="mm-controls">
+        <div class="mm-switch" role="group" aria-label="MITRE view"><button type="button" id="mitreViewMatrix" class="mm-switch-btn" aria-pressed="true">Matrix</button><button type="button" id="mitreViewList" class="mm-switch-btn" aria-pressed="false">List</button></div>
+        <label class="mm-ctl" id="mitrePlatformCtl" for="mitrePlatform">Platform <select id="mitrePlatform"><option value="windows">Windows</option><option value="linux">Linux</option><option value="macos">macOS</option><option value="cloud">Cloud</option><option value="all">All</option></select></label>
+        <label class="mm-ctl" id="mitreHitsOnlyCtl" for="mitreHitsOnly"><input id="mitreHitsOnly" type="checkbox"> Hits only</label>
+        <span class="mm-ctl" id="mitreExpandCtl" role="group" aria-label="Sub-techniques"><button type="button" id="mitreExpandAll" class="mm-ctl-btn">Expand all</button><button type="button" id="mitreCollapseAll" class="mm-ctl-btn">Collapse all</button></span>
+      </div>
+      <div id="mitre">—</div>
+      <div id="mitrePopover" class="mm-popover" role="dialog" aria-label="Technique details" hidden></div></section>
     <section id="sec-adversary" data-safe-style="grid-column: 1 / -1"><h2>Adversary Hints<span class="ev-sub">known ATT&amp;CK groups by technique overlap + their likely next techniques — hypothesis fuel, not attribution (derived, no AI)</span></h2><div id="adversaryHints">—</div></section>
     <section id="sec-playbook-match" data-safe-style="grid-column: 1 / -1"><h2>Playbook Match<span class="ev-sub">did this case's techniques happen in the ORDER a published ransomware playbook describes — matches the playbook, not the actor (derived, no AI)</span></h2><div id="playbookMatch">—</div></section>
     <section id="sec-d3fend" data-safe-style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" data-act="generateRemediation" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
@@ -5322,6 +5334,7 @@
     if (typeof renderCollectionPlan !== "function") dfirFeatureUnavailable("Collection plan");   // js/dashboard-collection-plan.js. Reported ONCE, here: both call sites re-run (every override click, every state push) so neither may chip.
     // "Now" investigator cockpit (#375) lives in public/js/dashboard-cockpit.js.
     if (typeof initCockpit === "function") initCockpit();
+    if (typeof initMitreMatrix === "function") initMitreMatrix(); // MITRE Matrix view (#1764)
     // render() lives in public/js/dashboard-render.js. It is the one module whose absence the
     // facade reports at load rather than stubbing — see that file's header for why.
     // The case-load path lives in public/js/dashboard-case-connect.js. Like render(), the facade
