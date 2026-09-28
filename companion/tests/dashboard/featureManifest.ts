@@ -1811,8 +1811,8 @@ export const FEATURES: Feature[] = [
     // listeners of its own — every link in it is a plain anchor — so the case-connect loader
     // calling loadRelatedCases(caseId) is the whole entry point.
     file: "dashboard-related-cases.js",
-    publish: ["loadRelatedCases", "renderRelatedCases"],
-    private: ["relatedCases", "relatedCasesFor"],
+    publish: ["loadRelatedCases", "renderRelatedCases", "setCrossCaseCapability"], // #1770
+    private: ["relatedCases", "relatedCasesFor", "crossCaseEnabled"],
   },
   {
     // The live-snapshot choice on an AI-suggested hunt (#809): a pure "does this VQL read live

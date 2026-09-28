@@ -69,11 +69,12 @@ jobs:
 
       # Runs even on a cache hit: it is a no-op when the browser is present, and --with-deps still
       # installs the OS packages, which are not part of the cached path.
-      - name: Install Chromium
+      # Firefox runs only the safe-dom sanitizer spec (#1814); see the projects in playwright.config.ts.
+      - name: Install Chromium and Firefox
         working-directory: companion
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox
 
-      - name: E2E (Playwright, Chromium)
+      - name: E2E (Playwright, Chromium + Firefox sanitizer spec)
         working-directory: companion
         run: npm run test:e2e
 

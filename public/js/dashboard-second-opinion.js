@@ -408,6 +408,13 @@
             "second opinion failed: " + rec.error;
           return;
         }
+        // #1771 — a refusal (an empty forensic timeline) is not a failure and not a result: say why
+        // no run happened, and never read it as "0 disagreements" or paint it as a record.
+        if (rec && rec.skipped) {
+          document.getElementById("status").textContent =
+            "second opinion not run: " + (rec.message || rec.skipped);
+          return;
+        }
         const n = Array.isArray(rec.deltas)
           ? rec.deltas.filter((d) => !d.carriedFrom).length
           : 0;
