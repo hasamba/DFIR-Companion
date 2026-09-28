@@ -45,9 +45,10 @@ export async function sniffImportFileHead(filePath: string): Promise<string> {
 }
 
 /**
- * The whole file as UTF-8, or the 413 message when it is over the cap. One open: the size check
+ * The whole file as text, or the 413 message when it is over the cap. One open: the size check
  * and the read share the descriptor, and the read stops the moment it passes the size it was
- * promised. I/O errors and "Invalid string length" propagate as before.
+ * promised. I/O errors and "Invalid string length" propagate as before. Decoded BOM-aware, the
+ * same as the head sample: a UTF-16 CSV was sniffed as csv and then parsed as UTF-8 mojibake.
  */
 export async function readImportFileBounded(
   filePath: string,
@@ -56,7 +57,7 @@ export async function readImportFileBounded(
 ): Promise<{ text: string; tooLarge?: undefined } | { text?: undefined; tooLarge: string }> {
   const fh = await open(filePath, "r");
   try {
-    return { text: (await readHandleBounded(fh, maxBytes)).toString("utf8") };
+    return { text: decodeImportedText(await readHandleBounded(fh, maxBytes)) };
   } catch (err) {
     if (err instanceof FileTooLargeError) return { tooLarge: importFileTooLarge(err.size, kind, maxBytes)! };
     throw err;

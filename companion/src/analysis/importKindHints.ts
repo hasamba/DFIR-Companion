@@ -9,6 +9,7 @@ import {
   MAC_LOGIN_ITEM_FILENAMES,
 } from "./macBinaryDetect.js";
 import { isBinaryPlist } from "./macosPersistence.js";
+import { binaryContentImportHint } from "./binaryText.js";
 
 /**
  * The v1 SessionLoginItems.sfl, a login-item container this codebase names but does not decode
@@ -62,7 +63,12 @@ export function binaryPlistImportHint(filename: string, text: string): string | 
 
 /** The first specific hint that applies, else undefined so the caller prints its generic list. */
 export function unknownImportHintFor(filename: string, text: string): string | undefined {
-  return capaFlavorHintFor(text) ?? binaryArtifactHintFor(filename) ?? binaryPlistImportHint(filename, text);
+  return (
+    capaFlavorHintFor(text) ??
+    binaryArtifactHintFor(filename) ??
+    binaryPlistImportHint(filename, text) ??
+    binaryContentImportHint(filename, text) // any other binary (#1802) — after the specific hints
+  );
 }
 
 /** The unified /import route's generic "unknown" sentence: every supported format, so the analyst can see what was tried. */

@@ -558,6 +558,7 @@
     "macBinaryDetect.ts": "analysis/ingest",
     "aliasRecordReader.ts": "analysis/ingest",
     "importKindHints.ts": "analysis/ingest",
+    "binaryText.ts": "analysis/ingest",
     "macFsEventImport.ts": "analysis/ingest",
     "macLoginItemImport.ts": "analysis/ingest",
     "macSpotlightUsageImport.ts": "analysis/ingest",

@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Report diff names text and Case Details changes** — version and release diffs flag a changed report text and list changed Case Details fields instead of saying "no differences", and a meta-only change now mints a version (closes #1779)
 - **Bare usernames redacted** — a username found as CORP\\user, a UPN or a profile path gets one token and is replaced wherever it appears, in the redacted package, AI anonymization and the support bundle; common words are spared (closes #1780)
+- **Import-from-path refuses the Companion's own files** — `/import-file`, `/import-mac-login-item` and custody recording refuse relative paths, the `.env` config and the cases root (except this case's drop folder or own files) (closes #1792)
+- **Unrecognised JSON is flagged** — JSON no importer recognises still imports as generic SIEM events, but the import answer and the Import summary now say the format was a guess (closes #1795)
+- **AI switch honoured by CSV/log API imports** — `/import-csv` and `/import-log` save the file but send nothing to the model while the case's AI is off, like the Import button (closes #1806)
+- **Binary files refused at import** — an .exe or other binary sent to Import or Import-from-path is refused with a reason instead of landing as a CSV/log, and UTF-16 exports with a BOM now parse cleanly through Import-from-path (closes #1802)
 - **Hunt Workbench keeps the saved hunt after Run** — Delete, Save and a second Run act on the selected hunt again; Delete with nothing selected says so (closes #1776)
 - **Settings saves a select put back to its blank option** — "not set", "default" and "same as …" now remove the key instead of reporting no changes; a blank AI provider or image detail value counts as unset (closes #1785)
 - **Hunt Workbench status line** — a late query check no longer overwrites a Run or Save result (closes #1777)

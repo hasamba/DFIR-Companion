@@ -203,10 +203,14 @@ parsing runs in the background. To know when it ends, see
 If AI is off for the case and the format needs AI (a generic CSV or log), the response adds
 `"analyzed": false, "reason": "ai-off"`. The file is kept as evidence but not parsed.
 
+If the file is JSON that no importer recognises, it is imported as generic SIEM events
+(`"kind": "siem"`, default severity Low) and the response adds a `"warning"` sentence that says so.
+
 !!! note "Binary files"
-    `text` is a string, so this endpoint takes text formats: CSV, JSON, JSONL, logs. For a binary
-    file such as a raw `.evtx`, use `import-file` below, or convert the file first
-    (for example, with Hayabusa or EvtxECmd).
+    `text` is a string, so this endpoint takes text formats: CSV, JSON, JSONL, logs. A binary file,
+    such as an executable or a raw `.evtx`, is refused with `400` and `"refused": true`, here and
+    in `import-file` below. Convert it first (for example, a raw `.evtx` with Hayabusa or
+    EvtxECmd) and import the output. UTF-16 exports with a byte-order mark import normally.
 
 ### Import a file from the server's disk
 
@@ -217,6 +221,10 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/import-file \
 ```
 
 - `path` is an absolute path **on the Companion machine**, not on the machine that runs the script.
+  A relative path is refused with `400`.
+- The Companion's own configuration file (`.env`) and the cases root are refused with `403`. The
+  one exception is this case's `drop/` folder, so a file the drop folder refused as too large can
+  still be imported from there.
 - A Plaso CSV streams from disk with no size limit. Other formats have a limit of 256 MB
   (`DFIR_MAX_IMPORT_FILE_MB`).
 - In team mode, this endpoint needs a **global administrator**, because it reads the server's disk.
