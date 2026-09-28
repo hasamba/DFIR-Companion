@@ -95,6 +95,11 @@ async function logFiles(): Promise<string[]> {
   }
 }
 
+async function runRetries(): Promise<number | undefined> {
+  const synth = (await runStore.list("c1")).filter((r) => r.kind === "synthesis");
+  return synth[synth.length - 1]?.execution.retries;
+}
+
 async function runWarnings(): Promise<string[]> {
   const runs = await runStore.list("c1");
   const synth = runs.filter((r) => r.kind === "synthesis");
@@ -131,6 +136,7 @@ describe("synthesis answer whose findings cite no event (#1754)", () => {
     expect(await runWarnings()).toContain(
       "citation retry ran: the first answer left 3 of 3 AI finding(s) with no cited event",
     );
+    expect(await runRetries()).toBe(1);
   });
 
   it("does not ask again when the findings cite their events", async () => {
@@ -138,6 +144,7 @@ describe("synthesis answer whose findings cite no event (#1754)", () => {
     await p.synthesize("c1");
     expect(prompts).toHaveLength(1);
     expect(await logFiles()).toHaveLength(0);
+    expect(await runRetries()).toBe(0);
     expect((await runWarnings()).some((w) => w.includes("cite no event"))).toBe(false);
   });
 
@@ -183,6 +190,23 @@ describe("synthesis answer whose findings cite no event (#1754)", () => {
     expect(prompts).toHaveLength(2);
     expect(state.findings.map((f) => f.id)).toEqual(expect.arrayContaining(["f1", "f2", "f3"]));
     expect(warns.some((w) => w.includes("citation retry failed"))).toBe(true);
+  });
+});
+
+describe("a finding whose only citation is an id no event has (#1754, Codex review)", () => {
+  it("counts as citing no event in the run record", async () => {
+    const p = pipelineAnswering([
+      answer([
+        finding("f1", "Toolkit staged in Public", ["29e20"]),
+        finding("f2", "Defender disabled", ["made-up"]),
+      ]),
+    ]);
+    const state = await p.synthesize("c1");
+    expect(prompts).toHaveLength(1);
+    expect(state.findings.find((f) => f.id === "f2")?.relatedEventIds).toEqual([]);
+    expect(await runWarnings()).toContain(
+      "1 of 2 AI finding(s) cite no event, so the High backfill cannot tell which rows they cover",
+    );
   });
 });
 

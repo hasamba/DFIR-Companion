@@ -44,6 +44,7 @@ export interface SynthesisCall {
   safetyStops: number; // #1740: how many times that model's safety filter stopped an answer
   primaryLabel: string; // #1740: the synthesis model's label, for the log line
   citationRetriedAfter?: CitationCounts["retriedAfter"]; // #1754: set when the citation retry ran
+  citationRetries: number; // #1754: 0 or 1 — the extra model call, kept apart from parseRetries
 }
 
 // One accepted answer and the model that gave it. Snapshotted per answer: the citation retry can
@@ -183,6 +184,7 @@ export async function callSynthesisModel(
     safetyStops: choice.safetyStops,
     primaryLabel: choice.primaryName,
     ...(retriedAfter ? { citationRetriedAfter: retriedAfter } : {}),
+    citationRetries: retriedAfter ? 1 : 0,
   };
 }
 
@@ -214,6 +216,7 @@ async function answerWithCitations(
   const deps = { log: ctx.log, store: ctx.opts.synthMetaStore };
   await keepFailedAnswer(deps, caseId, o.attempt(), err, first.delta);
   ctx.log.warn(`[synthesis] ${err.message} — asking once more for event citations`, { caseId });
+  ctx.recordRetry?.(caseId, "synthesis", err); // counted like any retry (ai_retry)
   o.setNote(synthesisRetryNote(err) ?? "");
   const retriedAfter = { uncited, total };
   let second: Answer;

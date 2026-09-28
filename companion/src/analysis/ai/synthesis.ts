@@ -459,7 +459,8 @@ async function recordSynthesisOutcome(
     falsePositiveMarkers: o.run.markers.length,
     infoEventsExcluded: o.prompt.omittedInfo > 0,
     observationsIncluded: o.observationsBlock.length > 0,
-    parseRetries: o.call.parseRetries,
+    // The run's retries are every extra model call: parse retries and the #1754 citation retry.
+    parseRetries: o.call.parseRetries + o.call.citationRetries,
     coverage: o.prompt.coverage,
     citationWarnings: o.citationWarnings,
   });
