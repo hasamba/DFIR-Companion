@@ -586,6 +586,7 @@
     // wall of unrelated key names, and no Settings save could ever succeed. Read-only fields are
     // skipped outright: the server refuses them by design, they're rendered for reference only.
     const updates = {};
+    const unset = [];
     document.querySelectorAll("[id^='env-']").forEach((el) => {
       const key = el.id.replace(/^env-/, "");
       if (el.readOnly || el.disabled) return;
@@ -595,8 +596,13 @@
         val = el.value.trim();
         if (!val) return;
       } else if (el.tagName === "SELECT") {
-        // A blank select is "leave whatever .env has" — it must not blank an existing key.
-        if (!el.value) return;
+        // A blank option means "not set / default / same as …" (#1785). Picked over a loaded value,
+        // it removes the key. Blank at load and blank now is no change — an unknown .env value also
+        // loads blank, and it must not be erased.
+        if (!el.value) {
+          if (loadedEnvValues[key]) unset.push(key);
+          return;
+        }
         val = el.value;
       } else {
         val = el.value.trim();
@@ -606,24 +612,24 @@
     const msg = document.getElementById("settingsSaveMsg");
     msg.textContent = "";
     let ok = true;
-    if (Object.keys(updates).length > 0) {
+    if (Object.keys(updates).length > 0 || unset.length > 0) {
       try {
         const r = await fetch("/settings/env", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updates }),
+          body: JSON.stringify({ updates, unset }),
         });
         if (r.ok) {
           // Saving only WRITES .env, so this used to be a flat "restart to apply" — which is how a
           // corrected MISP URL could sit on disk while the running server kept pushing to the old
           // one (#178). Now every integration group the save touched is applied live: /settings/reload
           // loads it into the environment AND rebuilds the clients it feeds, reporting them back.
-          const changed = Object.keys(updates);
+          const changed = [...Object.keys(updates), ...unset];
           const { rebuilt, inEffect } = await applySavedEnvGroups(changed);
           // The saved values are the new baseline, so saving twice without reopening the modal
           // doesn't rebuild the same clients again.
           changed.forEach((k) => {
-            loadedEnvValues[k] = updates[k];
+            loadedEnvValues[k] = updates[k] ?? "";
           });
           // Say what actually happened to THESE keys. Two ways to get this wrong, and the code has
           // been both: branching on `rebuilt` alone told the analyst to restart for DFIR_KEV_,

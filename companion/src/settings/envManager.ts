@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isSeaRuntime } from "../serverAssets.js";
-import { withVisionEnvAliases } from "../config/aiEnv.js";
+import { legacyVisionAlias, withVisionEnvAliases } from "../config/aiEnv.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 
 const SECRET_SUFFIXES = ["_KEY", "_SECRET", "_PASSWORD", "_TOKEN"];
@@ -296,10 +296,15 @@ function safeKeyLabel(key: string): string {
 }
 
 /** Validate that every key in `updates` is a well-formed name carrying a well-formed value, and is
- * on the writable allowlist rather than explicitly denied.
+ * on the writable allowlist rather than explicitly denied. `unset` names keys to remove (#1785) and
+ * passes the same key rules; a key both written and removed — directly or as a DFIR_VISION_ key's
+ * legacy alias — is rejected, because neither outcome is what the caller can be assumed to mean.
  * Returns an array of rejected keys, sanitized for display (empty = all ok). */
-export function validateEnvUpdates(updates: Record<string, unknown>): string[] {
-  const rejected: string[] = [];
+export function validateEnvUpdates(updates: Record<string, unknown>, unset: unknown = []): string[] {
+  if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string")) return ["unset"];
+  const removed = new Set(unset.flatMap((key: string) => [key, legacyVisionAlias(key) ?? key]));
+  const rejected = unset.length > 0 ? validateEnvUpdates(Object.fromEntries(unset.map((key) => [key, ""]))) : [];
+  for (const key of Object.keys(updates)) if (removed.has(key)) rejected.push(safeKeyLabel(key));
   for (const [key, value] of Object.entries(updates)) {
     if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
       rejected.push(safeKeyLabel(key));
@@ -396,6 +401,18 @@ export async function reloadEnvPrefix(prefix: string): Promise<string[]> {
       applied.push(k);
     }
   }
+  // Keys a save removed from .env (#1785). Only these are deleted from process.env — a variable
+  // that came from the shell and never from .env is not this reload's to drop — and each removal
+  // is consumed here, so a later reload leaves a value supplied afterwards alone.
+  for (const k of [...pendingEnvRemovals]) {
+    if (!k.startsWith(prefix) || Object.hasOwn(raw, k)) continue;
+    for (const name of [k, legacyVisionAlias(k)]) {
+      if (!name || !pendingEnvRemovals.has(name) || Object.hasOwn(raw, name)) continue;
+      pendingEnvRemovals.delete(name);
+      delete process.env[name];
+    }
+    applied.push(k);
+  }
   return applied;
 }
 
@@ -414,6 +431,8 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
 /**
  * Update specific keys in the .env file, preserving comments and structure.
  * Keys not already in the file are appended. Empty-string values are skipped.
+ * `unset` keys lose their line (and a DFIR_VISION_ key its legacy DFIR_AI_ alias, which would
+ * otherwise stand in for it again), and are queued for reloadEnvPrefix to drop from process.env.
  */
 // One writer at a time. updateEnv is a read-modify-write over a single file, so two overlapping
 // saves — the setup wizard and the Settings modal, or two browser tabs — both read the same
@@ -427,6 +446,9 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
 // blocks every save) for a configuration nothing else is supposed to be writing.
 let envWriteQueue: Promise<unknown> = Promise.resolve();
 
+/** Keys removed from .env by a save and not yet dropped from process.env by a reload (#1785). */
+const pendingEnvRemovals = new Set<string>();
+
 function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {
   // Run whether or not the previous save succeeded: one failed write must not wedge every later one.
   const result = envWriteQueue.then(run, run);
@@ -437,7 +459,7 @@ function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {
   return result;
 }
 
-export async function updateEnv(updates: Record<string, string>): Promise<void> {
+export async function updateEnv(updates: Record<string, string>, unset: readonly string[] = []): Promise<void> {
   // Fail closed on the record syntax even though the route validates first (#422). This function
   // is exported, and the cost of a caller forgetting is an attacker-authored line in the file the
   // server reads its security configuration from. The allowlist stays the route's business — this
@@ -447,18 +469,32 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
       throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
     }
   }
+  if (unset.some((key) => !ENV_KEY_SYNTAX.test(key))) throw new Error("refusing to remove a malformed .env key");
+  const removed = new Set(unset.flatMap((key) => [key, legacyVisionAlias(key) ?? key]));
   // Read and write as one step, or a concurrent save that read the same baseline overwrites us.
   return withEnvWriteLock(async () => {
-    await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(await readRaw(), updates));
+    await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(await readRaw(), updates, removed));
+    // Only after the write landed: a failed save removed nothing, so nothing is queued.
+    removed.forEach((key) => pendingEnvRemovals.add(key));
+    Object.keys(updates).forEach((key) => pendingEnvRemovals.delete(key));
   });
 }
 
 /** The file text with `updates` applied in place; keys not already in the file are appended. */
-function applyEnvUpdates(raw: string, updates: Record<string, string>): string {
+function applyEnvUpdates(
+  raw: string,
+  updates: Record<string, string>,
+  removed: ReadonlySet<string> = new Set(),
+): string {
   const lines = raw.split("\n");
   const updatedKeys = new Set<string>();
 
-  const newLines = lines.map((line) => {
+  const keyOf = (line: string): string | undefined => {
+    const trimmed = line.trim();
+    const eq = trimmed.startsWith("#") ? -1 : trimmed.indexOf("=");
+    return eq < 0 ? undefined : trimmed.slice(0, eq).trim();
+  };
+  const newLines = lines.filter((line) => !removed.has(keyOf(line) ?? "")).map((line) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) return line;
     const eq = trimmed.indexOf("=");
