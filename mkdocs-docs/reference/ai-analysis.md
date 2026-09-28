@@ -236,7 +236,9 @@ Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to
 - Added findings (model B found something model A missed)
 - Removed findings (model B did not confirm something model A concluded)
 - Severity differences
-- MITRE technique additions/removals
+- MITRE technique additions/removals — a technique counts as mapped by a model when its MITRE table or one of its findings that is not dismissed carries it, so a technique both models tag on a finding is not a disagreement
+
+For a technique disagreement, the referee also reads the findings that carry the technique. A staged tool or script that never ran keeps its technique: the finding text records that it did not run. The referee suggests a removal only when the technique is wrong for the artefact, for example build-time activity.
 
 A **referee** model reads each disagreement together with the forensic events the disputed finding cites, and writes a *referee suggests: accept B* or *referee suggests: keep A* line under it. The referee is model A unless you change it under **Settings → AI → Referee for 2nd-opinion verdicts** (`same-as-b` lets model B judge its own findings; any other model ID names a neutral third referee).
 

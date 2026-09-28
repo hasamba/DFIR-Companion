@@ -175,15 +175,33 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
       deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
   }
 
+  // The side that maps a technique is read from its TABLE, which is what accepting the delta acts
+  // on. The side that "does not" is read from its table AND its live findings' tags (#1757): a model
+  // can tag a finding and leave the id out of its top-level list, and then "Model B does not map
+  // this technique" was false and the referee was asked to settle a disagreement nobody had.
+  const aMapped = mappedTechniques(a);
+  const bMapped = mappedTechniques(b);
   const aTech = new Map(a.mitreTechniques.map((t) => [t.id, t]));
   const bTech = new Map(b.mitreTechniques.map((t) => [t.id, t]));
   for (const [id, t] of bTech) {
-    if (!aTech.has(id)) deltas.push(delta("mitre_added", id, id, { techniqueName: t.name }));
+    if (!aMapped.has(id)) deltas.push(delta("mitre_added", id, id, { techniqueName: t.name }));
   }
   for (const [id, t] of aTech) {
-    if (!bTech.has(id)) deltas.push(delta("mitre_removed", id, id, { techniqueName: t.name }));
+    if (!bMapped.has(id)) deltas.push(delta("mitre_removed", id, id, { techniqueName: t.name }));
   }
   return deltas;
+}
+
+// A finding the analyst, or an accepted second-opinion decision, dismissed is no longer a claim.
+const liveFindings = (s: InvestigationState): Finding[] => s.findings.filter((f) => f.status !== "dismissed");
+
+// Every technique id a model maps: its table plus its live findings' tags. Exact ids — a
+// sub-technique does not map its parent, nor the reverse.
+function mappedTechniques(s: InvestigationState): Set<string> {
+  return new Set([
+    ...s.mitreTechniques.map((t) => t.id),
+    ...liveFindings(s).flatMap((f) => f.mitreTechniques),
+  ]);
 }
 
 // `keyBasis` is the STABLE identity the delta id is slugged from — a finding's matchKey (semanticKey
@@ -338,7 +356,8 @@ function renderDeltaLine(d: SecondOpinionDelta): string {
 //
 // The referee used to judge from a one-line delta and routinely rejected findings it had no way to
 // weigh. Now each delta carries the FORENSIC-timeline events the disputed finding cites (both sides'
-// citations on a severity delta; technique-tagged events on a mitre delta). Two caps keep a
+// citations on a severity delta; on a mitre delta, the technique-tagged events plus the events the
+// findings carrying the technique cite — #1757). Two caps keep a
 // 50-delta run inside one prompt: per delta, and a run-wide budget. Both truncations are stated so
 // the referee knows it saw a sample. Reads `forensicTimeline` only — never the super-timeline.
 export const RECONCILE_EVENTS_PER_DELTA = 8;
@@ -349,39 +368,121 @@ const EVENT_INDENT = "  · ";
 const bySeverityThenTime = (x: ForensicEvent, y: ForensicEvent): number =>
   SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity] || byEventTime(x, y);
 
+const isTechniqueDelta = (d: SecondOpinionDelta): boolean =>
+  d.kind === "mitre_added" || d.kind === "mitre_removed";
+
+// Resolve event ids through the scoped map, first occurrence wins; unknown ids are skipped.
+function uniqueEvents(
+  events: readonly ForensicEvent[],
+  ids: readonly string[],
+  byId: Map<string, ForensicEvent>,
+) {
+  const seen = new Set<string>();
+  const out: ForensicEvent[] = [];
+  for (const e of [...events, ...ids.map((id) => byId.get(id))]) {
+    if (e && !seen.has(e.id)) {
+      seen.add(e.id);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
 // The events one delta puts in front of the referee, ranked highest severity first, then by time.
+// `carriers` are the findings shown under a technique delta; their citations join the tagged events.
 function citedEvents(
   d: SecondOpinionDelta,
   byId: Map<string, ForensicEvent>,
   timeline: readonly ForensicEvent[],
+  carriers: readonly Finding[] = [],
 ): ForensicEvent[] {
-  if (d.kind === "mitre_added" || d.kind === "mitre_removed") {
-    return timeline.filter((e) => e.mitreTechniques.includes(d.title)).sort(bySeverityThenTime);
+  if (isTechniqueDelta(d)) {
+    const tagged = timeline.filter((e) => e.mitreTechniques.includes(d.title));
+    const cited = carriers.flatMap((f) => f.relatedEventIds ?? []);
+    return uniqueEvents(tagged, cited, byId).sort(bySeverityThenTime);
   }
   const ids = [...(d.finding?.relatedEventIds ?? []), ...(d.bFinding?.relatedEventIds ?? [])];
-  const seen = new Set<string>();
-  const events: ForensicEvent[] = [];
-  for (const id of ids) {
-    const e = byId.get(id);
-    if (e && !seen.has(id)) {
-      seen.add(id);
-      events.push(e);
-    }
-  }
-  return events.sort(bySeverityThenTime);
+  return uniqueEvents([], ids, byId).sort(bySeverityThenTime);
 }
 
+// --- The findings behind a technique delta (#1757) --------------------------------------------
+//
+// A technique delta used to reach the referee as a bare id plus the events TAGGED with it. A staged
+// kit's finding cites events that carry no tag, so the referee read "(no cited events — this finding
+// is ungrounded)" and dropped T1490 from a shadow-copy script because it "was only staged". Now the
+// delta lists the live findings of the side that maps the technique, with their full text. A finding
+// shown under an earlier technique delta is referred back to, keyed by side — both models use f1, f2…
+export const RECONCILE_TECHNIQUE_FINDINGS = 3;
+export const RECONCILE_TECHNIQUE_DESC_CHARS = 1000;
+
+const FINDING_INDENT = "  › ";
+
+interface TechniqueCarriers {
+  side: "A" | "B";
+  shown: Finding[];
+  more: number;
+}
+
+function techniqueCarriers(
+  d: SecondOpinionDelta,
+  a: InvestigationState,
+  b: InvestigationState,
+): TechniqueCarriers | undefined {
+  if (!isTechniqueDelta(d)) return undefined;
+  const side = d.kind === "mitre_added" ? "B" : "A";
+  const all = liveFindings(side === "A" ? a : b)
+    .filter((f) => f.mitreTechniques.includes(d.title))
+    .sort((x, y) => SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity]);
+  const shown = all.slice(0, RECONCILE_TECHNIQUE_FINDINGS);
+  return { side, shown, more: all.length - shown.length };
+}
+
+function clipText(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > RECONCILE_TECHNIQUE_DESC_CHARS
+    ? `${flat.slice(0, RECONCILE_TECHNIQUE_DESC_CHARS)}…`
+    : flat;
+}
+
+// `textShown` is the prompt builder's run-wide record of findings already printed in full.
+function renderCarriers(c: TechniqueCarriers, textShown: Set<string>): string[] {
+  const lines = c.shown.map((f) => {
+    const head = `${FINDING_INDENT}Model ${c.side} finding [${f.id}] "${f.title}" [severity ${f.severity}]`;
+    const key = `${c.side}:${f.id}`;
+    if (textShown.has(key)) return `${head} — text shown above`;
+    textShown.add(key);
+    return `${head}: ${clipText(f.description ?? "")}`;
+  });
+  if (c.more > 0)
+    lines.push(`${FINDING_INDENT}… +${c.more} more Model ${c.side} findings carry this technique`);
+  return lines;
+}
+
+// How to judge a technique delta (#1757). User-prompt text, like the #1596 guard block, so an
+// ejected DFIR_AI_RECONCILE_PROMPT still carries it. Sent only when the run has a technique delta.
+export const RECONCILE_TECHNIQUE_RULE = [
+  "ATT&CK TECHNIQUE DELTAS — how to judge them:",
+  "- A technique names the behaviour an artefact implements. A script or tool that was staged, dropped or found but never run still maps to the technique its contents or purpose implement — for example a batch script that deletes shadow copies, or a tunnelling tool.",
+  '- Not being run is not a reason to remove a technique, or to reject its addition. Say "staged, not executed" in the rationale instead. Execution status belongs in the finding text, not in the technique mapping.',
+  "- A general-purpose program that merely could do it (cmd.exe, PowerShell, a copy tool) is not enough to support a technique by itself.",
+  "- Recommend removing a technique only when it is wrong for the artefact: the artefact is build-time or collector activity, or the behaviour is a different technique.",
+  "- Under each technique delta you see the findings that carry it. Read their text as well as the events before you call a technique ungrounded.",
+].join("\n");
+
 // A delta line plus its cited events, honouring both caps. `budget` is the run-wide remainder and
-// is decremented in place by the caller's loop through the returned `used` count.
+// is decremented in place by the caller's loop through the returned `used` count. `carrierLines`
+// are the findings behind a technique delta, printed between the delta line and its events.
 function renderDeltaWithEvents(
   d: SecondOpinionDelta,
   events: readonly ForensicEvent[],
   budget: number,
   hint?: string,
+  carrierLines: readonly string[] = [],
 ): { text: string; used: number } {
-  const lines = [renderDelta(d, hint)];
+  const lines = [renderDelta(d, hint), ...carrierLines];
   if (events.length === 0) {
-    lines.push(`${EVENT_INDENT}(no cited events — this finding is ungrounded)`);
+    const why = carrierLines.length ? "judge from the finding text above" : "this finding is ungrounded";
+    lines.push(`${EVENT_INDENT}(no cited events — ${why})`);
     return { text: lines.join("\n"), used: 0 };
   }
   const shown = events.slice(0, Math.max(0, Math.min(RECONCILE_EVENTS_PER_DELTA, budget)));
@@ -418,8 +519,12 @@ export function buildReconcilePrompt(
   const timeline = events ?? (a.forensicTimeline.length ? a.forensicTimeline : b.forensicTimeline);
   const byId = new Map(timeline.map((e) => [e.id, e]));
   let budget = RECONCILE_EVENTS_TOTAL;
+  const textShown = new Set<string>();
   const rendered = deltas.map((d) => {
-    const out = renderDeltaWithEvents(d, citedEvents(d, byId, timeline), budget, guard?.hints.get(d.id));
+    const carriers = techniqueCarriers(d, a, b);
+    const carrierLines = carriers ? renderCarriers(carriers, textShown) : [];
+    const cited = citedEvents(d, byId, timeline, carriers?.shown);
+    const out = renderDeltaWithEvents(d, cited, budget, guard?.hints.get(d.id), carrierLines);
     budget -= out.used;
     return out.text;
   });
@@ -431,6 +536,7 @@ export function buildReconcilePrompt(
     `DISAGREEMENTS (${deltas.length}) — each followed by the forensic events the finding cites:`,
     ...rendered,
     "",
+    ...(deltas.some(isTechniqueDelta) ? [RECONCILE_TECHNIQUE_RULE, ""] : []),
     ...(guard?.block ? [guard.block, ""] : []),
     "Return your reconciliation as raw JSON in the required shape — one verdict object per delta id above.",
   ].join("\n");

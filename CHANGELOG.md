@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
+### Fixed
+- **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
+
 ## [0.38.0] - 2026-09-26
 
 ### Added
