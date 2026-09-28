@@ -212,6 +212,8 @@
             // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
             if (jr.analyzed === false && jr.reason === "ai-off") aiOffSkipped++;
             else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
+            // Detection only guessed the kind (unrecognised JSON → generic SIEM, #1795): say so per file.
+            if (jr.warning) refused.push(`${f.name}: ${jr.warning}`);
           } catch (err) {
             dataFail++;
             console.warn("import failed:", f.name, err && err.message);
