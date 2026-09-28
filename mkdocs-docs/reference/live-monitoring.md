@@ -33,9 +33,11 @@ Content-Type: application/json
 { "source": "MyTool", "events": [...] }
 ```
 
-Or POST any file the Import button would accept (multipart/form-data).
+Or POST raw NDJSON (`Content-Type: application/x-ndjson`), one event per line. There is no multipart file upload. `Authorization: Bearer <token>` also works in place of `X-DFIR-Key`.
 
-**Configure:** Settings → General → Push ingest token (or `DFIR_PUSH_TOKEN` in `.env`). The endpoint is disabled until a token is set (returns `403 Disabled`). Per-case tokens are also supported.
+**Configure:** Settings → Integrations → Push ingest token (or `DFIR_PUSH_TOKEN` in `.env`). The endpoint is disabled until a token is set (returns `403` with `push ingest is disabled`). Per-case tokens are also supported.
+
+Full request details, responses and team-mode rules are in [Scripting & API](api.md#push-ingest-webhook).
 
 !!! warning
     The push endpoint is disabled by default. It requires a token to prevent unauthorised writes to your cases.
