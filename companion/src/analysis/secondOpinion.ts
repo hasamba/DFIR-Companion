@@ -19,6 +19,8 @@ import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
 import { stateEventResolver } from "./eventAliasLookup.js";
 import { rejectedTechniqueIds, withRejectedTechniqueIds } from "./rejectedTechniques.js";
+import { projectScope } from "./scopeProject.js";
+import type { ScopeWindow } from "./scope.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -147,7 +149,12 @@ function indexFindings(findings: readonly Finding[]): FindingIndex {
 // Compute the deterministic delta set between model A (primary, saved) and model B (second opinion).
 // b_only: B raised a finding A missed; a_only: A has a finding B dropped; severity: matched finding,
 // different severity; mitre_added/removed: ATT&CK techniques present on one side only (by id).
-export function buildSecondOpinionDeltas(a: InvestigationState, b: InvestigationState): SecondOpinionDelta[] {
+// `scope` is the case's time window: only in-scope findings count toward a technique mapping.
+export function buildSecondOpinionDeltas(
+  a: InvestigationState,
+  b: InvestigationState,
+  scope?: ScopeWindow,
+): SecondOpinionDelta[] {
   const { aAll, bAll, counterpart } = pairFindings(a, b);
   const deltas: SecondOpinionDelta[] = [];
   const matchedA = new Set<Finding>();
@@ -179,8 +186,8 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
   // on. The side that "does not" is read from its table AND its live findings' tags (#1757): a model
   // can tag a finding and leave the id out of its top-level list, and then "Model B does not map
   // this technique" was false and the referee was asked to settle a disagreement nobody had.
-  const aMapped = mappedTechniques(a);
-  const bMapped = mappedTechniques(b);
+  const aMapped = mappedTechniques(a, scope);
+  const bMapped = mappedTechniques(b, scope);
   const aTech = new Map(a.mitreTechniques.map((t) => [t.id, t]));
   const bTech = new Map(b.mitreTechniques.map((t) => [t.id, t]));
   for (const [id, t] of bTech) {
@@ -192,15 +199,21 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
   return deltas;
 }
 
-// A finding the analyst, or an accepted second-opinion decision, dismissed is no longer a claim.
-const liveFindings = (s: InvestigationState): Finding[] => s.findings.filter((f) => f.status !== "dismissed");
+// The findings that are a model's current claims: not dismissed (by the analyst or an accepted
+// second-opinion decision), and inside the scope window. Model A's saved case re-attaches
+// deterministic findings backed only by out-of-window events (carryOutOfWindowFindings); model B's
+// dry run never gets them, so without the projection one could hide B's in-scope technique.
+function liveFindings(s: InvestigationState, scope?: ScopeWindow): Finding[] {
+  const visible = scope ? projectScope(s, scope).findings : s.findings;
+  return visible.filter((f) => f.status !== "dismissed");
+}
 
 // Every technique id a model maps: its table plus its live findings' tags. Exact ids — a
 // sub-technique does not map its parent, nor the reverse.
-function mappedTechniques(s: InvestigationState): Set<string> {
+function mappedTechniques(s: InvestigationState, scope?: ScopeWindow): Set<string> {
   return new Set([
     ...s.mitreTechniques.map((t) => t.id),
-    ...liveFindings(s).flatMap((f) => f.mitreTechniques),
+    ...liveFindings(s, scope).flatMap((f) => f.mitreTechniques),
   ]);
 }
 
@@ -260,6 +273,7 @@ export interface BuildSecondOpinionInput {
   modelB: string;
   referee?: string; // set by the run once it knows who will (or did) referee; "" until then
   now: () => string;
+  scope?: ScopeWindow; // the case's time window, for the technique deltas (#1757)
 }
 
 // Assemble a fresh SecondOpinion record (deltas pending, no reconcile verdicts yet).
@@ -271,7 +285,7 @@ export function buildSecondOpinion(input: BuildSecondOpinionInput): SecondOpinio
     referee: input.referee ?? "",
     summary: "",
     agreementCount: agreementCount(input.a, input.b),
-    deltas: buildSecondOpinionDeltas(input.a, input.b),
+    deltas: buildSecondOpinionDeltas(input.a, input.b, input.scope),
   };
 }
 
@@ -427,10 +441,11 @@ function techniqueCarriers(
   d: SecondOpinionDelta,
   a: InvestigationState,
   b: InvestigationState,
+  scope?: ScopeWindow,
 ): TechniqueCarriers | undefined {
   if (!isTechniqueDelta(d)) return undefined;
   const side = d.kind === "mitre_added" ? "B" : "A";
-  const all = liveFindings(side === "A" ? a : b)
+  const all = liveFindings(side === "A" ? a : b, scope)
     .filter((f) => f.mitreTechniques.includes(d.title))
     .sort((x, y) => SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity]);
   const shown = all.slice(0, RECONCILE_TECHNIQUE_FINDINGS);
@@ -502,6 +517,7 @@ function renderDeltaWithEvents(
 // with no scope (tests, CLI). `guard` (#1596) is the runtime context from secondOpinionGuard.ts: the
 // open threads / negative answers block and a hint line under each A-only delta that may be the
 // last evidence for one. Carried as user-prompt text so an ejected reconcile prompt still gets it.
+// `scope` is the case's time window: a technique delta lists only in-scope carrying findings (#1757).
 export interface ReconcileGuardText {
   block: string;
   hints: ReadonlyMap<string, string>;
@@ -513,6 +529,7 @@ export function buildReconcilePrompt(
   deltas: readonly SecondOpinionDelta[],
   events?: readonly ForensicEvent[],
   guard?: ReconcileGuardText,
+  scope?: ScopeWindow,
 ): string {
   const aSummary = a.lastSummary?.trim() || a.attackerPath?.trim() || "(no summary)";
   const bSummary = b.lastSummary?.trim() || b.attackerPath?.trim() || "(no summary)";
@@ -521,7 +538,7 @@ export function buildReconcilePrompt(
   let budget = RECONCILE_EVENTS_TOTAL;
   const textShown = new Set<string>();
   const rendered = deltas.map((d) => {
-    const carriers = techniqueCarriers(d, a, b);
+    const carriers = techniqueCarriers(d, a, b, scope);
     const carrierLines = carriers ? renderCarriers(carriers, textShown) : [];
     const cited = citedEvents(d, byId, timeline, carriers?.shown);
     const out = renderDeltaWithEvents(d, cited, budget, guard?.hints.get(d.id), carrierLines);

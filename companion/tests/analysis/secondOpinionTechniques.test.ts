@@ -266,3 +266,38 @@ describe("buildReconcilePrompt — technique deltas show the findings that carry
     expect(block).toMatch(/ungrounded/i);
   });
 });
+
+// Codex review: model A's saved case re-attaches deterministic findings backed only by events outside
+// the scope window; model B's dry run never gets them. Such a finding must neither hide B's in-scope
+// technique nor be shown to the referee as a carrier.
+describe("technique deltas read only in-scope findings (#1757)", () => {
+  const scope = { start: "2026-06-01T00:00:00.000Z", end: null };
+  const old = event("old1", { timestamp: "2025-01-01T00:00:00.000Z", relatedFindingIds: ["f-auto-1"] });
+  const carried = finding({
+    id: "f-auto-1",
+    title: "Tool transfer long before the window",
+    severity: "Medium",
+    description: "OUT-OF-WINDOW TEXT",
+    relatedEventIds: ["old1"],
+    mitreTechniques: ["T1105", "T1490"],
+  });
+  const a = stateWith({
+    forensicTimeline: [old],
+    findings: [carried],
+    mitreTechniques: [tech("T1490")],
+  });
+  const b = stateWith({ forensicTimeline: [old], mitreTechniques: [tech("T1105")] });
+
+  it("an out-of-window model A finding does not hide model B's in-scope technique", () => {
+    expect(buildSecondOpinionDeltas(a, b).map((d) => d.id)).not.toContain("mitre_added:t1105");
+    expect(buildSecondOpinionDeltas(a, b, scope).map((d) => d.id)).toContain("mitre_added:t1105");
+  });
+
+  it("an out-of-window finding is not shown to the referee as a carrier", () => {
+    const deltas = buildSecondOpinionDeltas(a, b, scope);
+    const block = blockOf(buildReconcilePrompt(a, b, deltas, [], undefined, scope), "mitre_removed:t1490");
+    expect(block).not.toBe("");
+    expect(block).not.toContain("OUT-OF-WINDOW TEXT");
+    expect(buildReconcilePrompt(a, b, deltas, [])).toContain("OUT-OF-WINDOW TEXT"); // no scope → shown
+  });
+});
