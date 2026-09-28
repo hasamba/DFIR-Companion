@@ -45,8 +45,10 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ kind, ref }),
       })
-        .then((r) => r.json())
-        .then(renderFpCandidates)
+        .then(async (r) => {
+          const d = await r.json();
+          if (!fpHeld(r.status, d)) renderFpCandidates(d);
+        })
         .catch(() => {
           document.getElementById("fpCandidates").innerHTML = "";
         });
@@ -55,6 +57,15 @@
           ? "inline-block"
           : "none";
     }
+  }
+
+  // A Presidio hold waits for the analyst — it is not a failure (#1782). Shows the hold in the
+  // candidate list instead of an empty "No similar items found."
+  function fpHeld(status, data) {
+    if (typeof presidioHold !== "function" || !presidioHold(status, data)) return false;
+    document.getElementById("fpCandidates").innerHTML =
+      `<div data-safe-style="color:var(--text-muted);font-size:12px">${esc(presidioHoldText("Similar-item search"))}</div>`;
+    return true;
   }
 
   function renderFpCandidates(data) {
@@ -105,7 +116,8 @@
               ai: true,
             }),
           });
-          renderFpCandidates(await r.json());
+          const d = await r.json();
+          if (!fpHeld(r.status, d)) renderFpCandidates(d);
         } finally {
           btn.disabled = false;
           btn.textContent = "🔎 Ask AI for similar";

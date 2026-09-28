@@ -127,7 +127,8 @@ describe("the List view stays exactly as it was", () => {
     expect(src).toContain(
       '`<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`,',
     );
-    expect(src).toContain('.join("") || "—";');
+    // #1767: an empty List says so in a sentence instead of a bare dash.
+    expect(src).toContain('.join("") || mitreEmptyHtml();');
     // With the matrix module missing, the List is what render() draws.
     expect(src).toMatch(/if \(window\.DfirMitreMatrix\) \{[\s\S]*?\} else renderMitreList\(\);/);
   });

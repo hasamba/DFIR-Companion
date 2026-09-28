@@ -23,6 +23,23 @@ const ATTR_BREAK = '" onmouseover="alert(1)';
 
 // The body of the three AI-prose panels. The split itself is pinned in dashboardText.test.ts; what
 // matters here is that the text reaches innerHTML escaped, and that nothing renders for nothing.
+describe("emptyStateHtml", () => {
+  it("renders a muted sentence and escapes it", () => {
+    expect(f.emptyStateHtml("No IOCs yet")).toBe(
+      '<div class="empty-state" data-safe-style="color:var(--text-muted)">No IOCs yet</div>',
+    );
+    expect(f.emptyStateHtml(XSS)).toContain("&lt;img");
+  });
+});
+
+describe("timelineEmptyHtml", () => {
+  it("tells an empty case apart from a view that hides the case's events", () => {
+    expect(f.timelineEmptyHtml(0)).toContain("No events yet — import evidence.");
+    expect(f.timelineEmptyHtml(12)).toContain("No events in the current view");
+    expect(f.timelineEmptyHtml(12)).not.toContain("import evidence");
+  });
+});
+
 describe("proseHtml", () => {
   it("wraps each paragraph in its own <p>", () => {
     expect(f.proseHtml("First para.\n\nSecond para.")).toBe("<p>First para.</p><p>Second para.</p>");
@@ -55,9 +72,19 @@ describe("execSummaryHtml", () => {
   });
   const account = (name: string) => ({ actor: { kind: "account", name } });
 
-  it("keeps the dash placeholder for a case with nothing yet", () => {
-    expect(f.execSummaryHtml({})).toBe('<div class="prose">—</div>');
-    expect(f.execSummaryHtml(null)).toBe('<div class="prose">—</div>');
+  // #1765: a bare "—" read as "broken" on a new case. The panel says what is missing instead.
+  it("shows an empty-state sentence, not a bare dash, for a case with nothing yet", () => {
+    const empty = f.emptyStateHtml("No executive summary yet — run Synthesize.");
+    expect(f.execSummaryHtml({})).toBe(empty);
+    expect(f.execSummaryHtml(null)).toBe(empty);
+    expect(empty).toContain('class="empty-state"');
+    expect(empty).not.toMatch(/>—</);
+  });
+
+  it("puts the sentence, not a dash, beside the facts when only the prose is missing", () => {
+    const html = f.execSummaryHtml({ uncertainties: [{ question: "q", status: "unknown" }] });
+    expect(html).toContain("No executive summary yet");
+    expect(html).not.toMatch(/>—</);
   });
 
   it("shows the summary alone when there are no events and no ledger", () => {
@@ -183,6 +210,17 @@ describe("narrativeHtml", () => {
     const text = "At 08:49, one thing happened.\n\nThen another.";
     expect(f.narrativeHtml(text, events)).toBe(f.proseHtml(text));
     expect(f.narrativeHtml("—", events)).toBe("<p>—</p>");
+  });
+
+  // #1765 sweep: the VIEW shows a sentence for the editor's "nothing written yet" value; the value
+  // itself stays "—" in data-raw, so the sentence can never load into the editor or be saved.
+  it("narrativeViewHtml shows the empty-state sentence for the dash and for blank text", () => {
+    for (const v of ["—", "", "   ", null, undefined]) {
+      const html = f.narrativeViewHtml(v, events);
+      expect(html).toContain('class="empty-state"');
+      expect(html).toContain("No narrative yet");
+    }
+    expect(f.narrativeViewHtml(story, events)).toBe(f.narrativeHtml(story, events));
   });
 
   it("moves each opening time into the rail and restarts the sentence with a capital", () => {

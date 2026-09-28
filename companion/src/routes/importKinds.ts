@@ -1,7 +1,8 @@
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportRefused } from "./importDebugEmit.js";
 import type { Response } from "express";
-import { getAiLimiter } from "../http/rateLimiter.js";
+import { getAiLimiter, sendRateLimited } from "../http/rateLimiter.js";
+import type { RouteContext } from "./context.js";
 
 // The import kinds whose parsers STREAM: they report parse progress and honor the abort signal
 // mid-parse, so their jobs are cancellable even without an AI dependency. One list shared by the
@@ -35,8 +36,15 @@ export function isAiDependent(kind: string): boolean {
 // should stop; deterministic kinds and unmetered budgets return false. Called after the no-provider
 // 501 check, so it only fires when an LLM call will actually be made.
 export function rejectIfAiImportOverBudget(kind: string, caseId: string, res: Response): boolean {
-  if (isAiDependent(kind) && !getAiLimiter().tryAcquire(caseId)) {
-    res.status(429).json({ error: "AI-analysis import rate exceeded for this case, try again shortly" });
+  if (!isAiDependent(kind)) return false;
+  const limiter = getAiLimiter();
+  const now = Date.now();
+  if (!limiter.tryAcquire(caseId, now)) {
+    sendRateLimited(
+      res,
+      limiter.retryAfterMs(caseId, now),
+      "AI-analysis import rate exceeded for this case, try again shortly",
+    );
     return true;
   }
   return false;
@@ -70,4 +78,30 @@ export function refuseDetectedImport(o: {
     return true;
   }
   return false;
+}
+
+/**
+ * The per-case AI switch for an import that is itself an LLM call (isAiDependent). With AI off the
+ * evidence is already saved; this answers 202 `analyzed:false, reason:"ai-off"` plus `body`, and
+ * says so on the status line. Shared by /import, /import-file and the dedicated /import-csv and
+ * /import-log (#1806), which used to analyze with the switch off. Returns true when it has answered.
+ */
+export async function refuseAiOffImport(o: {
+  kind: string;
+  caseId: string;
+  res: Response;
+  aiEnabled: (caseId: string) => Promise<boolean>;
+  onAiStatus?: RouteContext["options"]["onAiStatus"];
+  debug?: ImportDebugRecorder;
+  body: Record<string, unknown>;
+}): Promise<boolean> {
+  if (!isAiDependent(o.kind) || (await o.aiEnabled(o.caseId))) return false;
+  o.onAiStatus?.(o.caseId, {
+    status: "idle",
+    at: new Date().toISOString(),
+    detail: `AI is off — ${o.kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
+  });
+  emitImportRefused(o.caseId, o.debug, "ai_off"); // stored as evidence, not analyzed (#1736)
+  o.res.status(202).json({ accepted: true, kind: o.kind, ...o.body, analyzed: false, reason: "ai-off" });
+  return true;
 }

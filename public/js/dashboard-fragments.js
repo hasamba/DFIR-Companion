@@ -260,8 +260,9 @@ function execSummaryHtml(state) {
   const summary = String(s.lastSummary || "").trim();
   const facts = execFactsHtml(s);
   const ledger = execLedgerHtml(Array.isArray(s.uncertainties) ? s.uncertainties : []);
-  if (!summary && !facts && !ledger) return '<div class="prose">—</div>';
-  const what = `<div class="exec-what"><div class="prose">${summary ? proseHtml(summary) : "—"}</div></div>`;
+  const none = "No executive summary yet — run Synthesize.";
+  if (!summary && !facts && !ledger) return emptyStateHtml(none);
+  const what = `<div class="exec-what">${summary ? `<div class="prose">${proseHtml(summary)}</div>` : emptyStateHtml(none)}</div>`;
   const body = ledger
     ? `<div class="exec-cols">${what}<div class="exec-assess">${ledger}</div></div>`
     : what;
@@ -352,6 +353,31 @@ function execLedgerHtml(uncertainties) {
 // minute, so a claim in the story is one click from its evidence. Times are read as UTC, the zone
 // the forensic timeline and the report use. Text the reader cannot place — fewer than two
 // paragraphs opening with a time — keeps the plain prose layout, so nothing is lost or reordered.
+// A panel with nothing in it yet says so in a muted sentence (#1765-#1768), the same shape as the
+// IOC panel's "No IOCs yet" — a bare "—" read as "broken" to an analyst on a new case.
+function emptyStateHtml(text) {
+  return `<div class="empty-state" data-safe-style="color:var(--text-muted)">${esc(text)}</div>`;
+}
+
+// The Forensic Timeline with nothing to show and no filter on. `rawCount` is the case's own event
+// count: events hidden only by the scope or false-positive marks must not read as "import evidence".
+function timelineEmptyHtml(rawCount) {
+  return emptyStateHtml(
+    rawCount > 0
+      ? "No events in the current view — the scope or false-positive marks hide them."
+      : "No events yet — import evidence.",
+  );
+}
+
+// The Narrative Timeline view. "—" and blank are the editor's "nothing written yet" value (see
+// dashboard-narrative.js): they stay in data-raw so the editor opens empty, and only the VIEW shows
+// the sentence — it must never load into the textarea or be saved as the narrative.
+function narrativeViewHtml(text, events) {
+  const raw = String(text == null ? "" : text).trim();
+  if (!raw || raw === "—") return emptyStateHtml("No narrative yet — ✨ Generate one from the Attack Path.");
+  return narrativeHtml(text, events);
+}
+
 function narrativeHtml(text, events) {
   const paras = proseParagraphs(text);
   const leads = paras.map(narrativeLead);
@@ -478,6 +504,9 @@ window.DfirFragments = {
   execWindow,
   execFactsHtml,
   execLedgerHtml,
+  emptyStateHtml,
+  timelineEmptyHtml,
+  narrativeViewHtml,
   narrativeHtml,
   narrativeLead,
   narrativeEventAt,

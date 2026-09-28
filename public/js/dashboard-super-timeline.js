@@ -463,7 +463,13 @@
     const btn = document.getElementById("stStarredReport");
     btn.disabled = true; btn.textContent = "✨ generating…";
     fetch(`/cases/${caseId}/starred-report`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-      .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status }); return d; })
+      .then(async r => {
+        const d = await r.json().catch(() => ({}));
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!r.ok && typeof presidioHold === "function" && presidioHold(r.status, d)) throw Object.assign(new Error("presidio hold"), { presidioHold: true });
+        if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status });
+        return d;
+      })
       .then(d => {
         if (caseId !== superCaseId()) return;   // case switched mid-flight — drop the stale result
         lastStarredReport = { ...d, caseId };
@@ -471,7 +477,8 @@
           d.truncated ? `${d.usedEvents} of ${d.eventCount} starred events (AI input budget)` : `${d.eventCount} starred event${d.eventCount !== 1 ? "s" : ""}`,
           saveStarredReport);
       })
-      .catch(e => stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
+      .catch(e => e.presidioHold ? stRenderNote(presidioHoldText("Starred report"))
+        : stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
       .finally(() => { btn.disabled = false; btn.textContent = "✨ Starred report"; });
   }
 
@@ -487,14 +494,21 @@
     p.delete("offset"); p.delete("limit");
     const body = Object.fromEntries(p.entries());
     fetch(`/cases/${caseId}/view-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-      .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status }); return d; })
+      .then(async r => {
+        const d = await r.json().catch(() => ({}));
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!r.ok && typeof presidioHold === "function" && presidioHold(r.status, d)) throw Object.assign(new Error("presidio hold"), { presidioHold: true });
+        if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status });
+        return d;
+      })
       .then(d => {
         if (caseId !== superCaseId()) return;   // case switched mid-flight — drop the stale result
         stRenderAiPanel("✨ View summary", d.markdown || "(empty summary)",
           d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events summarized` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
           null);
       })
-      .catch(e => stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
+      .catch(e => e.presidioHold ? stRenderNote(presidioHoldText("View summary"))
+        : stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
       .finally(() => { btn.disabled = false; btn.textContent = "✨ Summarize view"; });
   }
 

@@ -233,6 +233,11 @@
       .then((r) => r.json().then((body) => ({ ok: r.ok, code: r.status, body })))
       .then((r) => {
         if (slCaseId !== caseId || slRunGen !== gen) return;
+        // A Presidio hold waits for the analyst — it is not a failure (#1782). The status line is muted.
+        if (!r.ok && typeof presidioHold === "function" && presidioHold(r.code, r.body)) {
+          slRunError = presidioHoldText("Second look");
+          return;
+        }
         if (!r.ok) {
           slRunError = `The second look did not run: ${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}`;
           return;

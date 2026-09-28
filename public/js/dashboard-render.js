@@ -70,17 +70,19 @@
     document.getElementById("summary").innerHTML = execSummaryHtml(state);
     // Steps / Hosts tabs when the path reads as steps (attackPathHtml, js/dashboard-attack-path.js);
     // plain prose otherwise.
-    document.getElementById("attackerPath").innerHTML = attackPathHtml(
-      state.attackerPath || "—",
-      state.forensicTimeline,
-      attackPathStoredView(),
-    );
+    // The empty-state sentence goes around attackPathHtml, never through it: that function parses
+    // its input into steps, and a placeholder has no business being parsed as an attack (#1766).
+    document.getElementById("attackerPath").innerHTML = state.attackerPath
+      ? attackPathHtml(state.attackerPath, state.forensicTimeline, attackPathStoredView())
+      : emptyStateHtml("No attack path yet — run Synthesize.");
+    // data-raw keeps "—" as the editor's "nothing written yet" value; only the view shows the
+    // empty-state sentence (narrativeViewHtml), so the sentence can never be edited or saved (#1765).
     const narrative = state.narrativeTimeline || "—";
     const narrativeView = document.getElementById("narrativeView");
     narrativeView.dataset.raw = narrative;
     // A time rail with links into the timeline when the story opens its paragraphs with times
     // (narrativeHtml, js/dashboard-fragments.js); plain prose otherwise.
-    narrativeView.innerHTML = narrativeHtml(narrative, state.forensicTimeline);
+    narrativeView.innerHTML = narrativeViewHtml(narrative, state.forensicTimeline);
 
     const PRIO = {
       critical: "#ff5c5c",
@@ -468,7 +470,11 @@
               (viewFilters().minSeverity || viewTopN()) &&
               sorted.length > 0
             ? `<span data-safe-style="color:var(--text-muted)">No findings match the “${esc(activeDashView.name)}” view filter.</span>`
-            : "—");
+            : sorted.length > 0
+              ? emptyStateHtml("No findings match the current filters.")
+              : (rawState.findings || []).length > 0
+                ? emptyStateHtml("No findings in the current view — the scope or false-positive marks hide them.")
+                : emptyStateHtml("No findings yet."));
     const findingSelAllEl = document.getElementById("findingSelectAll");
     if (findingSelAllEl && findingSomeSel && !findingAllSel)
       findingSelAllEl.indeterminate = true;
@@ -500,7 +506,7 @@
           (r) =>
             `<div class="log-row"><span class="log-time">${esc(r.ts)}</span><span>${r.html}</span></div>`,
         )
-        .join("") || "—";
+        .join("") || emptyStateHtml("No imports or AI notes yet.");
     // MITRE is completed HERE, from the events this view is actually showing — `ft` is the
     // scope-projected timeline minus the ones the analyst dismissed — rather than read from a
     // stored aggregate. The client mirror of the server's eventTechniques.ts (#893). Nothing is
@@ -518,6 +524,14 @@
     // Without it a row appended from an event id showed the bare "T1490" here while
     // the report and every server-side export showed "Inhibit System Recovery".
     const mitreRows = deriveMitreRows(notFp, ft, state.mitreTechniques, state.techniqueNames);
+    // An empty case says so (#1767); a scoped view that only hides techniques must not tell the
+    // analyst to import evidence the case already holds. The Matrix view shows the same line.
+    const mitreEmptyHtml = () =>
+      emptyStateHtml(
+        DfirScope.isEmpty()
+          ? "No techniques yet — import evidence or run Synthesize."
+          : "No techniques in the current scope.",
+      );
     // The List view, unchanged. The Matrix view (#1764) draws from the SAME rows, so the two views
     // never disagree, and calls this back whenever the analyst's switch says List. With the matrix
     // module missing, the List is all there is.
@@ -528,10 +542,16 @@
             (m) =>
               `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`,
           )
-          .join("") || "—";
+          .join("") || mitreEmptyHtml();
     };
     if (window.DfirMitreMatrix) {
-      window.DfirMitreMatrix.renderPanel({ rows: mitreRows, findings: notFp, ft, renderList: renderMitreList });
+      window.DfirMitreMatrix.renderPanel({
+        rows: mitreRows,
+        findings: notFp,
+        ft,
+        renderList: renderMitreList,
+        emptyHtml: mitreRows.length ? "" : mitreEmptyHtml(),
+      });
     } else renderMitreList();
     renderPinned(); // pinned-strip titles resolve against the just-rendered findings (#220)
   }

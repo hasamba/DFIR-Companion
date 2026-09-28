@@ -168,7 +168,9 @@ test("US-015: a plain log import is accepted", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
   // AI-dependent: the stub provider returns fixed prose, so this asserts the route accepts and
-  // stores the evidence, not what the model made of it.
+  // stores the evidence, not what the model made of it. AI on first: the route honours the case's
+  // AI switch (#1806), and the demo case starts with it off.
+  await page.request.post(`/cases/${demoCase}/ai-control`, { data: { enabled: true } });
   const file = await postImport(page.request, demoCase, "import-log", {
     text: [
       "2026-05-18 02:30:00 FS01 sshd[1234]: Accepted password for jsmith from 10.0.0.5",

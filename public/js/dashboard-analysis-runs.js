@@ -20,98 +20,151 @@
     document.getElementById("arCompareResult").innerHTML = "";
     document.getElementById("arDetail").style.display = "none";
     document.getElementById("analysisRunsOverlay").classList.add("open");
-    loadAnalysisRuns();
+    return loadAnalysisRuns();
   }
   function closeAnalysisRuns() {
     document.getElementById("analysisRunsOverlay").classList.remove("open");
   }
 
-  async function loadAnalysisRuns() {
+  // #1783: the run list and the integrity check load INDEPENDENTLY, each with its own time limit.
+  // They used to share one Promise.all with no timeout, so a slow integrity check held back a run
+  // list that had already arrived, and any stalled request left "loading…" on screen for good.
+  // A reopen (or a case switch) starts a new load; the token keeps every late answer, error or
+  // timeout of an older load from writing over the newer one.
+  const LOAD_TIMEOUT_MS = 15000;
+  let loadToken = 0;
+
+  // fetch + JSON with a hard time limit. Rejects with `timedOut` set when the limit fires.
+  async function fetchJsonWithin(url, ms) {
+    const ctl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctl.abort();
+    }, ms);
+    try {
+      const res = await fetch(url, { signal: ctl.signal });
+      const body = await res.json();
+      return { res, body };
+    } catch (err) {
+      if (timedOut) throw Object.assign(new Error("timed out"), { timedOut: true });
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function loadAnalysisRuns() {
     const caseId = document.getElementById("caseId").value.trim();
     const list = document.getElementById("arList");
     const integrity = document.getElementById("arIntegrity");
+    const token = ++loadToken;
     if (!caseId) {
       list.textContent = "no case loaded";
-      return;
+      return Promise.resolve();
     }
     list.textContent = "loading…";
     integrity.textContent = "checking integrity…";
-    try {
-      const c = encodeURIComponent(caseId);
-      const [runsRes, integrityRes] = await Promise.all([
-        fetch(`/cases/${c}/analysis-runs`),
-        fetch(`/cases/${c}/analysis-runs/integrity`),
-      ]);
-      const runs = await runsRes.json();
-      const check = await integrityRes.json();
-      if (!runsRes.ok) throw new Error(runs.error || "HTTP " + runsRes.status);
-      integrity.textContent = check.ok
-        ? `✓ Ledger intact — ${check.manifests} manifest(s), hash chain verified`
-        : `⚠ Ledger integrity FAILED — ${(check.problems || []).join("; ")}`;
-      integrity.style.color = check.ok
-        ? "var(--sev-low)"
-        : "var(--badge-danger-text)";
-      if (!runs.length) {
-        list.textContent =
-          "no runs yet — import evidence, run analysis, enrich, or generate a report";
-        document.getElementById("arFrom").innerHTML = "";
-        document.getElementById("arTo").innerHTML = "";
-        return;
-      }
-      list.innerHTML = runs
-        .map((run) => {
-          const warnings = run.execution?.warnings?.length
-            ? `<div data-safe-style="color:var(--sev-medium)">⚠ ${run.execution.warnings.map(esc).join("; ")}</div>`
-            : "";
-          const parent = run.parentRunId
-            ? `<span title="${escAttr(run.parentRunId)}"> · child of ${esc(run.parentRunId.slice(0, 12))}…</span>`
-            : "";
-          const artifacts = run.input?.artifacts?.length
-            ? ` · ${run.input.artifacts.length} artifact(s)`
-            : "";
-          return `<div data-safe-style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-color)">
-          <div><strong>${esc(run.kind)}</strong>${parent} · ${esc(new Date(run.startedAt).toLocaleString())}
-            · ${(run.durationMs / 1000).toFixed(1)}s${artifacts}
-            · ${run.input?.eventCount || 0} evidence event(s) → ${run.output?.claimCount || 0} claim(s)
-            ${run.configuration?.provider ? `<div data-safe-style="color:var(--text-muted)">${esc(run.configuration.provider)}${run.configuration.model ? "/" + esc(run.configuration.model) : ""} · app ${esc(run.versions.application)}</div>` : ""}
-            ${warnings}</div>
-          <div data-safe-style="display:flex;gap:5px;align-items:flex-start;flex:none">
-            <button type="button" data-ar-view="${escAttr(run.id)}" data-safe-style="font-size:11px">View manifest</button>
-            <button type="button" data-ar-replay="${escAttr(run.id)}" data-safe-style="font-size:11px" title="Verify pinned dependencies, then create a new child run">Replay</button>
-          </div>
-        </div>`;
-        })
-        .join("");
-      list
-        .querySelectorAll("[data-ar-view]")
-        .forEach(
-          (btn) =>
-            (btn.onclick = () =>
-              viewAnalysisRun(btn.getAttribute("data-ar-view"))),
-        );
-      list
-        .querySelectorAll("[data-ar-replay]")
-        .forEach(
-          (btn) =>
-            (btn.onclick = () =>
-              replayAnalysisRun(btn.getAttribute("data-ar-replay"))),
-        );
-      const options = runs
-        .map(
-          (run) =>
-            `<option value="${escAttr(run.id)}">${esc(analysisRunLabel(run))}</option>`,
-        )
-        .join("");
-      document.getElementById("arFrom").innerHTML = options;
-      document.getElementById("arTo").innerHTML = options;
-      document.getElementById("arFrom").selectedIndex = Math.min(
-        1,
-        runs.length - 1,
-      );
-      document.getElementById("arTo").selectedIndex = 0;
-    } catch (err) {
-      list.textContent = "failed to load: " + err.message;
+    integrity.style.color = "";
+    const c = encodeURIComponent(caseId);
+    const current = () => token === loadToken;
+    const runsDone = fetchJsonWithin(`/cases/${c}/analysis-runs`, LOAD_TIMEOUT_MS)
+      .then(({ res, body }) => {
+        if (!current()) return;
+        if (!res.ok) throw new Error((body && body.error) || "HTTP " + res.status);
+        renderAnalysisRunList(list, Array.isArray(body) ? body : []);
+      })
+      .catch((err) => {
+        if (!current()) return;
+        list.textContent = err.timedOut
+          ? `Still loading after ${LOAD_TIMEOUT_MS / 1000} s — close and reopen to retry.`
+          : "failed to load: " + err.message;
+      });
+    const integrityDone = fetchJsonWithin(`/cases/${c}/analysis-runs/integrity`, LOAD_TIMEOUT_MS)
+      .then(({ res, body: check }) => {
+        if (!current()) return;
+        // Only a real verification result may say FAILED: 200 with ok:true, or 409 with ok:false and
+        // its problems. A 501 (runs not configured), a 500 or an odd body verified nothing.
+        const verified =
+          check &&
+          typeof check.ok === "boolean" &&
+          (res.ok ? check.ok : res.status === 409 && !check.ok && Array.isArray(check.problems));
+        if (!verified) throw new Error((check && check.error) || "HTTP " + res.status);
+        integrity.textContent = check.ok
+          ? `✓ Ledger intact — ${check.manifests} manifest(s), hash chain verified`
+          : `⚠ Ledger integrity FAILED — ${(check.problems || []).join("; ")}`;
+        integrity.style.color = check.ok ? "var(--sev-low)" : "var(--badge-danger-text)";
+      })
+      .catch((err) => {
+        if (!current()) return;
+        // Not "FAILED": a check that did not answer says nothing about the hash chain.
+        integrity.textContent = err.timedOut
+          ? "Integrity check timed out — close and reopen to retry."
+          : "Integrity check did not answer: " + err.message;
+        integrity.style.color = "var(--text-muted)";
+      });
+    return Promise.all([runsDone, integrityDone]);
+  }
+
+  function renderAnalysisRunList(list, runs) {
+    if (!runs.length) {
+      list.textContent =
+        "no runs yet — import evidence, run analysis, enrich, or generate a report";
+      document.getElementById("arFrom").innerHTML = "";
+      document.getElementById("arTo").innerHTML = "";
+      return;
     }
+    list.innerHTML = runs
+      .map((run) => {
+        const warnings = run.execution?.warnings?.length
+          ? `<div data-safe-style="color:var(--sev-medium)">⚠ ${run.execution.warnings.map(esc).join("; ")}</div>`
+          : "";
+        const parent = run.parentRunId
+          ? `<span title="${escAttr(run.parentRunId)}"> · child of ${esc(run.parentRunId.slice(0, 12))}…</span>`
+          : "";
+        const artifacts = run.input?.artifacts?.length
+          ? ` · ${run.input.artifacts.length} artifact(s)`
+          : "";
+        return `<div data-safe-style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-color)">
+        <div><strong>${esc(run.kind)}</strong>${parent} · ${esc(new Date(run.startedAt).toLocaleString())}
+          · ${(run.durationMs / 1000).toFixed(1)}s${artifacts}
+          · ${run.input?.eventCount || 0} evidence event(s) → ${run.output?.claimCount || 0} claim(s)
+          ${run.configuration?.provider ? `<div data-safe-style="color:var(--text-muted)">${esc(run.configuration.provider)}${run.configuration.model ? "/" + esc(run.configuration.model) : ""} · app ${esc(run.versions.application)}</div>` : ""}
+          ${warnings}</div>
+        <div data-safe-style="display:flex;gap:5px;align-items:flex-start;flex:none">
+          <button type="button" data-ar-view="${escAttr(run.id)}" data-safe-style="font-size:11px">View manifest</button>
+          <button type="button" data-ar-replay="${escAttr(run.id)}" data-safe-style="font-size:11px" title="Verify pinned dependencies, then create a new child run">Replay</button>
+        </div>
+      </div>`;
+      })
+      .join("");
+    list
+      .querySelectorAll("[data-ar-view]")
+      .forEach(
+        (btn) =>
+          (btn.onclick = () =>
+            viewAnalysisRun(btn.getAttribute("data-ar-view"))),
+      );
+    list
+      .querySelectorAll("[data-ar-replay]")
+      .forEach(
+        (btn) =>
+          (btn.onclick = () =>
+            replayAnalysisRun(btn.getAttribute("data-ar-replay"))),
+      );
+    const options = runs
+      .map(
+        (run) =>
+          `<option value="${escAttr(run.id)}">${esc(analysisRunLabel(run))}</option>`,
+      )
+      .join("");
+    document.getElementById("arFrom").innerHTML = options;
+    document.getElementById("arTo").innerHTML = options;
+    document.getElementById("arFrom").selectedIndex = Math.min(
+      1,
+      runs.length - 1,
+    );
+    document.getElementById("arTo").selectedIndex = 0;
   }
 
   async function viewAnalysisRun(id) {

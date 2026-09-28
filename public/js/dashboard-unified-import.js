@@ -17,6 +17,14 @@
   let importInFlight = false;
   const IMPORT_BUSY_MESSAGE = "an import is already running — wait for it to finish";
 
+  // One failed file, as the status line shows it (#1786): its name and the server's own sentence
+  // (413 size cap, 409, 429, 500, 501, a refusal reason). A bare "N failed" count sent the analyst
+  // to the file format when the fix was a setting. Not prefixed twice when the sentence names it.
+  function fileFailure(name, reason) {
+    const why = String(reason || "failed");
+    return why.includes(name) ? why : `${name}: ${why}`;
+  }
+
   function initUnifiedImport() {
     // ── Unified import: one button, the server auto-detects the file type ─────
     // Images go through the same /captures path the extension uses; a recognized binary
@@ -130,6 +138,7 @@
               );
               if (!filePath) {
                 dataFail++;
+                refused.push(fileFailure(f.name, "skipped — no local path given"));
                 continue;
               }
               // Large file: server reads from disk — bar stays indeterminate until WebSocket N/M updates arrive.
@@ -157,12 +166,19 @@
               let assetHost = "";
               const probe = typeof probeBareWindowsExport === "function" ? probeBareWindowsExport(text) : null;
               if (probe && probe.bare) {
+                // The run is parked on the analyst, not importing (#1772): say so, and stop the
+                // progress strip's "working" animation until the answer comes back.
+                hideImportProgress();
+                statusEl.textContent = `waiting for your answer — which host did ${f.name} come from?`;
                 const ans = await askImportAssetHost(f.name, probe.computers);
                 if (ans === null) {
+                  // Skipped: nothing will run for this file, so the strip stays stopped.
                   dataFail++;
                   refused.push(`${f.name}: skipped by you`);
                   continue;
                 }
+                statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
+                showImportProgressIndeterminate();
                 assetHost = ans;
               }
               showImportProgress(40);
@@ -178,7 +194,7 @@
             // The analyst reads that sentence in the summary, not a bare "failed" count.
             if (r.status === 400 && jr.refused && jr.error) {
               dataFail++;
-              refused.push(jr.error);
+              refused.push(fileFailure(f.name, jr.error));
               continue;
             }
             if (r.status === 403) {
@@ -212,8 +228,11 @@
             // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
             if (jr.analyzed === false && jr.reason === "ai-off") aiOffSkipped++;
             else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
+            // Detection only guessed the kind (unrecognised JSON → generic SIEM, #1795): say so per file.
+            if (jr.warning) refused.push(`${f.name}: ${jr.warning}`);
           } catch (err) {
             dataFail++;
+            refused.push(fileFailure(f.name, err && err.message));
             console.warn("import failed:", f.name, err && err.message);
           }
         }
@@ -231,6 +250,7 @@
             const imageBase64 = await fileToBase64(f);
             if (!imageBase64) {
               imgFail++;
+              refused.push(fileFailure(f.name, "could not read the file"));
               continue;
             }
             const triggerType = i === images.length - 1 ? "tab_switch" : "timer"; // flush the last window
@@ -264,7 +284,9 @@
               return;
             }
             if (!r.ok) {
+              const jr = await r.json().catch(() => ({}));
               imgFail++;
+              refused.push(fileFailure(f.name, jr.error || "HTTP " + r.status));
               continue;
             }
             const meta = await r.json();
@@ -272,8 +294,9 @@
             else if (meta.analyzed === false && meta.reason === "ai-off")
               imgAiOff++;
             else imgOk++;
-          } catch {
+          } catch (err) {
             imgFail++;
+            refused.push(fileFailure(f.name, err && err.message));
           }
         }
 
