@@ -38,7 +38,7 @@ curl -X POST http://127.0.0.1:4773/cases/INC-1/custody \
 
 `event` is one of `collected`, `accessed`, `transferred`, `exported`. An unrecognised value is **rejected** rather than quietly filed as a collection — a custody chain that silently relabels what happened is worse than one that refuses the entry. The Companion hashes the file itself; you cannot supply the hash.
 
-The path is read as given and may live outside the case directory, which is deliberate: evidence usually does. A closed or archived case refuses new records until you reopen or restore it.
+The path must be absolute. It is read as given and may live outside the case directory, which is deliberate: evidence usually does. Two places are refused with `403`: the Companion's own configuration file (`.env`, which holds the API keys) and other cases' folders in the cases root. This case's own files can still be recorded. A closed or archived case refuses new records until you reopen or restore it.
 
 ---
 
