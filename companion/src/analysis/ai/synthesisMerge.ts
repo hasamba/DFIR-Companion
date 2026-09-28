@@ -29,6 +29,7 @@ import {
   type deltaSchema,
 } from "../responseSchema.js";
 import { autoFindingSupport, coveredEventIds, dropAutoCoveredByDismissal } from "./groupedCitation.js";
+import { recoverProseCitations, type ProseRecovery } from "./findingCitations.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -129,6 +130,11 @@ export interface DeltaFoldInput {
    * Absent → each finding covers exactly the ids it cites.
    */
   membersOf?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * The event ids the prompt printed on their own line (#1754). A finding that cites none of the
+   * scoped events gets the ids its own text names, from this set only. Absent → no recovery.
+   */
+  promptEventIds?: ReadonlySet<string>;
 }
 
 export interface DeltaFoldResult {
@@ -145,6 +151,8 @@ export interface DeltaFoldResult {
    * these ids, not the ones the model sent, or a renamed finding silently loses that verdict.
    */
   delta: ReturnType<typeof deltaSchema.parse>;
+  /** Findings that got their citations from their own text (#1754), for the caller's log. */
+  recoveredCitations: ProseRecovery["recovered"];
 }
 
 /**
@@ -167,10 +175,15 @@ export async function foldSynthesisDelta(
   // `~[cld-e1]`) resolves here, once, against the events this run was shown — never onto one outside
   // the window or one the analyst rejected.
   const shownIds = new Set(scopedEvents.map((e) => e.id));
-  const delta = resolveCitedEventIds(
+  const resolved = resolveCitedEventIds(
     renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id))),
     shownIds,
   );
+  // A finding that still cites nothing gets the ids its own text names (#1754) — before the merge, so
+  // the event back-links, the dismissal reach and the High backfill all read them as citations.
+  const { delta, recovered: recoveredCitations } = input.promptEventIds
+    ? recoverProseCitations(resolved, input.promptEventIds, shownIds)
+    : { delta: resolved, recovered: [] };
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
@@ -211,6 +224,7 @@ export async function foldSynthesisDelta(
     eligibleIds,
     surviving,
     delta,
+    recoveredCitations,
   };
 }
 

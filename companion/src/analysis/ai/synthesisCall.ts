@@ -8,7 +8,9 @@ import {
   fillOptionalSynthesisFields,
   keepFailedAnswer,
   synthesisRetryNote,
+  UncitedAnswerError,
 } from "./synthesisAnswerRepair.js";
+import { needsCitationRetry, uncitedFindingIds, type CitationCounts } from "./findingCitations.js";
 import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
 
@@ -41,6 +43,18 @@ export interface SynthesisCall {
   fallbackFrom?: string; // #1734: the synthesis model whose safety filter stopped, when it fell back
   safetyStops: number; // #1740: how many times that model's safety filter stopped an answer
   primaryLabel: string; // #1740: the synthesis model's label, for the log line
+  citationRetriedAfter?: CitationCounts["retriedAfter"]; // #1754: set when the citation retry ran
+  citationRetries: number; // #1754: 0 or 1 — the extra model call, kept apart from parseRetries
+}
+
+// One accepted answer and the model that gave it. Snapshotted per answer: the citation retry can
+// move the call to the fallback model and then keep the FIRST answer, which the primary gave.
+interface Answer {
+  delta: ReturnType<typeof stripAiExtractedFrom>;
+  resolvedModel: string | undefined;
+  answeredBy: AIProvider;
+  answeredByLabel: string;
+  fallbackFrom: string | undefined;
 }
 
 export async function callSynthesisModel(
@@ -51,7 +65,13 @@ export async function callSynthesisModel(
   userPrompt: string,
   // `provider` here is the CALLER's override (second-opinion model B, a replay): when set, the call
   // runs on exactly that model — it keeps its safety retries (#1740) but never falls back (#1734).
-  opts: { signal?: AbortSignal; provider?: AIProvider } & SynthThinkingInput,
+  // `shownEventIds`: every event the prompt represents (#1754). When set, an answer whose findings
+  // mostly cite none of them is asked for once more.
+  opts: {
+    signal?: AbortSignal;
+    provider?: AIProvider;
+    shownEventIds?: ReadonlySet<string>;
+  } & SynthThinkingInput,
 ): Promise<SynthesisCall> {
   const { tokens: thinkingTokens, source: thinkingSource } = resolveSynthThinking(
     opts,
@@ -59,6 +79,7 @@ export async function callSynthesisModel(
   );
   let parseRetries = 0;
   let retryNote: string | undefined; // #1602: what the last bad answer got wrong, for the next attempt
+  let citationNote: string | undefined; // #1754: kept apart, so a later parse note cannot replace it
   let attempt = 0;
   // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
   // so a failed attempt's model never labels an answer that came back without one.
@@ -80,7 +101,7 @@ export async function callSynthesisModel(
         {
           systemPrompt: getSynthesisPrompt(),
           // Appended at the END so the cached prompt prefix is unchanged on the retry.
-          userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
+          userPrompt: [userPrompt, citationNote, retryNote].filter(Boolean).join("\n\n"),
           images: [],
           ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
           rejectTruncated: true, // a cut-off synthesis is never merged; say why instead
@@ -89,63 +110,133 @@ export async function callSynthesisModel(
         "synthesis",
       ),
     );
-  const delta = await ctx.withRetry(
-    caseId,
-    "synthesis",
-    async () => {
-      throwIfSuperseded(opts.signal); // #1608: a retry after a supersede calls no provider
-      attempt++;
-      let parsed: unknown;
-      try {
-        const served = await choice.ask(
-          ask,
-          () => throwIfSuperseded(opts.signal), // a cancelled run starts no second, expensive call
-          (from, to) =>
-            ctx.log.warn(
-              `[synthesis] ${from}'s safety filter stopped the answer — running this synthesis on the fallback model ${to}`,
-              { caseId },
-            ),
-          (err, stops) => {
-            ctx.log.warn(
-              `[synthesis] ${choice.primaryName}'s safety filter stopped the answer (${stops}) — asking it once more`,
-              { caseId },
-            );
-            ctx.recordRetry?.(caseId, "synthesis", err); // counted like any retry (ai_retry)
-          },
-        );
-        parsed = served.value;
-        const answer = parseSynthesisAnswer(ctx, caseId, parsed);
-        resolvedModel = served.resolvedModel;
-        return answer;
-      } catch (err) {
-        throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
-        parseRetries++;
-        retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-        await keepFailedAnswer(
-          { log: ctx.log, store: ctx.opts.synthMetaStore },
-          caseId,
-          attempt,
-          err,
-          parsed,
-        );
-        throw err;
-      }
-    },
-    ctx.opts.retries ?? 3,
-    ctx.opts.backoffMs ?? 500,
-  );
+  const answerOnce = async (): Promise<Answer> => {
+    resolvedModel = undefined;
+    const delta = await ctx.withRetry(
+      caseId,
+      "synthesis",
+      async () => {
+        throwIfSuperseded(opts.signal); // #1608: a retry after a supersede calls no provider
+        attempt++;
+        let parsed: unknown;
+        try {
+          const served = await choice.ask(
+            ask,
+            () => throwIfSuperseded(opts.signal), // a cancelled run starts no second, expensive call
+            (from, to) =>
+              ctx.log.warn(
+                `[synthesis] ${from}'s safety filter stopped the answer — running this synthesis on the fallback model ${to}`,
+                { caseId },
+              ),
+            (err, stops) => {
+              ctx.log.warn(
+                `[synthesis] ${choice.primaryName}'s safety filter stopped the answer (${stops}) — asking it once more`,
+                { caseId },
+              );
+              ctx.recordRetry?.(caseId, "synthesis", err); // counted like any retry (ai_retry)
+            },
+          );
+          parsed = served.value;
+          const answer = parseSynthesisAnswer(ctx, caseId, parsed);
+          resolvedModel = served.resolvedModel;
+          return answer;
+        } catch (err) {
+          throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
+          parseRetries++;
+          retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
+          await keepFailedAnswer(
+            { log: ctx.log, store: ctx.opts.synthMetaStore },
+            caseId,
+            attempt,
+            err,
+            parsed,
+          );
+          throw err;
+        }
+      },
+      ctx.opts.retries ?? 3,
+      ctx.opts.backoffMs ?? 500,
+    );
+    return {
+      delta,
+      resolvedModel,
+      answeredBy: choice.answeredBy,
+      answeredByLabel: choice.answeredByLabel,
+      fallbackFrom: choice.fallbackFrom,
+    };
+  };
+  const { answer, retriedAfter } = await answerWithCitations(ctx, caseId, {
+    answerOnce,
+    shown: opts.shownEventIds,
+    signal: opts.signal,
+    attempt: () => attempt,
+    setNote: (note) => (citationNote = note),
+  });
   return {
-    delta,
+    delta: answer.delta,
     thinkingTokens,
     thinkingSource,
     parseRetries,
-    ...(resolvedModel ? { resolvedModel } : {}),
-    answeredBy: choice.answeredBy,
-    answeredByLabel: choice.answeredByLabel,
-    ...(choice.fallbackFrom ? { fallbackFrom: choice.fallbackFrom } : {}),
+    ...(answer.resolvedModel ? { resolvedModel: answer.resolvedModel } : {}),
+    answeredBy: answer.answeredBy,
+    answeredByLabel: answer.answeredByLabel,
+    ...(answer.fallbackFrom ? { fallbackFrom: answer.fallbackFrom } : {}),
     safetyStops: choice.safetyStops,
     primaryLabel: choice.primaryName,
+    ...(retriedAfter ? { citationRetriedAfter: retriedAfter } : {}),
+    citationRetries: retriedAfter ? 1 : 0,
   };
+}
+
+/**
+ * Ask once more when most findings cite no event (#1754). On INC-2026-022 all 13 findings of an Opus
+ * answer left relatedEventIds empty, and the High backfill raised 82 auto findings on rows the
+ * findings had already explained. The retry is its OWN budget, outside `withRetry`: it runs even with
+ * retries set to 0 and after transient failures used the budget up. The uncited answer is saved to the
+ * case logs like a failed parse. Then the answer with fewer uncited findings wins (a tie takes the
+ * retry); a retry that cannot be had keeps the first answer — its text is still the analysis.
+ */
+async function answerWithCitations(
+  ctx: SynthesisContext,
+  caseId: string,
+  o: {
+    answerOnce: () => Promise<Answer>;
+    shown: ReadonlySet<string> | undefined;
+    signal: AbortSignal | undefined;
+    attempt: () => number;
+    setNote: (note: string) => void;
+  },
+): Promise<{ answer: Answer; retriedAfter?: { uncited: number; total: number } }> {
+  const first = await o.answerOnce();
+  if (!o.shown) return { answer: first };
+  const total = first.delta.findings.length;
+  const uncited = uncitedFindingIds(first.delta, o.shown).length;
+  if (!needsCitationRetry(uncited, total)) return { answer: first };
+  const err = new UncitedAnswerError(uncited, total);
+  const deps = { log: ctx.log, store: ctx.opts.synthMetaStore };
+  await keepFailedAnswer(deps, caseId, o.attempt(), err, first.delta);
+  ctx.log.warn(`[synthesis] ${err.message} — asking once more for event citations`, { caseId });
+  ctx.recordRetry?.(caseId, "synthesis", err); // counted like any retry (ai_retry)
+  o.setNote(synthesisRetryNote(err) ?? "");
+  const retriedAfter = { uncited, total };
+  let second: Answer;
+  try {
+    second = await o.answerOnce();
+  } catch (retryErr) {
+    throwIfSuperseded(o.signal);
+    if (retryErr instanceof Error && retryErr.name === "AbortError") throw retryErr;
+    ctx.log.warn(`[synthesis] the citation retry failed (${String(retryErr)}) — keeping the first answer`, {
+      caseId,
+    });
+    return { answer: first, retriedAfter };
+  }
+  const again = uncitedFindingIds(second.delta, o.shown).length;
+  if (needsCitationRetry(again, second.delta.findings.length))
+    ctx.log.warn(
+      `[synthesis] the citation retry still left ${again} of ${second.delta.findings.length} findings citing no event`,
+      { caseId },
+    );
+  return { answer: again <= uncited ? second : first, retriedAfter };
 }
 
 // #1602: default the often-empty parts of a partial answer, and say which ones, so a model that
