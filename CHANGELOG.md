@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
+### Fixed
+- **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
+
 ## [0.38.0] - 2026-09-26
 
 ### Added

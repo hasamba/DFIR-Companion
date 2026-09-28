@@ -8,6 +8,7 @@ import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
 import { rowsInBuildWindow } from "./jevBuildWindow.js";
+import { stateEventResolver } from "../analysis/eventAliasLookup.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
@@ -132,9 +133,13 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const { events: read, total } = await readMatchingRows(superStore, caseId, filters, cap);
 
     // Rows already in the forensic timeline are the ones synthesis can ALREADY see. Reviewing them
-    // would spend the analyst's money re-grading what is not missing.
+    // would spend the analyst's money re-grading what is not missing. That includes a row the case
+    // holds under ANOTHER id: a second tool's copy of an event, folded into the first tool's (#1761).
+    // The lineage resolves it to that event while the event is live; once the event is gone, the row
+    // resolves to itself and is missing evidence again.
     const analyzed = new Set(state.forensicTimeline.map((e) => e.id));
-    const unanalyzed = read.filter((e) => !analyzed.has(e.id));
+    const canonical = stateEventResolver(state);
+    const unanalyzed = read.filter((e) => !analyzed.has(canonical(e.id)));
     // Rows inside the host's own build window are the machine being built (#1529). The grader is not
     // told that, so it grades a Chocolatey firewall change Medium and a provisioning log clear Critical
     // (#1700). They are set aside here, before anything is spent, and counted so the sum still closes.

@@ -288,7 +288,10 @@ each row for this and hides the obvious ones by default.
 
 **Coverage is always stated.** The caption gives the true number of matching rows, how many were
 read, how many were skipped as already analysed, and how many were graded. Each is a separate fact,
-because only some of them have a single cause — a shortfall is not evidence the cap was reached.
+because only some of them have a single cause — a shortfall is not evidence the cap was reached. A
+row counts as already analysed when its event is in the forensic timeline, even under another id:
+when two tools report one event (Chainsaw and Hayabusa reading the same log), the case keeps one
+event, and the other tool's row is not graded again.
 
 **Promoting what it finds.** Tick the rows worth keeping and promote them into the forensic
 timeline — the record the AI reads. A promoted row takes **the severity the model gave it**, because
@@ -296,7 +299,10 @@ an `Info` row is invisible to synthesis and a promotion that kept the old grade 
 nothing. The row is stamped with the review, the grade, the confidence and the model that gave it,
 so a model's severity can never be mistaken for a tagger rule's or an analyst's own. A promotion can
 only raise a severity, never lower one. Rows already in the timeline are skipped rather than
-refused, and the reply says what was skipped and why; sandbox rows are refused outright. Promoting
+refused, and the reply says what was skipped and why. A row that turns out to be a copy of an event
+already there is named with that event's id. If a promoted row takes the place of an event the case
+already held, the reply says so too. Sandbox rows are refused outright. The case timeline note
+counts only the rows that landed. Promoting
 does not re-run the AI — press **AI Re-synthesize** when you have finished picking.
 
 **Read every row** when you want a full pass. An ordinary press stops at `DFIR_JEV_MAX_ROWS`; the

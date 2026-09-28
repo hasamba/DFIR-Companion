@@ -50,13 +50,19 @@ async function harness(
     /** What the review graded, as the server recorded it. */
     reviewed?: Tick[];
     model?: string;
+    /** The case lineage (#1715): absorbed id -> the id of the event that kept it. */
+    aliases?: Record<string, string>;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-jev-promote-"));
   const store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(store);
-  await stateStore.save({ ...emptyState("c1"), forensicTimeline: opts.forensic ?? [] });
+  await stateStore.save({
+    ...emptyState("c1"),
+    forensicTimeline: opts.forensic ?? [],
+    ...(opts.aliases ? { eventAliases: opts.aliases } : {}),
+  });
   // A deterministic runtime pipeline with no AI provider: promotion is a merge, not a model call.
   const pipeline = buildRuntimePipeline({
     provider: undefined,
@@ -70,12 +76,16 @@ async function harness(
   if (opts.reviewed?.length) {
     await new JevGradeStore(store).record("c1", opts.model ?? "typesafe/jev-1.13", opts.reviewed);
   }
+  const activity: string[] = [];
   const app = createApp(store, {
     pipeline,
     stateStore,
     ...(superTimelineStore ? { superTimelineStore } : {}),
+    activityLogStore: {
+      add: async (_caseId: string, entry: { detail?: string }) => void activity.push(entry.detail ?? ""),
+    } as never,
   });
-  return { app, stateStore };
+  return { app, stateStore, store, activity };
 }
 
 const promote = (app: Awaited<ReturnType<typeof harness>>["app"], body: unknown) =>
@@ -259,6 +269,135 @@ describe("the grade on a promoted row is the one the server recorded (#1578)", (
     expect(res.body.skipped).toBe(2);
     expect(res.body.reasons.join(" ")).toMatch(/2 row\(s\) were not graded by a review in this case/i);
     expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+});
+
+describe("a ticked row whose event the forensic timeline already holds (#1761)", () => {
+  // Two tools, one event: Chainsaw and Hayabusa both read the same Sysmon log. The case keeps the
+  // Chainsaw event and records the Hayabusa row as its duplicate (the lineage, #1715). The review
+  // used to offer those rows as missed evidence and the route promoted them, calling the rows the
+  // merge folded away "refused by the promotion seam" and writing the requested count into the note.
+  const chainsaw = raw("e1", { severity: "High", description: "toolkit written to C:\\Users\\Public" });
+  const notes = async (stateStore: Awaited<ReturnType<typeof harness>>["stateStore"]) =>
+    (await stateStore.load("c1")).timeline.map((t) => t.description);
+
+  it("reports a recorded duplicate by the event it duplicates, not as refused, and changes nothing", async () => {
+    const { app, stateStore, activity } = await harness({
+      forensic: [chainsaw],
+      aliases: { r1: "e1", r2: "e1" },
+      archive: [raw("r1", { description: "hayabusa copy" }), raw("r2", { description: "second copy" })],
+      // r2 was never graded: a duplicate is reported as one whatever the grade record says.
+      reviewed: [tick("r1", "Critical")],
+    });
+
+    const res = await promote(app, ids("r1", "r2"));
+
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(0);
+    expect(res.body.skipped).toBe(2);
+    const text = res.body.reasons.join(" ");
+    expect(text).toMatch(/2 row\(s\) were already in the forensic timeline as a duplicate of an event there/);
+    expect(text).toContain("r1 (duplicate of e1)");
+    expect(text).not.toMatch(/refused/);
+    expect(text).not.toMatch(/not graded/);
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id)).toEqual(["e1"]);
+    expect(after.forensicTimeline[0].severity).toBe("High");
+    expect(after.forensicTimeline[0].provenance ?? []).toEqual([]);
+    // Nothing was promoted, so the case timeline gains no "promoted" note.
+    expect(await notes(stateStore)).toEqual([]);
+    expect(activity.join(" ")).toMatch(/promoted 0 archive row/);
+  });
+
+  it("reports a row the merge folds into an existing event as a duplicate, and the note counts what landed", async () => {
+    const { app, stateStore, activity } = await harness({
+      forensic: [chainsaw],
+      archive: [raw("d1", { description: chainsaw.description }), raw("n1")],
+      reviewed: [tick("d1", "Medium"), tick("n1", "High")],
+    });
+
+    const res = await promote(app, ids("d1", "n1"));
+
+    expect(res.body.promoted).toBe(1);
+    expect(res.body.skipped).toBe(1);
+    const text = res.body.reasons.join(" ");
+    expect(text).toContain("d1 (duplicate of e1)");
+    expect(text).not.toMatch(/refused/);
+    expect(await notes(stateStore)).toEqual([
+      "Missed-evidence review: promoted 1 archive row(s) at the grade a decision model gave them",
+    ]);
+    expect(activity.join(" ")).toMatch(/promoted 1 archive row/);
+    const byId = new Map((await stateStore.load("c1")).forensicTimeline.map((e) => [e.id, e]));
+    expect(byId.get("e1")?.severity).toBe("High");
+    expect((byId.get("e1")?.provenance ?? []).join(" ")).not.toContain("missed-evidence");
+  });
+
+  it("does not warn about Info, or name the model, for a row that folded away", async () => {
+    const { app, store, activity } = await harness({
+      forensic: [chainsaw],
+      archive: [raw("d1", { description: chainsaw.description }), raw("n1")],
+      reviewed: [tick("d1", "Info", 0.2, 0.1)],
+      model: "model-that-graded-the-duplicate",
+    });
+    await new JevGradeStore(store).record("c1", "model-that-graded-the-new-row", [tick("n1", "High")]);
+
+    const res = await promote(app, ids("d1", "n1"));
+
+    expect(res.body.promoted).toBe(1);
+    expect(res.body.reasons.join(" ")).not.toMatch(/stayed Info/);
+    const log = activity.join(" ");
+    expect(log).toContain("model-that-graded-the-new-row");
+    expect(log).not.toContain("model-that-graded-the-duplicate");
+  });
+
+  it("says two ticked rows describing one event were merged, not that they were already there", async () => {
+    // Two tools' rows for one file: different text, one hash. (Identical text would never reach the
+    // archive twice — the super-timeline keeps one copy of an exact duplicate.)
+    const sha256 = "ab".repeat(32);
+    const { app } = await harness({
+      archive: [
+        raw("s1", { description: "file written (chainsaw)", sha256 }),
+        raw("s2", { description: "file written (hayabusa)", sha256 }),
+      ],
+      reviewed: [tick("s1", "High"), tick("s2", "Medium")],
+    });
+
+    const res = await promote(app, ids("s1", "s2"));
+
+    expect(res.body.promoted).toBe(1);
+    const text = res.body.reasons.join(" ");
+    expect(text).toContain("s2 (merged into s1)");
+    expect(text).not.toMatch(/already in the forensic timeline/);
+  });
+
+  it("says so when a promoted row took the place of an event the case already held", async () => {
+    const { app, stateStore } = await harness({
+      forensic: [raw("e2", { severity: "Low", description: "same fact" })],
+      archive: [raw("x1", { description: "same fact" })],
+      reviewed: [tick("x1", "High")],
+    });
+
+    const res = await promote(app, ids("x1"));
+
+    expect(res.body.promoted).toBe(1);
+    expect(res.body.reasons.join(" ")).toContain("x1 (in place of e2)");
+    const [row] = (await stateStore.load("c1")).forensicTimeline;
+    expect(row.id).toBe("x1");
+    expect((row.provenance ?? []).join(" ")).toContain("missed-evidence");
+  });
+
+  it("names at most three examples and counts the rest", async () => {
+    const rows = ["a", "b", "c", "d", "e"].map((id) => raw(id, { description: `copy ${id}` }));
+    const { app } = await harness({
+      forensic: [chainsaw],
+      aliases: Object.fromEntries(rows.map((r) => [r.id, "e1"])),
+      archive: rows,
+    });
+
+    const res = await promote(app, ids(...rows.map((r) => r.id)));
+
+    const line = res.body.reasons.find((r: string) => r.includes("duplicate"));
+    expect(line).toContain("a (duplicate of e1), b (duplicate of e1), c (duplicate of e1) and 2 more");
   });
 });
 
