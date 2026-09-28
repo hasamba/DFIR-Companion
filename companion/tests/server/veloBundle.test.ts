@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
+import { privateBundleDir } from "../helpers/bundleDir.js";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
@@ -72,7 +73,7 @@ async function makeApp(runnerOverride: VqlRunner = runner, cfg: Partial<Velocira
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const artifactBundleStore = new ArtifactBundleStore(join(dirname(root), "bundles"));
+  const artifactBundleStore = new ArtifactBundleStore(privateBundleDir(root));
   const veloHuntStore = new VeloHuntStore(store);
   const importMetaStore = new ImportMetaStore(store);
   const client = new VelociraptorClient({ ...veloCfg, ...cfg }, runnerOverride);

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
+import { privateBundleDir } from "../helpers/bundleDir.js";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
@@ -55,7 +56,7 @@ async function makeApp(runner: VqlRunner) {
     stateStore,
     importMetaStore: new ImportMetaStore(store),
     velociraptorClient: client,
-    artifactBundleStore: new ArtifactBundleStore(join(dirname(root), "bundles")),
+    artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
