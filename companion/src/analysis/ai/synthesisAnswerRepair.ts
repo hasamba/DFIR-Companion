@@ -58,6 +58,21 @@ function techniquesFromFindings(findings: unknown): Array<{ id: string; name: st
   return [...ids].map((id) => ({ id, name: techniqueName(id) }));
 }
 
+/**
+ * Most findings in an otherwise valid answer cite no event (#1754). Thrown only to route the answer to
+ * `keepFailedAnswer` and to name the retry note; synthesisCall.ts runs that retry itself, outside the
+ * generic retry budget, and keeps the first answer if the retry cannot be had.
+ */
+export class UncitedAnswerError extends Error {
+  constructor(
+    readonly uncited: number,
+    readonly total: number,
+  ) {
+    super(`${uncited} of ${total} findings in the answer cite no event`);
+    this.name = "UncitedAnswerError";
+  }
+}
+
 function isOmitted(issue: ZodError["issues"][number]): boolean {
   return issue.path.length === 1 && issue.code === "invalid_type" && issue.received === "undefined";
 }
@@ -67,6 +82,11 @@ function isOmitted(issue: ZodError["issues"][number]): boolean {
  * (a provider or network error). `undefined` means KEEP the current note, not clear it.
  */
 export function synthesisRetryNote(err: unknown): string | undefined {
+  if (err instanceof UncitedAnswerError)
+    return (
+      `Your previous answer cited no events for ${err.uncited} of ${err.total} findings: their relatedEventIds were empty. ` +
+      "Return the complete JSON object again, and set each finding's relatedEventIds to the ids of the timeline events it is based on."
+    );
   if (err instanceof AiAnswerParseError)
     return "Your previous answer was not valid JSON. Return one complete JSON object and nothing else.";
   if (!(err instanceof ZodError)) return undefined;
@@ -93,7 +113,7 @@ export async function keepFailedAnswer(
   const text =
     err instanceof AiAnswerParseError
       ? err.rawText
-      : err instanceof ZodError && parsed !== undefined
+      : (err instanceof ZodError || err instanceof UncitedAnswerError) && parsed !== undefined
         ? JSON.stringify(parsed, null, 2)
         : undefined;
   if (text === undefined) return;
