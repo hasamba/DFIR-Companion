@@ -59,6 +59,7 @@ const PAYLOADS = [
   `<div style="background-image:-webkit-image-set('https://attacker.invalid/wk' 1x)">wk</div>`,
   `<div style="background:cross-fade(image('https://attacker.invalid/img'),red)">img</div>`,
   `<svg><rect width=9 height=9 fill="url(https://attacker.invalid/paint.svg#g)"/></svg>`,
+  `<svg><rect width=9 height=9 cursor="\\75rl(https://attacker.invalid/cur.png), auto" fill="\\75rl(https://attacker.invalid/esc.svg#g)"/></svg>`,
   `<img src="/\\attacker.invalid/bs"><img src="\\\\attacker.invalid/bs2">`,
 ];
 
@@ -155,6 +156,7 @@ for (const withoutTrustedTypes of [false, true]) {
           [document.createElement("img"), "src", "/\\attacker.invalid/x"],
           [document.createElement("a"), "href", "javascript:window.__xss=1"],
           [document.createElementNS(svgNs, "rect"), "fill", "url(https://attacker.invalid/p.svg#g)"],
+          [document.createElementNS(svgNs, "rect"), "cursor", "\\75rl(https://attacker.invalid/c.png), auto"],
         ];
         const out: string[] = [];
         for (const [el, name, value] of cases) {

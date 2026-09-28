@@ -57,8 +57,10 @@
   // url(), image-set(), -webkit-image-set(), image() and src() all take a URL the browser fetches
   // (#1811). image-set and image are unanchored so a nested cross-fade(image("…")) is caught too.
   var DANGEROUS_CSS = /(?:url\s*\(|image-set\s*\(|image\s*\(|src\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|behavior\s*:|-moz-binding|[{}<>\\])/i;
-  // An SVG attribute may name a local paint server or clip path (url(#id)), never a remote one.
-  var REMOTE_SVG_REFERENCE = /url\s*\(\s*(?!['"]?\s*#)/i;
+  // An SVG presentation attribute (fill, cursor, clip-path…) is parsed as CSS. It may name a local
+  // paint server or clip path (url(#id)), never a remote one, and never hold a CSS escape: "\75rl("
+  // is url( to the browser but not to a regex.
+  var REMOTE_SVG_REFERENCE = /\\|url\s*\(\s*(?!['"]?\s*#)|image-set\s*\(|image\s*\(|src\s*\(/i;
 
   function isSafeUrl(value, attribute, tagName) {
     var raw = String(value == null ? "" : value).trim();
@@ -115,7 +117,7 @@
       (isSvg ? SAFE_SVG_ATTRIBUTES.has(lower) : SAFE_ATTRIBUTES.has(lower) || lower === "href");
     if (!allowed) return null;
     if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(text, lower, tag)) return null;
-    if (isSvg && REMOTE_SVG_REFERENCE.test(text)) return null;
+    if (isSvg && lower.indexOf("data-") !== 0 && lower.indexOf("aria-") !== 0 && REMOTE_SVG_REFERENCE.test(text)) return null;
     return { name: String(name), value: text };
   }
 

@@ -335,8 +335,14 @@ describe("safe DOM policy — script setters share the markup deny rules (#1813)
     rect.setAttribute("fill", "url(https://attacker.invalid/p.svg#g)");
     rect.setAttribute("clip-path", "url( 'https://attacker.invalid/c.svg#c')");
     expect([...rect.attrs.keys()]).toEqual([]);
+    rect.setAttribute("cursor", "\\75rl(https://attacker.invalid/c.png), auto");
+    rect.setAttribute("fill", "\\000075rl(https://attacker.invalid/p.svg#g)");
+    rect.setAttribute("stroke", "image-set('https://attacker.invalid/s' 1x)");
+    expect([...rect.attrs.keys()]).toEqual([]);
     rect.setAttribute("fill", "url(#grad)");
+    rect.setAttribute("data-tip", "C:\\Windows\\Temp\\x.ps1");
     expect(rect.attrs.get("fill")).toBe("url(#grad)");
+    expect(rect.attrs.get("data-tip")).toBe("C:\\Windows\\Temp\\x.ps1");
   });
 
   it("keeps the attributes app code and Leaflet set, with the caller's value", () => {
@@ -357,6 +363,16 @@ describe("safe DOM policy — script setters share the markup deny rules (#1813)
     img.setAttribute("aria-valuenow", null);
     expect(img.attrs.get("src")).toBe("/cases/demo/x.png");
     expect(img.attrs.get("aria-valuenow")).toBe("null");
+  });
+
+  it("drops a CSS-escaped remote reference in SVG markup too", async () => {
+    const api = await loadApi();
+    expect(api.attributeAction("RECT", true, "fill", "\\75rl(https://attacker.invalid/p)")).toBeNull();
+    expect(api.attributeAction("RECT", true, "clip-path", "url(https://attacker.invalid/c#c)")).toBeNull();
+    expect(api.attributeAction("RECT", true, "fill", "url(#grad)")).toEqual({
+      name: "fill",
+      value: "url(#grad)",
+    });
   });
 
   it("markup and script paths agree on every denied attribute", async () => {
