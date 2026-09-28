@@ -49,6 +49,11 @@ are always applied, whatever the dialog options say:
 The TXT header names the applied filters on its `# Filters:` line. The minimum severity and
 the IOC types are yours to choose in the dialog.
 
+The dialog shows how many IOCs match your filters, and why the others are left out — for example,
+below the minimum severity, or no usable threat-intel verdict. An IOC that was never enriched, or
+whose verdict expired or was revoked, counts as Info. Run enrichment, then export again. The TXT
+header records the same count on a `# Matched N of M IOCs` line, with one line per reason.
+
 ---
 
 ## Report Customisation

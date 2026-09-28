@@ -61,11 +61,10 @@ import { buildMitigationsResult, type MitigationsResult } from "../analysis/atta
 import { loadMitigationsDataset } from "../analysis/attackMitigationsData.js";
 import { buildStixBundle, type StixBundle } from "./stix.js";
 import {
-  buildIocBlocklistTxt,
-  buildIocBlocklistCsv,
-  buildIocBlocklistStix,
-  type IocBlocklistFormat,
+  buildIocBlocklist,
+  type BlocklistSummary,
   type IocBlocklistOptions,
+  type IocBlocklistRequestFormat,
 } from "./iocBlocklist.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis/customerExposure.js";
@@ -545,18 +544,16 @@ export class ReportWriter {
   // the report). Supports three formats: plain text (one value per line, grouped by type),
   // minimal CSV (type, value, severity, verdict, description), and STIX-indicators-only
   // (a stripped-down STIX 2.1 bundle with only `indicator` objects — no identities, report,
-  // or relationship objects). Severity is derived from the worst enrichment verdict.
+  // or relationship objects). Severity is derived from the worst enrichment verdict. "summary"
+  // returns the match count and why the rest were left out (#1807).
   async iocBlocklist(
     caseId: string,
-    format: IocBlocklistFormat = "txt",
+    format: IocBlocklistRequestFormat = "txt",
     opts: IocBlocklistOptions = {},
-  ): Promise<string | StixBundle> {
+  ): Promise<string | StixBundle | BlocklistSummary> {
     const state = await this.loadFilteredState(caseId);
     const caseMeta = await this.cases.getCaseMeta(caseId);
-    const resolvedOpts: IocBlocklistOptions = { ...opts, caseName: opts.caseName ?? caseMeta?.name };
-    if (format === "csv") return buildIocBlocklistCsv(state, resolvedOpts);
-    if (format === "stix") return buildIocBlocklistStix(state, resolvedOpts);
-    return buildIocBlocklistTxt(state, resolvedOpts);
+    return buildIocBlocklist(format, state, { ...opts, caseName: opts.caseName ?? caseMeta?.name });
   }
 
   // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
