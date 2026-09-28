@@ -242,6 +242,8 @@ export interface JobView {
   resume?: boolean;
   detail: string;
   when?: string;
+  /** What the status badge says: the status, or "held for analyst" for a gate hold (#1801). */
+  statusText?: string;
 }
 
 export interface ValuesApi {

@@ -84,15 +84,14 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       return res.status(200).json(await marked(caseId, record));
     } catch (err) {
       // secondOpinion() calls synthesize() twice (secondOpinionRun.ts), so it inherits the merge
-      // gate — and a gate is a question, not a failed second opinion. The job still has to END
-      // (cancel() refuses a non-cancellable job and would leave the case's slot held); the pill
+      // gate — and a gate is a question, not a failed second opinion. The job still has to END:
+      // hold() ends it with the same encoding the synthesis routes use (#1801) — cancel() would
+      // refuse a non-cancellable job and leave the case's slot held. The pill
       // reads "on hold" regardless, since a pending hold outranks the last job's failure.
       const held = isAnalystDecisionGate(err);
-      if (job) {
-        await options.jobManager?.fail(job.jobId, err, {
-          code: held ? "held_for_analyst" : "second_opinion_failed",
-          retryable: false,
-        });
+      if (job && held) await options.jobManager?.hold(job.jobId, (err as Error).message);
+      else if (job) {
+        await options.jobManager?.fail(job.jobId, err, { code: "second_opinion_failed", retryable: false });
       }
       options.onAiStatus?.(caseId, {
         status: held ? "blocked" : "error",

@@ -129,7 +129,9 @@ function jobMenuView(j) {
   const active = j.status === "running" || j.status === "queued";
   const name = !active && Array.isArray(j.files) && j.files.length > 1 ? "" : j.detail;
   const detail = name || progress || j.error ? `${name || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}`.trim() : "";
-  return { job: j, cancel, resume, detail, when: jobWhen(j) };
+  // #1801: a gate hold ends `cancelled`, but nobody pressed Cancel — the row says what happened.
+  const held = j.status === "cancelled" && !!j.failure && j.failure.code === "held_for_analyst";
+  return { job: j, cancel, resume, detail, when: jobWhen(j), statusText: held ? "held for analyst" : j.status };
 }
 
 // A job timestamp as the analyst reads it: date and time to the second, local zone. "" for a
@@ -165,7 +167,7 @@ function lastSynthesisLine(jobs) {
   if (j.status === "running") return `Last synthesis: running since ${jobTime(j.startedAt) || "—"}`;
   if (j.status === "queued") return `Last synthesis: queued ${jobTime(j.queuedAt) || "—"}`;
   const at = jobTime(j.endedAt) || jobTime(j.startedAt) || jobTime(j.queuedAt) || "—";
-  return `Last synthesis: ${at} — ${j.status}`;
+  return `Last synthesis: ${at} — ${jobMenuView(j).statusText}`;
 }
 
 // The bar's fill, 0–100, for a RUNNING job that reports progress; null otherwise (#1428). Only while
@@ -193,7 +195,7 @@ function updateJobRow(row, view) {
     model.style.display = modelText ? "" : "none";
   }
   status.className = `job-st job-${view.job.status}`;
-  status.textContent = view.job.status;
+  status.textContent = view.statusText || view.job.status;
   const pct = jobBarPercent(view.job);
   if (bar && fill) {
     bar.style.display = pct === null ? "none" : "";

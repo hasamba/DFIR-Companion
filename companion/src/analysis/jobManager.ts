@@ -28,6 +28,7 @@ import {
   pinJobModel,
   failJob,
   cancelJob,
+  holdJob,
   interruptJob,
   requeueJob,
   allowJobCancellation,
@@ -413,6 +414,10 @@ export class JobManager {
       };
       return failJob(table, jobId, failure, now);
     });
+  }
+
+  async hold(jobId: string, reason: string): Promise<void> {
+    await this.terminalTransition(jobId, (table, now) => holdJob(table, jobId, reason, now));
   }
 
   async cancel(jobId: string): Promise<CancelResult> {

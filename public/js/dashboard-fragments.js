@@ -84,7 +84,7 @@ function jobRowHtml(view) {
     + `<span class="job-bar-fill" data-safe-style="width:${pct === null ? 0 : pct}%"></span></span>`;
   return `<div class="job-row" data-job-id="${esc(j.id)}"><span class="job-kind">${esc(j.kind)}</span>`
     + `<span class="job-label">${esc(j.label || "")}</span>`
-    + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
+    + `<span class="job-st job-${esc(j.status)}">${esc(view.statusText || j.status)}</span>`
     + cancel + resume + model + bar
     + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span>`
     // Always the LAST line of the row, below the detail, so every row reads the same way.

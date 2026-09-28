@@ -19,7 +19,7 @@
  * Kicks that arrive while one is already waiting collapse into it: one follow-up run per case, the
  * newest kick's start function winning.
  */
-import type { Job } from "../analysis/jobRegistry.js";
+import { isHeldJob, type Job } from "../analysis/jobRegistry.js";
 
 export interface SynthesisDeferralDeps {
   /** The job registry. Absent → only `inFlight` makes a kick wait. */
@@ -61,7 +61,11 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
   }
 
   function wasCancelled(waiter: Waiter): boolean {
-    return [...waiter.watched].some((id) => deps.jobManager?.get(id)?.status === "cancelled");
+    // A gate hold also ends `cancelled`, but nobody pressed Cancel (#1801): the deferred run may go.
+    return [...waiter.watched].some((id) => {
+      const job = deps.jobManager?.get(id);
+      return job?.status === "cancelled" && !isHeldJob(job);
+    });
   }
 
   function check(caseId: string): void {
