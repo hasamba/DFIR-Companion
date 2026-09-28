@@ -76,15 +76,17 @@ describe("an automatic kick waiting on a synthesis that the gate held", () => {
     deferral.defer(
       "c1",
       () => outcome.push("start"),
-      () => outcome.push("cancelled"),
+      (held) => outcome.push(held ? "held" : "cancelled"),
     );
     await end(m, jobId);
     await vi.advanceTimersByTimeAsync(20);
     return outcome;
   }
 
-  it("still starts: nobody pressed Cancel", async () => {
-    expect(await settle((m, id) => m.hold(id, REASON))).toEqual(["start"]);
+  // Not a Cancel, but not a start either: a new run would stop at the same gate, and resolving the
+  // gate starts one. The caller marks the conclusions out of date and keeps the pill on hold.
+  it("reports the hold, not a Cancel, and starts nothing", async () => {
+    expect(await settle((m, id) => m.hold(id, REASON))).toEqual(["held"]);
   });
 
   it("stays cancelled after an analyst Cancel (#1608 unchanged)", async () => {

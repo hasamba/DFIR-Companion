@@ -143,6 +143,14 @@ describe("presidio approval: leave all visible (#1799)", () => {
     expect(events).toEqual(["refresh INC-1"]);
   });
 
+  // Review (#1799): a value hidden from the AI in another tab while the run was going must not be
+  // suppressed by it. The server's answer to the first request no longer lists it.
+  it("skips a value the latest server answer no longer lists", async () => {
+    const { api, posted } = bulk([{ ok: true, pending: [] }]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(posted).toEqual(["Suricata"]);
+  });
+
   it("stops at a refused request and re-reads what is still pending", async () => {
     const { api, posted, events } = bulk([{ ok: true, pending: [TIME] }, { ok: false }]);
     await api.suppressAllPresidioPending("INC-1");

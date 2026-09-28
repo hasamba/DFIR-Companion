@@ -8,15 +8,16 @@
 // Every reject errs toward KEEPING a value: a false reject leaks a name to the AI, while a false
 // keep only asks the analyst one more question. So the vocabulary rule drops a value only when
 // EVERY word is a known term ("Cobalt Strike Beacon" goes, "John Beacon" stays), the file rule
-// needs a known extension ("Jane.Doe" stays), and the flag rule needs a flag shape ("- Jane Doe",
-// a bulleted name, stays).
+// needs a known extension and a stem with no capitalized word in it ("Jane.Doe" and
+// "Jane_Doe.docx" stay), and the flag rule needs a flag shape ("- Jane Doe", a bulleted name, stays).
 
 /**
  * Words that are DFIR tools, platforms, malware families, Windows folders or ATT&CK technique
  * words — never a person on their own. Lower-case, one word per entry; a multi-word term such as
  * "Cobalt Strike" is covered by its words. Common English words that are also plausible surnames
  * (Play, Royal, Hive, Link, Empire, Falcon, Havoc …) and family or tool names that are also
- * given names (Akira, Mirai, Vidar, Thor) are deliberately absent.
+ * people's names (Conti, Akira, Mirai, Vidar, Thor) are deliberately absent — a bare surname in a
+ * log line is exactly what the gate is for.
  */
 export const DFIR_NON_PERSON_TERMS: ReadonlySet<string> = new Set([
   // Detection, triage and forensic tools
@@ -89,7 +90,6 @@ export const DFIR_NON_PERSON_TERMS: ReadonlySet<string> = new Set([
   "entra",
   "azure",
   // Malware and ransomware families
-  "conti",
   "lockbit",
   "blackcat",
   "alphv",
@@ -196,7 +196,9 @@ const ATTACK_ID = /^(?:T\d{4}(?:\.\d{3})?|TA\d{4})$/i;
 const CLI_FLAG = /^--?[a-z0-9][\w-]*(?:=\S*)?$/i;
 // Only digits, clock and date separators, and the ISO "T"/"Z" — with at least one digit.
 const TIMESTAMP_SHAPED = /^[\d\sTZ:./+-]+$/i;
-const FILE_NAME = /^[^\s\\/]+\.([a-z0-9]{1,5})$/i;
+const FILE_NAME = /^([^\s\\/]+)\.([a-z0-9]{1,5})$/i;
+// A name-shaped word inside a file stem: "Jane" in "Jane_Doe.docx". Such a stem goes to the analyst.
+const CAPITALIZED_WORD = /(?:^|[^\p{L}])\p{Lu}\p{Ll}/u;
 
 function normalize(value: string): string {
   return value.trim().replace(LIST_MARKER, "").replace(TRAILING_PUNCTUATION, "").trim();
@@ -223,6 +225,6 @@ export function isStructuralNonPerson(raw: string): boolean {
   if (ATTACK_ID.test(value)) return true;
   if (CLI_FLAG.test(value)) return true;
   const file = FILE_NAME.exec(value);
-  if (file && FILE_EXTENSIONS.has(file[1].toLowerCase())) return true;
+  if (file && FILE_EXTENSIONS.has(file[2].toLowerCase()) && !CAPITALIZED_WORD.test(file[1])) return true;
   return isVocabularyOnly(value);
 }

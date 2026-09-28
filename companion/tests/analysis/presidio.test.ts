@@ -58,7 +58,6 @@ describe("mapFindings", () => {
     const filed = [
       "Suricata",
       "Chainsaw",
-      "Conti",
       "-s",
       "Linux",
       "PsExec",
@@ -96,6 +95,10 @@ describe("mapFindings", () => {
       "- Jane Doe",
       "Linus Torvalds",
       "Akira",
+      // Review (#1799): a bare surname that is also a malware family, and a name inside a file name.
+      "Conti",
+      "Jane_Doe.docx",
+      "Report-Smith.pdf",
     ];
     expect(
       mapFindings(

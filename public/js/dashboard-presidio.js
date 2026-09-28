@@ -313,14 +313,21 @@
   // #1799: one click for a list that is all tool names and timestamps. One request per value, in
   // order, through the same endpoint as the per-row button. A refused request stops the run, and the
   // list is then re-read from the server so it shows exactly what is still pending.
+  //
+  // Every decision button is off while it runs, and a value is posted only while the latest server
+  // answer still lists it: a value hidden from the AI meanwhile (another tab) is never suppressed.
   function suppressAllPresidioPending(caseId) {
     const values = presidioPending.map((e) => e.value);
+    const el = document.getElementById("presidioPending");
+    if (el) el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    const stillPending = (value) => presidioPending.some((e) => e.value === value);
     return values
       .reduce(
         (chain, value) =>
           chain
-            .then(() => postPresidioSuppress(caseId, value))
+            .then(() => (stillPending(value) ? postPresidioSuppress(caseId, value) : null))
             .then((r) => {
+              if (!r) return { pending: presidioPending };
               if (!r.ok) throw new Error("HTTP " + r.status);
               return r.json();
             })

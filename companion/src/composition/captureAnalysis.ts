@@ -248,7 +248,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
         deferral.defer(
           caseId,
           () => startScheduledSynthesis(caseId),
-          () => void cancelledWhileWaiting(caseId),
+          (held) => void cancelledWhileWaiting(caseId, held),
         );
         return;
       }
@@ -261,8 +261,13 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
    * The analyst cancelled the synthesis an automatic kick was waiting on (#1608). Starting a new
    * run now would undo their Cancel, so leave the choice with them: mark the conclusions out of
    * date (the pill then says "press Re-synthesize") and refresh the pill.
+   *
+   * `held`: a gate held that run instead (#1801). A new run would stop at the same gate, and
+   * resolving it starts one, so only record that newer evidence is waiting; the pill keeps saying
+   * "on hold" — an idle push here would paint over the hold.
    */
-  async function cancelledWhileWaiting(caseId: string): Promise<void> {
+  async function cancelledWhileWaiting(caseId: string, held = false): Promise<void> {
+    if (held) return markOutOfDate(caseId, "synthesis on hold with newer evidence waiting");
     await markOutOfDate(caseId, "synthesis cancelled with newer evidence waiting");
     if (options.jobManager?.hasActive(caseId, "synthesis")) return; // a newer run owns the status
     options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
@@ -541,7 +546,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       deferral.defer(
         caseId,
         () => void startResynthesis(caseId, pipeline, false),
-        () => void cancelledWhileWaiting(caseId),
+        (held) => void cancelledWhileWaiting(caseId, held),
       );
       return;
     }
