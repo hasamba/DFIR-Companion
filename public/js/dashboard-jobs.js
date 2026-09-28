@@ -266,6 +266,16 @@
           "A deep pass is running — it ends in a synthesis of its own, so this would overwrite it.";
       else btn.removeAttribute("title");
     }
+    // #1753 — this push runs mid-run too, and it used to re-enable the button the click had just
+    // disabled; a second click then started an overlapping run whose result replaced the first.
+    const soRunning = jobsForCurrentCase().some(
+      (j) =>
+        j.kind === "second-opinion" &&
+        (j.status === "running" || j.status === "queued"),
+    );
+    // No native title here: the button carries a data-tip, and a title would stack a second
+    // tooltip on it (noDoubleTooltip.test.ts). The status line already says a run is in progress.
+    if (soBtn && soRunning) soBtn.disabled = true;
     const cancel = document.getElementById("deepPassCancel");
     if (cancel) cancel.style.display = deepPassJob() ? "" : "none";
     const prog = document.getElementById("deepPassProgress");

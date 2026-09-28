@@ -17,6 +17,7 @@ import { freshDeltas, markUnappliedDecisions } from "../analysis/secondOpinionTa
  */
 export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
+  const running = new Set<string>(); // cases with a second opinion in flight (#1753)
 
   // #1590 — every record the panel receives marks the accepted decisions that match no finding
   // now, against the case as it is at this moment, so none of them is skipped silently.
@@ -37,16 +38,42 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
         .json({ error: "second-opinion model not configured — set DFIR_AI_SECOND_OPINION_MODEL" });
     }
     const caseId = req.params.id;
-    // Same per-run deep-reasoning toggle (#121) as /synthesize — flows into both model A & B passes.
-    const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
-    options.onAiStatus?.(caseId, {
-      status: "analyzing",
-      phase: "synthesizing",
-      at: new Date().toISOString(),
-      detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion",
-    });
+    // #1753 — one run per case. Checked and claimed in the same synchronous turn, before any await,
+    // so two clicks at once cannot both pass; a second run would overwrite the first one's result.
+    if (running.has(caseId)) {
+      return res.status(409).json({ error: "a second opinion is already running for this case" });
+    }
+    running.add(caseId);
     try {
-      const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
+      return await runSecondOpinion(req, res, caseId);
+    } finally {
+      running.delete(caseId);
+    }
+  });
+
+  // #1753 — the run is a job for its whole length (model A refresh, model B, referee). Every "is this
+  // case busy?" answer — the jobs chip, GET /ai-state, the out-of-date marker — is derived from jobs;
+  // without one the pill read "idle" mid-run. Not cancellable: the pipeline takes no abort signal,
+  // and a Cancel that let the models keep running would be a new lie. No model is pinned: A, B and
+  // the referee may all differ, so no single model describes the job.
+  async function runSecondOpinion(req: Request, res: Response, caseId: string) {
+    const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
+    const label = deepReasoning ? "second opinion (deep reasoning)" : "second opinion";
+    await options.jobManager?.ready();
+    const job = options.jobManager?.register({ caseId, kind: "second-opinion", label, priority: "high" });
+    try {
+      // Queued behind an import or synthesis on this case? The jobs chip shows the queued row; the
+      // pill keeps the status of the job that holds the slot until this one really starts.
+      await job?.ready;
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "synthesizing",
+        at: new Date().toISOString(),
+        detail: `running ${label}`,
+      });
+      const record = await options.pipeline!.secondOpinion(caseId, { deepReasoning });
+      // Finished BEFORE the idle push: the dashboard re-derives the pill from jobs on that push.
+      if (job) await options.jobManager?.finish(job.jobId);
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -57,15 +84,24 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       return res.status(200).json(await marked(caseId, record));
     } catch (err) {
       // secondOpinion() calls synthesize() twice (secondOpinionRun.ts), so it inherits the merge
-      // gate — and a gate is a question, not a failed second opinion.
+      // gate — and a gate is a question, not a failed second opinion. The job still has to END
+      // (cancel() refuses a non-cancellable job and would leave the case's slot held); the pill
+      // reads "on hold" regardless, since a pending hold outranks the last job's failure.
+      const held = isAnalystDecisionGate(err);
+      if (job) {
+        await options.jobManager?.fail(job.jobId, err, {
+          code: held ? "held_for_analyst" : "second_opinion_failed",
+          retryable: false,
+        });
+      }
       options.onAiStatus?.(caseId, {
-        status: isAnalystDecisionGate(err) ? "blocked" : "error",
+        status: held ? "blocked" : "error",
         at: new Date().toISOString(),
         detail: (err as Error).message,
       });
       return sendPipelineError(res, err);
     }
-  });
+  }
 
   // Fetch the last second-opinion record for a case (or null). Read-only; no AI.
   app.get("/cases/:id/second-opinion", async (req: Request, res: Response) => {
