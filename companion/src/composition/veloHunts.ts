@@ -497,7 +497,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             );
           }
         } else {
-          await pipeline.importVelociraptor(caseId, json, {
+          await pipeline.importVelociraptorArtifact(caseId, json, {
             label: storedName,
             idPrefix: `${seq}`,
             importedAt,

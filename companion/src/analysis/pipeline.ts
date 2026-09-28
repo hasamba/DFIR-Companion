@@ -277,6 +277,12 @@ export class AnalysisPipeline {
   importVelociraptor(...args: ImporterArgs<typeof ingest.importVelociraptor>): Promise<InvestigationState> {
     return ingest.importVelociraptor(this.importCtx, ...args);
   }
+  // A pulled Velociraptor artifact: a Hayabusa result takes the Hayabusa importer, as from the drop folder (#1756).
+  importVelociraptorArtifact(
+    ...args: ImporterArgs<typeof ingest.importVelociraptorArtifact>
+  ): Promise<InvestigationState> {
+    return ingest.importVelociraptorArtifact(this.importCtx, ...args);
+  }
 
   importEcar(...args: ImporterArgs<typeof ingest.importEcar>): Promise<InvestigationState> {
     return ingest.importEcar(this.importCtx, ...args);

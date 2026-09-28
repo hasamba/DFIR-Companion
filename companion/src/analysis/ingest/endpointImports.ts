@@ -1,6 +1,5 @@
 import { parseChainsawReport, type ChainsawImportOptions } from "../chainsawImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../cybertriageImport.js";
-import { parseHayabusaTimeline, type HayabusaImportOptions } from "../hayabusaImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "../kapeImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -139,69 +138,6 @@ export async function importChainsaw(
       `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
-      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      (parsed.groups > parsed.kept && parsed.dropped > 0
-        ? `, ${parsed.dropped} record(s) omitted at the event cap`
-        : "") +
-      (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-    summary: "",
-  };
-  const delta = deltaSchema.parse(raw);
-
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
-}
-
-// Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
-// other deterministic paths there is no AI call: the matched Sigma rule's level drives
-// severity, its title leads the description, its tactics/tags become MITRE, and IOCs /
-// asset / process-chain come from the rendered detail fields. Tagged Hayabusa as source.
-export async function importHayabusa(
-  ctx: ImportContext,
-  caseId: string,
-  text: string,
-  opts: {
-    label: string;
-    idPrefix: string; // unique per import (e.g. "h3") so ids never collide
-    importedAt: string;
-    hayabusa?: HayabusaImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
-    minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
-    onProgress?: (done: number, total: number) => void;
-    debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
-  },
-): Promise<InvestigationState> {
-  const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
-  const parsedRaw = parseHayabusaTimeline(text, { ...known, ...opts.hayabusa, debug: opts.debug });
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
-  if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
-    return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
-
-  const raw = {
-    findings: [],
-    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
-    mitreTechniques: [],
-    ...hostIdentityDelta(parsed),
-    forensicEvents: parsed.events.map((e, i) => ({
-      ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
-      sources: e.sources?.length ? e.sources : ["Hayabusa"],
-    })),
-    threadsOpened: [],
-    threadsClosed: [],
-    timelineNote:
-      `Hayabusa import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
-      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.groups > parsed.kept && parsed.dropped > 0
         ? `, ${parsed.dropped} record(s) omitted at the event cap`

@@ -233,7 +233,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         resynthesizeInBackground(caseId);
         return { addedEvents: superAdded, addedIocs: 0, storedName };
       }
-      await pipeline.importVelociraptor(caseId, mapJson, {
+      await pipeline.importVelociraptorArtifact(caseId, mapJson, {
         label: storedName,
         idPrefix: `${seq}`,
         importedAt,
