@@ -693,6 +693,9 @@
     if (fromUrl) {
       el.value = fromUrl;
       connect();
+      // Same task as the connect, so before the next paint: reserve the cockpit's space now, not
+      // when its fetch starts, or the panels below it paint in place and then jump (#1791).
+      if (typeof cockpitShowLoading === "function") cockpitShowLoading();
     } else if (remembered) {
       el.value = remembered;
     }

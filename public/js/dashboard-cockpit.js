@@ -129,15 +129,26 @@
     body.innerHTML = `${story}${workspaces}<div class="now-grid">${groups}${parked}</div>`;
   }
 
+  // now-loading holds the rest of the viewport until the snapshot lands (#1791): the cockpit loads
+  // after the panels under it have painted, and growing from one line pushed all of them.
+  function showCockpitLoading(body) {
+    body.innerHTML = `<div class="now-state now-loading">Loading the current decisions…</div>`;
+  }
+
+  // Called at page load, before the case connects, when the URL names a case: the static
+  // "Connect to or create a case" line is short, and swapping it for the reserved placeholder
+  // later would push the panels below it just the same.
+  function cockpitShowLoading() {
+    const body = document.getElementById("cockpitBody");
+    if (body && !lastCockpit) showCockpitLoading(body);
+  }
+
   async function loadCockpit(caseId) {
     caseId = caseId || document.getElementById("caseId").value.trim();
     const body = document.getElementById("cockpitBody");
     if (!caseId || !body) return;
     const hasCurrentSnapshot = lastCockpit && lastCockpit.caseId === caseId;
-    // now-loading holds the rest of the viewport until the snapshot lands (#1791): the cockpit loads
-    // after the panels under it have painted, and growing from one line pushed all of them.
-    if (!hasCurrentSnapshot)
-      body.innerHTML = `<div class="now-state now-loading">Loading the current decisions…</div>`;
+    if (!hasCurrentSnapshot) showCockpitLoading(body);
     const investigator = investigatorName();
     try {
       const query = investigator
@@ -347,4 +358,5 @@
   window.cockpitStoryStage = cockpitStoryStage;
   window.cockpitWorkspace = cockpitWorkspace;
   window.loadCockpit = loadCockpit;
+  window.cockpitShowLoading = cockpitShowLoading;
 })();

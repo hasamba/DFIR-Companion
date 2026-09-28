@@ -11,6 +11,7 @@ import { dashboardStylesheet, loadDashboardModule } from "../helpers/dashboardMo
 
 interface Api {
   loadCockpit: (caseId?: string) => Promise<void>;
+  cockpitShowLoading: () => void;
 }
 
 function harness(fetchImpl: () => Promise<unknown>) {
@@ -64,6 +65,14 @@ describe("cockpit loading placeholder reserves its space (#1791)", () => {
     expect(h.seen.length).toBeGreaterThan(1);
     expect(h.body.innerHTML).not.toContain("now-loading");
     expect(h.body.innerHTML).toContain("now-grid");
+  });
+
+  it("a URL-named case reserves the space at page load, before the case connects", () => {
+    // The static "Connect to or create a case" line is short; swapping it for the reserved
+    // placeholder only once loadCockpit runs pushed the panels below just the same.
+    const h = harness(async () => ({ ok: true, json: async () => snapshot }));
+    h.api.cockpitShowLoading();
+    expect(h.body.innerHTML).toMatch(/class="now-state now-loading"/);
   });
 
   it("the stylesheet gives the loading placeholder a viewport-high minimum", () => {
