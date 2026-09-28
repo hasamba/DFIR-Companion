@@ -24,6 +24,10 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
+import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
+import { createImportDebugRecorder } from "../../src/analysis/importDebug.js";
+import { approvalRecorder, stagedDetection } from "../../src/routes/mcpPreviewDetection.js";
 
 // #1824: #1795's "unrecognised JSON — imported as generic SIEM" warning reached only /import and
 // /import-file. The drop folder, /push and the Velociraptor collectors use the same detector; each now
@@ -294,4 +298,92 @@ describe("Velociraptor hunt collect names a guessed uploaded JSON kind (#1824)",
     },
     POLL_TIMEOUT_MS * 2,
   );
+});
+
+// ── MCP preview approval ────────────────────────────────────────────────────────────────────────
+
+// The approval runs in a later request with a fresh recorder; the staged preview keeps the detection
+// decision so the approval can still tell a guessed kind from a confident one.
+describe("MCP preview approval names a guessed JSON kind (#1824)", () => {
+  async function mcpApp(output: string) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-siemfb-mcp-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const jobManager = new JobManager();
+    const mcpServerStore = new McpServerStore(join(root, "mcp-servers.json"));
+    const claude: ClaudeRunner = async () => ({
+      code: 0,
+      stderr: "",
+      stdout: JSON.stringify({ type: "result", subtype: "success", result: output }) + "\n",
+    });
+    const app = createApp(store, {
+      pipeline: runtimePipeline(store, stateStore),
+      stateStore,
+      mcpServerStore,
+      jobManager,
+      mcpClaudeRunner: claude,
+      mcpTransferRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await writeFile(join(store.caseDir("c1"), "imports", "mem.raw"), "MZ evidence bytes\n", "utf8");
+    await mcpServerStore.add({
+      id: "sift-mcp",
+      allowedTools: ["run_command"],
+      allowedCommands: ["vol.py"],
+      delivery: { mode: "scp", host: "sift.example.com", user: "analyst", remoteDir: "/cases/incoming" },
+    });
+    return { app, jobManager };
+  }
+
+  async function previewThenApprove(output: string) {
+    const { app, jobManager } = await mcpApp(output);
+    const run = await request(app)
+      .post("/cases/c1/mcp/sift-mcp/run")
+      .send({
+        tool: "run_command",
+        args: { command: ["vol.py", "-f", "<target>", "pslist"] },
+        targetPath: "imports/mem.raw",
+        preview: true,
+      });
+    await pollFor("the preview job to finish", async () => {
+      const st = jobManager.get(run.body.jobId)?.status;
+      return st === "succeeded" || st === "failed" ? st : undefined;
+    });
+    return request(app).post(`/cases/c1/mcp/preview/${run.body.jobId}/import`);
+  }
+
+  it(
+    "an approved guessed-SIEM preview answers with the warning and logs it",
+    async () => {
+      const imp = await previewThenApprove(GUESSED);
+      expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+      expect(imp.body.warning).toBe(SIEM_FALLBACK_WARNING);
+      expect(warnLines()).toHaveLength(1);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "an approved recognised preview carries no warning",
+    async () => {
+      const imp = await previewThenApprove("EvilRule /x/a.bin\n0x10:$s: 4d 5a");
+      expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+      expect(imp.body.warning).toBeUndefined();
+      expect(warnLines()).toEqual([]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it("stages the decision and ignores a malformed one read back from disk", () => {
+    const debug = createImportDebugRecorder();
+    debug.detected("siem", { confident: false, decision: "siem_fallback" });
+    const staged = stagedDetection(debug);
+    expect(staged).toEqual({ detection: { confident: false, decision: "siem_fallback" } });
+    expect(approvalRecorder({ kind: "siem", ...staged }).summary().detection?.confident).toBe(false);
+    expect(stagedDetection(createImportDebugRecorder())).toEqual({});
+    const bad = { kind: "siem", detection: { confident: "no", decision: 1 } } as unknown as Parameters<
+      typeof approvalRecorder
+    >[0];
+    expect(approvalRecorder(bad).summary().detection).toBeUndefined();
+  });
 });
