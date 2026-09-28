@@ -42,7 +42,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   const els: Record<string, unknown> = {
     status,
     caseId: { value: "c1" },
-    importFile: { files: [], value: "", onchange: null, click: () => {} } as FakeInput,
+    importFile: { files: [], value: "", onchange: null, click: () => {} },
     importBtn: { onclick: null },
   };
   const progress: string[] = [];
@@ -92,7 +92,15 @@ describe("import status line names each failed file and its reason (#1786)", () 
   });
 
   it("a failure with no server sentence shows the HTTP status", async () => {
-    const h = harness({ fetch: vi.fn(async () => ({ status: 502, ok: false, json: async () => { throw new Error("not json"); } })) });
+    const h = harness({
+      fetch: vi.fn(async () => ({
+        status: 502,
+        ok: false,
+        json: async () => {
+          throw new Error("not json");
+        },
+      })),
+    });
     await h.pick([csv("a.csv")]);
     expect(h.status.textContent).toContain("a.csv: HTTP 502");
   });
@@ -152,9 +160,7 @@ describe("import status line names each failed file and its reason (#1786)", () 
 describe("import status while the host prompt waits (#1772)", () => {
   it("says it is waiting for the analyst, sends nothing, then resumes on the answer", async () => {
     let answer!: (v: string | null) => void;
-    const askImportAssetHost = vi.fn(
-      () => new Promise<string | null>((r) => (answer = r)),
-    );
+    const askImportAssetHost = vi.fn(() => new Promise<string | null>((r) => (answer = r)));
     const fetch = vi.fn(async () => reply(202, { kind: "csv" }));
     const h = harness({
       probeBareWindowsExport: () => ({ bare: true, computers: ["WS-QA-01"] }),
