@@ -447,7 +447,9 @@
     const model = buildAttackMatrix(mmCatalogue, hits, { platform: p.platform, hitsOnly: p.hitsOnly });
     mmEntries = entriesOf(model);
     mmParents = model.columns.flatMap((c) => c.cells.filter((cell) => cell.children.length).map((cell) => cell.id));
-    host.innerHTML = matrixHtml(model, hits, mmExpanded);
+    // render() hands over its empty-case line (#1767): with no techniques the grid alone reads as
+    // "nothing matched" rather than "nothing imported yet".
+    host.innerHTML = (mmLast.emptyHtml || "") + matrixHtml(model, hits, mmExpanded);
     const first = host.querySelector(focusSelector || ".mm-cell.mm-hit") || host.querySelector(".mm-nav");
     if (first) first.tabIndex = 0;
     if (focusSelector && first) first.focus();

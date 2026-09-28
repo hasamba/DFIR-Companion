@@ -28,7 +28,8 @@
     const view = document.getElementById("narrativeView");
     view.dataset.raw = text;
     const state = DfirState.lastState();
-    view.innerHTML = narrativeHtml(text, state && state.forensicTimeline);
+    // narrativeViewHtml shows the empty-state sentence for "—"/blank; data-raw keeps the raw value.
+    view.innerHTML = narrativeViewHtml(text, state && state.forensicTimeline);
   }
 
   function genNarrative() {
@@ -247,7 +248,7 @@
         // data-raw, never textContent — see setNarrativeView. The `??` covers the one case where
         // no writer has run yet: the markup's own "—" placeholder carries no data-raw.
         const raw = view.dataset.raw ?? view.textContent;
-        ta.value = raw === "—" ? "" : raw;
+        ta.value = !raw || raw.trim() === "—" ? "" : raw;
         view.style.display = "none";
         wrap.style.display = "";
         ta.focus();

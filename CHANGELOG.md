@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Empty panels say what is missing** — Executive Summary, Attack Path, Narrative, MITRE, Investigation Log, Findings and Forensic Timeline show a short sentence instead of a bare "—" on a new case (closes #1765, #1766, #1767, #1768)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
 

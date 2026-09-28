@@ -5209,7 +5209,9 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : "—";
+          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>"
+            // An empty case says so (#1765 sweep); events hidden only by the scope or false-positive marks must not read as "import evidence".
+            : emptyStateHtml(((DfirState.lastState() || {}).forensicTimeline || []).length > 0 ? "No events in the current view — the scope or false-positive marks hide them." : "No events yet — import evidence.");
         return;
       }
 
