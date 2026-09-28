@@ -1672,6 +1672,9 @@ export const FEATURES: Feature[] = [
       "loadPresidioPending",
       "renderPresidioPending",
       "setPresidioPending",
+      // #1782: the one predicate and wording every AI button uses for a Presidio hold.
+      "presidioHold",
+      "presidioHoldText",
       "addCustomEntity",
       "openAnonModal",
       "saveAnon",

@@ -5209,7 +5209,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : "—";
+          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : timelineEmptyHtml(((DfirState.lastState() || {}).forensicTimeline || []).length);   // an empty case says so, not "—" (#1765)
         return;
       }
 

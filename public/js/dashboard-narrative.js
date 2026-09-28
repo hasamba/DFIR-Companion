@@ -28,7 +28,8 @@
     const view = document.getElementById("narrativeView");
     view.dataset.raw = text;
     const state = DfirState.lastState();
-    view.innerHTML = narrativeHtml(text, state && state.forensicTimeline);
+    // narrativeViewHtml shows the empty-state sentence for "—"/blank; data-raw keeps the raw value.
+    view.innerHTML = narrativeViewHtml(text, state && state.forensicTimeline);
   }
 
   function genNarrative() {
@@ -54,6 +55,12 @@
           e.sectionDisabled = true;
           throw e;
         }
+        // A Presidio hold is a question for the analyst, not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, d)) {
+          const e = new Error(presidioHoldText("Narrative"));
+          e.presidioHold = true;
+          throw e;
+        }
         // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
         // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
         if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
@@ -71,7 +78,7 @@
         }, 3000);
       })
       .catch((e) => {
-        msg.textContent = e.sectionDisabled
+        msg.textContent = e.sectionDisabled || e.presidioHold
           ? e.message || ""
           : "generate failed: " +
             (e.message || "") +
@@ -247,7 +254,7 @@
         // data-raw, never textContent — see setNarrativeView. The `??` covers the one case where
         // no writer has run yet: the markup's own "—" placeholder carries no data-raw.
         const raw = view.dataset.raw ?? view.textContent;
-        ta.value = raw === "—" ? "" : raw;
+        ta.value = !raw || raw.trim() === "—" ? "" : raw;
         view.style.display = "none";
         wrap.style.display = "";
         ta.focus();

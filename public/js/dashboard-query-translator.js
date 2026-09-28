@@ -76,8 +76,13 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ request: reqText, platforms }),
     })
-      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-      .then(({ ok, j }) => {
+      .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
+      .then(({ ok, status, j }) => {
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
+          box.innerHTML = `<div class="nlq-empty" data-safe-style="color:var(--text-muted)">${esc(presidioHoldText("Query translation"))}</div>`;
+          return;
+        }
         if (!ok || j.error) {
           box.innerHTML = `<div class="nlq-empty" data-safe-style="color:var(--sev-high)">error: ${esc(j.error || "translation failed")} — restart the companion server if this 404s</div>`;
           return;

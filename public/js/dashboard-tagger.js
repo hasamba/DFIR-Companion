@@ -63,6 +63,10 @@ async function suggestTaggerRule() {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description: desc }),
     });
     const d = await r.json();
+    // A Presidio hold waits for the analyst — it is not a failure (#1782).
+    if (!r.ok && typeof presidioHold === "function" && presidioHold(r.status, d)) {
+      msg.style.color = "var(--text-muted)"; msg.textContent = presidioHoldText("Rule suggestion"); return;
+    }
     if (!r.ok || d.error) {
       const hint = /501/.test(String(r.status)) ? " — AI provider not configured (Settings → AI)" : "";
       msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Suggest error: " + (d.error || r.status) + hint; return;
