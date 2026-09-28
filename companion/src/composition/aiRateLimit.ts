@@ -31,7 +31,12 @@
  * records — hence the named `aiRateLimitGate` function expression below.
  */
 import type { Express, Request, Response, NextFunction } from "express";
-import { chargeAiBudget, getDeterministicImportLimiter, sendRateLimited } from "../http/rateLimiter.js";
+import {
+  chargeAiBudget,
+  getDeterministicImportLimiter,
+  runWithAiSpendTracking,
+  sendRateLimited,
+} from "../http/rateLimiter.js";
 
 /** The DETERMINISTIC bulk-import routes. They parse and grade with no LLM call, so they are metered
  *  by their own generous per-case limiter (getDeterministicImportLimiter), NOT the 20/min AI cap —
@@ -77,7 +82,7 @@ export function mountAiRateLimit(app: Express): void {
   const aiLimited = (req: Request, res: Response, next: NextFunction): void => {
     const charge = chargeAiBudget(res, req.params.id);
     if (!charge.ok) return sendRateLimited(res, charge.retryAfterMs, "rate limit exceeded, slow down");
-    next();
+    runWithAiSpendTracking(res, next); // a model call inside the route pins the charge
   };
   const importLimited = getDeterministicImportLimiter().middleware((req) => req.params.id);
   app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {

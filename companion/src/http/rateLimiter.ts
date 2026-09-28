@@ -4,6 +4,7 @@
 //      per key (caseId), applies exponential backoff after N failures, and lockout for a cooldown.
 //   2. Sliding-window rate limiter (e.g. AI-cost DoS): caps total requests per window per key.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Request, Response, NextFunction } from "express";
 
 /** What one serialized {@link AttemptLimiter.attemptFor} decided; `value` is what the check proved. */
@@ -243,11 +244,30 @@ interface AiBudgetCharge {
   at: number;
   /** The route said no model call was made (a skip answer, an AI-off import). */
   unspent: boolean;
-  /** The route said a model call WAS made, whatever status it answers with. Wins over a refund. */
+  /** A model call went out while the request ran (noteAiCallStarted). Wins over any refund. */
   spent: boolean;
 }
 
 const AI_CHARGE_LOCAL = "aiBudgetCharge";
+
+// The charge of the request whose handler is running, so the model-call chokepoint can mark it spent
+// without a route having to (#1825): a deep pass spends its observation calls and may still answer
+// 409 at the final synthesis gate, and that 409 must not refund the calls already made.
+const aiSpendScope = new AsyncLocalStorage<AiBudgetCharge>();
+
+/** Called by every model call (analyzeRestored, askJev) just before it goes out: the request that
+ *  caused it keeps its AI-budget slot, whatever status it answers with. */
+export function noteAiCallStarted(): void {
+  const charge = aiSpendScope.getStore();
+  if (charge) charge.spent = true;
+}
+
+/** Run `fn` (the rest of the request) so a model call inside it marks this request's charge spent. */
+export function runWithAiSpendTracking(res: Response, fn: () => void): void {
+  const charge = aiBudgetCharge(res);
+  if (charge) aiSpendScope.run(charge, fn);
+  else fn();
+}
 
 /** Statuses that answer a request the route refused before any AI work: every 4xx except 429 (a
  *  limit, not a refusal of the input) and 499 (cancelled mid-run, so a model call may have been
@@ -262,7 +282,8 @@ function isRefusalStatus(status: number): boolean {
  * gate, a 501 with no provider — or a route marked it {@link markAiBudgetUnspent}. Twenty
  * malformed posts used to block the next real /synthesize with a 429.
  *
- * Refunds only on a sent answer ('finish'). A request whose client disconnects stays charged: it
+ * A model call made while the request runs marks it spent ({@link noteAiCallStarted}), and a spent
+ * request is never refunded. Refunds only on a sent answer ('finish'). A request whose client disconnects stays charged: it
  * may have started a model call, and refunding it would let a client start runs and drop them in a
  * loop. A 5xx (a model call that failed) and a 202 (AI work continuing in the background) stay
  * charged too.
@@ -292,13 +313,6 @@ function aiBudgetCharge(res: Response): AiBudgetCharge | undefined {
 export function markAiBudgetUnspent(res: Response): void {
   const charge = aiBudgetCharge(res);
   if (charge) charge.unspent = true;
-}
-
-/** The route made a model call and may still answer with a 4xx (a conflict found after the call),
- *  so its AI-budget slot stays spent (#1825). */
-export function markAiBudgetSpent(res: Response): void {
-  const charge = aiBudgetCharge(res);
-  if (charge) charge.spent = true;
 }
 
 /** A 429 that says when to retry — the `Retry-After` header (whole seconds, at least 1) and the

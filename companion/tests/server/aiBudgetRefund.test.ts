@@ -10,7 +10,7 @@ import express, { type Request, type Response } from "express";
 import request from "supertest";
 import {
   getAiLimiter,
-  markAiBudgetSpent,
+  noteAiCallStarted,
   markAiBudgetUnspent,
   resetLimiters,
 } from "../../src/http/rateLimiter.js";
@@ -74,7 +74,7 @@ async function makeApp() {
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
-  return { app, a, stateStore };
+  return { app, a, stateStore, pipeline };
 }
 
 async function seedEvent(stateStore: StateStore): Promise<void> {
@@ -179,14 +179,31 @@ describe("the AI gate's refund rule (#1825)", () => {
     expect(budgetIsWhole("k")).toBe(true);
   });
 
-  it("keeps a 409 charged when the route marked a model call spent", async () => {
+  it("keeps a 409 charged when a model call went out before it", async () => {
     const statuses = await fire(
-      stubApp((_req, res) => {
-        markAiBudgetSpent(res);
-        res.status(409).json({ error: "replaced by a newer second opinion" });
+      stubApp(async (_req, res) => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        noteAiCallStarted(); // what the model-call chokepoint does, after an await in the route
+        res.status(409).json({ error: "host_merge_decision_required" });
       }),
       21,
     );
+    expect(statuses[20]).toBe(429);
+  });
+
+  // The deep-pass shape: real model calls, then a refusal at the end. The provider call itself must
+  // pin the charge — no route has to remember to.
+  it("a real provider call pins the charge even when the route then answers 409", async () => {
+    const { a, stateStore, pipeline } = await makeApp();
+    await seedEvent(stateStore);
+    const statuses = await fire(
+      stubApp(async (_req, res) => {
+        await pipeline.synthesize("c1", { force: true });
+        res.status(409).json({ error: "host_merge_decision_required" });
+      }),
+      21,
+    );
+    expect(a.calls).toBeGreaterThanOrEqual(20);
     expect(statuses[20]).toBe(429);
   });
 
