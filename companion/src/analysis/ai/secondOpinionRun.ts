@@ -19,7 +19,8 @@ import {
 } from "../secondOpinionGuard.js";
 import { PresidioApprovalRequired } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
-import type { InvestigationState } from "../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
+import type { ScopeWindow } from "../scope.js";
 import type { SynthThinkingInput } from "../synthThinking.js";
 import { getReconcilePrompt } from "./prompts/index.js";
 import type { AIProvider } from "../../providers/provider.js";
@@ -110,9 +111,12 @@ export async function secondOpinion(
   const referee = pickReferee(ctx.opts, modelA);
   // `referee` stays "" until the verdict pass actually succeeds (reconcileDeltas stamps it), so a
   // failed or skipped pass never shows a referee that wrote nothing.
-  let record = buildSecondOpinion({ a, b, modelA, modelB, now: () => new Date().toISOString() });
+  // The scope window both syntheses read, and the scoped events the referee is shown: out-of-window
+  // events, analyst-marked false positives and out-of-window findings stay out (#1466, #1757).
+  const { scope, scoped } = await loadScopedEvents(ctx, caseId, a);
+  let record = buildSecondOpinion({ a, b, modelA, modelB, scope, now: () => new Date().toISOString() });
 
-  if (referee) record = await reconcileDeltas(ctx, caseId, referee, { a, b, record });
+  if (referee) record = await reconcileDeltas(ctx, caseId, referee, { a, b, record, scope, scoped });
 
   // #1590 — the new run ADDS to what the analyst already accepted; it no longer replaces it.
   const store = ctx.opts.secondOpinionStore;
@@ -135,22 +139,29 @@ export async function secondOpinion(
  * analyst can re-run only this pass. A Presidio or merge gate is recorded the same way here — the
  * A/B work is not thrown away for it — and the referee-only re-run then raises the real gate.
  */
+interface ReconcileInput {
+  a: InvestigationState;
+  b: InvestigationState;
+  record: SecondOpinion;
+  scope: ScopeWindow;
+  // The cited events the referee sees are the scoped set synthesis read — never an out-of-window
+  // event or an analyst-marked false positive (#1466 review).
+  scoped: ForensicEvent[];
+}
+
 async function reconcileDeltas(
   ctx: SecondOpinionContext,
   caseId: string,
   referee: RefereeModel,
-  input: { a: InvestigationState; b: InvestigationState; record: SecondOpinion },
+  input: ReconcileInput,
 ): Promise<SecondOpinion> {
-  const { a, b, record } = input;
+  const { a, b, record, scope, scoped } = input;
   if (record.deltas.length === 0) return record;
-  // The cited events the referee sees are the scoped set synthesis read — never an out-of-window
-  // event or an analyst-marked false positive (#1466 review).
-  const { scoped } = await loadScopedEvents(ctx, caseId, a);
   // #1596 — the referee sees the open threads and negative answers, and each A-only finding that may
   // be the last evidence for one; the verdicts then pass the same check in code.
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
-  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText);
+  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
   try {
     const parsed = await callReferee(ctx, caseId, a, referee, userPrompt, record);
     return flagRefereeDismissals(foldVerdicts(record, parsed, referee), guard);
