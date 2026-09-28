@@ -4,6 +4,12 @@
   #sec-now h2 #cockpitReviewBtn{margin-left:auto}
   .now-phase{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:var(--accent-hover);background:var(--surface-selected);border:1px solid var(--accent-solid)}
   .now-state{padding:16px;border:1px dashed var(--border-color);border-radius:8px;color:var(--text-muted)}
+  /* Load-time CLS (#1791): the cockpit grows from this one-line placeholder to its full height
+     (~800px on an empty case, far more on a busy one) after the case's other panels have painted.
+     Everything under it jumped, and the data-gated sections that open first (Collection Plan)
+     were the largest thing pushed. Holding the rest of the viewport while it loads keeps the
+     panels below off-screen until the cockpit knows its size. */
+  .now-state.now-loading{min-height:calc(100vh - 120px);box-sizing:border-box}
   .now-workspaces{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:10px;color:var(--text-muted);font-size:11px}
   .now-workspaces button{padding:3px 9px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:500;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-primary)}
   .now-story{margin-bottom:10px;padding:8px 10px;border:1px solid var(--border-subtle);border-radius:9px;background:color-mix(in oklab,var(--bg-primary) 35%,var(--bg-secondary))}
