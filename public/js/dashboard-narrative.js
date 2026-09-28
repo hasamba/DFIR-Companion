@@ -55,6 +55,12 @@
           e.sectionDisabled = true;
           throw e;
         }
+        // A Presidio hold is a question for the analyst, not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, d)) {
+          const e = new Error(presidioHoldText("Narrative"));
+          e.presidioHold = true;
+          throw e;
+        }
         // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
         // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
         if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
@@ -72,7 +78,7 @@
         }, 3000);
       })
       .catch((e) => {
-        msg.textContent = e.sectionDisabled
+        msg.textContent = e.sectionDisabled || e.presidioHold
           ? e.message || ""
           : "generate failed: " +
             (e.message || "") +

@@ -27,11 +27,20 @@
       `/cases/${encodeURIComponent(caseId)}/events/${encodeURIComponent(eventId)}/explain`,
       { method: "POST" },
     )
-      .then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          // A Presidio hold waits for the analyst — it is not a failure (#1782).
+          if (typeof presidioHold === "function" && presidioHold(r.status, body)) {
+            bodyEl.innerHTML = `<div data-safe-style="color:var(--text-muted)">${esc(presidioHoldText("Explain"))}</div>`;
+            return null;
+          }
+          throw new Error("HTTP " + r.status);
+        }
         return r.json();
       })
       .then((result) => {
+        if (!result) return;
         const section = (label, content, color) =>
           content
             ? `<div class="explain-section"><strong>${label}</strong><span data-safe-style="color:${color || "var(--text-primary)"}">${esc(content)}</span></div>`

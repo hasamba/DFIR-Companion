@@ -383,8 +383,16 @@
       headers: { "content-type": "application/json" },
       body: "{}",
     })
-      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-      .then(({ ok, j }) => {
+      .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
+      .then(({ ok, status, j }) => {
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
+          if (msg) {
+            msg.style.color = "var(--text-muted)";
+            msg.textContent = presidioHoldText("Playbook hunts");
+          }
+          return;
+        }
         if (!ok || j.error) {
           if (msg) {
             msg.style.color = "var(--sev-high)";
@@ -578,8 +586,23 @@
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ taskId: s.taskId, excludeVql }),
           })
-            .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-            .then(({ ok, j }) => {
+            .then((r) =>
+              r.json().then((j) => ({ ok: r.ok, status: r.status, j })),
+            )
+            .then(({ ok, status, j }) => {
+              // A Presidio hold waits for the analyst — it is not a failure (#1782).
+              if (
+                !ok &&
+                typeof presidioHold === "function" &&
+                presidioHold(status, j)
+              ) {
+                const msg = document.getElementById("pbHuntMsg");
+                if (msg) {
+                  msg.style.color = "var(--text-muted)";
+                  msg.textContent = presidioHoldText("Hunt regeneration");
+                }
+                return;
+              }
               if (!ok || j.error) {
                 const msg = document.getElementById("pbHuntMsg");
                 if (msg) {

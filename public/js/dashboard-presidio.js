@@ -205,6 +205,22 @@
     renderPresidioPending();
   }
 
+  // A 409 `presidio_approval_required` is a QUESTION, not a failure (#1782): the gate stopped the AI
+  // call so the analyst can decide on new values first. Every button that can hit the gate asks
+  // this one predicate, so the wording is the same everywhere and nobody is told to restart the
+  // server. It also refreshes the ⚠ Presidio badge at once. Only the error code is read: the rest
+  // of the hold's encoding may change, so a hold without a findings list re-reads the pending store
+  // instead of clearing the badge.
+  function presidioHold(status, body) {
+    if (status !== 409 || !body || body.error !== "presidio_approval_required") return false;
+    if (Array.isArray(body.findings)) setPresidioPending(body.findings);
+    else loadPresidioPending(document.getElementById("caseId")?.value.trim());
+    return true;
+  }
+  function presidioHoldText(what) {
+    return `${what} held for Presidio approval — review in Anonymization`;
+  }
+
   function renderPresidioPending() {
     const badge = document.getElementById("presidioPendingBadge");
     if (badge) {
@@ -571,6 +587,8 @@
   window.loadPresidioPending = loadPresidioPending;
   window.renderPresidioPending = renderPresidioPending;
   window.setPresidioPending = setPresidioPending;
+  window.presidioHold = presidioHold;
+  window.presidioHoldText = presidioHoldText;
   window.addCustomEntity = addCustomEntity;
   window.openAnonModal = openAnonModal;
   window.saveAnon = saveAnon;
