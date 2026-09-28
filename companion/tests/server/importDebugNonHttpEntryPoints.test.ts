@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
+import { privateBundleDir } from "../helpers/bundleDir.js";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
@@ -225,7 +226,7 @@ async function makeVeloApp() {
     superTimelineStore: new SuperTimelineStore(store),
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
     velociraptorClient: new VelociraptorClient(veloCfg, runner),
-    artifactBundleStore: new ArtifactBundleStore(join(dirname(root), "bundles")),
+    artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });

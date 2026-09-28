@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { join as pathJoin, dirname } from "node:path";
+import { privateBundleDir } from "../helpers/bundleDir.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
@@ -161,7 +161,7 @@ async function makeSuperBundleApp() {
     stateStore,
     importMetaStore,
     velociraptorClient: new VelociraptorClient(superVeloCfg, superBundleRunner),
-    artifactBundleStore: new ArtifactBundleStore(pathJoin(dirname(root), "bundles")),
+    artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
   });
@@ -214,7 +214,7 @@ async function makeSuperUploadApp() {
     pipeline,
     stateStore,
     velociraptorClient: new VelociraptorClient(superVeloCfg, superUploadRunner),
-    artifactBundleStore: new ArtifactBundleStore(pathJoin(dirname(root), "bundles")),
+    artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
   });
@@ -852,7 +852,7 @@ async function makeCatalogApp(catalog: CatalogEntry[], bundleArtifacts: string[]
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const bundleStore = new ArtifactBundleStore(pathJoin(dirname(root), "bundles"));
+  const bundleStore = new ArtifactBundleStore(privateBundleDir(root));
   await bundleStore.save({
     id: "custom-catalog-test",
     name: "Catalog Test",
