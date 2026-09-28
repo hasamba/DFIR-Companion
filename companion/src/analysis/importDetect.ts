@@ -15,6 +15,7 @@ import { isOlevbaResult } from "./olevbaResultImport.js";
 import { isMobsfReport, isMobsfIosReport } from "./mobsfPermissionImport.js";
 import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
+import { looksLikeHayabusaNamedExport } from "./hayabusaImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isPeSieveReport } from "./pesieveImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -605,14 +606,9 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // POST /cases/:id/import-leapp route for files LEAPP named after the artifact instead.
   if (/\b[ia]leapp\b/i.test(filename) && /\.(tsv|csv|txt)$/i.test(filename)) return "leapp";
 
-  // A Velociraptor artifact that shells out to Hayabusa (Windows.Hayabusa.Rules) streams Hayabusa's
-  // own Level/Title/Details rows but stamps a Velociraptor `_Source` on each, so the generic
-  // Velociraptor signature claims the file first and grades most detections Info (4 High vs the 7 the
-  // native path surfaces, and Hayabusa's rule titles / EIDs are flattened). Route by name to the
-  // native Hayabusa importer instead, gated on a Hayabusa-shaped body so a misnamed file isn't mis-routed.
-  if (/hayabusa/i.test(filename) && /"(?:Level|RuleTitle|Rule Title)"\s*:/.test(t.slice(0, 8192))) {
-    return "hayabusa";
-  }
+  // A Velociraptor Windows.Hayabusa.Rules export goes to the native Hayabusa importer, not the generic
+  // Velociraptor signature — see looksLikeHayabusaNamedExport (shared with the pull paths, #1756).
+  if (looksLikeHayabusaNamedExport(filename, t)) return "hayabusa";
 
   // A Velociraptor-named export that only matched the generic SIEM fallback is better served by
   // the Velociraptor importer (a more-specific content match — sandbox/hayabusa/… — always wins).

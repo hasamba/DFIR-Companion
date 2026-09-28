@@ -68,6 +68,18 @@ import {
 
 type Row = Record<string, unknown>;
 
+// A Velociraptor artifact that shells out to Hayabusa (Windows.Hayabusa.Rules) streams Hayabusa's own
+// Level/Title/Details rows but stamps a Velociraptor `_Source` on each, so the generic Velociraptor
+// mapper would claim it and grade most detections Info (4 High vs the 7 the native path surfaces, and
+// Hayabusa's rule titles / EIDs are flattened). Route by name to the native importer, gated on a
+// Hayabusa-shaped body so a misnamed file isn't mis-routed. One rule for auto-detect (#700) and for the
+// Velociraptor pull paths (#1756), so the two can never pick different importers for one file.
+export function looksLikeHayabusaNamedExport(filename: string, text: string): boolean {
+  return (
+    /hayabusa/i.test(filename) && /"(?:Level|RuleTitle|Rule Title)"\s*:/.test(text.trimStart().slice(0, 8192))
+  );
+}
+
 export interface HayabusaImportOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
