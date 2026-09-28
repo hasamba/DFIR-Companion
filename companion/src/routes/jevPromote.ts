@@ -5,6 +5,8 @@ import { isLabProduced } from "../analysis/labIntel.js";
 import { worstSeverity, type ForensicEvent, type InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { rowsInBuildWindow } from "./jevBuildWindow.js";
+import { stateEventResolver } from "../analysis/eventAliasLookup.js";
+import { emptyPromotionOutcome, type FoldedRow } from "../analysis/ingest/promotionOutcome.js";
 
 /**
  * The WRITE half of the missed-evidence review (#1568) — one route, and a separate module from
@@ -77,6 +79,72 @@ function parseSelection(body: unknown): { ids: string[] } | { error: string } {
   return { ids: [...ids] };
 }
 
+/** How many rows a reason names before it counts the rest: the panel gives each reason one line. */
+const EXAMPLES_SHOWN = 3;
+
+/** "r1 (duplicate of e1), r2 (duplicate of e1), r3 (duplicate of e1) and 4 more". */
+function examples(rows: readonly FoldedRow[], relation: string): string {
+  const shown = rows.slice(0, EXAMPLES_SHOWN).map((r) => `${r.id} (${relation} ${r.of})`);
+  const rest = rows.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")} and ${rest} more` : shown.join(", ");
+}
+
+interface PromoteTally {
+  already: number;
+  ungraded: number;
+  missing: number;
+  lab: number;
+  inBuild: number;
+  duplicates: readonly FoldedRow[];
+  mergedIntoSelected: readonly FoldedRow[];
+  replaced: readonly FoldedRow[];
+  refused: number;
+  stayedInfo: number;
+}
+
+/** What the panel lists under the result: every skip with its reason, then what the analyst should know. */
+function promoteReasons(t: PromoteTally): string[] {
+  const reasons: string[] = [];
+  if (t.already) reasons.push(`${t.already} row(s) were already in the forensic timeline`);
+  // A second tool's copy of an event already analyzed (#1761). Named by the event that holds it, so
+  // the analyst can open that event instead of wondering what refused the row.
+  if (t.duplicates.length)
+    reasons.push(
+      `${t.duplicates.length} row(s) were already in the forensic timeline as a duplicate of an event there: ` +
+        examples(t.duplicates, "duplicate of"),
+    );
+  if (t.mergedIntoSelected.length)
+    reasons.push(
+      `${t.mergedIntoSelected.length} row(s) describe the same event as another row in this selection and ` +
+        `were merged into it: ${examples(t.mergedIntoSelected, "merged into")}`,
+    );
+  if (t.ungraded) reasons.push(`${t.ungraded} row(s) were not graded by a review in this case`);
+  if (t.missing) reasons.push(`${t.missing} row(s) are no longer in the archive`);
+  if (t.lab) reasons.push(`${t.lab} sandbox-produced row(s) cannot be promoted by this review`);
+  if (t.inBuild)
+    reasons.push(
+      `${t.inBuild} row(s) sit inside the host's own build window — the machine being built, not ` +
+        `the incident. Promote one from the super-timeline yourself if you mean it`,
+    );
+  if (t.refused) reasons.push(`${t.refused} row(s) were refused by the promotion seam`);
+  // Not a skip: the row landed, but in the place of an event the case already held, so a model's grade
+  // now stands where that event's did. The row carries the review's tag; this says it out loud too.
+  if (t.replaced.length)
+    reasons.push(
+      `${t.replaced.length} promoted row(s) matched an event already in the forensic timeline and now stand ` +
+        `in its place, with this review's grade and tag: ${examples(t.replaced, "in place of")}`,
+    );
+  // Said out loud, because a promoted Info row reaches synthesis only once (#1586): the next run
+  // shows it as newly promoted evidence, and after that Info rows are left out of the prompt
+  // again (see promptIncludesInfo in analysis/synthGroup.ts). Without this, a row the model
+  // stops mentioning looks like the feature failing.
+  if (t.stayedInfo)
+    reasons.push(
+      `${t.stayedInfo} row(s) stayed Info — the next synthesis reads them once as newly promoted evidence; after that, Info rows are not shown to it`,
+    );
+  return reasons;
+}
+
 /** The counts the panel refreshes from, in the shape POST /cases/:id/synthesize already returns. */
 const freshCounts = (state: InvestigationState) => ({
   forensicEvents: state.forensicTimeline.length,
@@ -111,14 +179,18 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       const record = await grades.load(caseId);
       const state = await options.stateStore.load(caseId);
       const inForensic = new Set(state.forensicTimeline.map((e) => e.id));
+      // A row the case holds under ANOTHER id (#1761) — a second tool's copy of an event already
+      // analyzed. Resolved before the grade lookup, so an old grade record or a stale tab cannot promote
+      // it either. The seam checks again under the state lock.
+      const canonical = stateEventResolver(state);
+      const duplicates: FoldedRow[] = [];
       const toPromote: ForensicEvent[] = [];
       const tagById: Record<string, string[]> = {};
+      const gradeById = new Map<string, JevGradeEntry>();
       let already = 0;
       let missing = 0;
       let lab = 0;
-      let stayedInfo = 0;
       let ungraded = 0;
-      const models = new Set<string>();
       const eligible: Array<{ row: ForensicEvent; graded: JevGradeEntry }> = [];
 
       for (const id of parsed.ids) {
@@ -126,6 +198,11 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         // an import) already pulled up, and failing the batch over it would lose the rest.
         if (inForensic.has(id)) {
           already++;
+          continue;
+        }
+        const of = canonical(id);
+        if (of !== id) {
+          duplicates.push({ id, of });
           continue;
         }
         // No review in this case graded the row, so there is no grade to write. The browser's word
@@ -164,48 +241,42 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         const id = row.id;
         // RAISE ONLY. worstSeverity is the canonical "more severe of the two": a model grading a
         // row below the severity it already carries can never demote it.
-        const severity = worstSeverity(row.severity, graded.grade);
-        if (severity === "Info") stayedInfo++;
-        toPromote.push({ ...row, severity });
+        toPromote.push({ ...row, severity: worstSeverity(row.severity, graded.grade) });
         tagById[id] = [reviewProvenance(graded)];
-        models.add(graded.model.trim() || UNKNOWN_MODEL);
+        gradeById.set(id, graded);
       }
 
-      const after = toPromote.length
-        ? await options.pipeline.promoteSuperTimeline(caseId, toPromote, {
+      const { state: after, outcome } = toPromote.length
+        ? await options.pipeline.promoteSuperTimelineWithOutcome(caseId, toPromote, {
             importedAt: new Date().toISOString(),
             intent: "missed-evidence",
             tagById,
-            note: `Missed-evidence review: promoted ${toPromote.length} archive row(s) at the grade a decision model gave them`,
+            note: (o) =>
+              o.added.length
+                ? `Missed-evidence review: promoted ${o.added.length} archive row(s) at the grade a decision model gave them`
+                : "",
           })
-        : state;
+        : { state, outcome: emptyPromotionOutcome() };
 
-      // Counted from the saved state rather than from the request, so a row the promotion seam
-      // refused is reported as skipped instead of claimed as promoted.
-      const landed = new Set(after.forensicTimeline.map((e) => e.id));
-      const promoted = toPromote.filter((e) => landed.has(e.id)).length;
-      const refused = toPromote.length - promoted;
+      // Every count from here on is what the promotion DID, from the one outcome the seam returned, so
+      // the case timeline note, this answer and the activity log cannot disagree (#1761). A row the
+      // merge folded into an existing event is a duplicate, not a refusal, and says which event.
+      const added = new Set(outcome.added);
+      const promoted = added.size;
       const skipped = parsed.ids.length - promoted;
-
-      const reasons: string[] = [];
-      if (already) reasons.push(`${already} row(s) were already in the forensic timeline`);
-      if (ungraded) reasons.push(`${ungraded} row(s) were not graded by a review in this case`);
-      if (missing) reasons.push(`${missing} row(s) are no longer in the archive`);
-      if (lab) reasons.push(`${lab} sandbox-produced row(s) cannot be promoted by this review`);
-      if (inBuild.size)
-        reasons.push(
-          `${inBuild.size} row(s) sit inside the host's own build window — the machine being built, not ` +
-            `the incident. Promote one from the super-timeline yourself if you mean it`,
-        );
-      if (refused) reasons.push(`${refused} row(s) were refused by the promotion seam`);
-      // Said out loud, because a promoted Info row reaches synthesis only once (#1586): the next run
-      // shows it as newly promoted evidence, and after that Info rows are left out of the prompt
-      // again (see promptIncludesInfo in analysis/synthGroup.ts). Without this, a row the model
-      // stops mentioning looks like the feature failing.
-      if (stayedInfo)
-        reasons.push(
-          `${stayedInfo} row(s) stayed Info — the next synthesis reads them once as newly promoted evidence; after that, Info rows are not shown to it`,
-        );
+      const models = new Set(outcome.added.map((id) => gradeById.get(id)?.model.trim() || UNKNOWN_MODEL));
+      const reasons = promoteReasons({
+        already: already + outcome.alreadyPresent.length,
+        ungraded,
+        missing,
+        lab,
+        inBuild: inBuild.size,
+        duplicates: [...duplicates, ...outcome.duplicates],
+        mergedIntoSelected: outcome.mergedIntoSelected,
+        replaced: outcome.replaced,
+        refused: outcome.refused.length,
+        stayedInfo: after.forensicTimeline.filter((e) => added.has(e.id) && e.severity === "Info").length,
+      });
 
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai",

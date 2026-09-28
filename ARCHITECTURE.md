@@ -383,7 +383,14 @@ Three rules the promotion carries:
   grade, and a model's Medium on sandbox behaviour must not enter the incident chronology.
 
 A row the analyst ticked that is already in the forensic timeline is a no-op reported in
-`skipped`/`reasons`, not a failed batch.
+`skipped`/`reasons`, not a failed batch. That includes a row the case lineage (#1715) maps to a live
+event under another id: the review counts it as already analyzed. Inside the promotion seam, under
+the state lock, the `missed-evidence` intent refuses any row the forensic timeline already holds,
+under its own id or through the lineage (#1761) — a same-id merge would otherwise restate the event
+at the model's grade. Every count the route reports —
+promoted, skipped, the case timeline note, the activity log — comes from the seam's per-row outcome
+(`analysis/ingest/promotionOutcome.ts`), never from "is the requested id there now?", which cannot
+tell a fold into an existing event from a refusal.
 
 Two properties specific to this path:
 
