@@ -15,6 +15,7 @@ import {
 import { checkConfiguredPromptDrift } from "../analysis/promptCapabilities.js";
 import { getAppVersion } from "../version.js";
 import { tileTemplate } from "./geoTiles.js";
+import { isCrossCaseEnabled } from "./crossCase.js";
 import {
   resolveUpdateMode,
   buildUpdateStatus,
@@ -93,6 +94,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   // gate. synthesisEnabled is the separate TEXT gate the AI-analysis routes actually enforce
   // (hasSynthesisProvider); a UI control for one of those routes must read this, not aiEnabled,
   // or a vision-only config offers buttons that can only 501.
+  // Read once, like registerCrossCaseRoutes does, so /health reports what those routes decided.
+  const crossCaseEnabled = isCrossCaseEnabled();
   app.get("/health", (_req: Request, res: Response) => {
     const irisClient = ctx.irisClient();
     const dropWatchEnabled = ctx.dropWatchEnabled();
@@ -121,6 +124,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       logLevel: serverLogger.getLevel(),
       kevEnabled: !!options.kevStore,
       secondOpinionEnabled: !!options.secondOpinionEnabled,
+      // The dashboard skips GET /cases/:id/related when this is false (#1770).
+      crossCaseEnabled,
       deepReasoningSupported: deepReasoningSupported(options),
       dropEnabled: dropWatchEnabled && !!options.dropStatusStore,
       toolsEnabled: !!options.toolRunner,
