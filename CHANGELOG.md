@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Refused requests keep the AI budget** — a malformed request, a refusal or a skip answer no longer uses one of the case's 20 AI requests a minute (closes #1825)
 - **No ghost case after a delete race** — a status or password change during a delete no longer recreates a nameless case or reports the delete as failed; a case reopened mid-delete is kept (closes #1808)
 - **Archived cases refuse a status change** — setting an archived case to open or closed answers 409 "restore the case first" instead of stranding it (closes #1809)
 - **No Related Cases 404s with cross-case off** — /health reports the cross-case flag and the dashboard skips the related-cases request when it is off (closes #1770)

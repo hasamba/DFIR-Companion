@@ -176,15 +176,27 @@ export class SlidingWindowLimiter {
     this.windowMs = windowMs;
   }
 
-  /** Returns true if the request is allowed (and counts it); false if rate-limited. */
+  /** Returns true if the request is allowed (and counts it); false if rate-limited. A refused
+   *  request is not counted: it consumed nothing, and counting it would leave a {@link refund}
+   *  unable to bring the window back under the cap (#1825). */
   tryAcquire(key: string, now = Date.now()): boolean {
     const rec = this.counts.get(key);
     if (!rec || rec.windowStart + this.windowMs <= now) {
       this.counts.set(key, { windowStart: now, count: 1 });
       return true;
     }
+    if (rec.count >= this.maxRequests) return false;
     rec.count += 1;
-    return rec.count <= this.maxRequests;
+    return true;
+  }
+
+  /** Give back one request that {@link tryAcquire} allowed at `acquiredAt` (#1825). Only while the
+   *  key's window is still the one that request was counted in: a slot from an expired window is
+   *  never refunded into the next one. */
+  refund(key: string, acquiredAt: number): void {
+    const rec = this.counts.get(key);
+    if (!rec || rec.windowStart > acquiredAt || rec.count <= 0) return;
+    rec.count -= 1;
   }
 
   /** Time left in the key's current window, in ms: when a refused caller may try again (#1794).
@@ -223,6 +235,70 @@ export class SlidingWindowLimiter {
       next();
     };
   }
+}
+
+/** One request's claim on the per-case AI budget, kept on `res.locals` until the answer is sent. */
+interface AiBudgetCharge {
+  key: string;
+  at: number;
+  /** The route said no model call was made (a skip answer, an AI-off import). */
+  unspent: boolean;
+  /** The route said a model call WAS made, whatever status it answers with. Wins over a refund. */
+  spent: boolean;
+}
+
+const AI_CHARGE_LOCAL = "aiBudgetCharge";
+
+/** Statuses that answer a request the route refused before any AI work: every 4xx except 429 (a
+ *  limit, not a refusal of the input) and 499 (cancelled mid-run, so a model call may have been
+ *  made), and 501 (no AI provider configured). */
+function isRefusalStatus(status: number): boolean {
+  return (status >= 400 && status < 500 && status !== 429 && status !== 499) || status === 501;
+}
+
+/**
+ * Take one slot from the per-case AI budget for this request, and give it back when the answer
+ * turns out to be a refusal made before any AI work (#1825) — a 400 for a malformed body, a 409
+ * gate, a 501 with no provider — or a route marked it {@link markAiBudgetUnspent}. Twenty
+ * malformed posts used to block the next real /synthesize with a 429.
+ *
+ * Refunds only on a sent answer ('finish'). A request whose client disconnects stays charged: it
+ * may have started a model call, and refunding it would let a client start runs and drop them in a
+ * loop. A 5xx (a model call that failed) and a 202 (AI work continuing in the background) stay
+ * charged too.
+ */
+export function chargeAiBudget(
+  res: Response,
+  key: string,
+): { ok: true } | { ok: false; retryAfterMs: number } {
+  const limiter = getAiLimiter();
+  const now = Date.now();
+  if (!limiter.tryAcquire(key, now)) return { ok: false, retryAfterMs: limiter.retryAfterMs(key, now) };
+  const charge: AiBudgetCharge = { key, at: now, unspent: false, spent: false };
+  res.locals[AI_CHARGE_LOCAL] = charge;
+  res.once("finish", () => {
+    if (charge.spent) return;
+    if (charge.unspent || isRefusalStatus(res.statusCode)) limiter.refund(charge.key, charge.at);
+  });
+  return { ok: true };
+}
+
+function aiBudgetCharge(res: Response): AiBudgetCharge | undefined {
+  const charge: unknown = res.locals?.[AI_CHARGE_LOCAL];
+  return charge && typeof charge === "object" ? (charge as AiBudgetCharge) : undefined;
+}
+
+/** The route answered without making a model call (#1825), so its AI-budget slot goes back. */
+export function markAiBudgetUnspent(res: Response): void {
+  const charge = aiBudgetCharge(res);
+  if (charge) charge.unspent = true;
+}
+
+/** The route made a model call and may still answer with a 4xx (a conflict found after the call),
+ *  so its AI-budget slot stays spent (#1825). */
+export function markAiBudgetSpent(res: Response): void {
+  const charge = aiBudgetCharge(res);
+  if (charge) charge.spent = true;
 }
 
 /** A 429 that says when to retry — the `Retry-After` header (whole seconds, at least 1) and the
