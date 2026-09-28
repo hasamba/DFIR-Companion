@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -8,7 +9,13 @@ interface AttributeVerdict {
 }
 
 interface SafeDomApi {
-  attributeAction(tagName: string, isSvg: boolean, name: string, value: string): AttributeVerdict | null;
+  attributeAction(
+    tagName: string,
+    isSvg: boolean,
+    name: string,
+    value: string,
+    fromScript?: boolean,
+  ): AttributeVerdict | null;
   isSafeUrl(value: string, attribute: string, tagName: string): boolean;
   sanitizeCssText(value: string): string;
   precleanHtml(value: string): string;
@@ -174,6 +181,190 @@ describe("safe DOM policy — adversarial evidence fixtures", () => {
     );
     expect(api.sanitizeCssText("background:url(https://attacker.invalid/x);color:red")).toBe("color:red");
     expect(api.sanitizeCssText("width:expression(alert(1));position:fixed")).toBe("position:fixed");
+  });
+});
+
+describe("safe DOM policy — CSS image functions fetch URLs too (#1811)", () => {
+  it("drops image-set(), -webkit-image-set(), image(), src() and a nested cross-fade(image())", async () => {
+    const api = await loadApi();
+    for (const decl of [
+      'background-image:image-set("https://attacker.invalid/a" 1x)',
+      "background-image:-webkit-image-set('https://attacker.invalid/a' 1x)",
+      'background:IMAGE-SET("https://attacker.invalid/a" 1x)',
+      'list-style-image:image("https://attacker.invalid/a")',
+      'background:cross-fade(image("https://attacker.invalid/a"),red)',
+      'background-image:src("https://attacker.invalid/a")',
+      "--leak:image-set('https://attacker.invalid/a' 1x)",
+    ]) {
+      expect(api.sanitizeCssText(`${decl};color:red`), decl).toBe("color:red");
+    }
+  });
+
+  it("keeps gradients and image-named properties that fetch nothing", async () => {
+    const api = await loadApi();
+    const css = "background-image:linear-gradient(red,blue);border-image-width:2px;image-rendering:pixelated";
+    expect(api.sanitizeCssText(css)).toBe(css);
+  });
+});
+
+describe("safe DOM policy — backslash URLs are another origin (#1812)", () => {
+  const OFF_ORIGIN = [
+    "/\\attacker.invalid/x",
+    "\\\\attacker.invalid/x",
+    "\\/attacker.invalid/x",
+    "/\t\\attacker.invalid/x",
+    " \\attacker.invalid/x",
+    "\\attacker.invalid/x",
+  ];
+
+  it("rejects a leading backslash in any mix with a slash", async () => {
+    const api = await loadApi();
+    for (const url of OFF_ORIGIN) {
+      expect(api.isSafeUrl(url, "src", "img"), JSON.stringify(url)).toBe(false);
+      expect(api.isSafeUrl(url, "href", "a"), JSON.stringify(url)).toBe(false);
+      expect(api.isSafeUrl(url, "src", "script"), JSON.stringify(url)).toBe(false);
+    }
+  });
+
+  it("still keeps same-origin paths and relative links", async () => {
+    const api = await loadApi();
+    for (const url of ["/cases/demo/x.png", "./x.png", "../x.png", "?q=1", "#top"]) {
+      expect(api.isSafeUrl(url, "src", "img"), url).toBe(true);
+    }
+  });
+
+  it("allows an external href only on an anchor", async () => {
+    const api = await loadApi();
+    expect(api.isSafeUrl("https://example.com/advisory", "href", "a")).toBe(true);
+    expect(api.isSafeUrl("https://example.com/x.css", "href", "link")).toBe(false);
+    expect(api.isSafeUrl("https://example.com/", "href", "base")).toBe(false);
+    expect(api.isSafeUrl("https://example.com/x.svg#a", "href", "use")).toBe(false);
+  });
+});
+
+// A minimal DOM, just enough for safe-dom.js to patch Element.prototype, so the setters can be
+// driven without a browser. The Chromium/Firefox spec proves the same against a real parser.
+function loadPatchedElement(): { make(tag: string, svg?: boolean): FakeElement } {
+  const source = readFileSync(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
+  class Element {
+    attrs = new Map<string, string>();
+    tagName = "DIV";
+    namespaceURI = "http://www.w3.org/1999/xhtml";
+    get innerHTML(): string {
+      return "";
+    }
+    set innerHTML(_v: string) {}
+    get outerHTML(): string {
+      return "";
+    }
+    set outerHTML(_v: string) {}
+    insertAdjacentHTML(): void {}
+    setAttribute(name: string, value: unknown): void {
+      this.attrs.set(name, String(value));
+    }
+    setAttributeNS(_ns: string | null, name: string, value: unknown): void {
+      this.attrs.set(name, String(value));
+    }
+    removeAttribute(name: string): void {
+      this.attrs.delete(name);
+    }
+  }
+  const document = {
+    readyState: "complete",
+    documentElement: { classList: { add() {} } },
+    querySelectorAll: () => [],
+  };
+  const context = { Element, document } as Record<string, unknown>;
+  runInNewContext(source, context);
+  return {
+    make(tag, svg = false) {
+      const el = new Element() as unknown as FakeElement;
+      el.tagName = svg ? tag.toLowerCase() : tag.toUpperCase();
+      el.namespaceURI = svg ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml";
+      return el;
+    },
+  };
+}
+
+interface FakeElement {
+  attrs: Map<string, string>;
+  tagName: string;
+  namespaceURI: string;
+  setAttribute(name: string, value: unknown): void;
+  setAttributeNS(ns: string | null, name: string, value: unknown): void;
+}
+
+describe("safe DOM policy — script setters share the markup deny rules (#1813)", () => {
+  const XLINK = "http://www.w3.org/1999/xlink";
+
+  it("drops action, formaction, srcset, ping, background, srcdoc and handlers via setAttribute", () => {
+    const dom = loadPatchedElement();
+    for (const [tag, name, value] of [
+      ["FORM", "action", "https://attacker.invalid/"],
+      ["BUTTON", "formaction", "javascript:alert(1)"],
+      ["IMG", "srcset", "https://attacker.invalid/x 1x"],
+      ["A", "ping", "https://attacker.invalid/"],
+      ["TABLE", "background", "https://attacker.invalid/x"],
+      ["IFRAME", "srcdoc", "<script>alert(1)</script>"],
+      ["IMG", "OnError", "alert(1)"],
+      ["A", "href", "javascript:alert(1)"],
+      ["IMG", "src", "/\\attacker.invalid/x"],
+      ["LINK", "href", "https://attacker.invalid/x.css"],
+    ]) {
+      const el = dom.make(tag);
+      el.setAttribute(name, value);
+      expect([...el.attrs.keys()], `${tag} ${name}`).toEqual([]);
+    }
+  });
+
+  it("drops the same attributes via setAttributeNS, judging XLink href by namespace not prefix", () => {
+    const dom = loadPatchedElement();
+    const a = dom.make("a", true);
+    a.setAttributeNS(XLINK, "evil:href", "javascript:alert(1)");
+    a.setAttributeNS(null, "formaction", "https://attacker.invalid/");
+    a.setAttributeNS(null, "onclick", "alert(1)");
+    expect([...a.attrs.keys()]).toEqual([]);
+    const use = dom.make("use", true);
+    use.setAttributeNS(XLINK, "xlink:href", "https://attacker.invalid/x.svg#a");
+    expect([...use.attrs.keys()]).toEqual([]);
+  });
+
+  it("drops a remote SVG paint or clip reference but keeps a local one", () => {
+    const dom = loadPatchedElement();
+    const rect = dom.make("rect", true);
+    rect.setAttribute("fill", "url(https://attacker.invalid/p.svg#g)");
+    rect.setAttribute("clip-path", "url( 'https://attacker.invalid/c.svg#c')");
+    expect([...rect.attrs.keys()]).toEqual([]);
+    rect.setAttribute("fill", "url(#grad)");
+    expect(rect.attrs.get("fill")).toBe("url(#grad)");
+  });
+
+  it("keeps the attributes app code and Leaflet set, with the caller's value", () => {
+    const dom = loadPatchedElement();
+    const path = dom.make("path", true);
+    for (const [name, value] of [
+      ["fill-rule", "evenodd"],
+      ["pointer-events", "none"],
+      ["stroke-dashoffset", "2"],
+      ["d", "M0 0L1 1"],
+      ["data-tip", "powershell -c onload=1"],
+    ]) {
+      path.setAttribute(name, value);
+      expect(path.attrs.get(name), name).toBe(value);
+    }
+    const img = dom.make("IMG");
+    img.setAttribute("src", "/cases/demo/x.png");
+    img.setAttribute("aria-valuenow", null);
+    expect(img.attrs.get("src")).toBe("/cases/demo/x.png");
+    expect(img.attrs.get("aria-valuenow")).toBe("null");
+  });
+
+  it("markup and script paths agree on every denied attribute", async () => {
+    const api = await loadApi();
+    for (const name of ["action", "formaction", "srcset", "ping", "background", "srcdoc", "onclick"]) {
+      expect(api.attributeAction("A", false, name, "x"), name).toBeNull();
+      expect(api.attributeAction("A", false, name, "x", true), name).toBeNull();
+    }
   });
 });
 

@@ -51,20 +51,30 @@
     "stroke", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "stroke-opacity",
     "stroke-width", "transform", "viewbox", "width", "x", "x1", "x2", "xmlns", "y", "y1", "y2",
   ]);
-  var URL_ATTRIBUTES = new Set(["href", "poster", "src"]);
-  var DANGEROUS_CSS = /(?:url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|behavior\s*:|-moz-binding|[{}<>\\])/i;
+  var URL_ATTRIBUTES = new Set(["href", "poster", "src", "xlink:href"]);
+  // Attributes that run script, submit a form, or send a request. Denied on every path (#1813).
+  var DENIED_ATTRIBUTES = new Set(["action", "background", "formaction", "ping", "srcdoc", "srcset"]);
+  // url(), image-set(), -webkit-image-set(), image() and src() all take a URL the browser fetches
+  // (#1811). image-set and image are unanchored so a nested cross-fade(image("…")) is caught too.
+  var DANGEROUS_CSS = /(?:url\s*\(|image-set\s*\(|image\s*\(|src\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|behavior\s*:|-moz-binding|[{}<>\\])/i;
+  // An SVG attribute may name a local paint server or clip path (url(#id)), never a remote one.
+  var REMOTE_SVG_REFERENCE = /url\s*\(\s*(?!['"]?\s*#)/i;
 
   function isSafeUrl(value, attribute, tagName) {
     var raw = String(value == null ? "" : value).trim();
-    var compact = raw.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase();
+    var stripped = raw.replace(/[\u0000-\u0020\u007f]+/g, "");
+    // Browsers read "\" as "/" in http(s) and file URLs, so "/\host" is "//host": another origin (#1812).
+    var compact = stripped.replace(/\\/g, "/").toLowerCase();
     var attr = String(attribute || "").toLowerCase();
     var tag = String(tagName || "").toLowerCase();
     if (!compact) return true;
+    if (stripped[0] === "\\") return false;
     if (compact[0] === "#" || compact[0] === "?" || compact.indexOf("./") === 0 || compact.indexOf("../") === 0) return true;
     if (compact[0] === "/" && compact.indexOf("//") !== 0) return true;
     if (attr === "src" && tag === "img" && /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(compact)) return true;
     if (compact.indexOf("//") === 0) return false;
-    if (attr === "href" && /^(?:https?|mailto):/i.test(compact)) return true;
+    // An external link is fine on an anchor. On any other element an href loads a resource.
+    if ((attr === "href" || attr === "xlink:href") && (tag === "a" || tag === "area") && /^(?:https?|mailto):/i.test(compact)) return true;
 
     var base = root.location && root.location.origin ? root.location.origin : "https://dfir-companion.invalid";
     try {
@@ -88,21 +98,25 @@
     return clean.join(";");
   }
 
-  // Decide one attribute from its name alone, the way the DOM walk sees it after a real parse.
-  // Returns null to drop it, or { name, value } to keep it (style becomes data-safe-style).
-  function attributeAction(tagName, isSvg, name, value) {
+  // The one attribute policy for markup (the DOM walk) and for script (setAttribute) (#1813).
+  // Returns null to drop the attribute, or { name, value } to keep it (style becomes data-safe-style).
+  // fromScript skips only the markup allowlist: app code and Leaflet set SVG attributes such as
+  // fill-rule and pointer-events that markup never needs. Every deny rule applies to both paths.
+  function attributeAction(tagName, isSvg, name, value, fromScript) {
     var lower = String(name).toLowerCase();
     var tag = String(tagName || "").toUpperCase();
+    var text = String(value == null ? "" : value);
     if (lower === "style" || lower === "data-safe-style") {
-      var css = sanitizeCssText(value);
+      var css = sanitizeCssText(text);
       return css ? { name: "data-safe-style", value: css } : null;
     }
-    if (lower.indexOf("on") === 0 || lower === "srcdoc" || lower === "action" || lower === "formaction" || lower === "srcset") return null;
-    var allowed = lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0 ||
+    if (lower.indexOf("on") === 0 || DENIED_ATTRIBUTES.has(lower)) return null;
+    var allowed = fromScript || lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0 ||
       (isSvg ? SAFE_SVG_ATTRIBUTES.has(lower) : SAFE_ATTRIBUTES.has(lower) || lower === "href");
     if (!allowed) return null;
-    if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(value, lower, tag)) return null;
-    return { name: String(name), value: String(value == null ? "" : value) };
+    if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(text, lower, tag)) return null;
+    if (isSvg && REMOTE_SVG_REFERENCE.test(text)) return null;
+    return { name: String(name), value: text };
   }
 
   // A first, browser-independent pass that only removes blocked elements. It needs a literal "<",
@@ -128,6 +142,8 @@
   var outerDescriptor = Object.getOwnPropertyDescriptor(root.Element.prototype, "outerHTML");
   var nativeInsertAdjacentHtml = root.Element.prototype.insertAdjacentHTML;
   var nativeSetAttribute = root.Element.prototype.setAttribute;
+  var nativeSetAttributeNS = root.Element.prototype.setAttributeNS;
+  var XLINK_NS = "http://www.w3.org/1999/xlink";
   if (!innerDescriptor || !innerDescriptor.get || !innerDescriptor.set) throw new Error("DOM HTML setters unavailable");
 
   var trustedTypes = root.trustedTypes;
@@ -390,19 +406,31 @@
     nativeInsertAdjacentHtml.call(this, position, trustedHtml(value));
     hydrateStyles(this.parentNode || this);
   };
+  function isSvgElement(element) {
+    return element.namespaceURI === "http://www.w3.org/2000/svg";
+  }
+
   root.Element.prototype.setAttribute = function (name, value) {
-    var lower = String(name).toLowerCase();
-    if (lower.indexOf("on") === 0 || lower === "srcdoc") return;
-    if (lower === "style") {
-      var css = sanitizeCssText(value);
-      var state = cssMap(css);
+    if (String(name).toLowerCase() === "style") {
+      var state = cssMap(sanitizeCssText(value));
       styleState.set(this, state);
       this.removeAttribute("data-safe-style");
       applyStyleState(this, state, true);
       return;
     }
-    if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(value, lower, this.tagName)) return;
-    nativeSetAttribute.call(this, name, value);
+    var verdict = attributeAction(this.tagName, isSvgElement(this), name, value, true);
+    // Pass the caller's value through unchanged (setAttribute("x", null) writes "null"), except a
+    // data-safe-style value, which the verdict has sanitized.
+    if (verdict) nativeSetAttribute.call(this, verdict.name, verdict.name === "data-safe-style" ? verdict.value : value);
+  };
+  if (nativeSetAttributeNS) root.Element.prototype.setAttributeNS = function (namespace, qualifiedName, value) {
+    // Judge the local name; a prefix is arbitrary, so any XLink "…:href" is the XLink href.
+    var qualified = String(qualifiedName);
+    var local = qualified.slice(qualified.indexOf(":") + 1);
+    var judged = namespace === XLINK_NS && local.toLowerCase() === "href" ? "xlink:href" : local;
+    if (judged.toLowerCase() === "style") return;
+    var verdict = attributeAction(this.tagName, isSvgElement(this), judged, value, true);
+    if (verdict) nativeSetAttributeNS.call(this, namespace, qualifiedName, verdict.name === "data-safe-style" ? verdict.value : value);
   };
   patchStyleGetter(root.HTMLElement && root.HTMLElement.prototype);
   patchStyleGetter(root.SVGElement && root.SVGElement.prototype);

@@ -55,7 +55,22 @@ const PAYLOADS = [
   `<svg xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="data:image/svg+xml,x"/></svg>`,
   `<img src=x src=y onerror=${X} onerror=${X}><a href="/ok" href="javascript:${X}">dup</a>`,
   `<svg><circle ONLOAD=${X} Style="fill:url(https://attacker.invalid/x)"/></svg>`,
+  `<div style="background-image:image-set('https://attacker.invalid/set' 1x)">set</div>`,
+  `<div style="background-image:-webkit-image-set('https://attacker.invalid/wk' 1x)">wk</div>`,
+  `<div style="background:cross-fade(image('https://attacker.invalid/img'),red)">img</div>`,
+  `<svg><rect width=9 height=9 fill="url(https://attacker.invalid/paint.svg#g)"/></svg>`,
+  `<img src="/\\attacker.invalid/bs"><img src="\\\\attacker.invalid/bs2">`,
 ];
+
+// Every request the page makes to the attacker host. A sanitizer that leaves a fetchable URL fails
+// here even when no attribute text looks suspicious.
+function watchAttackerRequests(page: Page): string[] {
+  const seen: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("attacker.invalid")) seen.push(request.url());
+  });
+  return seen;
+}
 
 async function loadGuard(page: Page, withoutTrustedTypes: boolean): Promise<void> {
   if (withoutTrustedTypes) {
@@ -119,10 +134,44 @@ for (const withoutTrustedTypes of [false, true]) {
 
   test.describe(`safe-dom live DOM (${label})`, () => {
     test("no raw XSS payload survives any sink or parse context", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
       await loadGuard(page, withoutTrustedTypes);
       for (const payload of PAYLOADS) {
         expect(await renderAllSinks(page, payload), payload).toEqual([]);
       }
+      expect(requests).toEqual([]);
+    });
+
+    test("setAttribute and setAttributeNS apply the markup deny rules (#1813)", async ({ page }) => {
+      await loadGuard(page, withoutTrustedTypes);
+      const kept = await page.evaluate(() => {
+        const svgNs = "http://www.w3.org/2000/svg";
+        const xlink = "http://www.w3.org/1999/xlink";
+        const cases: [Element, string, string][] = [
+          [document.createElement("form"), "action", "https://attacker.invalid/"],
+          [document.createElement("button"), "formaction", "javascript:window.__xss=1"],
+          [document.createElement("img"), "srcset", "https://attacker.invalid/x 1x"],
+          [document.createElement("a"), "ping", "https://attacker.invalid/"],
+          [document.createElement("img"), "src", "/\\attacker.invalid/x"],
+          [document.createElement("a"), "href", "javascript:window.__xss=1"],
+          [document.createElementNS(svgNs, "rect"), "fill", "url(https://attacker.invalid/p.svg#g)"],
+        ];
+        const out: string[] = [];
+        for (const [el, name, value] of cases) {
+          el.setAttribute(name, value);
+          if (el.hasAttribute(name)) out.push(`${el.tagName} ${name}`);
+        }
+        const a = document.createElementNS(svgNs, "a");
+        a.setAttributeNS(xlink, "evil:href", "javascript:window.__xss=1");
+        if (a.attributes.length) out.push("svg a xlink href");
+        const path = document.createElementNS(svgNs, "path");
+        path.setAttribute("fill-rule", "evenodd");
+        path.setAttribute("pointer-events", "none");
+        if (path.getAttribute("fill-rule") !== "evenodd") out.push("fill-rule lost");
+        if (path.getAttribute("pointer-events") !== "none") out.push("pointer-events lost");
+        return out;
+      });
+      expect(kept).toEqual([]);
     });
 
     test("kept SVG attributes keep their case (viewBox)", async ({ page }) => {
