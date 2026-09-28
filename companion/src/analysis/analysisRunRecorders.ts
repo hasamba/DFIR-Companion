@@ -134,6 +134,8 @@ interface SynthesisRecord {
   observationsIncluded: boolean;
   parseRetries: number;
   coverage: SynthesisCoverage;
+  /** #1754: findings that cite no event, and whether the citation retry ran — already worded. */
+  citationWarnings?: string[];
 }
 
 export async function recordSynthesisRun(
@@ -190,6 +192,7 @@ export async function recordSynthesisRun(
         ...(input.coverage.omittedHighSeverity > 0
           ? [`${input.coverage.omittedHighSeverity} high-severity event(s) used deterministic backfill`]
           : []),
+        ...(input.citationWarnings ?? []),
       ],
     },
     output: {

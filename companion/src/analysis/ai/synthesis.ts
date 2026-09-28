@@ -62,6 +62,7 @@ import {
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 import { callSynthesisModel, throwIfSuperseded, type SynthesisCall } from "./synthesisCall.js";
+import { citationRunWarnings } from "./findingCitations.js";
 import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
@@ -364,12 +365,43 @@ interface SynthesisOutcome {
   parentRunId: string | undefined;
   /** #1599: the out-of-date revision read before the case load — see SynthMetaStore.record. */
   startRevision: number;
+  /** #1754: the run-record warnings for findings that cite no event. */
+  citationWarnings: string[];
 }
 
 /**
  * The two durable records of a real run: the synth-meta card the dashboard reads, and the full
  * analysis-run row. Only reached on a real run — a skipped one returns before the model call.
  */
+/**
+ * The model's surviving findings that ground on no event after the fold and grading (#1754): logged by
+ * id, and worded for the run record. Deterministic backfills are not the model's and are not counted.
+ */
+function uncitedFindingWarnings(
+  ctx: SynthesisContext,
+  caseId: string,
+  next: InvestigationState,
+  delta: SynthesisCall["delta"],
+  surviving: ReadonlySet<string>,
+  call: SynthesisCall,
+): string[] {
+  const modelIds = new Set(delta.findings.map((f) => f.id).filter((id) => surviving.has(id)));
+  const model = next.findings.filter((f) => modelIds.has(f.id));
+  const uncited = model.filter((f) => !(f.relatedEventIds ?? []).length).map((f) => f.id);
+  if (uncited.length)
+    ctx.log.warn(
+      `[synthesis] ${uncited.length} of ${model.length} findings cite no event: ${uncited.join(", ")}`,
+      {
+        caseId,
+      },
+    );
+  return citationRunWarnings({
+    uncited: uncited.length,
+    total: model.length,
+    ...(call.citationRetriedAfter ? { retriedAfter: call.citationRetriedAfter } : {}),
+  });
+}
+
 async function recordSynthesisOutcome(
   ctx: SynthesisContext,
   caseId: string,
@@ -429,6 +461,7 @@ async function recordSynthesisOutcome(
     observationsIncluded: o.observationsBlock.length > 0,
     parseRetries: o.call.parseRetries,
     coverage: o.prompt.coverage,
+    citationWarnings: o.citationWarnings,
   });
 }
 
@@ -565,7 +598,10 @@ export async function synthesize(
 
   const synthStart = Date.now();
   throwIfSuperseded(opts.signal); // building the prompt takes seconds on a large case
-  const call = await callSynthesisModel(ctx, caseId, state, synthProvider, prompt.userPrompt, opts);
+  const call = await callSynthesisModel(ctx, caseId, state, synthProvider, prompt.userPrompt, {
+    ...opts,
+    shownEventIds: prompt.shownIds,
+  });
   const { delta } = call;
 
   // THE ONE THAT MATTERS. Everything below writes: the fold grades findings, persistSynthesis saves
@@ -581,6 +617,7 @@ export async function synthesize(
     // The fold's delta, not this scope's: an invented deterministic id was renamed on the way in
     // (#787), and grading keys the model's relevance verdict on the id the case now holds.
     delta: foldedDelta,
+    recoveredCitations,
   } = await foldSynthesisDelta(ctx, {
     caseId,
     state,
@@ -591,7 +628,15 @@ export async function synthesize(
     inventory: run.inventory,
     hostOf: (raw) => resolveHost(aliasIndex, raw),
     membersOf: prompt.membersOf,
+    promptEventIds: new Set(prompt.promptEvents.map((e) => e.id)),
   });
+  for (const r of recoveredCitations)
+    ctx.log.warn(
+      `[synthesis] ${r.findingId} cited no event; recovered ${r.eventIds.join(", ")} from its text`,
+      {
+        caseId,
+      },
+    );
   let next = folded;
   if (opts.dryRun) return next;
 
@@ -657,6 +702,7 @@ export async function synthesize(
     observationsBlock,
     parentRunId: opts.analysisParentRunId,
     startRevision,
+    citationWarnings: uncitedFindingWarnings(ctx, caseId, next, foldedDelta, surviving, call),
   });
   // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
   // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
