@@ -171,13 +171,14 @@
                 hideImportProgress();
                 statusEl.textContent = `waiting for your answer — which host did ${f.name} come from?`;
                 const ans = await askImportAssetHost(f.name, probe.computers);
-                statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
-                showImportProgressIndeterminate();
                 if (ans === null) {
+                  // Skipped: nothing will run for this file, so the strip stays stopped.
                   dataFail++;
                   refused.push(`${f.name}: skipped by you`);
                   continue;
                 }
+                statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
+                showImportProgressIndeterminate();
                 assetHost = ans;
               }
               showImportProgress(40);

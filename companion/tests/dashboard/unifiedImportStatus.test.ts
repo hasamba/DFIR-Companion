@@ -177,6 +177,16 @@ describe("import status while the host prompt waits (#1772)", () => {
     expect(h.status.textContent).toMatch(/imported csv/);
   });
 
+  it("skipping the file leaves the progress strip stopped", async () => {
+    const h = harness({
+      probeBareWindowsExport: () => ({ bare: true, computers: [] }),
+      askImportAssetHost: async () => null,
+    });
+    await h.pick([csv("sysmon-triage.csv")]);
+    expect(h.status.textContent).toContain("sysmon-triage.csv: skipped by you");
+    expect(h.progress[h.progress.length - 1]).toBe("hide");
+  });
+
   it("a file that does not need the prompt is not asked about", async () => {
     const askImportAssetHost = vi.fn(async () => "");
     const h = harness({ probeBareWindowsExport: () => ({ bare: false, computers: [] }), askImportAssetHost });

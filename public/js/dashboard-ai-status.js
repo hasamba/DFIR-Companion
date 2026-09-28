@@ -105,6 +105,10 @@
   // "report written: …" notice).
   function clearTransientStatus() {
     const el = document.getElementById("status");
+    // An import summary that reports failed files keeps its per-file reasons (#1786): in a mixed
+    // batch the landed file's job pushes this idle seconds later, and clearing then erased the only
+    // place that said which file failed and why. The next import or action replaces it.
+    if (/\d+ file\(s\) failed|screenshot\(s\)[^·]*, \d+ failed/.test(el.textContent)) return;
     // "catching up" is the optimistic message toggleAi() writes when AI is switched on; it must
     // be cleared once the backfill reports idle, or it stays stuck (it's not a live indicator).
     // A finished second opinion's result line ("second opinion: N disagreements …", or its failure)
