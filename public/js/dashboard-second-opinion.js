@@ -236,8 +236,18 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deltaId, accept }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const rec = await r.json();
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
+          if (stillOpen(caseId))
+            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply");
+          return null;
+        }
+        return rec;
+      })
       .then((rec) => {
+        if (rec === null) return; // held for Presidio approval, shown above
         if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
@@ -266,8 +276,18 @@
         accept === "referee" ? { followReferee: true } : { accept },
       ),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const rec = await r.json();
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
+          if (stillOpen(caseId))
+            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply-all");
+          return null;
+        }
+        return rec;
+      })
       .then((rec) => {
+        if (rec === null) return; // held for Presidio approval, shown above
         if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
@@ -386,6 +406,13 @@
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion failed: " + rec.error;
+          return;
+        }
+        // #1771 — a refusal (an empty forensic timeline) is not a failure and not a result: say why
+        // no run happened, and never read it as "0 disagreements" or paint it as a record.
+        if (rec && rec.skipped) {
+          document.getElementById("status").textContent =
+            "second opinion not run: " + (rec.message || rec.skipped);
           return;
         }
         const n = Array.isArray(rec.deltas)

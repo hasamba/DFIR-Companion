@@ -233,6 +233,8 @@
         // guidance, not a failure — the run never started and nothing is wrong with the case.
         if (r.status === 400 || r.status === 423) { deepPassGuidance(j.error || "That run was refused."); return; }
         if (r.status === 501) { deepPassGuidance("No synthesis provider is configured — a deep pass needs one."); return; }
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, j)) { deepPassGuidance(presidioHoldText("Deep pass")); return; }
         document.getElementById("deepPassResult").innerHTML =
           `<div class="dp-result dp-partial"><span class="dp-partial-hd">Deep pass failed</span> — ${esc(j && j.error ? j.error : "unknown error")}. Nothing was written to the case.</div>`;
       })

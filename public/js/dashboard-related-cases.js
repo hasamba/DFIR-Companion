@@ -14,6 +14,10 @@
   // a case SWITCH from a same-case refresh, and it lets a late response for an abandoned case be
   // dropped instead of painted over the case now on screen.
   let relatedCasesFor = "";
+  // Whether the server has the cross-case pivot on (DFIR_CROSS_CASE, off by default), as /health
+  // reports it (#1770). null until the first answer. Only true fetches: with the pivot off the
+  // route answers 404, and the browser logs every 404 on each case load and every idle.
+  let crossCaseEnabled = null;
 
   function statusBadge(status) {
     // "open" is the norm and says nothing; the other two change how the analyst reads the link.
@@ -106,6 +110,9 @@
       paint();
     }
     if (!id) return;
+    // Unknown or off: no request. An unknown flag is resolved by setCrossCaseCapability, which
+    // loads the case on screen once /health says the pivot is on.
+    if (crossCaseEnabled !== true) return;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(id)}/related`);
       if (!r.ok) return;
@@ -120,6 +127,15 @@
     }
   }
 
+  // Written from the /health answer on every case connect. Only the first "on" loads the case on
+  // screen — the connect that ran while the flag was unknown skipped its request.
+  function setCrossCaseCapability(on) {
+    const was = crossCaseEnabled;
+    crossCaseEnabled = !!on;
+    if (crossCaseEnabled && was !== true && relatedCasesFor) loadRelatedCases(relatedCasesFor);
+  }
+
   window.loadRelatedCases = loadRelatedCases;
+  window.setCrossCaseCapability = setCrossCaseCapability;
   window.renderRelatedCases = renderRelatedCases;
 })();

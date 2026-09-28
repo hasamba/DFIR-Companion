@@ -117,7 +117,11 @@
     if (msg) msg.textContent = "summarizing…";
     fetch(`/cases/${caseId}/sessions/${encodeURIComponent(sid)}/summary`, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-    }).then(r => r.json().then(b => ({ ok: r.ok, b }))).then(({ ok, b }) => {
+    }).then(r => r.json().then(b => ({ ok: r.ok, status: r.status, b }))).then(({ ok, status, b }) => {
+      // A Presidio hold waits for the analyst — it is not a failure (#1782).
+      if (!ok && typeof presidioHold === "function" && presidioHold(status, b)) {
+        if (msg) msg.textContent = presidioHoldText("Session summary"); if (btn) btn.disabled = false; return;
+      }
       if (!ok) { if (msg) msg.textContent = (b && b.error) || "summary failed"; if (btn) btn.disabled = false; return; }
       sessionSummaries.set(sid, { markdown: b.markdown || "", label: b.label || "" });
       if (msg) msg.textContent = b.truncated ? `(${b.usedEvents} of ${b.eventCount} events used)` : "";
