@@ -66,12 +66,13 @@ const CASE_ADMIN_SEGMENTS = [
 // Holding "write" on one case must not let a user name a path outside that case and have its bytes
 // copied in as evidence. Same trust as /nsrl and /kev import-file, already global-admin prefixes.
 const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file", "/import-mac-login-item"];
-// The only /cases/* paths that are NOT a case: the encrypted-bundle import and the demo seeder.
+// The only /cases/* paths that are NOT a case: the two whole-case imports (the encrypted bundle and
+// the plain "Archive to ZIP" file, #1784) and the demo seeder.
 // "import" and "seed-demo" are themselves valid case ids (isValidCaseId accepts both) and any
 // authenticated user can create a case so named, so the exemption has to be these exact paths.
 // Exempting the whole /cases/import subtree would hand /cases/import/delete and
 // /cases/import/import-file to any authenticated session.
-const NON_CASE_PATHS = new Set(["/cases/import/encrypted", "/cases/seed-demo"]);
+const NON_CASE_PATHS = new Set(["/cases/import/encrypted", "/cases/import/zip", "/cases/seed-demo"]);
 
 /**
  * The spelling Express itself would route by: case-insensitive, trailing slash optional (neither
@@ -83,7 +84,7 @@ function collectionPath(path: string): string {
   return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
 }
 
-/** True for the two /cases/* paths that are not a case (see NON_CASE_PATHS), in Express's spelling. */
+/** True for the /cases/* paths that are not a case (see NON_CASE_PATHS), in Express's spelling. */
 export function isNonCasePath(path: string): boolean {
   return NON_CASE_PATHS.has(collectionPath(path));
 }
@@ -226,7 +227,9 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     // The new-case wizard's suggested id. Same policy as POST /cases directly above: anyone who
     // may create a case may ask what the next free number is.
     (normalizedMethod === "GET" && path === "/api/next-case-id") ||
+    // Both whole-case imports create a NEW case, like POST /cases, so anyone signed in may run them.
     collectionPath(path) === "/cases/import/encrypted" ||
+    collectionPath(path) === "/cases/import/zip" ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

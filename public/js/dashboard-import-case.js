@@ -1,5 +1,5 @@
-// Import case — a snapshot archive (#56), an encrypted archive, or a case pulled from DFIR-IRIS
-// (#415 tier 3).
+// Import case — a snapshot archive (#56), an encrypted archive, a plain "Archive to ZIP" file
+// (#1784), or a case pulled from DFIR-IRIS (#415 tier 3).
 //
 // EVERYTHING IS IN THE INITIALIZER, including two `const`s. `const importCaseOverlay =
 // document.getElementById("importCaseOverlay")` reads as module body — it is a VariableStatement —
@@ -82,6 +82,15 @@
     document.getElementById("importCaseEncrypted").onclick = () => {
       closeImportCaseModal();
       document.getElementById("encryptedImportFile").click();
+    };
+    document.getElementById("importCaseZip").onclick = () => {
+      closeImportCaseModal();
+      document.getElementById("zipImportFile").click();
+    };
+    document.getElementById("zipImportFile").onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = ""; // allow re-selecting the same file
+      if (file) importZipCase(file);
     };
     document.getElementById("importCaseIris").onclick = () => {
       closeImportCaseModal();
@@ -221,6 +230,62 @@
         cancelBtn.disabled = false;
       }
     };
+  }
+
+  // #1784. The plain ZIP "Archive to ZIP" writes. No password, so no modal of its own: progress and
+  // errors go to #status. The server checks every file against the archive's manifest when it has
+  // one, and the result line says which of the two happened.
+  async function importZipCase(file) {
+    const status = document.getElementById("status");
+    const LARGE_MB = 180; // same body limit as the encrypted import
+    if (file.size > LARGE_MB * 1024 * 1024) {
+      status.textContent = "ZIP import failed: the file is over 180 MB — too large to import via the dashboard";
+      return;
+    }
+    try {
+      status.textContent = "reading " + file.name + "…";
+      const data = arrayBufferToBase64(await file.arrayBuffer());
+      const importInto = (targetCaseId) =>
+        fetch("/cases/import/zip", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ data, ...(targetCaseId ? { targetCaseId } : {}) }),
+        });
+      status.textContent = "importing " + file.name + "…";
+      let res = await importInto(undefined);
+      let guard = 0;
+      while (res.status === 409 && guard++ < 5) {
+        const j = await res.json().catch(() => ({}));
+        const newId = window.prompt(
+          `A case "${j.caseId || ""}" already exists. Import under a different case id:`,
+          (j.caseId || "imported") + "-copy",
+        );
+        if (!newId) {
+          status.textContent = "ZIP import cancelled";
+          return;
+        }
+        res = await importInto(newId.trim());
+      }
+      const body = await res.json().catch(() => ({}));
+      if (res.status !== 201) {
+        status.textContent = "ZIP import failed: " + (body.error || "HTTP " + res.status);
+        return;
+      }
+      const c = body.counts || {};
+      const check = body.verified ? "hashes verified" : "no archive manifest, hashes not verified";
+      const line = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs) — ${check}`;
+      status.textContent = line;
+      // connect() below rewrites #status on ws.onopen (the #672 trap), and whether the hashes were
+      // checked must not vanish with it. The Import case modal reopens carrying the same line; its
+      // Cancel button closes it.
+      document.getElementById("importCaseHint").textContent = line;
+      document.getElementById("importCaseOverlay").classList.add("open");
+      document.getElementById("caseId").value = body.caseId;
+      loadCaseList();
+      connect();
+    } catch (err) {
+      status.textContent = "ZIP import failed: " + err.message + " — is the companion running?";
+    }
   }
 
   window.encryptionUpgradeNotice = encryptionUpgradeNotice;
