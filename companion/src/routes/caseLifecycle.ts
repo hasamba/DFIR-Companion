@@ -278,19 +278,17 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Delete only after building an archive; revoke roles and service identities only after success.
-  async function deleteCaseFolderBestEffort(
-    id: string,
-    actor?: AuthIdentity,
-  ): Promise<{ deleted: boolean; error?: string }> {
+  // Delete only after building an archive; revoke roles and service identities only after success,
+  // inside the delete's lock so a create of the same id cannot land before the revoke (#1826).
+  async function deleteCaseFolderBestEffort(id: string, actor?: AuthIdentity) {
     try {
-      await store.deleteCaseFolder(id, { closedOnly: true }); // re-checked under its lock (#1808)
+      const afterDelete = () => clearStateOutlivingCase(ctx, id, actor);
+      await store.deleteCaseFolder(id, { closedOnly: true, afterDelete }); // status re-checked (#1808)
     } catch (err) {
       const message = (err as Error).message;
       errLine(`[delete] case=${id} failed to delete: ${message}`);
       return { deleted: false, error: message };
     }
-    await clearStateOutlivingCase(ctx, id, actor);
     logLine(`[delete] case=${id} deleted`);
     return { deleted: true };
   }
