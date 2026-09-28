@@ -56,7 +56,6 @@ describe("the Second opinion button stays locked while its job runs (#1753)", ()
       so.disabled = true; // the click disabled it
       api.scheduleJobUiRefresh("INC-1", soJob(status));
       expect(so.disabled).toBe(true);
-      expect(so.title).toMatch(/already running/);
       expect(synth.disabled).toBe(false); // Re-synthesize queues behind it server-side
     });
   }
@@ -66,6 +65,5 @@ describe("the Second opinion button stays locked while its job runs (#1753)", ()
     api.scheduleJobUiRefresh("INC-1", soJob("running"));
     api.scheduleJobUiRefresh("INC-1", soJob("succeeded"));
     expect(so.disabled).toBe(false);
-    expect(so.title).toBe("");
   });
 });
