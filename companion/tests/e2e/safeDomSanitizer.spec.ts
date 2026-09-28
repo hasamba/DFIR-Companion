@@ -76,7 +76,9 @@ async function renderAllSinks(page: Page, html: string): Promise<string[]> {
     root.textContent = "";
     const div = root.appendChild(document.createElement("div"));
     div.innerHTML = markup;
-    const tbody = root.appendChild(document.createElement("table")).appendChild(document.createElement("tbody"));
+    const tbody = root
+      .appendChild(document.createElement("table"))
+      .appendChild(document.createElement("tbody"));
     tbody.innerHTML = markup;
     const select = root.appendChild(document.createElement("select"));
     select.innerHTML = markup;
@@ -89,15 +91,22 @@ async function renderAllSinks(page: Page, html: string): Promise<string[]> {
 
     const problems: string[] = [];
     if ((window as unknown as { __xss?: number }).__xss) problems.push("payload executed");
-    const blocked = "script,iframe,object,embed,foreignobject,math,style,template,base,meta,link,noscript,animate,set";
+    const blocked =
+      "script,iframe,object,embed,foreignobject,math,style,template,base,meta,link,noscript,animate,set";
     root.querySelectorAll(blocked).forEach((el) => problems.push(`element ${el.tagName}`));
     root.querySelectorAll("*").forEach((el) => {
       for (const attr of Array.from(el.attributes)) {
         const name = attr.name.toLowerCase();
-        if (/^on|^srcdoc$|^style$|^action$|^formaction$|^srcset$/.test(name)) problems.push(`${el.tagName} ${name}`);
-        if (/javascript:|vbscript:/i.test(attr.value.replace(/[\u0000-\u0020]/g, ""))) problems.push(`${el.tagName} ${name}=${attr.value}`);
+        if (/^on|^srcdoc$|^style$|^action$|^formaction$|^srcset$/.test(name))
+          problems.push(`${el.tagName} ${name}`);
+        if (/javascript:|vbscript:/i.test(attr.value.replace(/[\u0000-\u0020]/g, "")))
+          problems.push(`${el.tagName} ${name}=${attr.value}`);
       }
-      if (el.tagName === "A" && el.getAttribute("target") === "_blank" && el.getAttribute("rel") !== "noopener noreferrer") {
+      if (
+        el.tagName === "A" &&
+        el.getAttribute("target") === "_blank" &&
+        el.getAttribute("rel") !== "noopener noreferrer"
+      ) {
         problems.push("target=_blank without noopener");
       }
     });
@@ -134,10 +143,16 @@ for (const withoutTrustedTypes of [false, true]) {
           return rows.map(({ markup }) => {
             root.innerHTML = markup;
             const cell = root.querySelector("span")!;
-            return { text: cell.textContent, title: cell.getAttribute("title"), data: cell.getAttribute("data-cmd") };
+            return {
+              text: cell.textContent,
+              title: cell.getAttribute("title"),
+              data: cell.getAttribute("data-cmd"),
+            };
           });
         },
-        EVIDENCE.map((text) => ({ markup: `<span title="${esc(text)}" data-cmd='${esc(text)}'>${esc(text)}</span>` })),
+        EVIDENCE.map((text) => ({
+          markup: `<span title="${esc(text)}" data-cmd='${esc(text)}'>${esc(text)}</span>`,
+        })),
       );
       rendered.forEach((row, i) => {
         expect(row, EVIDENCE[i]).toEqual({ text: EVIDENCE[i], title: EVIDENCE[i], data: EVIDENCE[i] });

@@ -111,7 +111,9 @@ describe("safe DOM policy — adversarial evidence fixtures", () => {
           const verdict = api.attributeAction(tag, isSvg, name, value);
           if (!verdict) continue;
           const kept = `${verdict.name}=${verdict.value}`.toLowerCase();
-          expect(kept, `${fixture} → ${name}`).not.toMatch(/^on|^srcdoc|^style=|^action|^formaction|javascript:|url\(/);
+          expect(kept, `${fixture} → ${name}`).not.toMatch(
+            /^on|^srcdoc|^style=|^action|^formaction|javascript:|url\(/,
+          );
         }
       }
     }
@@ -119,7 +121,17 @@ describe("safe DOM policy — adversarial evidence fixtures", () => {
 
   it("drops handler, srcdoc and form-target attributes in any case and namespace", async () => {
     const api = await loadApi();
-    for (const name of ["onerror", "ONERROR", "OnLoad", "onpointerenter", "srcdoc", "SRCDOC", "action", "formaction", "srcset"]) {
+    for (const name of [
+      "onerror",
+      "ONERROR",
+      "OnLoad",
+      "onpointerenter",
+      "srcdoc",
+      "SRCDOC",
+      "action",
+      "formaction",
+      "srcset",
+    ]) {
       expect(api.attributeAction("IMG", false, name, "alert(1)"), name).toBeNull();
       expect(api.attributeAction("RECT", true, name, "alert(1)"), name).toBeNull();
     }
@@ -130,10 +142,18 @@ describe("safe DOM policy — adversarial evidence fixtures", () => {
 
   it("turns style into sanitized data-safe-style and drops network CSS", async () => {
     const api = await loadApi();
-    expect(api.attributeAction("DIV", false, "style", "color:red")).toEqual({ name: "data-safe-style", value: "color:red" });
-    expect(api.attributeAction("DIV", false, "STYLE", "background:url(https://attacker.invalid/x)")).toBeNull();
+    expect(api.attributeAction("DIV", false, "style", "color:red")).toEqual({
+      name: "data-safe-style",
+      value: "color:red",
+    });
+    expect(
+      api.attributeAction("DIV", false, "STYLE", "background:url(https://attacker.invalid/x)"),
+    ).toBeNull();
     expect(api.attributeAction("DIV", false, "data-safe-style", "width:expression(alert(1))")).toBeNull();
-    expect(api.attributeAction("svg", true, "viewBox", "0 0 10 10")).toEqual({ name: "viewBox", value: "0 0 10 10" });
+    expect(api.attributeAction("svg", true, "viewBox", "0 0 10 10")).toEqual({
+      name: "viewBox",
+      value: "0 0 10 10",
+    });
   });
 
   it("rejects scriptable URLs but retains ordinary evidence and same-origin links", async () => {
