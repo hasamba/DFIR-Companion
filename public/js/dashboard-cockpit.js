@@ -134,8 +134,10 @@
     const body = document.getElementById("cockpitBody");
     if (!caseId || !body) return;
     const hasCurrentSnapshot = lastCockpit && lastCockpit.caseId === caseId;
+    // now-loading holds the rest of the viewport until the snapshot lands (#1791): the cockpit loads
+    // after the panels under it have painted, and growing from one line pushed all of them.
     if (!hasCurrentSnapshot)
-      body.innerHTML = `<div class="now-state">Loading the current decisions…</div>`;
+      body.innerHTML = `<div class="now-state now-loading">Loading the current decisions…</div>`;
     const investigator = investigatorName();
     try {
       const query = investigator

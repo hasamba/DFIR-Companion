@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **No page jump when a case opens** — the Now cockpit holds its space while it loads, so the panels under it no longer jump down (load CLS 0.33 → 0.003) (closes #1791)
 - **Readable grey IOC badges** — the "low" risk and "telemetry-only" badges meet 4.5:1 contrast in dark and light (closes #1789)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
