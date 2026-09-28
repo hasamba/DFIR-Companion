@@ -22,7 +22,12 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Firefox runs the sanitizer spec only: the safe-dom policy depends on the browser's HTML parser
+  // and Firefox has no Trusted Types, so its parse differences are what that spec must see (#1814).
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "firefox", use: { ...devices["Desktop Firefox"] }, testMatch: "**/safeDomSanitizer.spec.ts" },
+  ],
   webServer: {
     command: "npx tsx tests/e2e/server-entry.ts",
     // GET /cases is the readiness probe: it is a real route that only answers once the case store
