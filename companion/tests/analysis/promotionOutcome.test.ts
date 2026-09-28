@@ -107,11 +107,7 @@ describe("a missed-evidence promotion refuses a row the case already holds under
 
 describe("what happened to each requested row", () => {
   it("tells a new row from one already there, a duplicate, a twin in the same selection and a replacement", async () => {
-    await seed([
-      ev("p1"),
-      ev("e1", { severity: "High" }),
-      ev("e2", { severity: "Low" }),
-    ]);
+    await seed([ev("p1"), ev("e1", { severity: "High" }), ev("e2", { severity: "Low" })]);
 
     const { state, outcome } = await pipeline.promoteSuperTimelineWithOutcome(
       "c1",
@@ -162,11 +158,11 @@ describe("the case timeline note", () => {
   it("counts only the rows this promotion added when the note is a function", async () => {
     await seed([ev("e1", { severity: "High" })]);
 
-    const { state } = await pipeline.promoteSuperTimelineWithOutcome(
-      "c1",
-      [ev("n1"), twin("d1", "e1")],
-      { importedAt: AT, intent: "missed-evidence", note: (o) => `promoted ${o.added.length}` },
-    );
+    const { state } = await pipeline.promoteSuperTimelineWithOutcome("c1", [ev("n1"), twin("d1", "e1")], {
+      importedAt: AT,
+      intent: "missed-evidence",
+      note: (o) => `promoted ${o.added.length}`,
+    });
 
     expect(state.timeline.map((t) => t.description)).toEqual(["promoted 1"]);
     expect(state.timeline[0]).toEqual({
