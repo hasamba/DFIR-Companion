@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,6 +27,7 @@ const SUMMARY: EvaluationSummary = {
   forbiddenConclusions: 0,
   danglingEvidenceRefs: 0,
   confidenceIssues: 0,
+  confidenceBandMisses: 0,
   uncertaintyRecall: 1,
   nextStepRecall: 1,
   durationMs: 1000,
@@ -226,6 +227,37 @@ describe("real-run tolerance and evaluation profile (#1579)", () => {
       createBaseline(identity, SUMMARY, RECORDED, { runs: 3, mode: "all" }),
     );
     expect((await readBaseline(path)).identity.judge).toEqual(identity.judge);
+  });
+
+  it("allows one more off-band confidence per run than the baseline on a real run, none on a mock run (#1747)", () => {
+    const baseline = createBaseline(IDENTITY, SUMMARY, RECORDED, { runs: 3, mode: "all" });
+    const plus = (misses: number) => ({
+      ...SUMMARY,
+      confidenceBandMisses: SUMMARY.confidenceBandMisses + misses,
+    });
+    expect(compareWithBaseline(baseline, plus(1), IDENTITY, REAL_3).status).toBe("passed");
+    expect(compareWithBaseline(baseline, plus(2), IDENTITY, REAL_3).qualityRegressions).toEqual([
+      "confidenceBandMisses",
+    ]);
+    const mock = compareWithBaseline(
+      createBaseline(IDENTITY, SUMMARY, RECORDED),
+      plus(1),
+      IDENTITY,
+      MOCK_PROFILE,
+    );
+    expect(mock.qualityRegressions).toEqual(["confidenceBandMisses"]);
+  });
+
+  it("reads an older baseline without the band-miss count as zero (#1747)", async () => {
+    const dir = await tempDir();
+    const path = await writeBaseline(
+      dir,
+      createBaseline(IDENTITY, SUMMARY, RECORDED, { runs: 3, mode: "all" }),
+    );
+    const raw = JSON.parse(await readFile(path, "utf8")) as { summary: Record<string, unknown> };
+    delete raw.summary.confidenceBandMisses;
+    await writeFile(path, JSON.stringify(raw));
+    expect((await readBaseline(path)).summary.confidenceBandMisses).toBe(0);
   });
 
   it("keeps lower-is-better counts strict on a real run", () => {

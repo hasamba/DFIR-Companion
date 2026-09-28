@@ -96,6 +96,7 @@ export interface CaseQualityScore {
   danglingEvidenceRefs: Array<{ claimId: string; evidenceEventIds: string[] }>;
   forbiddenConclusions: string[];
   confidenceIssues: string[];
+  confidenceBandMisses: string[];
   uncertainties: { total: number; matched: number; recall: number; missed: string[] };
   nextSteps: { total: number; matched: number; recall: number; missed: string[] };
   abstentionPassed: boolean;
@@ -456,26 +457,31 @@ function danglingRefs(output: QualityOutput): CaseQualityScore["danglingEvidence
 const inBand = (claim: QualityClaim, band: { min: number; max: number }): boolean =>
   typeof claim.confidence === "number" && claim.confidence >= band.min && claim.confidence <= band.max;
 
+// A numeric confidence must carry its reason — a rubric breach, hard on every run.
+function confidenceIssues(claims: readonly QualityClaim[]): string[] {
+  return claims
+    .filter((claim) => typeof claim.confidence === "number" && !String(claim.confidenceReason ?? "").trim())
+    .map((claim) => `${claim.id}: confidence has no reason`);
+}
+
 // #1579: a golden claim's band is met when ANY finding that makes the claim sits inside it. A
 // low-confidence side note that merely mentions the claim's terms (e.g. flagging planted text in the
-// same attachment) is not the claim, so it is flagged only when no finding made the claim in band.
-function confidenceIssues(golden: readonly GoldenClaim[], claims: readonly QualityClaim[]): string[] {
-  const issues: string[] = [];
-  const matches = (candidate: GoldenClaim): QualityClaim[] =>
-    claims.filter((claim) => containsTerms(claimText(claim), candidate.requiredTerms));
-  for (const claim of claims) {
-    const expected = golden.find((candidate) => containsTerms(claimText(claim), candidate.requiredTerms));
-    const band = expected?.confidence;
-    if (band && typeof claim.confidence === "number" && !inBand(claim, band)) {
-      if (!matches(expected).some((match) => inBand(match, band))) {
-        issues.push(`${claim.id}: confidence outside ${band.min}-${band.max}`);
-      }
-    }
-    if (typeof claim.confidence === "number" && !String(claim.confidenceReason ?? "").trim()) {
-      issues.push(`${claim.id}: confidence has no reason`);
-    }
-  }
-  return issues;
+// same attachment) is not the claim, so it counts only when no finding made the claim in band.
+// #1747: a band miss is a calibration miss, kept apart from a reason-less confidence and counted
+// once per golden claim. Association is by required terms only, as before.
+function confidenceBandMisses(golden: readonly GoldenClaim[], claims: readonly QualityClaim[]): string[] {
+  return golden.flatMap((expected) => {
+    const band = expected.confidence;
+    if (!band) return [];
+    const scored = claims.filter(
+      (claim) =>
+        typeof claim.confidence === "number" && containsTerms(claimText(claim), expected.requiredTerms),
+    );
+    if (scored.length === 0 || scored.some((claim) => inBand(claim, band))) return [];
+    return [
+      `${expected.id}: confidence outside ${band.min}-${band.max} (${scored.map((c) => c.id).join(", ")})`,
+    ];
+  });
 }
 
 function scoreUncertainties(
@@ -545,7 +551,8 @@ export function scoreCaseQuality(
             output.claims.some((claim) => assertsAsFact(claimText(claim), forbidden.terms)),
           )
           .map((forbidden) => forbidden.id),
-    confidenceIssues: confidenceIssues(golden.claims, output.claims),
+    confidenceIssues: confidenceIssues(output.claims),
+    confidenceBandMisses: confidenceBandMisses(golden.claims, output.claims),
     uncertainties: scoreUncertainties(golden.uncertainties, output.uncertainties),
     nextSteps: scoreNextSteps(golden.nextSteps, output.nextSteps),
     abstentionPassed: !golden.expectAbstention || output.claims.length === 0,
@@ -597,6 +604,9 @@ export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQu
     score.danglingEvidenceRefs.length === 0 &&
     score.forbiddenConclusions.length === 0 &&
     score.confidenceIssues.length === 0 &&
+    // #1747: a band miss fails a deterministic mock case; on a real run it is compared with the
+    // baseline instead of failing the case by itself.
+    (options.real === true || score.confidenceBandMisses.length === 0) &&
     score.uncertainties.recall === 1 &&
     score.nextSteps.recall === 1 &&
     score.abstentionPassed
@@ -630,6 +640,7 @@ export function formatCaseQualityReport(
     ...score.iocs.unexpected.map(unexpectedIocLabel),
     ...score.forbiddenConclusions.map((id) => `forbidden conclusion ${id}`),
     ...score.confidenceIssues,
+    ...score.confidenceBandMisses,
     ...score.uncertainties.missed.map((id) => `missed uncertainty ${id}`),
     ...score.nextSteps.missed.map((id) => `missed next step ${id}`),
   ];

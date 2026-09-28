@@ -11,10 +11,19 @@ export interface EvalCliOptions {
   baselinePath?: string;
   baselineDirectory?: string;
   attestationPath?: string;
+  // #1747: re-compare a saved candidate report against --baseline, with no model call.
+  compareReportPath?: string;
 }
 
 const MODES = new Set<EvalMode>(["all", "extraction", "synthesis", "screenshots"]);
-const VALUE_FLAGS = new Set(["--output", "--baseline", "--write-baseline", "--attestation", "--runs"]);
+const VALUE_FLAGS = new Set([
+  "--output",
+  "--baseline",
+  "--write-baseline",
+  "--attestation",
+  "--runs",
+  "--compare-report",
+]);
 const MAX_RUNS = 10;
 
 function flagValue(argv: readonly string[], flag: string, kind = "a path"): string | undefined {
@@ -42,6 +51,14 @@ export function parseEvalCli(argv: readonly string[]): EvalCliOptions {
     if (value.startsWith("--")) return false;
     return index === 0 || !VALUE_FLAGS.has(argv[index - 1]);
   });
+  const compareReportPath = flagValue(argv, "--compare-report");
+  if (compareReportPath) {
+    // The saved report decides real / runs / mode; a live-run flag here would contradict it.
+    const conflicting = ["--real", "--runs", "--write-baseline"].filter((flag) => argv.includes(flag));
+    if (positional.length) conflicting.push(`mode "${positional[0]}"`);
+    if (conflicting.length)
+      throw new Error(`--compare-report cannot be combined with ${conflicting.join(", ")}`);
+  }
   const candidate = positional[0];
   const mode = candidate && MODES.has(candidate as EvalMode) ? (candidate as EvalMode) : "all";
   return {
@@ -56,5 +73,6 @@ export function parseEvalCli(argv: readonly string[]): EvalCliOptions {
       ? { baselineDirectory: flagValue(argv, "--write-baseline") }
       : {}),
     ...(flagValue(argv, "--attestation") ? { attestationPath: flagValue(argv, "--attestation") } : {}),
+    ...(compareReportPath ? { compareReportPath } : {}),
   };
 }

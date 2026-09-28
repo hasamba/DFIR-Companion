@@ -101,8 +101,9 @@ describe("scoreCaseQuality (#378 production quality gates)", () => {
     const score = scoreCaseQuality(GOLDEN, unsafe);
     expect(score.danglingEvidenceRefs).toEqual([{ claimId: "f1", evidenceEventIds: ["invented-event"] }]);
     expect(score.forbiddenConclusions).toEqual(["invented-actor"]);
-    expect(score.confidenceIssues).toContain("f1: confidence outside 70-95");
-    expect(score.confidenceIssues).toContain("f1: confidence has no reason");
+    // #1747: an off-band confidence is a calibration miss, kept apart from a reason-less one.
+    expect(score.confidenceBandMisses).toEqual(["credential-access: confidence outside 70-95 (f1)"]);
+    expect(score.confidenceIssues).toEqual(["f1: confidence has no reason"]);
     expect(passesCaseQuality(score)).toBe(false);
   });
 
@@ -119,17 +120,26 @@ describe("scoreCaseQuality (#378 production quality gates)", () => {
       confidenceReason: "Only one event, and it is adversarial content.",
     };
     const withSideNote: QualityOutput = { ...OUTPUT, claims: [...OUTPUT.claims, sideNote] };
-    expect(scoreCaseQuality(GOLDEN, withSideNote).confidenceIssues).toEqual([]);
+    expect(scoreCaseQuality(GOLDEN, withSideNote).confidenceBandMisses).toEqual([]);
 
-    // With no finding in band, every out-of-band match is still flagged.
+    // With no finding in band, the golden claim is one band miss (#1747: counted per golden claim),
+    // naming every out-of-band finding that made it.
     const noneInBand: QualityOutput = {
       ...OUTPUT,
       claims: [{ ...OUTPUT.claims[0], confidence: 99 }, sideNote],
     };
-    expect(scoreCaseQuality(GOLDEN, noneInBand).confidenceIssues).toEqual([
-      "f1: confidence outside 70-95",
-      "f2: confidence outside 70-95",
+    expect(scoreCaseQuality(GOLDEN, noneInBand).confidenceBandMisses).toEqual([
+      "credential-access: confidence outside 70-95 (f1, f2)",
     ]);
+  });
+
+  it("fails a mock case on a band miss, but not a real case by itself (#1747)", () => {
+    const miss: QualityOutput = { ...OUTPUT, claims: [{ ...OUTPUT.claims[0], confidence: 99 }] };
+    const score = scoreCaseQuality(GOLDEN, miss);
+    expect(score.confidenceBandMisses).toHaveLength(1);
+    expect(score.confidenceIssues).toEqual([]);
+    expect(passesCaseQuality(score)).toBe(false);
+    expect(passesCaseQuality(score, { real: true })).toBe(true);
   });
 
   it("scores IOC recall, uncertainty handling, and useful next steps", () => {
@@ -562,6 +572,7 @@ describe("passesCaseQuality real-run tolerance (#1217)", () => {
     danglingEvidenceRefs: [],
     forbiddenConclusions: [],
     confidenceIssues: [],
+    confidenceBandMisses: [],
     uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
     nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
     abstentionPassed: true,
@@ -612,6 +623,7 @@ describe("formatCaseQualityReport labels non-gating extras accurately on a real 
     danglingEvidenceRefs: [],
     forbiddenConclusions: [],
     confidenceIssues: [],
+    confidenceBandMisses: [],
     uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
     nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
     abstentionPassed: true,
@@ -636,6 +648,7 @@ describe("formatCaseQualityReport labels non-gating extras accurately on a real 
       claims: { ...scoreWithExtra.claims, missed: ["missed-claim-1"] },
       forbiddenConclusions: ["invented-actor"],
       confidenceIssues: ["f-extra: confidence has no reason"],
+      confidenceBandMisses: [],
       uncertainties: { ...scoreWithExtra.uncertainties, missed: ["missed-uncertainty-1"] },
       nextSteps: { ...scoreWithExtra.nextSteps, missed: ["missed-next-step-1"] },
     };
@@ -659,6 +672,7 @@ describe("formatCaseQualityReport labels unexpected IOCs accurately on a real ru
     danglingEvidenceRefs: [],
     forbiddenConclusions: [],
     confidenceIssues: [],
+    confidenceBandMisses: [],
     uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
     nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
     abstentionPassed: true,

@@ -183,6 +183,15 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
     expect(report.outcome).toBe("quality_failed");
   });
 
+  it("does not treat an off-band confidence as a hard violation on a real run (#1747)", () => {
+    const cases = [dirtyCase("d1"), dirtyCase("d2"), dirtyCase("band", { confidenceBandMisses: 1 })];
+    const report = buildEvaluationReport(realInput(cases));
+    expect(report.outcome).toBe("passed");
+    expect(report.summary.confidenceBandMisses).toBe(1);
+    const noReason = buildEvaluationReport(realInput([...cases, dirtyCase("bare", { confidenceIssues: 1 })]));
+    expect(noReason.outcome).toBe("quality_failed");
+  });
+
   describe("a baseline replaces the recall floor on a real run (#1579)", () => {
     // 2 hits + 1 next-step miss → nextStepRecall aggregate 2/3, below the 0.7 floor.
     const belowFloor = (): EvaluationCaseResult[] => [
