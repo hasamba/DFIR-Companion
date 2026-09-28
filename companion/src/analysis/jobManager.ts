@@ -419,7 +419,6 @@ export class JobManager {
   async hold(jobId: string, reason: string): Promise<void> {
     await this.terminalTransition(jobId, (table, now) => holdJob(table, jobId, reason, now));
   }
-
   async cancel(jobId: string): Promise<CancelResult> {
     await this.ready();
     const job = getJob(this.table, jobId);
