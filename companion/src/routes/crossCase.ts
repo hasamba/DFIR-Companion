@@ -107,6 +107,12 @@ function parseTypes(raw: unknown): IocType[] | null | undefined {
   return picked.length ? picked : null;
 }
 
+/** Whether DFIR_CROSS_CASE turns the cross-case pivot on — only an explicit "on" does. Shared with
+ *  GET /health, so the dashboard skips the /related request instead of meeting a 404 (#1770). */
+export function isCrossCaseEnabled(): boolean {
+  return (process.env.DFIR_CROSS_CASE ?? "off").trim().toLowerCase() === "on";
+}
+
 export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
 
@@ -122,7 +128,7 @@ export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
   // estate is searchable. Deliberately NOT on the Settings writable allowlist — envManager keeps
   // security toggles out of the dashboard's reach, and this one decides whether a case may name
   // other cases.
-  const enabled = (process.env.DFIR_CROSS_CASE ?? "off").trim().toLowerCase() === "on";
+  const enabled = isCrossCaseEnabled();
 
   /** Refuse with the reason, so an operator meeting a 404 is not left guessing which. */
   function disabled(res: Response): Response {

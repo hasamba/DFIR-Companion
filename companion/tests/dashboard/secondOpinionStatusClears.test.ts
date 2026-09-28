@@ -32,6 +32,7 @@ describe("the status line after a second opinion", () => {
     "second opinion: 1 disagreement (0 agreed)",
     "second opinion failed: provider timeout",
     "second opinion error: Failed to fetch",
+    "second opinion not run: nothing to review — import evidence and synthesize the case first",
   ])("clears %j on the next idle", (text) => {
     const { status, api } = statusHarness(text);
     api.clearTransientStatus();

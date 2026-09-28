@@ -111,7 +111,7 @@
     // is stale once any later run ends; it outlived an import and a re-synthesis before. Anchored so
     // the in-flight "running second opinion …" line survives the idle its inner synthesis pushes.
     if (
-      /synthesiz|applying scope|marking false positive|import|catching up|^second opinion(:| failed| error)/i.test(
+      /synthesiz|applying scope|marking false positive|import|catching up|^second opinion(:| failed| error| not run)/i.test(
         el.textContent,
       )
     ) {

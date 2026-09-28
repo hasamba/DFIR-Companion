@@ -187,6 +187,14 @@ export class SlidingWindowLimiter {
     return rec.count <= this.maxRequests;
   }
 
+  /** Time left in the key's current window, in ms: when a refused caller may try again (#1794).
+   *  0 for a key with no window or an expired one. Pass the same `now` the refusal used, so the
+   *  answer cannot fall to 0 between the two calls at the window's last millisecond. */
+  retryAfterMs(key: string, now = Date.now()): number {
+    const rec = this.counts.get(key);
+    return rec ? Math.max(0, rec.windowStart + this.windowMs - now) : 0;
+  }
+
   /** Drop windows that have already fully expired — nothing reads them again until the key
    *  reappears, at which point tryAcquire starts a fresh window anyway. Bounds memory for a
    *  long-running process against a stream of distinct keys (this limiter runs before any
@@ -207,13 +215,22 @@ export class SlidingWindowLimiter {
   middleware(keyFn: (req: Request) => string) {
     return (req: Request, res: Response, next: NextFunction): void => {
       const key = keyFn(req);
-      if (!this.tryAcquire(key)) {
-        res.status(429).json({ error: "rate limit exceeded, slow down" });
+      const now = Date.now();
+      if (!this.tryAcquire(key, now)) {
+        sendRateLimited(res, this.retryAfterMs(key, now), "rate limit exceeded, slow down");
         return;
       }
       next();
     };
   }
+}
+
+/** A 429 that says when to retry — the `Retry-After` header (whole seconds, at least 1) and the
+ *  same wait in ms in the body, as {@link AttemptLimiter.middleware} answers (#1794). */
+export function sendRateLimited(res: Response, retryAfterMs: number, error: string): void {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  res.setHeader("Retry-After", String(seconds));
+  res.status(429).json({ error, retryAfterMs: Math.max(retryAfterMs, 1) });
 }
 
 // Module-level singletons, created once by the server. Each gets its own periodic sweep so a

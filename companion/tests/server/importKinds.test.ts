@@ -51,9 +51,14 @@ describe("rejectIfAiImportOverBudget — the AI-cost gate for CSV/log imports", 
   beforeEach(() => resetLimiters());
   afterEach(() => resetLimiters());
 
-  const mockRes = (): { res: Response; codes: number[] } => {
+  const mockRes = (): { res: Response; codes: number[]; headers: Record<string, string> } => {
     const codes: number[] = [];
+    const headers: Record<string, string> = {};
     const res = {
+      setHeader(k: string, v: string) {
+        headers[k] = v;
+        return this;
+      },
       status(code: number) {
         codes.push(code);
         return this;
@@ -62,7 +67,7 @@ describe("rejectIfAiImportOverBudget — the AI-cost gate for CSV/log imports", 
         return this;
       },
     } as unknown as Response;
-    return { res, codes };
+    return { res, codes, headers };
   };
 
   it("never meters a deterministic kind, however fast it is called", () => {
@@ -86,6 +91,19 @@ describe("rejectIfAiImportOverBudget — the AI-cost gate for CSV/log imports", 
     }
     expect(rejected).toBeGreaterThan(0); // the 21st+ CSV import is throttled
     expect(last429).toBe(true);
+  });
+
+  // #1794 — the 429 says when the budget frees up, like the auth and capture limiters.
+  it("sends Retry-After with the 429", () => {
+    let last = mockRes();
+    for (let i = 0; i < 25; i++) {
+      last = mockRes();
+      rejectIfAiImportOverBudget("csv", "case-c", last.res);
+    }
+    expect(last.codes).toEqual([429]);
+    const secs = Number(last.headers["Retry-After"]);
+    expect(secs).toBeGreaterThanOrEqual(1);
+    expect(secs).toBeLessThanOrEqual(60);
   });
 
   it("meters per case — one case's CSV flood does not throttle another", () => {
