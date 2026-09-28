@@ -183,7 +183,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       if (options.stateStore) {
         const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
         groups.HOST.push(...d.hosts);
-        groups.USER.push(...d.accounts);
+        groups.USER.push(...d.accounts, ...(d.usernames ?? []));
         groups.DOMAIN.push(...d.internalDomains);
       }
       for (const e of disc.discovered) groups[e.category]?.push(e.value);

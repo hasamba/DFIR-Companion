@@ -839,9 +839,11 @@ describe("anonymizer — discoveries()", () => {
     a.apply("WIN11\\vagrant on 10.0.0.5");
     a.apply("WIN11\\vagrant again"); // dup → not repeated
     const disc = a.discoveries();
-    expect(disc).toContainEqual({ value: "WIN11\\vagrant", category: "USER" });
+    // #1780: the account is tokenized as its two halves, so one person keeps one USER token.
+    expect(disc).toContainEqual({ value: "vagrant", category: "USER" });
+    expect(disc).toContainEqual({ value: "WIN11", category: "DOMAIN" });
     expect(disc).toContainEqual({ value: "10.0.0.5", category: "IP" });
-    expect(disc.filter((e) => e.value === "WIN11\\vagrant")).toHaveLength(1);
+    expect(disc.filter((e) => e.value === "vagrant")).toHaveLength(1);
   });
   it("never reports one-way secrets (they are placeholder-redacted, not tokenized)", () => {
     const a = createAnonymizer(policy({}, true), NONE);
@@ -1033,8 +1035,11 @@ describe("anonymizer — IPv6 detector false positives must not blind other dete
       internalDomains: ["corp.local"],
     });
     const out = a.apply("ac::admin@corp.local");
-    expect(out).toBe("ac::ANON_USER_1");
-    expect(a.discoveries()).toEqual([{ value: "admin@corp.local", category: "USER" }]);
+    expect(out).toBe("ac::ANON_USER_1@ANON_DOMAIN_1");
+    expect(a.discoveries()).toEqual([
+      { value: "admin", category: "USER" },
+      { value: "corp.local", category: "DOMAIN" },
+    ]);
     expect(a.restore(out)).toBe("ac::admin@corp.local");
   });
 
