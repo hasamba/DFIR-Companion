@@ -102,6 +102,23 @@ describe("pipeline.importVelociraptorArtifact (#1756)", () => {
     expect(events.every((e) => e.asset === "DESKTOP-01")).toBe(true);
   });
 
+  it("keeps a result over the import-file cap on the Velociraptor path", async () => {
+    const { pipeline, stateStore } = await setup();
+    const debug = createImportDebugRecorder();
+    const prev = process.env.DFIR_MAX_IMPORT_FILE_MB;
+    process.env.DFIR_MAX_IMPORT_FILE_MB = String(100 / (1024 * 1024)); // 100 bytes — below MAP's size
+    try {
+      await pipeline.importVelociraptorArtifact("c1", MAP, { ...base, debug });
+    } finally {
+      if (prev === undefined) delete process.env.DFIR_MAX_IMPORT_FILE_MB;
+      else process.env.DFIR_MAX_IMPORT_FILE_MB = prev;
+    }
+    const events = (await stateStore.load("c1")).forensicTimeline;
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((e) => e.sources?.includes("Hayabusa"))).toBe(false);
+    expect(debug.summary().fallbacks).toMatchObject({ hayabusa_over_import_file_cap: 1 });
+  });
+
   it("leaves a non-Hayabusa artifact on the Velociraptor importer", async () => {
     const { pipeline, stateStore } = await setup();
     await pipeline.importVelociraptorArtifact("c1", MAP, { ...base, label: "0003_velo-hunt_H.X_Other.json" });

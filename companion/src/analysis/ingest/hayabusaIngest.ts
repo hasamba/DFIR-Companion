@@ -7,7 +7,9 @@
  * how it arrived. `importVelociraptorArtifact` asks the same question auto-detect asks
  * (looksLikeHayabusaNamedExport) and hands a Hayabusa result to `importHayabusa`, carrying over the
  * options the pull paths set: the hunt-wide event budget, the flow's host, the GUI link, and the
- * partly-read mark. Moved out of endpointImports.ts, which had no room under the file-size cap.
+ * partly-read mark. A result over DFIR_MAX_IMPORT_FILE_MB keeps the batched Velociraptor path: the
+ * Hayabusa importer is whole-file, and that is the cap the drop folder applies to the same file.
+ * Moved out of endpointImports.ts, which had no room under the file-size cap.
  */
 import {
   looksLikeHayabusaNamedExport,
@@ -24,6 +26,7 @@ import { deltaIocs, hostIdentityDelta, knownHostIdentity, noteEmptyImport } from
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
 import { importVelociraptor } from "./endpointImports.js";
+import { maxImportFileBytes } from "./importFileCap.js";
 
 // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
 // other deterministic paths there is no AI call: the matched Sigma rule's level drives
@@ -118,6 +121,12 @@ export async function importVelociraptorArtifact(
   opts: Parameters<typeof importVelociraptor>[3],
 ): Promise<InvestigationState> {
   if (!looksLikeHayabusaNamedExport(opts.label, text)) return importVelociraptor(ctx, caseId, text, opts);
+  // The Hayabusa importer holds the file whole. Above the cap the drop folder would refuse to read,
+  // keep the batched Velociraptor path so a fleet-sized result cannot exhaust the server.
+  if (Buffer.byteLength(text, "utf8") > maxImportFileBytes()) {
+    opts.debug?.fallback("hayabusa_over_import_file_cap");
+    return importVelociraptor(ctx, caseId, text, opts);
+  }
   opts.debug?.detected("hayabusa", { confident: true, decision: "velociraptor_hayabusa_artifact" });
   return importHayabusa(ctx, caseId, text, {
     label: opts.label,
