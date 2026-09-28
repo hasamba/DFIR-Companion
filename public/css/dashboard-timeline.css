@@ -93,13 +93,14 @@
 /* Per-IOC provenance badge — distinct from the verdict badge. Accent for detection, muted grey for telemetry. */
 .ioc-prov-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; }
 .ioc-prov-detection { background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--border-color); }
-.ioc-prov-telemetry { background: var(--border-subtle); color: var(--text-faint); border: 1px solid var(--border-strong); }
-/* Composite IOC risk badge (#63) — severity-keyed colours; benign/low recede. */
+.ioc-prov-telemetry { background: var(--border-subtle); color: var(--text-muted); border: 1px solid var(--border-strong); }
+/* Composite IOC risk badge (#63) — severity-keyed colours; benign/low recede. Low and the telemetry
+   badge use --text-muted, not --text-faint: faint on --border-subtle is 4.14:1 in dark (#1789). */
 .ioc-risk-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
 .ioc-risk-critical { background: var(--danger-bg); color: var(--badge-danger-text); border: 1px solid var(--danger-border); }
 .ioc-risk-high { background: var(--warning-bg); color: var(--sev-high); border: 1px solid var(--warning-border); }
 .ioc-risk-medium { background: var(--warning-bg); color: var(--sev-medium); border: 1px solid var(--warning-border); }
-.ioc-risk-low { background: var(--border-subtle); color: var(--text-faint); border: 1px solid var(--border-strong); }
+.ioc-risk-low { background: var(--border-subtle); color: var(--text-muted); border: 1px solid var(--border-strong); }
 .ioc-risk-benign { background: var(--success-bg); color: var(--sev-low); border: 1px solid var(--success-border); }
 .ioc-noise-chk { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-muted); cursor: pointer; }
 .ioc-noise-chk input { cursor: pointer; }
