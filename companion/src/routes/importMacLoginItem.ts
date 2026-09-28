@@ -9,6 +9,7 @@ import { detectBinaryImportKind, MAC_LOGIN_ITEM_FILENAMES } from "../analysis/ma
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "./importFileHead.js";
+import { refuseImportPath } from "./serverPathGuard.js";
 
 /**
  * The two byte-native import routes for macOS login-item containers — both BTM generations, the
@@ -35,7 +36,7 @@ export function registerMacLoginItemImportRoute(
   ctx: RouteContext,
   settleDeps: SettleDeps | null,
 ): void {
-  const { options } = ctx;
+  const { options, store } = ctx;
 
   // Capped at the PARSER's own bound (32 MiB), never the codebase-wide text-import ceiling
   // (256 MiB by default) — reading up to that much into memory only to have the parser reject it
@@ -49,6 +50,9 @@ export function registerMacLoginItemImportRoute(
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath)
       return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
+    // The same deny-list as /import-file (#1792): never the Companion's config or its case storage.
+    const refusal = await refuseImportPath(filePath, store, caseId);
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const originalName = basename(filePath);
 
     let bytes: Buffer;

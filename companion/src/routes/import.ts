@@ -57,8 +57,9 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
-import { hasParseProgress, isAiDependent, refuseDetectedImport } from "./importKinds.js";
-import { emitImportRefused } from "./importDebugEmit.js";
+import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
+import { siemFallbackWarning } from "./importNotes.js";
+import { refuseImportPath } from "./serverPathGuard.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
@@ -86,6 +87,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     applyDeobfuscationToCase,
   } = ctx;
   registerImportResumeHandler(ctx);
+  // The per-case AI switch and status line, as the shared AI-off gate reads them (#1806).
+  const aiEnabled = async (id: string): Promise<boolean> => (await getControl(id)).enabled;
+  const onAiStatus: typeof options.onAiStatus = (id, event) => options.onAiStatus?.(id, event);
   registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
   registerImportAssetHostGuard(app); // 400 a malformed "asset for this import" before either generic route runs (#1496)
 
@@ -322,17 +326,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
       // AI-dependent imports respect the per-case AI toggle — rationale on isAiDependent().
       const aiDependent = isAiDependent(kind);
-      if (aiDependent && !(await getControl(caseId)).enabled) {
-        options.onAiStatus?.(caseId, {
-          status: "idle",
-          at: new Date().toISOString(),
-          detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
-        });
-        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
-        return res
-          .status(202)
-          .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
-      }
+      const body = { file: storedName, minSeverity, ...siemFallbackWarning(kind, debug) }; // #1795
+      if (await refuseAiOffImport({ kind, caseId, res, aiEnabled, onAiStatus, debug, body })) return;
 
       const job = options.jobManager?.register({
         caseId,
@@ -353,7 +348,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         }),
       });
       await job?.durable;
-      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
+      res.status(202).json({ accepted: true, kind, ...body });
       const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) =>
         options.onAiStatus?.(caseId, {
           status: "analyzing",
@@ -528,7 +523,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Import a large file from the server's local filesystem by path — bypasses the browser
   // FileReader memory limit for files too large to upload through the dashboard (400 MB+). Same
   // pipeline as /import. Reading an operator-named path is intentional and gated global-admin (like
-  // DFIR_NSRL_FILE / KEV import-file), not case-write. Body: { path, minSeverity? }.
+  // DFIR_NSRL_FILE / KEV import-file), not case-write — minus a deny-list (serverPathGuard.ts, #1792).
+  // Body: { path, minSeverity? }.
   app.post("/cases/:id/import-file", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
@@ -543,6 +539,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath)
       return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
+    const refusal = await refuseImportPath(filePath, store, caseId);
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error }); // not .env/cases (#1792)
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
 
     // Detect the import kind from a bounded HEAD sample — never read the whole file just to sniff
@@ -612,17 +610,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
       // Same AI-off gate as /import above — rationale on isAiDependent().
       const aiDependent = isAiDependent(kind);
-      if (aiDependent && !(await getControl(caseId)).enabled) {
-        options.onAiStatus?.(caseId, {
-          status: "idle",
-          at: new Date().toISOString(),
-          detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
-        });
-        emitImportRefused(caseId, debug, "ai_off"); // stored as evidence, not analyzed (#1736)
-        return res
-          .status(202)
-          .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
-      }
+      const body = { file: storedName, minSeverity, ...siemFallbackWarning(kind, debug) }; // #1795
+      if (await refuseAiOffImport({ kind, caseId, res, aiEnabled, onAiStatus, debug, body })) return;
 
       const job = options.jobManager?.register({
         caseId,
@@ -635,7 +624,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         parameters: importJobParameters({ kind, storedName, seq, importedAt, minSeverity, streaming, req }),
       });
       await job?.durable;
-      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
+      res.status(202).json({ accepted: true, kind, ...body });
       const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) =>
         options.onAiStatus?.(caseId, {
           status: "analyzing",
@@ -819,8 +808,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         rows: rows.length,
       });
 
+      // The per-case AI switch, as on /import (#1806): AI off = saved, not sent to the model.
+      const body = { file: storedName, rows: rows.length };
+      if (await refuseAiOffImport({ kind: "csv", caseId, res, aiEnabled, onAiStatus, body })) return;
       // Acknowledge immediately; the dashboard watches AI status + state over the WS.
-      res.status(202).json({ accepted: true, file: storedName, rows: rows.length });
+      res.status(202).json({ accepted: true, ...body });
 
       // Background: extract events from the rows, then synthesize conclusions.
       options.onAiStatus?.(caseId, {
@@ -883,7 +875,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         rows: lines.length,
       });
 
-      res.status(202).json({ accepted: true, file: storedName, lines: lines.length });
+      const body = { file: storedName, lines: lines.length }; // AI off = saved, not analyzed (#1806)
+      if (await refuseAiOffImport({ kind: "log", caseId, res, aiEnabled, onAiStatus, body })) return;
+      res.status(202).json({ accepted: true, ...body });
 
       options.onAiStatus?.(caseId, {
         status: "analyzing",
