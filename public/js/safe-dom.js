@@ -88,20 +88,34 @@
     return clean.join(";");
   }
 
-  // This is a first, browser-independent pass. The DOM walk below remains authoritative: regex is
-  // useful for reducing what reaches the inert parser, but it is never treated as an HTML parser.
+  // Decide one attribute from its name alone, the way the DOM walk sees it after a real parse.
+  // Returns null to drop it, or { name, value } to keep it (style becomes data-safe-style).
+  function attributeAction(tagName, isSvg, name, value) {
+    var lower = String(name).toLowerCase();
+    var tag = String(tagName || "").toUpperCase();
+    if (lower === "style" || lower === "data-safe-style") {
+      var css = sanitizeCssText(value);
+      return css ? { name: "data-safe-style", value: css } : null;
+    }
+    if (lower.indexOf("on") === 0 || lower === "srcdoc" || lower === "action" || lower === "formaction" || lower === "srcset") return null;
+    var allowed = lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0 ||
+      (isSvg ? SAFE_SVG_ATTRIBUTES.has(lower) : SAFE_ATTRIBUTES.has(lower) || lower === "href");
+    if (!allowed) return null;
+    if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(value, lower, tag)) return null;
+    return { name: String(name), value: String(value == null ? "" : value) };
+  }
+
+  // A first, browser-independent pass that only removes blocked elements. It needs a literal "<",
+  // which escaped evidence never holds. Attributes are NOT touched here: a regex cannot tell an
+  // attribute from escaped text such as " only=equals" or a tooltip value, and rewriting either
+  // changes evidence on screen (#1787). The DOM walk below is authoritative for attributes.
   function precleanHtml(value) {
     var html = String(value == null ? "" : value);
-    html = html.replace(/<\/?(?:script|iframe|object|embed|style|template|base|meta|link|math)\b[^>]*>/gi, "");
-    html = html.replace(/\s(?:on[a-z0-9_-]+|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-    html = html.replace(/\sstyle\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi, function (_all, _quoted, doubleValue, singleValue, bareValue) {
-      var css = sanitizeCssText(doubleValue || singleValue || bareValue || "");
-      return css ? ' data-safe-style="' + css.replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"' : "";
-    });
-    return html;
+    return html.replace(/<\/?(?:script|iframe|object|embed|style|template|base|meta|link|math)\b[^>]*>/gi, "");
   }
 
   var api = {
+    attributeAction: attributeAction,
     isSafeUrl: isSafeUrl,
     precleanHtml: precleanHtml,
     sanitizeCssText: sanitizeCssText,
@@ -119,14 +133,6 @@
   var trustedTypes = root.trustedTypes;
   var parserPolicy = trustedTypes ? trustedTypes.createPolicy("dfir-parser", { createHTML: function (input) { return input; } }) : null;
 
-  function isAllowedAttribute(element, name) {
-    var lower = name.toLowerCase();
-    if (lower.indexOf("on") === 0 || lower === "srcdoc" || lower === "action" || lower === "formaction" || lower === "srcset") return false;
-    if (lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0) return true;
-    if (element.namespaceURI === "http://www.w3.org/2000/svg") return SAFE_SVG_ATTRIBUTES.has(lower);
-    return SAFE_ATTRIBUTES.has(lower) || lower === "href";
-  }
-
   function sanitizeElement(element) {
     var name = element.tagName.toUpperCase();
     if (BLOCKED_ELEMENTS.has(name)) {
@@ -138,27 +144,16 @@
       return;
     }
 
+    var isSvg = element.namespaceURI === "http://www.w3.org/2000/svg";
     Array.prototype.slice.call(element.attributes).forEach(function (attribute) {
-      var attrName = attribute.name.toLowerCase();
-      if (attrName === "style") {
-        var css = sanitizeCssText(attribute.value);
-        element.removeAttribute(attribute.name);
-        if (css) element.setAttribute("data-safe-style", css);
-        return;
-      }
-      if (!isAllowedAttribute(element, attrName)) {
+      var verdict = attributeAction(name, isSvg, attribute.name, attribute.value);
+      if (!verdict) {
         element.removeAttribute(attribute.name);
         return;
       }
-      if (URL_ATTRIBUTES.has(attrName) && !isSafeUrl(attribute.value, attrName, name)) {
-        element.removeAttribute(attribute.name);
-        return;
-      }
-      if (attrName === "data-safe-style") {
-        var safeCss = sanitizeCssText(attribute.value);
-        if (safeCss) element.setAttribute(attribute.name, safeCss);
-        else element.removeAttribute(attribute.name);
-      }
+      if (verdict.name === attribute.name && verdict.value === attribute.value) return;
+      if (verdict.name !== attribute.name) element.removeAttribute(attribute.name);
+      element.setAttribute(verdict.name, verdict.value);
     });
 
     if (name === "A" && element.getAttribute("target") === "_blank") {

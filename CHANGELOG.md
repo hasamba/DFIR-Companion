@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **No Related Cases 404s with cross-case off** — /health reports the cross-case flag and the dashboard skips the related-cases request when it is off (closes #1770)
 - **Retry-After on AI rate-limit refusals** — the AI-route and CSV/log-import 429s now say how long to wait, in the header and the body (closes #1794)
 - **2nd opinion on an empty case is a refusal, not an error** — answers "not run: nothing to review", fails no job and leaves the AI pill idle (closes #1769, closes #1771)
+- **Evidence text no longer rewritten on screen** — the sanitizer stops deleting text like ` onload=1`, ` only=`, ` OneDrive=` or ` style=` from timeline rows, comments, tooltips and the exported deck (closes #1787)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
 
