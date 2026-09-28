@@ -41,8 +41,8 @@ class FakeElement {
   addEventListener(type: string, listener: Listener): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
-  async fire(type: string): Promise<void> {
-    for (const listener of this.listeners.get(type) ?? []) await listener({ target: this });
+  async fire(type: string, target: unknown = this): Promise<void> {
+    for (const listener of this.listeners.get(type) ?? []) await listener({ target });
   }
   appendChild(): void {}
   focus(): void {}
@@ -311,6 +311,20 @@ describe("hunt workbench — a late validate reply (#1777)", () => {
     h.el("hqStatus").textContent = "before";
     h.el("hqQuery").value = "";
     await h.el("hqQuery").fire("input");
+    held.release();
+    await h.settle();
+
+    expect(h.el("hqStatus").textContent).toBe("before");
+  });
+
+  it("an autocomplete pick makes an in-flight validate stale", async () => {
+    const h = await mount();
+    h.el("hqQuery").value = "severity>=High";
+    const held = h.holdValidate();
+    void h.el("hqExplain").fire("click");
+    await h.settle();
+    h.el("hqStatus").textContent = "before";
+    await h.el("hqSuggestions").fire("click", { closest: () => ({ dataset: { hqComplete: "host.name" } }) });
     held.release();
     await h.settle();
 

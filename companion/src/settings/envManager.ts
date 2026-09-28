@@ -401,17 +401,15 @@ export async function reloadEnvPrefix(prefix: string): Promise<string[]> {
       applied.push(k);
     }
   }
-  // Keys a save removed from .env (#1785). Only these are deleted from process.env — a variable
-  // that came from the shell and never from .env is not this reload's to drop — and each removal
-  // is consumed here, so a later reload leaves a value supplied afterwards alone.
-  for (const k of [...pendingEnvRemovals]) {
-    if (!k.startsWith(prefix) || Object.hasOwn(raw, k)) continue;
-    for (const name of [k, legacyVisionAlias(k)]) {
-      if (!name || !pendingEnvRemovals.has(name) || Object.hasOwn(raw, name)) continue;
-      pendingEnvRemovals.delete(name);
-      delete process.env[name];
-    }
-    applied.push(k);
+  // Keys a save removed from .env (#1785). Only lines that were really in the file are deleted
+  // from process.env — a variable that came from the shell and never from .env is not this
+  // reload's to drop — and each removal is consumed here, so a later reload leaves a value
+  // supplied afterwards alone. A vision key's legacy alias goes with the key it stood in for.
+  for (const [key, names] of [...pendingEnvRemovals]) {
+    if (!key.startsWith(prefix)) continue;
+    pendingEnvRemovals.delete(key);
+    names.filter((name) => !Object.hasOwn(raw, name)).forEach((name) => delete process.env[name]);
+    applied.push(key);
   }
   return applied;
 }
@@ -446,8 +444,11 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
 // blocks every save) for a configuration nothing else is supposed to be writing.
 let envWriteQueue: Promise<unknown> = Promise.resolve();
 
-/** Keys removed from .env by a save and not yet dropped from process.env by a reload (#1785). */
-const pendingEnvRemovals = new Set<string>();
+/**
+ * Removals a save made in .env and a reload has not yet applied to process.env (#1785): the key
+ * the caller unset → the names whose lines were actually removed (the key and/or its legacy alias).
+ */
+const pendingEnvRemovals = new Map<string, readonly string[]>();
 
 function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {
   // Run whether or not the previous save succeeded: one failed write must not wedge every later one.
@@ -470,13 +471,25 @@ export async function updateEnv(updates: Record<string, string>, unset: readonly
     }
   }
   if (unset.some((key) => !ENV_KEY_SYNTAX.test(key))) throw new Error("refusing to remove a malformed .env key");
-  const removed = new Set(unset.flatMap((key) => [key, legacyVisionAlias(key) ?? key]));
+  const targets = new Map(unset.map((key) => [key, [key, legacyVisionAlias(key) ?? key]]));
   // Read and write as one step, or a concurrent save that read the same baseline overwrites us.
   return withEnvWriteLock(async () => {
-    await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(await readRaw(), updates, removed));
-    // Only after the write landed: a failed save removed nothing, so nothing is queued.
-    removed.forEach((key) => pendingEnvRemovals.add(key));
-    Object.keys(updates).forEach((key) => pendingEnvRemovals.delete(key));
+    const raw = await readRaw();
+    const inFile = parseLines(raw);
+    const removed = new Set([...targets.values()].flat());
+    await atomicWrite(resolveEnvFilePath(), applyEnvUpdates(raw, updates, removed));
+    // Only after the write landed: a failed save removed nothing, so nothing is queued. Only names
+    // that had a line are queued, so a shell-only legacy alias survives the reload.
+    for (const [key, names] of targets) {
+      const gone = [...new Set(names)].filter((name) => Object.hasOwn(inFile, name));
+      if (gone.length > 0) pendingEnvRemovals.set(key, gone);
+    }
+    for (const key of Object.keys(updates)) {
+      pendingEnvRemovals.delete(key);
+      pendingEnvRemovals.forEach((names, owner) =>
+        pendingEnvRemovals.set(owner, names.filter((name) => name !== key)),
+      );
+    }
   });
 }
 

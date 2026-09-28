@@ -73,6 +73,27 @@ describe("reloadEnvPrefix after an unset", () => {
     expect(process.env.DFIR_AI_IMAGE_DETAIL).toBeUndefined();
   });
 
+  it("leaves a legacy alias that only the shell supplies", async () => {
+    await writeFile(envFile, "DFIR_VISION_PROVIDER=openai\n", "utf8");
+    process.env.DFIR_VISION_PROVIDER = "openai";
+    process.env.DFIR_AI_PROVIDER = "openrouter";
+    await updateEnv({}, ["DFIR_VISION_PROVIDER"]);
+    await reloadEnvPrefix("DFIR_VISION_");
+
+    expect(process.env.DFIR_VISION_PROVIDER).toBeUndefined();
+    expect(process.env.DFIR_AI_PROVIDER).toBe("openrouter");
+  });
+
+  it("drops a legacy-only vision value on the reload of the new name", async () => {
+    await writeFile(envFile, "DFIR_AI_PROVIDER=openai\n", "utf8");
+    process.env.DFIR_AI_PROVIDER = "openai";
+    await updateEnv({}, ["DFIR_VISION_PROVIDER"]);
+    const applied = await reloadEnvPrefix("DFIR_VISION_");
+
+    expect(process.env.DFIR_AI_PROVIDER).toBeUndefined();
+    expect(applied).toContain("DFIR_VISION_PROVIDER");
+  });
+
   it("consumes the removal: a later reload leaves a newly supplied value alone", async () => {
     await writeFile(envFile, "DFIR_CROWDSTRIKE_CLOUD=eu-1\n", "utf8");
     await updateEnv({}, ["DFIR_CROWDSTRIKE_CLOUD"]);

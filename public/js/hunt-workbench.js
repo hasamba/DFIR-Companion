@@ -537,6 +537,7 @@ function initialize() {
       query.selectionStart,
       "end",
     );
+    statusSeq += 1; // a completion is a query edit too: an in-flight validate is now stale
     query.focus();
     renderSuggestions();
   });
