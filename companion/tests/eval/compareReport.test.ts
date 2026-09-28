@@ -125,6 +125,19 @@ describe("loadSavedCandidate (#1747)", () => {
   });
 });
 
+describe("loadSavedCandidate refuses an empty evaluation (#1747, Codex review)", () => {
+  it("rejects a report that claims zero cases or zero extraction checks", async () => {
+    const empty = buildEvaluationReport(
+      candidate({ cases: [], extraction: [], expected: { cases: 0, extraction: 0, screenshot: 0 } }),
+    );
+    await expect(loadSavedCandidate(await saved(empty))).rejects.toThrow();
+    const noCases = buildEvaluationReport(
+      candidate({ cases: [], expected: { cases: 0, extraction: 1, screenshot: 0 } }),
+    );
+    await expect(loadSavedCandidate(await saved(noCases))).rejects.toThrow();
+  });
+});
+
 describe("recompareReport (#1747)", () => {
   it("recomputes the outcome against a baseline with no model call", async () => {
     const input = await loadSavedCandidate(await saved(buildEvaluationReport(candidate())));

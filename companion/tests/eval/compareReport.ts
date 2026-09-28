@@ -80,7 +80,15 @@ const savedReportSchema = z.object({
   real: z.literal(true, { errorMap: () => ({ message: "only a real (--real) run can be compared" }) }),
   runs: z.number().int().min(1),
   mode: z.string(),
-  expected: z.object({ cases: measure, extraction: measure, screenshot: measure }).strict(),
+  // An attestation must rest on real work: at least one case and one extraction check per run
+  // (Codex review — zero of each scored as a vacuous perfect run). Screenshots may be absent.
+  expected: z
+    .object({
+      cases: z.number().int().min(1),
+      extraction: z.number().int().min(1),
+      screenshot: z.number().int().min(0),
+    })
+    .strict(),
   skippedReason: z.string().optional(),
   providerFailureReason: z.string().optional(),
   runnerError: z.string().optional(),
