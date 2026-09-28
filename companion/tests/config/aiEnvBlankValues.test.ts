@@ -26,7 +26,9 @@ describe("visionEnv treats a blank value as unset", () => {
 
 describe("withVisionEnvAliases shows what runtime uses for a blank new name", () => {
   it("surfaces the legacy value under a blank new name", () => {
-    expect(withVisionEnvAliases({ DFIR_VISION_MODEL: "", DFIR_AI_MODEL: "gpt" }).DFIR_VISION_MODEL).toBe("gpt");
+    expect(withVisionEnvAliases({ DFIR_VISION_MODEL: "", DFIR_AI_MODEL: "gpt" }).DFIR_VISION_MODEL).toBe(
+      "gpt",
+    );
   });
 });
 
@@ -54,8 +56,8 @@ describe("role providers inherit on a blank value", () => {
   });
 
   it("a named provider still wins", () => {
-    expect(AI_ROLE_SOURCES["second-opinion"].provider({ ...env, DFIR_AI_SECOND_OPINION_PROVIDER: "gemini" })).toBe(
-      "gemini",
-    );
+    expect(
+      AI_ROLE_SOURCES["second-opinion"].provider({ ...env, DFIR_AI_SECOND_OPINION_PROVIDER: "gemini" }),
+    ).toBe("gemini");
   });
 });

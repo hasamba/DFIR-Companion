@@ -42,7 +42,11 @@ describe("updateEnv with unset keys", () => {
   });
 
   it("removes the legacy DFIR_AI_ alias of an unset DFIR_VISION_ key", async () => {
-    await writeFile(envFile, "DFIR_VISION_PROVIDER=openai\nDFIR_AI_PROVIDER=openai\nDFIR_AI_MODEL=m\n", "utf8");
+    await writeFile(
+      envFile,
+      "DFIR_VISION_PROVIDER=openai\nDFIR_AI_PROVIDER=openai\nDFIR_AI_MODEL=m\n",
+      "utf8",
+    );
     await updateEnv({}, ["DFIR_VISION_PROVIDER"]);
 
     const written = await readFile(envFile, "utf8");
@@ -129,8 +133,8 @@ describe("validateEnvUpdates with unset keys", () => {
 
   it("rejects a key off the allowlist, a non-string entry and a non-array list", () => {
     expect(validateEnvUpdates({}, ["PATH"])).toEqual(["PATH"]);
-    expect(validateEnvUpdates({}, [42] as unknown[])).toHaveLength(1);
-    expect(validateEnvUpdates({}, "DFIR_LOCAL_TELEMETRY" as unknown as unknown[])).toHaveLength(1);
+    expect(validateEnvUpdates({}, [42])).toHaveLength(1);
+    expect(validateEnvUpdates({}, "DFIR_LOCAL_TELEMETRY")).toHaveLength(1);
   });
 
   it("rejects a key that is both written and unset, including a vision key's legacy alias", () => {
@@ -148,7 +152,9 @@ describe("POST /settings/env with unset", () => {
     await writeFile(envFile, "DFIR_LOCAL_TELEMETRY=off\n", "utf8");
     setServerLogger(createConsoleLogger("info"));
     const app = createApp(new CaseStore(await mkdtemp(join(dir, "cases-"))), {});
-    const res = await request(app).post("/settings/env").send({ updates: {}, unset: ["DFIR_LOCAL_TELEMETRY"] });
+    const res = await request(app)
+      .post("/settings/env")
+      .send({ updates: {}, unset: ["DFIR_LOCAL_TELEMETRY"] });
 
     expect(res.status).toBe(200);
     expect(await readFile(envFile, "utf8")).not.toContain("DFIR_LOCAL_TELEMETRY");

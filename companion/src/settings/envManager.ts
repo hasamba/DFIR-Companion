@@ -303,7 +303,8 @@ function safeKeyLabel(key: string): string {
 export function validateEnvUpdates(updates: Record<string, unknown>, unset: unknown = []): string[] {
   if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string")) return ["unset"];
   const removed = new Set(unset.flatMap((key: string) => [key, legacyVisionAlias(key) ?? key]));
-  const rejected = unset.length > 0 ? validateEnvUpdates(Object.fromEntries(unset.map((key) => [key, ""]))) : [];
+  const rejected =
+    unset.length > 0 ? validateEnvUpdates(Object.fromEntries(unset.map((key) => [key, ""]))) : [];
   for (const key of Object.keys(updates)) if (removed.has(key)) rejected.push(safeKeyLabel(key));
   for (const [key, value] of Object.entries(updates)) {
     if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
@@ -460,7 +461,10 @@ function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {
   return result;
 }
 
-export async function updateEnv(updates: Record<string, string>, unset: readonly string[] = []): Promise<void> {
+export async function updateEnv(
+  updates: Record<string, string>,
+  unset: readonly string[] = [],
+): Promise<void> {
   // Fail closed on the record syntax even though the route validates first (#422). This function
   // is exported, and the cost of a caller forgetting is an attacker-authored line in the file the
   // server reads its security configuration from. The allowlist stays the route's business — this
@@ -470,7 +474,8 @@ export async function updateEnv(updates: Record<string, string>, unset: readonly
       throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
     }
   }
-  if (unset.some((key) => !ENV_KEY_SYNTAX.test(key))) throw new Error("refusing to remove a malformed .env key");
+  if (unset.some((key) => !ENV_KEY_SYNTAX.test(key)))
+    throw new Error("refusing to remove a malformed .env key");
   const targets = new Map(unset.map((key) => [key, [key, legacyVisionAlias(key) ?? key]]));
   // Read and write as one step, or a concurrent save that read the same baseline overwrites us.
   return withEnvWriteLock(async () => {
@@ -487,7 +492,10 @@ export async function updateEnv(updates: Record<string, string>, unset: readonly
     for (const key of Object.keys(updates)) {
       pendingEnvRemovals.delete(key);
       pendingEnvRemovals.forEach((names, owner) =>
-        pendingEnvRemovals.set(owner, names.filter((name) => name !== key)),
+        pendingEnvRemovals.set(
+          owner,
+          names.filter((name) => name !== key),
+        ),
       );
     }
   });
@@ -507,18 +515,20 @@ function applyEnvUpdates(
     const eq = trimmed.startsWith("#") ? -1 : trimmed.indexOf("=");
     return eq < 0 ? undefined : trimmed.slice(0, eq).trim();
   };
-  const newLines = lines.filter((line) => !removed.has(keyOf(line) ?? "")).map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) return line;
-    const key = trimmed.slice(0, eq).trim();
-    if (key in updates) {
-      updatedKeys.add(key);
-      return `${key}=${updates[key]}`;
-    }
-    return line;
-  });
+  const newLines = lines
+    .filter((line) => !removed.has(keyOf(line) ?? ""))
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      const eq = trimmed.indexOf("=");
+      if (eq < 0) return line;
+      const key = trimmed.slice(0, eq).trim();
+      if (key in updates) {
+        updatedKeys.add(key);
+        return `${key}=${updates[key]}`;
+      }
+      return line;
+    });
 
   for (const [key, val] of Object.entries(updates)) {
     if (!updatedKeys.has(key) && val !== "") {

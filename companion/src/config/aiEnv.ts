@@ -127,8 +127,7 @@ export const AI_ROLE_SOURCES: Readonly<Record<AiRoleId, AiRoleSource>> = {
   // the synthesis provider, the same fallback the running role uses (synthesisFallbackConfig).
   "synthesis-fallback": {
     role: "synthesis-fallback",
-    provider: (env) =>
-      env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim() || AI_ROLE_SOURCES.synthesis.provider(env),
+    provider: (env) => env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim() || AI_ROLE_SOURCES.synthesis.provider(env),
     ownNames: (s) => [`DFIR_AI_SYNTH_FALLBACK_${s}`],
   },
   velociraptor: {

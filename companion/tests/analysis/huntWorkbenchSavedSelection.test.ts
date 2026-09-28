@@ -53,28 +53,27 @@ class FakeElement {
   }
 }
 
-class FakeSelect extends FakeElement {
-  private options: string[] = [];
-  private current = "";
-  constructor(id: string) {
-    super(id);
-    // The base class's `value` field is an own property and would shadow the accessor below.
-    delete (this as { value?: string }).value;
-  }
-  override get innerHTML(): string {
-    return super.innerHTML;
-  }
-  override set innerHTML(html: string) {
-    super.innerHTML = html;
-    this.options = [...html.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
-    this.current = this.options[0] ?? "";
-  }
-  override get value(): string {
-    return this.current;
-  }
-  override set value(next: string) {
-    this.current = this.options.includes(next) ? next : "";
-  }
+/** A select whose value only takes one of its options, and resets when its options are rebuilt. */
+function fakeSelect(id: string): FakeElement {
+  const element = new FakeElement(id);
+  let html = "";
+  let options: string[] = [];
+  let current = "";
+  Object.defineProperty(element, "innerHTML", {
+    get: () => html,
+    set: (next: string) => {
+      html = next;
+      options = [...next.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+      current = options[0] ?? "";
+    },
+  });
+  Object.defineProperty(element, "value", {
+    get: () => current,
+    set: (next: string) => {
+      current = options.includes(next) ? next : "";
+    },
+  });
+  return element;
 }
 
 interface Call {
@@ -100,7 +99,7 @@ const HUNTS = [
 async function mount(): Promise<Harness> {
   const elements = new Map<string, FakeElement>();
   const el = (id: string): FakeElement => {
-    if (!elements.has(id)) elements.set(id, id === "hqSaved" ? new FakeSelect(id) : new FakeElement(id));
+    if (!elements.has(id)) elements.set(id, id === "hqSaved" ? fakeSelect(id) : new FakeElement(id));
     return elements.get(id)!;
   };
   el("caseId").value = "case-1";
@@ -142,7 +141,14 @@ async function mount(): Promise<Harness> {
       return reply({ explanation: "Filter: explanation" });
     }
     if (url.endsWith("/execute")) {
-      return reply({ matched: 10, scanned: 50, durationMs: 3, explanation: "ran", events: [], dataset: "forensic" });
+      return reply({
+        matched: 10,
+        scanned: 50,
+        durationMs: 3,
+        explanation: "ran",
+        events: [],
+        dataset: "forensic",
+      });
     }
     if (url.endsWith("/saved") && method === "GET") return reply(hunts);
     if (url.endsWith("/saved") && method === "POST") {

@@ -716,11 +716,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
 
   app.post("/settings/env", async (req: Request, res: Response) => {
     try {
-      const updates = req.body?.updates;
+      const { updates, unset = [] } = req.body ?? {}; // unset: blank Settings selects back to "not set" (#1785)
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
       }
-      const unset = req.body?.unset ?? []; // keys a blank Settings select puts back to "not set" (#1785)
       const rejected = validateEnvUpdates(updates as Record<string, unknown>, unset); // values are as untrusted as keys (#422)
       if (rejected.length > 0) {
         // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
