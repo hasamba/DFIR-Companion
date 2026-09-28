@@ -64,8 +64,10 @@ export async function importZipArchiveCase(
   buffer: Buffer,
   options: ImportZipArchiveOptions = {},
 ): Promise<ImportZipArchiveResult> {
-  const raw = openPlainCaseZip(buffer);
+  // The central directory is checked BEFORE readZip inflates anything, so an entry this build
+  // cannot decode is refused without spending memory on the rest of the archive.
   assertSupportedEntries(buffer);
+  const raw = openPlainCaseZip(buffer);
   // A pure directory entry ("INC-1/screenshots/") carries no bytes and is recreated by the files
   // under it. Any other entry keeps its raw path and is judged by the safety check below.
   const files = raw.filter((entry) => !(entry.path.endsWith("/") && entry.data.length === 0));

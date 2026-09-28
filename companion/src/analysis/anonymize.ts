@@ -14,6 +14,8 @@ import {
   isGuardedUsername,
   isNoiseAccount,
   isNoiseDomain,
+  preservedSpans,
+  strictlyInside,
   usernameRegExp,
 } from "./anonUsernames.js";
 
@@ -464,9 +466,12 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   function anonBareUsernames(t: string): string {
     if (bareRe === undefined) bareRe = usernameRegExp(learned);
     if (!bareRe) return t;
-    return t.replace(bareRe, (m: string, offset: number, whole: string) =>
-      insideSuppressedAccount(whole, offset, m, suppressed) ? m : assign("USER", m),
-    );
+    let spans: Array<[number, number]> | undefined; // computed once, only when a name matches
+    return t.replace(bareRe, (m: string, offset: number, whole: string) => {
+      if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
+      spans ??= preservedSpans(whole);
+      return strictlyInside(spans, offset, m.length) ? m : assign("USER", m);
+    });
   }
   const EMAIL_RE =
     /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;

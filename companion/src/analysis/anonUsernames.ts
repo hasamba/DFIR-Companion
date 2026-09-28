@@ -172,6 +172,30 @@ export function usernameRegExp(names: Iterable<string>): RegExp | null {
   return new RegExp(`(?<![${UNICODE_WORD}])(?:${alternation})(?![${UNICODE_WORD}])`, "giu");
 }
 
+// A URL or a dotted host name that no earlier pass tokenized is not a known victim value, so it is
+// most likely adversary infrastructure — which the redacted export promises to keep intact. A
+// victim username that happens to be one label of it ("jdoe.evil.example", ".../u/jdoe/payload")
+// must not be rewritten, or the recipient receives an indicator that blocks nothing.
+const URL_SPAN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
+const HOST_SPAN = /(?<![\p{L}\p{N}_.-])(?:[A-Za-z0-9-]+\.)+[A-Za-z][A-Za-z0-9-]{1,62}(?![\p{L}\p{N}_-])/gu;
+const ANY_TOKEN = /ANON_[A-Z]+_\d+/;
+
+/** The [start, end) spans of untokenized URLs and dotted host names in the text. */
+export function preservedSpans(text: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const re of [URL_SPAN, HOST_SPAN]) {
+    for (const m of text.matchAll(re)) {
+      if (!ANY_TOKEN.test(m[0])) spans.push([m.index, m.index + m[0].length]);
+    }
+  }
+  return spans;
+}
+
+/** True when [offset, offset+length) sits strictly inside one span (a label, not the whole span). */
+export function strictlyInside(spans: Array<[number, number]>, offset: number, length: number): boolean {
+  return spans.some(([s, e]) => offset >= s && offset + length <= e && e - s > length);
+}
+
 /**
  * True when the bare name at `offset` is the user half of a qualified account the analyst suppressed
  * ("CORP\jdoe" or "jdoe@corp.example" in the suppressed list). The whole account was left verbatim

@@ -390,7 +390,9 @@ export function parseBlocklistQuery(query: Record<string, unknown>): IocBlocklis
   if (typeof minSeverity === "string" && VALID_SEVERITIES.includes(minSeverity as Severity)) {
     opts.minSeverity = minSeverity as Severity;
   }
-  if (typeof types === "string" && types) {
+  // A present but empty `types=` means the analyst unticked every type: no IOC matches. Only an
+  // ABSENT parameter falls back to the defaults, or unticking everything would export them all.
+  if (typeof types === "string") {
     opts.types = types
       .split(",")
       .filter((t): t is BlocklistIocType => VALID_TYPES.includes(t as BlocklistIocType));

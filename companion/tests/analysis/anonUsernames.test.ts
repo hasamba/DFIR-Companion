@@ -100,6 +100,12 @@ describe("anonymizer — one token per person (#1780)", () => {
     expect(a.apply("jdoes xjdoe jdoe_backup")).toBe("jdoes xjdoe jdoe_backup");
   });
 
+  it("never rewrites a label of an untokenized URL or host — adversary IOCs stay intact", () => {
+    const a = createAnonymizer(userPolicy(), { ...NONE, usernames: ["jdoe", "john.smith"] });
+    const out = a.apply("jdoe hit jdoe.evil.example and https://evil.example/u/jdoe/p; john.smith too");
+    expect(out).toBe("ANON_USER_1 hit jdoe.evil.example and https://evil.example/u/jdoe/p; ANON_USER_2 too");
+  });
+
   it("lets a known host claim its span first", () => {
     const a = createAnonymizer(userPolicy(), { ...NONE, hosts: ["jdoe-laptop"], usernames: ["jdoe"] });
     expect(a.apply("jdoe on jdoe-laptop")).toBe("ANON_USER_1 on ANON_HOST_1");

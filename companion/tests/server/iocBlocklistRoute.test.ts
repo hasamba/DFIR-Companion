@@ -77,6 +77,15 @@ describe("GET /cases/:id/export/ioc-blocklist?format=summary (#1807)", () => {
     expect(res.body.excluded["ineligible-type"]).toBe(3);
   });
 
+  it("an empty types= (every type unticked) matches nothing instead of falling back to the defaults", async () => {
+    const app = await harness(IOCS);
+    const res = await request(app).get(
+      "/cases/c1/export/ioc-blocklist?format=summary&minSeverity=Info&types=",
+    );
+    expect(res.body.matched).toBe(0);
+    expect(res.body.excluded["ineligible-type"]).toBe(res.body.total);
+  });
+
   it("still serves the file formats, and the TXT header carries the count", async () => {
     const app = await harness(IOCS);
     const txt = await request(app).get("/cases/c1/export/ioc-blocklist?format=txt");
