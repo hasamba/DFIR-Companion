@@ -504,6 +504,10 @@
         // own button.
         if (typeof setSecondOpinionCapabilities === "function")
           setSecondOpinionCapabilities(h.secondOpinionEnabled, h.aiEnabled);
+        // The cross-case flag belongs to js/dashboard-related-cases.js (#1770): with the pivot off
+        // it skips GET /cases/:id/related, which could only 404.
+        if (typeof setCrossCaseCapability === "function")
+          setCrossCaseCapability(h.crossCaseEnabled === true);
         // The 🧠 box belongs to js/dashboard-search-scope.js, which reads it on Synthesize. Only a
         // provider that acts on thinkingTokens earns it (#1468); the name is for the tooltip.
         if (typeof setDeepReasoningCapability === "function")

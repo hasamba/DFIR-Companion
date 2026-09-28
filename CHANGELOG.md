@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **CSS image functions blocked** — the style sanitizer drops `image-set()`, `-webkit-image-set()`, `image()` and `src()`, which fetch an external URL like `url()` (closes #1811)
+- **Backslash URLs blocked** — a link or image source starting with `/\` or `\` no longer passes as same-origin; browsers read it as another host (closes #1812)
+- **One attribute policy for script and markup** — `setAttribute` and `setAttributeNS` now drop `action`, `formaction`, `srcset`, `ping` and remote SVG references, the same as rendered markup (closes #1813)
+- **Sanitizer checked in Firefox** — the nightly browser run now also runs the safe-dom sanitizer spec in Firefox (closes #1814)
+- **No ghost case after a delete race** — a status or password change during a delete no longer recreates a nameless case or reports the delete as failed; a case reopened mid-delete is kept (closes #1808)
+- **Archived cases refuse a status change** — setting an archived case to open or closed answers 409 "restore the case first" instead of stranding it (closes #1809)
+- **No Related Cases 404s with cross-case off** — /health reports the cross-case flag and the dashboard skips the related-cases request when it is off (closes #1770)
+- **Retry-After on AI rate-limit refusals** — the AI-route and CSV/log-import 429s now say how long to wait, in the header and the body (closes #1794)
+- **2nd opinion on an empty case is a refusal, not an error** — answers "not run: nothing to review", fails no job and leaves the AI pill idle (closes #1769, closes #1771)
 - **Import-from-path refuses the Companion's own files** — `/import-file`, `/import-mac-login-item` and custody recording refuse relative paths, the `.env` config and the cases root (except this case's drop folder or own files) (closes #1792)
 - **Unrecognised JSON is flagged** — JSON no importer recognises still imports as generic SIEM events, but the import answer and the Import summary now say the format was a guess (closes #1795)
 - **Unrecognised JSON is flagged on every import path** — the drop folder, push and Velociraptor uploads now say when JSON was imported as generic SIEM (closes #1824)

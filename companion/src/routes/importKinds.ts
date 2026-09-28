@@ -1,7 +1,7 @@
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportRefused } from "./importDebugEmit.js";
 import type { Response } from "express";
-import { getAiLimiter } from "../http/rateLimiter.js";
+import { getAiLimiter, sendRateLimited } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 
 // The import kinds whose parsers STREAM: they report parse progress and honor the abort signal
@@ -36,8 +36,15 @@ export function isAiDependent(kind: string): boolean {
 // should stop; deterministic kinds and unmetered budgets return false. Called after the no-provider
 // 501 check, so it only fires when an LLM call will actually be made.
 export function rejectIfAiImportOverBudget(kind: string, caseId: string, res: Response): boolean {
-  if (isAiDependent(kind) && !getAiLimiter().tryAcquire(caseId)) {
-    res.status(429).json({ error: "AI-analysis import rate exceeded for this case, try again shortly" });
+  if (!isAiDependent(kind)) return false;
+  const limiter = getAiLimiter();
+  const now = Date.now();
+  if (!limiter.tryAcquire(caseId, now)) {
+    sendRateLimited(
+      res,
+      limiter.retryAfterMs(caseId, now),
+      "AI-analysis import rate exceeded for this case, try again shortly",
+    );
     return true;
   }
   return false;

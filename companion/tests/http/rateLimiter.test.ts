@@ -250,6 +250,46 @@ describe("SlidingWindowLimiter", () => {
     expect(lim.tryAcquire("k", now + 200)).toBe(true);
   });
 
+  // #1794 — a refused caller is told when its window ends, like the auth and capture limiters do.
+  describe("retryAfterMs and the 429 it sends", () => {
+    it("is the time left in the key's window, and 0 for an unknown or expired key", () => {
+      const lim = new SlidingWindowLimiter(1, 60_000);
+      expect(lim.retryAfterMs("k", 1_000)).toBe(0);
+      lim.tryAcquire("k", 1_000);
+      expect(lim.retryAfterMs("k", 16_000)).toBe(45_000);
+      expect(lim.retryAfterMs("k", 61_000)).toBe(0);
+    });
+
+    it("the middleware sets Retry-After and a matching retryAfterMs body field", () => {
+      const lim = new SlidingWindowLimiter(1, 60_000);
+      const mw = lim.middleware(() => "k");
+      const headers: Record<string, string> = {};
+      let code = 0;
+      let body: { retryAfterMs?: number } = {};
+      const res = {
+        setHeader: (k: string, v: string) => (headers[k] = v),
+        status(c: number) {
+          code = c;
+          return this;
+        },
+        json(b: { retryAfterMs?: number }) {
+          body = b;
+          return this;
+        },
+      };
+      let passed = 0;
+      const next = () => (passed += 1);
+      mw({} as never, res as never, next);
+      mw({} as never, res as never, next);
+      expect(passed).toBe(1);
+      expect(code).toBe(429);
+      expect(Number(headers["Retry-After"])).toBeGreaterThanOrEqual(59);
+      expect(Number(headers["Retry-After"])).toBeLessThanOrEqual(60);
+      expect(body.retryAfterMs).toBeGreaterThan(0);
+      expect(Number(headers["Retry-After"])).toBe(Math.ceil((body.retryAfterMs ?? 0) / 1000));
+    });
+  });
+
   it("tracks keys independently", () => {
     const lim = new SlidingWindowLimiter(1, 10_000);
     expect(lim.tryAcquire("a")).toBe(true);
