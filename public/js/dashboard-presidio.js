@@ -194,6 +194,8 @@
     fetch(`/cases/${caseId}/presidio-pending`)
       .then((r) => (r.ok ? r.json() : { pending: [] }))
       .then((d) => {
+        // A late answer for a case the analyst has left must not fill this case's panel (#1782).
+        if (document.getElementById("caseId")?.value.trim() !== caseId) return;
         presidioPending = d.pending || [];
         renderPresidioPending();
       })
@@ -211,10 +213,14 @@
   // server. It also refreshes the ⚠ Presidio badge at once. Only the error code is read: the rest
   // of the hold's encoding may change, so a hold without a findings list re-reads the pending store
   // instead of clearing the badge.
+  //
+  // The badge is refreshed from the server's per-case pending store, NOT from the 409's findings:
+  // the answer can arrive after the analyst has switched case, and the response's values belong to
+  // the case that asked. Re-reading the store for the case on screen can never show one case's
+  // values in another's Anonymization panel.
   function presidioHold(status, body) {
     if (status !== 409 || !body || body.error !== "presidio_approval_required") return false;
-    if (Array.isArray(body.findings)) setPresidioPending(body.findings);
-    else loadPresidioPending(document.getElementById("caseId")?.value.trim());
+    loadPresidioPending(document.getElementById("caseId")?.value.trim());
     return true;
   }
   function presidioHoldText(what) {

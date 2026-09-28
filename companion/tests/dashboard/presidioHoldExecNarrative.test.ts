@@ -47,6 +47,12 @@ function page(fetchBody: unknown, status = 409) {
     document: { getElementById: get, querySelector: () => null, addEventListener: () => {} },
     fetch: (url: string) => {
       urls.push(url);
+      if (url.endsWith("/presidio-pending"))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ pending: HOLD.findings }),
+        });
       return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(fetchBody) });
     },
     isSectionVisible: () => true,
@@ -75,16 +81,23 @@ describe("presidioHold", () => {
     expect(t).not.toMatch(/fail|restart|error/i);
   });
 
-  // Only the error code is relied on: a hold without a findings list must not clear the badge.
-  it("refreshes the ⚠ Presidio badge from the hold's findings", () => {
+  // The badge is refreshed from the case's own pending store, never from the 409's findings: a late
+  // answer for another case must not put that case's values in this case's panel.
+  it("refreshes the ⚠ Presidio badge from the pending store of the case on screen", async () => {
+    urls.length = 0;
     expect(p.presidioHold(409, HOLD)).toBe(true);
+    expect(urls).toEqual(["/cases/case-1/presidio-pending"]);
+    await new Promise((r) => setTimeout(r, 10));
     expect(get("presidioPendingBadge").textContent).toBe("⚠ Presidio: 1");
   });
 
-  it("re-reads the pending store when the hold carries no findings list", () => {
-    urls.length = 0;
-    expect(p.presidioHold(409, { error: "presidio_approval_required" })).toBe(true);
-    expect(urls).toEqual(["/cases/case-1/presidio-pending"]);
+  it("drops a pending-store answer that arrives after the analyst switched case", async () => {
+    get("presidioPendingBadge").textContent = "";
+    p.presidioHold(409, HOLD);
+    get("caseId").value = "case-2";
+    await new Promise((r) => setTimeout(r, 10));
+    expect(get("presidioPendingBadge").textContent).toBe("");
+    get("caseId").value = "case-1";
   });
 });
 

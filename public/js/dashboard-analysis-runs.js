@@ -81,8 +81,15 @@
           : "failed to load: " + err.message;
       });
     const integrityDone = fetchJsonWithin(`/cases/${c}/analysis-runs/integrity`, LOAD_TIMEOUT_MS)
-      .then(({ body: check }) => {
+      .then(({ res, body: check }) => {
         if (!current()) return;
+        // Only a real verification result may say FAILED: 200 with ok:true, or 409 with ok:false and
+        // its problems. A 501 (runs not configured), a 500 or an odd body verified nothing.
+        const verified =
+          check &&
+          typeof check.ok === "boolean" &&
+          (res.ok ? check.ok : res.status === 409 && !check.ok && Array.isArray(check.problems));
+        if (!verified) throw new Error((check && check.error) || "HTTP " + res.status);
         integrity.textContent = check.ok
           ? `✓ Ledger intact — ${check.manifests} manifest(s), hash chain verified`
           : `⚠ Ledger integrity FAILED — ${(check.problems || []).join("; ")}`;

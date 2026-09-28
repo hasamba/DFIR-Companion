@@ -58,10 +58,10 @@ function harness() {
     analysisRunLabel: (r: { id: string }) => r.id,
   };
   const api = loadDashboardModule<RunsApi>("dashboard-analysis-runs.js", ["dashboard-escape.js"], globals);
-  const answer = (match: RegExp, body: unknown, ok = true) => {
+  const answer = (match: RegExp, body: unknown, ok = true, status = ok ? 200 : 500) => {
     const i = pending.findIndex((p) => match.test(p.url));
     const [p] = pending.splice(i, 1);
-    p.resolve({ ok, status: ok ? 200 : 500, json: () => Promise.resolve(body) });
+    p.resolve({ ok, status, json: () => Promise.resolve(body) });
   };
   return { api, get, pending, answer };
 }
@@ -124,6 +124,29 @@ describe("the run ledger overlay", () => {
     expect(h.get("arList").innerHTML).toContain("synthesis");
     expect(h.get("arList").textContent).not.toContain("Still loading");
     expect(h.get("arIntegrity").textContent).toContain("Ledger intact");
+  });
+
+  // Only a real verification result may say FAILED. Nothing was verified on these answers.
+  it.each([
+    ["501, runs not configured", { error: "analysis runs not configured" }, 501],
+    ["a JSON 500", { error: "boom" }, 500],
+    ["a malformed 200", { manifests: 3 }, 200],
+  ])("does not report ledger corruption on %s", async (_label, body, status) => {
+    const h = harness();
+    void h.api.openAnalysisRuns();
+    h.answer(INTEGRITY, body, status === 200, status);
+    await flush();
+    const text = h.get("arIntegrity").textContent;
+    expect(text).toMatch(/^Integrity check did not answer/);
+    expect(text).not.toContain("FAILED");
+  });
+
+  it("reports a real broken chain (409 with problems) as FAILED", async () => {
+    const h = harness();
+    void h.api.openAnalysisRuns();
+    h.answer(INTEGRITY, { ok: false, manifests: 2, problems: ["hash mismatch at run-2"] }, false, 409);
+    await flush();
+    expect(h.get("arIntegrity").textContent).toBe("⚠ Ledger integrity FAILED — hash mismatch at run-2");
   });
 
   it("still reports a server error on the run list", async () => {

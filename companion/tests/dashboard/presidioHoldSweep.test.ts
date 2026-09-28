@@ -75,7 +75,15 @@ function heldPage(elements: Record<string, El>, extra: Record<string, unknown> =
         querySelectorAll: (): { value: string }[] => [],
         addEventListener: () => {},
       },
-      fetch: () => Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve(HOLD) }),
+      // The hold itself, then the badge's re-read of the case's pending store.
+      fetch: (url: string) =>
+        url.endsWith("/presidio-pending")
+          ? Promise.resolve({
+              ok: true,
+              status: 200,
+              json: () => Promise.resolve({ pending: HOLD.findings }),
+            })
+          : Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve(HOLD) }),
       ...extra,
     },
   };
