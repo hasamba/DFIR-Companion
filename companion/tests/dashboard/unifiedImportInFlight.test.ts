@@ -163,3 +163,21 @@ describe("unified import: one run at a time (#1511)", () => {
     expect(h.status.textContent).toBe("");
   });
 });
+
+describe("unified import: a detection warning reaches the summary (#1795)", () => {
+  it("prints the server's warning sentence next to the file name", async () => {
+    const warning = "unrecognised JSON — imported as generic SIEM events";
+    const fetch = vi.fn(async () => ({
+      status: 202,
+      ok: true,
+      json: async () => ({ kind: "siem", warning }),
+    }));
+    const h = harness({ fetch });
+    const run = h.pick([{ name: "notes.json", type: "application/json", size: 10 }]);
+    await settle();
+    h.prompts[0].resolve("info");
+    await run;
+    expect(h.status.textContent).toMatch(/imported siem/);
+    expect(h.status.textContent).toContain(`notes.json: ${warning}`);
+  });
+});

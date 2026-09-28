@@ -7,13 +7,14 @@ import { lastCommittedImportBatch } from "../analysis/importResume.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
-import { hasParseProgress } from "./importKinds.js";
+import { hasParseProgress, isAiDependent } from "./importKinds.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
+import { decodeImportedText } from "../ingest/decodeText.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -37,6 +38,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       }
       const caseId = job.caseId;
       const parameters = importParametersSchema.parse(job.parameters);
+      // A CSV/log resume is itself an LLM call: AI off = nothing sent to the model (#1806).
+      if (isAiDependent(parameters.kind) && !(await ctx.getControl(caseId)).enabled)
+        throw new Error("AI is off for this case — turn AI on, then resume this CSV/log import");
       const minSeverity = parseMinSeverity(parameters.minSeverity);
       const declared = parseAssetHost(parameters.assetHost ?? undefined);
       const assetHost = declared.ok ? declared.host : "";
@@ -102,7 +106,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         if (parameters.streaming && parameters.kind === "plaso") {
           await importPlasoFileLogged(ctx, job.caseId, artifactPath, parameters.storedName, base);
         } else {
-          text = await readFile(artifactPath, "utf8");
+          text = decodeImportedText(await readFile(artifactPath)); // BOM-aware, as the first run read it
           await ctx.dispatchImport(parameters.kind, job.caseId, text, base);
         }
 

@@ -3,8 +3,10 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 
-// Per-case AI analysis control. `enabled` gates the LIVE screenshot pipeline only —
-// evidence is always captured, and explicit imports (CSV / log / THOR) always analyze.
+// Per-case AI analysis control. `enabled` gates every call to the model: the live screenshot
+// pipeline, synthesis, and the CSV / log imports (the unified /import and /import-file and the
+// dedicated /import-csv and /import-log, #1806) — with it off those are saved as evidence but not
+// analyzed. Evidence is always captured, and deterministic imports (THOR, Hayabusa, …) always parse.
 // It defaults to OFF so a fresh app start or a brand-new case captures evidence without
 // spending any AI until the analyst deliberately turns it on (the same OPSEC/cost-first
 // default-off stance as threat-intel enrichment). `lastAnalyzedSeq` is the highest
