@@ -35,6 +35,8 @@ export interface EvaluationCaseMetrics {
   forbiddenConclusions: number;
   danglingEvidenceRefs: number;
   confidenceIssues: number;
+  // #1747: off-band confidences, per golden claim. Absent on rows from reports older than #1747.
+  confidenceBandMisses?: number;
 }
 
 export interface EvaluationCaseResult {
@@ -74,6 +76,9 @@ export interface EvaluationReportInput {
   skippedReason?: string;
   providerFailureReason?: string;
   runnerError?: string;
+  // #1747: the candidate ran, but its baseline could not be read. Kept apart from runnerError so a
+  // saved report can be compared again later (run.ts --compare-report) without hiding a real failure.
+  baselineError?: string;
   baselineComparison?: BaselineComparison;
   // Single source of truth: the SAME options.real already threaded into runCorpusSuite for the
   // #1217/#1226 precision relaxation — never set independently (#1224).
@@ -223,6 +228,7 @@ function determineOutcome(
   recallFloor = !input.baselineComparison,
 ): EvaluationOutcome {
   if (input.runnerError) return "runner_failed";
+  if (input.baselineError) return "runner_failed";
   if (input.providerFailureReason) return "provider_failed";
   if (input.skippedReason) return "skipped";
   if (input.baselineComparison?.status === "incompatible") return "runner_failed";
@@ -299,6 +305,9 @@ function reportSummary(input: EvaluationReportInput, resources: EvaluationResour
       input.cases.reduce((sum, result) => sum + result.metrics.danglingEvidenceRefs, 0),
     ),
     confidenceIssues: perRun(input.cases.reduce((sum, result) => sum + result.metrics.confidenceIssues, 0)),
+    confidenceBandMisses: perRun(
+      input.cases.reduce((sum, result) => sum + (result.metrics.confidenceBandMisses ?? 0), 0),
+    ),
     uncertaintyRecall: average(input.cases.map((result) => result.metrics.uncertaintyRecall)),
     nextStepRecall: average(input.cases.map((result) => result.metrics.nextStepRecall)),
     durationMs: perRun(resources.durationMs),
@@ -325,6 +334,7 @@ export function buildEvaluationReport(input: EvaluationReportInput): EvaluationR
     ...(input.skippedReason ? { skippedReason: input.skippedReason } : {}),
     ...(input.providerFailureReason ? { providerFailureReason: input.providerFailureReason } : {}),
     ...(input.runnerError ? { runnerError: input.runnerError } : {}),
+    ...(input.baselineError ? { baselineError: input.baselineError } : {}),
     ...(input.baselineComparison ? { baselineComparison: { ...input.baselineComparison } } : {}),
     outcome: determineOutcome(input),
     summary: reportSummary(input, resources),

@@ -60,3 +60,25 @@ describe("parseEvalCli --runs (#1579)", () => {
     });
   });
 });
+
+describe("parseEvalCli --compare-report (#1747)", () => {
+  it("reads the saved report path", () => {
+    const options = parseEvalCli([
+      "--compare-report",
+      "r.json",
+      "--baseline",
+      "b.json",
+      "--output",
+      "o.json",
+      "--attestation",
+      "a.json",
+    ]);
+    expect(options.compareReportPath).toBe("r.json");
+  });
+
+  it("refuses flags that only make sense for a live run", () => {
+    for (const extra of [["--real"], ["--runs", "3"], ["--write-baseline", "d"], ["synthesis"]]) {
+      expect(() => parseEvalCli(["--compare-report", "r.json", ...extra])).toThrow(/--compare-report/);
+    }
+  });
+});

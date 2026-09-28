@@ -3,6 +3,7 @@ import { ProviderError, type AIProvider } from "../../src/providers/provider.js"
 import { runCorpusCase } from "./harness.js";
 import { JudgeFailure, judgeForbiddenConclusions, type JudgeOutcome } from "./forbiddenJudge.js";
 import { MeteredProvider } from "./meter.js";
+import { TimeoutRetryProvider } from "./timeoutRetry.js";
 import {
   forbiddenConclusionFindings,
   formatCaseQualityReport,
@@ -31,6 +32,7 @@ const FAILED_METRICS: EvaluationCaseMetrics = {
   forbiddenConclusions: 0,
   danglingEvidenceRefs: 0,
   confidenceIssues: 0,
+  confidenceBandMisses: 0,
 };
 
 function metrics(score: CaseQualityScore, fixture: CorpusCase): EvaluationCaseMetrics {
@@ -45,6 +47,7 @@ function metrics(score: CaseQualityScore, fixture: CorpusCase): EvaluationCaseMe
     forbiddenConclusions: score.forbiddenConclusions.length,
     danglingEvidenceRefs: score.danglingEvidenceRefs.length,
     confidenceIssues: score.confidenceIssues.length,
+    confidenceBandMisses: score.confidenceBandMisses.length,
   };
 }
 
@@ -65,8 +68,10 @@ function errorStatus(
   return { status: "runner_failed", errorKind: "deterministic-runner-error" };
 }
 
-function withTotalDuration(resources: EvaluationResources, started: number): EvaluationResources {
-  return { ...resources, durationMs: performance.now() - started };
+// #1747: `lostMs` is wall time spent in a timed-out attempt that was retried; it is not the case's
+// own cost, so it is left out of the measured duration.
+function withTotalDuration(resources: EvaluationResources, started: number, lostMs = 0): EvaluationResources {
+  return { ...resources, durationMs: Math.max(0, performance.now() - started - lostMs) };
 }
 
 // #1704: job log only — the judge's verdict beside the word list's, with the finding text and the
@@ -87,10 +92,13 @@ async function runOne(
   real: boolean,
 ): Promise<EvaluationCaseResult> {
   const metered = new MeteredProvider(provider);
+  // #1747: a real run retries one timed-out call; the meter underneath still counts both calls.
+  const retry = new TimeoutRetryProvider(metered);
+  const caller = real ? retry : metered;
   const started = performance.now();
   try {
-    const output = await runCorpusCase(fixture, metered);
-    const judged = real ? await judgeForbiddenConclusions(fixture.golden, output, metered) : undefined;
+    const output = await runCorpusCase(fixture, caller);
+    const judged = real ? await judgeForbiddenConclusions(fixture.golden, output, caller) : undefined;
     const score = scoreCaseQuality(
       fixture.golden,
       output,
@@ -108,7 +116,7 @@ async function runOne(
       scenario: fixture.scenario,
       status: passesCaseQuality(score, { real }) ? "passed" : "quality_failed",
       metrics: metrics(score, fixture),
-      resources: withTotalDuration(metered.snapshot(), started),
+      resources: withTotalDuration(metered.snapshot(), started, retry.lostMs()),
       ...(judged && judged.stats.pairs > 0 ? { judge: { ...judged.stats } } : {}),
     };
   } catch (error) {
@@ -120,7 +128,7 @@ async function runOne(
       scenario: fixture.scenario,
       status: classified.status,
       metrics: { ...FAILED_METRICS },
-      resources: withTotalDuration(metered.snapshot(), started),
+      resources: withTotalDuration(metered.snapshot(), started, retry.lostMs()),
       errorKind: classified.errorKind,
     };
   }

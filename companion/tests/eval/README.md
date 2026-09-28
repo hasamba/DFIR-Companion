@@ -74,6 +74,33 @@ One exception, in the job log only: when a finding trips a forbidden-conclusion 
 that finding's title and description, so a reviewer can tell a real mistake from a scorer miss. The
 corpus is synthetic, so this text holds no real evidence. The uploaded report never contains it.
 
+### Noise that no longer blocks an attestation (#1747)
+
+A real attestation needs a clean baseline run and a clean candidate run. Three kinds of noise
+unrelated to the change under test used to throw a whole run away:
+
+- **A hung call.** On a real run, a call that fails with a `timeout` (the Claude CLI provider) is
+  retried once. The time lost to the hung attempt is left out of the case's duration, so the retry
+  does not read as a slower prompt; the meter still counts both calls. HTTP providers report a
+  request timeout as `transport`, which the product already retries. A cancelled request is never
+  retried.
+- **One off-band confidence.** A confidence outside the golden claim's band (e.g. 50 where the band
+  is 55–100) is now `confidenceBandMisses`, counted once per golden claim. On a real run it is not a
+  hard violation: the baseline comparison allows one more miss per run than the baseline. A mock run
+  still fails on it. A confidence with **no reason** (`confidenceIssues`) stays a hard violation.
+  Band association is by the claim's required terms, as before. A baseline recorded before #1747
+  reads the missing count as 0.
+- **An unreadable baseline.** A finished candidate is still written, marked `baselineError`
+  (outcome `runner_failed`). Compare it later, with no model call:
+
+  ```bash
+  npx tsx tests/eval/run.ts --compare-report <saved-report.json> --baseline <baseline.json> \
+    --output tests/eval/reports/eval-report.json --attestation tests/eval/reports/no-regression.json
+  ```
+
+  Only a real `all` run with 3+ runs, every row present and no provider/runner failure is accepted.
+  Every derived field is recomputed. `--real`, `--runs`, `--write-baseline` or a mode are refused.
+
 ### Forbidden conclusions are graded by meaning on a real run (#1704)
 
 A word list cannot tell "NIGHTFALL did this" from "this finding explicitly does NOT attribute the

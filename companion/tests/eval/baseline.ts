@@ -26,6 +26,8 @@ export interface EvaluationSummary {
   forbiddenConclusions: number;
   danglingEvidenceRefs: number;
   confidenceIssues: number;
+  // #1747: off-band confidences per run. Reads as 0 from a baseline recorded before #1747.
+  confidenceBandMisses: number;
   uncertaintyRecall: number;
   nextStepRecall: number;
   durationMs: number;
@@ -61,7 +63,7 @@ export interface BaselineComparison {
 }
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-const evaluationIdentitySchema: z.ZodType<EvaluationIdentity> = z
+export const evaluationIdentitySchema: z.ZodType<EvaluationIdentity> = z
   .object({
     provider: z.string().min(1),
     model: z.string().min(1),
@@ -82,7 +84,7 @@ const evaluationIdentitySchema: z.ZodType<EvaluationIdentity> = z
 // #1579: summary counts and tokens are per-run means, so a 3-run summary can be fractional.
 const nonNegativeMeasure = z.number().finite().min(0);
 
-const evaluationSummarySchema: z.ZodType<EvaluationSummary> = z
+const evaluationSummarySchema: z.ZodType<EvaluationSummary, z.ZodTypeDef, unknown> = z
   .object({
     claimPrecision: z.number().min(0).max(1),
     claimRecall: z.number().min(0).max(1),
@@ -94,6 +96,7 @@ const evaluationSummarySchema: z.ZodType<EvaluationSummary> = z
     forbiddenConclusions: nonNegativeMeasure,
     danglingEvidenceRefs: nonNegativeMeasure,
     confidenceIssues: nonNegativeMeasure,
+    confidenceBandMisses: nonNegativeMeasure.default(0),
     uncertaintyRecall: z.number().min(0).max(1),
     nextStepRecall: z.number().min(0).max(1),
     durationMs: z.number().nonnegative(),
@@ -103,7 +106,7 @@ const evaluationSummarySchema: z.ZodType<EvaluationSummary> = z
   })
   .strict();
 
-const evaluationBaselineSchema: z.ZodType<EvaluationBaseline> = z
+const evaluationBaselineSchema: z.ZodType<EvaluationBaseline, z.ZodTypeDef, unknown> = z
   .object({
     schemaVersion: z.literal(1),
     key: z.string().min(1),
@@ -138,6 +141,7 @@ const REAL_QUALITY_TOLERANCE = 0.05;
 export const MIN_ATTESTED_RUNS = 3;
 const DEFAULT_MODE = "all";
 const RESOURCE_MULTIPLIER = 1.25;
+const REAL_BAND_MISS_TOLERANCE = 1;
 
 // A 1-run key is unchanged so existing baselines still match; a multi-run key is suffixed so a
 // 3-run baseline never collides with a 1-run one.
@@ -229,6 +233,11 @@ function qualityRegressions(
       (key) => !(real && REAL_UNGATED.has(key)) && current[key] < baseline[key] - tolerance,
     ),
     ...QUALITY_LOWER_IS_BETTER.filter((key) => current[key] > baseline[key]),
+    // #1747: a real run may carry one more off-band confidence per run than its baseline; a model's
+    // calibration drifts a few points between runs. A mock run stays strict.
+    ...(current.confidenceBandMisses > baseline.confidenceBandMisses + (real ? REAL_BAND_MISS_TOLERANCE : 0)
+      ? ["confidenceBandMisses"]
+      : []),
   ];
 }
 

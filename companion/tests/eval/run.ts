@@ -7,6 +7,7 @@ import { buildProvider } from "../../src/server.js";
 import { writeEvaluationReport, writeNoRegressionAttestation } from "./artifacts.js";
 import { compareWithBaseline, createBaseline, readBaseline, writeBaseline } from "./baseline.js";
 import { parseEvalCli, type EvalCliOptions } from "./cli.js";
+import { loadSavedCandidate, recompareReport } from "./compareReport.js";
 import { attestationPreflight } from "./preflight.js";
 import { loadGoldenCorpus, type GoldenCorpus } from "./corpus.js";
 import { runCorpusSuite } from "./corpusRunner.js";
@@ -21,6 +22,7 @@ import {
 } from "./harness.js";
 import { evaluationIdentity } from "./identity.js";
 import { MeteredProvider } from "./meter.js";
+import { TimeoutRetryProvider } from "./timeoutRetry.js";
 import {
   buildEvaluationReport,
   computeDirtyCaseAggregate,
@@ -46,8 +48,9 @@ type ExtractionFixture = (typeof EXTRACTION_FIXTURES)[number];
 type ScreenshotFixture = (typeof SCREENSHOT_FIXTURES)[number];
 type ProviderFor<T> = (fixture: T) => AIProvider;
 
-function measuredResources(metered: MeteredProvider, started: number): EvaluationResources {
-  return { ...metered.snapshot(), durationMs: performance.now() - started };
+// #1747: `lostMs` is wall time lost to a timed-out attempt that was retried; left out of the duration.
+function measuredResources(metered: MeteredProvider, started: number, lostMs = 0): EvaluationResources {
+  return { ...metered.snapshot(), durationMs: Math.max(0, performance.now() - started - lostMs) };
 }
 
 // The thresholds a row was scored against, copied so the report can re-judge the fixture's mean
@@ -72,9 +75,10 @@ async function runExtractionCase(
   real: boolean,
 ): Promise<EvaluationExtractionResult> {
   const metered = new MeteredProvider(provider);
+  const retry = new TimeoutRetryProvider(metered);
   const started = performance.now();
   try {
-    const produced = await runExtractionFixture(fixture, metered);
+    const produced = await runExtractionFixture(fixture, real ? retry : metered);
     const score = scoreExtraction(fixture.golden, produced, { toleranceMinutes: 5 });
     const gate = fixture.thresholds ?? thresholds ?? DEFAULT_THRESHOLDS;
     console.log(formatExtractionReport(fixture.name, score, gate));
@@ -84,7 +88,7 @@ async function runExtractionCase(
       status: passesExtraction(score, gate) ? "passed" : "quality_failed",
       precision: score.precision,
       recall: score.recall,
-      resources: measuredResources(metered, started),
+      resources: measuredResources(metered, started, retry.lostMs()),
       gate: gateOf(gate),
     };
   } catch (error) {
@@ -97,7 +101,7 @@ async function runExtractionCase(
       status: failure.status,
       precision: 0,
       recall: 0,
-      resources: measuredResources(metered, started),
+      resources: measuredResources(metered, started, retry.lostMs()),
       errorKind: failure.errorKind,
     };
   }
@@ -185,9 +189,10 @@ async function runRealScreenshots(provider: AIProvider | undefined): Promise<Eva
   const results: EvaluationExtractionResult[] = [];
   for (const fixture of fixtures) {
     const metered = new MeteredProvider(provider);
+    const retry = new TimeoutRetryProvider(metered);
     const started = performance.now();
     try {
-      const produced = await runRealScreenshotFixture(fixture, metered);
+      const produced = await runRealScreenshotFixture(fixture, retry);
       const thresholds = fixture.thresholds ?? REAL_THRESHOLDS;
       const score = scoreExtraction(fixture.golden, produced, { toleranceMinutes: 5 });
       console.log(formatExtractionReport(`${fixture.name} (screenshot)`, score, thresholds));
@@ -197,7 +202,7 @@ async function runRealScreenshots(provider: AIProvider | undefined): Promise<Eva
         status: passesExtraction(score, thresholds) ? "passed" : "quality_failed",
         precision: score.precision,
         recall: score.recall,
-        resources: measuredResources(metered, started),
+        resources: measuredResources(metered, started, retry.lostMs()),
         gate: gateOf(thresholds),
       });
     } catch (error) {
@@ -209,7 +214,7 @@ async function runRealScreenshots(provider: AIProvider | undefined): Promise<Eva
         status: failure.status,
         precision: 0,
         recall: 0,
-        resources: measuredResources(metered, started),
+        resources: measuredResources(metered, started, retry.lostMs()),
         errorKind: failure.errorKind,
       });
     }
@@ -228,7 +233,16 @@ async function applyBaseline(
     });
   }
   const preliminary = buildEvaluationReport(input);
-  const baseline = await readBaseline(options.baselinePath);
+  // #1747: an unreadable baseline must not throw away a finished candidate. The report is still
+  // written, marked with baselineError, and `--compare-report` can compare it later.
+  let baseline: Awaited<ReturnType<typeof readBaseline>>;
+  try {
+    baseline = await readBaseline(options.baselinePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`baseline unreadable — candidate report kept for --compare-report: ${message}`);
+    return buildEvaluationReport({ ...input, baselineError: `baseline unreadable: ${message}` });
+  }
   return buildEvaluationReport({
     ...input,
     baselineComparison: compareWithBaseline(baseline, preliminary.summary, preliminary.identity, {
@@ -468,8 +482,23 @@ async function refuseAttestation(options: EvalCliOptions, reason: string): Promi
   process.exitCode = reportExitCode(report.outcome);
 }
 
+// #1747: compare a saved candidate report with a baseline, making no model call.
+async function compareSaved(options: EvalCliOptions & { compareReportPath: string }): Promise<void> {
+  if (!options.baselinePath || !options.outputPath || !options.attestationPath) {
+    throw new Error("--compare-report needs --baseline, --output and --attestation");
+  }
+  const input = await loadSavedCandidate(options.compareReportPath);
+  const report = recompareReport(input, await readBaseline(options.baselinePath));
+  await writeRequestedArtifacts(report, { ...options, real: true, runs: input.runs ?? 1, mode: "all" });
+  logDirtyCaseAggregate(report);
+  console.log(`\nevaluation outcome: ${report.outcome} (compared from ${options.compareReportPath})`);
+  process.exitCode = reportExitCode(report.outcome);
+}
+
 async function main(): Promise<void> {
   const options = parseEvalCli(process.argv.slice(2));
+  if (options.compareReportPath)
+    return compareSaved({ ...options, compareReportPath: options.compareReportPath });
   const refusal = attestationPreflight(options);
   if (refusal) return refuseAttestation(options, refusal);
   const report = await execute(options);

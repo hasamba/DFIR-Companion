@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AIProvider, AnalyzeRequest } from "../../src/providers/provider.js";
+import { ProviderError, type AIProvider, type AnalyzeRequest } from "../../src/providers/provider.js";
 import { loadGoldenCorpus, type GoldenCorpus } from "./corpus.js";
 import { runCorpusSuite } from "./corpusRunner.js";
 
@@ -79,5 +79,24 @@ describe("runCorpusSuite grades forbidden conclusions with the judge on a real r
     const [row] = await runCorpusSuite(corpus, () => mock, false);
     expect(judged).toBe(0);
     expect(row.judge).toBeUndefined();
+  });
+
+  it("retries one timed-out call on a real run instead of failing the case (#1747)", async () => {
+    const corpus = await injectionCase();
+    const [fixture] = corpus.cases;
+    let calls = 0;
+    const flaky: AIProvider = {
+      name: "stub",
+      model: "stub-model",
+      async analyze(request: AnalyzeRequest) {
+        calls += 1;
+        if (calls === 1) throw new ProviderError("hung", "timeout");
+        const judging = request.systemPrompt.startsWith("You grade findings");
+        return { rawText: judging ? everyPair(request, false) : fixture.canned };
+      },
+    };
+    const [row] = await runCorpusSuite(corpus, () => flaky, true);
+    expect(row.status).not.toBe("provider_failed");
+    expect(row.resources.failedCalls).toBe(1);
   });
 });
