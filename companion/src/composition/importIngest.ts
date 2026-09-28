@@ -31,6 +31,7 @@ import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from ".
 import { detectImportWithCustomEx } from "../analysis/importDecision.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { importingDetail } from "../routes/importNotes.js";
 import {
   looksLikeMacLoginItemFilename,
   looksLikeUndecodedMacLoginItemFilename,
@@ -543,7 +544,11 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       status: "analyzing",
       phase: "extracting",
       at: importedAt,
-      detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
+      detail: importingDetail(
+        `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}`,
+        kind,
+        debug,
+      ),
     });
 
     // One import writer per case, held from the snapshot through the diff below: /push, the MCP

@@ -59,7 +59,8 @@ import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
-import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
+import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
@@ -352,7 +353,13 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     // stood when this sweep began" — a boundary an analyst can state.
     cache: ToolRunCache,
     modelCall?: ModelCallHooks,
-  ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
+  ): Promise<{
+    ok: boolean;
+    reason?: string;
+    pending?: PendingRawInput;
+    submitted?: string;
+    warning?: string;
+  }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     // One recorder per file attempt (#1736): detection, the importer's decisions, and the failure.
@@ -496,7 +503,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           ok: false,
           reason: "AI is off — saved as evidence but not analyzed; enable AI and re-import",
         };
-      return { ok: true };
+      // A guessed SIEM import still imports; the sweep names it in drop-log.txt and drop-status (#1824).
+      logSiemFallback(caseId, file.relpath, kind, debug);
+      return { ok: true, ...siemFallbackWarning(kind, debug) };
     } catch (err) {
       if (err instanceof LinkGuardError) {
         return { ok: false, reason: `${err.kind} detected in drop folder — refused to read (security)` };
@@ -556,6 +565,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // job itself when the analysis resolves.
       const submitted: { relpath: string; reason: string }[] = [];
       const failed: DropFailure[] = [];
+      const warned: DropFailure[] = []; // imported, but the JSON kind was a guess (#1824)
       const pendingRawInputs: PendingRawInput[] = [];
       let processed = 0;
       for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
@@ -576,6 +586,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
                 imported.push(file.relpath);
                 submitted.push({ relpath: file.relpath, reason: res.submitted });
               } else if (res.ok) imported.push(file.relpath);
+              if (res.ok && res.warning) warned.push({ relpath: file.relpath, reason: res.warning });
               else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
               await moveDropFile(dropDir, file.relpath, res.ok).catch((e) =>
                 logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`),
@@ -599,6 +610,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
             imported,
             failed,
             pendingRawInputs,
+            warnings: warned,
           });
           options.onDropStatus?.(caseId);
         } catch (e) {
@@ -617,6 +629,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           submitted,
           failed,
           pendingRawInputs,
+          warned,
         },
         pendingLogged.get(caseId) ?? new Set<string>(),
       );
