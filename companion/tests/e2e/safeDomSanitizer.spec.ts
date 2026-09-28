@@ -51,6 +51,10 @@ const PAYLOADS = [
   `<select><option><img src=x onerror=${X}></option></select>`,
   `<svg><animate onbegin=${X} attributeName=x dur=1s></animate><set attributeName=onmouseover to=${X} /></svg>`,
   `<img srcset="x 1x" onerror=${X}><a href="/x" target="_blank" rel="opener">x</a>`,
+  `<svg><a xlink:href="javascript:${X}"><text>t</text></a></svg>`,
+  `<svg xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="data:image/svg+xml,x"/></svg>`,
+  `<img src=x src=y onerror=${X} onerror=${X}><a href="/ok" href="javascript:${X}">dup</a>`,
+  `<svg><circle ONLOAD=${X} Style="fill:url(https://attacker.invalid/x)"/></svg>`,
 ];
 
 async function loadGuard(page: Page, withoutTrustedTypes: boolean): Promise<void> {
@@ -110,6 +114,16 @@ for (const withoutTrustedTypes of [false, true]) {
       for (const payload of PAYLOADS) {
         expect(await renderAllSinks(page, payload), payload).toEqual([]);
       }
+    });
+
+    test("kept SVG attributes keep their case (viewBox)", async ({ page }) => {
+      await loadGuard(page, withoutTrustedTypes);
+      const viewBox = await page.evaluate(() => {
+        const root = document.getElementById("root")!;
+        root.innerHTML = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"></circle></svg>';
+        return root.querySelector("svg")!.getAttribute("viewBox");
+      });
+      expect(viewBox).toBe("0 0 10 10");
     });
 
     test("escaped evidence text and tooltips render byte-identical (#1787)", async ({ page }) => {
