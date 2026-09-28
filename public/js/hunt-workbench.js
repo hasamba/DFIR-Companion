@@ -172,6 +172,11 @@ function initialize() {
   let running = null;
   let executionId = null;
   let validationTimer = null;
+  // The status line has many writers, and validate() answers late (#1777). Every write bumps this
+  // ticket; a validate reply is shown only when nothing else wrote since that validate started.
+  let statusSeq = 0;
+  // Only the newest saved-hunt list may land: a slow reply for the previous case must not win.
+  let loadSeq = 0;
 
   const caseId = () => (document.getElementById("caseId")?.value || "").trim();
   const endpoint = (suffix) =>
@@ -203,10 +208,14 @@ function initialize() {
     return body;
   }
 
+  function setStatus(text, isError = false) {
+    statusSeq += 1;
+    status.className = isError ? "hq-status hq-error" : "hq-status";
+    status.textContent = text;
+  }
+
   function reportActionError(error) {
-    status.className = "hq-status hq-error";
-    status.textContent =
-      error instanceof Error ? error.message : "The action failed.";
+    setStatus(error instanceof Error ? error.message : "The action failed.", true);
   }
 
   function parseParameters() {
@@ -311,26 +320,30 @@ function initialize() {
 
   async function validate() {
     if (!caseId() || !query.value.trim()) return;
+    const ticket = ++statusSeq;
     try {
       const body = await jsonRequest(endpoint("/validate"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query: query.value }),
       });
-      status.className = "hq-status";
-      status.textContent = body.explanation;
+      if (ticket === statusSeq) setStatus(body.explanation);
     } catch (error) {
+      if (ticket !== statusSeq) return;
       const typed = error.body?.error;
-      status.className = "hq-status hq-error";
-      status.textContent = typed?.line
-        ? `${typed.message} — line ${typed.line}, column ${typed.column}${typed.suggestions?.length ? `; try ${typed.suggestions.join(", ")}` : ""}`
-        : error.message;
+      setStatus(
+        typed?.line
+          ? `${typed.message} — line ${typed.line}, column ${typed.column}${typed.suggestions?.length ? `; try ${typed.suggestions.join(", ")}` : ""}`
+          : error.message,
+        true,
+      );
     }
   }
 
   async function run(cursor = null) {
+    clearTimeout(validationTimer);
     if (!caseId()) {
-      status.textContent = "Open a case first.";
+      setStatus("Open a case first.");
       return;
     }
     running?.abort();
@@ -338,8 +351,7 @@ function initialize() {
     executionId = crypto.randomUUID();
     runButton.disabled = true;
     cancelButton.disabled = false;
-    status.className = "hq-status";
-    status.textContent = "Running bounded indexed query…";
+    setStatus("Running bounded indexed query…");
     if (!cursor) selected = new Set();
     try {
       const savedHuntId = savedSelect.value || undefined;
@@ -360,14 +372,14 @@ function initialize() {
       });
       lastResult = body;
       lastCursor = body.nextCursor;
-      status.textContent = `${body.matched} match(es) on this result, ${body.scanned} row(s) scanned in ${body.durationMs} ms.\n${body.explanation}`;
+      setStatus(
+        `${body.matched} match(es) on this result, ${body.scanned} row(s) scanned in ${body.durationMs} ms.\n${body.explanation}`,
+      );
       renderResults();
       updateActionState();
       if (savedHuntId && !cursor) await loadSaved();
     } catch (error) {
-      status.className = "hq-status hq-error";
-      status.textContent =
-        error.name === "AbortError" ? "Query cancelled." : error.message;
+      setStatus(error.name === "AbortError" ? "Query cancelled." : error.message, true);
     } finally {
       running = null;
       executionId = null;
@@ -376,10 +388,17 @@ function initialize() {
     }
   }
 
-  async function loadSaved() {
+  // Rebuilding the options resets the select, so a Run of a saved hunt used to drop the selection
+  // and Delete/Save/the next Run all lost track of the hunt (#1776). Keep it when it still exists;
+  // a case change passes keep: false, because the old id does not belong to the new case.
+  async function loadSaved({ keep = true } = {}) {
+    const load = ++loadSeq;
     if (!caseId()) return;
+    const previous = keep ? savedSelect.value : "";
     try {
-      savedHunts = await jsonRequest(endpoint("/saved"));
+      const hunts = await jsonRequest(endpoint("/saved"));
+      if (load !== loadSeq) return;
+      savedHunts = hunts;
       savedSelect.innerHTML =
         '<option value="">Unsaved query</option>' +
         savedHunts
@@ -388,12 +407,14 @@ function initialize() {
               `<option value="${escapeHtml(hunt.id)}">${escapeHtml(hunt.name)} · ${escapeHtml(hunt.dataset)}</option>`,
           )
           .join("");
+      if (previous && savedHunts.some((hunt) => hunt.id === previous)) savedSelect.value = previous;
     } catch {
-      savedHunts = [];
+      if (load === loadSeq) savedHunts = [];
     }
   }
 
   async function saveHunt() {
+    clearTimeout(validationTimer);
     if (!caseId()) return;
     const existing = savedHunts.find((hunt) => hunt.id === savedSelect.value);
     const name =
@@ -417,20 +438,24 @@ function initialize() {
       );
       await loadSaved();
       savedSelect.value = saved.id;
-      status.textContent = `Saved “${saved.name}”.`;
+      setStatus(`Saved “${saved.name}”.`);
     } catch (error) {
-      status.className = "hq-status hq-error";
-      status.textContent = error.message;
+      setStatus(error.message, true);
     }
   }
 
   async function deleteHunt() {
-    if (!savedSelect.value || !confirm("Delete this saved hunt and its execution history?")) return;
+    if (!savedSelect.value) {
+      setStatus("Select a saved hunt first.");
+      return;
+    }
+    if (!confirm("Delete this saved hunt and its execution history?")) return;
     const response = await fetch(endpoint(`/saved/${encodeURIComponent(savedSelect.value)}`), {
       method: "DELETE",
     });
     if (!response.ok) throw new Error(`Delete failed (${response.status}).`);
     await loadSaved();
+    setStatus("Deleted the saved hunt.");
   }
 
   function rowsForExport() {
@@ -476,7 +501,7 @@ function initialize() {
         linkedEntityIds: ids,
       }),
     });
-    status.textContent = "Added the hunt and selected result links to the analyst notebook.";
+    setStatus("Added the hunt and selected result links to the analyst notebook.");
   }
 
   async function attachFinding() {
@@ -492,12 +517,13 @@ function initialize() {
         eventIds: selectedIds(),
       }),
     });
-    status.textContent = `Attached ${body.addedEventIds.length} forensic event(s) to ${findingId}.`;
+    setStatus(`Attached ${body.addedEventIds.length} forensic event(s) to ${findingId}.`);
   }
 
   query.addEventListener("input", () => {
     renderSuggestions();
     clearTimeout(validationTimer);
+    statusSeq += 1; // an edit makes any in-flight validate reply stale
     validationTimer = setTimeout(validate, 350);
   });
   suggestions.addEventListener("click", (event) => {
@@ -559,8 +585,9 @@ function initialize() {
       renderResults();
     });
   });
-  document.getElementById("caseId")?.addEventListener("change", loadSaved);
-  document.getElementById("caseId")?.addEventListener("input", loadSaved);
+  const loadSavedForCase = () => loadSaved({ keep: false });
+  document.getElementById("caseId")?.addEventListener("change", loadSavedForCase);
+  document.getElementById("caseId")?.addEventListener("input", loadSavedForCase);
 
   async function loadCatalog() {
     if (!caseId()) return;
