@@ -891,8 +891,11 @@ Each release provides four downloads built from the same frozen approved evidenc
 - **Legal/insurance** — restrictions, limitations, uncertainty, and sign-off record.
 - **IOCs** — spreadsheet-safe CSV of the approved indicators.
 
-Use the existing **From / To / Diff** controls for the visual version comparison. The release diff
-and release records are also machine-readable through the case API.
+Use the existing **From / To / Diff** controls for the visual version comparison. The diff lists
+finding, IOC and timeline changes. It also names a change to the report text or to Case Details
+fields (for example, Incident ID or Executive summary), so two versions that differ only there no
+longer read as identical. The release diff and release records are also machine-readable through
+the case API.
 
 ---
 

@@ -7,6 +7,7 @@ import { diffIocs } from "../analysis/iocsDiff.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { requestAuthentication } from "../auth/types.js";
 import { REPORT_PACK_TYPES } from "../reports/reportReleaseStore.js";
+import { diffReportText } from "../reports/reportTextDiff.js";
 import {
   reportActorSchema,
   reportAnnotationInputSchema,
@@ -113,8 +114,10 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
     }
   });
 
-  // Diff two stored versions' findings/IOCs/forensic-timeline. `from`/`to` are version ids from the
-  // list above; `to` defaults to the most recent version when omitted.
+  // Diff two stored versions' findings/IOCs/forensic-timeline, plus `report` — whether the report
+  // text changed and which Case Details (report-meta) fields changed (#1779), so a version that
+  // differs only there no longer reads "no differences". `from`/`to` are version ids from the list
+  // above; `to` defaults to the most recent version when omitted.
   app.get("/cases/:id/report-versions/diff", async (req: Request, res: Response) => {
     if (!options.reportVersionStore)
       return res.status(501).json({ error: "report versioning not configured" });
@@ -138,6 +141,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
         findings: diffFindings(from.state.findings, to.state.findings),
         iocs: diffIocs(from.state.iocs, to.state.iocs),
         timeline: diffTimeline(from.state.forensicTimeline, to.state.forensicTimeline),
+        report: diffReportText(from, to),
       });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -423,6 +427,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
     return res.status(200).json(await options.reportVersionStore.verifyReleases(req.params.id));
   });
 
+  // Same shape as the version diff above, over two frozen releases' snapshots (#1779 `report` too).
   app.get("/cases/:id/report-releases/diff", async (req: Request, res: Response) => {
     if (!options.reportVersionStore) {
       return res.status(501).json({ error: "report versioning not configured" });
@@ -442,6 +447,7 @@ export function registerReportVersionsRoutes(app: Express, ctx: RouteContext): v
         findings: diffFindings(from.snapshot.state.findings, to.snapshot.state.findings),
         iocs: diffIocs(from.snapshot.state.iocs, to.snapshot.state.iocs),
         timeline: diffTimeline(from.snapshot.state.forensicTimeline, to.snapshot.state.forensicTimeline),
+        report: diffReportText(from.snapshot, to.snapshot),
       });
     } catch (err) {
       return workflowError(res, err);
