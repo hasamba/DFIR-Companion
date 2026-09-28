@@ -716,11 +716,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
 
   app.post("/settings/env", async (req: Request, res: Response) => {
     try {
-      const updates = req.body?.updates;
+      const { updates, unset = [] } = req.body ?? {}; // unset: blank Settings selects back to "not set" (#1785)
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
       }
-      const rejected = validateEnvUpdates(updates as Record<string, unknown>); // values are as untrusted as keys (#422)
+      const rejected = validateEnvUpdates(updates as Record<string, unknown>, unset); // values are as untrusted as keys (#422)
       if (rejected.length > 0) {
         // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
         // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.
@@ -731,7 +731,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           .status(400)
           .json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
       }
-      await updateEnvFile(updates as Record<string, string>);
+      await updateEnvFile(updates as Record<string, string>, unset as string[]);
       return res.json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
