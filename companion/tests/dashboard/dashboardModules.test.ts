@@ -258,11 +258,11 @@ describe("every moved function still resolves at its call sites", () => {
   // with execSummaryHtml and its four helpers, the Executive Summary's fact strip and ledger; 128
   // with narrativeHtml and its three helpers, the Narrative Timeline's time rail; 131 with jobTime,
   // jobWhen and lastSynthesisLine, the Background jobs popover's "when did it run" line; 132 with
-  // jobFilesHtml, the popover's list of every file a drop sweep covers; 134 with emptyStateHtml and
-  // narrativeViewHtml, the panels' empty-state sentence (#1765-#1768).
+  // jobFilesHtml, the popover's list of every file a drop sweep covers; 135 with emptyStateHtml,
+  // narrativeViewHtml and timelineEmptyHtml, the panels' empty-state sentence (#1765-#1768).
   // The number is a vacuity guard, not a budget.
-  it("moved 134 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(134);
+  it("moved 135 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(135);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

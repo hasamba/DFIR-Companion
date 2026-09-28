@@ -321,6 +321,7 @@ export interface FragmentsApi {
   narrativeHtml(text: unknown, events: unknown): string;
   narrativeViewHtml(text: unknown, events: unknown): string;
   emptyStateHtml(text: unknown): string;
+  timelineEmptyHtml(rawCount: number): string;
   narrativeLead(
     para: string,
   ): { date: string | null; dateLabel: string; times: string[]; sub: string; rest: string } | null;

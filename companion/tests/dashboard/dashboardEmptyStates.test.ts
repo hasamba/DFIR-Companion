@@ -52,9 +52,9 @@ describe("render() empty states", () => {
 });
 
 describe("Forensic Timeline empty state", () => {
-  it("says the case is empty, or that the view hides its events, instead of a dash", () => {
-    expect(HTML).toContain("No events yet — import evidence.");
-    expect(HTML).toContain("No events in the current view — the scope or false-positive marks hide them.");
-    expect(HTML).not.toMatch(/No events match the current filters\.<\/div>" : "—"/);
+  it("renders through timelineEmptyHtml instead of a dash", () => {
+    expect(HTML).toContain(
+      'No events match the current filters.</div>" : timelineEmptyHtml(((DfirState.lastState() || {}).forensicTimeline || []).length);',
+    );
   });
 });

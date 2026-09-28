@@ -359,6 +359,16 @@ function emptyStateHtml(text) {
   return `<div class="empty-state" data-safe-style="color:var(--text-muted)">${esc(text)}</div>`;
 }
 
+// The Forensic Timeline with nothing to show and no filter on. `rawCount` is the case's own event
+// count: events hidden only by the scope or false-positive marks must not read as "import evidence".
+function timelineEmptyHtml(rawCount) {
+  return emptyStateHtml(
+    rawCount > 0
+      ? "No events in the current view — the scope or false-positive marks hide them."
+      : "No events yet — import evidence.",
+  );
+}
+
 // The Narrative Timeline view. "—" and blank are the editor's "nothing written yet" value (see
 // dashboard-narrative.js): they stay in data-raw so the editor opens empty, and only the VIEW shows
 // the sentence — it must never load into the textarea or be saved as the narrative.
@@ -495,6 +505,7 @@ window.DfirFragments = {
   execFactsHtml,
   execLedgerHtml,
   emptyStateHtml,
+  timelineEmptyHtml,
   narrativeViewHtml,
   narrativeHtml,
   narrativeLead,

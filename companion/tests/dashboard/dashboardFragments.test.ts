@@ -32,6 +32,14 @@ describe("emptyStateHtml", () => {
   });
 });
 
+describe("timelineEmptyHtml", () => {
+  it("tells an empty case apart from a view that hides the case's events", () => {
+    expect(f.timelineEmptyHtml(0)).toContain("No events yet — import evidence.");
+    expect(f.timelineEmptyHtml(12)).toContain("No events in the current view");
+    expect(f.timelineEmptyHtml(12)).not.toContain("import evidence");
+  });
+});
+
 describe("proseHtml", () => {
   it("wraps each paragraph in its own <p>", () => {
     expect(f.proseHtml("First para.\n\nSecond para.")).toBe("<p>First para.</p><p>Second para.</p>");
