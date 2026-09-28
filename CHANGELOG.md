@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Empty panels say what is missing** — Executive Summary, Attack Path, Narrative, MITRE, Investigation Log, Findings and Forensic Timeline show a short sentence instead of a bare "—" on a new case (closes #1765, #1766, #1767, #1768)
+- **Presidio hold is not a failure** — Executive Summary, Narrative and every other AI button show "held for Presidio approval — review in Anonymization" instead of a red "failed … restart the server" (closes #1782)
+- **Run ledger never hangs on "loading…"** — the run list shows as soon as it arrives, and a stalled list or integrity check says so after 15 s (closes #1783)
 - **CSS image functions blocked** — the style sanitizer drops `image-set()`, `-webkit-image-set()`, `image()` and `src()`, which fetch an external URL like `url()` (closes #1811)
 - **Backslash URLs blocked** — a link or image source starting with `/\` or `\` no longer passes as same-origin; browsers read it as another host (closes #1812)
 - **One attribute policy for script and markup** — `setAttribute` and `setAttributeNS` now drop `action`, `formaction`, `srcset`, `ping` and remote SVG references, the same as rendered markup (closes #1813)

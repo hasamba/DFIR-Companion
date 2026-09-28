@@ -33,6 +33,13 @@
           e.sectionDisabled = true;
           throw e;
         }
+        // A Presidio hold is a question for the analyst, not a failure (#1782): muted, and no
+        // "restart the server" hint. The ⚠ Presidio badge opens the values to decide on.
+        if (typeof presidioHold === "function" && presidioHold(r.status, d)) {
+          const e = new Error(presidioHoldText("Executive summary"));
+          e.presidioHold = true;
+          throw e;
+        }
         // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
         // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
         if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
@@ -60,7 +67,7 @@
       })
       .catch((e) => {
         msg.textContent = "";
-        out.innerHTML = e.sectionDisabled
+        out.innerHTML = e.sectionDisabled || e.presidioHold
           ? `<div data-safe-style="color:var(--text-muted);margin-top:8px">${esc(e.message)}</div>`
           : `<div data-safe-style="color:var(--sev-high);margin-top:8px">generate failed: ${esc(e.message)} — restart the companion server if this 404s</div>`;
       })

@@ -425,8 +425,14 @@
         author: investigatorName(),
       }),
     })
-      .then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          // A Presidio hold waits for the analyst — it is not a failure (#1782).
+          if (typeof presidioHold === "function" && presidioHold(r.status, body))
+            throw Object.assign(new Error("presidio hold"), { presidioHold: true });
+          throw new Error("HTTP " + r.status);
+        }
         return r.json();
       })
       .then(() => {
@@ -441,6 +447,10 @@
       // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
       // must see why nothing happened instead of a dead button.
       .catch((e) => {
+        if (msg && e.presidioHold) {
+          msg.textContent = presidioHoldText("Promote");
+          return;
+        }
         if (msg)
           msg.textContent =
             "promote failed: " +
@@ -475,8 +485,14 @@
           author: investigatorName(),
         }),
       })
-        .then((r) => {
-          if (!r.ok) throw new Error("HTTP " + r.status);
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            // A Presidio hold waits for the analyst — it is not a failure (#1782).
+            if (typeof presidioHold === "function" && presidioHold(r.status, body))
+              throw Object.assign(new Error("presidio hold"), { presidioHold: true });
+            throw new Error("HTTP " + r.status);
+          }
           return r.json();
         })
         .then(() => {
@@ -486,6 +502,10 @@
           loadHypotheses(caseId);
         })
         .catch((e) => {
+          if (e.presidioHold) {
+            msg.textContent = presidioHoldText("Add hypothesis");
+            return;
+          }
           msg.textContent =
             "failed: " +
             e.message +
@@ -521,6 +541,15 @@
                   locked: true,
                 });
               });
+            // A Presidio hold is a question for the analyst, not a failure (#1782).
+            if (r.status === 409)
+              return r.json().then((body) => {
+                if (typeof presidioHold === "function" && presidioHold(r.status, body))
+                  throw Object.assign(new Error(presidioHoldText("Hypothesis generation")), {
+                    presidioHold: true,
+                  });
+                throw new Error((body && body.error) || "HTTP 409");
+              });
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
           })
@@ -539,10 +568,11 @@
             loadSynthMeta(caseId);
           })
           .catch((e) => {
-            msg.textContent =
-              "failed: " +
-              e.message +
-              " — restart the companion server if this 404s";
+            msg.textContent = e.presidioHold
+              ? e.message
+              : "failed: " +
+                e.message +
+                " — restart the companion server if this 404s";
           })
           .finally(() => {
             btn.disabled = false;
@@ -566,11 +596,14 @@
           headers: { "content-type": "application/json" },
           body: "{}",
         })
-          .then((r) => {
-            if (!r.ok)
-              return r.json().then((p) => {
-                throw new Error(p.error || "HTTP " + r.status);
-              });
+          .then(async (r) => {
+            if (!r.ok) {
+              const p = await r.json().catch(() => ({}));
+              // A Presidio hold waits for the analyst — it is not a failure (#1782).
+              if (typeof presidioHold === "function" && presidioHold(r.status, p))
+                throw Object.assign(new Error("presidio hold"), { presidioHold: true });
+              throw new Error(p.error || "HTTP " + r.status);
+            }
             return r.json();
           })
           .then((p) => {
@@ -581,6 +614,10 @@
                 : "no open hypotheses to review";
           })
           .catch((e) => {
+            if (e.presidioHold) {
+              msg.textContent = presidioHoldText("Hypothesis review");
+              return;
+            }
             msg.textContent =
               "failed: " +
               e.message +
