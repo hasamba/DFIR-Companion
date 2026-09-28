@@ -69,9 +69,10 @@ describe("the four moments the pill re-derives", () => {
     expect(duplicates.match(/window\.refreshAiState\?\.\(caseId\)/g) ?? []).toHaveLength(1);
   });
 
-  // Both Presidio paths, not just approve: suppress clears the gate exactly as much as approve does.
-  it("re-reads after either Presidio resolution", () => {
-    expect(presidio.match(/refreshAiState\(caseId\)/g) ?? []).toHaveLength(2);
+  // Every Presidio path, not just approve: suppress clears the gate exactly as much as approve does,
+  // and so does "Leave all visible" (#1799).
+  it("re-reads after every Presidio resolution", () => {
+    expect(presidio.match(/refreshAiState\(caseId\)/g) ?? []).toHaveLength(3);
   });
 });
 
