@@ -1275,6 +1275,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // MITRE ATT&CK matrix (#1764). DfirMitreMatrix is published by the initializer, as
+    // DfirPaletteConfig is, so nothing but the entry point exists before the page calls it.
+    file: "dashboard-mitre-matrix.js",
+    initializer: "initMitreMatrix",
+    publish: ["initMitreMatrix"],
+    private: ["mmCatalogue", "mmLast", "mmEntries", "mmExpanded", "mmPopoverId"],
+  },
+  {
     // Kill chain tactic phase view. Split out of the 1,145-line "Activity Log" banner, which held
     // ten features and two spine functions — it read as core machinery only because of what else
     // shared its banner.

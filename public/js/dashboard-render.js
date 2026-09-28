@@ -518,13 +518,21 @@
     // Without it a row appended from an event id showed the bare "T1490" here while
     // the report and every server-side export showed "Inhibit System Recovery".
     const mitreRows = deriveMitreRows(notFp, ft, state.mitreTechniques, state.techniqueNames);
-    document.getElementById("mitre").innerHTML =
-      mitreRows
-        .map(
-          (m) =>
-            `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`,
-        )
-        .join("") || "—";
+    // The List view, unchanged. The Matrix view (#1764) draws from the SAME rows, so the two views
+    // never disagree, and calls this back whenever the analyst's switch says List. With the matrix
+    // module missing, the List is all there is.
+    const renderMitreList = () => {
+      document.getElementById("mitre").innerHTML =
+        mitreRows
+          .map(
+            (m) =>
+              `<div class="mitre-row">${mitreLinks([m.id])} <span>${esc(m.name)}</span><span class="mitre-findings">${esc(m.findingIds.join(", "))}</span></div>`,
+          )
+          .join("") || "—";
+    };
+    if (window.DfirMitreMatrix) {
+      window.DfirMitreMatrix.renderPanel({ rows: mitreRows, findings: notFp, ft, renderList: renderMitreList });
+    } else renderMitreList();
     renderPinned(); // pinned-strip titles resolve against the just-rendered findings (#220)
   }
 

@@ -601,3 +601,20 @@ export interface CasePickerApi {
   loadCaseList(): Promise<void>;
   syncCasePicker(): void;
 }
+
+// public/js/dashboard-mitre-matrix.js — the MITRE panel's Matrix view (#1764). The layout and hit
+// builder mirror analysis/attackMatrix.ts and reports/attackMatrixHits.ts; the parity suite pins
+// them deep-equal. `unknown` for the model shapes: the suite compares them to the server's types.
+export interface MitreMatrixApi {
+  buildAttackMatrix(data: unknown, hits: unknown[], opts: { platform: string; hitsOnly: boolean }): unknown;
+  aggregateCell(cell: unknown): unknown;
+  buildMatrixHits(rows: unknown[], findings: unknown[], ft: unknown[]): unknown[];
+  coerceCatalogue(raw: unknown): unknown;
+  matrixHtml(model: unknown, hits: unknown[], expanded?: Map<string, boolean>): string;
+  popoverHtml(entry: { id: string; name: string; agg?: unknown }, ctx: unknown): string;
+  renderPanel(args: { rows: unknown[]; findings: unknown[]; ft: unknown[]; renderList: () => void }): void;
+  setAllExpanded(open: boolean): void;
+  prefs(): { view: string; platform: string; hitsOnly: boolean };
+  PLATFORM_GROUPS: Record<string, string[]>;
+  MATRIX_PLATFORMS: string[];
+}

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
 - **Importer debug detail** — every import records the columns it used, skipped-row reasons, fallbacks and parse-failure location to the debug log and the support bundle (closes #1736)
 - **Redacted support bundle** — Diagnostics downloads one zip of redacted logs, an always-on capped debug log and failed-import layouts for bug reports (closes #1735)
 - **Per-model AI keys become overrides** — per-model key and base-URL fields move to the full Settings view, and a one-click notice moves saved values into the provider fields

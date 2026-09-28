@@ -1,0 +1,79 @@
+/* MITRE ATT&CK matrix view of the MITRE panel (#1764). Drawn by js/dashboard-mitre-matrix.js.
+   Colours come only from the theme roles (--sev-*, --bg-*, --text-*), so every theme, light or
+   dark, gets a matrix that matches it. The columns scroll sideways INSIDE the panel; the page
+   itself never does. Not one of the eight byte-split dashboard parts, so it is named apart from
+   them and linked after them. */
+
+#sec-mitre { position: relative; min-width: 0; }
+#sec-mitre.mm-matrix-on { grid-column: 1 / -1; }
+
+.mm-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 8px; font-size: 12px; }
+.mm-switch { display: inline-flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.mm-switch-btn { border: 0; border-radius: 0; padding: 3px 12px; background: var(--bg-secondary); color: var(--text-muted); cursor: pointer; }
+.mm-switch-btn[aria-pressed="true"] { background: var(--bg-tertiary); color: var(--text-bright); font-weight: 600; }
+.mm-ctl { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.mm-ctl[hidden] { display: none; }
+
+.mm-note { margin: 0 0 8px; color: var(--text-muted); font-style: italic; }
+.mm-scroll { overflow-x: auto; max-width: 100%; padding-bottom: 6px; }
+.mm-grid { display: flex; gap: 6px; align-items: flex-start; width: max-content; }
+.mm-col { flex: 0 0 148px; width: 148px; display: flex; flex-direction: column; gap: 3px; }
+.mm-col-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
+  padding: 4px 6px; border-bottom: 2px solid var(--border-color);
+  font-size: 11px; font-weight: 600; color: var(--text-bright);
+}
+.mm-col-count { color: var(--text-muted); font-weight: 400; }
+
+.mm-tech-row { display: flex; gap: 2px; }
+.mm-cell {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px;
+  padding: 3px 5px; border: 1px solid var(--border-subtle); border-radius: 3px;
+  background: var(--bg-secondary); color: var(--text-dim);
+  font-size: 11px; line-height: 1.25; text-align: left; cursor: pointer;
+}
+.mm-cell:hover { background: var(--bg-hover); color: var(--text-bright); }
+.mm-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.mm-sub { margin-left: 10px; }
+.mm-subs { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.mm-toggle {
+  flex: 0 0 auto; padding: 0 5px; border: 1px solid var(--border-subtle); border-radius: 3px;
+  background: var(--bg-tertiary); color: var(--text-muted); font-size: 10px; cursor: pointer;
+}
+
+/* A hit: the severity colour, plus a count badge and a severity letter so colour is never the
+   only signal. */
+.mm-hit { color: var(--text-bright); border-left-width: 4px; font-weight: 600; }
+.mm-badge, .mm-sevl {
+  flex: 0 0 auto; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 700;
+  background: var(--bg-primary); color: var(--text-bright);
+}
+.mm-sev-Critical { background: color-mix(in oklab, var(--sev-critical) 30%, var(--bg-secondary)); border-color: var(--sev-critical); }
+.mm-sev-High { background: color-mix(in oklab, var(--sev-high) 30%, var(--bg-secondary)); border-color: var(--sev-high); }
+.mm-sev-Medium { background: color-mix(in oklab, var(--sev-medium) 30%, var(--bg-secondary)); border-color: var(--sev-medium); }
+.mm-sev-Low { background: color-mix(in oklab, var(--sev-low) 30%, var(--bg-secondary)); border-color: var(--sev-low); }
+.mm-sev-Info { background: color-mix(in oklab, var(--sev-info) 22%, var(--bg-secondary)); border-color: var(--sev-info); }
+
+.mm-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+.mm-legend { display: inline-flex; flex-wrap: wrap; gap: 10px; }
+.mm-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.mm-swatch { display: inline-block; min-width: 16px; padding: 0 3px; border: 1px solid; border-radius: 3px; text-align: center; font-weight: 700; color: var(--text-bright); }
+
+.mm-popover {
+  position: absolute; z-index: 30; width: 340px; max-width: calc(100% - 8px); max-height: 420px; overflow-y: auto;
+  padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 6px;
+  background: var(--bg-elevated); color: var(--text-primary); font-size: 12px;
+  box-shadow: 0 6px 24px color-mix(in oklab, var(--bg-primary) 60%, transparent);
+}
+.mm-popover[hidden] { display: none; }
+.mm-pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.mm-pop-close { border: 0; background: none; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.mm-pop-meta { margin: 4px 0; color: var(--text-muted); }
+.mm-accepted { margin: 4px 0; font-style: italic; }
+.mm-popover h4 { margin: 8px 0 4px; font-size: 11px; text-transform: uppercase; color: var(--text-muted); }
+.mm-pop-list { margin: 0; padding-left: 16px; }
+.mm-link { border: 0; padding: 1px 0; background: none; color: var(--accent); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.mm-link:hover { text-decoration: underline; }
+.mm-more { margin: 4px 0 0; color: var(--text-muted); }
+.mm-key { color: var(--text-muted); font-size: 11px; }
+.mm-ctl-btn { padding: 2px 8px; font-size: 12px; }

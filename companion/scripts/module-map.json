@@ -163,6 +163,8 @@
     "attack.ts": "analysis/intel",
     "attackMitigations.ts": "analysis/intel",
     "attackMitigationsData.ts": "analysis/intel",
+    "attackMatrix.ts": "analysis/intel",
+    "attackMatrixData.ts": "analysis/intel",
     "attackTechniqueNames.ts": "analysis/timeline",
     "auditdImport.ts": "analysis/ingest",
     "authObservationStore.ts": "analysis/ingest",

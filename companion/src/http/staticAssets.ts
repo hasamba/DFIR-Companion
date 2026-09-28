@@ -262,6 +262,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // Vim-style keyboard navigation for the Forensic Timeline.
   "/js/dashboard-live-socket.js": "application/javascript; charset=utf-8",
   "/js/dashboard-case-connect.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-mitre-matrix.js": "application/javascript; charset=utf-8",
   "/js/dashboard-render.js": "application/javascript; charset=utf-8",
   "/js/dashboard-facet-filters.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hunts-jumps.js": "application/javascript; charset=utf-8",
@@ -342,6 +343,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/css/dashboard-timeline.css": "text/css; charset=utf-8",
   "/css/dashboard-toolbar.css": "text/css; charset=utf-8",
   "/css/dashboard-sections.css": "text/css; charset=utf-8",
+  // The MITRE panel's Matrix view (#1764). A feature sheet, not a ninth byte-split part.
+  "/css/mitre-matrix.css": "text/css; charset=utf-8",
 };
 
 /**
