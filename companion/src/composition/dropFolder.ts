@@ -582,11 +582,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
               }
               // A submitted file still counts as "imported" for the dashboard's drop banner (it was
               // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
+              if (res.ok && res.warning) warned.push({ relpath: file.relpath, reason: res.warning });
               if (res.ok && res.submitted) {
                 imported.push(file.relpath);
                 submitted.push({ relpath: file.relpath, reason: res.submitted });
               } else if (res.ok) imported.push(file.relpath);
-              if (res.ok && res.warning) warned.push({ relpath: file.relpath, reason: res.warning });
               else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
               await moveDropFile(dropDir, file.relpath, res.ok).catch((e) =>
                 logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`),

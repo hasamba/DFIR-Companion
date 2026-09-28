@@ -166,6 +166,9 @@ describe("drop folder names a guessed JSON kind (#1824)", () => {
 
     const status = await dropStatusStore.load("c1");
     expect(status.importedCount).toBe(2);
+    expect(status.failedCount).toBe(0); // a warning is not a failure, and a clean file is neither
+    expect(status.failed).toEqual([]);
+    expect(log.some((l) => l.includes("FAILED"))).toBe(false);
     expect(status.warnings).toEqual([{ relpath: "guess.json", reason: SIEM_FALLBACK_WARNING }]);
     expect(warnLines()).toHaveLength(1);
   });
