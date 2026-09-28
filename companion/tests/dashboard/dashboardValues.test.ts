@@ -248,7 +248,12 @@ describe("lastSynthesisLine", () => {
 
   // #1801: a gate hold ends cancelled, but it was not the analyst's Cancel.
   it("names a gate hold as held for the analyst, not cancelled", () => {
-    const held = { kind: "synthesis", status: "cancelled", endedAt: E, failure: { code: "held_for_analyst" } };
+    const held = {
+      kind: "synthesis",
+      status: "cancelled",
+      endedAt: E,
+      failure: { code: "held_for_analyst" },
+    };
     expect(v.lastSynthesisLine([held])).toBe(`Last synthesis: ${v.jobTime(E)} — held for analyst`);
     expect(v.lastSynthesisLine([{ kind: "synthesis", status: "cancelled", endedAt: E }])).toBe(
       `Last synthesis: ${v.jobTime(E)} — cancelled`,
