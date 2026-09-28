@@ -257,7 +257,8 @@ describe("POST /cases/:id/import-binary — the browser's byte-native path (#130
       "utf8",
     );
     expect(dashboard).toMatch(/jr\.refused/);
-    expect(dashboard).toMatch(/refused\.push\(jr\.error\)/);
+    // #1786 ties the sentence to its file name; the sentence itself is still what the analyst reads.
+    expect(dashboard).toMatch(/refused\.push\(fileFailure\(f\.name, jr\.error\)\)/);
   });
 
   it("is a case-scoped WRITE, not the global-admin gate the server-path route needs", () => {
