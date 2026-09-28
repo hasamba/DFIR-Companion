@@ -107,8 +107,11 @@
     const el = document.getElementById("status");
     // "catching up" is the optimistic message toggleAi() writes when AI is switched on; it must
     // be cleared once the backfill reports idle, or it stays stuck (it's not a live indicator).
+    // A finished second opinion's result line ("second opinion: N disagreements …", or its failure)
+    // is stale once any later run ends; it outlived an import and a re-synthesis before. Anchored so
+    // the in-flight "running second opinion …" line survives the idle its inner synthesis pushes.
     if (
-      /synthesiz|applying scope|marking false positive|import|catching up/i.test(
+      /synthesiz|applying scope|marking false positive|import|catching up|^second opinion(:| failed| error)/i.test(
         el.textContent,
       )
     ) {
