@@ -1,5 +1,5 @@
 import type { Express, Request, Response, CookieOptions } from "express";
-import { isValidCaseId } from "../storage/caseStore.js";
+import { isValidCaseId, CaseLifecycleError } from "../storage/caseStore.js";
 import {
   hashCasePassword,
   verifyCasePassword,
@@ -141,6 +141,8 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       // the case immediately, not just for other people.
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
+      // The case was deleted after the existence check (#1808); updateCaseMeta no longer recreates it.
+      if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -154,6 +156,8 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       res.clearCookie(unlockCookieName(id), { path: "/" });
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
+      // The case was deleted after the existence check (#1808); updateCaseMeta no longer recreates it.
+      if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
