@@ -314,7 +314,12 @@
 .dp-partial { background: #ff5a5a18; border-color: #ff5a5a66; }
 .dp-partial .dp-partial-hd { color: #ff8f8f; font-weight: bold; }
 /* Background jobs widget (#225) — badge + popover in the toolbar. */
-#jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #6aa9ff22; border: 1px solid #6aa9ff55; }
+/* Theme tokens, not a fixed blue (#1749). The chip is visible at rest since #1732, and #6aa9ff text
+   measured 2.16:1 on the light theme. Accent text fails 4.5:1 in about half the themes, so the text
+   takes the text role and the accent only tints the pill. tests/dashboard/jobsBadgeContrast.test.ts. */
+#jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; color: var(--text-primary);
+  background: color-mix(in oklab, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 34%, transparent); }
 .jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto; overflow-x: hidden;
   background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px #0009; }
 .jobs-menu h3 { margin: 2px 4px 8px; font-size: 12px; color: var(--text-muted); font-weight: normal; text-transform: uppercase; letter-spacing: .04em; }
