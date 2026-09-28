@@ -27,6 +27,8 @@ function recordPlasoParse(
   recordParsedImport(debug, parsed, parsed.events.length, post);
 }
 import { isLabProduced, PROMOTED_MARKER } from "../labIntel.js";
+import { stateEventResolver } from "../eventAliasLookup.js";
+import { promotionOutcome, type PromotionOutcome } from "./promotionOutcome.js";
 
 /**
  * Whole-timeline sources. Plaso arrives already normalised into timeline rows, and
@@ -125,12 +127,48 @@ const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionInte
   "missed-evidence",
 ]);
 
+/**
+ * The intents that may only ADD a row the forensic timeline does not hold under any id (#1761). A
+ * missed-evidence row is by definition absent from it, so one that is there is DROPPED here:
+ *   - under its own id: mergeDelta treats a same-id row as an update and overwrites the event's text
+ *     and severity, so a stale archive row would restate the event at the model's grade — lower, too,
+ *     since "raise only" was judged against the archive row, not the event;
+ *   - under another id, through the case lineage (#1715) — a second tool's copy of the event: it
+ *     folds away, or, graded above that event, takes the event's place.
+ * The route checks both, but against the state it read before its grade and archive lookups. This
+ * runs under the state lock, on the state the merge will use, so an import in between changes nothing.
+ */
+const NEW_ROWS_ONLY_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>(["missed-evidence"]);
+
+export interface PromotionOptions {
+  importedAt: string;
+  intent: PromotionIntent;
+  tagById?: Record<string, string[]>;
+  /**
+   * The case timeline note. A string is written as given. A function is called after the merge with
+   * what the promotion did, so a count in it is what landed rather than what was asked for (#1761);
+   * an empty answer writes no note.
+   */
+  note?: string | ((outcome: PromotionOutcome) => string);
+}
+
 export async function promoteSuperTimeline(
   ctx: ImportContext,
   caseId: string,
   requested: ForensicEvent[],
-  opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
+  opts: PromotionOptions,
 ): Promise<InvestigationState> {
+  return (await promoteSuperTimelineWithOutcome(ctx, caseId, requested, opts)).state;
+}
+
+/** promoteSuperTimeline, plus what it did to each requested row (#1761, promotionOutcome.ts). */
+export async function promoteSuperTimelineWithOutcome(
+  ctx: ImportContext,
+  caseId: string,
+  requested: ForensicEvent[],
+  opts: PromotionOptions,
+): Promise<{ state: InvestigationState; outcome: PromotionOutcome }> {
+  const requestedIds = requested.map((e) => e.id);
   const events = requested
     .filter((e) => !(LAB_REFUSING_INTENTS.has(opts.intent) && isLabProduced(e)))
     .map((e) => (isLabProduced(e) ? { ...e, origin: "lab" as const, severity: "Info" as const } : e));
@@ -138,49 +176,86 @@ export async function promoteSuperTimeline(
   if (opts.intent === "manual" || opts.intent === "remediation-check")
     for (const e of events) marked[e.id] = [...new Set([...(marked[e.id] ?? []), PROMOTED_MARKER])];
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    if (!events.length) return state;
+    const before = await ctx.opts.stateStore.load(caseId);
+    const live = new Set(before.forensicTimeline.map((e) => e.id));
+    const canonical = stateEventResolver(before);
+    const toMerge = NEW_ROWS_ONLY_INTENTS.has(opts.intent)
+      ? events.filter((e) => !live.has(canonical(e.id)))
+      : events;
+    if (!toMerge.length) return { state: before, outcome: promotionOutcome(before, before, requestedIds) };
     const delta = deltaSchema.parse({
       findings: [],
       iocs: [],
       mitreTechniques: [],
       threadsOpened: [],
       threadsClosed: [],
-      timelineNote: opts.note ?? `Promoted ${events.length} event(s) from the super-timeline`,
+      // A function note waits for the outcome below; mergeDelta writes no entry for an empty note.
+      timelineNote:
+        typeof opts.note === "function"
+          ? ""
+          : (opts.note ?? `Promoted ${toMerge.length} event(s) from the super-timeline`),
       summary: "",
-      forensicEvents: events.map((e) => ({ ...e })),
+      forensicEvents: toMerge.map((e) => ({ ...e })),
     });
-    state = await ctx.mergeWithAliases(state, delta, {
+    const merged = await ctx.mergeWithAliases(before, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [],
     });
-    // Stamp promotedAt so the forensic gate keeps these rows past the next demote pass (#1432).
-    // The delta schema strips unknown keys, so the stamp cannot ride through mergeWithAliases;
-    // apply it by id afterwards, like the provenance markers below. An earlier stamp is kept.
-    const promotedIds = new Set(events.map((e) => e.id));
+    const stamped = stampPromoted(merged, toMerge, marked, opts.importedAt);
+    const outcome = promotionOutcome(before, stamped, requestedIds);
+    const state = withOutcomeNote(stamped, opts, outcome);
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    return { state, outcome };
+  });
+}
+
+function stampPromoted(
+  merged: InvestigationState,
+  events: readonly ForensicEvent[],
+  marked: Record<string, string[]>,
+  importedAt: string,
+): InvestigationState {
+  // Stamp promotedAt so the forensic gate keeps these rows past the next demote pass (#1432).
+  // The delta schema strips unknown keys, so the stamp cannot ride through mergeWithAliases;
+  // apply it by id afterwards, like the provenance markers below. An earlier stamp is kept.
+  const promotedIds = new Set(events.map((e) => e.id));
+  let state: InvestigationState = {
+    ...merged,
+    forensicTimeline: merged.forensicTimeline.map((e) =>
+      promotedIds.has(e.id) && !e.promotedAt ? { ...e, promotedAt: importedAt } : e,
+    ),
+  };
+  // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
+  // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
+  // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
+  if (Object.keys(marked).length) {
+    const tagged = new Set(Object.keys(marked));
     state = {
       ...state,
       forensicTimeline: state.forensicTimeline.map((e) =>
-        promotedIds.has(e.id) && !e.promotedAt ? { ...e, promotedAt: opts.importedAt } : e,
+        tagged.has(e.id) ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...marked[e.id]])] } : e,
       ),
     };
-    // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
-    // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
-    // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-    if (Object.keys(marked).length) {
-      const tagged = new Set(Object.keys(marked));
-      state = {
-        ...state,
-        forensicTimeline: state.forensicTimeline.map((e) =>
-          tagged.has(e.id)
-            ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...marked[e.id]])] }
-            : e,
-        ),
-      };
-    }
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    return state;
-  });
+  }
+  return state;
+}
+
+/** The entry mergeDelta would have pushed for this promotion's ctx, written once the outcome is known. */
+function withOutcomeNote(
+  state: InvestigationState,
+  opts: PromotionOptions,
+  outcome: PromotionOutcome,
+): InvestigationState {
+  if (typeof opts.note !== "function") return state;
+  const description = opts.note(outcome).trim();
+  if (!description) return state;
+  return {
+    ...state,
+    timeline: [
+      ...state.timeline,
+      { timestamp: opts.importedAt, windowSequence: -1, description, sourceScreenshots: [] },
+    ],
+  };
 }

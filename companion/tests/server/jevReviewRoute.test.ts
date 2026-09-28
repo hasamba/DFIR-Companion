@@ -279,6 +279,39 @@ describe("what the analyst is told about coverage", () => {
     }
   });
 
+  // #1761. Two tools reading one log: the case keeps one tool's event and records the other tool's
+  // row as its duplicate. That row IS analyzed — under the id of the event it folded into — so
+  // grading it spends the analyst's money on what is not missing, and offering it is a false lead.
+  it("counts a row the case holds under another id as already analyzed, and does not grade it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-jev-alias-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [raw("chainsaw1", "toolkit written")],
+      // hayabusa1 folded into a live event. hayabusa2 folded into one since dismissed, so its event
+      // is no longer visible to synthesis and the row is missing evidence again.
+      eventAliases: { hayabusa1: "chainsaw1", hayabusa2: "gone" },
+    });
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append("c1", [
+      raw("hayabusa1", "toolkit written (hayabusa)"),
+      raw("hayabusa2", "logon (hayabusa)"),
+      raw("fresh", "never analyzed"),
+    ]);
+    const app = createApp(cases, { stateStore, superTimelineStore });
+
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.read).toBe(3);
+    expect(res.body.alreadyAnalyzed).toBe(1);
+    expect(res.body.graded).toBe(2);
+    expect((res.body.rows as { id: string }[]).map((r) => r.id).sort()).toEqual(["fresh", "hayabusa2"]);
+    expect([...(await new JevGradeStore(cases).load("c1")).keys()].sort()).toEqual(["fresh", "hayabusa2"]);
+  });
+
   it("merges a second review into the record rather than replacing it", async () => {
     const { cases, stateStore, superTimelineStore } = await caseRoot(6, 0);
     const app = createApp(cases, { stateStore, superTimelineStore });

@@ -266,6 +266,10 @@ export class AnalysisPipeline {
     return ingest.promoteSuperTimeline(this.importCtx, ...args);
   }
 
+  promoteSuperTimelineWithOutcome(...args: ImporterArgs<typeof ingest.promoteSuperTimelineWithOutcome>) {
+    return ingest.promoteSuperTimelineWithOutcome(this.importCtx, ...args);
+  }
+
   importChainsaw(...args: ImporterArgs<typeof ingest.importChainsaw>): Promise<InvestigationState> {
     return ingest.importChainsaw(this.importCtx, ...args);
   }
