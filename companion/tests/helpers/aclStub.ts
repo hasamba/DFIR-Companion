@@ -23,7 +23,8 @@ export function aclStub(aces: (path: string) => StubAce[] = () => [], seen?: str
   return async (_binary, args) => {
     const paths = aclScriptPaths(args);
     seen?.push(paths);
-    const records = paths.map((p) => ({ p, o: "S-1-5-21-1000-2000-3000-1001", n: false, a: aces(p) }));
+    // The script answers with each requested path's INDEX, never its text.
+    const records = paths.map((p, i) => ({ p: i, o: "S-1-5-21-1000-2000-3000-1001", n: false, a: aces(p) }));
     return { code: 0, stderr: "", stdout: JSON.stringify(records) };
   };
 }

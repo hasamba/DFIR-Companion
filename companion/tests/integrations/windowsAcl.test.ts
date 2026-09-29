@@ -82,13 +82,10 @@ describe("aclProblem — which Windows ACLs let other users write (#1863)", () =
 });
 
 describe("parseAclOutput", () => {
-  const ok = (p: string, a: unknown[] = []) => ({ p, o: OWNER, n: false, a });
+  const ok = (p: number, a: unknown[] = []) => ({ p, o: OWNER, n: false, a });
 
   it("reads one record per requested path, rights as unsigned", () => {
-    const out = JSON.stringify([
-      ok("C:\\cases", [{ s: "S-1-1-0", r: GENERIC_READ_INT32, t: 0 }]),
-      ok("C:\\cases\\.mcp-delivery"),
-    ]);
+    const out = JSON.stringify([ok(0, [{ s: "S-1-1-0", r: GENERIC_READ_INT32, t: 0 }]), ok(1)]);
     const records = parseAclOutput(out, ["C:\\cases", "C:\\cases\\.mcp-delivery"]);
     expect(records.get("C:\\cases")?.entries).toEqual([{ sid: "S-1-1-0", rights: 0x80000000, allow: true }]);
     expect(records.get("C:\\cases\\.mcp-delivery")?.entries).toEqual([]);
@@ -96,16 +93,17 @@ describe("parseAclOutput", () => {
 
   it.each([
     ["not JSON", "Get-Acl : access denied"],
-    ["not an array", JSON.stringify(ok("C:\\cases"))],
+    ["not an array", JSON.stringify(ok(0))],
     ["a missing path", JSON.stringify([])],
-    ["a duplicate path", JSON.stringify([ok("C:\\cases"), ok("C:\\cases")])],
-    ["an unexpected path", JSON.stringify([ok("C:\\cases"), ok("C:\\other")])],
-    ["a missing owner", JSON.stringify([{ p: "C:\\cases", n: false, a: [] }])],
-    ["a missing DACL flag", JSON.stringify([{ p: "C:\\cases", o: OWNER, a: [] }])],
-    ["a malformed SID", JSON.stringify([ok("C:\\cases", [{ s: "Everyone", r: 1, t: 0 }])])],
-    ["fractional rights", JSON.stringify([ok("C:\\cases", [{ s: "S-1-1-0", r: 1.5, t: 0 }])])],
-    ["out-of-range rights", JSON.stringify([ok("C:\\cases", [{ s: "S-1-1-0", r: 2 ** 33, t: 0 }])])],
-    ["an unknown entry type", JSON.stringify([ok("C:\\cases", [{ s: "S-1-1-0", r: 1, t: 7 }])])],
+    ["a duplicate path", JSON.stringify([ok(0), ok(0)])],
+    ["an unexpected path", JSON.stringify([ok(0), ok(1)])],
+    ["a path given as text, not an index", JSON.stringify([{ p: "C:\\cases", o: OWNER, n: false, a: [] }])],
+    ["a missing owner", JSON.stringify([{ p: 0, n: false, a: [] }])],
+    ["a missing DACL flag", JSON.stringify([{ p: 0, o: OWNER, a: [] }])],
+    ["a malformed SID", JSON.stringify([ok(0, [{ s: "Everyone", r: 1, t: 0 }])])],
+    ["fractional rights", JSON.stringify([ok(0, [{ s: "S-1-1-0", r: 1.5, t: 0 }])])],
+    ["out-of-range rights", JSON.stringify([ok(0, [{ s: "S-1-1-0", r: 2 ** 33, t: 0 }])])],
+    ["an unknown entry type", JSON.stringify([ok(0, [{ s: "S-1-1-0", r: 1, t: 7 }])])],
   ])("throws on %s", (_name, stdout) => {
     expect(() => parseAclOutput(stdout, ["C:\\cases"])).toThrow();
   });
@@ -133,7 +131,7 @@ describe("readWindowsAcls — the PowerShell call", () => {
       return {
         code: 0,
         stderr: "",
-        stdout: JSON.stringify(paths.map((p) => ({ p, o: OWNER, n: false, a: [] }))),
+        stdout: JSON.stringify(paths.map((_p, i) => ({ p: i, o: OWNER, n: false, a: [] }))),
       };
     };
 
@@ -150,6 +148,13 @@ describe("readWindowsAcls — the PowerShell call", () => {
     expect(script).toContain("$ErrorActionPreference = 'Stop'");
     expect(script).toContain("'C:\\cases\\.mcp-delivery'");
     expect(script).toContain("SecurityIdentifier");
+    // No cmdlet that PowerShell autoloads from a module: under an inherited PowerShell 7
+    // PSModulePath, Windows PowerShell cannot load Microsoft.PowerShell.Security, so Get-Acl fails
+    // (first seen on the Windows CI runner). The script reads the descriptor through .NET instead.
+    for (const cmdlet of ["Get-Acl", "New-Object", "ConvertTo-Json", "ForEach-Object"]) {
+      expect(script).not.toContain(cmdlet);
+    }
+    expect(script).toContain("[System.Security.AccessControl.DirectorySecurity]::new(");
   });
 
   it("throws when PowerShell exits non-zero", async () => {

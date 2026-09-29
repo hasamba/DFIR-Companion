@@ -535,10 +535,15 @@ describe("deliver — team mode on Windows checks the folder ACLs (#1863)", () =
     "reads a real Windows ACL: private is accepted, Everyone-modify is refused",
     async () => {
       const casesRoot = await mkdtemp(join(tmpdir(), "dfir-acl-"));
-      const csv = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" });
+      const csv = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       const sid = /"(S-1-[0-9-]+)"/.exec(csv)?.[1];
       expect(sid).toBeDefined();
-      execFileSync("icacls", [casesRoot, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`]);
+      execFileSync("icacls", [casesRoot, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       await mkdir(join(casesRoot, "c1", "imports"), { recursive: true });
       const mem = join(casesRoot, "c1", "imports", "mem.raw");
       await writeFile(mem, MEM_BYTES);
@@ -553,7 +558,9 @@ describe("deliver — team mode on Windows checks the folder ACLs (#1863)", () =
       expect(target.destination).toMatch(/copied to shared path/);
       await target.cleanup?.();
 
-      execFileSync("icacls", [casesRoot, "/grant", "*S-1-1-0:(OI)(CI)M"]);
+      execFileSync("icacls", [casesRoot, "/grant", "*S-1-1-0:(OI)(CI)M"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       await expect(deliver(s, mem, { runner, source: src, teamMode: true })).rejects.toThrow(
         /other users can write the cases root .*Everyone/,
       );

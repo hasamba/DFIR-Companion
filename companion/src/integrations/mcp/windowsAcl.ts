@@ -76,23 +76,36 @@ export function psLiteral(value: string): string {
 }
 
 /**
- * The script. Errors are terminating, so a failed Get-Acl stops it with a non-zero exit instead of
+ * The script. Errors are terminating, so a failed read stops it with a non-zero exit instead of
  * printing a partial answer. Rules come back as SecurityIdentifier, so no name is ever translated.
+ *
+ * PURE .NET, NO CMDLETS BEYOND THE ENGINE. Get-Acl, New-Object and ConvertTo-Json live in modules
+ * PowerShell autoloads, and autoload fails when the Companion inherits a PowerShell 7 PSModulePath:
+ * Windows PowerShell then reports "Get-Acl was found in the module Microsoft.PowerShell.Security, but
+ * the module could not be loaded" — first seen on the Windows CI runner, and exactly what an analyst
+ * who starts the Companion from pwsh would hit. DirectorySecurity reads the same descriptor, and the
+ * JSON is built by hand: every value is a SID, an integer, a boolean, or the index of a requested
+ * path, so nothing needs escaping.
  */
 function aclScript(paths: string[]): string {
   return [
     "$ErrorActionPreference = 'Stop'",
-    "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
+    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
     "$sidType = [System.Security.Principal.SecurityIdentifier]",
+    "$ac = [System.Security.AccessControl.AccessControlSections]",
+    "$sections = $ac::Access -bor $ac::Owner",
     `$paths = @(${paths.map(psLiteral).join(",")})`,
-    "$out = @(foreach ($p in $paths) {",
-    "  $acl = Get-Acl -LiteralPath $p",
-    "  $rules = @($acl.GetAccessRules($true, $true, $sidType) | ForEach-Object {",
-    "    @{ s = $_.IdentityReference.Value; r = [int]$_.FileSystemRights; t = [int]$_.AccessControlType } })",
-    "  @{ p = $p; o = $acl.GetOwner($sidType).Value;",
-    "     n = [bool]($acl.GetSecurityDescriptorSddlForm('Access') -match 'D:NO_ACCESS_CONTROL'); a = $rules }",
-    "})",
-    "ConvertTo-Json -InputObject $out -Depth 5 -Compress",
+    "$recs = [System.Collections.Generic.List[string]]::new()",
+    "for ($i = 0; $i -lt $paths.Count; $i++) {",
+    "  $acl = [System.Security.AccessControl.DirectorySecurity]::new($paths[$i], $sections)",
+    "  $rules = [System.Collections.Generic.List[string]]::new()",
+    "  foreach ($x in $acl.GetAccessRules($true, $true, $sidType)) {",
+    "    $rules.Add('{\"s\":\"' + $x.IdentityReference.Value + '\",\"r\":' + [int]$x.FileSystemRights + ',\"t\":' + [int]$x.AccessControlType + '}')",
+    "  }",
+    "  $n = [bool]($acl.GetSecurityDescriptorSddlForm($ac::Access) -match 'D:NO_ACCESS_CONTROL')",
+    "  $recs.Add('{\"p\":' + $i + ',\"o\":\"' + $acl.GetOwner($sidType).Value + '\",\"n\":' + $n.ToString().ToLowerInvariant() + ',\"a\":[' + ($rules -join ',') + ']}')",
+    "}",
+    "[Console]::Out.Write('[' + ($recs -join ',') + ']')",
   ].join("\n");
 }
 
@@ -109,13 +122,16 @@ function parseEntry(raw: unknown): AclEntry {
   return { sid: e.s, rights: r >>> 0, allow: e.t === 0 };
 }
 
-function parseRecord(raw: unknown): AclRecord {
+// `p` is the index of the requested path; the script never echoes the path text itself.
+function parseRecord(raw: unknown, paths: string[]): AclRecord {
   const r = raw as { p?: unknown; o?: unknown; n?: unknown; a?: unknown };
-  if (typeof r?.p !== "string") fail("a record without a path");
-  if (typeof r.o !== "string" || !SID_RE.test(r.o)) fail(`no owner for ${r.p}`);
-  if (typeof r.n !== "boolean") fail(`no access-list flag for ${r.p}`);
-  if (!Array.isArray(r.a)) fail(`no entries for ${r.p}`);
-  return { path: r.p, owner: r.o, nullDacl: r.n, entries: r.a.map(parseEntry) };
+  if (typeof r?.p !== "number" || !Number.isInteger(r.p)) fail("a record without a path index");
+  const path = paths[r.p];
+  if (path === undefined) fail(`a path that was not asked for: index ${r.p}`);
+  if (typeof r.o !== "string" || !SID_RE.test(r.o)) fail(`no owner for ${path}`);
+  if (typeof r.n !== "boolean") fail(`no access-list flag for ${path}`);
+  if (!Array.isArray(r.a)) fail(`no entries for ${path}`);
+  return { path, owner: r.o, nullDacl: r.n, entries: r.a.map(parseEntry) };
 }
 
 /** Strict: exactly one record for every requested path, no duplicates, no extras. Throws otherwise. */
@@ -128,8 +144,7 @@ export function parseAclOutput(stdout: string, paths: string[]): Map<string, Acl
   }
   if (!Array.isArray(parsed)) fail("not a list");
   const records = new Map<string, AclRecord>();
-  for (const record of parsed.map(parseRecord)) {
-    if (!paths.includes(record.path)) fail(`a path that was not asked for: ${record.path}`);
+  for (const record of parsed.map((raw) => parseRecord(raw, paths))) {
     if (records.has(record.path)) fail(`${record.path} twice`);
     records.set(record.path, record);
   }
