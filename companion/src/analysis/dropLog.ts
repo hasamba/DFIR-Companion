@@ -19,7 +19,7 @@ export type DropLogStatus = "IMPORTED" | "SUBMITTED" | "FAILED" | "PENDING";
 export interface DropLogEntry {
   status: DropLogStatus;
   relpath: string;
-  /** Present for FAILED, PENDING and SUBMITTED; optional for IMPORTED (e.g. "via <tool>"). */
+  /** Present for FAILED, PENDING and SUBMITTED; optional for IMPORTED ("via <tool>", a warning). */
   reason?: string;
 }
 
@@ -60,11 +60,16 @@ export function buildSweepLogEntries(
     submitted?: readonly { relpath: string; reason: string }[];
     failed: readonly { relpath: string; reason: string }[];
     pendingRawInputs: readonly { relpath: string; ext: string; configured: boolean }[];
+    /** Imported, but with a caveat the analyst must read (a guessed JSON kind, #1824). */
+    warned?: readonly { relpath: string; reason: string }[];
   },
   loggedPending: ReadonlySet<string>,
 ): { entries: DropLogEntry[]; nextLoggedPending: Set<string> } {
   const entries: DropLogEntry[] = [
-    ...sweep.imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
+    ...sweep.imported.map((relpath): DropLogEntry => {
+      const reason = sweep.warned?.find((w) => w.relpath === relpath)?.reason;
+      return reason ? { status: "IMPORTED", relpath, reason } : { status: "IMPORTED", relpath };
+    }),
     ...(sweep.submitted ?? []).map((s): DropLogEntry => ({
       status: "SUBMITTED",
       relpath: s.relpath,

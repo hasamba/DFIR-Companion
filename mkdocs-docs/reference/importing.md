@@ -2412,6 +2412,11 @@ running `drop-log.txt` in the same `drop/` folder — including the terminal out
 previously-pending file is later run manually. Use it as an audit trail of everything the watcher has
 seen for this case.
 
+A dropped JSON file that no importer recognises still imports, as generic SIEM events at default
+severity Low. Its `IMPORTED` line in `drop-log.txt` carries a warning that says the format was a
+guess, and the case log gets a WARN line. Velociraptor uploaded reports get the same warning: in the
+`warnings` list of an uploads-only import, and in the case log for a hunt collect.
+
 Enabled by default. Configure via `DFIR_DROP_ENABLED`, `DFIR_DROP_POLL_S` (poll interval), `DFIR_DROP_MAX_BYTES` (size cap).
 
 ## SO-CRATES (direct API)

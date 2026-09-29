@@ -2,6 +2,7 @@ import type { Request } from "express";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { VeloUploadsOutcome } from "./veloUploadFields.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
@@ -297,7 +298,7 @@ export interface RouteContext {
     caseId: string,
     uploads: HuntUpload[],
     opts: { minSeverity?: Severity; label: string },
-  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }>;
+  ): Promise<VeloUploadsOutcome>;
   createVeloMonitor(
     caseId: string,
     spec: {

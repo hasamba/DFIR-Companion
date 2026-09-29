@@ -4,6 +4,7 @@ import {
   type ImportDebugRecorder,
   type ImportOutcome,
 } from "../analysis/importDebug.js";
+import { isGuessedSiem, SIEM_FALLBACK_WARNING } from "./importNotes.js";
 
 /**
  * Close an import attempt's debug recorder (#1736) and write its one `[import-debug]` line, scoped
@@ -32,4 +33,19 @@ export function emitImportRefused(
 ): void {
   debug?.observed(reason);
   emitImportDebug(caseId, debug, "refused");
+}
+
+/**
+ * The case-log line for an import whose JSON was only guessed to be SIEM (#1824). The paths with no
+ * synchronous answer an analyst reads — the drop folder, a push webhook, a Velociraptor collect —
+ * need a line that outlives the live status banner. A no-op for any other import.
+ */
+export function logSiemFallback(
+  caseId: string,
+  name: string,
+  kind: string,
+  debug: ImportDebugRecorder | undefined,
+): void {
+  if (isGuessedSiem(kind, debug))
+    getServerLogger().warn(`[import] ${name}: ${SIEM_FALLBACK_WARNING}`, { caseId });
 }
