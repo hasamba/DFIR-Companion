@@ -56,10 +56,9 @@ export async function seedDemoCase(
       (err as NodeJS.ErrnoException).code = "EEXIST";
       throw err;
     }
-    // force: clear the existing case directory before re-seeding so orphan files (extra screenshots/
-    // imports, custom state files) don't survive into the "fresh" demo case. Overwriting only the
-    // demo's own files shipped stale evidence and an imports.jsonl that no longer matched imports/
-    // (#19). The route already refuses force on an OPEN/busy case.
+    // force: clear the case directory first so orphan files (extra screenshots/imports, custom state)
+    // don't survive into the "fresh" demo — overwriting only the demo's own files shipped stale
+    // evidence (#19). The route already refuses force on an OPEN/busy case.
     await rm(caseDir, { recursive: true, force: true });
   }
 
