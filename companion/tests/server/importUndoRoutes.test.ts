@@ -6,7 +6,13 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { ImportUndoStore, pushCheckpoint, emptyUndoStack } from "../../src/analysis/importUndo.js";
+import {
+  ImportUndoStore,
+  pushCheckpoint,
+  emptyUndoStack,
+  deltaCheckpoint,
+} from "../../src/analysis/importUndo.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import {
   emptyState,
@@ -50,7 +56,7 @@ const mkState = (
   findings: findings.map(finding),
 });
 
-async function harness(opts: { wireUndo?: boolean } = {}) {
+async function harness(opts: { wireUndo?: boolean; importLock?: ImportLock } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-undo-route-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -62,6 +68,7 @@ async function harness(opts: { wireUndo?: boolean } = {}) {
     stateStore,
     importMetaStore,
     ...(opts.wireUndo === false ? {} : { importUndoStore }),
+    ...(opts.importLock ? { importLock: opts.importLock } : {}),
   });
   return { app, store, stateStore, importUndoStore, importMetaStore };
 }
@@ -162,5 +169,74 @@ describe("import undo/redo routes (#76)", () => {
       .send({ caseId: "INC-4", name: "C", investigator: "a", aiProvider: null });
     expect((await request(app).get("/cases/INC-4/import/undo-stack")).status).toBe(501);
     expect((await request(app).post("/cases/INC-4/import/undo")).status).toBe(501);
+  });
+
+  // #1874 item 3: a checkpoint is now a delta applied to the CURRENT state, so undo must not read
+  // the state while an import is still writing it, and must not pop the stack unless the state save
+  // landed.
+  async function seedDelta(h: Awaited<ReturnType<typeof harness>>, caseId: string) {
+    await request(h.app).post("/cases").send({ caseId, name: "C", investigator: "a", aiProvider: null });
+    const before = mkState(caseId, ["e1"], ["i1"], ["f1"]);
+    const after = mkState(caseId, ["e1", "e2"], ["i1", "i2"], ["f1", "f2"]);
+    await h.stateStore.save(after);
+    const saved = await h.stateStore.load(caseId);
+    await h.importUndoStore.save(
+      caseId,
+      pushCheckpoint(emptyUndoStack(), deltaCheckpoint("thor (x)", "t", await loadAs(h, before), saved)),
+    );
+    return { before, after: saved };
+  }
+  // The state as the store gives it back, so the comparison is like for like.
+  async function loadAs(h: Awaited<ReturnType<typeof harness>>, s: InvestigationState) {
+    const prev = await h.stateStore.load(s.caseId);
+    await h.stateStore.save(s);
+    const out = await h.stateStore.load(s.caseId);
+    await h.stateStore.save(prev);
+    return out;
+  }
+
+  it("undo of a delta checkpoint restores the exact pre-import state; redo the exact post-import one", async () => {
+    const h = await harness();
+    const { before, after } = await seedDelta(h, "INC-5");
+    expect((await request(h.app).post("/cases/INC-5/import/undo")).status).toBe(200);
+    const { updatedAt: _u1, ...undone } = await h.stateStore.load("INC-5");
+    const { updatedAt: _u2, ...want } = await loadAs(h, before);
+    expect(undone).toEqual(want);
+    expect((await request(h.app).post("/cases/INC-5/import/redo")).status).toBe(200);
+    const { updatedAt: _u3, ...redone } = await h.stateStore.load("INC-5");
+    const { updatedAt: _u4, ...wantAfter } = after;
+    expect(redone).toEqual(wantAfter);
+  });
+
+  it("undo waits for an import that holds the case", async () => {
+    const importLock = new ImportLock();
+    const h = await harness({ importLock });
+    await seedDelta(h, "INC-6");
+    const release = await importLock.acquire("INC-6");
+    let done = false;
+    const pending = request(h.app)
+      .post("/cases/INC-6/import/undo")
+      .then((r) => {
+        done = true;
+        return r;
+      });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(done).toBe(false);
+    release();
+    expect((await pending).status).toBe(200);
+  });
+
+  it("a failed state save leaves the checkpoint on the stack", async () => {
+    const h = await harness();
+    await seedDelta(h, "INC-7");
+    const save = h.stateStore.save.bind(h.stateStore);
+    h.stateStore.save = async () => {
+      throw new Error("disk full");
+    };
+    expect((await request(h.app).post("/cases/INC-7/import/undo")).status).toBeGreaterThanOrEqual(500);
+    h.stateStore.save = save;
+    const stack = (await request(h.app).get("/cases/INC-7/import/undo-stack")).body;
+    expect(stack.canUndo).toBe(true);
+    expect(stack.canRedo).toBe(false);
   });
 });

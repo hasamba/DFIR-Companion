@@ -20,7 +20,7 @@ import { nsrlMatchIocs, nsrlMatchEvents } from "../analysis/nsrl.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
 import { applyDeobfuscation } from "../analysis/applyDeobfuscation.js";
-import { pushCheckpoint } from "../analysis/importUndo.js";
+import { deltaCheckpoint, pushCheckpoint, type ImportCheckpoint } from "../analysis/importUndo.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -42,7 +42,16 @@ export interface CaseAppliersDeps {
 export interface CaseAppliers {
   /** The shared FalsePositiveStore the whitelist/NSRL sweeps write through. */
   readonly falsePositives: FalsePositiveStore;
-  pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
+  /**
+   * `afterState` is the state the import left. Pass it when the caller holds it (the settled state);
+   * otherwise the current state is loaded.
+   */
+  pushImportCheckpoint(
+    caseId: string,
+    beforeState: InvestigationState,
+    label: string,
+    afterState?: InvestigationState,
+  ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyDeobfuscationToCase(
     caseId: string,
@@ -63,29 +72,33 @@ export function createCaseAppliers({
   // re-derives its conclusions without it.
   const falsePositives = new FalsePositiveStore(store);
 
-  // #76: snapshot the PRE-import investigation state (findings + IOCs + timeline + MITRE + attacker
-  // path — everything the import and its synthesis change) onto the per-case undo stack so the whole
-  // import can be rolled back. Best-effort — undo is a convenience and must NEVER break the import.
-  // Callers gate on whether the import actually changed anything (no checkpoint for a no-op re-import).
+  // #76: push what it takes to get back to the PRE-import investigation state (findings + IOCs +
+  // timeline + MITRE + attacker path — everything the import and its synthesis change) onto the
+  // per-case undo stack so the whole import can be rolled back. Since #1874 that is the inverse
+  // delta from the post-import state (analysis/importUndoDelta.ts), not a full copy of the case.
+  // Best-effort — undo is a convenience and must NEVER break the import. Callers gate on whether
+  // the import actually changed anything (no checkpoint for a no-op re-import).
   async function pushImportCheckpoint(
     caseId: string,
     beforeState: InvestigationState,
     label: string,
+    afterState?: InvestigationState,
   ): Promise<void> {
     const undoStore = options.importUndoStore;
     if (!undoStore) return;
     try {
+      const at = new Date().toISOString();
+      const after = afterState ?? (await options.stateStore?.load(caseId));
+      // No state store (tests only — undo itself needs one): keep the full copy.
+      const checkpoint: ImportCheckpoint = after
+        ? deltaCheckpoint(label, at, beforeState, after)
+        : { label, at, state: beforeState };
       // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
       // import firing requests seconds apart while the previous one's async work is still in
       // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge
       // simultaneous tmp writes).
       await undoStore.mutate(caseId, (stack) => ({
-        stack: pushCheckpoint(
-          stack,
-          { label, at: new Date().toISOString(), state: beforeState },
-          undoStore.depth(),
-          undoStore.byteBudget(),
-        ),
+        stack: pushCheckpoint(stack, checkpoint, undoStore.depth(), undoStore.byteBudget()),
         result: undefined,
       }));
       options.onImportUndo?.(caseId);

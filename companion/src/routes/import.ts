@@ -47,7 +47,7 @@ import {
   type ToolConfig,
 } from "../integrations/tools/toolConfig.js";
 import { createToolRunCache } from "../integrations/tools/toolProvenance.js";
-import { summarizeUndoStack, applyUndo, applyRedo } from "../analysis/importUndo.js";
+import { summarizeUndoStack, applyUndo, applyRedo, runUndoStep } from "../analysis/importUndo.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -134,19 +134,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       .find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
     return custom ? custom.id : null;
   };
-  // #76: restore a full investigation state from an undo/redo checkpoint, verbatim — findings, IOCs,
-  // timeline, MITRE, attacker path, the lot (no AI re-synthesis; the snapshot already holds the exact
-  // prior conclusions). Keeps the case id, stamps updatedAt. Returns the saved state so the caller
-  // can broadcast it (null when no state store is wired — routes gate on this).
-  async function restoreImportState(
-    caseId: string,
-    snapState: InvestigationState,
-  ): Promise<InvestigationState | null> {
-    if (!options.stateStore) return null;
-    const next: InvestigationState = { ...snapState, caseId, updatedAt: new Date().toISOString() };
-    await options.stateStore.save(next);
-    return next;
-  }
 
   // Batch-run EVERY pending raw drop file through its matching tool — the "Run tools on these N files"
   // button on the drop banner (ONE confirmation for the whole batch). Each ran/failed file is moved out
@@ -241,6 +228,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             caseId,
             before,
             `Tools: drop batch (${ran} file${ran !== 1 ? "s" : ""})`,
+            s ?? undefined,
           );
         }
       }
@@ -437,7 +425,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
+                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`, s);
               }
             } catch {
               /* non-fatal */
@@ -705,7 +693,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);
+                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`, s);
               }
             } catch {
               /* non-fatal */
@@ -2775,18 +2763,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.stateStore.load(caseId);
-      let restore: InvestigationState | undefined;
-      // Atomic load->pop->save under the store's per-case lock (mirrors pushImportCheckpoint) so
-      // an undo/redo can't race a concurrent import's checkpoint push on the same file.
-      const summary = await undoStore.mutate(caseId, (stack) => {
-        const result = applyUndo(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
-        if (!result) return { stack, result: null };
-        restore = result.restore;
-        return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
-      });
-      if (!summary || !restore) return res.status(400).json({ error: "nothing to undo" });
-      const next = await restoreImportState(caseId, restore);
+      const { summary, next } = await runUndoStep(
+        { undoStore, stateStore: options.stateStore, importLock, runStateExclusive: ctx.runStateExclusive },
+        caseId,
+        applyUndo,
+      );
+      if (!summary) return res.status(400).json({ error: "nothing to undo" });
       // The "last import" banner / NEW row highlights describe a change that has now been rolled back.
       if (options.importMetaStore) {
         try {
@@ -2811,16 +2793,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.stateStore.load(caseId);
-      let restore: InvestigationState | undefined;
-      const summary = await undoStore.mutate(caseId, (stack) => {
-        const result = applyRedo(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
-        if (!result) return { stack, result: null };
-        restore = result.restore;
-        return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
-      });
-      if (!summary || !restore) return res.status(400).json({ error: "nothing to redo" });
-      const next = await restoreImportState(caseId, restore);
+      const { summary, next } = await runUndoStep(
+        { undoStore, stateStore: options.stateStore, importLock, runStateExclusive: ctx.runStateExclusive },
+        caseId,
+        applyRedo,
+      );
+      if (!summary) return res.status(400).json({ error: "nothing to redo" });
       if (options.importMetaStore) {
         try {
           await options.importMetaStore.clear(caseId);

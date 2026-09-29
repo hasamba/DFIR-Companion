@@ -12,7 +12,9 @@ import {
   applyRedo,
   summarizeUndoStack,
   normalizeStack,
+  encodeStack,
   undoMaxBytesFromEnv,
+  deltaCheckpoint,
   DEFAULT_UNDO_MAX_BYTES,
   type ImportUndoStack,
 } from "../../src/analysis/importUndo.js";
@@ -148,7 +150,9 @@ describe("importUndo pure operations", () => {
     expect(r.restore.findings).toHaveLength(1); // findings come back too
     expect(r.stack.undo).toHaveLength(0);
     expect(r.stack.redo).toHaveLength(1);
-    expect(r.stack.redo[0].state.findings).toHaveLength(5); // current state preserved for redo
+    // The redo entry is a delta back to the current state (#1874), so redo restores all 5 findings.
+    expect(r.stack.redo[0].state).toBeUndefined();
+    expect(applyRedo(r.stack, r.restore)!.restore).toEqual(current);
     expect(r.stack.redo[0].label).toBe("thor (0003_thor.json)"); // redo re-applies the same import
     expect(r.stack.redo[0].at).toBe("2026-06-13T10:00:00Z");
   });
@@ -228,6 +232,74 @@ describe("importUndo pure operations", () => {
     expect(out.undo[0].label).toBe("a");
     expect(out.redo).toHaveLength(1);
     expect(out.redo[0]).toEqual({ label: "", at: "", state: {} });
+  });
+});
+
+describe("delta checkpoints (#1874 item 3)", () => {
+  const S0 = mkState("s0", 4, 2, 1);
+  const S1 = {
+    ...S0,
+    forensicTimeline: [...S0.forensicTimeline, ...mkState("s1", 3, 0).forensicTimeline],
+    lastSummary: "one",
+  };
+  const S2 = { ...S1, iocs: [...S1.iocs, ...mkState("s2", 0, 2).iocs], findings: [], lastSummary: "two" };
+
+  it("stores the counts of the state it restores, and no full state", () => {
+    const c = deltaCheckpoint("import A", "2026-06-13T00:00:00Z", S0, S1);
+    expect(c.state).toBeUndefined();
+    expect(c.counts).toEqual({ events: 4, iocs: 2, findings: 1 });
+    expect(summarizeUndoStack({ undo: [c], redo: [] }).nextUndo).toEqual({
+      label: "import A",
+      at: "2026-06-13T00:00:00Z",
+      events: 4,
+      iocs: 2,
+      findings: 1,
+    });
+  });
+
+  it("undo / redo through delta entries land on the exact states, via the file format", () => {
+    let stack: ImportUndoStack = emptyUndoStack();
+    stack = pushCheckpoint(stack, deltaCheckpoint("import A", "t1", S0, S1));
+    stack = pushCheckpoint(stack, deltaCheckpoint("import B", "t2", S1, S2));
+    stack = normalizeStack(JSON.parse(encodeStack(stack).toString("utf8")));
+    const u1 = applyUndo(stack, S2)!;
+    expect(u1.restore).toEqual(S1);
+    const u2 = applyUndo(normalizeStack(JSON.parse(encodeStack(u1.stack).toString("utf8"))), u1.restore)!;
+    expect(u2.restore).toEqual(S0);
+    const r1 = applyRedo(u2.stack, u2.restore)!;
+    expect(r1.restore).toEqual(S1);
+    const r2 = applyRedo(r1.stack, r1.restore)!;
+    expect(r2.restore).toEqual(S2);
+    expect(r2.stack.undo.map((c) => c.label)).toEqual(["import A", "import B"]);
+  });
+
+  it("a stack file holding a legacy full-state checkpoint under delta ones still undoes and redoes", () => {
+    let stack: ImportUndoStack = emptyUndoStack();
+    stack = pushCheckpoint(stack, { label: "legacy A", at: "t1", state: S0 }); // written by an older build
+    stack = pushCheckpoint(stack, deltaCheckpoint("import B", "t2", S1, S2));
+    stack = normalizeStack(JSON.parse(encodeStack(stack).toString("utf8")));
+    expect(summarizeUndoStack(stack).undo.map((c) => c.events)).toEqual([4, 7]);
+    const u1 = applyUndo(stack, S2)!;
+    expect(u1.restore).toEqual(S1);
+    const u2 = applyUndo(u1.stack, u1.restore)!;
+    expect(u2.restore).toEqual(S0); // the legacy entry restores verbatim
+    expect(u2.stack.redo.every((c) => c.state === undefined && c.delta)).toBe(true);
+    const r1 = applyRedo(u2.stack, u2.restore)!;
+    expect(r1.restore).toEqual(S1);
+    expect(applyRedo(r1.stack, r1.restore)!.restore).toEqual(S2);
+  });
+
+  it("normalizeStack drops an entry whose delta is malformed and keeps its counts otherwise", () => {
+    const good = deltaCheckpoint("ok", "t", S0, S1);
+    const out = normalizeStack({
+      undo: [
+        JSON.parse(JSON.stringify(good)),
+        { label: "bad", at: "t", delta: { v: 1, fields: {}, absent: "x", keyed: {} } },
+      ],
+      redo: [],
+    });
+    expect(out.undo.map((c) => c.label)).toEqual(["ok"]);
+    expect(out.undo[0].counts).toEqual({ events: 4, iocs: 2, findings: 1 });
   });
 });
 
