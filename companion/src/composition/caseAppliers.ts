@@ -112,7 +112,8 @@ export function createCaseAppliers({
     if (!options.iocWhitelistStore || !options.stateStore) return { matched: 0, added: 0 };
     const rules = await options.iocWhitelistStore.load();
     if (rules.length === 0) return { matched: 0, added: 0 };
-    const state = await options.stateStore.load(caseId);
+    // Reads IOCs only, so the overview load, which skips the forensic timeline (#1874).
+    const state = await options.stateStore.loadOverview(caseId);
     const matches = whitelistMatches(state.iocs, rules);
     if (matches.length === 0) return { matched: 0, added: 0 };
     const markers = await falsePositives.load(caseId);

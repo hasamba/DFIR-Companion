@@ -380,7 +380,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       let section: ImportSection | null = null;
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        section = await beginImportSection(importLock, caseId, options.stateStore);
+        section = await beginImportSection(importLock, caseId, options.stateStore, text.length);
         stateBefore = section.stateBefore;
         return dispatchImport(kind, caseId, text, base);
       };
@@ -655,7 +655,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        section = await beginImportSection(importLock, caseId, options.stateStore);
+        section = await beginImportSection(importLock, caseId, options.stateStore, size);
         stateBefore = section.stateBefore;
         return streaming
           ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)

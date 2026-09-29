@@ -197,6 +197,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_STATE_BACKUP_",
   "DFIR_DEMO_RESET_HOURS",
   "DFIR_MAX_EVENTS",
+  // The import memory guard's off switch (#1874), read per import.
+  "DFIR_IMPORT_MEMORY_GUARD",
   "DFIR_MAX_BODY_MB",
   "DFIR_MAX_IMPORT_FILE_MB",
   "DFIR_FORENSIC_",

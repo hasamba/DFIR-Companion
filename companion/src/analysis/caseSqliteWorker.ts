@@ -3,6 +3,7 @@ import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
+import { SAVE_STATE_WORKER_SOURCE } from "./caseSqliteWorkerSaveState.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -113,9 +114,13 @@ function indexValues(kind, entity) {
   return out;
 }
 
+function entityIdOf(kind, entity) {
+  return scalarText(entity && (entity.id || (kind === "iocs" ? entity.value : null)));
+}
+
 function entityProjection(kind, entity, ordinal, contentKey) {
   const sources = Array.isArray(entity && entity.sources) ? entity.sources : [];
-  const entityId = scalarText(entity && (entity.id || (kind === "iocs" ? entity.value : null)));
+  const entityId = entityIdOf(kind, entity);
   const timestamp = scalarText(entity && (entity.timestamp || entity.firstSeen || entity.openedAt));
   return {
     kind,
@@ -192,16 +197,7 @@ function writeState(db, state) {
     ).run(JSON.stringify(meta));
     for (const kind of ARRAY_KINDS) {
       const values = Array.isArray(state && state[kind]) ? state[kind] : [];
-      const existing = new Map(db.prepare(
-        "SELECT row_id, ordinal, payload FROM entities WHERE kind=? ORDER BY ordinal"
-      ).all(kind).map((row) => [row.ordinal, row]));
-      for (let ordinal = 0; ordinal < values.length; ordinal++) {
-        const projection = entityProjection(kind, values[ordinal], ordinal);
-        const prior = existing.get(ordinal);
-        if (!prior) writer.insert(projection, values[ordinal]);
-        else if (prior.payload !== projection.payload) writer.update(prior.row_id, projection, values[ordinal]);
-      }
-      db.prepare("DELETE FROM entities WHERE kind=? AND ordinal>=?").run(kind, values.length);
+      writeStateKind(db, writer, kind, values); // #1874: by entity id — caseSqliteWorkerSaveState.ts
       db.prepare(
         "INSERT INTO entity_counts(kind, count) VALUES(?, ?) " +
         "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
@@ -569,6 +565,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   SUPER_WORKER_SOURCE +
   SUPER_QUERY_WORKER_SOURCE +
   TERMS_WORKER_SOURCE +
+  SAVE_STATE_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {

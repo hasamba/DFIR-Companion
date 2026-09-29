@@ -6,7 +6,7 @@
 // state; the pipeline folds it into the state it is already about to save).
 
 import type { ForensicEvent } from "./stateTypes.js";
-import { normalizeLabel, type TagsStore } from "./tags.js";
+import type { NewTag, TagsStore } from "./tags.js";
 import { TAGGER_AUTHOR_PREFIX } from "./superTimeline.js";
 import { runTagger, applyToForensicEvent, type TaggerResult } from "./tagger.js";
 import type { CompiledRuleset } from "./taggerRules.js";
@@ -61,28 +61,19 @@ export async function runAndApplyTagger(params: RunAndApplyParams): Promise<RunA
   const { caseId, ruleset, forensicTimeline, tagsStore, mutateForensic } = params;
   const result = "result" in params ? params.result : runTagger(params.events, ruleset);
 
-  // Write tags per rule so each tag's author records the rule that produced it. add() is idempotent
-  // per (target, label), so a tag two rules both apply is created once (first author wins). Load the
-  // existing tags ONCE and track written keys locally so `tagsWritten` counts only genuinely-new tags
-  // (used for the "Run tagger" display total) without an O(n) reload per add.
-  const seen = new Set(
-    (await tagsStore.load(caseId).catch(() => [])).map((t) => `${t.targetId}\n${normalizeLabel(t.label)}`),
-  );
-  let tagsWritten = 0;
+  // Tags per rule so each tag's author records the rule that produced it, written in ONE batch
+  // (#1874). addMany() is idempotent per (target, label), so a tag two rules both apply is created
+  // once (first author wins), and `tagsWritten` counts only genuinely-new tags (the "Run tagger"
+  // display total).
+  const inputs: NewTag[] = [];
   for (const rule of result.perRule) {
     if (!rule.matched || rule.tags.length === 0) continue;
     const author = `${TAGGER_AUTHOR_PREFIX}${rule.id}`;
     for (const eventId of rule.eventIds) {
-      for (const label of rule.tags) {
-        await tagsStore.add(caseId, { targetType: "event", targetId: eventId, label, author });
-        const key = `${eventId}\n${normalizeLabel(label)}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          tagsWritten++;
-        }
-      }
+      for (const label of rule.tags) inputs.push({ targetType: "event", targetId: eventId, label, author });
     }
   }
+  const tagsWritten = (await tagsStore.addMany(caseId, inputs)).length;
 
   // Forensic severity/MITRE mutation (never on the raw super-timeline). Map only events present in
   // the forensic timeline; applyToForensicEvent preserves identity when nothing changes.

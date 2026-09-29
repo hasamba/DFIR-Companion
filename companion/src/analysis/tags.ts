@@ -141,6 +141,42 @@ export class TagsStore {
     });
   }
 
+  // add() for a batch, in ONE load and ONE save (#1874) — the automatic tagger's path. Calling add()
+  // per tag re-read, re-validated and rewrote the whole file each time, so one import that tagged
+  // 20,000 rows spent minutes here. Same rules as add(): normalized labels, one tag per
+  // (target, label) with the first author winning, protection for analyst event tags. Every label
+  // is checked before anything is written. Returns the tags created, in input order; they share
+  // one createdAt, the instant of the batch.
+  async addMany(caseId: string, inputs: readonly NewTag[]): Promise<Tag[]> {
+    if (inputs.some((input) => !normalizeLabel(input.label))) throw new Error("label is required");
+    if (!inputs.length) return [];
+    // A tuple key, not a joined string: target ids are arbitrary text, so a separator can collide.
+    const key = (targetType: string, targetId: string, label: string) =>
+      JSON.stringify([targetType, targetId, label]);
+    return this.lock.runExclusive(caseId, async () => {
+      const existingTags = await this.load(caseId);
+      const seen = new Set(existingTags.map((t) => key(t.targetType, t.targetId, t.label)));
+      const createdAt = new Date().toISOString();
+      const created: Tag[] = [];
+      for (const input of inputs) {
+        const targetType = String(input.targetType).trim();
+        const targetId = String(input.targetId).trim();
+        const label = normalizeLabel(input.label);
+        const k = key(targetType, targetId, label);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const author = (input.author || "").trim() || "anonymous";
+        created.push({ id: randomUUID(), targetType, targetId, label, author, createdAt });
+      }
+      if (!created.length) return [];
+      for (const tag of created) {
+        if (this.protection && protectsEvent(tag)) await this.protection.protect(caseId, tag.targetId);
+      }
+      await this.save(caseId, [...existingTags, ...created]);
+      return created;
+    });
+  }
+
   // Remove one tag by id; returns the removed tag (so callers can inspect its label), or null if
   // no tag with that id existed.
   async remove(caseId: string, tagId: string): Promise<Tag | null> {

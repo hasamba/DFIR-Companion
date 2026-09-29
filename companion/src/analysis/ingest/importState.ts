@@ -120,7 +120,9 @@ export async function knownHostIdentity(
   caseId: string,
 ): Promise<{ knownRenames: HostRenameRecord[]; collectorHostnames: string[] }> {
   try {
-    const state = await ctx.opts.stateStore.load(caseId);
+    // The overview load skips the forensic timeline, the one array that grows with the evidence
+    // (#1874): the ledger is case metadata, so there is no need to read and hold every event.
+    const state = await ctx.opts.stateStore.loadOverview(caseId);
     return { knownRenames: state.hostRenames ?? [], collectorHostnames: state.collectorHostnames ?? [] };
   } catch {
     return { knownRenames: [], collectorHostnames: [] };

@@ -1355,6 +1355,7 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_ATOMIC_WRITE_RETRIES">Atomic-save retries<span class="sfield-hint">DFIR_ATOMIC_WRITE_RETRIES — retries on a transient Windows lock (AV/indexer/sync client) during the state save's final rename (default 20)</span></label><input id="env-DFIR_ATOMIC_WRITE_RETRIES" placeholder="20" /></div>
           <div class="sfield"><label for="env-DFIR_MAX_EVENTS">SIEM/EDR import event cap<span class="sfield-hint">DFIR_MAX_EVENTS — safety cap on events emitted by a single SIEM/EDR JSON import (default 2000)</span></label><input id="env-DFIR_MAX_EVENTS" placeholder="2000" /></div>
+          <div class="sfield"><label for="env-DFIR_IMPORT_MEMORY_GUARD">Import memory guard<span class="sfield-hint">DFIR_IMPORT_MEMORY_GUARD — refuse an import that would exhaust the server's memory on a very large case (on/off, default on)</span></label><input id="env-DFIR_IMPORT_MEMORY_GUARD" placeholder="on" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_IMPORT_RATE_MAX">Deterministic-import rate limit<span class="sfield-hint">DFIR_IMPORT_RATE_MAX — requests/min for Velociraptor/THOR/Chainsaw/Hayabusa imports, drawn from a separate pool than the AI request budget (default 300)</span></label><input id="env-DFIR_IMPORT_RATE_MAX" placeholder="300" /></div>

@@ -12,6 +12,7 @@ import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext } from "./routes/context.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { ImportLock } from "./analysis/importLock.js";
+import { createImportMemoryGuard } from "./analysis/importMemoryGuard.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import type { ForensicEvent } from "./analysis/stateTypes.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
@@ -103,7 +104,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // One import writer per case, across EVERY import path (routes, /push + MCP ingest, monitors, hunt
   // collects). Unlike the state lock this one is never optional: an import's "+N events" and its undo
   // checkpoint are only correct if nothing else writes inside its section. See analysis/importLock.ts.
-  const importLock = options.importLock ?? new ImportLock();
+  // #1874: the memory guard admits each import section, sized from the case's indexed event count.
+  const importLock =
+    options.importLock ??
+    new ImportLock(
+      createImportMemoryGuard({
+        countEvents: async (caseId) =>
+          options.stateStore
+            ? (await options.stateStore.queryForensicTimeline(caseId, { limit: 1, includeTotal: true })).total
+            : 0,
+      }),
+    );
 
   // Name the model on every AI job the jobs popover lists (#633 follow-up). Installed here because
   // this is the first place holding BOTH the job manager and the pipeline whose provider answers

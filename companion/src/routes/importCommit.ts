@@ -120,7 +120,9 @@ export function commitDedicatedImport(
   let stateBefore: InvestigationState | null = null;
   let section: ImportSection | null = null;
   const run = async (): Promise<void> => {
-    section = await beginImportSection(importLock, caseId, options.stateStore);
+    section = await beginImportSection(importLock, caseId, options.stateStore, {
+      incomingEvents: commit.linesIn,
+    });
     stateBefore = section.stateBefore;
     // #1438: the start line is the last thing in the log before a crash mid-parse; the merged line
     // carries the wall time. The FAILED line is recordImportFailure's (the `.catch` below), once.

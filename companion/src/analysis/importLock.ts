@@ -1,4 +1,5 @@
 import { StateLock } from "./stateLock.js";
+import type { ImportAdmission, ImportAdmissionHint } from "./importMemoryGuard.js";
 
 /**
  * Per-case IMPORT mutex: one writer at a time through the whole import critical section —
@@ -26,9 +27,24 @@ import { StateLock } from "./stateLock.js";
 export class ImportLock {
   private readonly lock = new StateLock();
 
+  /**
+   * `admission` runs once the section is granted, before the import does anything (#1874 — the
+   * memory guard, analysis/importMemoryGuard.ts). A refusal releases the section and rejects, so
+   * the next import for the case is not wedged; an admission's reservation is released with the
+   * section.
+   */
+  constructor(private readonly admission?: ImportAdmission) {}
+
   /** Run `fn` with the case's import section held. Prefer this — the release cannot be forgotten. */
-  runExclusive<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
-    return this.lock.runExclusive(caseId, fn);
+  runExclusive<T>(caseId: string, fn: () => Promise<T>, hint?: ImportAdmissionHint): Promise<T> {
+    return this.lock.runExclusive(caseId, async () => {
+      const releaseAdmission = await this.admit(caseId, hint);
+      try {
+        return await fn();
+      } finally {
+        releaseAdmission();
+      }
+    });
   }
 
   /**
@@ -36,11 +52,26 @@ export class ImportLock {
    * whose diff runs in a later `.then`. Resolves once the section is granted; call the returned
    * release from a `finally`. FORGETTING IT WEDGES EVERY LATER IMPORT FOR THE CASE.
    */
-  acquire(caseId: string): Promise<() => void> {
-    return new Promise<() => void>((granted) => {
+  async acquire(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
+    const releaseSection = await new Promise<() => void>((granted) => {
       // The queued task resolves only when the holder releases, so the chain's tail IS the hold.
       // `granted` fires the moment the task starts, which is the moment the lock is ours.
       void this.lock.runExclusive(caseId, () => new Promise<void>((release) => granted(() => release())));
     });
+    let releaseAdmission: () => void;
+    try {
+      releaseAdmission = await this.admit(caseId, hint);
+    } catch (error) {
+      releaseSection();
+      throw error;
+    }
+    return () => {
+      releaseAdmission();
+      releaseSection();
+    };
+  }
+
+  private admit(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
+    return this.admission ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
   }
 }
