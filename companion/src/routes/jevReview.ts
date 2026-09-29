@@ -6,6 +6,7 @@ import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../a
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
+import { markAiBudgetUnspent } from "../http/rateLimiter.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
 import { rowsInBuildWindow } from "./jevBuildWindow.js";
 import { stateEventResolver } from "../analysis/eventAliasLookup.js";
@@ -172,6 +173,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
             `missed-evidence review graded nothing: ${inBuild.size} archive row(s) sit inside the ` +
             `host's own build window and were set aside, ${coverage.alreadyAnalyzed} already analyzed`,
         });
+      markAiBudgetUnspent(res); // nothing sent to Jev: the AI-budget slot goes back (#1825)
       return res.json({
         model: settings.model,
         rows: [],

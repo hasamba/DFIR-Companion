@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **AI-provider warning no longer moves the page** — the pre-flight banner is a strip fixed to the bottom of the window, so a late answer does not push the dashboard down (closes #1827)
+- **Refused requests keep the AI budget** — a malformed request, a refusal or a skip answer no longer uses one of the case's 20 AI requests a minute (closes #1825)
+- **Reusing a deleted case ID keeps its roles** — creating a case whose ID is still being deleted answers 409, and the delete's role cleanup can no longer revoke a new case's access (closes #1826)
 - **Report diff names text and Case Details changes** — version and release diffs flag a changed report text and list changed Case Details fields instead of saying "no differences", and a meta-only change now mints a version (closes #1779)
 - **Bare usernames redacted** — a username found as CORP\\user, a UPN or a profile path gets one token and is replaced wherever it appears, in the redacted package, AI anonymization and the support bundle; common words are spared (closes #1780)
 - **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)

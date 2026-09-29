@@ -38,6 +38,20 @@ export class CaseAlreadyExistsError extends Error {
 }
 
 /**
+ * The case id is mid-delete: its folder may already be gone while the delete still clears the state
+ * that outlives it (roles, jobs). Creating the id then would let that cleanup revoke the new case's
+ * roles (#1826), so createCase refuses it. A kind of CaseAlreadyExistsError, so a create route
+ * answers it with the same 409.
+ */
+export class CaseBeingDeletedError extends CaseAlreadyExistsError {
+  constructor(caseId: string) {
+    super(caseId);
+    this.message = `case ${caseId} is being deleted — try again once the delete finishes`;
+    this.name = "CaseBeingDeletedError";
+  }
+}
+
+/**
  * A lifecycle write refused because of the case's current state, with the HTTP status a route
  * answers it with. Thrown inside the per-case metadata lock, so the check and the write agree.
  */
@@ -117,6 +131,10 @@ export class CaseStore {
   // status or password write that landed mid-rm made the rm fail with ENOTEMPTY; one that landed
   // between an archive's move and its status write could strand the case (#1809).
   private readonly metaLock = new StateLock();
+
+  // Ids with a delete in flight, counted so two deletes of one id cannot clear each other's mark.
+  // Set when deleteCaseFolder is called, cleared once its locked section (rm + cleanup) ends (#1826).
+  private readonly deleting = new Map<string, number>();
 
   // Notified after every artifact write below, so chain-of-custody is recorded for ALL stored
   // evidence rather than only where a caller remembered to ask (#231). It lives here, at the two
@@ -281,19 +299,35 @@ export class CaseStore {
   // Runs under the metadata lock (#1808), so no case.json write lands during the rm. With
   // `closedOnly`, refuses a case that is not closed or archived AT THAT MOMENT: an archive-first
   // export can run long enough for the case to be reopened after the route's own status check.
-  async deleteCaseFolder(caseId: string, opts: { closedOnly?: boolean } = {}): Promise<void> {
-    await this.metaLock.runExclusive(caseId, async () => {
-      const dir = this.caseDir(caseId);
-      const meta = await this.getCaseMeta(caseId);
-      if (!meta) throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
-      if (opts.closedOnly && meta.status !== "closed" && meta.status !== "archived") {
-        throw new CaseLifecycleError(
-          `case ${caseId} must be closed or archived before it can be deleted`,
-          409,
-        );
-      }
-      await rm(dir, { recursive: true });
-    });
+  //
+  // `afterDelete` runs inside the same lock, right after the rm, and only when the rm succeeded: the
+  // cleanup of state that outlives the folder (roles, jobs) must finish before a create of the same
+  // id can start, or it revokes the new case's roles (#1826). It must not throw — the folder is
+  // already gone. createCase refuses the id for as long as this call is in flight.
+  async deleteCaseFolder(
+    caseId: string,
+    opts: { closedOnly?: boolean; afterDelete?: () => Promise<void> } = {},
+  ): Promise<void> {
+    this.deleting.set(caseId, (this.deleting.get(caseId) ?? 0) + 1);
+    try {
+      await this.metaLock.runExclusive(caseId, async () => {
+        const dir = this.caseDir(caseId);
+        const meta = await this.getCaseMeta(caseId);
+        if (!meta) throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
+        if (opts.closedOnly && meta.status !== "closed" && meta.status !== "archived") {
+          throw new CaseLifecycleError(
+            `case ${caseId} must be closed or archived before it can be deleted`,
+            409,
+          );
+        }
+        await rm(dir, { recursive: true });
+        await opts.afterDelete?.();
+      });
+    } finally {
+      const left = (this.deleting.get(caseId) ?? 1) - 1;
+      if (left > 0) this.deleting.set(caseId, left);
+      else this.deleting.delete(caseId);
+    }
   }
 
   // Case ids retired by a delete. An incident number is not free again once it has been used: the
@@ -342,7 +376,10 @@ export class CaseStore {
   //
   // The subdirectories are created only AFTER the claim succeeds, so a loser leaves nothing behind.
   // Under the metadata lock, so a create cannot land inside a delete's rm of the same id (#1808).
+  // Refused outright while a delete of the same id is in flight (#1826) — checked before queueing, so
+  // a create never waits behind the delete only to land inside its cleanup window.
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
+    if (this.deleting.has(input.caseId)) throw new CaseBeingDeletedError(input.caseId);
     return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));
   }
 
