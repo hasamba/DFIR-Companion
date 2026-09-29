@@ -12,7 +12,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 // each relpath onto drop/ and reads, uploads and moves the result.
 //
 // This is the one rule both consumers apply. It is deliberately narrower than
-// isSafeZipEntryPath in caseExportArchive.ts: an archive path must be portable, so that helper
+// isSafeZipEntryPath in caseRestore.ts: an archive path must be portable, so that helper
 // refuses colons and backslashes outright. A drop relpath only has to stay inside drop/ on the
 // machine it is on — a colon is an ordinary Linux filename character (timestamps are common
 // names), and on win32 the walk's own output is backslash-separated. Segments are therefore
