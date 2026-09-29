@@ -14,6 +14,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { TeamAuth } from "../../src/auth/teamAuth.js";
 import { createApp } from "../../src/server.js";
+import { AuditCursorStore } from "../../src/analysis/auditExportCursor.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { importZipArchiveCase } from "../../src/analysis/caseZipImport.js";
@@ -355,5 +356,23 @@ describe("(c) a folder a part-failed delete left on disk", () => {
     await mkdir(join(root, "c3"), { recursive: true });
     const meta = await store.createCase({ caseId: "c3", name: "n", investigator: "i", aiProvider: null });
     expect(meta.caseId).toBe("c3");
+  });
+});
+
+describe("the SIEM audit export position of a deleted case (#1868)", () => {
+  it("is cleared by the delete, so a same-id new case's records are exported from line 0", async () => {
+    const root = await tmpRoot();
+    const store = new CaseStore(join(root, "cases"));
+    const auditExportCursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
+    const app = createApp(store, { stateStore: new StateStore(store), auditExportCursors });
+    const body = { caseId: "a1", name: "Old", investigator: "alice", aiProvider: "mock" };
+    expect((await request(app).post("/cases").send(body)).status).toBe(201);
+    await auditExportCursors.set("siem-1", "a1", 120);
+    await request(app).patch("/cases/a1/status").send({ status: "closed" });
+
+    const del = await request(app).post("/cases/a1/delete").send({ archiveFirst: "none" });
+
+    expect(del.body).toMatchObject({ deleted: true });
+    expect(await auditExportCursors.get("siem-1", "a1")).toBe(0);
   });
 });

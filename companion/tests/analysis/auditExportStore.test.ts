@@ -118,6 +118,19 @@ describe("AuditCursorStore", () => {
     expect(await cursors.get("d1", "case-1")).toBe(0);
     expect(await cursors.get("d2", "case-1")).toBe(5);
   });
+
+  // #1868: a deleted case's positions survived, so a same-id new case's first N records were
+  // treated as already sent and never reached the SIEM.
+  it("forgets a deleted case's positions for every destination, and only that case's", async () => {
+    const cursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
+    await cursors.set("d1", "case-1", 120);
+    await cursors.set("d2", "case-1", 80);
+    await cursors.set("d1", "case-10", 7);
+    await cursors.clearCase("case-1");
+    expect(await cursors.get("d1", "case-1")).toBe(0);
+    expect(await cursors.get("d2", "case-1")).toBe(0);
+    expect(await cursors.get("d1", "case-10")).toBe(7);
+  });
 });
 
 describe("ActivityLogStore.readFrom", () => {

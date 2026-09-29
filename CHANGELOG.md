@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **SIEM audit export restarts for a reused case id** — deleting a case clears its export position, so a same-id new case's first activity records are no longer skipped (closes #1868)
 - **Windows team-mode MCP delivery checks folder permissions** — on Windows the cases root and `.mcp-delivery` are refused when Everyone, Authenticated Users, Users, Anonymous or Guests can write them, and when the permissions cannot be read (closes #1863)
 - **Property and attribute-node writes follow the safe-dom policy** — `a.href =`, `img.src =`, `iframe.srcdoc =`, URL-part setters, SVG `href.baseVal`, `setAttributeNode` and `Attr.value` are judged like `setAttribute`; downloads, map tiles and graph glyphs keep working (closes #1858)
 - **The last HTML and script doors go through safe-dom** — `createContextualFragment`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `DOMParser`, XSLT and XHR documents, `document.write` and `execCommand("insertHTML")` are sanitized; script text, script URLs and inserting a script element by script are refused; script-built SVG animations cannot rewrite a link (closes #1864)
