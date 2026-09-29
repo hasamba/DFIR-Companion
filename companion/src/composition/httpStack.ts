@@ -334,8 +334,41 @@ export function mountTerminalHandlers(app: Express): void {
         .status(404)
         .json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
     }
+    const clientStatus = clientErrorStatus(err);
+    if (clientStatus !== null) {
+      // A 4xx the framework already classified (Express 4 sets status 400 on the URIError that a
+      // malformed %-escape in a :param raises). The message is FIXED: err.message carries the raw
+      // param, which is attacker-chosen text.
+      const error =
+        err instanceof URIError ? "malformed percent-encoding in URL" : clientErrorMessage(clientStatus);
+      return res.status(clientStatus).json({ error });
+    }
     const message = err instanceof Error ? err.message : String(err);
     getServerLogger().error(`unhandled error on ${req.method} ${req.path}: ${message}`);
     return res.status(500).json({ error: "internal server error" });
   });
+}
+
+/** The error's own 4xx status (`status` or `statusCode`), or null when it has none. */
+function clientErrorStatus(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const { status, statusCode } = err as { status?: unknown; statusCode?: unknown };
+  const code = typeof status === "number" ? status : statusCode;
+  return typeof code === "number" && Number.isInteger(code) && code >= 400 && code <= 499 ? code : null;
+}
+
+const CLIENT_ERROR_MESSAGES: Readonly<Record<number, string>> = {
+  400: "bad request",
+  401: "unauthorized",
+  403: "forbidden",
+  404: "not found",
+  405: "method not allowed",
+  408: "request timeout",
+  413: "payload too large",
+  415: "unsupported media type",
+  429: "too many requests",
+};
+
+function clientErrorMessage(status: number): string {
+  return CLIENT_ERROR_MESSAGES[status] ?? "client error";
 }

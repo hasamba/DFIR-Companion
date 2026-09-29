@@ -130,7 +130,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(409).json({ error: stoppingMessage(caseId) });
       const meta = await store.createCase({
         caseId,
-        name,
+        name: String(name).trim(),
         investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown",
         aiProvider: aiProvider ?? null,
         // A deleted case with this id may have left roles behind if its cleanup failed (#1831).

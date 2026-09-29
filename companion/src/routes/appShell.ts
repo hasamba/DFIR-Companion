@@ -18,9 +18,11 @@ import { sendMaybeGzipped } from "../http/compressibleResponse.js";
  * Express's default HTML page — the only observable delta from their original home in startServer.
  */
 export function registerAppShellRoutes(app: Express): void {
-  // Redirect root to the dashboard.
-  app.get("/", (_req, res) => {
-    res.redirect("/dashboard");
+  // Redirect root to the dashboard, keeping the query so /?caseId=demo still opens that case. Only
+  // the "?..." part is carried over; the path stays fixed, so the query cannot pick the target.
+  app.get("/", (req, res) => {
+    const q = req.originalUrl.indexOf("?");
+    res.redirect("/dashboard" + (q >= 0 ? req.originalUrl.slice(q) : ""));
   });
 
   // Serve the dashboard. withNonce stamps this response's CSP nonce into the inline <script>

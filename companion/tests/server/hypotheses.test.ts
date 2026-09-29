@@ -90,13 +90,42 @@ describe("hypothesis routes (#140)", () => {
     );
   });
 
-  it("ignores an invalid status in PATCH (keeps the prior status)", async () => {
-    const { app } = await makeApp();
+  it("400s an invalid status in PATCH, names the allowed values, and writes nothing (#13)", async () => {
+    const { app, store } = await makeApp();
     const created = (await request(app).post("/cases/c1/hypotheses").send({ title: "h", status: "open" }))
       .body;
-    const patched = await request(app).patch(`/cases/c1/hypotheses/${created.id}`).send({ status: "bogus" });
-    expect(patched.status).toBe(200);
-    expect(patched.body.status).toBe("open");
+    const patched = await request(app)
+      .patch(`/cases/c1/hypotheses/${created.id}`)
+      .send({ status: "bogus", notes: "n" });
+    expect(patched.status).toBe(400);
+    expect(patched.body.error).toMatch(/open, supported, refuted, unknown/);
+    const [after] = await new HypothesisStore(store).load("c1");
+    expect(after).toMatchObject({ status: "open", notes: created.notes, updatedAt: created.updatedAt });
+  });
+
+  it("400s a PATCH with no valid fields and does not mark the hypothesis analystTouched (#13)", async () => {
+    const { app, store } = await makeApp();
+    const hs = new HypothesisStore(store);
+    const created = (await request(app).post("/cases/c1/hypotheses").send({ title: "h" })).body;
+    const before = JSON.stringify(await hs.load("c1"));
+    for (const body of [{}, { bogusField: 1 }, { title: 42 }]) {
+      const res = await request(app).patch(`/cases/c1/hypotheses/${created.id}`).send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("no valid fields to update");
+    }
+    // No write at all: an empty patch used to bump updatedAt and set analystTouched, which freezes a
+    // synthesis hypothesis out of every later refresh.
+    expect(JSON.stringify(await hs.load("c1"))).toBe(before);
+  });
+
+  it("400s an invalid status in POST instead of defaulting to open; absent still defaults (#13)", async () => {
+    const { app } = await makeApp();
+    const bad = await request(app).post("/cases/c1/hypotheses").send({ title: "h", status: "bogus" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/open, supported, refuted, unknown/);
+    const ok = await request(app).post("/cases/c1/hypotheses").send({ title: "h" });
+    expect(ok.status).toBe(201);
+    expect(ok.body.status).toBe("open");
   });
 
   it("DELETEs a hypothesis (204) then 404s", async () => {

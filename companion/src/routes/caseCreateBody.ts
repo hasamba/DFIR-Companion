@@ -18,10 +18,11 @@ export interface CaseCreateBody {
   aiProvider?: unknown;
 }
 
-/** The rejection message, or null when the body is well-formed. */
+/** The rejection message, or null when the body is well-formed. The caller stores `name` trimmed. */
 export function validateCaseCreateBody(body: CaseCreateBody): string | null {
   const { caseId, name, investigator, aiProvider } = body;
-  if (!caseId || !name) return "caseId and name are required";
+  // A whitespace-only name is as missing as an absent one: it saves a case the list shows blank.
+  if (!caseId || !name || (typeof name === "string" && !name.trim())) return "caseId and name are required";
   if (typeof caseId !== "string" || !isValidCaseId(caseId)) {
     return "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal";
   }

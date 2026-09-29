@@ -1,4 +1,5 @@
 import type { Finding } from "../analysis/stateTypes.js";
+import { mdControlPictures } from "./controlChars.js";
 
 // One home for "untrusted text → safe Markdown fragment".
 //
@@ -16,12 +17,12 @@ import type { Finding } from "../analysis/stateTypes.js";
  * inside a GFM table cell ends the row; the text after the newline becomes spurious rows with empty
  * trailing cells, corrupting the table structure. The corrupted Markdown flows to the HTML export
  * (marked parses the broken table) and the DOCX export, producing broken tables in all three
- * deliverables. Newlines reach here from report-meta free-text fields (revisions[].comments,
+ * deliverables. Other C0 controls and DEL become visible Control Pictures (#9). Newlines reach here from report-meta free-text fields (revisions[].comments,
  * distribution[].name, glossary entries) and from AI-generated descriptions that contain a literal
  * newline (#12).
  */
 export function cellMd(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
+  return mdControlPictures(value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " "));
 }
 
 /**
@@ -31,7 +32,7 @@ export function cellMd(value: string): string {
  * the whole string, attributed to the finding or hypothesis that carries it.
  */
 export function oneLineMd(value: string): string {
-  return value.replace(/[\r\n]+/g, " ").trim();
+  return mdControlPictures(value.replace(/[\r\n]+/g, " ").trim());
 }
 
 /**
@@ -42,8 +43,10 @@ export function oneLineMd(value: string): string {
  * renders as the literal characters the author typed instead of restructuring the document.
  */
 export function blockMd(value: string): string {
-  return value
-    .split(/\r?\n/)
+  // A lone CR is a line break to marked, so it is split on here too — otherwise "benign\r## X"
+  // would slip past the per-line check and forge a heading.
+  return mdControlPictures(value)
+    .split(/\r\n|\r|\n/)
     .map((line) =>
       /^ {0,3}(#{1,6}(\s|$)|=+[ \t]*$|-{2,}[ \t]*$)/.test(line) ? line.replace(/^([ \t]*)/, "$1\\") : line,
     )

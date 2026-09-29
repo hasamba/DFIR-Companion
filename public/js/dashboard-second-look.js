@@ -238,8 +238,14 @@
           slRunError = presidioHoldText("Second look");
           return;
         }
+        // A 501 is a refusal made BEFORE the sweep (re-synthesis asked for, no AI provider set).
+        // Nothing changed, and the reason names the opt-out, so show it as it came.
+        if (r.code === 501 && r.body && r.body.error) {
+          slRunError = String(r.body.error);
+          return;
+        }
         if (!r.ok) {
-          slRunError = `The second look did not run: ${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}`;
+          slRunError = `The second look did not run:${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}`;
           return;
         }
         slResult = r.body && typeof r.body === "object" ? r.body : null;

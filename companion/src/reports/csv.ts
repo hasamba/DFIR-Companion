@@ -7,10 +7,11 @@ import { buildIocProvenanceChains } from "../analysis/iocProvenanceChain.js";
 import { caseTime, intelTemporal } from "../analysis/intelTemporal.js";
 import { assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
 import type { GeoMapData } from "../analysis/geoMap.js";
+import { csvNulPicture } from "./controlChars.js";
 
 function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return `"${guarded.replace(/"/g, '""')}"`;
+  return `"${csvNulPicture(guarded).replace(/"/g, '""')}"`;
 }
 function row(values: string[]): string {
   return values.map(cell).join(",");

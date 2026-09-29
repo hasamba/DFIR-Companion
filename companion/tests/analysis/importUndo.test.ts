@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -289,6 +289,88 @@ describe("ImportUndoStore", () => {
     }
     const raw = await readFile(join(cases.stateDir("c1"), "import-undo-stack.json"), "utf8");
     expect(Buffer.byteLength(raw)).toBeLessThan(budgetBytes * 1.5); // headroom for JSON formatting/metadata, not unbounded
+  });
+
+  it("writes compact JSON and keeps the file within the byte budget plus a small envelope (#qa-kimi A)", async () => {
+    // Regression: the budget was measured on compact JSON but the file was written pretty-printed
+    // (indent 2), so a 200 MB budget produced a 381 MB file on disk.
+    const budgetBytes = 400_000;
+    const bounded = new ImportUndoStore(cases, 10, budgetBytes);
+    let growingEvents = 200;
+    for (let i = 0; i < 12; i++) {
+      growingEvents += 150;
+      await bounded.mutate("c1", (stack) => ({
+        stack: pushCheckpoint(
+          stack,
+          cp(`s${i}`, growingEvents, 5, 1, `import ${i}`),
+          bounded.depth(),
+          bounded.byteBudget(),
+        ),
+        result: undefined,
+      }));
+    }
+    const raw = await readFile(join(cases.stateDir("c1"), "import-undo-stack.json"), "utf8");
+    expect(raw).not.toContain("\n"); // compact, not pretty-printed
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(budgetBytes + 512);
+    const loaded = await bounded.load("c1");
+    expect(loaded.undo[loaded.undo.length - 1].label).toBe("import 11"); // newest always kept
+  });
+
+  it("loads a legacy pretty-printed stack file and rewrites it compact on the next push", async () => {
+    const legacy: ImportUndoStack = {
+      undo: [cp("old1", 3, 1, 0, "legacy one"), cp("old2", 4, 1, 1, "legacy two")],
+      redo: [cp("r", 2, 0, 0, "legacy redo")],
+    };
+    const file = join(cases.stateDir("c1"), "import-undo-stack.json");
+    await writeFile(file, JSON.stringify(legacy, null, 2), "utf8");
+    const loaded = await store.load("c1");
+    expect(loaded.undo.map((c) => c.label)).toEqual(["legacy one", "legacy two"]);
+    expect(loaded.undo[1].state.forensicTimeline).toHaveLength(4);
+    expect(loaded.redo.map((c) => c.label)).toEqual(["legacy redo"]);
+
+    await store.mutate("c1", (stack) => ({
+      stack: pushCheckpoint(stack, cp("new", 2, 0, 0, "new"), store.depth(), 10_000_000),
+      result: undefined,
+    }));
+    const raw = await readFile(file, "utf8");
+    expect(raw).not.toContain("\n");
+    const after = await store.load("c1");
+    expect(after.undo.map((c) => c.label)).toEqual(["legacy one", "legacy two", "new"]);
+    expect(after.redo).toEqual([]);
+    expect(after.undo[0].state).toEqual(legacy.undo[0].state);
+  });
+
+  it("a push serializes each checkpoint at most once and never re-stringifies the whole stack", async () => {
+    // Regression: every push parsed the whole file, stringified every checkpoint to measure it,
+    // then stringified the whole stack again to write it.
+    for (let i = 0; i < 3; i++) {
+      await store.mutate("c1", (stack) => ({
+        stack: pushCheckpoint(stack, cp(`p${i}`, 50, 1, 0, `p${i}`), store.depth(), 10_000_000),
+        result: undefined,
+      }));
+    }
+    const spy = vi.spyOn(JSON, "stringify");
+    try {
+      await store.mutate("c1", (stack) => ({
+        stack: pushCheckpoint(stack, cp("p3", 50, 1, 0, "p3"), store.depth(), 10_000_000),
+        result: undefined,
+      }));
+      const args = spy.mock.calls.map((c) => c[0] as Record<string, unknown> | null);
+      const isObj = (a: unknown): a is Record<string, unknown> => !!a && typeof a === "object";
+      const holdsCheckpoints = (a: Record<string, unknown>) =>
+        Array.isArray(a.undo) && a.undo.some((c: unknown) => isObj(c) && "state" in c);
+      expect(args.filter((a) => isObj(a) && holdsCheckpoints(a))).toHaveLength(0); // no whole-stack stringify
+      expect(args.filter((a) => isObj(a) && "forensicTimeline" in a)).toHaveLength(0); // no bare-state measuring
+      const perCheckpoint = new Map<string, number>();
+      for (const a of args) {
+        if (isObj(a) && "state" in a && typeof a.label === "string")
+          perCheckpoint.set(a.label, (perCheckpoint.get(a.label) ?? 0) + 1);
+      }
+      expect([...perCheckpoint.keys()].sort()).toEqual(["p0", "p1", "p2", "p3"]);
+      for (const n of perCheckpoint.values()) expect(n).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("mutate() serializes concurrent load-modify-save calls so no checkpoint is lost to a race", async () => {

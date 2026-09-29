@@ -104,6 +104,8 @@ async function previewTaggerRule() {
     if (!r.ok || d.error) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Invalid rule: " + (d.error || r.status); return; }
     msg.style.color = d.matched > 0 ? "var(--text-muted)" : "var(--warning-bg-strong)";
     msg.textContent = `Would match ${d.matched} event(s) in this case${d.scope ? " (scope: " + d.scope + ")" : ""}.`;
+    // A 0-match preview says WHY when the server can tell: e.g. no event fills "message" (#12).
+    if (!d.matched && d.hint) msg.textContent += ` ${d.hint}.`;
     // Show the actual matching events (a capped sample) so the analyst can see WHAT it covers.
     const sample = d.sample || [];
     if (sample.length) {

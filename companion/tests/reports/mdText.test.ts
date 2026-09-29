@@ -57,3 +57,27 @@ describe("cellMd", () => {
     expect(cellMd("a|b\nc")).toBe("a\\|b c");
   });
 });
+
+describe("control characters become visible Control Pictures (#9)", () => {
+  it("cellMd maps NUL and other C0 controls, and DEL", () => {
+    expect(cellMd("A\u0000B\u0001C\u007FD")).toBe("A␀B␁C␡D");
+  });
+
+  it("oneLineMd maps NUL and other C0 controls, and DEL", () => {
+    expect(oneLineMd("A\u0000B\u001BC\u007F")).toBe("A␀B␛C␡");
+  });
+
+  it("blockMd maps C0 controls but keeps TAB and line structure", () => {
+    expect(blockMd("a\u0000b\tc\nd\u0007e")).toBe("a␀b\tc\nd␇e");
+  });
+});
+
+describe("blockMd treats a lone CR as a line break, as marked does (#9)", () => {
+  it("escapes a heading forged after a lone CR", () => {
+    expect(blockMd("benign\r## Heading")).toBe("benign\n\\## Heading");
+  });
+
+  it("escapes a thematic break forged after a lone CR", () => {
+    expect(blockMd("above\r---\rbelow")).toBe("above\n\\---\nbelow");
+  });
+});

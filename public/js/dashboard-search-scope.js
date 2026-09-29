@@ -285,9 +285,17 @@
     return synthRequestInFlight;
   }
 
+  // The press always forces a full provider run. When the pill already reads "up to date" (#4),
+  // ask first. The pill's ai-idle class is the state js/dashboard-ai-status.js already derived —
+  // both its pushed idle and its derived ai-state paint it — so this reads it, never re-derives it.
+  const RESYNTH_UP_TO_DATE_CONFIRM =
+    "Conclusions are already up to date. Run synthesis again anyway? This spends provider time.";
+
   function resynthesize() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
+    const pill = document.getElementById("aiStatus");
+    if (pill && pill.className === "ai-idle" && !confirm(RESYNTH_UP_TO_DATE_CONFIRM)) return;
     // A second press superseded the first run, and the first request's 499 then read "synthesis
     // failed". The button stays off until this request settles.
     const button = document.getElementById("synthesize");

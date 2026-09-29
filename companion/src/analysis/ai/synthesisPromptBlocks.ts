@@ -166,16 +166,18 @@ function buildScopeNote(scope: ScopeWindow): string {
 /**
  * Cap the existing-findings echo (a big import can produce 100s of auto-findings). Append the prior
  * run's corroboration label (investigation-guidance #6) so the model sees which of its own earlier
- * claims were weak/uncorroborated and can strengthen or drop them this run.
+ * claims were weak/uncorroborated and can strengthen or drop them this run. Each line carries the
+ * prior severity (the live-intrusion rank for a simulation-capped finding) so the model does not
+ * re-guess it from the title every run and drift the grade. Exported for tests.
  */
-function buildFindingsEcho(state: InvestigationState): string {
+export function buildFindingsEcho(state: InvestigationState): string {
   const echoed = state.findings.slice(0, 150);
   const detailed = detailedFindingIds(echoed);
   return (
     echoed
       .map((f) => {
         const corr = corroborationLabel(f);
-        const head = `[${f.id}] ${f.title}${corr ? ` — ${corr}` : ""}`;
+        const head = `[${f.id}] (severity: ${echoRank(f)}) ${f.title}${corr ? ` — ${corr}` : ""}`;
         return detailed.has(f.id) ? head + findingDetail(f) : head;
       })
       .join("\n") || "(none yet)"
@@ -193,7 +195,8 @@ const FINDING_DETAIL_CHARS = 300;
 const FINDING_CITED_IDS = 8;
 
 export const EXISTING_FINDINGS_HEADER =
-  "EXISTING FINDINGS (update by id, do not duplicate). Indented lines show what a finding said last run and " +
+  'EXISTING FINDINGS (update by id, do not duplicate). "(severity: X)" is the severity a finding carried last ' +
+  "run — keep it unless the evidence now supports a different grade. Indented lines show what a finding said last run and " +
   "the events it cited and its ATT&CK tags. Keep every concrete detail it names (file, command, host, account, " +
   "time) and every ATT&CK tag unless the evidence now contradicts it — then say why in the new description:";
 

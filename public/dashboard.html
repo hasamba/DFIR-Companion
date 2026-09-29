@@ -3997,7 +3997,7 @@
       </div>
       </div><!-- /taggerSuggestWrap -->
       <div id="taggerRulesPane" hidden data-safe-style="margin-bottom:8px">
-        <div data-safe-style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
+        <div data-safe-style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity and more. <b>description</b> always holds the event summary; <b>message</b> holds the full raw text only when the importer keeps it (Hayabusa rows have none), so match text on description too.</div>
         <textarea id="taggerRulesText" spellcheck="false" data-safe-style="width:100%;min-height:220px;font-family:var(--font-code);font-size:12px;background:var(--bg-secondary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:8px"></textarea>
         <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:4px">
           <button class="ev-bulk-btn" data-act="saveTaggerRules" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>

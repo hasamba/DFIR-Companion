@@ -285,6 +285,21 @@ describe("what the run reports afterwards", () => {
     expect(html).toContain("&lt;img");
   });
 
+  // Bug #7: with no AI provider the route refuses the default run BEFORE the sweep. Nothing
+  // changed, so the reason alone is the answer — and it names the opt-out the analyst can use.
+  it("shows a 501 refusal as the server's reason, with the opt-out usable", async () => {
+    const h = await withPreview();
+    const run = h.api.runSecondLook();
+    const reason =
+      'Re-synthesis needs an AI provider. Untick "Re-synthesise afterwards" to promote the rows only.';
+    h.pending.shift()!.resolve({ error: reason }, { ok: false, status: 501 });
+    await run;
+    await settle();
+    expect(h.el("secondLookStatus").textContent).toBe(reason);
+    expect(h.el("secondLookResynth").disabled).toBe(false);
+    expect(h.el("secondLookRunBtn").disabled).toBe(false);
+  });
+
   it("surfaces a refusal as a reason, not as silence", async () => {
     const h = await withPreview();
     const run = h.api.runSecondLook();

@@ -433,6 +433,10 @@ export function backfillSilenceGapFindings(
 ): InvestigationState {
   const cap = Math.max(0, Math.floor(maxFindings));
   const existingIds = new Set(state.findings.map((f) => f.id));
+  // The cap bounds the TOTAL gap findings, not the new ones per run. Gap findings already in state
+  // (earlier backfills, or ids the model echoed back) count toward it — otherwise every re-synthesis
+  // skipped the kept ids and added `cap` more, ratcheting 5 → 10 → 15.
+  const heldGapCount = state.findings.filter((f) => f.id.startsWith(GAP_FINDING_ID_PREFIX)).length;
   const newFindings: Finding[] = [];
   // Back-link each gap finding to the two events that bound it, mirroring backfillHighSeverityFindings.
   // Without this, the dashboard's client-side scope projection (which drops a finding only when it's
@@ -448,7 +452,7 @@ export function backfillSilenceGapFindings(
     // fact for the coverage panel, not a Medium finding with a "returning operator" brief.
     if (gap.betweenWaves && !gap.attackerEdges) continue;
     if (gap.provisioningEdges || gap.hostHistory) continue; // idle time / the host's own history
-    if (newFindings.length >= cap) break;
+    if (heldGapCount + newFindings.length >= cap) break;
     // Idempotency key derived from the bounding events — stable across synthesis runs over the same
     // gap (so re-synthesis refreshes rather than duplicates), and unique per distinct gap.
     const id = `${GAP_FINDING_ID_PREFIX}${gap.beforeEventId}-${gap.afterEventId}`;

@@ -1,6 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
-import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
+import {
+  createFieldCoverage,
+  createTaggerAccumulator,
+  feedTaggerScope,
+  fieldCoverageHint,
+} from "../analysis/tagger.js";
 import { compileText, TaggerRulesConflictError } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -237,8 +242,17 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       // accumulator keeps the first N matches as it streams (#1444), so nothing else is held.
       const PREVIEW_SAMPLE_CAP = 100;
       const acc = createTaggerAccumulator(ruleset, PREVIEW_SAMPLE_CAP);
+      // Field fill counts ride the same pass, so a 0-match preview can say WHY (#12).
+      const coverage = createFieldCoverage(ruleset);
+      const both: typeof acc = {
+        ...acc,
+        add(events) {
+          acc.add(events);
+          coverage.add(events);
+        },
+      };
       await feedTaggerScope(
-        acc,
+        both,
         scope,
         state.forensicTimeline,
         options.superTimelineStore ? options.superTimelineStore.eventBatches(req.params.id) : null,
@@ -250,7 +264,12 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         asset: e.asset ?? "",
         description: e.description.slice(0, 200),
       }));
-      return res.status(200).json({ matched: result.totalMatched, scope, sample });
+      if (result.totalMatched > 0)
+        return res.status(200).json({ matched: result.totalMatched, scope, sample });
+      const fieldCoverage = coverage.counts();
+      const scanned = coverage.scanned();
+      const hint = fieldCoverageHint(fieldCoverage, scanned);
+      return res.status(200).json({ matched: 0, scope, sample, fieldCoverage, scanned, hint });
     } catch (err) {
       return res.status(400).json({ error: (err as Error).message });
     }

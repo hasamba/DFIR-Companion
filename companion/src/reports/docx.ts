@@ -26,6 +26,7 @@ import {
   type EvidenceSafetyFinding,
 } from "./evidenceSafety.js";
 import { renderScopeSection } from "./scopeSection.js";
+import { xmlSafeText } from "./controlChars.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { DEFAULT_ACCENT, defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
@@ -519,7 +520,10 @@ ${renderScopeSection(hostScope)}`
     },
   });
   const evidenceSafety = checkEvidenceSafety(state, mdWithScope, { unescaped: false });
-  const tokens = marked.lexer(withEvidenceSafetyMarkdownBanner(mdWithScope, evidenceSafety));
+  // XML 1.0 forbids NUL and most other C0 controls, and the docx library writes them raw: one
+  // imported NUL in an event description made the whole .docx unopenable (#9). Mapped here, before
+  // marked runs, so every paragraph, table cell and heading is covered by one choke point.
+  const tokens = marked.lexer(xmlSafeText(withEvidenceSafetyMarkdownBanner(mdWithScope, evidenceSafety)));
   const children = tokensToDocxChildren(tokens);
   // Brand the headings with the template's accent colour (a validated #rrggbb). The default
   // template keeps the historical theme colour (no override) so an un-templated .docx is unchanged.
@@ -530,7 +534,7 @@ ${renderScopeSection(hostScope)}`
       : undefined;
   const doc = new Document({
     creator: "DFIR Companion",
-    title: meta.incidentId.trim() || state.caseId,
+    title: xmlSafeText(meta.incidentId.trim() || state.caseId),
     styles: brandStyles,
     // Numbering definitions referenced by listItemParagraphs above.
     numbering: {

@@ -294,3 +294,37 @@ describe("image embedding", () => {
     expect(malformed).toContain("Broken");
   });
 });
+
+describe("XML-forbidden characters in evidence text (#9)", () => {
+  // Characters XML 1.0 forbids. One of them in word/document.xml makes the .docx unopenable.
+  const XML_FORBIDDEN =
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+  it("renders NUL and other C0 controls as visible Control Pictures, never raw", async () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Title\u0000X￾",
+      description: "A\u0000B\u0001C\uD800D",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
+    });
+    const meta = emptyReportMeta();
+    meta.incidentId = "INC\u0000-9";
+    const buf = await renderDocxReport(state, meta);
+    const zip = await JSZip.loadAsync(buf);
+    for (const name of Object.keys(zip.files)) {
+      if (!/\.(xml|rels)$/.test(name)) continue;
+      const text = await zip.file(name)!.async("string");
+      expect(XML_FORBIDDEN.test(text), `forbidden character in ${name}`).toBe(false);
+    }
+    const xml = await unzipDocumentXml(buf);
+    expect(xml).toContain("A␀B␁C");
+    expect(xml).toContain("INC␀-9");
+  });
+});
