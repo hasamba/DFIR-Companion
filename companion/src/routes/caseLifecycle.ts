@@ -37,9 +37,13 @@ import {
 } from "../settings/envManager.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
-import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
-import type { IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
+import {
+  IOC_BLOCKLIST_FILE_FORMATS,
+  IOC_BLOCKLIST_REQUEST_FORMATS,
+  parseBlocklistQuery,
+  type IocBlocklistRequestFormat,
+} from "../reports/iocBlocklist.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -408,46 +412,32 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // Export a clean IOC block-list for network/firewall teams (issue #87). Supports three formats:
   // txt (one value per line, grouped by type, with header comments), csv (minimal columnar format
   // for TIP ingestion/ticketing), and stix (indicators-only STIX 2.1 bundle). Severity is derived
-  // from the worst enrichment verdict; scope/legitimate filters always apply.
+  // from the worst enrichment verdict; scope/legitimate filters always apply. format=summary returns
+  // JSON — the match count and why the rest were left out — for the dialog's live count (#1807).
   //
-  // Query params: format (txt|csv|stix, default txt), minSeverity (Critical|High|Medium|Low|Info,
-  // default Medium), types (comma-separated ip,domain,url,hash,email), verdictOnly (true|false).
+  // Query params: format (txt|csv|stix|summary, default txt), minSeverity (Critical|High|Medium|Low|
+  // Info, default Medium), types (comma-separated ip,domain,url,hash,email), verdictOnly (true|false).
   app.get("/cases/:id/export/ioc-blocklist", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-    const fmt = String(req.query.format ?? "txt");
-    if (fmt !== "txt" && fmt !== "csv" && fmt !== "stix") {
-      return res.status(400).json({ error: "format must be txt, csv, or stix" });
+    const fmt = String(req.query.format ?? "txt") as IocBlocklistRequestFormat;
+    if (!IOC_BLOCKLIST_REQUEST_FORMATS.includes(fmt)) {
+      return res.status(400).json({ error: "format must be txt, csv, stix, or summary" });
     }
-    const opts: IocBlocklistOptions = {};
-    const VALID_SEV: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
-    const VALID_TYPES: BlocklistIocType[] = ["ip", "domain", "url", "hash", "email"];
-    const { minSeverity, types, verdictOnly } = req.query;
-    if (typeof minSeverity === "string" && VALID_SEV.includes(minSeverity as Severity)) {
-      opts.minSeverity = minSeverity as Severity;
-    }
-    if (typeof types === "string" && types) {
-      opts.types = types
-        .split(",")
-        .filter((t): t is BlocklistIocType => VALID_TYPES.includes(t as BlocklistIocType));
-    }
-    if (verdictOnly === "true") opts.verdictOnly = true;
     try {
-      const data = await options.reportWriter.iocBlocklist(req.params.id, fmt, opts);
-      const cid = req.params.id;
+      const data = await options.reportWriter.iocBlocklist(
+        req.params.id,
+        fmt,
+        parseBlocklistQuery(req.query),
+      );
       res.setHeader("Cache-Control", "private, no-cache");
-      if (fmt === "stix") {
-        res.type("application/json; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="ioc-blocklist-${cid}.stix.json"`);
-        return res.send(JSON.stringify(data, null, 2));
-      } else if (fmt === "csv") {
-        res.type("text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="ioc-blocklist-${cid}.csv"`);
-        return res.send(data);
-      } else {
-        res.type("text/plain; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="ioc-blocklist-${cid}.txt"`);
-        return res.send(data);
-      }
+      if (fmt === "summary") return res.status(200).json(data);
+      const file = IOC_BLOCKLIST_FILE_FORMATS[fmt];
+      res.type(file.contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="ioc-blocklist-${req.params.id}.${file.extension}"`,
+      );
+      return res.send(typeof data === "string" ? data : JSON.stringify(data, null, 2));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

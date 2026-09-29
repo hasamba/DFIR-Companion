@@ -1,13 +1,19 @@
 import type { Express, Request, Response } from "express";
 import { getImportLimiter, getImportIpLimiter } from "../http/rateLimiter.js";
-import { importEncryptedCase, CaseImportConflictError } from "../analysis/caseExportArchive.js";
+import {
+  importEncryptedCase,
+  CaseImportConflictError,
+  type CaseImportCounts,
+} from "../analysis/caseExportArchive.js";
+import { importZipArchiveCase } from "../analysis/caseZipImport.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { hashFile } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
 
 /**
- * Encrypted whole-case import — POST /cases/import/encrypted.
+ * Whole-case import — POST /cases/import/encrypted (a `.dfircase` package) and POST
+ * /cases/import/zip (the plain ZIP "Archive to ZIP" writes, #1784).
  *
  * Split out of routes/caseLifecycle.ts when the request budget below was added (#424): that file
  * is at its size-ledger cap, and this route's rate limiting is intricate enough to be worth
@@ -83,7 +89,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         },
       );
       options.teamAuth?.grantCreator(req, meta.caseId);
-      await recordArrival(ctx, meta.caseId, provenance?.sourceCaseId);
+      await recordArrival(ctx, meta.caseId, DFIRCASE_ARRIVAL, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
@@ -127,19 +133,99 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
       return res.status(500).json({ error: msg });
     }
   });
+
+  registerZipImportRoute(app, ctx);
+}
+
+const INVALID_ARCHIVE_MESSAGE =
+  /not a valid case archive|invalid target case id|not a ZIP archive|corrupt ZIP|zip entry|zip bomb/i;
+
+/**
+ * Import the plain ZIP that "Archive to ZIP" writes into a NEW case (#1784). Body:
+ * { data: base64, targetCaseId? }. Same answers as the encrypted route: 201, 409 with the
+ * conflicting caseId (the dashboard re-prompts), 400 for a malformed or unverifiable archive.
+ *
+ * There is no password, so there is no derivation to protect and no failure limiter. The per-IP
+ * request budget still applies: every request inflates and hashes up to the zip-bomb caps.
+ */
+function registerZipImportRoute(app: Express, ctx: RouteContext): void {
+  const { store, options } = ctx;
+  app.post("/cases/import/zip", async (req: Request, res: Response) => {
+    try {
+      const { data, targetCaseId } = (req.body ?? {}) as Record<string, unknown>;
+      if (typeof data !== "string" || !data.trim()) {
+        return res.status(400).json({ error: "data (base64) is required" });
+      }
+      if (!getImportIpLimiter().tryAcquire(req.ip ?? "unknown")) {
+        res.setHeader("Retry-After", "60");
+        return res.status(429).json({ error: "too many import attempts, try again later" });
+      }
+      const result = await importZipArchiveCase(store, Buffer.from(data, "base64"), {
+        targetCaseId:
+          typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
+      });
+      const { meta, verified, sourceCaseId } = result;
+      options.teamAuth?.grantCreator(req, meta.caseId);
+      await recordArrival(ctx, meta.caseId, ZIP_ARRIVAL, sourceCaseId);
+      const counts = await countsFromState(ctx, meta.caseId, result.counts);
+      // sanitizeCaseMeta for the same reason as above: case.json travels byte-for-byte, lock hash included.
+      return res.status(201).json({ ...sanitizeCaseMeta(meta), counts, verified, sourceCaseId });
+    } catch (err) {
+      if (err instanceof CaseImportConflictError) {
+        return res.status(409).json({ error: err.message, caseId: err.caseId });
+      }
+      const msg = (err as Error).message;
+      return res.status(INVALID_ARCHIVE_MESSAGE.test(msg) ? 400 : 500).json({ error: msg });
+    }
+  });
 }
 
 /**
+ * The entity counts as the imported case now reports them. A SQLite case has no
+ * state/investigation.json, so the counts read from the archive's entries are 0 for it; the loaded
+ * state is the truth. Falls back to the entry counts when there is no state store or it cannot load.
+ */
+async function countsFromState(
+  ctx: RouteContext,
+  caseId: string,
+  fallback: CaseImportCounts,
+): Promise<CaseImportCounts> {
+  const state = await ctx.options.stateStore?.load(caseId).catch(() => undefined);
+  if (!state) return fallback;
+  return {
+    ...fallback,
+    forensicEvents: state.forensicTimeline.length,
+    findings: state.findings.length,
+    iocs: state.iocs.length,
+  };
+}
+
+interface ArrivalWording {
+  /** How the chain names the package, e.g. ".dfircase archive". */
+  label: string;
+  trigger: string;
+}
+
+const DFIRCASE_ARRIVAL: ArrivalWording = { label: ".dfircase archive", trigger: "encrypted-case-import" };
+const ZIP_ARRIVAL: ArrivalWording = { label: "ZIP archive", trigger: "zip-case-import" };
+
+/**
  * Record in the new case's custody chain that it ARRIVED rather than being created here (#904).
- * `sourceCaseId` is the id the archive's manifest claimed, and is undefined for an archive written
- * before manifests — the arrival is still worth recording without it.
+ * `sourceCaseId` is the id the archive's manifest (or, for a plain ZIP, its case folder) claimed, and
+ * is undefined for a `.dfircase` written before manifests — the arrival is still worth recording
+ * without it. `wording` names the package kind in the chain.
  *
  * Deliberately never throws. It runs after the atomic rename that publishes the case, so the import
  * has already succeeded by the time it is called; letting a custody append failure escape would turn
  * a completed import into a 500 and tell the analyst their case did not import when it did. The
  * failure is logged instead, which is what a missing chain entry needs — someone to notice it.
  */
-async function recordArrival(ctx: RouteContext, caseId: string, sourceCaseId?: string): Promise<void> {
+async function recordArrival(
+  ctx: RouteContext,
+  caseId: string,
+  wording: ArrivalWording,
+  sourceCaseId?: string,
+): Promise<void> {
   const custody = ctx.options.custodyStore;
   if (!custody) return;
   try {
@@ -156,8 +242,8 @@ async function recordArrival(ctx: RouteContext, caseId: string, sourceCaseId?: s
       collectedAt: new Date().toISOString(),
       // `source` is the chain's free-text "where". Beside a "transferred" event it reads as where
       // the evidence came from — see CustodyStore.recordTransfer for the same field read the other way.
-      source: sourceCaseId ? `.dfircase archive of case ${sourceCaseId}` : ".dfircase archive",
-      trigger: "encrypted-case-import",
+      source: sourceCaseId ? `${wording.label} of case ${sourceCaseId}` : wording.label,
+      trigger: wording.trigger,
     });
   } catch (err) {
     ctx.serverLogger.warn(
