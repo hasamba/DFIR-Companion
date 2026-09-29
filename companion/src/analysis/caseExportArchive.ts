@@ -20,7 +20,7 @@ import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
-import { restoreCaseZip, type CaseImportCounts } from "./caseRestore.js";
+import { restoreCaseZip, type CaseImportCounts, type RestoreCaseZipOptions } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
@@ -392,6 +392,7 @@ function countsFromManifest(entry: ZipEntry | undefined): CaseImportCounts | nul
 
 export interface ImportEncryptedCaseOptions {
   targetCaseId?: string;
+  beforePublish?: RestoreCaseZipOptions["beforePublish"];
 }
 
 export interface ImportEncryptedCaseResult {
@@ -446,6 +447,7 @@ export async function importEncryptedCase(
 
   const restored = await restoreCaseZip(store, zip, files, {
     targetCaseId: options.targetCaseId,
+    beforePublish: options.beforePublish,
     // Integrity after path safety, and before the case is published. The order is deliberate: an
     // unsafe path is a question about where bytes would land, and it has to be settled before the
     // bytes are worth hashing at all.

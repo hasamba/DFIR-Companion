@@ -5,6 +5,7 @@ import {
   restoreCaseZip,
   type CaseImportCounts,
   type CaseZipFile,
+  type RestoreCaseZipOptions,
   type StagedDigest,
 } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry, type CaseZipEntry } from "./caseZipReader.js";
@@ -30,6 +31,7 @@ const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
 export interface ImportZipArchiveOptions {
   targetCaseId?: string;
+  beforePublish?: RestoreCaseZipOptions["beforePublish"];
 }
 
 export interface ImportZipArchiveResult {
@@ -82,6 +84,7 @@ export async function importZipArchiveCase(
 
   const { meta, sourceCaseId, counts } = await restoreCaseZip(store, buffer, files, {
     targetCaseId: options.targetCaseId,
+    beforePublish: options.beforePublish,
     // Runs after the restore's own path-safety pass and before any write.
     preflight: (caseJsonId) => {
       if (caseJsonId !== caseFolder) {

@@ -101,7 +101,6 @@ describe("AI rate limiter coverage", () => {
     "/tagger/suggest-rule",
     "/velociraptor/suggest-hunts",
     "/adversary-hints/hunt-technique",
-    "/anon-control",
   ];
   for (const path of MISSING) {
     it(`throttles POST /cases/:id${path}`, async () => {
@@ -127,6 +126,15 @@ describe("AI rate limiter coverage", () => {
     const statuses = await fireManyGet("/cases/nosuch/import/undo-stack", 30);
     expect(statuses.filter((s) => s === 429).length).toBe(0);
   });
+
+  // #1832 — these make no model call, so the AI budget does not meter them: an analyst working
+  // through second-opinion deltas or the anonymization toggles must not 429 their next real AI run.
+  for (const path of ["/second-opinion/apply", "/second-opinion/apply-all", "/anon-control"]) {
+    it(`does NOT throttle POST /cases/:id${path} (no model call)`, async () => {
+      const statuses = await fireManyPost(`/cases/nosuch${path}`, 25);
+      expect(statuses.filter((s) => s === 429).length).toBe(0);
+    });
+  }
 
   it("does NOT throttle GET /cases/:id/synth-meta (read-only, zero AI cost)", async () => {
     const statuses = await fireManyGet("/cases/nosuch/synth-meta", 30);
