@@ -73,9 +73,8 @@ function fakeDom() {
   return { els, document: { getElementById: el, querySelectorAll: () => [] } };
 }
 
-const flush = async () => {
-  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
-};
+// Every stubbed answer is an already-resolved promise, so one macrotask drains every chain.
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("the modal's Save on a stale list (#1839)", () => {
   it("saves nothing, reloads the list with the analyst's edit kept, and saves from the new version next", async () => {

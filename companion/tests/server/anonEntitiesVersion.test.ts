@@ -8,6 +8,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { createApp } from "../../src/server.js";
+import type { CustomEntity } from "../../src/analysis/anonymize.js";
 
 // #1839: the custom-entity editor saves the WHOLE list. Before this, a stale second window could
 // erase a value the analyst had just hidden in the first — and once the value was gone from the
@@ -17,8 +18,8 @@ import { createApp } from "../../src/server.js";
 let app: ReturnType<typeof createApp>;
 let custom: CustomEntitiesStore;
 let pending: PresidioPendingStore;
-const JANE = { value: "Jane Doe", category: "PERSON" };
-const DC9 = { value: "DC9", category: "HOST" };
+const JANE: CustomEntity = { value: "Jane Doe", category: "PERSON" };
+const DC9: CustomEntity = { value: "DC9", category: "HOST" };
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-anonversion-"));
