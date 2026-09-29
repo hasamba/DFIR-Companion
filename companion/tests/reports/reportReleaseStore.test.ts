@@ -187,6 +187,25 @@ describe("ReportReleaseStore", () => {
         },
       }),
     ).rejects.toThrow("missing artifact");
+    // #1841: a recorded path the server-path guard now refuses was not verified — it blocks too.
+    await expect(
+      releases.create("c1", {
+        ...base,
+        custody: {
+          ...base.custody,
+          chainBreaks: [],
+          mismatches: [
+            {
+              artifactPath: "/evidence/image.E01",
+              recordedSha256: HASH,
+              actualSha256: null,
+              reason: "refused" as const,
+              detail: "refused: that path is not a regular file",
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow("could not be verified");
     await expect(
       releases.create("c1", {
         ...base,
