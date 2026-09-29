@@ -23,6 +23,9 @@ const finding = (over: Partial<Finding> = {}): Finding => ({
   title: "PowerShell staged batch scripts",
   description: SCENARIO_023,
   relatedIocs: [],
+  sourceScreenshots: [],
+  firstSeen: "2026-09-28T11:39:54Z",
+  lastUpdated: "2026-09-28T11:39:58Z",
   mitreTechniques: ["T1074.001", "T1059.001"],
   status: "open",
   ...over,
@@ -83,6 +86,16 @@ describe("capabilityTechniques (#1873)", () => {
     "Nothing was staged without log clearing.",
   ])("adds nothing for a negated or unasserted mention: %j", (text) => {
     expect(capabilityTechniques(text)).toEqual([]);
+  });
+
+  it.each([
+    ["No execution of the staged log-clearing scripts was observed.", ["T1070.001"]],
+    ["The log-clearing and backup deletion scripts were not executed.", ["T1070.001", "T1490"]],
+    ["The kit supports log clearing; none of it has run.", ["T1070.001"]],
+    ["No log clearing occurred.", []],
+    ["The timeline shows no log clearing after the run.", []],
+  ])("keeps a capability when only its execution is denied: %j", (text, expected) => {
+    expect(capabilityTechniques(text)).toEqual(expected);
   });
 
   it("does not read a file name as a role — shadow.bat was a backdoor in scenario 023", () => {

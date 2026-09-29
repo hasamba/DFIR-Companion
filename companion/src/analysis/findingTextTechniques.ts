@@ -55,13 +55,24 @@ const CLAUSE_END = /;|\b(?:but|however|although|though|yet|whereas|while)\b/i;
 const NOT_ASSERTED =
   /\b(?:no|not|never|none|nothing|neither|nor|without|absent|lacks?|lacking|lacked|prevent\w*|block\w*|detect\w*|whether|if|unless|could|would|might|may|investigate\w*|check\w*|verify|confirm\w*|fail\w*|designed)\b|n't\b/i;
 
+// A denial of RUNNING is not a denial of the capability: "no execution of the staged log-clearing
+// scripts was observed" still says the scripts clear logs, and staged tooling is exactly the case
+// #1873 is about. So a negation that governs an execution word is dropped before the clause is
+// judged; "no log clearing occurred" keeps its negation and adds nothing.
+const EXECUTION_DENIAL =
+  /\b(?:no|not|never|none)\s+(?:(?:been|yet|of|the|them|it)\s+)*(?:execut\w*|run|ran|launch\w*|start\w*)\b|n't\s+(?:been\s+)?(?:execut\w*|run|ran|launch\w*|start\w*)\b/gi;
+
+function asserted(clause: string): boolean {
+  return !NOT_ASSERTED.test(clause.replace(EXECUTION_DENIAL, " "));
+}
+
 /** The capability techniques a text asserts, in the order it first names them. */
 export function capabilityTechniques(text: string): string[] {
   const hits: Array<{ id: string; at: number }> = [];
   let offset = 0;
   for (const sentence of text.split(SENTENCE_END)) {
     for (const clause of sentence.split(CLAUSE_END)) {
-      if (clause && !NOT_ASSERTED.test(clause)) {
+      if (clause && asserted(clause)) {
         for (const { id, re } of CAPABILITIES) {
           const m = re.exec(clause);
           if (m) hits.push({ id, at: offset + m.index });
