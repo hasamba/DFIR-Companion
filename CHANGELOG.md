@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Reused case id starts clean** — creating a deleted case's id clears its stale roles, and is refused while its old jobs still stop or a half-deleted folder remains (closes #1831)
 - **Non-AI clicks keep the AI budget** — second-opinion apply, anonymization toggles and AI routes that answer without a model call no longer count toward the per-case AI limit (closes #1832)
+- **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
+- **AI-provider warning no longer moves the page** — the pre-flight banner is a strip fixed to the bottom of the window, so a late answer does not push the dashboard down (closes #1827)
 - **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)
 - **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)
 - **Refused requests keep the AI budget** — a malformed request, a refusal or a skip answer no longer uses one of the case's 20 AI requests a minute (closes #1825)
