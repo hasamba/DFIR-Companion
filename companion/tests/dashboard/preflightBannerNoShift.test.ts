@@ -62,7 +62,7 @@ const passing = {
   },
 };
 
-function harness(report: unknown, controlOk = true) {
+function harness(report: unknown, controlOk: boolean | "reject" = true) {
   const banner = el();
   banner.hidden = true;
   banner.offsetHeight = 36;
@@ -70,6 +70,7 @@ function harness(report: unknown, controlOk = true) {
   const observed: FakeEl[] = [];
   let disconnected = 0;
   const calls: string[] = [];
+  const toasts: Array<[string, string]> = [];
   class FakeResizeObserver {
     constructor(private cb: () => void) {}
     observe(t: FakeEl) {
@@ -93,13 +94,19 @@ function harness(report: unknown, controlOk = true) {
     },
     ResizeObserver: FakeResizeObserver,
     openSettingsTab: () => {},
+    showToast: (text: string, kind: string) => toasts.push([text, kind]),
     fetch: async (url: string) => {
       calls.push(url);
       if (url === "/diagnostics/preflight") return { ok: true, json: async () => report };
-      return { ok: controlOk, json: async () => ({}) };
+      if (controlOk === "reject") throw new Error("network down");
+      return {
+        ok: controlOk,
+        status: controlOk ? 200 : 500,
+        json: async () => (controlOk ? {} : { error: "cases root is read-only" }),
+      };
     },
   });
-  return { api, banner, rootVars, observed, calls, disconnectedCount: () => disconnected };
+  return { api, banner, rootVars, observed, calls, toasts, disconnectedCount: () => disconnected };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -165,6 +172,19 @@ describe("pre-flight banner does not shift the page (#1827)", () => {
     await settle();
     expect(refused.banner.hidden).toBe(false);
     expect(refused.rootVars.get("--preflight-banner-h")).toBe("36px");
+    expect(refused.toasts).toEqual([
+      ["Could not disable the pre-flight checks: cases root is read-only", "warn"],
+    ]);
+
+    const offline = harness(failing, "reject");
+    offline.api.initPreflightBanner();
+    await settle();
+    await settle();
+    offline.banner.children.find((c) => c.textContent === "Disable checks")!.onclick!();
+    await settle();
+    await settle();
+    expect(offline.banner.hidden).toBe(false);
+    expect(offline.toasts).toEqual([["Could not disable the pre-flight checks: network down", "warn"]]);
 
     const saved = harness(failing, true);
     saved.api.initPreflightBanner();
@@ -175,6 +195,7 @@ describe("pre-flight banner does not shift the page (#1827)", () => {
     await settle();
     expect(saved.banner.hidden).toBe(true);
     expect(saved.rootVars.has("--preflight-banner-h")).toBe(false);
+    expect(saved.toasts).toHaveLength(0);
   });
 
   it("a configured provider shows nothing and reserves nothing", async () => {

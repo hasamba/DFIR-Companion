@@ -64,11 +64,17 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ disabled: true }),
           })
-            .then((r) => {
-              // Hide only when the server saved the setting; otherwise the warning still holds.
-              if (r && r.ok) hideBanner(banner);
+            .then(async (r) => {
+              // Hide only when the server saved the setting; otherwise the warning still holds and
+              // the analyst is told why, so the button does not look dead.
+              if (r && r.ok) return hideBanner(banner);
+              const data = await r.json().catch(() => null);
+              throw new Error((data && data.error) || `server returned ${r ? r.status : "no answer"}`);
             })
-            .catch(() => {});
+            .catch((err) => {
+              if (typeof showToast === "function")
+                showToast(`Could not disable the pre-flight checks: ${err.message}`, "warn");
+            });
         };
         const btn = document.createElement("button");
         btn.type = "button";
