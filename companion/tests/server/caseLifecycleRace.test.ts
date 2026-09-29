@@ -8,7 +8,13 @@ import { mkdtemp, mkdir, writeFile, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { CaseStore, CaseNotFoundError } from "../../src/storage/caseStore.js";
+import {
+  CaseStore,
+  CaseNotFoundError,
+  CaseAlreadyExistsError,
+  CaseBeingDeletedError,
+} from "../../src/storage/caseStore.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 
@@ -166,7 +172,8 @@ describe("PATCH /status on an archived case (#1809)", () => {
 });
 
 describe("create racing a delete of the same id (#1808)", () => {
-  it("the create waits for the delete; the new case is whole and the delete succeeded", async () => {
+  // Since #1826 a create that arrives mid-delete is refused (CaseBeingDeletedError) rather than queued.
+  it("the create never lands inside the delete; the new case is whole and the delete succeeded", async () => {
     const { app, store } = await harness();
     await seedClosedCase(app, store, "reuse");
     const del = request(app).post("/cases/reuse/delete").send({ archiveFirst: "none" });
@@ -179,6 +186,93 @@ describe("create racing a delete of the same id (#1808)", () => {
     const [delRes, created] = await Promise.all([del, create]);
     expect(delRes.body).toMatchObject({ deleted: true });
     if (created === "created") expect((await store.getCaseMeta("reuse"))?.name).toBe("second");
-    else expect(created).toBe("CaseAlreadyExistsError");
+    else expect(["CaseAlreadyExistsError", "CaseBeingDeletedError"]).toContain(created);
+  });
+});
+
+// #1826 — the delete's cleanup (revoke roles, forget jobs, retire the id) used to run after the
+// per-case lock was released, so a create of the same id could land between the rm and the revoke
+// and lose the creator's fresh role. The cleanup now runs inside the lock, and a create of an id
+// that is mid-delete is refused with 409.
+describe("a create racing a delete of the same id (#1826)", () => {
+  const gate = () => {
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    return { open, opened };
+  };
+
+  it("CaseStore refuses the id while the delete's cleanup is pending, then allows it", async () => {
+    const { store, root } = await harness();
+    await store.createCase({ caseId: "d1", name: "n", investigator: "i", aiProvider: null });
+    const cleanup = gate();
+    let cleanupEntered = false;
+    const del = store.deleteCaseFolder("d1", {
+      afterDelete: async () => {
+        cleanupEntered = true;
+        await cleanup.opened;
+      },
+    });
+    while (!cleanupEntered) await sleep(2);
+    expect(await exists(join(root, "d1"))).toBe(false); // the folder is gone, the cleanup is not done
+    const err = await store
+      .createCase({ caseId: "d1", name: "new", investigator: "bob", aiProvider: null })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CaseBeingDeletedError);
+    expect(err).toBeInstanceOf(CaseAlreadyExistsError);
+    expect(await exists(join(root, "d1"))).toBe(false);
+    cleanup.open();
+    await del;
+    const meta = await store.createCase({ caseId: "d1", name: "new", investigator: "bob", aiProvider: null });
+    expect(meta.name).toBe("new");
+  });
+
+  it("a failed delete clears the mark, so the id is not refused forever", async () => {
+    const { store } = await harness();
+    await expect(store.deleteCaseFolder("never")).rejects.toThrow(/no case.json/);
+    await store.createCase({ caseId: "never", name: "n", investigator: "i", aiProvider: null });
+  });
+
+  it("POST /cases during the delete's cleanup answers 409; after it, the create succeeds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-lifecycle-race-"));
+    const store = new CaseStore(root);
+    const jobManager = new JobManager({ perCaseConcurrency: 1 });
+    const app = createApp(store, { stateStore: new StateStore(store), jobManager });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "d2", name: "Old", investigator: "alice", aiProvider: "mock" });
+    expect((await request(app).patch("/cases/d2/status").send({ status: "closed" })).status).toBe(200);
+
+    const cleanup = gate();
+    const order: string[] = [];
+    const forget = jobManager.forgetCase.bind(jobManager);
+    let cleanupEntered = false;
+    jobManager.forgetCase = async (caseId: string) => {
+      cleanupEntered = true;
+      await cleanup.opened;
+      await forget(caseId);
+      order.push("cleanup-done");
+    };
+
+    const del = request(app)
+      .post("/cases/d2/delete")
+      .send({ archiveFirst: "none" })
+      .then((r) => r);
+    while (!cleanupEntered) await sleep(2);
+    const racing = await request(app)
+      .post("/cases")
+      .send({ caseId: "d2", name: "New", investigator: "bob", aiProvider: "mock" });
+    expect(racing.status).toBe(409);
+    expect(racing.body.error).toMatch(/being deleted/);
+
+    cleanup.open();
+    const delRes = await del;
+    expect(delRes.body).toMatchObject({ deleted: true });
+    const created = await request(app)
+      .post("/cases")
+      .send({ caseId: "d2", name: "New", investigator: "bob", aiProvider: "mock" });
+    order.push("created");
+    expect(created.status).toBe(201);
+    expect(order).toEqual(["cleanup-done", "created"]);
+    expect((await store.getCaseMeta("d2"))?.name).toBe("New");
   });
 });

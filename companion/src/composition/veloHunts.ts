@@ -26,7 +26,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase, RouteContext } from "../routes/context.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
-import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
@@ -536,8 +536,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           // Super-only bundles route to the super-timeline; the upload path (THOR/Hayabusa JSON) only has
           // a forensic-merge importer (dispatchImport), so ingesting it would leak into the forensic
           // timeline and break the super-only invariant. Skip it and tell the analyst to collect
-          // upload-based artifacts via a normal bundle. (The shipped super-timeline-triage bundle has no
-          // upload artifacts; this guards custom/edited super-only bundles.)
+          // upload-based artifacts via a normal bundle (the shipped super-only bundle has none).
           logLine(
             `[velociraptor] super-only bundle: skipping uploaded ${upKind} report ${up.name} (upload-based artifacts aren't ingested for super-only bundles — collect them via a normal bundle)`,
           );
@@ -560,6 +559,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             minSeverity,
             debug: upDebug,
           });
+          logSiemFallback(caseId, up.name, upKind, upDebug); // a guessed JSON kind outlives the status (#1824)
           importedAny = true;
         } catch (e) {
           logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`);

@@ -49,6 +49,8 @@ export const dropStatusSchema = z.object({
   imported: z.array(z.string()).catch([]),
   failed: z.array(failureSchema).catch([]),
   pendingRawInputs: pendingRawListSchema,
+  // Imported, but the JSON kind was only guessed (#1824). Absent in records written before it: [].
+  warnings: z.array(failureSchema).catch([]),
 });
 
 export type DropFailure = z.infer<typeof failureSchema>;
@@ -63,6 +65,7 @@ const EMPTY: DropStatus = {
   imported: [],
   failed: [],
   pendingRawInputs: [],
+  warnings: [],
 };
 
 // One sweep can drop hundreds of files; cap the detail lists (the counts stay exact).
@@ -73,6 +76,7 @@ export interface DropSweep {
   imported: string[]; // relpaths imported OK this sweep
   failed: DropFailure[]; // relpaths that failed + the reason
   pendingRawInputs?: PendingRawInput[]; // raw EVTX/PCAP awaiting an external tool run
+  warnings?: DropFailure[]; // imported, but with a caveat — a guessed JSON kind (#1824)
 }
 
 export class DropStatusStore {
@@ -100,6 +104,7 @@ export class DropStatusStore {
       imported: sweep.imported.slice(0, MAX_LISTED),
       failed: sweep.failed.slice(0, MAX_LISTED),
       pendingRawInputs: (sweep.pendingRawInputs ?? []).slice(0, MAX_LISTED),
+      warnings: (sweep.warnings ?? []).slice(0, MAX_LISTED),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(status, null, 2));
     return status;
