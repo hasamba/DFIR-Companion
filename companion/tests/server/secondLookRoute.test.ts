@@ -75,7 +75,29 @@ async function harness(opts: { withSuperTimeline?: boolean } = {}) {
     activityLogStore: new ActivityLogStore(store),
     ...(withSuper ? { superTimelineStore } : {}),
   });
-  return { app, stateStore, synthMetaStore: new SynthMetaStore(store), superTimelineStore };
+  return { app, stateStore, store, synthMetaStore: new SynthMetaStore(store), superTimelineStore };
+}
+
+/**
+ * The same case, seeded by one real synthesis, then served by an app whose pipeline has NO AI
+ * provider — an install where the analyst turned AI off after the first synthesis.
+ */
+async function aiOffHarness() {
+  const h = await harness();
+  await seedSynthesis(h.app);
+  const pipeline = buildRuntimePipeline({
+    stateStore: h.stateStore,
+    store: h.store,
+    imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+  });
+  const app = createApp(h.store, {
+    pipeline,
+    stateStore: h.stateStore,
+    aiConfigured: false,
+    activityLogStore: new ActivityLogStore(h.store),
+    superTimelineStore: h.superTimelineStore,
+  });
+  return { ...h, app };
 }
 
 /** One synthesis, so the model's own evidence request is on the synth-meta for the button to read. */
@@ -173,5 +195,29 @@ describe("POST /cases/:id/second-look", () => {
     const res = await request(app).post("/cases/c1/second-look").send({});
     expect(res.status).toBe(501);
     expect(res.body.error).toMatch(/super-timeline/i);
+  });
+
+  // Bug #7: the sweep promoted rows, THEN the re-synthesis threw for want of a provider, and the
+  // route answered 500 — "did not run" — over a forensic timeline it had already changed.
+  it("answers 501 BEFORE the sweep when re-synthesis is asked for and no AI provider is set", async () => {
+    const { app, stateStore } = await aiOffHarness();
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(501);
+    expect(res.body.error).toMatch(/Re-synthesi[sz]e/);
+    const after = await stateStore.load("c1");
+    expect(
+      after.forensicTimeline.some((e) => e.id === "rawhit"),
+      "no row may be promoted",
+    ).toBe(false);
+  });
+
+  it("still promotes offline when the analyst sends resynthesize: false", async () => {
+    const { app, stateStore } = await aiOffHarness();
+    const res = await request(app).post("/cases/c1/second-look").send({ resynthesize: false });
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(1);
+    expect(res.body.resynthesized).toBe(false);
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.some((e) => e.id === "rawhit")).toBe(true);
   });
 });

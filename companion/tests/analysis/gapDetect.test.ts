@@ -9,6 +9,7 @@ import {
   DEFAULT_GAP_DENSITY_FACTOR,
   DEFAULT_GAP_MAX_FINDINGS,
   DEFAULT_GAP_OUTLIER_SPAN,
+  type TimelineGap,
 } from "../../src/analysis/gapDetect.js";
 import {
   emptyState,
@@ -294,6 +295,67 @@ describe("backfillSilenceGapFindings", () => {
     expect(next.findings).toHaveLength(2);
     // Cap 0 → no findings.
     expect(backfillSilenceGapFindings(baseState(), gaps, "2026-05-29T00:00:00Z", 0).findings).toHaveLength(0);
+  });
+
+  it("bounds the TOTAL gap findings across re-syntheses — the cap does not ratchet 5 → 10 → 12", () => {
+    // Twelve distinct complete-silence gaps. Before the fix the cap counted only NEW findings, and
+    // ids already in state were skipped without counting, so each re-synthesis added `cap` more.
+    const gaps: TimelineGap[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `gap-${i + 1}`,
+      startTimestamp: `2026-05-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+      endTimestamp: `2026-05-${String(i + 1).padStart(2, "0")}T06:00:00Z`,
+      durationSeconds: 6 * 3600 - i,
+      durationLabel: "6h",
+      severity: "High",
+      complete: true,
+      silentSources: ["EventLog"],
+      activeSources: [],
+      beforeEventId: `x${i}`,
+      afterEventId: `y${i}`,
+    }));
+    const gapCount = (s: InvestigationState) => s.findings.filter((f) => f.id.startsWith("f-gap-")).length;
+    const first = backfillSilenceGapFindings(baseState(), gaps, "2026-05-29T00:00:00Z", 5);
+    expect(gapCount(first)).toBe(5);
+    const second = backfillSilenceGapFindings(first, gaps, "2026-05-29T01:00:00Z", 5);
+    expect(gapCount(second)).toBe(5);
+    const third = backfillSilenceGapFindings(second, gaps, "2026-05-29T02:00:00Z", 5);
+    expect(gapCount(third)).toBe(5);
+    // The five kept are still the worst five.
+    expect(third.findings.map((f) => f.id)).toEqual(
+      gaps.slice(0, 5).map((g) => `f-gap-${g.beforeEventId}-${g.afterEventId}`),
+    );
+  });
+
+  it("counts gap findings the model echoed into state toward the cap", () => {
+    const gaps: TimelineGap[] = Array.from({ length: 4 }, (_, i) => ({
+      id: `gap-${i + 1}`,
+      startTimestamp: "2026-05-01T00:00:00Z",
+      endTimestamp: "2026-05-01T06:00:00Z",
+      durationSeconds: 6 * 3600 - i,
+      durationLabel: "6h",
+      severity: "High",
+      complete: true,
+      silentSources: ["EventLog"],
+      activeSources: [],
+      beforeEventId: `x${i}`,
+      afterEventId: `y${i}`,
+    }));
+    // Two stale gap findings from an older timeline sit in state (kept by the merge as updates).
+    const stale = ["f-gap-old1-old2", "f-gap-old3-old4"].map((id): Finding => ({
+      id,
+      severity: "Low",
+      confidence: 50,
+      title: id,
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-01T00:00:00Z",
+      lastUpdated: "2026-05-01T00:00:00Z",
+      status: "open",
+    }));
+    const next = backfillSilenceGapFindings(baseState(stale), gaps, "2026-05-29T00:00:00Z", 3);
+    expect(next.findings.filter((f) => f.id.startsWith("f-gap-"))).toHaveLength(3);
   });
 });
 

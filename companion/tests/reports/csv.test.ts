@@ -389,3 +389,25 @@ describe("geoMapCsv clientReported column (#1326)", () => {
     expect(b.endsWith(',"no"')).toBe(true);
   });
 });
+
+describe("CSV cells and NUL bytes (#9)", () => {
+  it("maps NUL to a visible Control Picture and keeps a quoted CR exact", () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "A\u0000B",
+      description: "line1\rline2",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
+    });
+    const csv = findingsCsv(state);
+    expect(csv).not.toContain("\u0000");
+    expect(csv).toContain('"A\u2400B"');
+    expect(csv).toContain('"line1\rline2"');
+  });
+});

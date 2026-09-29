@@ -258,3 +258,13 @@ export function matchEvent(event: ForensicEvent, rule: CompiledRule): boolean {
   if (rule.none.some((c) => conditionMatches(event, c))) return false;
   return true;
 }
+
+/** Every field a rule's conditions reference, once each, in first-seen order (all → any → none). */
+export function ruleFields(rule: CompiledRule): string[] {
+  return [...new Set([...rule.all, ...rule.any, ...rule.none].map((c) => c.field))];
+}
+
+/** Whether an event carries a non-empty value in `field` — what an `exists: true` condition tests. */
+export function hasFieldValue(event: ForensicEvent, field: string): boolean {
+  return fieldValues(event, field).length > 0;
+}

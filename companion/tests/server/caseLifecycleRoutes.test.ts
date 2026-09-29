@@ -307,6 +307,26 @@ describe("POST /cases — body types", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s a whitespace-only name with the required-field message (#11)", async () => {
+    const { app, store } = await harness();
+    for (const name of ["", "   ", "\t\n"]) {
+      const res = await request(app)
+        .post("/cases")
+        .send({ caseId: "TYPE-BLANK", name, investigator: "alice" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("caseId and name are required");
+    }
+    expect(await store.caseExists("TYPE-BLANK")).toBe(false);
+  });
+
+  it("stores the name trimmed (#11)", async () => {
+    const { app, store } = await harness();
+    const res = await request(app).post("/cases").send({ caseId: "TYPE-TRIM", name: "  Case Trim  " });
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("Case Trim");
+    expect((await store.getCaseMeta("TYPE-TRIM"))?.name).toBe("Case Trim");
+  });
+
   it("still accepts a well-formed body, and an omitted aiProvider", async () => {
     const { app, store } = await harness();
     const res = await request(app).post("/cases").send({ caseId: "TYPE-4", name: "Case Four" });

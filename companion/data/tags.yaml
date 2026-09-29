@@ -37,10 +37,15 @@
 # ─────────────────────────── Windows Event Log — persistence / execution ───────────────────────────
 win_service_install:
   description: Windows service installed (Security 4697 / System 7045)
+  # Hayabusa rows keep their text in `description` and carry no `message`, so both are read. The
+  # description side anchors on "(EID nnnn" — a bare '7045' would also hit a PID or a byte count in
+  # a detail field — and leaves out 'Service Control Manager', which names every 7036 state change.
   any:
     - { field: message, contains: ['7045', '4697', 'A new service was installed', 'Service Control Manager'] }
+    - { field: description, contains: ['(EID 7045', '(EID 4697', 'A new service was installed'] }
   none:
     - { field: message, contains: ['svchost.exe -k'] }   # routine OS service hosting
+    - { field: description, contains: ['svchost.exe -k'] }
   tags: ['win-service', 'persistence']
   mitre: ['T1543.003']
   severity: Medium
@@ -48,8 +53,12 @@ win_service_install:
 
 win_scheduled_task:
   description: Scheduled task created / updated (Security 4698/4702, TaskScheduler 106/140)
+  # Hayabusa rows carry no `message`; see win_service_install. The description side names 106/140
+  # only under a TaskScheduler channel, because a bare 'TaskScheduler' would match every task run.
   any:
     - { field: message, contains: ['4698', '4702', 'A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+    - { field: description, contains: ['(EID 4698', '(EID 4702', 'A scheduled task was created', 'A scheduled task was updated'] }
+    - { field: description, regex: '\(EID (?:106|140) [^)]*TaskSch', flags: 'i' }
   tags: ['win-scheduled-task', 'persistence']
   mitre: ['T1053.005']
   severity: Medium
@@ -59,6 +68,7 @@ win_wmi_persistence:
   description: WMI event subscription (permanent consumer) — a classic fileless persistence
   any:
     - { field: message, contains: ['EventConsumer', 'CommandLineEventConsumer', '__EventFilter', 'FilterToConsumerBinding'] }
+    - { field: description, contains: ['EventConsumer', 'CommandLineEventConsumer', '__EventFilter', 'FilterToConsumerBinding'] }   # Hayabusa: no `message`
   tags: ['wmi-persistence', 'persistence']
   mitre: ['T1546.003']
   severity: High

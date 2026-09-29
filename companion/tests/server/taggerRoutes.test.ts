@@ -305,6 +305,34 @@ describe("POST /cases/:id/tagger/preview", () => {
     expect(tags).toHaveLength(0);
   });
 
+  it("on zero matches, reports how many scoped events fill each referenced field, with a hint", async () => {
+    // Hayabusa-shaped rows: text in description, no message.
+    const state = await stateStore.load("c1");
+    await stateStore.save({
+      ...state,
+      forensicTimeline: [
+        ev({ id: "h1", description: "Hayabusa: New Service Installed (EID 7045 System)" }),
+        ev({ id: "h2", description: "Hayabusa: Logon (EID 4624 Security)" }),
+      ],
+    });
+    const ruleYaml = "svc:\n  any:\n    - { field: message, contains: '7045' }\n  tags: ['t']\n";
+    const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml });
+    expect(res.status).toBe(200);
+    expect(res.body.matched).toBe(0);
+    expect(res.body.fieldCoverage).toEqual({ message: 0 });
+    expect(res.body.scanned).toBe(2);
+    expect(res.body.hint).toMatch(/0 of 2 events have "message"/);
+    expect(res.body.hint).toMatch(/"description"/);
+  });
+
+  it("omits the coverage hint when the rule matches", async () => {
+    const ruleYaml = "svc:\n  any:\n    - { field: message, contains: '7045' }\n  tags: ['t']\n";
+    const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml });
+    expect(res.body.matched).toBe(1);
+    expect(res.body.hint).toBeUndefined();
+    expect(res.body.fieldCoverage).toBeUndefined();
+  });
+
   it("400s on an invalid rule YAML", async () => {
     const res = await request(app())
       .post("/cases/c1/tagger/preview")

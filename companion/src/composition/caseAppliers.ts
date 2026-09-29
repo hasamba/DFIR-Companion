@@ -25,6 +25,7 @@ import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/play
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 
 export interface CaseAppliersDeps {
   store: CaseStore;
@@ -88,8 +89,14 @@ export function createCaseAppliers({
         result: undefined,
       }));
       options.onImportUndo?.(caseId);
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      // Non-fatal, but never silent: a checkpoint too large to serialize (RangeError past V8's max
+      // string length) or a failed write means Undo will not cover this import.
+      const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      getServerLogger().warn(
+        `[import-undo] could not save the undo checkpoint before "${label}"; Undo will not cover this import (${reason})`,
+        { caseId },
+      );
     }
   }
 

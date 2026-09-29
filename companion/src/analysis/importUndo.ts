@@ -48,20 +48,45 @@ export function emptyUndoStack(): ImportUndoStack {
   return { undo: [], redo: [] };
 }
 
-function checkpointBytes(c: ImportCheckpoint): number {
-  return Buffer.byteLength(JSON.stringify(c.state));
+// --- Size measurement (#qa-kimi A). The budget is measured against the exact bytes the file
+// holds: each checkpoint is written as its own compact JSON entry, and the entry that was measured
+// is the entry that is written. Two per-object caches keep a push from serializing anything twice:
+//  - `encoded`: the compact UTF-8 entry, made at most once per checkpoint object and reused by save().
+//  - `knownBytes`: an entry's size read from the file's own `bytes` index, so the checkpoints a push
+//    loads from disk are measured without re-serializing them.
+// Both are WeakMaps, so an entry dies with its checkpoint object (the stack is reloaded per mutate).
+// Checkpoints are never mutated after creation, so a cached entry cannot go stale.
+const encoded = new WeakMap<ImportCheckpoint, Buffer>();
+const knownBytes = new WeakMap<ImportCheckpoint, number>();
+
+function encodeCheckpoint(c: ImportCheckpoint): Buffer {
+  let buf = encoded.get(c);
+  if (!buf) {
+    buf = Buffer.from(JSON.stringify(c), "utf8");
+    encoded.set(c, buf);
+    knownBytes.set(c, buf.length);
+  }
+  return buf;
 }
 
-// Drop oldest-first entries until the list's total serialized size fits `maxBytes`. Always keeps
-// at least the newest entry, even if it alone exceeds the budget — undo becomes single-level for
-// a case that large rather than unavailable. A non-positive maxBytes disables the cap.
+function checkpointBytes(c: ImportCheckpoint): number {
+  return knownBytes.get(c) ?? encodeCheckpoint(c).length;
+}
+
+// Drop oldest-first entries until the list's serialized size (entries plus separating commas) fits
+// `maxBytes`. The NEWEST entry is always kept, even if it alone exceeds the budget: undo then becomes
+// single-level for a case that large rather than unavailable, and the file can exceed the budget
+// by that one entry. A non-positive maxBytes disables the cap.
+// The budget applies to each list on its own. A push clears redo, so after any import the whole file
+// is the undo list plus a fixed envelope of a few hundred bytes. A run of undos with no import in
+// between can hold a full undo list and a full redo list — up to twice the budget.
 function capBySize(list: ImportCheckpoint[], maxBytes: number): ImportCheckpoint[] {
   if (!(maxBytes > 0) || list.length === 0) return list;
   const sizes = list.map(checkpointBytes);
-  let total = sizes.reduce((a, b) => a + b, 0);
+  let total = sizes.reduce((a, b) => a + b, 0) + (list.length - 1);
   let start = 0;
   while (total > maxBytes && start < list.length - 1) {
-    total -= sizes[start];
+    total -= sizes[start] + 1;
     start++;
   }
   return start === 0 ? list : list.slice(start);
@@ -180,25 +205,60 @@ export function summarizeUndoStack(
 // partial write (or a hand-edit) must load as a clean stack rather than throw — mirrors
 // StateStore's trust-our-own-data approach: the structure is validated here; a checkpoint with no
 // usable `state` object is dropped (it could not be restored anyway).
+// The file may carry a `bytes` index ({ undo: number[], redo: number[] }) — the size of each written
+// entry, so a later push can measure the stack without re-serializing it. A legacy file (pretty-
+// printed, no index) loads the same way; its entries are simply measured on the next push.
 export function normalizeStack(raw: unknown): ImportUndoStack {
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  return { undo: normalizeList(obj.undo), redo: normalizeList(obj.redo) };
+  const idx = obj.bytes && typeof obj.bytes === "object" ? (obj.bytes as Record<string, unknown>) : {};
+  return { undo: normalizeList(obj.undo, idx.undo), redo: normalizeList(obj.redo, idx.redo) };
 }
 
-function normalizeList(v: unknown): ImportCheckpoint[] {
+function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
   if (!Array.isArray(v)) return [];
+  // Trust the index only when it lines up one-to-one with the entries it describes.
+  const idx = Array.isArray(sizes) && sizes.length === v.length ? sizes : [];
   const out: ImportCheckpoint[] = [];
-  for (const item of v) {
-    if (!item || typeof item !== "object") continue;
+  v.forEach((item: unknown, i) => {
+    if (!item || typeof item !== "object") return;
     const o = item as Record<string, unknown>;
-    if (!o.state || typeof o.state !== "object") continue; // unrestorable — drop it
-    out.push({
+    if (!o.state || typeof o.state !== "object") return; // unrestorable — drop it
+    const checkpoint: ImportCheckpoint = {
       label: typeof o.label === "string" ? o.label : "",
       at: typeof o.at === "string" ? o.at : "",
       state: o.state as InvestigationState,
-    });
-  }
+    };
+    const n: unknown = idx[i];
+    // A coerced label/at no longer matches the stored entry, so its size is re-measured instead.
+    if (
+      typeof n === "number" &&
+      Number.isSafeInteger(n) &&
+      n > 0 &&
+      o.label === checkpoint.label &&
+      o.at === checkpoint.at
+    )
+      knownBytes.set(checkpoint, n);
+    out.push(checkpoint);
+  });
   return out;
+}
+
+// Serialize a stack as compact JSON: every checkpoint is one entry encoded exactly once (reusing the
+// entry measured by capBySize), followed by the `bytes` index. Built as a Buffer so the file as a
+// whole is not bound by V8's maximum string length — only a single checkpoint is.
+export function encodeStack(stack: ImportUndoStack): Buffer {
+  const undo = stack.undo.map(encodeCheckpoint);
+  const redo = stack.redo.map(encodeCheckpoint);
+  const comma = Buffer.from(",");
+  const join = (bufs: Buffer[]): Buffer[] => bufs.flatMap((b, i) => (i === 0 ? [b] : [comma, b]));
+  const index = JSON.stringify({ undo: undo.map((b) => b.length), redo: redo.map((b) => b.length) });
+  return Buffer.concat([
+    Buffer.from('{"undo":['),
+    ...join(undo),
+    Buffer.from('],"redo":['),
+    ...join(redo),
+    Buffer.from(`],"bytes":${index}}`),
+  ]);
 }
 
 export class ImportUndoStore {
@@ -240,7 +300,7 @@ export class ImportUndoStore {
   }
 
   async save(caseId: string, stack: ImportUndoStack): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify(stack, null, 2));
+    await atomicWrite(this.path(caseId), encodeStack(stack));
   }
 
   // Atomically load -> transform -> save under this case's lock. Use this instead of manual

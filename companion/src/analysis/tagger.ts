@@ -8,7 +8,7 @@
 // a tagger rule can never remove a technique or downgrade a severity the AI assigned.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { matchEvent, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
+import { hasFieldValue, matchEvent, ruleFields, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
 import { withClrUsageLogNote } from "./clrUsageLogNote.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
@@ -127,6 +127,52 @@ export function createTaggerAccumulator(ruleset: CompiledRuleset, sampleSize = 0
     },
     sample: () => [...sample],
   };
+}
+
+/**
+ * Per-field fill counts for a preview (#12). A valid rule on a field no scoped event fills returns
+ * 0 matches and looks like "not present in this case" — Hayabusa rows, for one, keep their text in
+ * `description` and carry no `message`. Fed the same batches as the accumulator, so it costs one
+ * presence check per referenced field per event and holds nothing but the counts.
+ */
+export interface FieldCoverage {
+  add(events: readonly ForensicEvent[]): void;
+  counts(): Record<string, number>;
+  scanned(): number;
+}
+
+export function createFieldCoverage(ruleset: CompiledRuleset): FieldCoverage {
+  const fields = [...new Set(ruleset.rules.flatMap(ruleFields))];
+  const counts = new Map<string, number>(fields.map((f) => [f, 0]));
+  let scanned = 0;
+  return {
+    add(events) {
+      scanned += events.length;
+      for (const event of events)
+        for (const f of fields) if (hasFieldValue(event, f)) counts.set(f, (counts.get(f) ?? 0) + 1);
+    },
+    counts: () => Object.fromEntries(counts),
+    scanned: () => scanned,
+  };
+}
+
+// Free-text fields whose content an importer may fold into `description` instead (Hayabusa does).
+const DESCRIPTION_FALLBACK_FIELDS = new Set(["message", "commandLine"]);
+
+/** One human line explaining a 0-match preview from its field coverage. `description` is always set. */
+export function fieldCoverageHint(counts: Record<string, number>, scanned: number): string {
+  if (scanned === 0) return "No events in the tagger scope";
+  const empty = Object.keys(counts).filter((f) => counts[f] === 0);
+  if (empty.length === 0) {
+    const filled = Object.entries(counts).map(([f, n]) => `"${f}" is filled on ${n} of ${scanned} events`);
+    return `${filled.join("; ")}, but no value matched the condition`;
+  }
+  return empty
+    .map(
+      (f) =>
+        `0 of ${scanned} events have "${f}"${DESCRIPTION_FALLBACK_FIELDS.has(f) ? '; try "description"' : ""}`,
+    )
+    .join(". ");
 }
 
 /**

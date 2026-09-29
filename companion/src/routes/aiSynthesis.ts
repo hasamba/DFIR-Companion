@@ -121,7 +121,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/ai-control", async (req: Request, res: Response) => {
     try {
       const body = req.body ?? {};
-      const enabled = Boolean(body.enabled);
+      // Strict: Boolean(undefined) paused AI and dropped the capture buffer on a body that forgot the field.
+      if (typeof body.enabled !== "boolean")
+        return res.status(400).json({ error: "enabled must be true or false" });
+      const enabled: boolean = body.enabled;
       const patch: Parameters<typeof setControl>[1] = { enabled };
       // Optional: toggle whether the analyst notebook is sent to the synthesis prompt.
       if (typeof body.includeNotebook === "boolean") patch.includeNotebook = body.includeNotebook;
@@ -498,7 +501,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // saves last silently destroys the other's data (analyst edit lost OR synthesis results lost).
   app.put("/cases/:id/narrative", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
-    const narrative = typeof req.body?.narrativeTimeline === "string" ? req.body.narrativeTimeline : "";
+    // A missing field used to save "" — one typo erased the narrative. An explicit "" still clears it.
+    const narrative: unknown = req.body?.narrativeTimeline;
+    if (typeof narrative !== "string")
+      return res.status(400).json({ error: "narrativeTimeline must be a string" });
     try {
       const stateStore = options.stateStore;
       const saved = await ctx.runStateExclusive(req.params.id, async () => {
@@ -576,19 +582,20 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // dashboard clients. A PATCH marks the hypothesis analystTouched, freezing it from synthesis refresh.
   // The GET (with the evidence assessment) and the exclusions live in routes/hypothesisEvidence.ts.
   const asStringArray = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(String) : undefined);
+  // A present-but-unknown status is an error, not a silent default (an absent one stays optional).
+  const badStatus = (v: unknown) => v != null && !HYPOTHESIS_STATUSES.includes(v as HypothesisStatus);
+  const badStatusError = { error: `status must be one of: ${HYPOTHESIS_STATUSES.join(", ")}` };
 
   app.post("/cases/:id/hypotheses", async (req: Request, res: Response) => {
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
     const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
     if (!title) return res.status(400).json({ error: "title is required" });
-    const statusIn = String(req.body?.status ?? "");
+    if (badStatus(req.body?.status)) return res.status(400).json(badStatusError);
     const input: NewHypothesis = {
       title,
       description: typeof req.body?.description === "string" ? req.body.description : undefined,
       expectedOutcome: typeof req.body?.expectedOutcome === "string" ? req.body.expectedOutcome : undefined,
-      status: HYPOTHESIS_STATUSES.includes(statusIn as HypothesisStatus)
-        ? (statusIn as HypothesisStatus)
-        : undefined,
+      status: (req.body?.status as HypothesisStatus | null) ?? undefined,
       relatedTechniques: asStringArray(req.body?.relatedTechniques),
       relatedEventIds: asStringArray(req.body?.relatedEventIds),
       relatedIocIds: asStringArray(req.body?.relatedIocIds),
@@ -607,16 +614,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
 
   app.patch("/cases/:id/hypotheses/:hid", async (req: Request, res: Response) => {
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
+    if (badStatus(req.body?.status)) return res.status(400).json(badStatusError);
     const patch: HypothesisPatch = {};
     if (typeof req.body?.title === "string") patch.title = req.body.title;
     if (typeof req.body?.description === "string") patch.description = req.body.description;
     if (typeof req.body?.expectedOutcome === "string") patch.expectedOutcome = req.body.expectedOutcome;
-    if (
-      typeof req.body?.status === "string" &&
-      HYPOTHESIS_STATUSES.includes(req.body.status as HypothesisStatus)
-    ) {
-      patch.status = req.body.status as HypothesisStatus;
-    }
+    if (req.body?.status != null) patch.status = req.body.status as HypothesisStatus;
     if (Array.isArray(req.body?.relatedTechniques))
       patch.relatedTechniques = req.body.relatedTechniques.map(String);
     if (Array.isArray(req.body?.relatedEventIds))
@@ -626,6 +629,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (req.body?.acknowledgeReview === true) patch.acknowledgeReview = true; // #933 item 22
     if (typeof req.body?.assignee === "string") patch.assignee = req.body.assignee;
     if (typeof req.body?.notes === "string") patch.notes = req.body.notes;
+    // Any write marks the hypothesis analystTouched, freezing it from synthesis refresh — so a body
+    // with nothing usable must not write at all.
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no valid fields to update" });
     try {
       const updated = await options.hypothesisStore.update(req.params.id, req.params.hid, patch);
       if (!updated) return res.status(404).json({ error: "hypothesis not found" });

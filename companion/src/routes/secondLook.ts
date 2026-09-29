@@ -63,6 +63,16 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
     // missing, misspelled or non-boolean field must never be what produces that state.
     const resynthesize = (req.body as { resynthesize?: unknown })?.resynthesize !== false;
 
+    // Refuse BEFORE the sweep. The sweep writes promoted rows into the forensic timeline, and a
+    // re-synthesis that then threw for want of a provider answered "did not run" over a record it
+    // had already changed. The opt-out needs no AI, so the refusal names it (the checkbox label).
+    if (resynthesize && !options.pipeline.hasSynthesisProvider()) {
+      return res.status(501).json({
+        error:
+          'Re-synthesis needs an AI provider. Untick "Re-synthesise afterwards" to promote the rows only.',
+      });
+    }
+
     if (running.has(caseId)) {
       return res.status(409).json({ error: "a second look is already running for this case" });
     }
