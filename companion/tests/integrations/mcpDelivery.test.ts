@@ -313,6 +313,31 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "refuses when other users can write the cases root, unless the sticky bit is set",
+    async () => {
+      await chmod(root, 0o777);
+      await expect(deliver(server(PREFIXED), MEM, { runner, source, teamMode: true })).rejects.toThrow(
+        /other users can write the cases root/,
+      );
+      expect(await listDelivery()).toEqual([]);
+
+      await chmod(root, 0o1777);
+      const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+      await target.cleanup?.();
+      await chmod(root, 0o700);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("opens a delivery folder the umask made private", async () => {
+    await mkdir(deliveryRoot());
+    await chmod(deliveryRoot(), 0o700);
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+
+    expect((await stat(deliveryRoot())).mode & 0o777).toBe(0o755);
+    await target.cleanup?.();
+  });
+
   it.skipIf(process.platform === "win32")("tightens a delivery folder it owns", async () => {
     await mkdir(deliveryRoot());
     await chmod(deliveryRoot(), 0o777);

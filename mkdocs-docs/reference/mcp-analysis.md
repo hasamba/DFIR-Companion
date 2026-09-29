@@ -184,8 +184,9 @@ Choose the method that reflects your actual deployment.
     The job and the custody entry say **copied to shared path** in team mode and **shared path** in
     single-user mode. Team mode needs free space on the share for one copy of the file. It also
     needs the local prefix to be the cases root or a folder above it. Companion refuses the delivery
-    if other users can write to `.mcp-delivery`. If Companion stops during a run, it removes copies
-    older than one day at the next start.
+    if other users can write to `.mcp-delivery` or to the cases root (a cases root with the sticky
+    bit is accepted). The copy is never readable by more users than the original file. If a copy is
+    left behind, Companion removes it when it is more than one day old: at start, and every six hours.
 
 === "SCP"
 

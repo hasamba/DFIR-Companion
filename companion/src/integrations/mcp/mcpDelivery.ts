@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, realpath, utimes } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath, stat, utimes } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative } from "node:path";
 import {
   openCaseFile,
@@ -236,8 +236,18 @@ async function sharedDeliveryRoot(
       `the MCP delivery folder ${root} is not a plain folder — refusing to copy evidence there`,
     );
   }
-  if (process.platform !== "win32" && (info.mode & 0o022) !== 0) {
-    // mkdir's mode is masked by umask and an existing folder keeps its own: set it outright.
+  if (process.platform !== "win32") {
+    // Whoever can write the cases root can rename .mcp-delivery away and put a link in its place,
+    // unless the sticky bit stops them renaming entries they do not own.
+    const parent = await stat(casesRoot);
+    if ((parent.mode & 0o022) !== 0 && (parent.mode & 0o1000) === 0) {
+      throw new Error(
+        `other users can write the cases root ${casesRoot}, so a copy handed over from it could be swapped ` +
+          `before the analysis host reads it — make it writable by the Companion's user only, or set the sticky bit`,
+      );
+    }
+    // mkdir's mode is masked by umask (a 0700 folder the host cannot enter) and an existing folder
+    // keeps its own: set it outright, then check what actually stuck.
     await (ctx.chmod ?? chmod)(root, 0o755).catch(() => undefined);
     info = await lstat(root);
     if (info.isSymbolicLink() || (info.mode & 0o022) !== 0) {
@@ -269,7 +279,6 @@ async function deliverSharedCopy(
   ctx: DeliveryContext,
 ): Promise<DeliveredTarget> {
   const { root, rootReal } = await sharedDeliveryRoot(server, ctx);
-  const original = await lstat(localPath);
   const snapshot = await snapshotCaseFile(ctx.source, localPath, root, {
     name: uniqueRemoteName(localPath),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -290,7 +299,7 @@ async function deliverSharedCopy(
         `the MCP delivery folder moved while evidence was copied into it — refusing to hand it over`,
       );
     }
-    const modes = sharedModes(Number(original.mode));
+    const modes = sharedModes(snapshot.mode);
     await chmod(snapshot.path, modes.file);
     await chmod(folder, modes.dir);
     const remotePath = rewriteToRemote(server, snapshot.path);
