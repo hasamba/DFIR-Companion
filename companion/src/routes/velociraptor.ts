@@ -27,7 +27,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
-import { externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
+import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
@@ -681,7 +681,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
             ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
               label: `velo-hunt_${ref.huntId}_${art}.json`,
               ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
-              debug: read.debug, // #1736
+              ...{ debug: read.debug, rows: rows.length }, // #1736; rows size it for the memory guard (#1874)
               // Namespaced per artifact: a running index across the whole hunt would collide now that
               // each artifact imports in its own pass.
               idBase: `${ref.huntId}-${art}`,
@@ -749,7 +749,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
             label: `velo-flow_${ref.flowId}_${art}.json`,
             ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
-            debug: read.debug, // #1736
+            ...{ debug: read.debug, rows: rows.length }, // #1736; rows size it for the memory guard (#1874)
             idBase: `${ref.flowId}-${art}`,
             superOnly,
             minSeverity,
@@ -770,7 +770,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       });
     } catch (err) {
       logLine(`[velociraptor] import-external ERROR: ${(err as Error).message}`);
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(errorStatusOf(err)).json({ error: (err as Error).message });
     }
   });
 

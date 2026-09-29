@@ -57,6 +57,19 @@ export interface MemoryAssessmentInput extends MemorySnapshot {
   reservedBytes: number;
   /** Their heap estimates: the V8 heap is one per process, shared by every case's import. */
   reservedHeapBytes?: number;
+  /** The refusal's wording for what was stored and how to retry — see ImportAdmissionHint. */
+  wording?: RefusalWording;
+}
+
+/**
+ * What a refusal tells the analyst about their evidence and the retry. The defaults fit an uploaded
+ * file; a path that stores something else (a hunt's rows) or retries differently (Collect now) says so.
+ */
+export interface RefusalWording {
+  /** A sentence without its full stop, e.g. "The file is saved in the case". */
+  saved?: string;
+  /** What to do once memory is free, e.g. "import the file again". */
+  retry?: string;
 }
 
 export type MemoryAssessment =
@@ -75,8 +88,8 @@ export function assessImportMemory(input: MemoryAssessmentInput): MemoryAssessme
     needBytes,
     message:
       `Import refused to protect the server: this case holds ${count(input.caseEvents)} events, and ` +
-      `${why} The file is saved in the case and nothing was changed. ${fix} Then import the file ` +
-      `again. To import anyway, set DFIR_IMPORT_MEMORY_GUARD=off.`,
+      `${why} ${input.wording?.saved ?? "The file is saved in the case"} and nothing was changed. ${fix} ` +
+      `Then ${input.wording?.retry ?? "import the file again"}. To import anyway, set DFIR_IMPORT_MEMORY_GUARD=off.`,
   });
   if (needBytes > usable) {
     return refused(
@@ -106,6 +119,8 @@ export interface ImportAdmissionHint {
   incomingBytes?: number;
   /** Rows the artifact holds, when the caller has counted them; preferred over the size. */
   incomingEvents?: number;
+  /** The refusal's wording, when the default ("the file is saved…import the file again") is untrue. */
+  wording?: RefusalWording;
 }
 
 /** Admit an import for a case; resolves to the release for its reservation, or throws the refusal. */
@@ -170,6 +185,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         incomingEvents: estimateIncomingEvents(maxEvents(), hint),
         reservedBytes: reserved,
         reservedHeapBytes: reservedHeap,
+        wording: hint?.wording,
         ...probe(),
       });
       if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message);

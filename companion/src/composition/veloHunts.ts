@@ -26,7 +26,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase, RouteContext } from "../routes/context.js";
-import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
@@ -65,6 +65,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
+import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -341,6 +342,14 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         );
       }
 
+      // Evidence first (#1874): store every artifact and upload BEFORE the import section, so the
+      // memory guard can refuse the import below without losing a row — see veloEvidenceFirst.ts.
+      const evidence = await ev.storeHuntEvidence(
+        { persistEvidence, resolveImportKind, getControl, recordImportFailure, logLine },
+        { caseId, huntId: job.huntId, artifacts: artifactFiles, totalRows, uploads, superOnly },
+        (d) => (inFlight = d), // a failure storing an artifact is that artifact's failure (#1736)
+      );
+
       // Everything below WRITES to the case. Take the queue slot, then the import lock — that order,
       // always (see analysis/importLock.ts). The slot keeps the collect visible as work and stops it
       // starting while an import runs; the lock is what actually guarantees one writer, including
@@ -353,9 +362,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       options.onVeloHunt?.(caseId);
       importSlot = await claimImportSlot(
         caseId,
-        `velociraptor: hunt ${job.huntId} (${totalRows} row(s), ${uploads.length} upload(s))`,
+        `velociraptor: hunt ${job.huntId} (${totalRows} row(s), ${evidence.uploads.length} upload(s))`,
       );
-      releaseImportLock = await importLock.acquire(caseId);
+      // Sized: the memory guard may refuse here — the pass fails with its message on the hunt card.
+      releaseImportLock = await importLock.acquire(caseId, evidence.hint);
       job = { ...job, collectPhase: "importing" };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -387,19 +397,14 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const reportArtifactProgress = (done: number, detail: string): void => {
         if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
       };
-      for (const [index, { name, file, rows: rowCount }] of artifactFiles.entries()) {
+      for (const [index, stored] of evidence.artifacts.entries()) {
+        const { name, file, rows: rowCount, storedName, importedAt, seq, debug } = stored;
         const partly = unread.some((u) => u.name === name) ? name : undefined; // stamps every row (#1651)
         const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;
         reportArtifactProgress(index, step);
         logLine(`[velociraptor] hunt ${job.huntId}: importing ${step}`);
-        const debug = (inFlight = createImportDebugRecorder()); // one recorder per artifact (#1736)
-        debug.detected("velociraptor", { confident: true, decision: "explicit_route" }); // a row map
-        const json = await readFile(file, "utf8");
-        const { storedName, importedAt, seq } = await persistEvidence(
-          caseId,
-          `velo-hunt_${job.huntId}_${name}.json`,
-          json,
-        );
+        inFlight = debug; // this artifact's recorder, made when it was stored (#1736)
+        const json = await readFile(file, "utf8"); // stored as evidence above; read again, one at a time
         lastFile = storedName;
         options.onAiStatus?.(caseId, {
           status: "analyzing",
@@ -527,24 +532,11 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         `${artifactFiles.length}/${artifactFiles.length} artifact(s) imported`,
       );
 
-      // 4) The uploaded JSON reports read above → detect + dispatch.
-      for (const up of uploads) {
-        const upDebug = createImportDebugRecorder(); // one recorder per upload (#1736)
-        const upKind = resolveImportKind(up.name, up.content, upDebug); // honors custom importers too
-        if (upKind === "unknown") continue;
-        if (superOnly) {
-          // Super-only bundles route to the super-timeline; the upload path (THOR/Hayabusa JSON) only has
-          // a forensic-merge importer (dispatchImport), so ingesting it would leak into the forensic
-          // timeline and break the super-only invariant. Skip it and tell the analyst to collect
-          // upload-based artifacts via a normal bundle (the shipped super-only bundle has none).
-          logLine(
-            `[velociraptor] super-only bundle: skipping uploaded ${upKind} report ${up.name} (upload-based artifacts aren't ingested for super-only bundles — collect them via a normal bundle)`,
-          );
-          continue;
-        }
-        if ((upKind === "csv" || upKind === "log") && !(await getControl(caseId)).enabled) continue; // AI-dependent, AI off
+      // 4) The uploaded JSON reports planned and stored above → dispatch. The skips (unknown kind,
+      // super-only bundle, CSV/log with AI off) were made by planUploads, before the section.
+      for (const { up, kind: upKind, debug: upDebug, storedName, importedAt, seq } of evidence.uploads) {
+        if (await ev.aiGateClosed(upKind, getControl, caseId)) continue; // AI turned off while it waited
         try {
-          const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
           lastFile = storedName;
           options.onAiStatus?.(caseId, {
             status: "analyzing",

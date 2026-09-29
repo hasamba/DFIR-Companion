@@ -297,6 +297,7 @@ export interface RouteContext {
       hostFallback?: string;
       veloUrl?: string;
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
+      rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
       debug?: ImportDebugRecorder; // this artifact's recorder (#1736)
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
