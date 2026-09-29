@@ -4,6 +4,7 @@ import { AnonControlStore, type AnonControl } from "../analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
+import { PresidioDecisions } from "../analysis/presidioDecisions.js";
 import { isLocalAiProvider, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "../analysis/redactedExport.js";
@@ -54,6 +55,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
+  const presidioDecisions = new PresidioDecisions(customEntities, discoveredEntities, presidioPending);
 
   /**
    * Tell the analyst the held case is ready, once nothing is left to approve.
@@ -283,15 +285,14 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const caseId = req.params.id;
       const entities = sanitizeCustomEntities([req.body]);
       if (entities.length === 0) return res.status(400).json({ error: "value is required" });
-      // CustomEntitiesStore has no append, so read-modify-write. sanitizeCustomEntities dedupes
-      // case-insensitively with first-wins, so re-approving an already-present value is a no-op
-      // rather than a duplicate row.
-      const existing = await customEntities.load(caseId);
-      await customEntities.save(caseId, [...existing, ...entities]);
-      const rest = (await presidioPending.load(caseId)).filter(
-        (e) => e.value.toLowerCase() !== entities[0].value.toLowerCase(),
-      );
-      await presidioPending.save(caseId, rest);
+      // Hide wins over any earlier "leave visible" (#1822): the decision lifts the veto too, under
+      // one per-case lock with suppress. Re-approving an already-present value is a no-op.
+      const outcome = await presidioDecisions.approve(caseId, entities[0]);
+      if (!outcome.applied) {
+        logLine(`[presidio] could not hide a finding for case ${caseId}: custom entity list is full`);
+        return res.status(409).json({ error: "presidio_custom_list_full", pending: outcome.pending });
+      }
+      const rest = outcome.pending;
       logLine(`[presidio] approved a ${entities[0].category} finding for case ${caseId}`);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "anonymization",
@@ -306,7 +307,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   });
 
   // Never ask again: the value is vetoed at the assign() chokepoint (added to `suppressed`) and
-  // hidden from the list. Distinct from approve (above) — this path NEVER adds to `discovered`, so
+  // hidden from the list — unless it is no longer pending or already hidden, which wins (#1822; see
+  // presidioDecisions.ts). Distinct from approve (above) — this path NEVER adds to `discovered`, so
   // the value is never tokenized. The log line deliberately omits the value itself: the analyst
   // marked it a false positive, but it may still be real PII.
   app.post("/cases/:id/presidio-pending/suppress", async (req: Request, res: Response) => {
@@ -315,11 +317,16 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const caseId = req.params.id;
       const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
       if (!value) return res.status(400).json({ error: "value is required" });
-      await discoveredEntities.suppress(caseId, value);
-      const rest = (await presidioPending.load(caseId)).filter(
-        (e) => e.value.toLowerCase() !== value.toLowerCase(),
-      );
-      await presidioPending.save(caseId, rest);
+      // Refused for a value that is no longer pending or is already hidden (#1822): a stale tab or
+      // the bulk "Leave all visible" must never undo a "Hide from AI". The value stays out of the log.
+      const outcome = await presidioDecisions.suppress(caseId, value);
+      if (!outcome.applied) {
+        logLine(`[presidio] refused to leave a finding visible for case ${caseId} (${outcome.reason})`);
+        return res
+          .status(409)
+          .json({ error: "presidio_not_pending", reason: outcome.reason, pending: outcome.pending });
+      }
+      const rest = outcome.pending;
       logLine(`[presidio] suppressed a finding for case ${caseId}`);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "anonymization",

@@ -1,7 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
-import { mkdir, copyFile, stat } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { parseCsv } from "../analysis/csvImport.js";
 import { parseLogLines } from "../analysis/logImport.js";
 import { parseThorReport } from "../analysis/thorImport.js";
@@ -59,7 +58,7 @@ import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
-import { refuseImportPath } from "./serverPathGuard.js";
+import { copyHandleExclusive, openImportFile } from "./importFileSource.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
@@ -540,8 +539,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath)
       return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
-    const refusal = await refuseImportPath(filePath, store, caseId);
-    if (refusal) return res.status(refusal.status).json({ error: refusal.error }); // not .env/cases (#1792)
+    const src = await openImportFile(filePath, store, caseId, res); // judged handle, not .env/cases (#1792, #1834)
+    if (!src) return;
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
 
     // Detect the import kind from a bounded HEAD sample — never read the whole file just to sniff
@@ -549,7 +548,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     // "Invalid string length"), so a sample-based sniff is the only way to even classify it.
     let sample: string;
     try {
-      sample = await sniffImportFileHead(filePath);
+      sample = await sniffImportFileHead(src.handle);
     } catch (err) {
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
     }
@@ -571,7 +570,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     let text = "";
     if (!streaming) {
       try {
-        const read = await readImportFileBounded(filePath, kind);
+        const read = await readImportFileBounded(src.handle, kind);
         if (read.tooLarge !== undefined) return res.status(413).json({ error: read.tooLarge });
         text = read.text;
       } catch (err) {
@@ -596,9 +595,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
       // never string-decode is still persisted faithfully) and append the audit line.
       await mkdir(store.importsDir(caseId), { recursive: true });
-      // COPYFILE_EXCL: never overwrite evidence already on disk (#214) — fail loudly instead.
-      await copyFile(filePath, join(store.importsDir(caseId), storedName), fsConstants.COPYFILE_EXCL);
-      const { size } = await stat(filePath);
+      // Exclusive: never overwrite evidence already on disk (#214). From the judged handle (#1834).
+      const size = await copyHandleExclusive(src.handle, join(store.importsDir(caseId), storedName));
       await store.appendImport(caseId, {
         caseId,
         sequenceNumber: seq,
