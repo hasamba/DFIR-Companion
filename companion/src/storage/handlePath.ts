@@ -1,5 +1,5 @@
 import type { BigIntStats } from "node:fs";
-import { readlink, realpath, stat, type FileHandle } from "node:fs/promises";
+import { lstat, readlink, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 /**
@@ -14,15 +14,17 @@ import { isAbsolute } from "node:path";
  *   and then unlinked, leaving only the protected name): null, unless a live file really has that
  *   name and is this inode.
  * - Elsewhere (Windows, macOS, a Linux without /proc): the path we opened must still be canonical
- *   (realpath returns it unchanged) and must still name this inode (dev + ino). A swap of the final
- *   component fails that. Residual: an attacker who toggles an INTERMEDIATE directory between a real
+ *   (realpath returns it unchanged) and must still name this inode (dev + ino, by lstat). A swap of
+ *   the final component — to a link, or back — fails that. Residual: an attacker who toggles an INTERMEDIATE directory between a real
  *   folder and a link in step with open, realpath and stat — Node offers no handle-to-path call on
  *   these platforms. It needs write access to the named path's folders on the Companion host.
  */
 const DELETED_SUFFIX = " (deleted)";
 
+// lstat, not stat: a final component swapped back to a link to the open inode must not match
+// (Windows has no O_NOFOLLOW, so the open itself may have followed such a link).
 async function namesInode(path: string, st: BigIntStats): Promise<boolean> {
-  const at = await stat(path, { bigint: true }).catch(() => null);
+  const at = await lstat(path, { bigint: true }).catch(() => null);
   return at !== null && at.dev === st.dev && at.ino === st.ino;
 }
 

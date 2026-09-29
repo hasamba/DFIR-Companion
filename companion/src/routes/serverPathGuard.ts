@@ -1,8 +1,9 @@
 import { constants, type BigIntStats } from "node:fs";
-import { open, realpath, stat, type FileHandle } from "node:fs/promises";
+import { open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { perUserEnvFile, resolveEnvFilePath } from "../settings/envManager.js";
 import { openedPath } from "../storage/handlePath.js";
+import { treeHoldsInode } from "../storage/inodeSearch.js";
 
 /**
  * The deny-list for routes that read a server path the caller names (#1792): /import-file,
@@ -19,8 +20,8 @@ import { openedPath } from "../storage/handlePath.js";
  * nothing else, so the bytes judged are the bytes read. Judging a path and letting the route
  * re-open it left a window in which the path could be swapped for a symlink to a protected file.
  * The env file is matched by identity (device + inode) so a hardlink cannot pass, and a file with a
- * second hard link on the disk that holds the case storage or the config is refused: that second
- * name may be a protected file. Where the handle's folder comes from: storage/handlePath.ts.
+ * second hard link is refused when that other name is a protected file. Where the handle's folder
+ * comes from: storage/handlePath.ts.
  */
 
 export interface ServerPathRefusal {
@@ -52,8 +53,7 @@ const NOT_A_FILE = "refused: that path is not a regular file";
 const CHANGED =
   "refused: the file changed while it was being checked (moved, replaced or deleted) — nothing was read; try again";
 const HARDLINKED =
-  "refused: that file has another hard link on the disk that holds the Companion's case storage or configuration, " +
-  "so it may be one of those files under a second name — copy it (a copy has one link) and use the copy";
+  "refused: that file is a second name (a hard link) for a file in the Companion's case storage or configuration";
 
 // Only where the platform defines them (Windows has neither): never follow a final-component link
 // swapped in after realpath, and never block on a FIFO swapped in after the pre-open stat.
@@ -89,13 +89,22 @@ async function isCompanionConfig(at: string, st: BigIntStats): Promise<boolean> 
   return perUser !== null && inside(await real(dirname(perUser)), at);
 }
 
-/** A second hard link on the protected disk: the other name may be a case file or the config. */
-async function hardlinkedOnProtectedDisk(st: BigIntStats, casesRootReal: string): Promise<boolean> {
+/**
+ * A multi-link file whose other name is protected: a case file, or an `.env*` file beside a live env
+ * file, or anything in the per-user config dir. Other multi-link evidence (deduplicated or
+ * hard-linked collections) is read as before. Walks only for nlink > 1 — see storage/inodeSearch.ts.
+ */
+async function aliasOfProtected(st: BigIntStats, casesRootReal: string): Promise<boolean> {
   if (st.nlink <= 1n) return false;
-  const dirs = [casesRootReal, ...(await Promise.all(envFiles().map(async (f) => dirname(await real(f)))))];
-  for (const dir of dirs) {
-    const d = await stat(dir, { bigint: true }).catch(() => null);
-    if (d && d.dev === st.dev) return true;
+  if (await treeHoldsInode(casesRootReal, st)) return true;
+  const perUser = perUserEnvFile();
+  if (perUser !== null && (await treeHoldsInode(await real(dirname(perUser)), st))) return true;
+  for (const envFile of envFiles()) {
+    const dir = dirname(await real(envFile));
+    const names = await readdir(dir).catch(() => [] as string[]);
+    for (const name of names.filter((n) => n.toLowerCase().startsWith(".env"))) {
+      if (await treeHoldsInode(join(dir, name), st)) return true;
+    }
   }
   return false;
 }
@@ -111,7 +120,7 @@ async function judgeOpened(
   if (at === null || st.nlink === 0n) return { refusal: { status: 409, error: CHANGED } };
   if (await isCompanionConfig(at, st)) return { refusal: { status: 403, error: CONFIG_REFUSAL } };
   const casesRootReal = await real(policy.casesRoot);
-  if (await hardlinkedOnProtectedDisk(st, casesRootReal)) return { refusal: { status: 403, error: HARDLINKED } };
+  if (await aliasOfProtected(st, casesRootReal)) return { refusal: { status: 403, error: HARDLINKED } };
   if (!inside(casesRootReal, at)) return { at };
   const allowed = await Promise.all(policy.allowUnder.map(async (dir) => inside(await real(dir), at)));
   if (allowed.some(Boolean) && st.nlink === 1n) return { at };

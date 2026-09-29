@@ -90,6 +90,24 @@ describe("openServerPath judges and returns the open handle (#1834)", () => {
     expect(opened.refusal!.error).toMatch(/hard link/);
   });
 
+  it("reads ordinary hard-linked evidence whose other name is not protected", async () => {
+    const evidence = join(root, "collection", "a.txt");
+    await mkdir(join(root, "collection"));
+    await writeFile(evidence, BENIGN);
+    await link(evidence, join(root, "collection", "dedup-copy.txt"));
+    const opened = await openImportPath(evidence, store, "c1");
+    expect(opened.refusal).toBeUndefined();
+    await opened.file!.handle.close();
+  });
+
+  it("refuses a hardlink of an .env variant beside the live env file", async () => {
+    const bak = join(root, "config", ".env.bak");
+    await writeFile(bak, "DFIR_FAKE_PROVIDER_KEY=not-a-real-value\n");
+    const alias = join(root, "notes.txt");
+    await link(bak, alias);
+    expect((await openImportPath(alias, store, "c1")).refusal).toMatchObject({ status: 403 });
+  });
+
   it("refuses a FIFO without blocking", async () => {
     if (process.platform === "win32") return;
     const fifo = join(root, "pipe");
