@@ -1,4 +1,15 @@
-import { mkdir, writeFile, appendFile, readFile, stat, readdir, rename, rm } from "node:fs/promises";
+import {
+  mkdir,
+  writeFile,
+  appendFile,
+  readFile,
+  stat,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  unlink,
+} from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -16,6 +27,12 @@ export interface CreateCaseInput {
   name: string;
   investigator: string;
   aiProvider: string | null;
+  /**
+   * Runs inside the case lock right after the id is claimed, before anything else is written. The
+   * create route clears access rows a deleted case with this id left behind (#1831). If it throws,
+   * the claim is undone and the create fails.
+   */
+  onClaimed?: () => void | Promise<void>;
 }
 
 export function isValidCaseId(caseId: string): boolean {
@@ -48,6 +65,20 @@ export class CaseBeingDeletedError extends CaseAlreadyExistsError {
     super(caseId);
     this.message = `case ${caseId} is being deleted — try again once the delete finishes`;
     this.name = "CaseBeingDeletedError";
+  }
+}
+
+/**
+ * A folder for the id is still on disk but holds no case.json — what a delete whose rm failed part
+ * way leaves behind (#1831). Creating the id would adopt the old evidence files, so it is refused
+ * until the folder is removed by hand. A kind of CaseAlreadyExistsError, so a create route answers
+ * it with the same 409.
+ */
+export class CaseFolderLeftoverError extends CaseAlreadyExistsError {
+  constructor(caseId: string, dir: string) {
+    super(caseId);
+    this.message = `a folder for case ${caseId} is still on disk (${dir}) from an earlier case — remove it before reusing the id`;
+    this.name = "CaseFolderLeftoverError";
   }
 }
 
@@ -394,6 +425,7 @@ export class CaseStore {
     // Resolved once: caseDir() is existsSync-based, so re-resolving it after the mkdir below would
     // answer a different question than the one the claim is made against.
     const dir = this.caseDir(input.caseId);
+    await this.refuseLeftoverFolder(input.caseId, dir);
     await mkdir(dir, { recursive: true });
     try {
       await writeFile(join(dir, "case.json"), JSON.stringify(meta, null, 2), {
@@ -406,6 +438,12 @@ export class CaseStore {
       }
       throw err;
     }
+    try {
+      await input.onClaimed?.();
+    } catch (err) {
+      await this.undoClaim(dir);
+      throw err;
+    }
     for (const sub of [
       this.screenshotsDir(input.caseId),
       this.metadataDir(input.caseId),
@@ -416,6 +454,26 @@ export class CaseStore {
       await mkdir(sub, { recursive: true });
     }
     return meta;
+  }
+
+  // A non-empty folder with no case.json is a partial delete's leftover (#1831). An empty folder is
+  // harmless, and a folder that has case.json is a live case — its claim below fails as before.
+  private async refuseLeftoverFolder(caseId: string, dir: string): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    if (entries.length > 0 && !entries.includes("case.json")) throw new CaseFolderLeftoverError(caseId, dir);
+  }
+
+  // Removes only what the claim wrote: case.json, then the folder if it is still empty. Anything
+  // that appeared in it meanwhile stays; the error the caller rethrows says the create failed.
+  private async undoClaim(dir: string): Promise<void> {
+    await unlink(join(dir, "case.json")).catch(() => undefined);
+    await rmdir(dir).catch(() => undefined);
   }
 
   // True once a case has been created (its case.json exists). Backs the capture guard:
