@@ -25,7 +25,7 @@ export interface ConclusionsOutOfDateDeps {
   store: CaseStore;
   options: AppOptions;
   /** Cases whose automatic synthesis is running right now (composition/captureAnalysis.ts). */
-  synthInFlight: () => ReadonlySet<string>;
+  synthInFlight: () => { has(caseId: string): boolean };
 }
 
 /** Mark a case's conclusions out of date. Never throws: the change it follows has already landed. */

@@ -21,6 +21,7 @@
  * through Python's zipfile, which cannot open AES archives at all.
  */
 import { basename, join, resolve } from "node:path";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { EXPORT_STAGING_DIRNAME } from "../storage/exportStaging.js";
 import { resolveInsideDropDir } from "../storage/dropRelpath.js";
@@ -129,7 +130,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
   // once — piles them all onto that lock. Chain them per case so verdicts land one at a time, in
   // completion order. The chain never rejects (each link swallows), so one bad import cannot wedge
   // every later one behind it.
-  const socratesIngestChain = new Map<string, Promise<unknown>>();
+  const socratesIngestChain = new CaseKeyedMap<Promise<unknown>>(() => store.casesRoot); // #1866
   const queueSocratesIngest = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => {
     const prev = socratesIngestChain.get(caseId) ?? Promise.resolve();
     const next = prev.then(fn, fn);

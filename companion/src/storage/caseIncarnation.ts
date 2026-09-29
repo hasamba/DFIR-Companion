@@ -20,7 +20,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 export const ARCHIVED_DIRNAME = "_archived";
 export const LEGACY_GENERATION = "legacy";
@@ -143,10 +143,76 @@ export function runInCaseScope<T>(casesRoot: string, caseId: string, fn: () => T
   return scope.run(next, fn);
 }
 
+/**
+ * Capture the case's incarnation NOW and return a runner that puts later work in that scope — for
+ * work that is started after a response went out, or from a callback that runs elsewhere (#1866).
+ */
+export function captureCaseScope(casesRoot: string, caseId: string): <T>(fn: () => T) => T {
+  const generation = runInCaseScope(casesRoot, caseId, () => capturedGeneration(casesRoot, caseId));
+  return (fn) => (generation === null ? fn() : runInCaseScope(casesRoot, caseId, fn, generation));
+}
+
+/**
+ * Is this async context old work of `caseId` — did it capture an incarnation that has since been
+ * deleted or replaced? Matched by case id, so a caller that does not know the cases root (the job
+ * manager) can refuse to register old work against a same-id successor (#1866).
+ */
+export function staleCaseScope(caseId: string): CaseWriteRefusal | null {
+  for (const entry of scope.getStore()?.values() ?? []) {
+    if (basename(entry.active) !== caseId) continue;
+    const now = readCurrent(entry);
+    if (!now || entry.generation === GONE_GENERATION) return "deleted";
+    if (now.generation !== entry.generation) return "replaced";
+  }
+  return null;
+}
+
 /** The generation this async context captured for the case, or null when it captured none. */
 export function capturedGeneration(casesRoot: string, caseId: string): string | null {
   if (!isSafeCaseId(caseId)) return null;
   return scope.getStore()?.get(caseDirsOf(casesRoot, caseId).active)?.generation ?? null;
+}
+
+/** The generation of a case that has no case.json and was never deleted in this process. */
+export const NO_CASE_GENERATION = "\0none";
+
+/**
+ * The incarnation this async context works for (#1866): the captured generation inside a scope,
+ * else the one case.json records now. A folder deleted in this process reads as "gone"; a case
+ * that never existed reads as NO_CASE_GENERATION. Per-case in-memory state keys on this, so old
+ * work and a same-id successor never share an entry.
+ */
+export function currentGeneration(casesRoot: string, caseId: string): string {
+  if (typeof casesRoot !== "string" || !isSafeCaseId(caseId)) return NO_CASE_GENERATION;
+  const dirs = caseDirsOf(casesRoot, caseId);
+  const captured = scope.getStore()?.get(dirs.active)?.generation;
+  if (captured !== undefined) return captured;
+  const now = readCurrent(dirs);
+  if (now) return now.generation;
+  return tombstones.has(dirs.active) || tombstones.has(dirs.archived) ? GONE_GENERATION : NO_CASE_GENERATION;
+}
+
+/**
+ * Run `fn` as work of the incarnation `generation` names — one read back from per-case state. A
+ * NO_CASE_GENERATION entry runs unscoped, as it was recorded: a scope for a case that never existed
+ * would refuse every write.
+ */
+export function runInGenerationScope<T>(
+  casesRoot: string,
+  caseId: string,
+  generation: string,
+  fn: () => T,
+): T {
+  return generation === NO_CASE_GENERATION ? fn() : runInCaseScope(casesRoot, caseId, fn, generation);
+}
+
+/**
+ * Run `fn` with no case captured — for a shared worker that starts one case's queued item from
+ * the tail of another's (#1866). Without it the new item inherits the finished item's scope, and
+ * "first capture wins" would pin it to that item's case incarnation.
+ */
+export function runOutsideCaseScope<T>(fn: () => T): T {
+  return scope.exit(fn);
 }
 
 function refusalFor(target: string): CaseWriteRefusal | null {
@@ -162,6 +228,14 @@ function refusalFor(target: string): CaseWriteRefusal | null {
     if (isUnder(target, dir) && !existsSync(join(dir, "case.json"))) return reason;
   }
   return null;
+}
+
+/**
+ * Would a write under `path` be refused right now? Reports nothing — for a writer that must not
+ * recurse into the refusal reporter (the case log file sink, whose own lines carry the case id).
+ */
+export function caseWriteRefusalFor(path: string): CaseWriteRefusal | null {
+  return refusalFor(resolve(path));
 }
 
 /**

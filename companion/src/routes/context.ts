@@ -27,6 +27,7 @@ import type { PlaybookTask } from "../analysis/playbook.js";
 import type { PlaybookControl } from "../analysis/playbookControl.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import type { CombinedLogImportOptions } from "../analysis/combinedLogImport.js";
+import type { PerCaseMap, PerCaseSet } from "../storage/caseKeyedState.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -333,8 +334,8 @@ export interface RouteContext {
   // never hoist to registration scope. They must be re-read per request: the underlying binding
   // is created AFTER this ctx literal or reassigned at runtime (e.g. irisClient on /iris/reconnect,
   // importerRegistry after its async load), so a value captured once would silently go stale.
-  captureBuffers(): Map<string, CaptureMetadata[]>;
-  synthInFlight(): Set<string>;
+  captureBuffers(): PerCaseMap<CaptureMetadata[]> & { values(): Iterable<CaptureMetadata[]> };
+  synthInFlight(): PerCaseSet;
   importerRegistry(): ImporterRegistry;
   // The active importer precedence (builtin-first / external-first). A `let` in createApp read live by
   // dispatchImport/resolveImportKind (stay) and the moved GET /importers route; PUT /importers/precedence
@@ -372,7 +373,7 @@ export interface RouteContext {
   // Cases whose last enrich run had to skip a down provider — the background poller (createApp) drains
   // this Set on recovery. POST /cases/:id/enrich-control deletes a case from it when enrichment is
   // turned off; call ctx.enrichPending() INSIDE the handler and mutate the returned Set in place.
-  enrichPending(): Set<string>;
+  enrichPending(): PerCaseSet;
   // The active NSRL RDS SQLite connection (#63) — a MUTABLE shared handle. createApp's applyNsrlToCase
   // reads it; the POST/DELETE /nsrl/db routes swap it at runtime. Read via nsrlDb() and reassign via
   // setNsrlDb() (both reach the SAME createApp `let`), never a value captured at registration.
@@ -399,12 +400,12 @@ export interface RouteContext {
   //   dropSeen          — per-case size+mtime snapshot used to detect a settled (fully-copied) file.
   //   dropScanning      — per-case in-flight-sweep guard (run-pending + the poller serialize on it).
   //   dropPendingLogged — per-case relpaths already logged PENDING, to dedupe the drop-log across polls.
-  dropSeen(): Map<string, Map<string, { size: number; mtimeMs: number }>>;
-  dropScanning(): Set<string>;
-  dropPendingLogged(): Map<string, Set<string>>;
+  dropSeen(): PerCaseMap<Map<string, { size: number; mtimeMs: number }>>;
+  dropScanning(): PerCaseSet;
+  dropPendingLogged(): PerCaseMap<Set<string>>;
   // Fixed-delay hunt auto-collect timers, keyed by huntId. SHARED between the moved run-bundle /
   // deploy-hunt routes (which set a collect timer on it) and importVeloHuntResults (which clears it on
   // collect, still in createApp) — exposed as a live accessor so the routes mutate the SAME Map; call
   // ctx.veloHuntTimers() INSIDE the handler and set/delete on the returned map.
-  veloHuntTimers(): Map<string, NodeJS.Timeout>;
+  veloHuntTimers(): { set(caseId: string, timer: NodeJS.Timeout, huntId: string): unknown };
 }

@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
+import { captureCaseScope } from "../storage/caseIncarnation.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import {
   parseSlashCommand,
@@ -458,11 +459,16 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
       .catch(() => false);
     if (!bound)
       return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
-    audit(cmd.caseId, {
-      category: "collaboration",
-      action: "slash-command-bind",
-      detail: `${platform} channel ${channelId} bound to case ${cmd.caseId} by user ${userId}`,
-    });
+    captureCaseScope(
+      store.casesRoot,
+      cmd.caseId,
+    )(() =>
+      audit(cmd.caseId, {
+        category: "collaboration",
+        action: "slash-command-bind",
+        detail: `${platform} channel ${channelId} bound to case ${cmd.caseId} by user ${userId}`,
+      }),
+    );
     return reply(`Channel bound to case ${cmd.caseId}.`);
   }
 
@@ -482,6 +488,9 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
   const guard = await guardCase(ctx, cmd.caseId);
   if (guard) return reply(guard);
   if (!options.stateStore) return reply("State store not configured.");
+  // #1866: chat routes are outside the /cases/:id gate. Everything below — the audit line and the
+  // out-of-band run — is work of the case incarnation the guard just saw.
+  const inCase = captureCaseScope(store.casesRoot, cmd.caseId);
 
   // Read-only commands respond synchronously.
   if (READ_ONLY_COMMANDS.includes(cmd.name)) {
@@ -511,11 +520,13 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
         `Error loading case ${cmd.caseId}: ${redactPaths((err as Error).message, [store.casesRoot])}`,
       );
     }
-    audit(cmd.caseId, {
-      category: "collaboration",
-      action: "slash-command",
-      detail: `/dfir ${cmd.name} (user ${userId}, ${platform} channel ${channelId})`,
-    });
+    inCase(() =>
+      audit(cmd.caseId, {
+        category: "collaboration",
+        action: "slash-command",
+        detail: `/dfir ${cmd.name} (user ${userId}, ${platform} channel ${channelId})`,
+      }),
+    );
     return reply(r, false);
   }
 
@@ -524,14 +535,16 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     return {
       ...reply(`Working on /dfir ${cmd.name} for case ${cmd.caseId}…`),
       background: () =>
-        runActionCommand(cmd, input).catch((err) => {
-          audit(cmd.caseId, {
-            category: "collaboration",
-            action: "slash-command-error",
-            detail: `/dfir ${cmd.name} failed: ${(err as Error).message}`,
-            outcome: "error",
-          });
-        }),
+        inCase(() =>
+          runActionCommand(cmd, input).catch((err) => {
+            audit(cmd.caseId, {
+              category: "collaboration",
+              action: "slash-command-error",
+              detail: `/dfir ${cmd.name} failed: ${(err as Error).message}`,
+              outcome: "error",
+            });
+          }),
+        ),
     };
   }
 

@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -43,7 +44,7 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
   // presses would each plan the same promotions from the pre-promotion state and each pay for a full
   // synthesis. The Jev review holds the same guard for the same reason (#1551). Held per app, so one
   // test's app never locks another's.
-  const running = new Set<string>();
+  const running = new CaseKeyedSet(() => ctx.store.casesRoot); // #1866: per case incarnation
 
   app.post("/cases/:id/second-look", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.superTimelineStore) return unconfigured(res);

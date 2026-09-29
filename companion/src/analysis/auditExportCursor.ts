@@ -82,6 +82,21 @@ export class AuditCursorStore {
     });
   }
 
+  /**
+   * Drop a deleted case's position for every destination (#1868). The file lives outside the case
+   * folder, so the delete does not remove it: without this a same-id new case would inherit the old
+   * line count, and its first records — "already sent" by that count — would never reach the SIEM.
+   */
+  clearCase(caseId: string): Promise<void> {
+    return this.lock.runExclusive(this.file, async () => {
+      const all = await this.loadAll();
+      const suffix = `\u0000${caseId}`;
+      const next = Object.fromEntries(Object.entries(all).filter(([k]) => !k.endsWith(suffix)));
+      if (Object.keys(next).length === Object.keys(all).length) return;
+      await this.persist(next);
+    });
+  }
+
   /** Drop every position for a removed destination, so a re-added one starts clean. */
   clearDestination(destinationId: string): Promise<void> {
     return this.lock.runExclusive(this.file, async () => {

@@ -17,7 +17,8 @@ import type { AppOptions } from "./appOptions.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velociraptor/huntStatusPoller.js";
 import { logLine } from "../logging/serverLogger.js";
-import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -44,8 +45,12 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   // Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
   // overlap itself), .unref()'d so a pending poll never blocks process exit. Interval from
   // DFIR_VELO_HUNT_POLL_S (default 30s, clamped 5-300). Mirrors the live-monitor scheduling.
-  const veloStatusTimers = new Map<string, NodeJS.Timeout>();
-  const statusKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
+  // #1866: keyed by (case, generation, hunt id) and cleared on delete, so a deleted case's poll
+  // chain never re-arms or cancels a same-id successor's hunt poll.
+  const veloStatusTimers = new CaseKeyedMap<NodeJS.Timeout>(
+    () => store.casesRoot,
+    (timer) => clearTimeout(timer),
+  );
 
   // One status-poll tick: load the job, poll (pure pollHuntStatusOnce), persist + broadcast only on
   // an actual status change, then either reschedule, trigger an immediate collect, or stop. Never
@@ -54,7 +59,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     const huntStore = options.veloHuntStore;
     const client = options.velociraptorClient;
     if (!huntStore || !client) {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
+      veloStatusTimers.delete(caseId, huntId);
       return;
     }
     let job: VeloHuntJob | null = null;
@@ -64,7 +69,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       logLine(`[velo-hunt-status] failed to load hunt ${huntId} for status poll: ${(err as Error).message}`);
     }
     if (!job) {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
+      veloStatusTimers.delete(caseId, huntId);
       return;
     }
 
@@ -80,34 +85,32 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     }
 
     if (outcome.action === "reschedule") {
-      if (veloStatusTimers.has(statusKey(caseId, huntId))) scheduleVeloHuntStatusPoll(caseId, huntId);
+      if (veloStatusTimers.has(caseId, huntId)) scheduleVeloHuntStatusPoll(caseId, huntId);
     } else if (outcome.action === "collect") {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
+      veloStatusTimers.delete(caseId, huntId);
       startVeloHuntCollect(caseId, huntId); // clears the fixed-delay timer + status poll itself
     } else {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
+      veloStatusTimers.delete(caseId, huntId);
     }
   }
 
   // Arm (or re-arm) a hunt's status-poll timer for one interval out. Clears any existing timer first
   // so start is idempotent. Clamped 5s..300s so a bad env value can't busy-loop or stall forever.
   function scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const existing = veloStatusTimers.get(key);
+    const existing = veloStatusTimers.get(caseId, huntId);
     if (existing) clearTimeout(existing);
     const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
     // #1855: the chain of polls runs as work of the case incarnation that armed it.
     const poll = () => void pollVeloHuntStatus(caseId, huntId);
     const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(poll, seconds * 1000));
     timer.unref?.();
-    veloStatusTimers.set(key, timer);
+    veloStatusTimers.set(caseId, timer, huntId);
   }
 
   function stopVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const timer = veloStatusTimers.get(key);
+    const timer = veloStatusTimers.get(caseId, huntId);
     if (timer) clearTimeout(timer);
-    veloStatusTimers.delete(key);
+    veloStatusTimers.delete(caseId, huntId);
   }
 
   // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
@@ -117,7 +120,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   async function resumeVeloHuntStatusPolls(): Promise<void> {
     const huntStore = options.veloHuntStore;
     if (!huntStore || !options.velociraptorClient) return;
-    let cases: { caseId: string }[] = [];
+    let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
     } catch {
@@ -128,7 +131,13 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       try {
         for (const job of await huntStore.list(c.caseId)) {
           if (job.status === "running" || job.status === "unreachable") {
-            scheduleVeloHuntStatusPoll(c.caseId, job.huntId);
+            // #1866: armed as work of the incarnation just listed.
+            runInCaseScope(
+              store.casesRoot,
+              c.caseId,
+              () => scheduleVeloHuntStatusPoll(c.caseId, job.huntId),
+              generationOf(c),
+            );
             resumed++;
           }
         }

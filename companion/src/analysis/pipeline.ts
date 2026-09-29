@@ -1,5 +1,6 @@
 import { ProviderError, type AIProvider } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import type { CaptureMetadata } from "../types.js";
 import type { InvestigationState } from "./stateTypes.js";
 import { type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
@@ -206,9 +207,9 @@ export class AnalysisPipeline {
    */
 
   // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
-  private readonly lastSynthHash = new Map<string, string>();
+  private readonly lastSynthHash = new CaseKeyedMap<string>(() => this.opts.stateStore?.casesRoot); // #1866
   // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
-  private readonly importTruncation = new Map<string, AggregateStats>();
+  private readonly importTruncation = new CaseKeyedMap<AggregateStats>(() => this.opts.stateStore?.casesRoot);
   consumeImportTruncation(caseId: string): AggregateStats | undefined {
     const v = this.importTruncation.get(caseId);
     this.importTruncation.delete(caseId);

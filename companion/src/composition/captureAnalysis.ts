@@ -35,7 +35,8 @@ import { SynthMetaStore } from "../analysis/synthMeta.js";
 // header pill and the gate's own 409 can never drift into saying different things.
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import { isAnalystDecisionGate } from "../routes/presidioApproval.js";
-import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap, CaseKeyedSet } from "../storage/caseKeyedState.js";
 
 export interface CaptureAnalysisDeps {
   store: CaseStore;
@@ -53,9 +54,9 @@ export interface CaptureAnalysisDeps {
 
 export interface CaptureAnalysis {
   /** Per-case window of captures awaiting analysis. The /captures route appends to it in place. */
-  readonly captureBuffers: Map<string, CaptureMetadata[]>;
+  readonly captureBuffers: CaseKeyedMap<CaptureMetadata[]>;
   /** Cases whose auto-synthesis is running right now (read by the synth-meta route). */
-  readonly synthInFlight: Set<string>;
+  readonly synthInFlight: CaseKeyedSet;
   /** How many captures make a full window. */
   readonly windowSize: number;
   flush(caseId: string): Promise<void>;
@@ -83,20 +84,26 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     dispatchNotify,
   } = deps;
   const windowSize = options.windowSize ?? 4;
-  const captureBuffers = new Map<string, CaptureMetadata[]>();
+  // #1866: every per-case map below keys on (case id, generation), so a deleted case's late
+  // callbacks never cancel, coalesce with or clear a same-id successor's entries.
+  const captureBuffers = new CaseKeyedMap<CaptureMetadata[]>(() => store.casesRoot);
 
   // Debounced live synthesis: after capture windows are analyzed, re-derive the
   // findings / MITRE / attacker path so the dashboard updates as you browse.
   const autoSynth = options.autoSynthesize ?? false;
   const synthDebounceMs = options.autoSynthesizeDebounceMs ?? 8000;
-  const synthTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const synthInFlight = new Set<string>();
+  const synthTimers = new CaseKeyedMap<ReturnType<typeof setTimeout>>(
+    () => store.casesRoot,
+    (timer) => clearTimeout(timer),
+  );
+  const synthInFlight = new CaseKeyedSet(() => store.casesRoot);
   // #1608: an automatic kick waits for a running synthesis rather than superseding it — see
   // synthesisDeferral.ts. Checked synchronously right before each register(), so no run can start
   // between the check and the registration that would otherwise abort it.
   const deferral = createSynthesisDeferral({
     ...(options.jobManager ? { jobManager: options.jobManager } : {}),
     inFlight: synthInFlight,
+    casesRoot: () => store.casesRoot,
     retryMs: synthDebounceMs,
   });
 
@@ -356,8 +363,10 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   const flushIntervalMs = options.flushIntervalMs ?? 5 * 60_000;
   if (flushIntervalMs > 0 && options.pipeline) {
     const sweep = setInterval(() => {
-      for (const [caseId, buf] of captureBuffers) {
-        if (buf.length > 0) void flush(caseId);
+      // #1866: each buffer drains as work of the incarnation that filled it.
+      for (const { caseId, generation, value } of captureBuffers.list()) {
+        if (value.length > 0)
+          void runInGenerationScope(store.casesRoot, caseId, generation, () => flush(caseId));
       }
     }, flushIntervalMs);
     sweep.unref?.();

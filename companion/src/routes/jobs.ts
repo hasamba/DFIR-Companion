@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 function canAccessGlobalJob(ctx: RouteContext, req: Request): boolean {
   const teamAuth = ctx.options.teamAuth;
@@ -63,7 +64,10 @@ async function resumeJob(ctx: RouteContext, req: Request, res: Response): Promis
   if (!canWrite(ctx, req, job.caseId)) {
     return res.status(403).json({ error: "case role does not permit resuming this job" });
   }
-  const result = await manager.resume(req.params.id);
+  // #1866: /api/jobs is not under /cases/:id, so the case gate never scoped it. The resumed run is
+  // work of the case incarnation that owns the job now; a delete + same-id re-create refuses it.
+  const resume = () => manager.resume(req.params.id);
+  const result = await (job.caseId ? runInCaseScope(ctx.store.casesRoot, job.caseId, resume) : resume());
   if (result.ok) return res.status(202).json(result.job);
   if (result.reason === "unknown") return res.status(404).json({ error: `unknown job: ${req.params.id}` });
   if (result.reason === "not-interrupted") {

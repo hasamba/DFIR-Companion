@@ -16,7 +16,7 @@ import {
   type JobModelIdentity,
 } from "./jobServedModel.js";
 import type { ServedModelRegistry } from "./servedModels.js";
-import { StoppingJobs } from "./stoppingJobs.js";
+import { StoppingJobs, staleScopeRegistration } from "./stoppingJobs.js";
 import {
   emptyJobTable,
   createJob,
@@ -265,7 +265,8 @@ export class JobManager {
 
   register(input: RegisterInput): RegisteredJob {
     const caseId = input.caseId ?? null;
-    const existing = this.reusedRegistration(input, caseId);
+    // #1866: old work (a deleted / replaced case's scope) never touches a successor's jobs.
+    const existing = staleScopeRegistration(caseId) ?? this.reusedRegistration(input, caseId);
     if (existing) return existing;
     this.supersedeExclusiveJobs(input, caseId);
     const jobId = this.appendQueuedJob(input, caseId);

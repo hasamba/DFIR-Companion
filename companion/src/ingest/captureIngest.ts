@@ -5,6 +5,8 @@ import { isValidCaseId } from "../storage/caseStore.js";
 import { computeContentHash } from "../dedup/contentHash.js";
 import { slugifyTitle } from "./titleSlug.js";
 import { detectImageFormat } from "./imageFormat.js";
+import { resolve } from "node:path";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 // Is deduplication enabled? Default on. `DFIR_DEDUP=off` (also false/no/0) turns it off so
 // EVERY capture is analyzed. Read per call so a restart picks up the change. When on, a capture
@@ -45,8 +47,19 @@ export class InvalidImageError extends Error {
 }
 
 // In-memory cache of the last PERSISTED content hash per case, to decide duplicates without
-// re-reading disk. Only a frame that actually landed is recorded here.
-const lastHashByCase = new Map<string, string>();
+// re-reading disk. Only a frame that actually landed is recorded here. One map per cases root, keyed
+// by (case id, generation) and forgotten on delete (#1866): a same-id successor's first frame is
+// never judged a duplicate of the deleted case's last one.
+const lastHashByRoot = new Map<string, CaseKeyedMap<string>>();
+function lastHashes(store: CaseStore): CaseKeyedMap<string> {
+  const root = resolve(String(store.casesRoot ?? ""));
+  let map = lastHashByRoot.get(root);
+  if (!map) {
+    map = new CaseKeyedMap<string>(root);
+    lastHashByRoot.set(root, map);
+  }
+  return map;
+}
 
 // One queue per case, so the read-decide-write sequence below never interleaves with another
 // capture for the same case. Without it the dedup decision races its own write: two overlapping
@@ -100,7 +113,7 @@ export async function ingestCapture(
   const hash = computeContentHash(bytes);
 
   return withCaseLock(payload.caseId, async () => {
-    const previous = lastHashByCase.get(payload.caseId);
+    const previous = lastHashes(store).get(payload.caseId);
     // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
     // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
     const duplicate = dedup && previous !== undefined && previous === hash;
@@ -114,7 +127,7 @@ export async function ingestCapture(
     // failed write poisons the cache: the extension retries the identical bytes after a 5xx (its
     // queue keeps the entry at the head) and that retry comes back a duplicate — which willAnalyze,
     // the OCR indexer and captureAnalysis all skip, so it is stored but never analyzed (#513).
-    lastHashByCase.set(payload.caseId, hash);
+    lastHashes(store).set(payload.caseId, hash);
     return metadata;
   });
 }
@@ -171,7 +184,7 @@ async function persistCapture(
 
 // Exposed for test isolation.
 export function _resetDedupCache(): void {
-  lastHashByCase.clear();
+  lastHashByRoot.clear();
   // Deliberately NOT clearing caseQueues: dropping a live chain would let a post-reset capture run
   // alongside one still in flight, which is the interleaving the queue exists to prevent. Settled
   // chains remove themselves, so there is nothing left to clear anyway.

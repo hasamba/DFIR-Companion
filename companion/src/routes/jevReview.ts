@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
@@ -82,7 +83,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
   // Cases with a review in flight. Every run bills the analyst, so a double-click or a second tab
   // must not buy the same review twice (#1551). Held per app, so one test's app never locks another's.
-  const running = new Set<string>();
+  const running = new CaseKeyedSet(() => ctx.store.casesRoot); // per case incarnation (#1866)
 
   app.post("/cases/:id/jev/review", async (req: Request, res: Response) => {
     const caseId = req.params.id;

@@ -64,6 +64,20 @@ export class SlashCommandChannelStore {
     });
   }
 
+  /**
+   * Drop every channel binding to a deleted case (#1866). A binding is authority: left behind, it
+   * would bind those channels to a new case that later takes the same id. Returns how many went.
+   */
+  unbindCase(caseId: string): Promise<number> {
+    return slashCommandLock.runExclusive(this.file, async () => {
+      const all = await this.loadAll();
+      const next = Object.fromEntries(Object.entries(all).filter(([, b]) => b.caseId !== caseId));
+      const dropped = Object.keys(all).length - Object.keys(next).length;
+      if (dropped > 0) await this.write(next);
+      return dropped;
+    });
+  }
+
   unbind(key: string): Promise<boolean> {
     return slashCommandLock.runExclusive(this.file, async () => {
       const all = await this.loadAll();

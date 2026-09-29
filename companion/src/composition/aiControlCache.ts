@@ -12,6 +12,7 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import { AiControlStore, type AiControl } from "../analysis/aiControl.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 export interface AiControlCache {
   getControl(caseId: string): Promise<AiControl>;
@@ -20,7 +21,10 @@ export interface AiControlCache {
 
 export function createAiControlCache(store: CaseStore): AiControlCache {
   const aiControl = new AiControlStore(store);
-  const cache = new Map<string, AiControl>();
+  // #1866: keyed by (case id, generation) and forgotten on delete, so a same-id successor never
+  // inherits the deleted case's toggle or lastAnalyzedSeq, and an old run's setControl (its save
+  // refused) cannot poison the successor's entry.
+  const cache = new CaseKeyedMap<AiControl>(() => store.casesRoot);
 
   async function getControl(caseId: string): Promise<AiControl> {
     let c = cache.get(caseId);

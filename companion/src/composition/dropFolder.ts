@@ -65,6 +65,7 @@ import type { RegisteredJob } from "../analysis/jobManager.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
 export function dropDirOf(store: CaseStore, caseId: string): string {
@@ -139,7 +140,7 @@ export interface DropFolderDeps {
   ) => Promise<boolean>;
   // A dropped image joins the SAME capture + vision path as POST /captures.
   indexCaptureText: (metadata: CaptureMetadata) => void;
-  captureBuffers: Map<string, CaptureMetadata[]>;
+  captureBuffers: PerCaseMap<CaptureMetadata[]>;
   flush: (caseId: string) => Promise<void>;
 }
 
@@ -147,11 +148,11 @@ export interface DropFolder {
   /** False when DFIR_DROP_ENABLED is off; the dashboard reports this. */
   readonly watchEnabled: boolean;
   /** Per-case size+mtime memory of files awaiting settle. Exposed for the drop-status route. */
-  readonly seen: Map<string, Map<string, { size: number; mtimeMs: number }>>;
+  readonly seen: PerCaseMap<Map<string, { size: number; mtimeMs: number }>>;
   /** Cases with a sweep in flight (a second sweep of the same case is skipped). */
-  readonly scanning: Set<string>;
+  readonly scanning: PerCaseSet;
   /** Files already logged PENDING, so a waiting raw file gets one line, not one per poll. */
-  readonly pendingLogged: Map<string, Set<string>>;
+  readonly pendingLogged: PerCaseMap<Set<string>>;
   ensureDropFolders(caseId: string): Promise<void>;
   moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
   scanCaseDrops(caseId: string): Promise<void>;
@@ -182,11 +183,13 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const watchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
   const dropMaxBytes = dropMaxBytesFromEnv();
-  const seen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
-  const scanning = new Set<string>();
+  // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
+  // same-id successor, and its late `finally` never clears the successor's scanning mark.
+  const seen = new CaseKeyedMap<Map<string, { size: number; mtimeMs: number }>>(() => store.casesRoot);
+  const scanning = new CaseKeyedSet(() => store.casesRoot);
   // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new
   // PENDING line every poll — only once when first seen pending, cleared once it resolves.
-  const pendingLogged = new Map<string, Set<string>>();
+  const pendingLogged = new CaseKeyedMap<Set<string>>(() => store.casesRoot);
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {

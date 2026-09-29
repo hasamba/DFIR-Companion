@@ -575,7 +575,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         ctx.startVeloHuntCollect(caseId, launch.huntId);
       }, waitMinutes * 60_000);
       timer.unref?.();
-      ctx.veloHuntTimers().set(launch.huntId, timer);
+      ctx.veloHuntTimers().set(caseId, timer, launch.huntId);
       ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
 
       return res.status(202).json({
@@ -901,7 +901,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           ctx.startVeloHuntCollect(caseId, launch.huntId);
         }, waitMinutes * 60_000);
         timer.unref?.();
-        ctx.veloHuntTimers().set(launch.huntId, timer);
+        ctx.veloHuntTimers().set(caseId, timer, launch.huntId);
         ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
       }
       await ctx.recordHuntDeploy(caseId, {
