@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Custody verify cannot be pointed at a protected file** — verify, export and transfer re-open recorded paths through the server-path guard; a path swapped for a link or FIFO reports "refused" with no hash (closes #1841)
 - **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
 - **AI-provider warning no longer moves the page** — the pre-flight banner is a strip fixed to the bottom of the window, so a late answer does not push the dashboard down (closes #1827)
 - **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)

@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { hashHandle, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
+import { custodyPathPolicy, hashHandle, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
 import { buildCustodyManifest } from "../analysis/custodyManifest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
@@ -73,11 +73,8 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     // again, so a path swapped after the check cannot be hashed (#1834).
     let sha256: string;
     try {
-      const opened = await openServerPath(artifactPath, {
-        casesRoot: store.casesRoot,
-        allowUnder: [store.caseDir(caseId)],
-        allowedLabel: "this case's own files",
-      });
+      // The same policy verify, export and transfer re-check the path under later (#1841).
+      const opened = await openServerPath(artifactPath, custodyPathPolicy(store, caseId));
       if (opened.refusal) return res.status(opened.refusal.status).json({ error: opened.refusal.error });
       try {
         sha256 = await hashHandle(opened.file.handle);

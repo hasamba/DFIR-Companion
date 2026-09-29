@@ -240,6 +240,10 @@ function releaseProblems(input: ReportReleaseInput): string[] {
   if (input.custody.mismatches.some((item) => item.reason === "hash-mismatch")) {
     problems.push("artifact hash does not match custody record");
   }
+  // A recorded path that now names a file the server-path guard refuses (#1841) was not verified.
+  if (input.custody.mismatches.some((item) => item.reason === "refused")) {
+    problems.push("artifact recorded in custody could not be verified (refused)");
+  }
   return problems;
 }
 
