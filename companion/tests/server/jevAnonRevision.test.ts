@@ -33,16 +33,25 @@ describe("a Hide during a Jev review (#1840)", () => {
   let jev: ReturnType<typeof createServer>;
   let bodies: string[];
   let onFirst: () => Promise<void>;
+  let firstStatus: number;
 
   beforeEach(async () => {
     for (const k of ENV) saved[k] = process.env[k];
     bodies = [];
+    firstStatus = 200;
     jev = createServer((req, res) => {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", async () => {
         bodies.push(body);
-        if (bodies.length === 1) await onFirst();
+        if (bodies.length === 1) {
+          await onFirst();
+          if (firstStatus !== 200) {
+            res.writeHead(firstStatus, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: { message: "busy" } }));
+            return;
+          }
+        }
         const questions = JSON.parse(body).questions as Record<string, { type: string }>;
         const answers: Record<string, unknown> = {};
         for (const [id, q] of Object.entries(questions))
@@ -67,6 +76,35 @@ describe("a Hide during a Jev review (#1840)", () => {
       else process.env[k] = saved[k];
     }
     await new Promise<void>((resolve) => jev.close(() => resolve()));
+  });
+
+  async function reviewCase(rows: number) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-jev-anonrev-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save(emptyState("c1"));
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append(
+      "c1",
+      Array.from({ length: rows }, (_, i) => row(i)),
+    );
+    const custom = new CustomEntitiesStore(cases);
+    onFirst = async () => {
+      await custom.save("c1", [{ value: NAME, category: "PERSON" }]); // the analyst presses Hide
+    };
+    return createApp(cases, { stateStore, superTimelineStore });
+  }
+
+  // A retry resends the SAME masked body. The first attempt fails with a retryable 503, the Hide
+  // lands during the backoff, and the retry must not go out.
+  it("does not retry a batch whose masked body went stale during the backoff", async () => {
+    firstStatus = 503;
+    const app = await reviewCase(1);
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+    expect(res.status).toBe(502);
+    expect(String(res.body.error)).toMatch(/anonymization/i);
+    expect(bodies).toHaveLength(1);
   });
 
   it("holds every batch that had not left when the Hide landed", async () => {

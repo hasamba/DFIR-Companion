@@ -19,6 +19,7 @@ import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import { postAnonControl } from "../helpers/anonControl.js";
 
 const OUT_OF_DATE = "conclusions out of date — press Re-synthesize";
 
@@ -94,22 +95,20 @@ async function expectOutOfDateAndNoRun(reason: string): Promise<void> {
 
 describe("former synthesis triggers only mark the conclusions out of date (#1599)", () => {
   it("anonymization switch", async () => {
-    const res = await request(app).post("/cases/c1/anon-control").send({ enabled: false });
+    const res = await postAnonControl(app, "c1", { enabled: false });
     expect(res.status).toBe(200);
     await expectOutOfDateAndNoRun("anonymization changed");
   });
 
   it("an anonymization category change, not only the main switch", async () => {
-    const res = await request(app)
-      .post("/cases/c1/anon-control")
-      .send({ categories: { IP: false } });
+    const res = await postAnonControl(app, "c1", { categories: { IP: false } });
     expect(res.status).toBe(200);
     await expectOutOfDateAndNoRun("anonymization changed");
   });
 
   it("an anonymization POST that changes nothing marks nothing", async () => {
     const cur = (await request(app).get("/cases/c1/anon-control")).body;
-    await request(app).post("/cases/c1/anon-control").send({ enabled: cur.enabled });
+    await postAnonControl(app, "c1", { enabled: cur.enabled });
     await settle();
     expect((await meta.load("c1")).outOfDate ?? null).toBeNull();
   });
@@ -208,7 +207,7 @@ describe("a case with no finished synthesis never reads as out of date", () => {
   it("anonymization switch on a case that was never synthesized", async () => {
     await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
     await new AiControlStore(cases).save("c2", { enabled: false, lastAnalyzedSeq: 0 });
-    const res = await request(app).post("/cases/c2/anon-control").send({ enabled: false });
+    const res = await postAnonControl(app, "c2", { enabled: false });
     expect(res.status).toBe(200);
     await settle();
     expect(synthesize).not.toHaveBeenCalled();

@@ -109,9 +109,10 @@ export class PresidioDecisions {
 
   /**
    * The Anonymization modal's settings Save (#1839). `build` turns the current control into the
-   * next one. With a `baseVersion`, a modal loaded before another window changed the settings is
-   * refused, so a stale form cannot turn masking off under a value just hidden. Without one (a
-   * partial update that names only the fields it changes) it applies as before.
+   * next one, but only from the version the caller loaded: a modal loaded before another window
+   * changed the settings is refused, so a stale form cannot turn masking off under a value just
+   * hidden. A missing version counts as stale (fail closed) — an old, cached dashboard posts the
+   * whole form without one.
    */
   replaceControl(
     caseId: string,
@@ -122,7 +123,7 @@ export class PresidioDecisions {
     if (!control) return Promise.reject(new Error("anonymization control store not wired"));
     return decisionLock.runExclusive(caseId, async () => {
       const cur = await control.load(caseId);
-      if (baseVersion !== undefined && baseVersion !== anonControlVersion(cur)) {
+      if (baseVersion !== anonControlVersion(cur)) {
         return { applied: false, reason: "stale", control: cur, version: anonControlVersion(cur) };
       }
       const next = build(cur);

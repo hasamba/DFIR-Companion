@@ -140,11 +140,18 @@ describe("versioned settings save (#1839)", () => {
     expect((await control()).body.enabled).toBe(true);
   });
 
-  it("applies a save from the current version, and a partial update without one", async () => {
+  it("applies a save from the current version", async () => {
     const v = (await control()).body.version;
     const ok = await post({ enabled: false, version: v });
     expect(ok.status).toBe(200);
     expect(ok.body.version).not.toBe(v);
-    expect((await post({ enabled: true })).status).toBe(200);
+  });
+
+  // The request an already-open dashboard from before this fix sends: the whole form, no version.
+  it("refuses a save with no version — an old cached dashboard's whole-form post", async () => {
+    const res = await post({ enabled: false, categories: { IP: true }, redactSecrets: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("anon_control_stale");
+    expect((await control()).body.enabled).toBe(true);
   });
 });

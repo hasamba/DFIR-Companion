@@ -29,9 +29,12 @@ test("US-272: with anonymization on, the provider sees tokens; the analyst still
   page,
   demoCase,
 }) => {
-  // 1. Enable anonymization for this case — the POST the Anon toolbar toggle makes.
+  // 1. Enable anonymization for this case — the POST the Anonymization modal makes, from the
+  //    version it loaded (#1839: a save without one is refused).
+  const current = await page.request.get(`/cases/${demoCase}/anon-control`);
+  const { version } = (await current.json()) as { version: string };
   const enabled = await page.request.post(`/cases/${demoCase}/anon-control`, {
-    data: { enabled: true },
+    data: { enabled: true, version },
   });
   expect(enabled.status(), await enabled.text()).toBe(200);
 

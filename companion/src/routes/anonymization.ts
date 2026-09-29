@@ -134,9 +134,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           presidio: typeof req.body?.presidio === "boolean" ? req.body.presidio : cur.presidio,
         };
       };
-      // #1839: the modal sends the version it loaded. A stale form (another window changed the
-      // settings since) is refused with the current settings, so it can never turn masking off
-      // under a value just hidden. A caller that names only the fields it changes may omit it.
+      // #1839: the caller sends the version it loaded (GET returns it). A stale or missing version
+      // is refused with the current settings, so a stale form can never turn masking off under a
+      // value just hidden.
       const base = typeof req.body?.version === "string" ? req.body.version : undefined;
       const outcome = await presidioDecisions.replaceControl(req.params.id, build, base);
       if (!outcome.applied) {

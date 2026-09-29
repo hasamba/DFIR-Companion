@@ -196,19 +196,19 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       const result = await gradeEvents(
         {
           mask,
-          ask: (jevState, questions) => {
-            assertAnonRevision(caseId, maskedAt, "the missed-evidence review");
-            return askJev(
+          ask: (jevState, questions) =>
+            askJev(
               {
                 baseUrl: settings.baseUrl,
                 model: settings.model,
                 apiKey: settings.apiKey,
                 timeoutMs: settings.timeoutMs,
+                // Before every attempt, retries included: a retry resends the same masked body.
+                beforeSend: () => assertAnonRevision(caseId, maskedAt, "the missed-evidence review"),
               },
               jevState,
               questions,
-            );
-          },
+            ),
         },
         candidates,
         { batchSize: settings.batchSize },
