@@ -88,8 +88,15 @@ export function capabilityTechniques(text: string): string[] {
 // A backfill's finding re-derives its tags from its events (#1684), dismissed findings are not
 // conclusions, and Info is this product's "not attacker activity" grade — the benign-noise and
 // lab-build notes — so none of them may add an attacker technique from its prose.
+// A finding with no string id is skipped, not thrown on: the live push is transport and may carry a
+// partial state (live/hub.ts, attachLiveSocket.test.ts).
 function eligible(f: Finding): boolean {
-  return !isDeterministicFindingId(f.id) && f.status !== "dismissed" && f.severity !== "Info";
+  return (
+    typeof f?.id === "string" &&
+    !isDeterministicFindingId(f.id) &&
+    f.status !== "dismissed" &&
+    f.severity !== "Info"
+  );
 }
 
 function linkRow(rows: Technique[], id: string, findingId: string): Technique[] {

@@ -175,6 +175,12 @@ describe("withFindingTextTechniques (#1873)", () => {
     expect(withFindingTextTechniques(state)).toEqual(state);
   });
 
+  it("skips a malformed finding instead of throwing (the live push may carry a partial state)", () => {
+    const state = stateWith([{ secret: "x" } as unknown as Finding]);
+
+    expect(withFindingTextTechniques(state)).toEqual(state);
+  });
+
   it("is idempotent and does not change its input", () => {
     const state = stateWith([finding()]);
     const snapshot = structuredClone(state);
