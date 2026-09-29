@@ -6,6 +6,10 @@ import type { RouteContext } from "./context.js";
 import type { SecondOpinion } from "../analysis/secondOpinion.js";
 import type { Finding } from "../analysis/stateTypes.js";
 import { freshDeltas, markUnappliedDecisions } from "../analysis/secondOpinionTargets.js";
+import type { SynthesisSkipReason } from "../analysis/ai/synthesisSkip.js";
+
+const EMPTY_TIMELINE: SynthesisSkipReason = "empty-timeline";
+const NOTHING_TO_REVIEW = "nothing to review — import evidence and synthesize the case first";
 
 /**
  * The Second LLM Opinion routes (#116): the two-model run, the saved record, the analyst's
@@ -65,6 +69,14 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       // Queued behind an import or synthesis on this case? The jobs chip shows the queued row; the
       // pill keeps the status of the job that holds the slot until this one really starts.
       await job?.ready;
+      // #1769 — an empty forensic timeline is a refusal, not a failure: the #1676 skip shape, the job
+      // ENDS (finished, never failed) and the pill goes idle, never red. Checked only once the job
+      // holds the case slot, so an import queued ahead still lands its events before the check.
+      if ((await options.stateStore?.load(caseId))?.forensicTimeline.length === 0) {
+        if (job) await options.jobManager?.finish(job.jobId);
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+        return res.status(200).json({ skipped: EMPTY_TIMELINE, message: NOTHING_TO_REVIEW });
+      }
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "synthesizing",
@@ -84,15 +96,14 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       return res.status(200).json(await marked(caseId, record));
     } catch (err) {
       // secondOpinion() calls synthesize() twice (secondOpinionRun.ts), so it inherits the merge
-      // gate — and a gate is a question, not a failed second opinion. The job still has to END
-      // (cancel() refuses a non-cancellable job and would leave the case's slot held); the pill
+      // gate — and a gate is a question, not a failed second opinion. The job still has to END:
+      // hold() ends it with the same encoding the synthesis routes use (#1801) — cancel() would
+      // refuse a non-cancellable job and leave the case's slot held. The pill
       // reads "on hold" regardless, since a pending hold outranks the last job's failure.
       const held = isAnalystDecisionGate(err);
-      if (job) {
-        await options.jobManager?.fail(job.jobId, err, {
-          code: held ? "held_for_analyst" : "second_opinion_failed",
-          retryable: false,
-        });
+      if (job && held) await options.jobManager?.hold(job.jobId, (err as Error).message);
+      else if (job) {
+        await options.jobManager?.fail(job.jobId, err, { code: "second_opinion_failed", retryable: false });
       }
       options.onAiStatus?.(caseId, {
         status: held ? "blocked" : "error",

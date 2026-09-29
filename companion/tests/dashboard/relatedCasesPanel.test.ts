@@ -159,6 +159,7 @@ describe("related cases panel staleness", () => {
   }
   interface LoaderApi {
     loadRelatedCases(caseId: string): Promise<void>;
+    setCrossCaseCapability(on: boolean): void;
   }
 
   function deferred<T>() {
@@ -189,6 +190,8 @@ describe("related cases panel staleness", () => {
         return next();
       },
     });
+    // These tests are about staleness with the pivot ON; the off/unknown gate is tested below.
+    sandbox.setCrossCaseCapability(true);
     return {
       section,
       body,
@@ -271,5 +274,50 @@ describe("related cases panel staleness", () => {
     await h.load("");
     expect(h.body.innerHTML).toBe("");
     expect(h.section.dataset.gateOpen).toBe("");
+  });
+});
+
+// #1770 — the pivot is off by default and its route answers 404. The panel asks only once /health
+// has said the pivot is on; a connect that ran while the flag was unknown is caught up then.
+describe("related cases fetch gate (#1770)", () => {
+  interface GateApi {
+    loadRelatedCases(caseId: string): Promise<void>;
+    setCrossCaseCapability(on: boolean): void;
+  }
+  function gateHarness() {
+    const urls: string[] = [];
+    const api = loadDashboardModule<GateApi>("dashboard-related-cases.js", ["dashboard-escape.js"], {
+      document: { getElementById: () => null },
+      applySectionsVis: () => {},
+      fetch: (url: string) => {
+        urls.push(url);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ related: [] }) });
+      },
+    });
+    return { api, urls };
+  }
+
+  it("never fetches while the pivot is off", async () => {
+    const { api, urls } = gateHarness();
+    api.setCrossCaseCapability(false);
+    await api.loadRelatedCases("CASE-1");
+    api.setCrossCaseCapability(false);
+    expect(urls).toEqual([]);
+  });
+
+  it("holds the request while the flag is unknown, then sends it once the pivot is on", async () => {
+    const { api, urls } = gateHarness();
+    await api.loadRelatedCases("CASE-1");
+    expect(urls).toEqual([]);
+    api.setCrossCaseCapability(true);
+    api.setCrossCaseCapability(true); // the next /health poll does not refetch
+    expect(urls).toEqual(["/cases/CASE-1/related"]);
+  });
+
+  it("fetches on each load once the pivot is on", async () => {
+    const { api, urls } = gateHarness();
+    api.setCrossCaseCapability(true);
+    await api.loadRelatedCases("CASE-2");
+    expect(urls).toEqual(["/cases/CASE-2/related"]);
   });
 });

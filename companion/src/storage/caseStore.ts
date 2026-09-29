@@ -37,6 +37,43 @@ export class CaseAlreadyExistsError extends Error {
   }
 }
 
+/**
+ * A lifecycle write refused because of the case's current state, with the HTTP status a route
+ * answers it with. Thrown inside the per-case metadata lock, so the check and the write agree.
+ */
+export class CaseLifecycleError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: 404 | 409,
+  ) {
+    super(message);
+    this.name = "CaseLifecycleError";
+  }
+}
+
+/**
+ * The case has no metadata (it was never created, or a delete removed it). Thrown by updateCaseMeta,
+ * which used to write a default case.json instead — a write that landed during a delete's rm made
+ * the rm fail and left a nameless "ghost" case after the evidence was already gone (#1808).
+ */
+export class CaseNotFoundError extends CaseLifecycleError {
+  constructor(readonly caseId: string) {
+    super(`case ${caseId} not found`, 404);
+    this.name = "CaseNotFoundError";
+  }
+}
+
+/** The case is archived (in _archived/); only restore may move it back to open or closed (#1809). */
+export class CaseArchivedError extends CaseLifecycleError {
+  constructor(readonly caseId: string) {
+    super(`case ${caseId} is archived — restore the case first`, 409);
+    this.name = "CaseArchivedError";
+  }
+}
+
+/** A check run on the current case.json inside the metadata lock; it throws to refuse. */
+export type CaseMetaGuard = (current: CaseMeta) => void;
+
 /** What the caller knows about where an artifact came from; only the capture path has all of it. */
 export interface ArtifactProvenance {
   source?: string;
@@ -75,6 +112,11 @@ export class CaseStore {
 
   // Serializes the retired-case-id ledger read-modify-write (see retireCaseId).
   private readonly retiredLock = new StateLock();
+
+  // Serializes, per case, every case.json write against the folder moves and the delete (#1808). A
+  // status or password write that landed mid-rm made the rm fail with ENOTEMPTY; one that landed
+  // between an archive's move and its status write could strand the case (#1809).
+  private readonly metaLock = new StateLock();
 
   // Notified after every artifact write below, so chain-of-custody is recorded for ALL stored
   // evidence rather than only where a caller remembered to ask (#231). It lives here, at the two
@@ -168,18 +210,63 @@ export class CaseStore {
   // Non-destructive "remove from active list": moves the whole case folder under _archived/.
   // Nothing is deleted — caseDir()'s fallback means every other method keeps working unchanged.
   // Rejects (via rename's ENOENT) if caseId doesn't currently exist in the active root.
-  // Known limitation: no locking against a concurrent request reading/writing the same case
-  // mid-move — acceptable for now since this is a single-user localhost tool.
-  async archiveCaseFolder(caseId: string): Promise<void> {
-    const archivedRoot = join(this.root, ARCHIVED_DIRNAME);
-    await mkdir(archivedRoot, { recursive: true });
-    await rename(join(this.root, caseId), join(archivedRoot, caseId));
+  // Serialized against case.json writes and the delete (metaLock); evidence writers are not locked,
+  // and rely on the closed/archived write guards instead.
+  // With `status`, the move and the status write are one step under the metadata lock, and a failed
+  // status write moves the folder back — so no other write can see the case moved but not re-labelled.
+  async archiveCaseFolder(caseId: string, status?: CaseMeta["status"]): Promise<CaseMeta | null> {
+    const active = join(this.root, caseId);
+    const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
+    return this.metaLock.runExclusive(caseId, async () => {
+      await mkdir(join(this.root, ARCHIVED_DIRNAME), { recursive: true });
+      await rename(active, archived);
+      return status ? this.relabelAfterMove(caseId, status, archived, active) : null;
+    });
   }
 
-  // Inverse of archiveCaseFolder: moves the case back into the active root.
+  // Inverse of archiveCaseFolder: moves the case back into the active root, same `status` contract.
   // Rejects (via rename's ENOENT) if caseId isn't currently archived under _archived/.
-  async restoreCaseFolder(caseId: string): Promise<void> {
-    await rename(join(this.root, ARCHIVED_DIRNAME, caseId), join(this.root, caseId));
+  async restoreCaseFolder(caseId: string, status?: CaseMeta["status"]): Promise<CaseMeta | null> {
+    const active = join(this.root, caseId);
+    const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
+    return this.metaLock.runExclusive(caseId, async () => {
+      await rename(archived, active);
+      return status ? this.relabelAfterMove(caseId, status, active, archived) : null;
+    });
+  }
+
+  // Held under metaLock by the caller. Writes the status at the folder's new place; on failure moves
+  // the folder back (best-effort) and rethrows, so the move and the label land together or not at all.
+  private async relabelAfterMove(
+    caseId: string,
+    status: CaseMeta["status"],
+    movedTo: string,
+    movedFrom: string,
+  ): Promise<CaseMeta> {
+    try {
+      return await this.writeCaseMetaLocked(caseId, { status });
+    } catch (err) {
+      const rolledBack = await rename(movedTo, movedFrom).then(
+        () => "",
+        (undo: Error) => `; moving it back also failed (${undo.message}) — the folder stays at ${movedTo}`,
+      );
+      throw new Error(`status write after the move failed: ${(err as Error).message}${rolledBack}`, {
+        cause: err,
+      });
+    }
+  }
+
+  /** True when the case's folder sits under _archived/ — whatever its case.json says. Lets restore
+   *  recover a case a pre-#1809 status change left there labelled open or closed. */
+  isInArchive(caseId: string): boolean {
+    return existsSync(join(this.root, ARCHIVED_DIRNAME, caseId)) && !existsSync(join(this.root, caseId));
+  }
+
+  /** Set a case open or closed. Refuses an archived case: only restore takes it out (#1809). */
+  setCaseStatus(caseId: string, status: "open" | "closed"): Promise<CaseMeta> {
+    return this.updateCaseMeta(caseId, { status }, (current) => {
+      if (current.status === "archived") throw new CaseArchivedError(caseId);
+    });
   }
 
   // Permanently deletes a case's folder — recursive, irreversible. Works whether the case is
@@ -189,12 +276,24 @@ export class CaseStore {
   // behavior. Refuses to delete a directory that doesn't actually contain a case.json — this is
   // the most dangerous method in this class (genuinely irreversible, unlike the archive/restore
   // moves), so it shouldn't silently wipe an unrelated directory that happens to share the name.
-  async deleteCaseFolder(caseId: string): Promise<void> {
-    const dir = this.caseDir(caseId);
-    if (!(await this.caseExists(caseId))) {
-      throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
-    }
-    await rm(dir, { recursive: true });
+  //
+  //
+  // Runs under the metadata lock (#1808), so no case.json write lands during the rm. With
+  // `closedOnly`, refuses a case that is not closed or archived AT THAT MOMENT: an archive-first
+  // export can run long enough for the case to be reopened after the route's own status check.
+  async deleteCaseFolder(caseId: string, opts: { closedOnly?: boolean } = {}): Promise<void> {
+    await this.metaLock.runExclusive(caseId, async () => {
+      const dir = this.caseDir(caseId);
+      const meta = await this.getCaseMeta(caseId);
+      if (!meta) throw new Error(`refusing to delete "${caseId}": no case.json found at ${dir}`);
+      if (opts.closedOnly && meta.status !== "closed" && meta.status !== "archived") {
+        throw new CaseLifecycleError(
+          `case ${caseId} must be closed or archived before it can be deleted`,
+          409,
+        );
+      }
+      await rm(dir, { recursive: true });
+    });
   }
 
   // Case ids retired by a delete. An incident number is not free again once it has been used: the
@@ -242,7 +341,12 @@ export class CaseStore {
   // an archived case's metadata can no longer be silently overwritten.
   //
   // The subdirectories are created only AFTER the claim succeeds, so a loser leaves nothing behind.
+  // Under the metadata lock, so a create cannot land inside a delete's rm of the same id (#1808).
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
+    return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));
+  }
+
+  private async createCaseLocked(input: CreateCaseInput): Promise<CaseMeta> {
     const meta: CaseMeta = {
       caseId: input.caseId,
       name: input.name,
@@ -466,15 +570,24 @@ export class CaseStore {
     return metadata;
   }
 
-  /** Atomically patch case.json with the given fields. Unknown fields are preserved. */
-  async updateCaseMeta(caseId: string, patch: Partial<CaseMeta>): Promise<CaseMeta> {
-    const existing = (await this.getCaseMeta(caseId)) ?? {
-      caseId,
-      name: "",
-      createdAt: "",
-      investigator: "",
-      aiProvider: null,
-    };
+  /**
+   * Atomically patch case.json with the given fields. Unknown fields are preserved. Throws
+   * CaseNotFoundError when the case has no case.json — it never writes a default one (#1808).
+   * `guard` runs on the current metadata inside the lock and throws to refuse the write.
+   */
+  async updateCaseMeta(caseId: string, patch: Partial<CaseMeta>, guard?: CaseMetaGuard): Promise<CaseMeta> {
+    return this.metaLock.runExclusive(caseId, () => this.writeCaseMetaLocked(caseId, patch, guard));
+  }
+
+  // The body of updateCaseMeta; the caller holds metaLock for this case.
+  private async writeCaseMetaLocked(
+    caseId: string,
+    patch: Partial<CaseMeta>,
+    guard?: CaseMetaGuard,
+  ): Promise<CaseMeta> {
+    const existing = await this.getCaseMeta(caseId);
+    if (!existing) throw new CaseNotFoundError(caseId);
+    guard?.(existing);
     const updated = { ...existing, ...patch, caseId };
     await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
     return updated;

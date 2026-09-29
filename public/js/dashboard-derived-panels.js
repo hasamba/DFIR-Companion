@@ -322,6 +322,12 @@
     msg.textContent = "generating… (one AI call)";
     fetch(`/cases/${caseId}/remediation-plan`, { method: "POST" }).then(async r => {
       const j = await r.json().catch(() => ({}));
+      // A Presidio hold waits for the analyst — it is not a failure (#1782).
+      if (!r.ok && typeof presidioHold === "function" && presidioHold(r.status, j)) {
+        msg.textContent = presidioHoldText("Remediation plan");
+        out.innerHTML = "";
+        return;
+      }
       if (!r.ok) {
         msg.textContent = j.error || (r.status === 501 ? "AI provider not configured — set one up in Settings → AI." : "Failed (restart the companion server if this endpoint 404s).");
         out.innerHTML = "";

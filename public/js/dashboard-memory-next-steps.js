@@ -55,8 +55,14 @@
       headers: { "content-type": "application/json" },
       body: "{}",
     })
-      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-      .then(({ ok, j }) => {
+      .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
+      .then(({ ok, status, j }) => {
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
+          if (msg) msg.textContent = "";
+          el.innerHTML = `<div class="mns-empty" data-safe-style="color:var(--text-muted)">${esc(presidioHoldText("Memory next steps"))}</div>`;
+          return;
+        }
         if (!ok || j.error) {
           if (msg) msg.textContent = "";
           el.innerHTML = `<div class="mns-empty" data-safe-style="color:var(--sev-high)">error: ${esc(j.error || "could not generate next steps")} — restart the companion server if this 404s</div>`;
