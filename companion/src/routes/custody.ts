@@ -1,9 +1,9 @@
 import type { Express, Request, Response } from "express";
-import { hashFile, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
+import { hashHandle, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
 import { buildCustodyManifest } from "../analysis/custodyManifest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
-import { refuseServerPath } from "./serverPathGuard.js";
+import { openServerPath } from "./serverPathGuard.js";
 
 export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, instanceSecret } = ctx;
@@ -57,14 +57,6 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     }
     const artifactPath = typeof req.body?.artifactPath === "string" ? req.body.artifactPath.trim() : "";
     if (!artifactPath) return res.status(400).json({ error: "artifactPath is required" });
-    // Case-write, so in team mode this must not become an existence + SHA-256 oracle for the
-    // Companion's config or for other cases' files (#1792). This case's own files stay recordable.
-    const refusal = await refuseServerPath(artifactPath, {
-      casesRoot: store.casesRoot,
-      allowUnder: [store.caseDir(caseId)],
-      allowedLabel: "this case's own files",
-    });
-    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const collectedBy = typeof req.body?.collectedBy === "string" ? req.body.collectedBy.trim() : "";
     const source = typeof req.body?.source === "string" ? req.body.source.trim() : "";
     const trigger = typeof req.body?.trigger === "string" ? req.body.trigger.trim() : "";
@@ -75,9 +67,23 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     if (rawEvent !== undefined && !isCustodyEvent(rawEvent)) {
       return res.status(400).json({ error: `event must be one of: ${CUSTODY_EVENTS.join(", ")}` });
     }
+    // Case-write, so in team mode this must not become an existence + SHA-256 oracle for the
+    // Companion's config or for other cases' files (#1792). This case's own files stay recordable.
+    // The guard opens and judges the handle, and the hash reads that handle — never the path
+    // again, so a path swapped after the check cannot be hashed (#1834).
     let sha256: string;
     try {
-      sha256 = await hashFile(artifactPath);
+      const opened = await openServerPath(artifactPath, {
+        casesRoot: store.casesRoot,
+        allowUnder: [store.caseDir(caseId)],
+        allowedLabel: "this case's own files",
+      });
+      if (opened.refusal) return res.status(opened.refusal.status).json({ error: opened.refusal.error });
+      try {
+        sha256 = await hashHandle(opened.file.handle);
+      } finally {
+        await opened.file.handle.close();
+      }
     } catch (err) {
       return res.status(400).json({ error: `could not read artifact: ${(err as Error).message}` });
     }

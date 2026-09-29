@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)
 - **No page jump when a case opens** — the Now cockpit holds its space while it loads, so the panels under it no longer jump down (load CLS 0.33 → 0) (closes #1791)
 - **Import failures say why** — the status line names each failed file with the server's reason (size cap, busy, budget, no AI provider), for data files and screenshots (closes #1786)
 - **Host prompt no longer looks like a hang** — while the "which host did this file come from?" prompt waits, the status line says it is waiting for your answer (closes #1772)
