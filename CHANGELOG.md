@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Stale anonymization saves refused** — a second window's Save can no longer erase a value just hidden from the AI or turn masking off under it; the modal reloads with your unsaved edits kept (closes #1839)
 - **Hide reaches AI calls already under way** — an AI call masks again when a value is hidden while it is being prepared, and a Jev review stops sending (closes #1840)
+- **Custody verify cannot be pointed at a protected file** — verify, export and transfer re-open recorded paths through the server-path guard; a path swapped for a link or FIFO reports "refused" with no hash (closes #1841)
+- **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
 - **AI-provider warning no longer moves the page** — the pre-flight banner is a strip fixed to the bottom of the window, so a late answer does not push the dashboard down (closes #1827)
 - **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)
 - **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)

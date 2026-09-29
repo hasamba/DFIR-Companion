@@ -4,6 +4,7 @@ import { join, relative, isAbsolute, sep } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { StateLock } from "./stateLock.js";
 import { authenticatedActorFields } from "../auth/identityContext.js";
+import { openServerPath, type ServerPathPolicy } from "../storage/serverPathGuard.js";
 
 // Evidence here is disk images, memory dumps and Plaso super-timelines — routinely 400 MB+, and
 // past V8's ~512 MB string ceiling. readFile() would OOM on exactly the artifacts custody matters
@@ -24,6 +25,52 @@ export async function hashHandle(handle: FileHandle): Promise<string> {
     hash.update(chunk as Buffer);
   }
   return hash.digest("hex");
+}
+
+/**
+ * The server-path policy a custody record is made under, and re-checked under (#1792, #1841): the
+ * Companion's config and other cases' storage are refused; this case's own files are allowed. Every
+ * producer of records writes paths it allows — POST /custody is guarded by it, and the companion's
+ * own artifacts live in the case dir (archive-aware, so an archived case still verifies).
+ */
+export function custodyPathPolicy(
+  cases: { casesRoot: string; caseDir(caseId: string): string },
+  caseId: string,
+): ServerPathPolicy {
+  return {
+    casesRoot: cases.casesRoot,
+    allowUnder: [cases.caseDir(caseId)],
+    allowedLabel: "this case's own files",
+  };
+}
+
+/** What re-hashing a recorded path found. `refused` carries the guard's reason; no hash is taken. */
+type Rehash = { sha256: string } | { refused: string } | { missing: true };
+
+const CHANGED_WHILE_CHECKED =
+  "refused: the file changed while it was being checked (replaced by a link) — nothing was read";
+
+/**
+ * Re-hash a RECORDED path the way it was recorded: open once through the server-path guard, judge the
+ * open handle, hash that handle. By name, a path swapped since the record for a link to a protected
+ * file would hand out that file's hash, and a FIFO would block open() forever (#1841).
+ */
+async function rehashRecorded(policy: ServerPathPolicy, artifactPath: string): Promise<Rehash> {
+  try {
+    const opened = await openServerPath(artifactPath, policy);
+    if (opened.refusal) return { refused: opened.refusal.error };
+    try {
+      return { sha256: await hashHandle(opened.file.handle) };
+    } finally {
+      await opened.file.handle.close();
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { missing: true };
+    // O_NOFOLLOW met a link swapped in after the guard resolved the path.
+    if (code === "ELOOP") return { refused: CHANGED_WHILE_CHECKED };
+    throw err;
+  }
 }
 
 /**
@@ -86,7 +133,10 @@ export interface CustodyMismatch {
   artifactPath: string;
   recordedSha256: string;
   actualSha256: string | null;
-  reason: "hash-mismatch" | "missing";
+  /** `refused`: the recorded path now names something the server-path guard will not read (#1841). */
+  reason: "hash-mismatch" | "missing" | "refused";
+  /** Why a `refused` artifact was not read. */
+  detail?: string;
 }
 
 /** A place where the log stopped being a chain: an entry was altered, removed, or replayed. */
@@ -153,6 +203,20 @@ export class CustodyStore {
    */
   private caseRelative(caseId: string, artifactPath: string): string | null {
     return toCaseRelative(this.cases.caseDir(caseId), artifactPath);
+  }
+
+  /** rehashRecorded for each distinct path once — a path recorded many times is opened once. */
+  private rehasher(caseId: string): (artifactPath: string) => Promise<Rehash> {
+    const policy = custodyPathPolicy(this.cases, caseId);
+    const seen = new Map<string, Promise<Rehash>>();
+    return (artifactPath) => {
+      let pending = seen.get(artifactPath);
+      if (!pending) {
+        pending = rehashRecorded(policy, artifactPath);
+        seen.set(artifactPath, pending);
+      }
+      return pending;
+    };
   }
 
   /**
@@ -235,17 +299,16 @@ export class CustodyStore {
     const artifactPaths = [...new Set(existing.map((r) => r.artifactPath))];
     const exportedAt = new Date().toISOString();
     const inputs: CustodyRecordInput[] = [];
+    const rehash = this.rehasher(caseId);
 
     for (const artifactPath of artifactPaths) {
-      let sha256: string;
-      try {
-        sha256 = await hashFile(artifactPath);
-      } catch {
-        continue;
-      }
+      // Missing, unreadable, or refused by the server-path guard (#1841): nothing about it is
+      // attested. Refused is visible in verifyIntegrity, the sweep and the release gate.
+      const found = await rehash(artifactPath).catch(() => null);
+      if (!found || !("sha256" in found)) continue;
       inputs.push({
         artifactPath,
-        sha256,
+        sha256: found.sha256,
         caseId,
         event: "exported",
         collectedBy: opts.exportedBy,
@@ -283,17 +346,21 @@ export class CustodyStore {
   ): Promise<CustodyRecord[]> {
     const transferredAt = new Date().toISOString();
     const inputs: CustodyRecordInput[] = [];
+    const rehash = this.rehasher(caseId);
 
     for (const artifactPath of new Set(opts.artifactPaths)) {
-      let sha256: string;
+      let found: Rehash;
       try {
-        sha256 = await hashFile(artifactPath);
+        found = await rehash(artifactPath);
       } catch (err) {
         throw new Error(`cannot record transfer of "${artifactPath}": ${(err as Error).message}`);
       }
+      if ("missing" in found) throw new Error(`cannot record transfer of "${artifactPath}": file not found`);
+      if ("refused" in found)
+        throw new Error(`cannot record transfer of "${artifactPath}": ${found.refused}`);
       inputs.push({
         artifactPath,
-        sha256,
+        sha256: found.sha256,
         caseId,
         event: "transferred",
         collectedBy: opts.transferredBy,
@@ -392,31 +459,17 @@ export class CustodyStore {
 
   async verifyIntegrity(caseId: string): Promise<CustodyMismatch[]> {
     const records = await this.load(caseId);
+    const rehash = this.rehasher(caseId);
     const mismatches: CustodyMismatch[] = [];
     for (const record of records) {
-      let actual: string | null = null;
-      try {
-        actual = await hashFile(record.artifactPath);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          mismatches.push({
-            artifactPath: record.artifactPath,
-            recordedSha256: record.sha256,
-            actualSha256: null,
-            reason: "missing",
-          });
-          continue;
-        }
-        throw err;
-      }
-      if (actual !== record.sha256) {
-        mismatches.push({
-          artifactPath: record.artifactPath,
-          recordedSha256: record.sha256,
-          actualSha256: actual,
-          reason: "hash-mismatch",
-        });
-      }
+      const found = await rehash(record.artifactPath);
+      const base = { artifactPath: record.artifactPath, recordedSha256: record.sha256 };
+      if ("missing" in found) mismatches.push({ ...base, actualSha256: null, reason: "missing" });
+      // No hash for a refused path: it would be the hash of whatever protected file it now names.
+      else if ("refused" in found)
+        mismatches.push({ ...base, actualSha256: null, reason: "refused", detail: found.refused });
+      else if (found.sha256 !== record.sha256)
+        mismatches.push({ ...base, actualSha256: found.sha256, reason: "hash-mismatch" });
     }
     return mismatches;
   }

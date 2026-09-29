@@ -1,21 +1,11 @@
-import {
-  readdir,
-  readFile,
-  writeFile,
-  mkdir,
-  mkdtemp,
-  rename as renamePath,
-  rm,
-  stat,
-  lstat,
-} from "node:fs/promises";
-import { join, dirname, isAbsolute } from "node:path";
+import { readdir, readFile, mkdir, mkdtemp, rm, lstat } from "node:fs/promises";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
 import type { CaseMeta } from "../types.js";
-import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
-import { portableArchivePaths, destinationKey } from "../storage/portableFilename.js";
+import { createZip, type ZipEntry } from "./zipArchive.js";
+import { portableArchivePaths } from "../storage/portableFilename.js";
 import { encryptBuffer, decryptBuffer, readFormatVersion, CURRENT_FORMAT_VERSION } from "./caseEncryption.js";
 import {
   ARCHIVE_MANIFEST_PATH,
@@ -30,6 +20,8 @@ import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
+import { restoreCaseZip, type CaseImportCounts } from "./caseRestore.js";
+import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
 // AES-256-GCM encrypted (via caseEncryption.ts) into a single `.dfircase` file that another
@@ -38,25 +30,8 @@ import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 
 export const MIN_PASSWORD_LENGTH = 8;
 
-// Where an encrypted import extracts before it is published (#420). Dotted, and a level below the
-// cases, so nothing that enumerates the cases root can mistake a half-extracted archive for a case.
-const IMPORT_STAGING_DIRNAME = ".import-staging";
-const IMPORT_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-export class CaseImportConflictError extends Error {
-  constructor(public readonly caseId: string) {
-    super(`case ${caseId} already exists — import under a different case id`);
-    this.name = "CaseImportConflictError";
-  }
-}
-
-export interface CaseImportCounts {
-  forensicEvents: number;
-  findings: number;
-  iocs: number;
-  captures: number;
-  imports: number;
-}
+// The restore half lives in caseRestore.ts (#1828); these stay importable from here.
+export { CaseImportConflictError, isSafeZipEntryPath, type CaseImportCounts } from "./caseRestore.js";
 
 // Windows-illegal filename characters (also unsafe cross-platform): < > : " / \ | ? * and control
 // chars. caseId itself never needs this — isValidCaseId's allowlist already guarantees it's
@@ -361,65 +336,6 @@ async function archiveGeneration(
   return await encryptBuffer(createZip(entries), password);
 }
 
-// Defense-in-depth against a crafted/corrupted archive writing outside the target case
-// directory (zip-slip). The primary defense is that the archive is password-authenticated, but
-// this guard means a malicious or corrupted entry path is rejected before ANY file is written.
-// The colon check also closes an NTFS alternate-data-stream gap: "shot.jpg:hidden.exe" doesn't
-// escape the case directory, but would silently write a hidden stream on Windows without it.
-//
-// It also fixes the archive to ONE path syntax, forward slashes, and rejects the segment spellings
-// Windows silently normalizes. Both exist for the same reason (#426): the duplicate check compares
-// raw path strings, but the write loop resolves them with the host platform's rules, and on Windows
-// several distinct strings resolve to one file. `state/a` and `state\a`, `EVIDENCE.BIN` and
-// `evidence.bin`, `notes` and `notes.` all pass a raw-string comparison and then have the later
-// entry silently overwrite the earlier one — evidence loss with no error, from a crafted archive or
-// from a legitimate one created on a case-sensitive filesystem. A reserved device name (CON, LPT1,
-// NUL — with or without an extension) is worse still: on Windows it does not resolve to a file at
-// all. Every case archive this tool writes uses forward slashes and ordinary names, so nothing
-// legitimate is refused.
-const WINDOWS_RESERVED_SEGMENT = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
-
-export function isSafeZipEntryPath(path: string): boolean {
-  if (!path || isAbsolute(path) || /^[a-zA-Z]:/.test(path) || path.includes(":")) return false;
-  if (path.includes("\\")) return false;
-  return path.split("/").every(
-    (seg) =>
-      seg !== "" &&
-      seg !== "." &&
-      seg !== ".." &&
-      !/[.\s]$/.test(seg) && // Windows strips trailing dots and spaces
-      !/[\x00-\x1f]/.test(seg) && // control characters are not filenames anywhere
-      !WINDOWS_RESERVED_SEGMENT.test(seg),
-  );
-}
-
-function rewriteCaseIdInJson(data: Buffer, targetCaseId: string, indent: number | undefined): Buffer {
-  const parsed = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
-  return Buffer.from(JSON.stringify({ ...parsed, caseId: targetCaseId }, null, indent), "utf8");
-}
-
-function rewriteCaseIdInJsonl(data: Buffer, targetCaseId: string): Buffer {
-  const lines = data
-    .toString("utf8")
-    .split("\n")
-    .filter((l) => l.trim().length > 0);
-  const rewritten = lines.map((line) => {
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    return JSON.stringify({ ...parsed, caseId: targetCaseId });
-  });
-  return Buffer.from(rewritten.length ? rewritten.join("\n") + "\n" : "", "utf8");
-}
-
-// Legacy archive paths whose caseId must be rewritten on import, mapped to the indent they're
-// written back with. investigation.json stays compact because old archives can be near V8's string
-// ceiling. SQLite-backed imports normalize the database's caseId on first StateStore load.
-// case.json is small and CaseStore writes it pretty, so it stays pretty.
-const CASE_ID_JSON_PATHS = new Map<string, number | undefined>([
-  ["case.json", 2],
-  ["state/investigation.json", undefined],
-]);
-const CASE_ID_JSONL_PATHS = new Set(["metadata/captures.jsonl", "metadata/imports.jsonl"]);
-
 function countLines(data: Buffer | undefined): number {
   if (!data) return 0;
   return data
@@ -428,7 +344,7 @@ function countLines(data: Buffer | undefined): number {
     .filter((l) => l.trim().length > 0).length;
 }
 
-export function countsFromEntries(entries: ZipEntry[]): CaseImportCounts {
+function countsFromEntries(entries: ZipEntry[]): CaseImportCounts {
   const invEntry = entries.find((e) => e.path === "state/investigation.json");
   let forensicEvents = 0;
   let findings = 0;
@@ -512,242 +428,42 @@ export async function importEncryptedCase(
   // cannot return undefined past that call — decryptBuffer would already have thrown.
   const formatVersion = readFormatVersion(fileBuffer);
   const zip = await decryptBuffer(fileBuffer, password);
-  const archiveEntries = readZip(zip);
-  const manifestEntry = archiveEntries.find((entry) => entry.path === ARCHIVE_MANIFEST_PATH);
+  // Central directory only: sizes, ratio and structure are checked before anything inflates, and
+  // every entry then streams to the staging folder instead of into memory (#1828).
+  const archiveEntries = listCaseZipEntries(zip);
+  const manifestEntries = archiveEntries.filter((entry) => entry.name === ARCHIVE_MANIFEST_PATH);
+  if (manifestEntries.length > 1) {
+    throw new Error(`not a valid case archive: more than one ${ARCHIVE_MANIFEST_PATH}`);
+  }
+  const manifestEntry = manifestEntries[0]
+    ? { path: ARCHIVE_MANIFEST_PATH, data: readCaseZipEntry(zip, manifestEntries[0]) }
+    : undefined;
   const manifestCounts = countsFromManifest(manifestEntry);
   const manifest = parseArchiveManifest(manifestEntry);
-  const entries = archiveEntries.filter((e) => e.path !== ARCHIVE_MANIFEST_PATH);
+  const files = archiveEntries
+    .filter((entry) => entry.name !== ARCHIVE_MANIFEST_PATH)
+    .map((entry) => ({ path: entry.name, entry }));
 
-  const { meta } = await restoreCaseEntries(store, entries, {
+  const restored = await restoreCaseZip(store, zip, files, {
     targetCaseId: options.targetCaseId,
-    // Integrity after path safety, and both before anything reaches disk. The order is deliberate:
-    // an unsafe path is a question about where bytes would land, and it has to be settled before
-    // the bytes are worth hashing at all.
-    verify: manifest ? (checked) => verifyArchiveManifest(manifest, checked) : undefined,
+    // Integrity after path safety, and before the case is published. The order is deliberate: an
+    // unsafe path is a question about where bytes would land, and it has to be settled before the
+    // bytes are worth hashing at all.
+    verify: manifest ? (digests) => verifyArchiveManifest(manifest, digests) : undefined,
     // The provenance record, kept with the case instead of dropped on the floor (#904). Written
-    // AFTER the entry loop on purpose: a case that was itself imported carries the PREVIOUS
+    // AFTER the entries on purpose: a case that was itself imported carries the PREVIOUS
     // source-manifest.json as an ordinary file, and what belongs on disk afterwards is the manifest
     // of the archive just opened, not the one that travelled inside it. Verbatim bytes, so the file
     // still hashes to what the exporter recorded.
     extraFiles: manifestEntry && manifest ? [{ path: SOURCE_MANIFEST_PATH, data: manifestEntry.data }] : [],
+    countEntities: manifestCounts === null,
   });
-  const counts = manifestCounts ?? countsFromEntries(entries);
   return {
-    meta,
-    counts,
+    meta: restored.meta,
+    counts: manifestCounts ?? restored.counts,
     // Non-null: decryptBuffer above already threw on any container this build cannot read.
     formatVersion: formatVersion!,
     currentFormatVersion: CURRENT_FORMAT_VERSION,
     provenance: manifest ? provenanceOf(manifest) : null,
   };
-}
-
-/**
- * Open a plain (unencrypted) case ZIP for caseZipImport.ts. It lives here, beside the `.dfircase`
- * reader, so the ZIP reader keeps one importer in this domain (see scripts/boundary-violations.json).
- * Uses readZip's own zip-bomb caps. An encrypted entry is refused (readZip demands a password this
- * path never has), and every reader or zlib failure reads as "not a valid case archive" so the route
- * answers 400, not 500.
- */
-export function openPlainCaseZip(buffer: Buffer): ZipEntry[] {
-  try {
-    return readZip(buffer);
-  } catch (err) {
-    throw new Error(`not a valid case archive: ${(err as Error).message}`);
-  }
-}
-
-export interface RestoreCaseEntriesOptions {
-  targetCaseId?: string;
-  /**
-   * Integrity check over the entries. It runs AFTER every path has passed the safety check and
-   * BEFORE anything reaches disk, and it throws to refuse the archive. `sourceCaseId` is the id
-   * the archive's own case.json claims.
-   */
-  verify?: (entries: ZipEntry[], sourceCaseId: string) => void;
-  /** Files generated by the importer, written after the archive's own entries (they win). */
-  extraFiles?: ZipEntry[];
-}
-
-export interface RestoreCaseEntriesResult {
-  meta: CaseMeta;
-  /** The case id the archive's case.json claimed, before any rename. */
-  sourceCaseId: string;
-}
-
-/**
- * Write an opened case archive's entries (paths relative to the case directory) into a NEW case.
- * Shared by the `.dfircase` import above and the plain ZIP import (caseZipImport.ts), so both
- * formats get one path-safety rule, one conflict rule and one atomic publish.
- *
- * Every entry is written back verbatim (byte-for-byte) unless the target case id differs from the
- * archive's own id, in which case the handful of caseId-bearing files are rewritten to keep the
- * imported case internally consistent.
- */
-export async function restoreCaseEntries(
-  store: CaseStore,
-  entries: ZipEntry[],
-  options: RestoreCaseEntriesOptions = {},
-): Promise<RestoreCaseEntriesResult> {
-  const caseJsonEntry = entries.find((e) => e.path === "case.json");
-  if (!caseJsonEntry) throw new Error("not a valid case archive: missing case.json");
-
-  let originalMeta: CaseMeta;
-  try {
-    originalMeta = JSON.parse(caseJsonEntry.data.toString("utf8")) as CaseMeta;
-  } catch {
-    throw new Error("not a valid case archive: corrupt case.json");
-  }
-  if (typeof originalMeta.caseId !== "string" || !originalMeta.caseId) {
-    throw new Error("not a valid case archive: case.json missing caseId");
-  }
-
-  const targetCaseId = (options.targetCaseId ?? originalMeta.caseId).trim();
-  if (!isValidCaseId(targetCaseId)) throw new Error(`invalid target case id "${targetCaseId}"`);
-  if (await store.caseExists(targetCaseId)) throw new CaseImportConflictError(targetCaseId);
-
-  // Everything below this point is validation — nothing touches disk until every entry path
-  // has been checked (zip-slip / NTFS ADS / duplicates) AND every caseId-bearing file that
-  // needs rewriting has been proven to parse. A corrupt archive must fail cleanly here, not
-  // partway through the write loop — a partial write would leave an orphaned case directory
-  // that makes store.caseExists() return true for a case that never actually imported.
-  assertSafeEntryPaths(entries);
-
-  options.verify?.(entries, originalMeta.caseId);
-
-  const rewrittenByPath = rewriteCaseIds(entries, originalMeta.caseId, targetCaseId);
-  await publishCase(store, targetCaseId, entries, rewrittenByPath, options.extraFiles ?? []);
-
-  const meta = await store.getCaseMeta(targetCaseId);
-  if (!meta) throw new Error("import failed: case.json missing after write");
-  return { meta, sourceCaseId: originalMeta.caseId };
-}
-
-function assertSafeEntryPaths(entries: ZipEntry[]): void {
-  const seenPaths = new Map<string, string>();
-  for (const entry of entries) {
-    if (!isSafeZipEntryPath(entry.path)) {
-      throw new Error(`not a valid case archive: unsafe entry path "${entry.path}"`);
-    }
-    // Keyed by the destination the path resolves to, not the raw string, so an alias cannot slip
-    // past and overwrite the file an earlier entry wrote (#426).
-    const key = destinationKey(entry.path);
-    const earlier = seenPaths.get(key);
-    if (earlier === entry.path) {
-      throw new Error(`not a valid case archive: duplicate entry path "${entry.path}"`);
-    }
-    if (earlier !== undefined) {
-      throw new Error(
-        `not a valid case archive: entry path "${entry.path}" resolves to the same file as ` +
-          `"${earlier}" on a case-insensitive filesystem`,
-      );
-    }
-    seenPaths.set(key, entry.path);
-  }
-}
-
-function rewriteCaseIds(
-  entries: ZipEntry[],
-  sourceCaseId: string,
-  targetCaseId: string,
-): Map<string, Buffer> {
-  const rewrittenByPath = new Map<string, Buffer>();
-  if (targetCaseId === sourceCaseId) return rewrittenByPath;
-  for (const entry of entries) {
-    // A plain match: entry paths are forward-slash only by the time they get here, because
-    // isSafeZipEntryPath rejects a backslash outright rather than normalizing one away (#426).
-    try {
-      if (CASE_ID_JSON_PATHS.has(entry.path)) {
-        const indent = CASE_ID_JSON_PATHS.get(entry.path);
-        rewrittenByPath.set(entry.path, rewriteCaseIdInJson(entry.data, targetCaseId, indent));
-      } else if (CASE_ID_JSONL_PATHS.has(entry.path)) {
-        rewrittenByPath.set(entry.path, rewriteCaseIdInJsonl(entry.data, targetCaseId));
-      }
-    } catch {
-      throw new Error(`not a valid case archive: corrupt ${entry.path}`);
-    }
-  }
-  return rewrittenByPath;
-}
-
-async function publishCase(
-  store: CaseStore,
-  targetCaseId: string,
-  entries: ZipEntry[],
-  rewrittenByPath: Map<string, Buffer>,
-  extraFiles: ZipEntry[],
-): Promise<void> {
-  // Extract into a private staging directory and publish it with a single rename (#420).
-  //
-  // The caseExists() check above is not a claim on the id — nothing stopped a second import from
-  // passing the same check and then interleaving its writes into the same destination. The result
-  // was a case that never existed in either archive: case.json from whichever import wrote it
-  // last, evidence files from both. Nothing downstream could detect that, so every analysis,
-  // report and custody record built on it was untrustworthy.
-  //
-  // rename() of a directory onto an existing non-empty directory fails on every platform, which
-  // makes it the exclusive atomic claim the existence check never was: the first import to finish
-  // publishes, and any other aiming at the same id gets a conflict instead of a merge. It also
-  // means a case directory only ever becomes visible complete — a failure part-way through the
-  // write loop used to leave an orphan that made caseExists() true for a case that never imported.
-  const staging = await createImportStaging(store, targetCaseId);
-  try {
-    for (const sub of ["screenshots", "metadata", "state", "reports", "imports"]) {
-      await mkdir(join(staging, sub), { recursive: true });
-    }
-
-    for (const entry of entries) {
-      const data = rewrittenByPath.get(entry.path) ?? entry.data;
-      const target = join(staging, entry.path);
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, data);
-    }
-    for (const extra of extraFiles) {
-      const target = join(staging, extra.path);
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, extra.data);
-    }
-
-    try {
-      await renamePath(staging, join(store.casesRoot, targetCaseId));
-    } catch (err) {
-      // Platforms disagree on the errno for "destination directory is in the way" (ENOTEMPTY,
-      // EEXIST, EPERM on Windows), so ask the filesystem what actually happened rather than
-      // enumerating codes: if the target is a case now, someone else claimed it.
-      if (await store.caseExists(targetCaseId)) throw new CaseImportConflictError(targetCaseId);
-      throw err;
-    }
-  } finally {
-    // No-op after a successful rename; on any failure it is what keeps a half-extracted archive
-    // from surviving as a stale staging directory.
-    await rm(staging, { recursive: true, force: true }).catch(() => {
-      /* best effort */
-    });
-  }
-}
-
-/**
- * A unique, private directory to extract into, on the same filesystem as the destination so the
- * publishing rename is atomic. It lives under a dotted subdirectory of the cases root rather than
- * beside the cases: listCases() only treats a directory holding a readable case.json as a case, and
- * a half-extracted archive holds exactly that.
- *
- * Also sweeps staging directories older than a day. The finally block above removes this run's on
- * every path a process survives; the sweep is for the one it does not (a kill or a power loss
- * mid-extraction), so those cannot accumulate forever. A day is far longer than any import, so it
- * cannot collide with a slow one running concurrently.
- */
-async function createImportStaging(store: CaseStore, targetCaseId: string): Promise<string> {
-  const stagingRoot = join(store.casesRoot, IMPORT_STAGING_DIRNAME);
-  await mkdir(stagingRoot, { recursive: true });
-  const cutoff = Date.now() - IMPORT_STAGING_MAX_AGE_MS;
-  for (const name of await readdir(stagingRoot).catch(() => [])) {
-    const path = join(stagingRoot, name);
-    const info = await stat(path).catch(() => null);
-    if (info && info.mtimeMs < cutoff)
-      await rm(path, { recursive: true, force: true }).catch(() => {
-        /* best effort */
-      });
-  }
-  return mkdtemp(join(stagingRoot, `${targetCaseId}-`));
 }
