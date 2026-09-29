@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readCaseFile } from "../storage/caseFileRead.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { detectImageFormat } from "../ingest/imageFormat.js";
@@ -6,7 +6,12 @@ import type { AnalyzeImage } from "../providers/provider.js";
 
 export function makeImageLoader(store: CaseStore) {
   return async (caseId: string, screenshotFile: string): Promise<AnalyzeImage> => {
-    const bytes = await readFile(join(store.screenshotsDir(caseId), screenshotFile));
+    // One judged handle (#1846): these bytes go to a remote AI provider, so a screenshot name swapped
+    // for a link to another case's file must be refused, not sent.
+    const bytes = await readCaseFile(
+      { casesRoot: store.casesRoot, caseDir: store.caseDir(caseId) },
+      join(store.screenshotsDir(caseId), screenshotFile),
+    );
     // From the BYTES, not the filename. Capture ingest accepts PNG, JPEG and GIF as well as WebP,
     // and this reported image/webp for all of them — a media type a provider can reject outright
     // or quietly mis-decode (#425). Sniffing rather than reading the extension also heals the

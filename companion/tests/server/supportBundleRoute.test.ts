@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -180,6 +180,27 @@ describe("POST /diagnostics/support-bundle", () => {
     const failure = JSON.parse(files.get("imports/failure-1.json")!);
     expect(failure.shape).toBeUndefined();
     expect(failure.shapeUnavailable).toContain("locked");
+  });
+
+  // #1846: the case log and the stored import are case files that leave in the bundle — a name
+  // swapped for a link must not carry another file out.
+  it.skipIf(process.platform === "win32")("leaves out a case log or import swapped for a link", async () => {
+    const app = await setup();
+    const elsewhere = join(await mkdtemp(join(tmpdir(), "dfir-sb-away-")), "other.log");
+    await writeFile(elsewhere, "linked-file-marker\n");
+    const caseLog = join(store.caseDir(CASE_ID), "logs", "session-test.log");
+    await rm(caseLog, { force: true });
+    await symlink(elsewhere, caseLog);
+    const stored = join(store.importsDir(CASE_ID), "0001_seedhunt.json");
+    await rm(stored, { force: true });
+    await symlink(elsewhere, stored);
+    const res = await bundle(app, { caseId: CASE_ID, includeCaseLog: true });
+    expect(res.status).toBe(200);
+    const zip = (res.body as Buffer).toString("latin1");
+    expect(zip).not.toContain("linked-file-marker");
+    const files = entries(res.body as Buffer);
+    expect(files.has("logs/case.log")).toBe(false);
+    expect(files.get("README.txt")).toMatch(/logs\/case\.log: not included/);
   });
 
   it("rejects an invalid case id", async () => {

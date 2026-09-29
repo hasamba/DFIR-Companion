@@ -19,7 +19,7 @@ import { EXPORT_STAGING_DIRNAME } from "./caseArchive.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
-import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
+import { CaseFileRefusedError, readCaseFile, withPinnedCaseFile } from "../storage/caseFileRead.js";
 import { restoreCaseZip, type CaseImportCounts, type RestoreCaseZipOptions } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
 
@@ -77,6 +77,18 @@ export function attachmentContentDisposition(filename: string): string {
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
   );
   return `${header}; filename*=UTF-8''${encoded}`;
+}
+
+// A case file the guard refused, named by its case-relative path. Anything else is rethrown as is.
+function refusedAs(rel: string): (err: unknown) => never {
+  return (err: unknown) => {
+    if (err instanceof CaseFileRefusedError) {
+      throw new Error(
+        `${err.kind} detected in case directory at "${rel}" — refusing to include in export (security)`,
+      );
+    }
+    throw err;
+  };
 }
 
 /**
@@ -218,7 +230,15 @@ async function buildCaseArchive(
   await mkdir(stagingRoot, { recursive: true });
   const staging = await mkdtemp(join(stagingRoot, `${caseId}-`));
   try {
-    return await archiveGeneration(caseDir, caseId, password, relPaths, extraEntries, staging);
+    return await archiveGeneration(
+      store.casesRoot,
+      caseDir,
+      caseId,
+      password,
+      relPaths,
+      extraEntries,
+      staging,
+    );
   } finally {
     // The snapshot is a full copy of the case database, so it never outlives the request that
     // needed it — including when the export throws.
@@ -229,6 +249,7 @@ async function buildCaseArchive(
 }
 
 async function archiveGeneration(
+  casesRoot: string,
   caseDir: string,
   caseId: string,
   password: string,
@@ -242,11 +263,12 @@ async function archiveGeneration(
   const liveDbPath = join(caseDir, "state", INVESTIGATION_DB_FILENAME);
   const snapshotPath = join(staging, INVESTIGATION_DB_FILENAME);
   const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
-  const snapshotted = await caseSqliteWorker.request<boolean>({
-    op: "backupDatabase",
-    dbPath: liveDbPath,
-    targetPath: snapshotPath,
-  });
+  const scope = { casesRoot, caseDir };
+  // The worker opens the live database by name, so the name is judged before and after (#1846): a
+  // link to another case's database, or a swap during the snapshot, fails the export.
+  const snapshotted = await withPinnedCaseFile(scope, liveDbPath, () =>
+    caseSqliteWorker.request<boolean>({ op: "backupDatabase", dbPath: liveDbPath, targetPath: snapshotPath }),
+  ).catch(refusedAs(dbRel));
 
   const entries: ZipEntry[] = [];
   // `originalPath` appears only on an entry whose case-directory name could not be an archive
@@ -279,16 +301,12 @@ async function archiveGeneration(
       continue;
     }
     const fullPath = join(caseDir, rel);
-    // The link check and the read are ONE operation on ONE descriptor (see storage/noFollowRead.ts).
-    // Re-checking the path and then reading the path left a window in which a process controlling
-    // the case directory could swap the approved file for a symlink and have the read follow it —
-    // sealing an arbitrary host-readable file into the encrypted export.
-    const data = await readFileNoFollow(fullPath).catch((err: unknown) => {
-      if (err instanceof LinkGuardError) {
-        throw new Error(
-          `${err.kind} detected in case directory at "${rel}" — refusing to include in export (security)`,
-        );
-      }
+    // The check and the read are ONE operation on ONE descriptor (storage/caseFileRead.ts). Reading
+    // the path after checking it let a process controlling the case directory swap the approved file
+    // — or a folder above it (#1846) — for a link and seal another file into the encrypted export.
+    // The same open refuses a FIFO instead of hanging on it.
+    const data = await readCaseFile(scope, fullPath).catch((err: unknown) => {
+      refusedAs(rel)(err);
       return rethrowVanished(rel)(err);
     });
     entries.push({ path: recordFile(rel, data), data });

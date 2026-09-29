@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Case files that leave the host are read from the file that was checked** — Archive to ZIP, the .dfircase export, evidence and report downloads, the redacted package, the support bundle and AI screenshot analysis refuse a file or folder swapped for a link, a hard link or a FIFO (closes #1846)
 - **Stale anonymization saves refused** — a second window's Save can no longer erase a value just hidden from the AI or turn masking off under it; the modal reloads with your unsaved edits kept (closes #1839)
 - **Hide reaches AI calls already under way** — an AI call masks again when a value is hidden while it is being prepared, and a Jev review stops sending (closes #1840)
 - **Reused case id starts clean** — creating a deleted case's id clears its stale roles, and is refused while its old jobs still stop or a half-deleted folder remains (closes #1831)

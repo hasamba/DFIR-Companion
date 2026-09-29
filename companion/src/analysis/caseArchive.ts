@@ -6,6 +6,12 @@ import { portableZipEntryPath, portableArchivePaths } from "../storage/portableF
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+import {
+  CaseFileRefusedError,
+  readCaseFile,
+  withPinnedCaseFile,
+  type CaseScope,
+} from "../storage/caseFileRead.js";
 
 // Where an archive stages the database snapshot it packages instead of the live file. Dotted and a
 // level above the cases for the same reason import staging is: nothing that enumerates the cases
@@ -230,7 +236,10 @@ export async function archiveCase(
   const archivePath = join(casesRoot, zipArchiveFilename(caseId, caseName));
 
   const scan = deps.scanFiles ?? defaultScanFiles;
-  const read = deps.readFile ?? (async (p: string) => readFile(p));
+  // Every case file is read from ONE judged handle (#1846): a name swapped for a link — at the file or
+  // at a folder above it — or a FIFO fails the archive instead of shipping another case's file.
+  const scope: CaseScope = { casesRoot, caseDir };
+  const read = deps.readFile ?? ((p: string) => readCaseFile(scope, p));
   // The default write is ATOMIC (write to a unique temp file then rename over the target), so a
   // crash (power loss, OOM kill, disk full mid-write) never leaves a partially-written ZIP as the
   // only copy of a case. Plain fs.writeFile opens with O_TRUNC and streams in chunks; a crash
@@ -263,12 +272,29 @@ export async function archiveCase(
   // .sqlite file alone would be missing them. The archive carries a VACUUM INTO snapshot instead —
   // one consistent standalone file — exactly as the encrypted export does.
   const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
-  const snapshot = relPaths.includes(dbRel) ? await snapshotDatabase(casesRoot, caseId, caseDir) : null;
+  const snapshot = relPaths.includes(dbRel)
+    ? await withPinnedCaseFile(scope, join(caseDir, dbRel), () =>
+        snapshotDatabase(casesRoot, caseId, caseDir),
+      ).catch(refusedAs(dbRel))
+    : null;
   try {
     return await packageArchive(caseId, caseDir, archivePath, relPaths, read, write, snapshot, dbRel);
   } finally {
     if (snapshot) await rm(snapshot.staging, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+// A refusal names the case-relative file and fails the whole archive: an archive that silently drops
+// a file is the one outcome it must never produce, and one that ships another case's file is worse.
+function refusedAs(rel: string): (err: unknown) => never {
+  return (err: unknown) => {
+    if (err instanceof CaseFileRefusedError) {
+      throw new Error(
+        `"${rel}": ${err.kind} detected in case directory — refusing to include in archive (security)`,
+      );
+    }
+    throw err;
+  };
 }
 
 interface DatabaseSnapshot {
@@ -340,7 +366,10 @@ async function packageArchive(
   for (const rel of relPaths) {
     // The READ keeps the real on-disk name. Only the name written into the archive is rewritten.
     // The database is read from its snapshot, which this process just wrote into its own staging.
-    const data = snapshot && rel === dbRel ? await readFile(snapshot.path) : await read(join(caseDir, rel));
+    const data =
+      snapshot && rel === dbRel
+        ? await readFile(snapshot.path)
+        : await read(join(caseDir, rel)).catch(refusedAs(rel));
     const sha256 = createHash("sha256").update(data).digest("hex");
     const archivedRel = archivePathByRel.get(rel) ?? rel;
     zipFiles.push({ name: `${entryPrefix}/${archivedRel}`, data });
