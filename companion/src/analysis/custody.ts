@@ -276,8 +276,10 @@ export class CustodyStore {
         records.push(record);
       }
 
-      await mkdir(this.cases.metadataDir(caseId), { recursive: true });
-      await appendFile(this.path(caseId), pending.join("\n") + "\n", "utf8");
+      await this.cases.withCaseWrite(this.path(caseId), async () => {
+        await mkdir(this.cases.metadataDir(caseId), { recursive: true }); // refused for a deleted case (#1855)
+        await appendFile(this.path(caseId), pending.join("\n") + "\n", "utf8");
+      });
       // Callers get back the absolute form — the relative one never leaves this class.
       return records;
     });

@@ -13,6 +13,7 @@ import {
   type ToolRunProvenance,
 } from "./toolProvenance.js";
 import { mapStagedPath, stageToolInput } from "./toolInput.js";
+import { withCaseWrite } from "../../storage/caseIncarnation.js";
 
 // Orchestrates "run the analyst's tool against a raw file on disk → hand its TEXT output to the existing
 // importer". Pure of any server/HTTP concern; the ToolRunner is injected so tests never spawn. Security
@@ -87,7 +88,8 @@ export async function runToolAgainstFile(opts: {
     );
   }
 
-  await mkdir(workDir, { recursive: true });
+  // Refused instead of recreating a deleted case's folder (#1855); runs below live in unique temp dirs.
+  await withCaseWrite(workDir, () => mkdir(workDir, { recursive: true }));
   const runDir = await createStagingDir(workDir, "run-");
   try {
     const staged = await stageToolInput({

@@ -1,4 +1,4 @@
-import { readFile, unlink, mkdir } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
@@ -306,7 +306,7 @@ export class ReportVersionStore {
         ...(input.template ? { template: input.template } : {}),
       };
 
-      await mkdir(this.dir(caseId), { recursive: true });
+      await this.cases.mkdirInCase(this.dir(caseId));
       await atomicWrite(this.recordPath(caseId, id), JSON.stringify(record));
       const updated = [summary, ...existing];
       const cap = maxVersions();

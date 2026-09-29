@@ -1,5 +1,6 @@
 import { writeFile, rename, unlink } from "node:fs/promises";
 import { atomicTempPath } from "../storage/atomicWrite.js";
+import { withCaseWrite } from "../storage/caseIncarnation.js";
 
 // A report is not one file, it is eight — markdown, HTML, four CSVs, the state export, and the
 // analysis-run provenance record. They were written one after another, straight over the previous
@@ -34,7 +35,9 @@ export class ReportGeneration {
   /** Write one artifact into staging. Nothing is visible at its real path until publish(). */
   async stage(target: string, contents: string): Promise<void> {
     const tmp = atomicTempPath(target);
-    await writeFile(tmp, contents, "utf8");
+    // Staging and publishing are admitted like any case write (#1855): a deleted or replaced case's
+    // late report is refused instead of landing in the new case's reports/.
+    await withCaseWrite(target, () => writeFile(tmp, contents, "utf8"));
     this.staged.push({ tmp, target });
   }
 
@@ -53,7 +56,7 @@ export class ReportGeneration {
    */
   async publish(): Promise<void> {
     for (const { tmp, target } of this.staged) {
-      await rename(tmp, target);
+      await withCaseWrite(target, () => rename(tmp, target));
     }
     this.published = true;
     this.staged.length = 0;

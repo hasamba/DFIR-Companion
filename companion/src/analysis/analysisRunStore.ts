@@ -224,44 +224,48 @@ export class AnalysisRunStore {
         tip.sequence + 1,
         tip.manifestHash,
       );
-      await mkdir(this.dir(caseId), { recursive: true });
-      // Ordering matters: the marker goes down first, so any crash that leaves the
-      // head behind the manifests also leaves the marker, and the next append knows
-      // to reconcile instead of trusting a stale tip.
-      await atomicWrite(
-        this.pendingPath(caseId),
-        JSON.stringify({ id: manifest.id } satisfies AnalysisRunPendingAppend),
-      );
-      let handle;
-      try {
-        handle = await open(this.path(caseId, manifest.id), "wx");
-        await handle.writeFile(JSON.stringify(manifest, null, 2), "utf8");
-        await handle.sync();
-      } catch (err) {
-        // The marker is deliberately LEFT in place on failure. It may predate this attempt — a
-        // retry of an id whose first attempt wrote the manifest but died before pinning the head
-        // hits EEXIST here, and the marker is then the only remaining signal that the head is
-        // stale. Clearing it would let the next append trust that head and reuse a sequence that
-        // is already on disk, forking the chain permanently. A stale marker only costs the next
-        // append one rescan, and the next successful append clears it.
-        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error(`analysis run ${manifest.id} already exists`);
+      // One admitted write from the marker to its removal (#1855): a delete waits for all of it, and
+      // a deleted or replaced case's late run record is refused before anything is created.
+      return this.cases.withCaseWrite(this.dir(caseId), async () => {
+        await mkdir(this.dir(caseId), { recursive: true });
+        // Ordering matters: the marker goes down first, so any crash that leaves the
+        // head behind the manifests also leaves the marker, and the next append knows
+        // to reconcile instead of trusting a stale tip.
+        await atomicWrite(
+          this.pendingPath(caseId),
+          JSON.stringify({ id: manifest.id } satisfies AnalysisRunPendingAppend),
+        );
+        let handle;
+        try {
+          handle = await open(this.path(caseId, manifest.id), "wx");
+          await handle.writeFile(JSON.stringify(manifest, null, 2), "utf8");
+          await handle.sync();
+        } catch (err) {
+          // The marker is deliberately LEFT in place on failure. It may predate this attempt — a
+          // retry of an id whose first attempt wrote the manifest but died before pinning the head
+          // hits EEXIST here, and the marker is then the only remaining signal that the head is
+          // stale. Clearing it would let the next append trust that head and reuse a sequence that
+          // is already on disk, forking the chain permanently. A stale marker only costs the next
+          // append one rescan, and the next successful append clears it.
+          if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new Error(`analysis run ${manifest.id} already exists`);
+          }
+          throw err;
+        } finally {
+          await handle?.close();
         }
-        throw err;
-      } finally {
-        await handle?.close();
-      }
-      await atomicWrite(
-        this.headPath(caseId),
-        JSON.stringify({
-          schemaVersion: ANALYSIS_RUN_SCHEMA_VERSION,
-          caseId,
-          sequence: manifest.sequence,
-          manifestHash: manifest.manifestHash,
-        } satisfies AnalysisRunHead),
-      );
-      await rm(this.pendingPath(caseId), { force: true });
-      return manifest;
+        await atomicWrite(
+          this.headPath(caseId),
+          JSON.stringify({
+            schemaVersion: ANALYSIS_RUN_SCHEMA_VERSION,
+            caseId,
+            sequence: manifest.sequence,
+            manifestHash: manifest.manifestHash,
+          } satisfies AnalysisRunHead),
+        );
+        await rm(this.pendingPath(caseId), { force: true });
+        return manifest;
+      });
     });
   }
 

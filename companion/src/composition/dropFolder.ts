@@ -64,6 +64,7 @@ import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
+import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
 export function dropDirOf(store: CaseStore, caseId: string): string {
@@ -187,18 +188,21 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   // PENDING line every poll — only once when first seen pending, cleared once it resolves.
   const pendingLogged = new Map<string, Set<string>>();
 
-  async function ensureDropFolders(caseId: string): Promise<void> {
+  // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
+  function ensureDropFolders(caseId: string): Promise<void> {
     const dropDir = dropDirOf(store, caseId);
-    await mkdir(join(dropDir, DROP_PROCESSED), { recursive: true });
-    await mkdir(join(dropDir, DROP_FAILED), { recursive: true });
-    const readme = join(dropDir, DROP_README);
-    try {
-      await stat(readme);
-    } catch {
-      await writeFile(readme, DROP_README_TEXT, "utf8").catch(() => {
-        /* best-effort */
-      });
-    }
+    return store.withCaseWrite(dropDir, async () => {
+      await mkdir(join(dropDir, DROP_PROCESSED), { recursive: true });
+      await mkdir(join(dropDir, DROP_FAILED), { recursive: true });
+      const readme = join(dropDir, DROP_README);
+      try {
+        await stat(readme);
+      } catch {
+        await writeFile(readme, DROP_README_TEXT, "utf8").catch(() => {
+          /* best-effort */
+        });
+      }
+    });
   }
 
   // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
@@ -251,7 +255,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     return candidate;
   }
 
-  async function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+  // A move is one admitted write (#1855): refused for a deleted or replaced case, never a new folder.
+  function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+    return store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok));
+  }
+
+  async function moveDropFileAdmitted(dropDir: string, relpath: string, ok: boolean): Promise<void> {
     // FIRST, before the mkdir below: this is the one function that renames a file, and its relpath
     // is not only the walk's — run-pending feeds it from state/drop-status.json, which an imported
     // archive restores verbatim (#919). The schema drops an escaping entry at load; this is the
@@ -665,7 +674,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   let dropTimer: NodeJS.Timeout | null = null;
   async function pollDropFolders(): Promise<void> {
     try {
-      for (const c of await store.listCases()) await scanCaseDrops(c.caseId);
+      // #1855: each case's sweep is work of the incarnation just listed, not of whichever exists later.
+      for (const c of await store.listCases())
+        await runInCaseScope(store.casesRoot, c.caseId, () => scanCaseDrops(c.caseId), generationOf(c));
     } catch (e) {
       logLine(`[drop] poll error: ${(e as Error).message}`);
     } finally {

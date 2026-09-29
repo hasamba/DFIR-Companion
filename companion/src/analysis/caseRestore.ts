@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import type { CaseMeta } from "../types.js";
 import { destinationKey } from "../storage/portableFilename.js";
+import { newCaseGeneration } from "../storage/caseIncarnation.js";
 import {
   CASE_ZIP_MAX_CONTROL_BYTES,
   CASE_ZIP_MAX_TOTAL_BYTES,
@@ -202,6 +203,7 @@ export async function restoreCaseZip(
       await writeFile(target, extra.data);
     }
     if (options.countEntities !== false) counts = await countsFromStaging(staging);
+    await stampFreshGeneration(join(staging, "case.json"));
     await options.beforePublish?.(targetCaseId);
     await publish(store, staging, targetCaseId);
   } finally {
@@ -216,6 +218,16 @@ export async function restoreCaseZip(
   const meta = await store.getCaseMeta(targetCaseId);
   if (!meta) throw new Error("import failed: case.json missing after write");
   return { meta, sourceCaseId, counts };
+}
+
+/**
+ * An imported case is a new incarnation of its id (#1855), whatever generation the archive carried:
+ * an export of a deleted case must not hand that case's late work a key to the new one. The last
+ * change to the staged case.json, right before the publish.
+ */
+async function stampFreshGeneration(caseJsonPath: string): Promise<void> {
+  const meta = JSON.parse(await readFile(caseJsonPath, "utf8")) as CaseMeta;
+  await writeFile(caseJsonPath, JSON.stringify({ ...meta, generation: newCaseGeneration() }, null, 2));
 }
 
 /** The staged case's running size, so a caseId rewrite or an extra file cannot push it past the cap. */

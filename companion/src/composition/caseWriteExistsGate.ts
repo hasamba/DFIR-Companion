@@ -38,12 +38,14 @@
  * for the limiter to protect.
  *
  * This is a check, not a lock: a case deleted between the check and a handler's write can still
- * race. Closing that needs the store to refuse, not the router.
+ * race. The store closes that: this gate also puts the request in the case's incarnation scope
+ * (#1855), and the guarded writes refuse once that incarnation is gone.
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
 import { isNonCasePath } from "../auth/policy.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 /** Sub-paths of /cases/:id that keep their own ordering. Compared lowercased, trailing slash off. */
@@ -71,8 +73,13 @@ export function mountCaseWriteExistsGate(app: Express, store: CaseStore): void {
     (caseId) => `case ${caseId} does not exist — create it in the dashboard first`,
   );
   app.use("/cases/:id", function caseWriteExistsGate(req: Request, res: Response, next: NextFunction) {
-    if (READ_METHODS.has(req.method)) return next();
-    if (bypassesCaseWriteExistsGate(req.baseUrl + req.path)) return next();
-    return exists(req, res, next);
+    // #1855: the whole request — its writes, the jobs it registers, the tails it kicks — runs as
+    // work of the case incarnation that exists NOW. Captured synchronously, before the exists
+    // check's await, so a delete + re-create in between cannot hand this request the new case.
+    return runInCaseScope(store.casesRoot, String(req.params.id), () => {
+      if (READ_METHODS.has(req.method)) return next();
+      if (bypassesCaseWriteExistsGate(req.baseUrl + req.path)) return next();
+      return exists(req, res, next);
+    });
   });
 }

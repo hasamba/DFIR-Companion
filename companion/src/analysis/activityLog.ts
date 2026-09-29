@@ -87,8 +87,12 @@ export class ActivityLogStore {
       ...(input.targetId ? { targetId: input.targetId } : {}),
       outcome: input.outcome ?? "success",
     };
-    await mkdir(this.cases.metadataDir(caseId), { recursive: true });
-    await appendFile(this.path(caseId), JSON.stringify(entry) + "\n", "utf8");
+    // One admitted write (#1855): a deleted case's late entry recreates nothing and never reaches a
+    // new case that reuses the id.
+    await this.cases.withCaseWrite(this.path(caseId), async () => {
+      await mkdir(this.cases.metadataDir(caseId), { recursive: true });
+      await appendFile(this.path(caseId), JSON.stringify(entry) + "\n", "utf8");
+    });
     return entry;
   }
 

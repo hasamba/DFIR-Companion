@@ -76,9 +76,9 @@ export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
       const seedId = caseId ?? DEMO_CASE_ID_DEFAULT;
       if (options.jobManager?.isStopping(seedId))
         return res.status(409).json({ error: stoppingMessage(seedId) });
-      const result = await store.withSeedSlot(seedId, async (isNew) => {
+      const result = await store.withSeedSlot(seedId, async (isNew, generation) => {
         if (isNew) options.teamAuth?.store.deleteCaseAccess(seedId, requestAuthentication(req)?.identity);
-        return seedDemoCase(store.casesRoot, { caseId, force });
+        return seedDemoCase(store.casesRoot, { caseId, force, generation });
       });
       options.teamAuth?.grantCreator(req, result.caseId);
       return res.status(201).json(result);

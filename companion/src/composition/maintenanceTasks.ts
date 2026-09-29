@@ -22,7 +22,7 @@ import { milestoneEvent } from "../analysis/notifications.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import type { AuditExporter } from "../integrations/audit/auditExporter.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
-import { seedDemoCase } from "../analysis/seedDemoCase.js";
+import { DEMO_CASE_ID_DEFAULT, seedDemoCase } from "../analysis/seedDemoCase.js";
 import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateCheck.js";
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
@@ -34,6 +34,7 @@ import {
   SHARED_DELIVERY_DIRNAME,
   sweepStaleStaging,
 } from "../storage/exportStaging.js";
+import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 
 /**
  * Delay before the FIRST evidence-integrity sweep after boot. Long enough to stay out of the startup
@@ -134,7 +135,9 @@ export function startMaintenanceTasks({
         const lastAt = lastScheduledBackupAt.get(c.caseId) ?? 0;
         if (mtime > lastAt) {
           try {
-            const { prune } = await backupManager.createBackup(c.caseId, "scheduled");
+            // #1855: the backup is work of the incarnation just listed — refused if it is gone.
+            const backup = () => backupManager.createBackup(c.caseId, "scheduled");
+            const { prune } = await runInCaseScope(store.casesRoot, c.caseId, backup, generationOf(c));
             lastScheduledBackupAt.set(c.caseId, Date.now());
             // The byte cap holds everything it is allowed to delete; when the survivors are all
             // exempt (newest backup, newest pre-synthesis) it cannot be met. Say so rather than
@@ -252,7 +255,11 @@ export function startPostListenTasks({
   if (demoMode) {
     const resetHours = Math.max(1, Number(process.env.DFIR_DEMO_RESET_HOURS) || 1);
     const seedDemo = (): void => {
-      void seedDemoCase(store.casesRoot, { force: true })
+      // Through the seed slot (#1855): the reset is a new incarnation, and old work is shut out.
+      const reseed = (_isNew: boolean, generation: string) =>
+        seedDemoCase(store.casesRoot, { force: true, generation });
+      void store
+        .withSeedSlot(DEMO_CASE_ID_DEFAULT, reseed)
         .then((r) =>
           logLine(
             `[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`,

@@ -79,12 +79,11 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
           req.params.id,
           instanceSecret,
         );
-        await mkdir(store.reportsDir(req.params.id), { recursive: true });
-        await writeFile(
-          join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME),
-          JSON.stringify(manifest, null, 2),
-          "utf8",
-        );
+        const manifestPath = join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME);
+        await store.withCaseWrite(manifestPath, async () => {
+          await mkdir(store.reportsDir(req.params.id), { recursive: true });
+          await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+        });
       }
       dispatchNotify(
         milestoneEvent(

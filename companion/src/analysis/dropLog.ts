@@ -6,6 +6,7 @@
 
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
+import { withCaseWrite } from "../storage/caseIncarnation.js";
 
 /** The log file's basename inside `drop/`. Also added to dropScan.ts's IGNORED_BASENAMES. */
 export const DROP_LOG_FILE = "drop-log.txt";
@@ -46,7 +47,9 @@ export function formatDropLogLines(entries: readonly DropLogEntry[], at: string)
 /** Append pre-formatted lines to drop/drop-log.txt, creating the file if it doesn't exist yet. */
 export async function appendDropLog(dropDir: string, lines: readonly string[]): Promise<void> {
   if (lines.length === 0) return;
-  await appendFile(join(dropDir, DROP_LOG_FILE), lines.join("\n") + "\n", "utf8");
+  const path = join(dropDir, DROP_LOG_FILE);
+  // Refused for a deleted or replaced case (#1855): a late log line creates nothing.
+  await withCaseWrite(path, () => appendFile(path, lines.join("\n") + "\n", "utf8"));
 }
 
 /** Given one sweep's outcomes and the relpaths already logged as PENDING for this case, returns the

@@ -40,8 +40,11 @@ export async function verifyCasePassword(password: string, stored: CasePasswordH
 /** Strip the password hash off a CaseMeta before it ever reaches a JSON response — the
  * salt/hash must never leave the server. Callers get a `hasPassword` flag instead. Use
  * this on EVERY route that serializes a CaseMeta (list, create, status change, etc). */
-export function sanitizeCaseMeta(meta: CaseMeta): Omit<CaseMeta, "password"> & { hasPassword: boolean } {
-  const { password, ...rest } = meta;
+export function sanitizeCaseMeta(
+  meta: CaseMeta,
+): Omit<CaseMeta, "password" | "generation"> & { hasPassword: boolean } {
+  // The incarnation id (#1855) is internal bookkeeping for late-write checks; no client needs it.
+  const { password, generation: _generation, ...rest } = meta;
   return { ...rest, hasPassword: Boolean(password) };
 }
 
