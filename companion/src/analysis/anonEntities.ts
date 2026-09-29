@@ -21,6 +21,9 @@ const VALID: readonly AnonTokenCategory[] = [
   "OTHER",
 ];
 
+// The most custom entities a case keeps. sanitizeCustomEntities drops everything past it.
+export const MAX_CUSTOM_ENTITIES = 500;
+
 // Sanitize a raw entity list: trim, drop blanks, coerce unknown categories to OTHER, dedupe by
 // value (case-insensitive, first wins), cap the count. Pure — safe to run on stored OR posted data.
 export function sanitizeCustomEntities(raw: unknown): CustomEntity[] {
@@ -39,7 +42,7 @@ export function sanitizeCustomEntities(raw: unknown): CustomEntity[] {
       ? (rawCat as AnonTokenCategory)
       : "OTHER";
     out.push({ value, category });
-    if (out.length >= 500) break;
+    if (out.length >= MAX_CUSTOM_ENTITIES) break;
   }
   return out;
 }

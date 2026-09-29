@@ -15,6 +15,8 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { LoggerImpl, createConsoleLogger } from "../../src/logging/logger.js";
 import { createApp, setServerLogger } from "../../src/server.js";
 import { awaitActivityEntries } from "../helpers/activityLog.js";
+import { createAnonymizer, type AnonPolicy, type CustomEntity } from "../../src/analysis/anonymize.js";
+import { MAX_CUSTOM_ENTITIES } from "../../src/analysis/anonEntities.js";
 
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
@@ -186,6 +188,132 @@ describe("presidio approval routes", () => {
     const entries = await awaitActivityEntries(app, "c1", "presidio-suppress");
     expect(entries).toHaveLength(1);
     expect(entries[0].detail).not.toContain("Jane Doe");
+  });
+});
+
+// #1822: "Leave visible" must never undo "Hide from AI". The stricter choice wins in every order:
+// two tabs, the bulk "Leave all visible", concurrent requests, a stale pending list.
+describe("presidio decisions: the stricter choice wins (#1822)", () => {
+  const JANE: CustomEntity = { value: "Jane Doe", category: "PERSON" };
+  const TOOL: CustomEntity = { value: "Suricata", category: "PERSON" };
+  const approve = () => request(app).post("/cases/c1/presidio-pending/approve").send(JANE);
+  const suppress = (value = "Jane Doe") =>
+    request(app).post("/cases/c1/presidio-pending/suppress").send({ value });
+
+  const POLICY: AnonPolicy = {
+    enabled: true,
+    redactSecrets: false,
+    maskPublicIps: true,
+    categories: {
+      IP: false,
+      EMAIL: false,
+      USER: false,
+      HOST: false,
+      DOMAIN: false,
+      PATH: false,
+      CMD: false,
+      REG: false,
+      CARD: false,
+      PHONE: false,
+      NATID: false,
+    },
+  };
+  /** What the AI would see, built from the persisted stores the pipeline reads. */
+  async function wireText(): Promise<string> {
+    const disc = await discoveredStore.load("c1");
+    const known = {
+      hosts: [],
+      accounts: [],
+      internalDomains: [],
+      custom: [...(await customStore.load("c1")), ...disc.discovered],
+      suppressed: disc.suppressed,
+    };
+    return createAnonymizer(POLICY, known).apply("logon by Jane Doe");
+  }
+  async function expectHidden(): Promise<void> {
+    expect(await customStore.load("c1")).toEqual([JANE]);
+    expect((await discoveredStore.load("c1")).suppressed).not.toContain("jane doe");
+    expect(await wireText()).not.toContain("Jane Doe");
+  }
+
+  it("Hide then Leave visible (stale tab): Leave visible is refused with 409", async () => {
+    expect((await approve()).status).toBe(200);
+    const res = await suppress();
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "presidio_not_pending", reason: "not_pending", pending: [] });
+    await expectHidden();
+  });
+
+  it("Leave visible then Hide: Hide lifts the veto", async () => {
+    expect((await suppress()).status).toBe(200);
+    expect(await wireText()).toContain("Jane Doe"); // left visible, as asked
+    expect((await approve()).status).toBe(200);
+    await expectHidden();
+  });
+
+  it("refuses Leave visible for a value that is pending again but already hidden", async () => {
+    // A pipeline run that read the lists before the Hide landed writes the value back into pending.
+    await approve();
+    await pendingStore.save("c1", [JANE]);
+    const res = await suppress();
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "presidio_not_pending", reason: "already_hidden" });
+    expect(res.body.pending).toEqual([JANE]);
+    await expectHidden();
+  });
+
+  it("matches the pending value case-insensitively", async () => {
+    await approve();
+    expect((await suppress("JANE DOE")).status).toBe(409);
+    await expectHidden();
+  });
+
+  it("a refused Leave visible writes no activity entry and leaves the pending list alone", async () => {
+    await pendingStore.save("c1", [JANE, TOOL]);
+    await customStore.save("c1", [JANE]);
+    expect((await suppress()).status).toBe(409);
+    expect(await pendingStore.load("c1")).toEqual([JANE, TOOL]);
+    const log = await request(app).get("/cases/c1/activity-log");
+    expect((log.body as { action: string }[]).filter((e) => e.action === "presidio-suppress")).toEqual([]);
+    expect(loggedLines.some((l) => l.includes("Jane Doe"))).toBe(false);
+  });
+
+  it("bulk Leave visible skips a hidden value and still leaves the rest visible", async () => {
+    await pendingStore.save("c1", [TOOL, JANE]);
+    await approve(); // another tab hides Jane Doe while the bulk run is going
+    const results = [await suppress("Suricata"), await suppress("Jane Doe")];
+    expect(results.map((r) => r.status)).toEqual([200, 409]);
+    expect((await discoveredStore.load("c1")).suppressed).toEqual(["suricata"]);
+    expect(await pendingStore.load("c1")).toEqual([]);
+    await expectHidden();
+  });
+
+  it.each([
+    ["Hide first", () => [approve(), suppress()]],
+    ["Leave visible first", () => [suppress(), approve()]],
+  ])("two concurrent requests (%s) always end hidden", async (_label, fire) => {
+    for (let i = 0; i < 5; i++) {
+      await customStore.save("c1", []);
+      await pendingStore.save("c1", [JANE]);
+      await discoveredStore.unsuppress("c1", "Jane Doe");
+      const res = await Promise.all(fire().map((r) => r.then((x) => x)));
+      expect(res.every((r) => r.status === 200 || r.status === 409)).toBe(true);
+      await expectHidden();
+      expect(await pendingStore.load("c1")).toEqual([]);
+    }
+  });
+
+  it("refuses Hide with 409 when the custom list is full, and keeps the value pending", async () => {
+    const full: CustomEntity[] = Array.from({ length: MAX_CUSTOM_ENTITIES }, (_, i) => ({
+      value: `entity-${i}`,
+      category: "OTHER",
+    }));
+    await customStore.save("c1", full);
+    const res = await approve();
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "presidio_custom_list_full", pending: [JANE] });
+    expect(await pendingStore.load("c1")).toEqual([JANE]);
+    expect((await customStore.load("c1")).some((e) => e.value === "Jane Doe")).toBe(false);
   });
 });
 

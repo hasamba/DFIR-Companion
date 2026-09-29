@@ -6,6 +6,7 @@ import { registerAskCaseRoute } from "./askCase.js";
 import { registerSecondOpinionRoutes } from "./secondOpinionRoutes.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { withNonce } from "../http/securityHeaders.js";
+import { markAiBudgetUnspent } from "../http/rateLimiter.js";
 import {
   defaultReportTemplate,
   isReportSectionEnabled,
@@ -212,6 +213,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // #1676: an empty forensic timeline stops synthesize() before any model call. Say so — never
       // "synthesis ran", which told the analyst a run happened when none did.
       const skipMessage = skipped ? "nothing to synthesize — the forensic timeline is empty" : undefined;
+      if (skipped) markAiBudgetUnspent(res); // no model call, so no AI-budget slot spent (#1825)
       // Best-effort and in order: one line per kept finding whose ATT&CK tags moved (#1684), then
       // the run summary.
       const log = (action: string, detail: string) =>

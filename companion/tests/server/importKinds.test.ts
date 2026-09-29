@@ -55,6 +55,10 @@ describe("rejectIfAiImportOverBudget — the AI-cost gate for CSV/log imports", 
     const codes: number[] = [];
     const headers: Record<string, string> = {};
     const res = {
+      locals: {},
+      once() {
+        return this;
+      },
       setHeader(k: string, v: string) {
         headers[k] = v;
         return this;

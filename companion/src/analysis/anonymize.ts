@@ -365,7 +365,13 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   const counters: Record<string, number> = {};
   // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
   // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
-  const suppressed = new Set((known.suppressed ?? []).map((s) => s.toLowerCase()));
+  // A value that is ALSO a custom entity is not vetoed (#1822): custom is an explicit "hide this",
+  // and the stricter choice wins. Without this, a stale "Leave visible" in another tab, or a removal
+  // from the auto list, sent a name the analyst had hidden to the AI in clear.
+  const hidden = new Set((known.custom ?? []).map((e) => e.value.toLowerCase()));
+  const suppressed = new Set(
+    (known.suppressed ?? []).map((s) => s.toLowerCase()).filter((s) => !hidden.has(s)),
+  );
 
   function assign(category: AnonTokenCategory, real: string): string {
     if (suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
