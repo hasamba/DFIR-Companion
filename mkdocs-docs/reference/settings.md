@@ -207,6 +207,15 @@ tool has auto-run on; the Import dialog shows a banner for these formats. Config
 (`DFIR_TOOL_*`, not a secret). Commands run with **no shell** (args tokenized) and the target path is
 contained to the case directory. Master kill-switch: `DFIR_TOOL_AUTO_RUN=off`.
 
+Before a tool runs, the Companion checks the target file itself. It refuses a link, a named pipe or
+device, and a file with a second name elsewhere, and the run fails with the reason. In team mode the
+tool reads a private copy of the checked file, not the file in the case folder, so a file swapped
+after the check cannot reach the tool. The copy's SHA-256 and size go into the chain-of-custody record
+of the tool's output, and the copy is deleted when the run ends. A folder-input tool (Velociraptor
+`--ROOT`) always gets such a copy. In single-user mode a file-input tool reads the case file in place,
+with no copy, because many-GB evidence would otherwise be copied on every run. The tool's working
+folder sits outside the case folder, beside the cases in `.export-staging/`.
+
 ### MCP servers
 
 MCP servers are configured in Claude Code, then allowed under
