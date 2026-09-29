@@ -18,8 +18,19 @@ import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
+import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
+import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
+import {
+  CaseAlreadyExistsError,
+  CaseArchivedError,
+  CaseBeingDeletedError,
+  CaseFolderLeftoverError,
+  CaseLifecycleError,
+  CaseNotFoundError,
+} from "./caseErrors.js";
 
-const ARCHIVED_DIRNAME = "_archived";
+// How long a delete, archive or reseed waits for writes already admitted to the case folder (#1855).
+const WRITE_QUIESCE_MS = 30_000;
 const RETIRED_IDS_FILENAME = ".dfir-companion-retired-cases.json";
 
 export interface CreateCaseInput {
@@ -39,82 +50,7 @@ export function isValidCaseId(caseId: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(caseId) && !caseId.includes("..");
 }
 
-/**
- * The case id is already owned by someone else. Thrown by createCase when its exclusive claim on
- * case.json loses — which is the ONLY way a caller can learn it lost, since a check-then-create
- * pair cannot: both racers pass the check.
- *
- * A distinct type rather than a message match so the route can answer 409 (someone else has it)
- * instead of 500 (we broke), and so a future caller cannot mistake it for a disk failure.
- */
-export class CaseAlreadyExistsError extends Error {
-  constructor(readonly caseId: string) {
-    super(`case ${caseId} already exists`);
-    this.name = "CaseAlreadyExistsError";
-  }
-}
-
-/**
- * The case id is mid-delete: its folder may already be gone while the delete still clears the state
- * that outlives it (roles, jobs). Creating the id then would let that cleanup revoke the new case's
- * roles (#1826), so createCase refuses it. A kind of CaseAlreadyExistsError, so a create route
- * answers it with the same 409.
- */
-export class CaseBeingDeletedError extends CaseAlreadyExistsError {
-  constructor(caseId: string) {
-    super(caseId);
-    this.message = `case ${caseId} is being deleted — try again once the delete finishes`;
-    this.name = "CaseBeingDeletedError";
-  }
-}
-
-/**
- * A folder for the id is still on disk but holds no case.json — what a delete whose rm failed part
- * way leaves behind (#1831). Creating the id would adopt the old evidence files, so it is refused
- * until the folder is removed by hand. A kind of CaseAlreadyExistsError, so a create route answers
- * it with the same 409.
- */
-export class CaseFolderLeftoverError extends CaseAlreadyExistsError {
-  constructor(caseId: string, dir: string) {
-    super(caseId);
-    this.message = `a folder for case ${caseId} is still on disk (${dir}) from an earlier case — remove it before reusing the id`;
-    this.name = "CaseFolderLeftoverError";
-  }
-}
-
-/**
- * A lifecycle write refused because of the case's current state, with the HTTP status a route
- * answers it with. Thrown inside the per-case metadata lock, so the check and the write agree.
- */
-export class CaseLifecycleError extends Error {
-  constructor(
-    message: string,
-    readonly httpStatus: 404 | 409,
-  ) {
-    super(message);
-    this.name = "CaseLifecycleError";
-  }
-}
-
-/**
- * The case has no metadata (it was never created, or a delete removed it). Thrown by updateCaseMeta,
- * which used to write a default case.json instead — a write that landed during a delete's rm made
- * the rm fail and left a nameless "ghost" case after the evidence was already gone (#1808).
- */
-export class CaseNotFoundError extends CaseLifecycleError {
-  constructor(readonly caseId: string) {
-    super(`case ${caseId} not found`, 404);
-    this.name = "CaseNotFoundError";
-  }
-}
-
-/** The case is archived (in _archived/); only restore may move it back to open or closed (#1809). */
-export class CaseArchivedError extends CaseLifecycleError {
-  constructor(readonly caseId: string) {
-    super(`case ${caseId} is archived — restore the case first`, 409);
-    this.name = "CaseArchivedError";
-  }
-}
+export * from "./caseErrors.js";
 
 /** A check run on the current case.json inside the metadata lock; it throws to refuse. */
 export type CaseMetaGuard = (current: CaseMeta) => void;
@@ -174,7 +110,14 @@ export class CaseStore {
   // Injected rather than imported so storage/ keeps knowing nothing about custody.
   private artifactStoredListener: ArtifactStoredListener | null = null;
 
-  constructor(private readonly root: string) {}
+  private readonly writeQuiesceMs: number;
+
+  constructor(
+    private readonly root: string,
+    opts: { writeQuiesceMs?: number } = {},
+  ) {
+    this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
+  }
 
   get casesRoot(): string {
     return this.root;
@@ -267,8 +210,15 @@ export class CaseStore {
     const active = join(this.root, caseId);
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
     return this.metaLock.runExclusive(caseId, async () => {
-      await mkdir(join(this.root, ARCHIVED_DIRNAME), { recursive: true });
-      await rename(active, archived);
+      await this.whileClosed(
+        caseId,
+        "moved",
+        async () => {
+          await mkdir(join(this.root, ARCHIVED_DIRNAME), { recursive: true });
+          await rename(active, archived);
+        },
+        ["active"],
+      );
       return status ? this.relabelAfterMove(caseId, status, archived, active) : null;
     });
   }
@@ -279,9 +229,23 @@ export class CaseStore {
     const active = join(this.root, caseId);
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
     return this.metaLock.runExclusive(caseId, async () => {
-      await rename(archived, active);
+      await this.whileClosed(caseId, "moved", () => rename(archived, active), ["archived"]);
       return status ? this.relabelAfterMove(caseId, status, active, archived) : null;
     });
+  }
+
+  // Close the case to new writes, wait for admitted ones, then act; a late write to a place the case
+  // left is refused afterwards instead of recreating it (#1855). The caller holds metaLock.
+  private whileClosed<T>(caseId: string, reason: CaseWriteRefusal, act: () => Promise<T>, vacated: Vacated) {
+    const busy = () =>
+      new CaseLifecycleError(`writes to case ${caseId} are still in progress — try again`, 409);
+    return runWhileCaseClosed(
+      this.root,
+      caseId,
+      { reason, timeoutMs: this.writeQuiesceMs, busy },
+      act,
+      vacated,
+    );
   }
 
   // Held under metaLock by the caller. Writes the status at the folder's new place; on failure moves
@@ -351,7 +315,7 @@ export class CaseStore {
             409,
           );
         }
-        await rm(dir, { recursive: true });
+        await this.whileClosed(caseId, "deleted", () => rm(dir, { recursive: true }), ["active", "archived"]);
         await opts.afterDelete?.();
       });
     } finally {
@@ -425,7 +389,13 @@ export class CaseStore {
     return this.metaLock.runExclusive(caseId, async () => {
       const isNew = !(await this.caseExists(caseId));
       if (isNew) await this.refuseLeftoverFolder(caseId, this.caseDir(caseId));
-      return fn(isNew);
+      // A reseed replaces the case: old work is shut out while it runs and by the new generation after.
+      const seed = async () => {
+        const value = await fn(isNew);
+        await this.stampNewGeneration(caseId);
+        return value;
+      };
+      return isNew ? seed() : this.whileClosed(caseId, "replaced", seed, []);
     });
   }
 
@@ -434,8 +404,17 @@ export class CaseStore {
     return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));
   }
 
+  // The seeder writes its own case.json; give it a fresh generation (#1855). Written past the guard:
+  // the caller holds the case lock, and a reseed holds the folder closed.
+  private async stampNewGeneration(caseId: string): Promise<void> {
+    const meta = await this.getCaseMeta(caseId);
+    const next = JSON.stringify({ ...meta, generation: newCaseGeneration() }, null, 2);
+    if (meta) await atomicWrite(this.caseMetaPath(caseId), next, { caseGuard: false });
+  }
+
   private async createCaseLocked(input: CreateCaseInput): Promise<CaseMeta> {
     const meta: CaseMeta = {
+      generation: newCaseGeneration(),
       caseId: input.caseId,
       name: input.name,
       createdAt: new Date().toISOString(),
@@ -559,7 +538,7 @@ export class CaseStore {
     provenance?: ArtifactProvenance,
   ): Promise<string> {
     const path = join(this.screenshotsDir(caseId), filename);
-    await writeFile(path, bytes, { flag: "wx" });
+    await withCaseWrite(path, () => writeFile(path, bytes, { flag: "wx" }));
     // Hash the buffer we just wrote rather than re-reading the file: same bytes, no second pass
     // over evidence that can run to hundreds of megabytes.
     await this.announceArtifact({
@@ -573,7 +552,8 @@ export class CaseStore {
   }
 
   async appendCapture(caseId: string, metadata: CaptureMetadata): Promise<CaptureMetadata> {
-    await appendFile(this.capturesLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+    const path = this.capturesLogPath(caseId);
+    await withCaseWrite(path, () => appendFile(path, JSON.stringify(metadata) + "\n", "utf8"));
     return metadata;
   }
 
@@ -636,10 +616,12 @@ export class CaseStore {
     text: string,
     provenance?: ArtifactProvenance,
   ): Promise<string> {
-    await mkdir(this.importsDir(caseId), { recursive: true });
     const path = join(this.importsDir(caseId), filename);
     // Create-exclusive, for the same reason as saveScreenshot above (#214).
-    await writeFile(path, text, { encoding: "utf8", flag: "wx" });
+    await this.withCaseWrite(path, async () => {
+      await mkdir(this.importsDir(caseId), { recursive: true });
+      await writeFile(path, text, { encoding: "utf8", flag: "wx" });
+    });
     // utf8 in, utf8 on disk — so this matches what a later re-read hashes during verification.
     await this.announceArtifact({
       caseId,
@@ -666,9 +648,11 @@ export class CaseStore {
     bytes: Buffer,
     provenance?: ArtifactProvenance,
   ): Promise<string> {
-    await mkdir(this.importsDir(caseId), { recursive: true });
     const path = join(this.importsDir(caseId), filename);
-    await writeFile(path, bytes, { flag: "wx" });
+    await this.withCaseWrite(path, async () => {
+      await mkdir(this.importsDir(caseId), { recursive: true });
+      await writeFile(path, bytes, { flag: "wx" });
+    });
     await this.announceArtifact({
       caseId,
       path,
@@ -680,9 +664,21 @@ export class CaseStore {
   }
 
   async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {
-    await mkdir(this.metadataDir(caseId), { recursive: true });
-    await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+    await this.withCaseWrite(this.importsLogPath(caseId), async () => {
+      await mkdir(this.metadataDir(caseId), { recursive: true });
+      await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+    });
     return metadata;
+  }
+
+  /** `fn` as one admitted write under `path`; refused for a deleted, replaced or moved case (#1855). */
+  withCaseWrite<T>(path: string, fn: () => Promise<T>): Promise<T> {
+    return withCaseWrite(path, fn);
+  }
+
+  /** mkdir -p for a folder inside a case, refused instead of recreating a deleted case (#1855). */
+  async mkdirInCase(dir: string): Promise<void> {
+    await withCaseWrite(dir, () => mkdir(dir, { recursive: true }));
   }
 
   /**
@@ -703,7 +699,10 @@ export class CaseStore {
     const existing = await this.getCaseMeta(caseId);
     if (!existing) throw new CaseNotFoundError(caseId);
     guard?.(existing);
-    const updated = { ...existing, ...patch, caseId };
+    const updated: CaseMeta = { ...existing, ...patch, caseId };
+    // The incarnation is never patched (#1855), and a legacy case is not given one here.
+    if (existing.generation === undefined) delete updated.generation;
+    else updated.generation = existing.generation;
     await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
     return updated;
   }
@@ -744,7 +743,7 @@ export class CaseStore {
   // separate process, so run it against an idle case.
   async putOcrEntry(caseId: string, entry: OcrIndexEntry): Promise<void> {
     return this.ocrLock.runExclusive(caseId, async () => {
-      await mkdir(this.metadataDir(caseId), { recursive: true });
+      await this.mkdirInCase(this.metadataDir(caseId));
       const index = await this.loadOcrIndex(caseId);
       const updated: OcrIndex = { ...index, [entry.screenshotFile]: entry };
       await atomicWrite(this.ocrIndexPath(caseId), JSON.stringify(updated, null, 2));

@@ -27,6 +27,7 @@ import { validateProcessChains, hasChainWork, type ChainSummary } from "../enric
 import { recordEnrichmentRun } from "../analysis/analysisRunRecorders.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 /** Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry. */
 function shortValue(value: string): string {
@@ -117,7 +118,12 @@ export function createEnrichmentEngine({
     covered: ReadonlySet<string>; // IOC values earlier batches in this chain already took on
   }
 
+  // #1855: runs as work of the case incarnation it was kicked for (a batch chain keeps the first).
   function enrichInBackground(caseId: string, force = false, parentRunId?: string, chain?: BatchChain): void {
+    runInCaseScope(store.casesRoot, caseId, () => enrichInScope(caseId, force, parentRunId, chain));
+  }
+
+  function enrichInScope(caseId: string, force: boolean, parentRunId?: string, chain?: BatchChain): void {
     if (allProviders.length === 0 || !options.stateStore) return;
     let job: RegisteredJob | undefined; // #225: registered once providers are known
     void (async () => {

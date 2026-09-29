@@ -1,4 +1,4 @@
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -147,7 +147,7 @@ export class ClockSkewStore {
   }
 
   async save(caseId: string, record: ClockSkewRecord): Promise<ClockSkewRecord> {
-    await mkdir(this.cases.stateDir(caseId), { recursive: true });
+    await this.cases.mkdirInCase(this.cases.stateDir(caseId));
     const clean: ClockSkewRecord = {
       alignEnabled: record.alignEnabled === true,
       results: (Array.isArray(record.results) ? record.results : [])

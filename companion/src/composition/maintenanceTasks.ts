@@ -30,6 +30,7 @@ import type { AuthStore } from "../auth/authStore.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import { EXPORT_STAGING_DIRNAME, sweepStaleStaging } from "../storage/exportStaging.js";
+import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 
 /**
  * Delay before the FIRST evidence-integrity sweep after boot. Long enough to stay out of the startup
@@ -118,7 +119,9 @@ export function startMaintenanceTasks({
         const lastAt = lastScheduledBackupAt.get(c.caseId) ?? 0;
         if (mtime > lastAt) {
           try {
-            const { prune } = await backupManager.createBackup(c.caseId, "scheduled");
+            // #1855: the backup is work of the incarnation just listed — refused if it is gone.
+            const backup = () => backupManager.createBackup(c.caseId, "scheduled");
+            const { prune } = await runInCaseScope(store.casesRoot, c.caseId, backup, generationOf(c));
             lastScheduledBackupAt.set(c.caseId, Date.now());
             // The byte cap holds everything it is allowed to delete; when the survivors are all
             // exempt (newest backup, newest pre-synthesis) it cannot be met. Say so rather than

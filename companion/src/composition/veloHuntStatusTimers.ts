@@ -17,6 +17,7 @@ import type { AppOptions } from "./appOptions.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velociraptor/huntStatusPoller.js";
 import { logLine } from "../logging/serverLogger.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -95,9 +96,9 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     const existing = veloStatusTimers.get(key);
     if (existing) clearTimeout(existing);
     const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
-    const timer = setTimeout(() => {
-      void pollVeloHuntStatus(caseId, huntId);
-    }, seconds * 1000);
+    // #1855: the chain of polls runs as work of the case incarnation that armed it.
+    const poll = () => void pollVeloHuntStatus(caseId, huntId);
+    const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(poll, seconds * 1000));
     timer.unref?.();
     veloStatusTimers.set(key, timer);
   }

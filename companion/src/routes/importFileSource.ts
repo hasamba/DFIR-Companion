@@ -3,6 +3,7 @@ import { unlink, type FileHandle } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import type { Response } from "express";
 import { openImportPath, type GuardedFile } from "./serverPathGuard.js";
+import { withCaseWrite } from "../storage/caseIncarnation.js";
 
 /**
  * The one open of the server file POST /cases/:id/import-file reads (#1834).
@@ -41,6 +42,10 @@ export async function openImportFile(
  * an existing `dest` is never touched.
  */
 export async function copyHandleExclusive(handle: FileHandle, dest: string): Promise<number> {
+  return withCaseWrite(dest, () => copyAdmitted(handle, dest)); // refused for a deleted case (#1855)
+}
+
+async function copyAdmitted(handle: FileHandle, dest: string): Promise<number> {
   const out = createWriteStream(dest, { flags: "wx" });
   let created = false;
   out.once("open", () => (created = true));

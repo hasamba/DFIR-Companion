@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { StateLock } from "../analysis/stateLock.js";
@@ -136,7 +136,7 @@ export class ReportWorkflowStore {
 
   private async save(caseId: string, workflow: ReportWorkflow): Promise<ReportWorkflow> {
     const validated = workflowSchema.parse(workflow);
-    await mkdir(this.dir(caseId), { recursive: true });
+    await this.cases.mkdirInCase(this.dir(caseId));
     await atomicWrite(this.path(caseId, workflow.versionId), JSON.stringify(validated, null, 2));
     return validated;
   }

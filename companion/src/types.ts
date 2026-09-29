@@ -34,6 +34,9 @@ export interface CaseMeta {
   // NEVER serialize this directly in an API response — always go through
   // analysis/casePassword.ts's sanitizeCaseMeta(), which replaces it with `hasPassword`.
   password?: CasePasswordHash;
+  // Which incarnation of the case id this is (#1855): a random id written at create, seed and
+  // whole-case import. Absent on cases created before it (read as "legacy"). Never patched.
+  generation?: string;
 }
 
 // Audit record for an uploaded CSV result set (e.g. a Velociraptor export),

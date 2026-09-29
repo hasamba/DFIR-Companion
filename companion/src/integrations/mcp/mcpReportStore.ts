@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../storage/caseStore.js";
@@ -70,7 +70,7 @@ export class McpReportStore {
       id: `mcp-${randomUUID()}`,
       importedAt: new Date().toISOString(),
     };
-    await mkdir(this.dir(caseId), { recursive: true });
+    await this.cases.mkdirInCase(this.dir(caseId));
     await atomicWrite(this.path(caseId, report.id), JSON.stringify(report, null, 2));
     return report;
   }

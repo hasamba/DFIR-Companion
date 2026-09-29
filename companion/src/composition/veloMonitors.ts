@@ -29,6 +29,7 @@ import type { Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 export interface VeloMonitorsDeps {
   store: CaseStore;
@@ -178,9 +179,9 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     const existing = timers.get(key);
     if (existing) clearTimeout(existing);
     const seconds = Math.min(3600, Math.max(5, Math.floor(monitor.pollSeconds) || 30));
-    const timer = setTimeout(() => {
-      void pollVeloMonitor(caseId, monitor.id);
-    }, seconds * 1000);
+    // #1855: the chain of polls runs as work of the case incarnation that armed it.
+    const poll = () => void pollVeloMonitor(caseId, monitor.id);
+    const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(poll, seconds * 1000));
     timer.unref?.();
     timers.set(key, timer);
   }

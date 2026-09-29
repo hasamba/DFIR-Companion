@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
+import { open, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -224,7 +224,7 @@ export class AnalysisRunStore {
         tip.sequence + 1,
         tip.manifestHash,
       );
-      await mkdir(this.dir(caseId), { recursive: true });
+      await this.cases.mkdirInCase(this.dir(caseId));
       // Ordering matters: the marker goes down first, so any crash that leaves the
       // head behind the manifests also leaves the marker, and the next append knows
       // to reconcile instead of trusting a stale tip.

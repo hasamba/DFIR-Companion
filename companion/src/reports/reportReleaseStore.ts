@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CustodyChainBreak, CustodyChainHead, CustodyMismatch } from "../analysis/custody.js";
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
@@ -364,7 +364,7 @@ export class ReportReleaseStore {
         ...(record.supersedesReleaseId ? { supersedesReleaseId: record.supersedesReleaseId } : {}),
         manifestHash: record.manifestHash,
       };
-      await mkdir(this.dir(caseId), { recursive: true });
+      await this.cases.mkdirInCase(this.dir(caseId));
       await atomicWrite(this.recordPath(caseId, id), JSON.stringify(record, null, 2));
       await atomicWrite(this.indexPath(caseId), JSON.stringify([summary, ...existing], null, 2));
       await atomicWrite(

@@ -19,6 +19,7 @@ import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
+import { setCaseWriteRefusalReporter } from "./storage/caseIncarnation.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
 import {
@@ -88,6 +89,8 @@ import type { AppOptions } from "./composition/appOptions.js";
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
+  // A deleted or replaced case's late write is refused and dropped; say so in the log (#1855).
+  setCaseWriteRefusalReporter((err) => warnLine(`[cases] ${err.message}`));
   // Signs/verifies case-unlock cookies (issue: case password protection). Persisted next to
   // the cases root so "remember on this computer" survives a server restart.
   const instanceSecret = loadOrCreateInstanceSecret(store.casesRoot);
