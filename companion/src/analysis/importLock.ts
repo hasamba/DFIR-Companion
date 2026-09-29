@@ -30,9 +30,10 @@ export class ImportLock {
   /**
    * `admission` runs once the section is granted, before the import does anything (#1874 — the
    * memory guard, analysis/importMemoryGuard.ts), and ONLY for a caller that passes a size hint. A
-   * hint is the caller's statement that the evidence is already stored, so a refusal loses nothing:
-   * the Velociraptor hunt collect and external ingest store the rows they fetched INSIDE the
-   * section, and a refusal there would drop them, so they pass none. A refusal releases the section
+   * hint is the caller's statement that the evidence is already stored, so a refusal loses nothing —
+   * which is why the Velociraptor hunt collect and external ingest store every row they fetched
+   * BEFORE they take the section (composition/veloEvidenceFirst.ts). A caller that stores inside the
+   * section must pass no hint. A refusal releases the section
    * and rejects, so the next import for the case is not wedged; an admission's reservation is
    * released with the section.
    */
