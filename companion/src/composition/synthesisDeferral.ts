@@ -19,7 +19,7 @@
  * Kicks that arrive while one is already waiting collapse into it: one follow-up run per case, the
  * newest kick's start function winning.
  */
-import type { Job } from "../analysis/jobRegistry.js";
+import { isHeldJob, type Job } from "../analysis/jobRegistry.js";
 
 export interface SynthesisDeferralDeps {
   /** The job registry. Absent → only `inFlight` makes a kick wait. */
@@ -32,7 +32,7 @@ export interface SynthesisDeferralDeps {
 
 interface Waiter {
   start: () => void;
-  onCancelled: () => void;
+  onCancelled: (held: boolean) => void;
   /** Every running synthesis this waiter has waited on — to notice an analyst Cancel. */
   watched: Set<string>;
 }
@@ -43,9 +43,11 @@ export interface SynthesisDeferral {
   /**
    * Start once no synthesis for the case is running. If one of the runs it waited on ends
    * `cancelled` — the analyst pressed Cancel — `onCancelled` runs instead: a Cancel must not be
-   * followed by a fresh run the analyst never asked for.
+   * followed by a fresh run the analyst never asked for. It also runs, with `held` true, when a
+   * gate held that run (#1801): a new run would stop at the same gate, and resolving the gate
+   * already starts one.
    */
-  defer(caseId: string, start: () => void, onCancelled: () => void): void;
+  defer(caseId: string, start: () => void, onCancelled: (held: boolean) => void): void;
 }
 
 export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisDeferral {
@@ -60,8 +62,11 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
     return runningIds(caseId).length > 0 || deps.inFlight?.has(caseId) === true;
   }
 
-  function wasCancelled(waiter: Waiter): boolean {
-    return [...waiter.watched].some((id) => deps.jobManager?.get(id)?.status === "cancelled");
+  /** How a watched run ended, when it did not end in a result: "cancelled", "held", or null. */
+  function stoppedBy(waiter: Waiter): "cancelled" | "held" | null {
+    const ended = [...waiter.watched].map((id) => deps.jobManager?.get(id));
+    if (ended.some((job) => job?.status === "cancelled" && !isHeldJob(job))) return "cancelled";
+    return ended.some((job) => isHeldJob(job)) ? "held" : null;
   }
 
   function check(caseId: string): void {
@@ -74,7 +79,8 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
       return;
     }
     waiting.delete(caseId);
-    if (wasCancelled(waiter)) waiter.onCancelled();
+    const stopped = stoppedBy(waiter);
+    if (stopped) waiter.onCancelled(stopped === "held");
     else waiter.start();
   }
 
@@ -83,7 +89,7 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
     timer.unref?.();
   }
 
-  function defer(caseId: string, start: () => void, onCancelled: () => void): void {
+  function defer(caseId: string, start: () => void, onCancelled: (held: boolean) => void): void {
     const existing = waiting.get(caseId);
     if (existing) {
       // Collapse into the waiter already scheduled; the newest kick decides what starts.

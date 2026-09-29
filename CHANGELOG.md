@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
+- **Presidio stops flagging tool names as people** — tool and malware names, timestamps, flags, file names and ATT&CK ids are no longer held as PERSON, and the approval panel offers one-click Leave all visible (closes #1799)
+- **Gate holds are not user cancels** — a Presidio or duplicate-host hold records its job as held for the analyst, not as a ✕ Cancel, on every AI route (closes #1801)
 - **No page jump when a case opens** — the Now cockpit holds its space while it loads, so the panels under it no longer jump down (load CLS 0.33 → 0) (closes #1791)
 - **Import failures say why** — the status line names each failed file with the server's reason (size cap, busy, budget, no AI provider), for data files and screenshots (closes #1786)
 - **Host prompt no longer looks like a hang** — while the "which host did this file come from?" prompt waits, the status line says it is waiting for your answer (closes #1772)
