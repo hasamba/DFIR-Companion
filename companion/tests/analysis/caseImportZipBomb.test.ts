@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { importEncryptedCase } from "../../src/analysis/caseExportArchive.js";
 import { importZipArchiveCase } from "../../src/analysis/caseZipImport.js";
-import { IMPORT_STAGING_DIRNAME } from "../../src/analysis/caseRestore.js";
+import { IMPORT_STAGING_DIRNAME, restoreCaseZip } from "../../src/analysis/caseRestore.js";
+import { listCaseZipEntries, writeAll } from "../../src/analysis/caseZipReader.js";
+import type { FileHandle } from "node:fs/promises";
 import { encryptBuffer } from "../../src/analysis/caseEncryption.js";
 import {
   buildRawZip,
@@ -161,5 +163,55 @@ describe(".dfircase import — zip bombs inside the decrypted package", () => {
       /same file as "metadata\/source-manifest\.json"/,
     );
     await expectNothingLeft(store);
+  });
+});
+
+describe("restore — the staged case stays inside its caps", () => {
+  it("counts caseId-rewrite growth, from bytes written, against the total cap", async () => {
+    // Each invalid UTF-8 byte decodes to U+FFFD and is written back as three bytes.
+    const bad = Buffer.concat([
+      Buffer.from('{"caseId":"A","s":"'),
+      Buffer.alloc(4000, 0xff),
+      Buffer.from('"}\n'),
+    ]);
+    const zip = buildRawZip([
+      deflatedEntry("case.json", caseJson("A")),
+      deflatedEntry("metadata/captures.jsonl", bad),
+    ]);
+    const files = listCaseZipEntries(zip).map((entry) => ({ path: entry.name, entry }));
+    const store = await harness();
+    const staged = files.reduce((sum, f) => sum + f.entry.size, 0);
+    await expect(
+      restoreCaseZip(store, zip, files, { targetCaseId: "B", maxTotalBytes: staged + 1000 }),
+    ).rejects.toThrow(/would grow past the/);
+    await expectNothingLeft(store);
+  });
+
+  it("does not collide with an archive entry named like the rewrite's temporary file", async () => {
+    const zip = buildRawZip([
+      deflatedEntry("INC-8/case.json", caseJson("INC-8")),
+      deflatedEntry("INC-8/metadata/captures.jsonl", Buffer.from('{"caseId":"INC-8"}\n')),
+      deflatedEntry("INC-8/metadata/captures.jsonl.rewrite", Buffer.from("kept")),
+    ]);
+    const store = await harness();
+    await importZipArchiveCase(store, zip, { targetCaseId: "INC-80" });
+    const dir = join(store.caseDir("INC-80"), "metadata");
+    expect(await readFile(join(dir, "captures.jsonl.rewrite"), "utf8")).toBe("kept");
+    expect(await readFile(join(dir, "captures.jsonl"), "utf8")).toBe('{"caseId":"INC-80"}\n');
+  });
+
+  it("writeAll finishes a short write and refuses a write that makes no progress", async () => {
+    const got: number[] = [];
+    const shortWriter = {
+      write: async (data: Buffer, off: number, len: number) => {
+        const n = Math.min(len, 3);
+        got.push(...data.subarray(off, off + n));
+        return { bytesWritten: n, buffer: data };
+      },
+    } as unknown as FileHandle;
+    await writeAll(shortWriter, Buffer.from("0123456789"));
+    expect(Buffer.from(got).toString()).toBe("0123456789");
+    const stuck = { write: async () => ({ bytesWritten: 0 }) } as unknown as FileHandle;
+    await expect(writeAll(stuck, Buffer.from("x"))).rejects.toThrow(/no progress/);
   });
 });

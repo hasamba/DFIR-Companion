@@ -10,13 +10,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join, dirname, isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import type { CaseMeta } from "../types.js";
 import { destinationKey } from "../storage/portableFilename.js";
 import {
+  CASE_ZIP_MAX_CONTROL_BYTES,
   CASE_ZIP_MAX_TOTAL_BYTES,
   extractCaseZipEntry,
   readCaseZipEntry,
+  writeAll,
   type CaseZipEntry,
 } from "./caseZipReader.js";
 
@@ -209,9 +212,14 @@ export async function restoreCaseZip(
 class StagingBudget {
   private used = 0;
   constructor(private readonly max: number) {}
+  /** Throw if `bytes` more would not fit, without recording them. */
+  assertFits(bytes: number): void {
+    if (this.used + bytes > this.max)
+      throw invalid(`the imported case would grow past the ${this.max} byte cap`);
+  }
   add(bytes: number): void {
+    this.assertFits(bytes);
     this.used += bytes;
-    if (this.used > this.max) throw invalid(`the imported case would grow past the ${this.max} byte cap`);
   }
 }
 
@@ -293,7 +301,9 @@ async function rewriteCaseIds(
 
 /**
  * Rewrite each JSONL record's caseId one line at a time into a sibling file, then replace the
- * original. Both handles are closed before the rename, which Windows needs.
+ * original. Growth is measured in bytes actually written against the original file size — never
+ * from decoded line lengths, which differ from the raw bytes when the input is not valid UTF-8.
+ * Every handle that opened is closed before the rename or any error leaves, which Windows needs.
  */
 async function rewriteCaseIdInJsonl(
   target: string,
@@ -301,28 +311,33 @@ async function rewriteCaseIdInJsonl(
   targetCaseId: string,
   budget: StagingBudget,
 ): Promise<void> {
-  const temp = `${target}.rewrite`;
+  // A random name no archive entry can have claimed in advance.
+  const temp = `${target}.${randomUUID()}.rewrite`;
   const input = await open(target, "r");
-  const output = await open(temp, "wx");
+  let written = 0;
   try {
-    for await (const line of input.readLines({ autoClose: false })) {
-      if (line.trim().length === 0) {
-        budget.add(-(Buffer.byteLength(line) + 1));
-        continue;
+    const originalSize = (await input.stat()).size;
+    const output = await open(temp, "wx");
+    try {
+      for await (const line of input.readLines({ autoClose: false })) {
+        if (line.trim().length === 0) continue;
+        let rewritten: Buffer;
+        try {
+          const record = JSON.parse(line) as Record<string, unknown>;
+          rewritten = Buffer.from(JSON.stringify({ ...record, caseId: targetCaseId }) + "\n", "utf8");
+        } catch {
+          throw invalid(`corrupt ${path}`);
+        }
+        written += rewritten.length;
+        budget.assertFits(written - originalSize);
+        await writeAll(output, rewritten);
       }
-      let rewritten: string;
-      try {
-        rewritten =
-          JSON.stringify({ ...(JSON.parse(line) as Record<string, unknown>), caseId: targetCaseId }) + "\n";
-      } catch {
-        throw invalid(`corrupt ${path}`);
-      }
-      budget.add(Buffer.byteLength(rewritten) - Buffer.byteLength(line) - 1);
-      await output.write(rewritten);
+    } finally {
+      await output.close();
     }
+    budget.add(written - originalSize);
   } finally {
     await input.close();
-    await output.close();
   }
   await renamePath(temp, target);
 }
@@ -343,7 +358,11 @@ async function countsFromStaging(staging: string): Promise<CaseImportCounts> {
   let forensicEvents = 0;
   let findings = 0;
   let iocs = 0;
-  const inv = await readFile(join(staging, "state", "investigation.json"), "utf8").catch(() => null);
+  // Counts are display only. A legacy investigation.json past the control-file size is not parsed a
+  // second time just to count it: the route reads the counts from the loaded state instead.
+  const invPath = join(staging, "state", "investigation.json");
+  const invSize = (await stat(invPath).catch(() => null))?.size ?? 0;
+  const inv = invSize > 0 && invSize <= CASE_ZIP_MAX_CONTROL_BYTES ? await readFile(invPath, "utf8") : null;
   if (inv !== null) {
     try {
       const parsed = JSON.parse(inv) as Record<string, unknown>;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createInflateRaw, crc32, inflateRawSync } from "node:zlib";
 
@@ -262,6 +262,19 @@ export function readCaseZipEntry(
   return data;
 }
 
+/**
+ * Write every byte of `data`. A file write may complete short (a full disk, a quota); the hash and
+ * CRC cover the whole chunk, so a silently short write would publish a truncated file that still
+ * passed every check.
+ */
+export async function writeAll(handle: FileHandle, data: Buffer): Promise<void> {
+  for (let off = 0; off < data.length;) {
+    const { bytesWritten } = await handle.write(data, off, data.length - off);
+    if (bytesWritten <= 0) throw new Error("write made no progress");
+    off += bytesWritten;
+  }
+}
+
 function* slices(raw: Buffer): Generator<Buffer> {
   for (let off = 0; off < raw.length; off += CASE_ZIP_STREAM_SLICE_BYTES) {
     yield raw.subarray(off, off + CASE_ZIP_STREAM_SLICE_BYTES);
@@ -300,12 +313,15 @@ export async function extractCaseZipEntry(
         }
         hash.update(chunk);
         crc = crc32(chunk, crc);
-        await handle.write(chunk);
+        await writeAll(handle, chunk);
       }
     } catch (err) {
       if ((err as Error).message.startsWith("not a valid case archive")) throw err;
       throw invalid(`zip entry "${entry.name}" could not be inflated: ${(err as Error).message}`);
     }
+    // Check what reached the disk, not only what the inflater produced.
+    if ((await handle.stat()).size !== bytes)
+      throw invalid(`zip entry "${entry.name}" was not fully written`);
   } finally {
     await handle.close();
   }
