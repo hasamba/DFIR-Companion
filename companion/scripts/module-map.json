@@ -638,6 +638,7 @@
     "preflight.ts": "analysis/case",
     "presentation.ts": "analysis/workflow",
     "presidio.ts": "analysis/privacy",
+    "presidioDecisions.ts": "analysis/privacy",
     "presidioPending.ts": "analysis/privacy",
     "presidioPersonFilter.ts": "analysis/privacy",
     "prevalence.ts": "analysis/detect",
