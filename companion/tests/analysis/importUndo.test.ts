@@ -328,9 +328,9 @@ describe("ImportUndoStore", () => {
     const loaded = await store.load("c1");
     expect(loaded.undo).toHaveLength(1);
     expect(loaded.undo[0].label).toBe("thor (0003_thor.json)");
-    expect(loaded.undo[0].state.forensicTimeline).toHaveLength(3);
-    expect(loaded.undo[0].state.iocs).toHaveLength(2);
-    expect(loaded.undo[0].state.findings).toHaveLength(1);
+    expect(loaded.undo[0].state!.forensicTimeline).toHaveLength(3);
+    expect(loaded.undo[0].state!.iocs).toHaveLength(2);
+    expect(loaded.undo[0].state!.findings).toHaveLength(1);
     expect(loaded.redo).toEqual([]);
   });
 
@@ -397,7 +397,7 @@ describe("ImportUndoStore", () => {
     await writeFile(file, JSON.stringify(legacy, null, 2), "utf8");
     const loaded = await store.load("c1");
     expect(loaded.undo.map((c) => c.label)).toEqual(["legacy one", "legacy two"]);
-    expect(loaded.undo[1].state.forensicTimeline).toHaveLength(4);
+    expect(loaded.undo[1].state!.forensicTimeline).toHaveLength(4);
     expect(loaded.redo.map((c) => c.label)).toEqual(["legacy redo"]);
 
     await store.mutate("c1", (stack) => ({
