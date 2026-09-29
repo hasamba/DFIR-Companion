@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -25,6 +26,7 @@ import {
   type DeliverySource,
 } from "../../src/integrations/mcp/mcpDelivery.js";
 import { SPLIT_UTF8_TEXT, splitUtf8Script } from "../helpers/splitUtf8.js";
+import { aclStub, type StubAce } from "../helpers/aclStub.js";
 import {
   DEFAULT_DELIVERY,
   type McpServer,
@@ -74,6 +76,9 @@ beforeEach(async () => {
   await writeFile(MEM, MEM_BYTES);
   source = { casesRoot: root, caseDir: join(root, "c1"), stagingDir: join(root, ".export-staging") };
 });
+
+// A private folder on Windows: no entry for any broad principal. Keeps team-mode tests off the CI disk ACL.
+const privateAcl = aclStub();
 
 const REMOTE = /^\/cases\/incoming\/[0-9a-f]{12}_mem\.raw$/;
 
@@ -196,7 +201,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   });
 
   it("copies the file to a hidden delivery folder on the share and hands over that path", async () => {
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+    });
 
     expect(target.remotePath).toMatch(SNAP);
     expect(await readFile(local(target.remotePath), "utf8")).toBe(MEM_BYTES);
@@ -209,7 +219,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   it("a swap of the case path after delivery does not change what the host reads", async () => {
     await mkdir(join(root, "c2"), { recursive: true });
     await writeFile(join(root, "c2", "case.json"), "other-case-secret");
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+    });
 
     await rm(MEM);
     if (process.platform === "win32") await writeFile(MEM, "other-case-secret");
@@ -225,6 +240,7 @@ describe("deliver — remote-path in team mode (#1856)", () => {
       runner,
       source,
       teamMode: true,
+      aclRunner: privateAcl,
       recordTransfer: async (destination, sent) => void seen.push({ destination, sent }),
     });
 
@@ -233,7 +249,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   });
 
   it("removes the copy after the run", async () => {
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+    });
     expect(await listDelivery()).toHaveLength(1);
 
     await target.cleanup?.();
@@ -247,6 +268,7 @@ describe("deliver — remote-path in team mode (#1856)", () => {
         runner,
         source,
         teamMode: true,
+        aclRunner: privateAcl,
         recordTransfer: async () => {
           throw new Error("custody store offline");
         },
@@ -260,14 +282,20 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, signal: controller.signal }),
+      deliver(server(PREFIXED), MEM, {
+        runner,
+        source,
+        teamMode: true,
+        aclRunner: privateAcl,
+        signal: controller.signal,
+      }),
     ).rejects.toThrow();
 
     expect(await listDelivery()).toEqual([]);
   });
 
   it("puts the copy under the cases root when the mount has the same path on both sides", async () => {
-    const target = await deliver(server(), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(), MEM, { runner, source, teamMode: true, aclRunner: privateAcl });
 
     expect(dirname(dirname(target.remotePath))).toBe(deliveryRoot());
     expect(await readFile(target.remotePath, "utf8")).toBe(MEM_BYTES);
@@ -277,7 +305,7 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   it("refuses when the cases root is not inside the local prefix, and copies nothing", async () => {
     const s = server({ localPrefix: join(root, "c1"), remotePrefix: "/mnt/c1" });
 
-    await expect(deliver(s, MEM, { runner, source, teamMode: true })).rejects.toThrow(
+    await expect(deliver(s, MEM, { runner, source, teamMode: true, aclRunner: privateAcl })).rejects.toThrow(
       /cases root.*local prefix/,
     );
     expect(await listDelivery()).toEqual([]);
@@ -287,9 +315,9 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     const elsewhere = await mkdtemp(join(tmpdir(), "dfir-mcp-elsewhere-"));
     await symlink(elsewhere, deliveryRoot());
 
-    await expect(deliver(server(PREFIXED), MEM, { runner, source, teamMode: true })).rejects.toThrow(
-      /delivery folder/,
-    );
+    await expect(
+      deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, aclRunner: privateAcl }),
+    ).rejects.toThrow(/delivery folder/);
     expect(await readdir(elsewhere)).toEqual([]);
   });
 
@@ -304,6 +332,7 @@ describe("deliver — remote-path in team mode (#1856)", () => {
           runner,
           source,
           teamMode: true,
+          aclRunner: privateAcl,
           chmod: async () => {
             throw new Error("EPERM");
           },
@@ -317,13 +346,18 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     "refuses when other users can write the cases root, unless the sticky bit is set",
     async () => {
       await chmod(root, 0o777);
-      await expect(deliver(server(PREFIXED), MEM, { runner, source, teamMode: true })).rejects.toThrow(
-        /other users can write the cases root/,
-      );
+      await expect(
+        deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, aclRunner: privateAcl }),
+      ).rejects.toThrow(/other users can write the cases root/);
       expect(await listDelivery()).toEqual([]);
 
       await chmod(root, 0o1777);
-      const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+      const target = await deliver(server(PREFIXED), MEM, {
+        runner,
+        source,
+        teamMode: true,
+        aclRunner: privateAcl,
+      });
       await target.cleanup?.();
       await chmod(root, 0o700);
     },
@@ -332,7 +366,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   it.skipIf(process.platform === "win32")("opens a delivery folder the umask made private", async () => {
     await mkdir(deliveryRoot());
     await chmod(deliveryRoot(), 0o700);
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+    });
 
     expect((await stat(deliveryRoot())).mode & 0o777).toBe(0o755);
     await target.cleanup?.();
@@ -341,7 +380,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
   it.skipIf(process.platform === "win32")("tightens a delivery folder it owns", async () => {
     await mkdir(deliveryRoot());
     await chmod(deliveryRoot(), 0o777);
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+    });
 
     expect((await stat(deliveryRoot())).mode & 0o777).toBe(0o755);
     await target.cleanup?.();
@@ -351,7 +395,12 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     "the copy is never readable by more users than the original",
     async () => {
       await chmod(MEM, 0o640);
-      const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+      const target = await deliver(server(PREFIXED), MEM, {
+        runner,
+        source,
+        teamMode: true,
+        aclRunner: privateAcl,
+      });
 
       expect((await stat(local(target.remotePath))).mode & 0o777).toBe(0o440);
       expect((await stat(dirname(local(target.remotePath)))).mode & 0o777).toBe(0o750);
@@ -361,7 +410,13 @@ describe("deliver — remote-path in team mode (#1856)", () => {
 
   // The day-old staging sweep must not remove a copy the analysis host is still reading.
   it("keeps the copy's folder fresh while the run lasts", async () => {
-    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, keepAliveMs: 10 });
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: privateAcl,
+      keepAliveMs: 10,
+    });
     const folder = dirname(local(target.remotePath));
     const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     await utimes(folder, old, old);
@@ -380,6 +435,134 @@ describe("deliver — remote-path in team mode (#1856)", () => {
     expect(target.cleanup).toBeUndefined();
     await expect(stat(deliveryRoot())).rejects.toThrow();
   });
+});
+
+// #1863: on Windows, mode bits say nothing — the ACLs of the cases root and the delivery folder are read
+// by SID and a write right for a broad principal is refused, with the same words as on POSIX.
+describe("deliver — team mode on Windows checks the folder ACLs (#1863)", () => {
+  const EVERYONE_FULL: StubAce = { s: "S-1-1-0", r: 0x1f01ff, t: 0 };
+  const USERS_MODIFY: StubAce = { s: "S-1-5-32-545", r: 0x301bf, t: 0 };
+  const shared = () => ({ localPrefix: root, remotePrefix: "/mnt/dfir" });
+  const deliveryRoot = (): string => join(root, ".mcp-delivery");
+  const listDelivery = async (): Promise<string[]> => readdir(deliveryRoot()).catch(() => []);
+  const failing =
+    (why: string): TransferRunner =>
+    async () => {
+      throw new Error(why);
+    };
+
+  describe("on a simulated win32", () => {
+    const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+    beforeEach(() => {
+      Object.defineProperty(process, "platform", { ...real, value: "win32" });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, "platform", real);
+    });
+
+    it("refuses a cases root Everyone can write, and copies nothing", async () => {
+      const aclRunner = aclStub((p) => (p === root ? [EVERYONE_FULL] : []));
+
+      await expect(
+        deliver(server(shared()), MEM, { runner, source, teamMode: true, aclRunner }),
+      ).rejects.toThrow(/other users can write the cases root .*Everyone/);
+      expect(await listDelivery()).toEqual([]);
+    });
+
+    it("refuses a delivery folder Users can modify", async () => {
+      const aclRunner = aclStub((p) => (p === deliveryRoot() ? [USERS_MODIFY] : []));
+
+      await expect(
+        deliver(server(shared()), MEM, { runner, source, teamMode: true, aclRunner }),
+      ).rejects.toThrow(/other users can write the MCP delivery folder .*Users/);
+      expect(await listDelivery()).toEqual([]);
+    });
+
+    it("reads both folders in one call and delivers when neither is writable by others", async () => {
+      const seen: string[][] = [];
+      const aclRunner = aclStub(() => [{ s: "S-1-5-32-545", r: 0x200a9, t: 0 }], seen);
+
+      const target = await deliver(server(shared()), MEM, { runner, source, teamMode: true, aclRunner });
+
+      expect(seen).toEqual([[root, deliveryRoot()]]);
+      expect(target.destination).toMatch(/copied to shared path/);
+      expect(calls).toHaveLength(0);
+      await target.cleanup?.();
+    });
+
+    it.each([
+      ["PowerShell is missing", failing('cannot run "powershell.exe": spawn powershell.exe ENOENT')],
+      ["PowerShell times out", failing("powershell.exe timed out after 30000ms")],
+      [
+        "PowerShell exits non-zero",
+        (async () => ({ code: 1, stdout: "", stderr: "denied" })) as TransferRunner,
+      ],
+      ["the output is not an ACL", (async () => ({ code: 0, stdout: "oops", stderr: "" })) as TransferRunner],
+    ])("fails closed when %s", async (_why, aclRunner) => {
+      await expect(
+        deliver(server(shared()), MEM, { runner, source, teamMode: true, aclRunner }),
+      ).rejects.toThrow(/cannot read the Windows permissions/);
+      expect(await listDelivery()).toEqual([]);
+    });
+
+    it("single-user mode reads no ACL", async () => {
+      const seen: string[][] = [];
+      const target = await deliver(server(shared()), MEM, {
+        runner,
+        source,
+        teamMode: false,
+        aclRunner: aclStub(() => [EVERYONE_FULL], seen),
+      });
+
+      expect(target.cleanup).toBeUndefined();
+      expect(seen).toEqual([]);
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("POSIX reads no ACL", async () => {
+    const seen: string[][] = [];
+    const target = await deliver(server(shared()), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      aclRunner: aclStub(() => [EVERYONE_FULL], seen),
+    });
+
+    expect(seen).toEqual([]);
+    await target.cleanup?.();
+  });
+
+  // A real ACL on the Windows CI shards: a private cases root is accepted, and one Everyone can modify
+  // is refused. The default runner spawns the real powershell.exe.
+  it.runIf(process.platform === "win32")(
+    "reads a real Windows ACL: private is accepted, Everyone-modify is refused",
+    async () => {
+      const casesRoot = await mkdtemp(join(tmpdir(), "dfir-acl-"));
+      const csv = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" });
+      const sid = /"(S-1-[0-9-]+)"/.exec(csv)?.[1];
+      expect(sid).toBeDefined();
+      execFileSync("icacls", [casesRoot, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`]);
+      await mkdir(join(casesRoot, "c1", "imports"), { recursive: true });
+      const mem = join(casesRoot, "c1", "imports", "mem.raw");
+      await writeFile(mem, MEM_BYTES);
+      const src = {
+        casesRoot,
+        caseDir: join(casesRoot, "c1"),
+        stagingDir: join(casesRoot, ".export-staging"),
+      };
+      const s = server({ localPrefix: casesRoot, remotePrefix: "/mnt/dfir" });
+
+      const target = await deliver(s, mem, { runner, source: src, teamMode: true });
+      expect(target.destination).toMatch(/copied to shared path/);
+      await target.cleanup?.();
+
+      execFileSync("icacls", [casesRoot, "/grant", "*S-1-1-0:(OI)(CI)M"]);
+      await expect(deliver(s, mem, { runner, source: src, teamMode: true })).rejects.toThrow(
+        /other users can write the cases root .*Everyone/,
+      );
+    },
+    60_000,
+  );
 });
 
 describe("deliver — scp mode", () => {

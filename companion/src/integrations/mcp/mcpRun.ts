@@ -36,6 +36,8 @@ export interface McpRunDeps {
   claudeBin?: string;
   model?: string;
   transferRunner: TransferRunner;
+  /** The Windows ACL check's powershell runner (#1863). Tests inject it; production leaves it unset. */
+  aclRunner?: TransferRunner;
   signal?: AbortSignal;
   /** The case the target belongs to; required whenever a target is delivered (#1847). */
   deliverySource?: DeliverySource;
@@ -106,6 +108,7 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
         runner: deps.transferRunner,
         source: deps.deliverySource,
         teamMode: deps.teamMode,
+        ...(deps.aclRunner ? { aclRunner: deps.aclRunner } : {}),
         signal: deps.signal,
         recordTransfer: deps.recordTransfer,
       });
