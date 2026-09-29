@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Seeding the demo case runs the id-reuse checks** — a new demo case id waits out a deleted case's jobs, refuses a part-deleted folder and clears stale roles, like New case (closes #1853)
 - **Crashed exports no longer leave copies behind** — export staging folders older than a day (a case database or evidence copy) are removed at startup and before each export (closes #1851)
 - **A FIFO no longer hangs a drop-folder read or SO-CRATES upload** — the guarded open refuses any non-regular file at once instead of blocking a worker thread (closes #1849)
 - **MCP SCP delivery sends the file that was checked** — scp sends a private snapshot of the judged file under a unique remote name, custody records the hash of the bytes sent, and any failure after scp starts removes the remote copy (closes #1847)
