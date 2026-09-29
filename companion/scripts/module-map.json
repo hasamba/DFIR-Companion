@@ -734,6 +734,7 @@
     "sqliteRowStateLatest.ts": "analysis/ingest",
     "sourceTrust.ts": "analysis/intel",
     "sourceTrustStore.ts": "analysis/intel",
+    "stoppingJobs.ts": "analysis/case",
     "winEventTables.ts": "analysis/ingest",
     "winAccountRoles.ts": "analysis/ingest",
     "objectAccess.ts": "analysis/ingest",

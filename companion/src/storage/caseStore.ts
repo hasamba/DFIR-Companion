@@ -409,6 +409,11 @@ export class CaseStore {
   // Under the metadata lock, so a create cannot land inside a delete's rm of the same id (#1808).
   // Refused outright while a delete of the same id is in flight (#1826) — checked before queueing, so
   // a create never waits behind the delete only to land inside its cleanup window.
+  /** A delete of the id is in flight (see deleteCaseFolder). Whole-case imports check it (#1831). */
+  isDeleting(caseId: string): boolean {
+    return this.deleting.has(caseId);
+  }
+
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
     if (this.deleting.has(input.caseId)) throw new CaseBeingDeletedError(input.caseId);
     return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));

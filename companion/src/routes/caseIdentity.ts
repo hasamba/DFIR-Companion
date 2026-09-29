@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { RouteContext } from "./context.js";
+import { CaseImportConflictError } from "../analysis/caseExportArchive.js";
 
 /**
  * A case id's life apart from its folder — the two ends of it.
@@ -95,11 +96,20 @@ export function stoppingMessage(caseId: string): string {
 }
 
 /**
- * Make the caller administrator of a case an import just created, on a clean slate. The id may
- * belong to a deleted case whose cleanup failed to revoke its roles (#1831); a newly published
- * case holds no rows of its own yet, so any row for the id is stale.
+ * The check a whole-case import (.dfircase, ZIP) runs right before it publishes a new case under
+ * `caseId` (#1831). It refuses an id whose delete is still in flight or whose deleted case still has
+ * jobs winding down, then clears access rows such a case may have left behind — before the publish,
+ * so a failed clear leaves nothing published. The id is free at this point, so any row is stale.
  */
-export function grantNewCaseCreator(ctx: RouteContext, req: Request, caseId: string): void {
-  ctx.options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity);
-  ctx.options.teamAuth?.grantCreator(req, caseId);
+export function importedCaseIdClaim(ctx: RouteContext, req: Request): (caseId: string) => void {
+  return (caseId) => {
+    if (ctx.store.isDeleting(caseId))
+      throw new CaseImportConflictError(
+        caseId,
+        `case ${caseId} is being deleted — try again once the delete finishes`,
+      );
+    if (ctx.options.jobManager?.isStopping(caseId))
+      throw new CaseImportConflictError(caseId, stoppingMessage(caseId));
+    ctx.options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity);
+  };
 }

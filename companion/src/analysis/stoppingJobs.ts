@@ -18,11 +18,20 @@
 export class StoppingJobs {
   private readonly byCase = new Map<string, Set<string>>();
   private readonly caseOf = new Map<string, string>();
+  // Running jobs cancelled or superseded before any delete: their row is terminal or gone, but the
+  // work may still be running. A later delete of the case holds them too.
+  private readonly abortedRunning = new Map<string, string>();
 
-  /** Record a deleted case's running jobs: their work may not have stopped yet. A queued job never
-   *  started (its admission is rejected), so it cannot write and is not held. */
+  /** Record a deleted case's running jobs, and its cancelled ones still winding down: their work may
+   *  not have stopped yet. A queued job never started (its admission is rejected), so it is not held. */
   add(caseId: string, jobs: readonly { id: string; status: string }[]): void {
     for (const job of jobs) if (job.status === "running") this.track(caseId, job.id);
+    for (const [jobId, owner] of this.abortedRunning) if (owner === caseId) this.track(caseId, jobId);
+  }
+
+  /** A running job was cancelled or superseded: remember it until its work reports its end. */
+  aborted(job: { id: string; caseId: string | null; status: string }): void {
+    if (job.caseId !== null && job.status === "running") this.abortedRunning.set(job.id, job.caseId);
   }
 
   /** A job registered for a case whose old jobs are still stopping belongs to the old case. */
@@ -32,6 +41,7 @@ export class StoppingJobs {
 
   /** The job's work reported its end. */
   settle(jobId: string): void {
+    this.abortedRunning.delete(jobId);
     const caseId = this.caseOf.get(jobId);
     if (caseId === undefined) return;
     this.caseOf.delete(jobId);

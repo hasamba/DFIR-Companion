@@ -14,6 +14,13 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { TeamAuth } from "../../src/auth/teamAuth.js";
 import { createApp } from "../../src/server.js";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+import { importZipArchiveCase } from "../../src/analysis/caseZipImport.js";
+import { CaseImportConflictError } from "../../src/analysis/caseExportArchive.js";
+import { importedCaseIdClaim } from "../../src/routes/caseIdentity.js";
+import type { RouteContext } from "../../src/routes/context.js";
+import type { Request } from "express";
 
 const exists = (p: string) =>
   stat(p).then(
@@ -195,6 +202,121 @@ describe("(b) a deleted case's jobs still stopping", () => {
       .post("/cases")
       .send({ ...body, name: "New" });
     expect(created.status).toBe(201);
+  });
+});
+
+describe("(b) cancelled or superseded work still winding down", () => {
+  it("a running job cancelled before the delete still holds the id until it reports", async () => {
+    const jm = new JobManager({ perCaseConcurrency: 1 });
+    const job = jm.register({ caseId: "c1", kind: "import", cancellable: true });
+    await job.ready;
+    expect((await jm.cancel(job.jobId)).ok).toBe(true);
+    await jm.forgetCase("c1");
+    expect(jm.isStopping("c1")).toBe(true);
+    await jm.fail(job.jobId, new Error("aborted")); // the worker notices and ends
+    expect(jm.isStopping("c1")).toBe(false);
+  });
+
+  it("a running job superseded before the delete still holds the id until it reports", async () => {
+    const jm = new JobManager({ perCaseConcurrency: 2 });
+    const first = jm.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
+    await first.ready;
+    const second = jm.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
+    await second.ready;
+    expect(first.signal?.aborted).toBe(true);
+    await jm.finish(second.jobId);
+    await jm.forgetCase("c1");
+    expect(jm.isStopping("c1")).toBe(true);
+    await jm.finish(first.jobId);
+    expect(jm.isStopping("c1")).toBe(false);
+  });
+
+  it("a cancelled job that already reported does not hold a later delete", async () => {
+    const jm = new JobManager({ perCaseConcurrency: 1 });
+    const job = jm.register({ caseId: "c1", kind: "import", cancellable: true });
+    await job.ready;
+    await jm.cancel(job.jobId);
+    await jm.fail(job.jobId, new Error("aborted"));
+    const other = jm.register({ caseId: "c1", kind: "import" });
+    await other.ready;
+    await jm.finish(other.jobId);
+    await jm.forgetCase("c1");
+    expect(jm.isStopping("c1")).toBe(false);
+  });
+});
+
+describe("whole-case imports of a reused id", () => {
+  async function archive(app: ReturnType<typeof createApp>, stateStore: StateStore): Promise<Buffer> {
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "SRC", name: "Source", investigator: "alice", aiProvider: "mock" });
+    await stateStore.save(emptyState("SRC"));
+    const archived = await request(app).post("/cases/SRC/archive").send({});
+    expect(archived.status).toBe(200);
+    return readFile(archived.body.archivePath as string);
+  }
+
+  it("a ZIP import refuses an id whose deleted case still has work stopping, then succeeds", async () => {
+    resetLimiters();
+    const store = new CaseStore(await tmpRoot());
+    const stateStore = new StateStore(store);
+    const jobManager = new JobManager({ perCaseConcurrency: 1 });
+    const app = createApp(store, { stateStore, jobManager });
+    const zip = (await archive(app, stateStore)).toString("base64");
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "R1", name: "Old", investigator: "alice", aiProvider: "mock" });
+    const job = jobManager.register({ caseId: "R1", kind: "import", cancellable: true });
+    await job.ready;
+    await request(app).patch("/cases/R1/status").send({ status: "closed" });
+    expect((await request(app).post("/cases/R1/delete").send({ archiveFirst: "none" })).body).toMatchObject({
+      deleted: true,
+    });
+
+    const refused = await request(app).post("/cases/import/zip").send({ data: zip, targetCaseId: "R1" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/still stopping/);
+    expect(await store.caseExists("R1")).toBe(false);
+
+    await jobManager.fail(job.jobId, new Error("aborted"));
+    const imported = await request(app).post("/cases/import/zip").send({ data: zip, targetCaseId: "R1" });
+    expect(imported.status).toBe(201);
+  });
+
+  it("the import claim refuses a mid-delete or stopping id and clears stale access otherwise", () => {
+    const cleared: string[] = [];
+    const ctx = (deleting: boolean, stopping: boolean) =>
+      ({
+        store: { isDeleting: () => deleting },
+        options: {
+          jobManager: { isStopping: () => stopping },
+          teamAuth: { store: { deleteCaseAccess: (id: string) => cleared.push(id) } },
+        },
+      }) as unknown as RouteContext;
+    const req = {} as Request;
+    expect(() => importedCaseIdClaim(ctx(true, false), req)("x1")).toThrow(CaseImportConflictError);
+    expect(() => importedCaseIdClaim(ctx(false, true), req)("x2")).toThrow(/still stopping/);
+    expect(cleared).toEqual([]);
+    importedCaseIdClaim(ctx(false, false), req)("x3");
+    expect(cleared).toEqual(["x3"]);
+  });
+
+  it("a claim that throws before the publish leaves nothing published", async () => {
+    resetLimiters();
+    const store = new CaseStore(await tmpRoot());
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    const zip = await archive(app, stateStore);
+    await expect(
+      importZipArchiveCase(store, zip, {
+        targetCaseId: "R2",
+        beforePublish: () => {
+          throw new Error("access store down");
+        },
+      }),
+    ).rejects.toThrow(/access store down/);
+    expect(await store.caseExists("R2")).toBe(false);
+    expect(await exists(store.caseDir("R2"))).toBe(false);
   });
 });
 

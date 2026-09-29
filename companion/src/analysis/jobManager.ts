@@ -143,13 +143,10 @@ function deferred(): Deferred {
     resolve = ok;
     reject = fail;
   });
-  // Cancelling a job that never started REJECTS these (see cancel()), and the reject can land
-  // before anyone is waiting: resume() publishes its admission into this.admissions and only
-  // attaches runResumedJob's handler after the ledger write returns. A rejection with no handler
-  // at that moment is an unhandled rejection, which Node makes fatal — one cancel would take the
-  // whole server down mid-investigation. This keep-alive handler makes the rejection safe to
-  // observe late, or never. It swallows nothing: .catch() returns a NEW promise and the original
-  // still rejects, so every real awaiter of `ready` still sees the AbortError.
+  // Cancelling a job that never started REJECTS these (see cancel()), possibly before anyone waits:
+  // resume() attaches runResumedJob's handler only after the ledger write. Unhandled, Node makes that
+  // rejection fatal. This keep-alive swallows nothing — .catch() returns a NEW promise, and every
+  // real awaiter of `ready` still sees the AbortError.
   promise.catch(() => {});
   let done = false;
   return {
@@ -428,7 +425,7 @@ export class JobManager {
     if (!job) return { ok: false, reason: "unknown" };
     if (isTerminal(job.status)) return { ok: false, reason: "terminal" };
     if (!job.cancellable) return { ok: false, reason: "not-cancellable" };
-
+    this.stopping.aborted(job); // its row turns terminal now; its work may run on (#1831)
     this.controllers.get(jobId)?.abort();
     this.clearBudgetTimer(jobId);
     this.table = cancelJob(this.table, jobId, this.now());
@@ -607,6 +604,7 @@ export class JobManager {
     // come back as a `cancelled` job the analyst never cancelled.
     const durability = this.durabilities.get(job.id);
     const inLedger = durability?.settled() === true;
+    this.stopping.aborted(job);
     this.controllers.get(job.id)?.abort();
     this.clearBudgetTimer(job.id);
     this.table = dropJob(this.table, job.id);
@@ -749,6 +747,7 @@ export class JobManager {
       await handler(job, this.controllers.get(jobId)?.signal);
       await this.finish(jobId);
     } catch (error) {
+      this.stopping.settle(jobId); // the handler ended, even when its row is gone or terminal
       const job = getJob(this.table, jobId);
       if (!job || isTerminal(job.status)) return;
       await this.fail(jobId, error, {

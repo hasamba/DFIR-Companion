@@ -7,6 +7,7 @@ import {
   openPlainCaseZip,
   restoreCaseEntries,
   type CaseImportCounts,
+  type RestoreCaseEntriesOptions,
 } from "./caseExportArchive.js";
 import type { ArchiveEntry } from "./caseArchiveManifest.js";
 
@@ -33,6 +34,7 @@ const SUPPORTED_METHODS = new Set([0, 8]);
 
 export interface ImportZipArchiveOptions {
   targetCaseId?: string;
+  beforePublish?: RestoreCaseEntriesOptions["beforePublish"];
 }
 
 export interface ImportZipArchiveResult {
@@ -83,6 +85,7 @@ export async function importZipArchiveCase(
 
   const { meta, sourceCaseId } = await restoreCaseEntries(store, entries, {
     targetCaseId: options.targetCaseId,
+    beforePublish: options.beforePublish,
     // Runs after the restore's own path-safety pass and before any write.
     verify: (checked, caseJsonId) => {
       if (caseJsonId !== caseFolder) {

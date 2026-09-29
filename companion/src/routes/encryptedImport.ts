@@ -10,7 +10,7 @@ import { DecryptionError } from "../analysis/caseEncryption.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { hashFile } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
-import { grantNewCaseCreator } from "./caseIdentity.js";
+import { importedCaseIdClaim } from "./caseIdentity.js";
 
 /**
  * Whole-case import — POST /cases/import/encrypted (a `.dfircase` package) and POST
@@ -87,9 +87,10 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         {
           targetCaseId:
             typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
+          beforePublish: importedCaseIdClaim(ctx, req),
         },
       );
-      grantNewCaseCreator(ctx, req, meta.caseId);
+      options.teamAuth?.grantCreator(req, meta.caseId);
       await recordArrival(ctx, meta.caseId, DFIRCASE_ARRIVAL, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
@@ -164,9 +165,10 @@ function registerZipImportRoute(app: Express, ctx: RouteContext): void {
       const result = await importZipArchiveCase(store, Buffer.from(data, "base64"), {
         targetCaseId:
           typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
+        beforePublish: importedCaseIdClaim(ctx, req),
       });
       const { meta, verified, sourceCaseId } = result;
-      grantNewCaseCreator(ctx, req, meta.caseId);
+      options.teamAuth?.grantCreator(req, meta.caseId);
       await recordArrival(ctx, meta.caseId, ZIP_ARRIVAL, sourceCaseId);
       const counts = await countsFromState(ctx, meta.caseId, result.counts);
       // sanitizeCaseMeta for the same reason as above: case.json travels byte-for-byte, lock hash included.
