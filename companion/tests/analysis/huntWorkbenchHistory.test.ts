@@ -183,6 +183,11 @@ interface Harness {
   failNextExecute: () => void;
   /** Hold the next GET /saved reply; release() lets it answer (reject = fail it). */
   holdSaved: () => { release: (reject?: boolean) => void };
+  /** Fire the workbench's body MutationObserver, as a dashboard re-render would. */
+  mutate: () => Promise<void>;
+  /** Hold the next POST /execute until release(); abort rejects it like a real fetch. */
+  holdExecute: () => { release: () => void };
+  savedGets: () => string[];
 }
 
 async function mount(initial: Hunt[]): Promise<Harness> {
@@ -196,6 +201,9 @@ async function mount(initial: Hunt[]): Promise<Harness> {
   let failExecute = false;
   let savedGate: Promise<boolean> | null = null;
   let counter = 0;
+  let observerCallback: () => void = () => {};
+  let executeGate: Promise<void> | null = null;
+  const savedGets: string[] = [];
 
   vi.stubGlobal("document", {
     readyState: "complete",
@@ -205,17 +213,46 @@ async function mount(initial: Hunt[]): Promise<Harness> {
     body: new FakeElement("body"),
     querySelectorAll: () => [],
   });
-  vi.stubGlobal("MutationObserver", class { observe(): void {} });
-  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      constructor(callback: () => void) {
+        observerCallback = callback;
+      }
+      observe(): void {}
+    },
+  );
+  vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
+    callback();
+    return 0;
+  });
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   vi.stubGlobal("confirm", () => true);
   vi.stubGlobal("prompt", () => "Fresh hunt");
-  vi.stubGlobal("fetch", async (url: string, init: { method?: string; body?: string } = {}) => {
+  vi.stubGlobal("fetch", async (url: string, init: { method?: string; body?: string; signal?: AbortSignal } = {}) => {
     const method = init.method ?? "GET";
     const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
     const reply = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => value });
     if (url.endsWith("/validate")) return reply({ explanation: "ok" });
+    if (url.endsWith("/cancel")) return reply({ cancelled: true });
     if (url.endsWith("/execute")) {
+      const gate = executeGate;
+      executeGate = null;
+      if (gate) {
+        const signal = init.signal;
+        const aborted = await Promise.race([
+          gate.then(() => false),
+          new Promise<boolean>((resolve) => signal?.addEventListener("abort", () => resolve(true))),
+        ]);
+        if (aborted) {
+          // The server records the cancelled run a moment after the client sees its abort.
+          setTimeout(() => {
+            const entry = run({ id: "cancelled-run", executedAt: "2026-09-09T00:00:00.000Z", status: "cancelled", matched: 0 });
+            hunts = hunts.map((hunt) => (hunt.id === body?.savedHuntId ? { ...hunt, history: [entry, ...hunt.history] } : hunt));
+          }, 100);
+          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+        }
+      }
       counter += 1;
       const entry = run({
         id: `run-${counter}`,
@@ -232,6 +269,7 @@ async function mount(initial: Hunt[]): Promise<Harness> {
       return reply({ matched: entry.matched, scanned: 1, durationMs: 1, explanation: "ran", events: [], dataset: "forensic" });
     }
     if (url.endsWith("/saved") && method === "GET") {
+      savedGets.push(url);
       const gate = savedGate;
       savedGate = null;
       const snapshot = hunts;
@@ -256,6 +294,18 @@ async function mount(initial: Hunt[]): Promise<Harness> {
   return {
     el,
     settle,
+    savedGets: () => savedGets,
+    mutate: async () => {
+      observerCallback();
+      await settle();
+    },
+    holdExecute: () => {
+      let release = () => {};
+      executeGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { release };
+    },
     failNextExecute: () => {
       failExecute = true;
     },
@@ -353,5 +403,50 @@ describe("hunt workbench — execution history panel (#1833)", () => {
     await h.settle();
 
     expect(h.el("hqHistory").innerHTML).toContain("seed-analyst");
+  });
+
+  it("hides the old case's history the moment the case changes", async () => {
+    const h = await mount([HUNT]);
+    await select(h, "h1");
+    h.holdSaved(); // the new case's list never answers
+    h.el("caseId").value = "case-2";
+    void h.el("caseId").fire("change");
+    await h.settle();
+
+    expect(h.el("hqHistory").innerHTML).toBe("");
+  });
+
+  it("a case opened without an input event still reloads the list and hides the old history", async () => {
+    const h = await mount([HUNT]);
+    await select(h, "h1");
+    const before = h.savedGets().length;
+    h.el("caseId").value = "case-2"; // new-case / demo / import set the box directly
+    await h.mutate();
+
+    expect(h.savedGets().length).toBe(before + 1);
+    expect(h.savedGets().at(-1)).toContain("/cases/case-2/");
+    expect(h.el("hqHistory").innerHTML).toBe("");
+  });
+
+  it("a re-render with the same case does not reload the list", async () => {
+    const h = await mount([HUNT]);
+    const before = h.savedGets().length;
+    await h.mutate();
+
+    expect(h.savedGets().length).toBe(before);
+  });
+
+  it("a cancelled Run shows the cancelled row once the server has recorded it", async () => {
+    const h = await mount([EMPTY]);
+    await select(h, "h2");
+    h.holdExecute();
+    const running = h.el("hqRun").fire("click");
+    await h.settle();
+    await h.el("hqCancel").fire("click");
+    await running;
+    await h.settle();
+
+    expect(h.el("hqSaved").value).toBe("h2");
+    expect(h.el("hqHistory").innerHTML).toContain("hq-run-cancelled");
   });
 });

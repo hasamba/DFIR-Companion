@@ -133,6 +133,9 @@ function escapeHtml(value) {
 // The statuses savedHuntStore records. Anything else is shown as text but never becomes a class.
 const RUN_STATUSES = new Set(["completed", "cancelled", "limited", "failed"]);
 const HISTORY_COLUMNS = ["Time", "Analyst", "Status", "Matches", "Duration"];
+// A cancelled run is recorded when the server's query unwinds, which can be after the client has
+// already seen its own abort. Wait this long before reloading, so the "cancelled" row is there.
+const CANCEL_RECORD_SETTLE_MS = 750;
 
 function formatRunTime(iso) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(String(iso ?? ""));
@@ -237,6 +240,11 @@ function initialize() {
   let statusSeq = 0;
   // Only the newest saved-hunt list may land: a slow reply for the previous case must not win.
   let loadSeq = 0;
+  // The case the saved-hunt list was asked for, and the case it belongs to. History shows only
+  // when the list belongs to the open case: another case's analysts and parameters never leak.
+  let requestedCase = "";
+  let savedCase = "";
+  let cancelRequest = null;
 
   const caseId = () => (document.getElementById("caseId")?.value || "").trim();
   const endpoint = (suffix) =>
@@ -269,9 +277,11 @@ function initialize() {
 
   function renderHistory() {
     if (!history) return;
-    history.innerHTML = renderHuntHistory(
-      savedHunts.find((hunt) => hunt.id === savedSelect.value),
-    );
+    const current =
+      savedCase === caseId()
+        ? savedHunts.find((hunt) => hunt.id === savedSelect.value)
+        : null;
+    history.innerHTML = renderHuntHistory(current);
   }
 
   function reportActionError(error) {
@@ -414,6 +424,7 @@ function initialize() {
     setStatus("Running bounded indexed query…");
     if (!cursor) selected = new Set();
     const savedHuntId = savedSelect.value || undefined;
+    let cancelled = false;
     try {
       const body = await jsonRequest(endpoint("/execute"), {
         method: "POST",
@@ -438,7 +449,8 @@ function initialize() {
       renderResults();
       updateActionState();
     } catch (error) {
-      setStatus(error.name === "AbortError" ? "Query cancelled." : error.message, true);
+      cancelled = error.name === "AbortError";
+      setStatus(cancelled ? "Query cancelled." : error.message, true);
     } finally {
       running = null;
       executionId = null;
@@ -446,7 +458,12 @@ function initialize() {
       cancelButton.disabled = true;
     }
     // The server records failed runs too, so the history refreshes either way (#1833).
-    if (savedHuntId && !cursor) await loadSaved();
+    if (!savedHuntId || cursor) return;
+    if (cancelled) {
+      await cancelRequest;
+      await new Promise((resolve) => setTimeout(resolve, CANCEL_RECORD_SETTLE_MS));
+    }
+    await loadSaved();
   }
 
   // Rebuilding the options resets the select, so a Run of a saved hunt used to drop the selection
@@ -454,12 +471,19 @@ function initialize() {
   // a case change passes keep: false, because the old id does not belong to the new case.
   async function loadSaved({ keep = true } = {}) {
     const load = ++loadSeq;
-    if (!caseId()) return;
+    const forCase = caseId();
+    requestedCase = forCase;
+    if (!keep) {
+      savedHunts = [];
+      renderHistory();
+    }
+    if (!forCase) return;
     const previous = keep ? savedSelect.value : "";
     try {
       const hunts = await jsonRequest(endpoint("/saved"));
       if (load !== loadSeq) return;
       savedHunts = hunts;
+      savedCase = forCase;
       savedSelect.innerHTML =
         '<option value="">Unsaved query</option>' +
         savedHunts
@@ -629,9 +653,10 @@ function initialize() {
   cancelButton.addEventListener("click", async () => {
     running?.abort();
     if (executionId) {
-      await fetch(endpoint(`/executions/${executionId}/cancel`), {
+      cancelRequest = fetch(endpoint(`/executions/${executionId}/cancel`), {
         method: "POST",
       }).catch(() => {});
+      await cancelRequest;
     }
   });
   nextButton.addEventListener("click", () => run(lastCursor));
@@ -727,6 +752,12 @@ function initialize() {
     requestAnimationFrame(() => {
       pivotQueued = false;
       addPivotButtons();
+      // New-case, demo-case and import set the case box without an input/change event. The
+      // dashboard re-renders after any case opens, so this is where a silent switch is noticed.
+      if (caseId() !== requestedCase) {
+        loadSavedForCase();
+        loadCatalog();
+      }
     });
   }).observe(document.body, { childList: true, subtree: true });
 
