@@ -48,7 +48,13 @@ describe("renderHuntHistory", () => {
     const html = renderHuntHistory({
       history: [
         run({ id: "old", executedAt: "2026-09-01T10:00:00.000Z", executedBy: "older-analyst" }),
-        run({ id: "new", executedAt: "2026-09-02T10:00:00.000Z", executedBy: "newer-analyst", matched: 7, durationMs: 250 }),
+        run({
+          id: "new",
+          executedAt: "2026-09-02T10:00:00.000Z",
+          executedBy: "newer-analyst",
+          matched: 7,
+          durationMs: 250,
+        }),
       ],
     });
     for (const header of ["Time", "Analyst", "Status", "Matches", "Duration"]) {
@@ -61,7 +67,10 @@ describe("renderHuntHistory", () => {
   });
 
   it("does not reorder the hunt's own history array", () => {
-    const history = [run({ id: "a", executedAt: "2026-09-01T00:00:00.000Z" }), run({ id: "b", executedAt: "2026-09-03T00:00:00.000Z" })];
+    const history = [
+      run({ id: "a", executedAt: "2026-09-01T00:00:00.000Z" }),
+      run({ id: "b", executedAt: "2026-09-03T00:00:00.000Z" }),
+    ];
     renderHuntHistory({ history });
     expect(history.map((entry) => entry.id)).toEqual(["a", "b"]);
   });
@@ -229,60 +238,87 @@ async function mount(initial: Hunt[]): Promise<Harness> {
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   vi.stubGlobal("confirm", () => true);
   vi.stubGlobal("prompt", () => "Fresh hunt");
-  vi.stubGlobal("fetch", async (url: string, init: { method?: string; body?: string; signal?: AbortSignal } = {}) => {
-    const method = init.method ?? "GET";
-    const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-    const reply = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => value });
-    if (url.endsWith("/validate")) return reply({ explanation: "ok" });
-    if (url.endsWith("/cancel")) return reply({ cancelled: true });
-    if (url.endsWith("/execute")) {
-      const gate = executeGate;
-      executeGate = null;
-      if (gate) {
-        const signal = init.signal;
-        const aborted = await Promise.race([
-          gate.then(() => false),
-          new Promise<boolean>((resolve) => signal?.addEventListener("abort", () => resolve(true))),
-        ]);
-        if (aborted) {
-          // The server records the cancelled run a moment after the client sees its abort.
-          setTimeout(() => {
-            const entry = run({ id: "cancelled-run", executedAt: "2026-09-09T00:00:00.000Z", status: "cancelled", matched: 0 });
-            hunts = hunts.map((hunt) => (hunt.id === body?.savedHuntId ? { ...hunt, history: [entry, ...hunt.history] } : hunt));
-          }, 100);
-          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  vi.stubGlobal(
+    "fetch",
+    async (url: string, init: { method?: string; body?: string; signal?: AbortSignal } = {}) => {
+      const method = init.method ?? "GET";
+      const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      const reply = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => value });
+      if (url.endsWith("/validate")) return reply({ explanation: "ok" });
+      if (url.endsWith("/cancel")) return reply({ cancelled: true });
+      if (url.endsWith("/execute")) {
+        const gate = executeGate;
+        executeGate = null;
+        if (gate) {
+          const signal = init.signal;
+          const aborted = await Promise.race([
+            gate.then(() => false),
+            new Promise<boolean>((resolve) => signal?.addEventListener("abort", () => resolve(true))),
+          ]);
+          if (aborted) {
+            // The server records the cancelled run a moment after the client sees its abort.
+            setTimeout(() => {
+              const entry = run({
+                id: "cancelled-run",
+                executedAt: "2026-09-09T00:00:00.000Z",
+                status: "cancelled",
+                matched: 0,
+              });
+              hunts = hunts.map((hunt) =>
+                hunt.id === body?.savedHuntId ? { ...hunt, history: [entry, ...hunt.history] } : hunt,
+              );
+            }, 100);
+            throw Object.assign(new Error("aborted"), { name: "AbortError" });
+          }
         }
+        counter += 1;
+        const entry = run({
+          id: `run-${counter}`,
+          executedAt: `2026-09-0${counter}T00:00:00.000Z`,
+          executedBy: String(body?.author),
+          status: failExecute ? "failed" : "completed",
+          matched: failExecute ? 0 : counter * 10,
+        });
+        hunts = hunts.map((hunt) =>
+          hunt.id === body?.savedHuntId ? { ...hunt, history: [entry, ...hunt.history] } : hunt,
+        );
+        if (failExecute) {
+          failExecute = false;
+          return reply({ error: { message: "boom" } }, false);
+        }
+        return reply({
+          matched: entry.matched,
+          scanned: 1,
+          durationMs: 1,
+          explanation: "ran",
+          events: [],
+          dataset: "forensic",
+        });
       }
-      counter += 1;
-      const entry = run({
-        id: `run-${counter}`,
-        executedAt: `2026-09-0${counter}T00:00:00.000Z`,
-        executedBy: String(body?.author),
-        status: failExecute ? "failed" : "completed",
-        matched: failExecute ? 0 : counter * 10,
-      });
-      hunts = hunts.map((hunt) => (hunt.id === body?.savedHuntId ? { ...hunt, history: [entry, ...hunt.history] } : hunt));
-      if (failExecute) {
-        failExecute = false;
-        return reply({ error: { message: "boom" } }, false);
+      if (url.endsWith("/saved") && method === "GET") {
+        savedGets.push(url);
+        const gate = savedGate;
+        savedGate = null;
+        const snapshot = hunts;
+        if (gate && (await gate)) return reply({ error: "down" }, false);
+        return reply(snapshot);
       }
-      return reply({ matched: entry.matched, scanned: 1, durationMs: 1, explanation: "ran", events: [], dataset: "forensic" });
-    }
-    if (url.endsWith("/saved") && method === "GET") {
-      savedGets.push(url);
-      const gate = savedGate;
-      savedGate = null;
-      const snapshot = hunts;
-      if (gate && (await gate)) return reply({ error: "down" }, false);
-      return reply(snapshot);
-    }
-    if (url.endsWith("/saved") && method === "POST") {
-      const created: Hunt = { id: "h-new", name: "Fresh hunt", dataset: "forensic", query: "x", author: "a", parameters: {}, history: [] };
-      hunts = [created, ...hunts];
-      return reply(created);
-    }
-    return reply({ fields: [], grammar: "" });
-  });
+      if (url.endsWith("/saved") && method === "POST") {
+        const created: Hunt = {
+          id: "h-new",
+          name: "Fresh hunt",
+          dataset: "forensic",
+          query: "x",
+          author: "a",
+          parameters: {},
+          history: [],
+        };
+        hunts = [created, ...hunts];
+        return reply(created);
+      }
+      return reply({ fields: [], grammar: "" });
+    },
+  );
 
   vi.resetModules();
   await import("../../../public/js/hunt-workbench.js");
