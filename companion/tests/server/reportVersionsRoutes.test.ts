@@ -130,6 +130,28 @@ describe("report-versions routes", () => {
     ]);
   });
 
+  it("reports a Case Details change the evidence diff cannot see (#1779)", async () => {
+    const { app } = await harness();
+    await request(app).put("/cases/c1/report-meta").send({ organization: "ExampleCorp" });
+    await request(app).post("/cases/c1/report");
+    const v1 = (await request(app).get("/cases/c1/report-versions")).body[0];
+    await request(app)
+      .put("/cases/c1/report-meta")
+      .send({ organization: "ExampleCorp", incidentId: "INC-7" });
+    await request(app).post("/cases/c1/report");
+    const v2 = (await request(app).get("/cases/c1/report-versions")).body[0];
+    expect(v2.id).not.toBe(v1.id);
+
+    const diff = await request(app).get(`/cases/c1/report-versions/diff?from=${v1.id}&to=${v2.id}`);
+    expect(diff.status).toBe(200);
+    expect(diff.body.findings.added).toEqual([]);
+    expect(diff.body.report.caseDetailsChanged).toEqual(["incidentId"]);
+    expect(diff.body.report.textChanged).toBe(true);
+
+    const same = await request(app).get(`/cases/c1/report-versions/diff?from=${v2.id}&to=${v2.id}`);
+    expect(same.body.report).toEqual({ textChanged: false, caseDetailsChanged: [] });
+  });
+
   it("restores a prior version's editable report-meta", async () => {
     const { app } = await harness();
     await request(app).put("/cases/c1/report-meta").send({ organization: "OriginalCorp" });
@@ -236,5 +258,16 @@ describe("report-versions routes", () => {
     expect(secondRelease.body.supersedesReleaseId).toBe(firstRelease.id);
     const preserved = await request(app).get(`/cases/c1/report-releases/${firstRelease.id}`);
     expect(preserved.body.snapshot.meta.organization).toBe("First version");
+
+    // #1779: the release diff names the Case Details field that changed.
+    const releaseDiff = await request(app).get(
+      `/cases/c1/report-releases/diff?from=${firstRelease.id}&to=${secondRelease.body.id}`,
+    );
+    expect(releaseDiff.status).toBe(200);
+    expect(releaseDiff.body.report).toEqual({ textChanged: true, caseDetailsChanged: ["organization"] });
+    const sameRelease = await request(app).get(
+      `/cases/c1/report-releases/diff?from=${firstRelease.id}&to=${firstRelease.id}`,
+    );
+    expect(sameRelease.body.report).toEqual({ textChanged: false, caseDetailsChanged: [] });
   });
 });
