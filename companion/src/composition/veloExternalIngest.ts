@@ -28,10 +28,17 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
-import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackNotes } from "../routes/importNotes.js";
 import type { VeloUploadsOutcome } from "../routes/veloUploadFields.js";
+import {
+  EXTERNAL_REFUSAL_WORDING,
+  evidenceSizeHint,
+  planUploads,
+  storeUploads,
+  utf8Bytes,
+} from "./veloEvidenceFirst.js";
 
 // The case's rename ledger for a super-only parse (#1495): what the forensic path reads through
 // importState.ts knownHostIdentity, from the snapshot this path already holds. Nothing when the
@@ -74,6 +81,7 @@ export interface VeloExternalIngest {
       hostFallback?: string;
       veloUrl?: string;
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
+      rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(
@@ -137,6 +145,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       hostFallback?: string;
       veloUrl?: string;
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
+      rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
       // The caller's recorder for this artifact (#1736). The caller owns failure (recordImportFailure);
       // this function writes the success line, since it imports without dispatchImport.
       debug?: ImportDebugRecorder;
@@ -145,10 +154,19 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     opts.debug?.detected("velociraptor", { confident: true, decision: "explicit_route" }); // a row map
+    // Evidence first (#1874): stored before the section, so the memory guard below can refuse the
+    // import without losing the rows — see composition/veloEvidenceFirst.ts.
+    const { storedName, importedAt, seq } = await persistEvidence(caseId, opts.label, mapJson);
     // One import writer per case: the section spans the snapshot, the merge and the diff
     // below, so no concurrent import can be counted into this artifact map's numbers.
     // See analysis/importLock.ts.
-    const releaseImportLock = await importLock.acquire(caseId);
+    const releaseImportLock = await importLock.acquire(
+      caseId,
+      evidenceSizeHint(
+        opts.rows === undefined ? { bytes: utf8Bytes([mapJson]) } : { rows: opts.rows },
+        EXTERNAL_REFUSAL_WORDING,
+      ),
+    );
     try {
       let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
@@ -158,7 +176,6 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           /* null */
         }
       }
-      const { storedName, importedAt, seq } = await persistEvidence(caseId, opts.label, mapJson);
 
       if (opts.superOnly && options.superTimelineStore) {
         const artifact = storedName.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
@@ -340,10 +357,29 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
   ): Promise<VeloUploadsOutcome> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
+    // Evidence first (#1874): every upload that will import is stored before the section, so the
+    // memory guard below can refuse without losing a file — see composition/veloEvidenceFirst.ts.
+    // CSV/log are themselves an LLM call — respect the per-case AI toggle exactly like every other
+    // import path; with AI off they are skipped, never stored as evidence that never analyzes.
+    const plan = await planUploads(uploads, {
+      resolveImportKind,
+      aiEnabled: async () => (await getControl(caseId)).enabled,
+      logLine,
+    });
+    const skipped = [...plan.skipped];
+    const stored = await storeUploads(persistEvidence, caseId, plan.planned, ({ up, debug }, e) => {
+      // No failure ring on this path: the upload is skipped and logged, so its line is written here.
+      emitImportDebug(caseId, debug, "failed");
+      logLine(`[velociraptor] uploads-only import failed (${up.name}): ${(e as Error).message}`);
+      skipped.push(up.name);
+    });
     // One import writer per case: the section spans the snapshot, the merge and the diff
     // below, so no concurrent import can be counted into these uploads' numbers.
     // See analysis/importLock.ts.
-    const releaseImportLock = await importLock.acquire(caseId);
+    const releaseImportLock = await importLock.acquire(
+      caseId,
+      evidenceSizeHint({ bytes: utf8Bytes(stored.map((u) => u.up.content)) }, EXTERNAL_REFUSAL_WORDING),
+    );
     try {
       let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
@@ -355,25 +391,10 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       }
 
       const imported: string[] = [];
-      const skipped: string[] = [];
       const importedKinds: Array<{ file: string; kind: string; debug: ImportDebugRecorder }> = []; // #1824
       let lastStoredName: string | undefined;
-      for (const up of uploads) {
-        const debug = createImportDebugRecorder(); // one recorder per uploaded file (#1736)
-        const kind = resolveImportKind(up.name, up.content, debug);
-        if (kind === "unknown") {
-          skipped.push(up.name);
-          continue;
-        }
-        // CSV/log are themselves an LLM call — respect the per-case AI toggle exactly like every other
-        // import path (dispatchImport's own CSV/log routes, and the bundle-collect uploads step).
-        // With AI off, skip entirely rather than persisting evidence that never analyzes.
-        if ((kind === "csv" || kind === "log") && !(await getControl(caseId)).enabled) {
-          skipped.push(up.name);
-          continue;
-        }
+      for (const { up, kind, debug, storedName, importedAt, seq } of stored) {
         try {
-          const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
           lastStoredName = storedName;
           await dispatchImport(kind, caseId, up.content, {
             label: storedName,

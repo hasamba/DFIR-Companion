@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Setup wizard saves provider keys** — the AI step writes the key and base URL to the provider, so Settings → AI no longer asks to move them after a fresh setup (closes #1870)
+- **Import memory guard covers Velociraptor hunts** — a hunt collect and an external hunt/flow import store their rows as evidence first, then the guard may refuse with its message on the hunt card (part of #1874)
 
 ## [0.39.0] - 2026-09-29
 

@@ -37,6 +37,21 @@ describe("assessImportMemory", () => {
     expect(verdict.message).toMatch(/DFIR_IMPORT_MEMORY_GUARD=off/);
   });
 
+  it("says what was saved and how to retry in the caller's words, when it gives them", () => {
+    const starved = { caseEvents: 140_000, incomingEvents: 2_000, ...roomy, availableBytes: 0 };
+    const fallback = assessImportMemory(starved);
+    const worded = assessImportMemory({
+      ...starved,
+      wording: { saved: "The hunt's rows are saved in the case", retry: "press Collect now on this hunt" },
+    });
+    if (fallback.ok || worded.ok) throw new Error("expected both to be refused");
+    expect(fallback.message).toMatch(/The file is saved in the case and nothing was changed\./);
+    expect(fallback.message).toMatch(/Then import the file again\./);
+    expect(worded.message).toMatch(/The hunt's rows are saved in the case and nothing was changed\./);
+    expect(worded.message).toMatch(/Then press Collect now on this hunt\./);
+    expect(worded.message).not.toMatch(/import the file again/);
+  });
+
   it("refuses when the V8 heap limit is too small for the case, even with free memory", () => {
     const caseEvents = Math.ceil((2 * GB) / IMPORT_HEAP_BYTES_PER_EVENT) + 1;
     const verdict = assessImportMemory({ caseEvents, incomingEvents: 0, ...roomy, heapLimitBytes: 2 * GB });
