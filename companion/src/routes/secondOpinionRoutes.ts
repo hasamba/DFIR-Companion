@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
+import { markAiBudgetUnspent } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 import type { SecondOpinion } from "../analysis/secondOpinion.js";
 import type { Finding } from "../analysis/stateTypes.js";
@@ -75,6 +76,7 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       if ((await options.stateStore?.load(caseId))?.forensicTimeline.length === 0) {
         if (job) await options.jobManager?.finish(job.jobId);
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+        markAiBudgetUnspent(res); // nothing reached a model: the AI-budget slot goes back (#1825)
         return res.status(200).json({ skipped: EMPTY_TIMELINE, message: NOTHING_TO_REVIEW });
       }
       options.onAiStatus?.(caseId, {

@@ -8,7 +8,8 @@ import { telegramChatsFromBindings } from "../analysis/slashCommandStore.js";
 import type { RouteContext } from "./context.js";
 import { requestAuthentication } from "../auth/types.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
-import { emitImportDebug } from "./importDebugEmit.js";
+import { emitImportDebug, logSiemFallback } from "./importDebugEmit.js";
+import { siemFallbackWarning } from "./importNotes.js";
 
 /**
  * Push + notification routes: the generic external push-ingest endpoint (#84) with its per-case
@@ -83,7 +84,8 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
 
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
-    res.status(202).json({ accepted: true, kind, source });
+    logSiemFallback(caseId, filename, kind, debug); // #1824: a webhook's 202 is not read by the analyst
+    res.status(202).json({ accepted: true, kind, source, ...siemFallbackWarning(kind, debug) });
     // Import in the background; the 202 already went out. The failure ring is the one place a
     // failed import is logged (#1438), so a push that dies after the 202 still leaves a line.
     ingestStreamed(caseId, kind, text, filename, minSeverity, undefined, undefined, undefined, debug).catch(

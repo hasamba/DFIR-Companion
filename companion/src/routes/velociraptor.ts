@@ -28,6 +28,7 @@ import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
 import { externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
+import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
@@ -652,8 +653,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
             kind: "hunt",
             huntId: ref.huntId,
             uploadsOnly: true,
-            imported: out.imported,
-            skipped: out.skipped,
+            ...uploadOutcomeFields(out),
             addedEvents: out.addedEvents,
             addedIocs: out.addedIocs,
             ...(out.imported.length === 0
@@ -723,8 +723,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           clientId: ref.clientId,
           flowId: ref.flowId,
           uploadsOnly: true,
-          imported: out.imported,
-          skipped: out.skipped,
+          ...uploadOutcomeFields(out),
           addedEvents: out.addedEvents,
           addedIocs: out.addedIocs,
           ...(out.imported.length === 0

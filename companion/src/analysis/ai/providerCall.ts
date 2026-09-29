@@ -35,6 +35,7 @@ import {
 import type { PresidioPendingStore } from "../presidioPending.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
+import { noteAiCallStarted } from "../../http/rateLimiter.js";
 
 /**
  * The AI-call gate (#418).
@@ -118,6 +119,7 @@ async function analyzeProvider(
   label: string,
 ): Promise<AnalyzeResult> {
   const startedAt = Date.now();
+  noteAiCallStarted(); // the request that caused this call keeps its AI-budget slot (#1825)
   try {
     const result = await provider.analyze(req);
     const usage = result.usage;

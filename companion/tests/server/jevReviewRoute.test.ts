@@ -11,6 +11,7 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
+import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
 
 // The Jev review is OFF unless the analyst turns it on, and it reads the raw record — so the two
 // properties worth pinning at the route are that an unconfigured install offers nothing, and that
@@ -215,6 +216,19 @@ describe("what the analyst is told about coverage", () => {
     expect(res.body.alreadyAnalyzed).toBe(5);
     expect(res.body.capped).toBe(false);
     expect(res.body.rows).toEqual([]);
+  });
+
+  // #1825 — a review that sends nothing to Jev gives its AI-budget slot back.
+  it("a review with nothing to grade does not use the case's AI budget", async () => {
+    resetLimiters();
+    const app = await caseWith(5, 5);
+    for (let i = 0; i < 25; i++) {
+      const res = await request(app).post("/cases/c1/jev/review").send({});
+      expect(res.status).toBe(200);
+    }
+    const limiter = getAiLimiter();
+    for (let i = 0; i < 20; i++) expect(limiter.tryAcquire("c1")).toBe(true);
+    resetLimiters();
   });
 
   it("reads every matching row when the analyst asks for it, past the default cap", async () => {

@@ -107,6 +107,22 @@ describe("appendDropLog", () => {
 });
 
 describe("buildSweepLogEntries", () => {
+  it("puts a warning on the IMPORTED line of the file it names (#1824)", () => {
+    const { entries } = buildSweepLogEntries(
+      {
+        imported: ["a.json", "b.json"],
+        failed: [],
+        pendingRawInputs: [],
+        warned: [{ relpath: "b.json", reason: "unrecognised JSON" }],
+      },
+      new Set(),
+    );
+    expect(entries).toEqual([
+      { status: "IMPORTED", relpath: "a.json" },
+      { status: "IMPORTED", relpath: "b.json", reason: "unrecognised JSON" },
+    ]);
+  });
+
   it("always produces entries for imported and failed files regardless of loggedPending", () => {
     const { entries, nextLoggedPending } = buildSweepLogEntries(
       {

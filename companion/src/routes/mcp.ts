@@ -15,6 +15,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { registerMcpServerRoutes } from "./mcpServers.js";
+import * as detect from "./mcpPreviewDetection.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 
 /**
@@ -105,8 +106,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
   /**
    * Ingest one tool's output through the same chain as every other import, with an undo checkpoint.
-   * Shared by the direct run and the approve-a-preview path so the two cannot diverge in what they
-   * write or what they make reversible.
+   * Shared by the direct run and the preview approval, so the two cannot diverge in what they write.
    */
   async function ingestMcpOutput(
     caseId: string,
@@ -143,7 +143,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (before && (r.addedEvents > 0 || r.addedIocs > 0)) {
       await pushImportCheckpoint(caseId, before, `MCP: ${serverId}/${tool}`);
     }
-    void label;
+    detect.logSiemFallback(caseId, label, kind, debug); // a guessed JSON kind (#1824)
     return r;
   }
 
@@ -188,12 +188,11 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   /** The kind an agent preview is staged under; it is a delta, not a file any importer detects. */
   const AGENT_DELTA_KIND = "mcp-agent-delta";
 
-  // A job id is the preview's filename, and it arrives from the client on the approve/discard
-  // routes. Only the shape JobManager mints is accepted, so nothing can walk out of the directory.
+  // A job id names the preview file and comes from the client: only JobManager's shape, so no path walk.
   const isJobId = (v: string): boolean => /^job_[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(v);
   const previewDir = (caseId: string): string => join(store.caseDir(caseId), ".mcpwork", "preview");
 
-  interface StagedPreview {
+  interface StagedPreview extends detect.PreviewDetection {
     server: string;
     tool: string;
     label: string;
@@ -345,9 +344,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         }
 
         if (preview) {
-          // Held on disk rather than re-run on approval: importing must not mean executing the tool
-          // a second time. That would double the cost of a Volatility run and, for a tool with side
-          // effects, do the thing twice.
+          // Held on disk rather than re-run on approval: importing must not execute the tool twice —
+          // double the cost of a Volatility run and, for a tool with side effects, do the thing twice.
           await stagePreview(caseId, job?.jobId ?? "", {
             server: server.id,
             tool,
@@ -355,6 +353,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             kind,
             outName,
             text: outcome.text,
+            ...detect.stagedDetection(debug), // the approval's warning needs it (#1824)
           });
           if (job) await options.jobManager?.finish(job.jobId);
           void logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -514,7 +513,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       });
     if (p.importedAt)
       return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
-    const debug = createImportDebugRecorder(); // the approval is its own import attempt (#1736)
+    const debug = detect.approvalRecorder(p); // its own attempt (#1736), with the staged detection (#1824)
     try {
       // An agent preview holds a delta, not tool output — merge it rather than routing it through
       // importers that have no format to detect.
@@ -559,7 +558,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         action: "mcp-run",
         detail: `${p.server}/${p.tool} on ${p.label} imported after review → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`,
       });
-      return res.status(200).json({ ok: true, reportId: report.id, ...counts });
+      const warning = detect.siemFallbackWarning(p.kind, debug); // a guessed JSON kind (#1824)
+      return res.status(200).json({ ok: true, reportId: report.id, ...counts, ...warning });
     } catch (err) {
       recordImportFailure(caseId, `mcp:${p.server}/${p.tool}`, p.label, err, debug);
       return res.status(400).json({ ok: false, error: (err as Error).message });

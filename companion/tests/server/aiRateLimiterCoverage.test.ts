@@ -5,7 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
-import { resetLimiters } from "../../src/http/rateLimiter.js";
+import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
 
 // The AI rate limiter (20 req/min per case) must cover EVERY AI-cost route and NOT throttle
 // the non-AI undo/redo/undo-stack routes under /import (which a prefix mount would swallow).
@@ -13,6 +13,10 @@ import { resetLimiters } from "../../src/http/rateLimiter.js";
 // the route-mounting wiring is what's tested. The case exists but nothing is configured, so
 // AI-cost routes return 501/500 — a 429 means the limiter fired FIRST, which is what we detect.
 // It has to exist: since #1570 a write to an unknown case is a 404 ahead of the limiter.
+//
+// Since #1825 a refusal (the 501s and 400s these unconfigured routes answer) gives its budget slot
+// back, so firing refusals no longer exhausts the budget. The POST helper therefore spends the case's
+// whole budget FIRST: a covered route then answers 429, an uncovered one reaches its handler.
 
 let app: ReturnType<typeof createApp>;
 
@@ -25,6 +29,10 @@ beforeEach(async () => {
 });
 
 async function fireManyPost(path: string, count: number, body?: unknown): Promise<number[]> {
+  const limiter = getAiLimiter();
+  while (limiter.tryAcquire("nosuch")) {
+    /* spend the whole per-case AI budget */
+  }
   const out: number[] = [];
   for (let i = 0; i < count; i++) {
     const res = await request(app)

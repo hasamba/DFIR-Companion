@@ -250,6 +250,31 @@ describe("SlidingWindowLimiter", () => {
     expect(lim.tryAcquire("k", now + 200)).toBe(true);
   });
 
+  // #1825 — a refused request consumed nothing, and a refund gives back one allowed request.
+  it("does not count a refused request, so one refund reopens the window", () => {
+    const lim = new SlidingWindowLimiter(2, 60_000);
+    lim.tryAcquire("k", 1_000);
+    lim.tryAcquire("k", 1_000);
+    for (let i = 0; i < 5; i++) expect(lim.tryAcquire("k", 2_000)).toBe(false);
+    lim.refund("k", 1_000);
+    expect(lim.tryAcquire("k", 3_000)).toBe(true);
+    expect(lim.tryAcquire("k", 3_000)).toBe(false);
+  });
+
+  it("never refunds a slot from an expired window into the next one", () => {
+    const lim = new SlidingWindowLimiter(1, 100);
+    lim.tryAcquire("k", 0);
+    expect(lim.tryAcquire("k", 200)).toBe(true); // new window
+    lim.refund("k", 0); // the old window's slot
+    expect(lim.tryAcquire("k", 250)).toBe(false);
+  });
+
+  it("ignores a refund for an unknown key", () => {
+    const lim = new SlidingWindowLimiter(1, 100);
+    lim.refund("nobody", 0);
+    expect(lim.tryAcquire("nobody", 0)).toBe(true);
+  });
+
   // #1794 — a refused caller is told when its window ends, like the auth and capture limiters do.
   describe("retryAfterMs and the 429 it sends", () => {
     it("is the time left in the key's window, and 0 for an unknown or expired key", () => {
