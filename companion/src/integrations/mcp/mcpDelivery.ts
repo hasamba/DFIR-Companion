@@ -1,12 +1,14 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { basename, posix } from "node:path";
+import { chmod, lstat, mkdir, realpath, utimes } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, posix, relative } from "node:path";
 import {
   openCaseFile,
   snapshotCaseFile,
   type CaseFileSnapshot,
   type CaseScope,
 } from "../../storage/caseFileRead.js";
+import { SHARED_DELIVERY_DIRNAME } from "../../storage/exportStaging.js";
 import { retryTransientSpawn } from "../velociraptor/velociraptorApi.js";
 import { getServerLogger } from "../../logging/serverLogger.js";
 import type { McpServer } from "./mcpServerStore.js";
@@ -18,7 +20,8 @@ import type { McpServer } from "./mcpServerStore.js";
 //
 // Two modes:
 //   remote-path  the file is already visible to the server over a shared mount; rewrite the local
-//                prefix to the remote one and hand over the path. Nothing is copied.
+//                prefix to the remote one and hand over the path. Nothing is copied in single-user
+//                mode. In team mode a private copy on the share is handed over instead (#1856).
 //   scp          push the bytes, run, then delete the staged copy.
 //
 // Spawn discipline is the external tool runner's, verbatim in substance: NO shell, every argument a
@@ -74,11 +77,21 @@ export interface DeliverySource extends CaseScope {
 export interface DeliveryContext {
   runner: TransferRunner;
   source: DeliverySource;
+  /**
+   * Team auth is on (#1856). The analysis host opens a remote-path target BY NAME, later, and in team
+   * mode a second writer could swap that name for a link after the check — so team mode hands over a
+   * private copy on the share instead. Required and passed by the caller: this module reads no env.
+   */
+  teamMode: boolean;
   signal?: AbortSignal;
   /** Byte progress for SCP delivery. Raw SSH diagnostics are never exposed. */
   onProgress?: (done: number, total: number) => void;
   /** Injectable only to keep the progress-polling test fast. */
   progressIntervalMs?: number;
+  /** Injectable only to keep the keep-alive test fast. */
+  keepAliveMs?: number;
+  /** Injectable only to simulate a delivery folder this process cannot tighten (a 0777 CIFS mount). */
+  chmod?: (path: string, mode: number) => Promise<void>;
   /**
    * Records that the evidence left this machine. Called after the bytes land and BEFORE the remote
    * path is handed back, so a transfer that succeeded always has its chain entry — wiring custody
@@ -160,10 +173,12 @@ export async function deliver(
   ctx: DeliveryContext,
 ): Promise<DeliveredTarget> {
   if (server.delivery.mode === "remote-path") {
+    if (ctx.teamMode) return deliverSharedCopy(server, localPath, ctx);
     const remotePath = rewriteToRemote(server, localPath);
     // Nothing is read here, but the file must be one this case may hand over: a link, a FIFO or a
     // hard link is refused before the path leaves. The analysis host still opens the path by name
-    // later — a shared mount cannot carry a handle (stated residual, PLAN-1846).
+    // later — a shared mount cannot carry a handle. Single-user mode accepts that: no second writer
+    // exists to swap the name (#1856, owner decision).
     const judged = await openCaseFile(ctx.source, localPath);
     await judged.handle.close();
     const destination = `${server.label} (shared path ${remotePath})`;
@@ -181,6 +196,127 @@ export async function deliver(
   } finally {
     const left = await snapshot.dispose();
     if (left) getServerLogger().warn(`MCP delivery could not remove its local snapshot: ${left}`);
+  }
+}
+
+/** How often a team-mode copy's folder is touched, so the day-old staging sweep never takes a live one. */
+const SHARED_KEEPALIVE_MS = 60 * 60 * 1000;
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * The shared delivery folder, checked (#1856): a real directory at `<casesRoot>/.mcp-delivery`, not a
+ * link, and on POSIX writable by nobody but this process's user — a folder another user can write is
+ * one where the copy could be renamed away and a link put in its place before the host opens it.
+ * Resolves with its path as the prefix rewrite sees it, and its real path for the after-copy check.
+ */
+async function sharedDeliveryRoot(
+  server: McpServer,
+  ctx: DeliveryContext,
+): Promise<{ root: string; rootReal: string }> {
+  const { casesRoot } = ctx.source;
+  const { localPrefix } = server.delivery;
+  // Outside every case folder, and reachable by the host. A prefix below the cases root would put
+  // the copy inside a case, where a case writer could reach it — refused rather than risked.
+  if (localPrefix && !isInside(localPrefix, casesRoot)) {
+    throw new Error(
+      `team mode copies evidence into the cases root before handing it over, but the cases root is not inside ` +
+        `the local prefix "${localPrefix}" of ${server.label} — set the local prefix to the cases root or above it`,
+    );
+  }
+  const root = join(casesRoot, SHARED_DELIVERY_DIRNAME);
+  rewriteToRemote(server, root); // fails before anything is copied if the host cannot reach it
+  await mkdir(root, { recursive: true, mode: 0o755 });
+  let info = await lstat(root);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(
+      `the MCP delivery folder ${root} is not a plain folder — refusing to copy evidence there`,
+    );
+  }
+  if (process.platform !== "win32" && (info.mode & 0o022) !== 0) {
+    // mkdir's mode is masked by umask and an existing folder keeps its own: set it outright.
+    await (ctx.chmod ?? chmod)(root, 0o755).catch(() => undefined);
+    info = await lstat(root);
+    if (info.isSymbolicLink() || (info.mode & 0o022) !== 0) {
+      throw new Error(
+        `other users can write the MCP delivery folder ${root}, so a copy there could be swapped before ` +
+          `the analysis host reads it — make it writable by the Companion's user only`,
+      );
+    }
+  }
+  return { root, rootReal: await realpath(root) };
+}
+
+/** Read bits for group/other only where the original file had them, so the copy is never MORE readable. */
+function sharedModes(originalMode: number): { file: number; dir: number } {
+  const file = 0o400 | (originalMode & 0o044);
+  const dir = 0o700 | (originalMode & 0o040 ? 0o050 : 0) | (originalMode & 0o004 ? 0o005 : 0);
+  return { file, dir };
+}
+
+/**
+ * Team-mode remote-path delivery (#1856): copy the checked bytes into a private folder on the share,
+ * hand the host THAT path, record the copy's hash, and remove it after the run — or at once, when
+ * anything after the copy fails. The case path can be swapped afterwards; the copy cannot, because
+ * only this process's user can write its folder.
+ */
+async function deliverSharedCopy(
+  server: McpServer,
+  localPath: string,
+  ctx: DeliveryContext,
+): Promise<DeliveredTarget> {
+  const { root, rootReal } = await sharedDeliveryRoot(server, ctx);
+  const original = await lstat(localPath);
+  const snapshot = await snapshotCaseFile(ctx.source, localPath, root, {
+    name: uniqueRemoteName(localPath),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  });
+  const folder = dirname(snapshot.path);
+  let keepAlive: NodeJS.Timeout | undefined;
+  const dispose = async (): Promise<string | null> => {
+    if (keepAlive) clearInterval(keepAlive);
+    keepAlive = undefined;
+    const left = await snapshot.dispose();
+    if (left) getServerLogger().warn(`MCP delivery could not remove its shared copy: ${left}`);
+    return left;
+  };
+  try {
+    // The copy's folder must still be where it was made: a root swapped for a link mid-copy is refused.
+    if ((await realpath(folder)) !== join(rootReal, basename(folder))) {
+      throw new Error(
+        `the MCP delivery folder moved while evidence was copied into it — refusing to hand it over`,
+      );
+    }
+    const modes = sharedModes(Number(original.mode));
+    await chmod(snapshot.path, modes.file);
+    await chmod(folder, modes.dir);
+    const remotePath = rewriteToRemote(server, snapshot.path);
+    const destination = `${server.label} (copied to shared path ${remotePath})`;
+    await ctx.recordTransfer?.(destination, { sha256: snapshot.sha256 });
+    // A long run must not look like a day-old leftover to the staging sweep.
+    keepAlive = setInterval(() => {
+      const now = new Date();
+      void utimes(folder, now, now).catch(() => undefined);
+    }, ctx.keepAliveMs ?? SHARED_KEEPALIVE_MS);
+    keepAlive.unref();
+    return {
+      remotePath,
+      destination,
+      // Best-effort, like the SCP cleanup — a leftover is logged and swept after a day.
+      cleanup: async () => {
+        await dispose();
+      },
+    };
+  } catch (err) {
+    const left = await dispose();
+    if (left === null) throw err;
+    throw new Error(
+      `${(err as Error).message} — and the shared copy could not be removed (${left}); remove it by hand`,
+      { cause: err },
+    );
   }
 }
 

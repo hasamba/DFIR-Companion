@@ -1,8 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdir, mkdtemp, readFile, readdir, writeFile, rm, symlink } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  utimes,
+  writeFile,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   deliver,
   rewriteToRemote,
@@ -130,7 +141,7 @@ describe("deliver — remote-path mode", () => {
   it("hands back the rewritten path and copies nothing", async () => {
     const s = server({ localPrefix: root, remotePrefix: "/mnt/dfir" });
 
-    const target = await deliver(s, MEM, { runner, source });
+    const target = await deliver(s, MEM, { runner, source, teamMode: false });
 
     expect(target.remotePath).toBe("/mnt/dfir/c1/imports/mem.raw");
     expect(calls).toHaveLength(0);
@@ -145,6 +156,7 @@ describe("deliver — remote-path mode", () => {
     await deliver(s, MEM, {
       runner,
       source,
+      teamMode: false,
       recordTransfer: async (d) => {
         seen.push(d);
       },
@@ -162,15 +174,192 @@ describe("deliver — remote-path mode", () => {
     const seen: string[] = [];
     const s = server({ localPrefix: root, remotePrefix: "/mnt/dfir" });
     await expect(
-      deliver(s, MEM, { runner, source, recordTransfer: async (d) => void seen.push(d) }),
+      deliver(s, MEM, { runner, source, teamMode: false, recordTransfer: async (d) => void seen.push(d) }),
     ).rejects.toThrow(/symlink detected/);
     expect(seen).toEqual([]);
   });
 });
 
+// #1856: in team mode a second writer could swap the case path for a link after the check, and the
+// analysis host opens the name later. So team mode hands over a private copy on the share instead.
+describe("deliver — remote-path in team mode (#1856)", () => {
+  const PREFIXED = { localPrefix: "", remotePrefix: "" };
+  const SNAP = /^\/mnt\/dfir\/\.mcp-delivery\/delivery-[^/]+\/[0-9a-f]{12}_mem\.raw$/;
+  const local = (remotePath: string): string =>
+    join(root, ...remotePath.slice("/mnt/dfir/".length).split("/"));
+  const deliveryRoot = (): string => join(root, ".mcp-delivery");
+  const listDelivery = async (): Promise<string[]> => readdir(deliveryRoot()).catch(() => []);
+  const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+  beforeEach(() => {
+    PREFIXED.localPrefix = root;
+    PREFIXED.remotePrefix = "/mnt/dfir";
+  });
+
+  it("copies the file to a hidden delivery folder on the share and hands over that path", async () => {
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+
+    expect(target.remotePath).toMatch(SNAP);
+    expect(await readFile(local(target.remotePath), "utf8")).toBe(MEM_BYTES);
+    expect(target.destination).toBe(`SIFT (copied to shared path ${target.remotePath})`);
+    expect(calls).toHaveLength(0);
+    expect(target.cleanup).toBeTypeOf("function");
+    await target.cleanup?.();
+  });
+
+  it("a swap of the case path after delivery does not change what the host reads", async () => {
+    await mkdir(join(root, "c2"), { recursive: true });
+    await writeFile(join(root, "c2", "case.json"), "other-case-secret");
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+
+    await rm(MEM);
+    if (process.platform === "win32") await writeFile(MEM, "other-case-secret");
+    else await symlink(join(root, "c2", "case.json"), MEM);
+
+    expect(await readFile(local(target.remotePath), "utf8")).toBe(MEM_BYTES);
+    await target.cleanup?.();
+  });
+
+  it("records custody with the hash of the copy that was handed over", async () => {
+    const seen: { destination: string; sent?: { sha256: string } }[] = [];
+    const target = await deliver(server(PREFIXED), MEM, {
+      runner,
+      source,
+      teamMode: true,
+      recordTransfer: async (destination, sent) => void seen.push({ destination, sent }),
+    });
+
+    expect(seen).toEqual([{ destination: target.destination, sent: { sha256: sha(MEM_BYTES) } }]);
+    await target.cleanup?.();
+  });
+
+  it("removes the copy after the run", async () => {
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+    expect(await listDelivery()).toHaveLength(1);
+
+    await target.cleanup?.();
+
+    expect(await listDelivery()).toEqual([]);
+  });
+
+  it("removes the copy when the custody record fails, and the error still reaches the caller", async () => {
+    await expect(
+      deliver(server(PREFIXED), MEM, {
+        runner,
+        source,
+        teamMode: true,
+        recordTransfer: async () => {
+          throw new Error("custody store offline");
+        },
+      }),
+    ).rejects.toThrow(/custody store offline/);
+
+    expect(await listDelivery()).toEqual([]);
+  });
+
+  it("leaves nothing behind when the delivery is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, signal: controller.signal }),
+    ).rejects.toThrow();
+
+    expect(await listDelivery()).toEqual([]);
+  });
+
+  it("puts the copy under the cases root when the mount has the same path on both sides", async () => {
+    const target = await deliver(server(), MEM, { runner, source, teamMode: true });
+
+    expect(dirname(dirname(target.remotePath))).toBe(deliveryRoot());
+    expect(await readFile(target.remotePath, "utf8")).toBe(MEM_BYTES);
+    await target.cleanup?.();
+  });
+
+  it("refuses when the cases root is not inside the local prefix, and copies nothing", async () => {
+    const s = server({ localPrefix: join(root, "c1"), remotePrefix: "/mnt/c1" });
+
+    await expect(deliver(s, MEM, { runner, source, teamMode: true })).rejects.toThrow(
+      /cases root.*local prefix/,
+    );
+    expect(await listDelivery()).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a delivery folder that is a link", async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), "dfir-mcp-elsewhere-"));
+    await symlink(elsewhere, deliveryRoot());
+
+    await expect(deliver(server(PREFIXED), MEM, { runner, source, teamMode: true })).rejects.toThrow(
+      /delivery folder/,
+    );
+    expect(await readdir(elsewhere)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a delivery folder other users can write, and copies nothing",
+    async () => {
+      await mkdir(deliveryRoot());
+      await chmod(deliveryRoot(), 0o777);
+      // A folder this process cannot tighten (a 0777 CIFS mount) — simulated by a chmod that fails.
+      await expect(
+        deliver(server(PREFIXED), MEM, {
+          runner,
+          source,
+          teamMode: true,
+          chmod: async () => {
+            throw new Error("EPERM");
+          },
+        }),
+      ).rejects.toThrow(/other users can write/);
+      expect(await listDelivery()).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("tightens a delivery folder it owns", async () => {
+    await mkdir(deliveryRoot());
+    await chmod(deliveryRoot(), 0o777);
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+
+    expect((await stat(deliveryRoot())).mode & 0o777).toBe(0o755);
+    await target.cleanup?.();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "the copy is never readable by more users than the original",
+    async () => {
+      await chmod(MEM, 0o640);
+      const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true });
+
+      expect((await stat(local(target.remotePath))).mode & 0o777).toBe(0o440);
+      expect((await stat(dirname(local(target.remotePath)))).mode & 0o777).toBe(0o750);
+      await target.cleanup?.();
+    },
+  );
+
+  // The day-old staging sweep must not remove a copy the analysis host is still reading.
+  it("keeps the copy's folder fresh while the run lasts", async () => {
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: true, keepAliveMs: 10 });
+    const folder = dirname(local(target.remotePath));
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await utimes(folder, old, old);
+
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect((await stat(folder)).mtimeMs).toBeGreaterThan(Date.now() - 60_000);
+    await target.cleanup?.();
+  });
+
+  it("single-user mode still copies nothing", async () => {
+    const target = await deliver(server(PREFIXED), MEM, { runner, source, teamMode: false });
+
+    expect(target.remotePath).toBe("/mnt/dfir/c1/imports/mem.raw");
+    expect(target.destination).toBe("SIFT (shared path /mnt/dfir/c1/imports/mem.raw)");
+    expect(target.cleanup).toBeUndefined();
+    await expect(stat(deliveryRoot())).rejects.toThrow();
+  });
+});
+
 describe("deliver — scp mode", () => {
   it("pushes the file and returns the staged remote path", async () => {
-    const target = await deliver(server(SCP), MEM, { runner, source });
+    const target = await deliver(server(SCP), MEM, { runner, source, teamMode: false });
 
     expect(calls).toHaveLength(1);
     expect(calls[0].binary).toBe("scp");
@@ -187,7 +376,7 @@ describe("deliver — scp mode", () => {
   // BatchMode on and StrictHostKeyChecking untouched: an unknown host fails closed rather than
   // trusting whatever answered the address.
   it("never prompts and never disables host-key checking", async () => {
-    await deliver(server(SCP), MEM, { runner, source });
+    await deliver(server(SCP), MEM, { runner, source, teamMode: false });
     const args = calls[0].args.join(" ");
     expect(args).toContain("BatchMode=yes");
     expect(args).not.toContain("StrictHostKeyChecking");
@@ -196,6 +385,7 @@ describe("deliver — scp mode", () => {
   it("passes an identity file and a non-default port", async () => {
     await deliver(server({ ...SCP, identityFile: "/home/dfir/.ssh/lab", port: 2222 }), MEM, {
       source,
+      teamMode: false,
       runner,
     });
     expect(calls[0].args.slice(0, 7)).toEqual([
@@ -210,30 +400,30 @@ describe("deliver — scp mode", () => {
   });
 
   it("omits the port flag when it is the default", async () => {
-    await deliver(server(SCP), MEM, { runner, source });
+    await deliver(server(SCP), MEM, { runner, source, teamMode: false });
     expect(calls[0].args).not.toContain("-P");
   });
 
   it("uses a bare host when no user is configured", async () => {
-    await deliver(server({ ...SCP, user: "" }), MEM, { runner, source });
+    await deliver(server({ ...SCP, user: "" }), MEM, { runner, source, teamMode: false });
     expect(calls[0].args.at(-1)).toMatch(/^sift\.example\.com:\/cases\/incoming\/[0-9a-f]{12}_mem\.raw$/);
   });
 
   it("sanitizes the remote filename rather than trusting the evidence name", async () => {
     const hostile = join(root, "c1", "imports", "x; rm -rf ~");
     await writeFile(hostile, "x");
-    const target = await deliver(server(SCP), hostile, { runner, source });
+    const target = await deliver(server(SCP), hostile, { runner, source, teamMode: false });
     expect(target.remotePath).toMatch(/^\/cases\/incoming\/[0-9a-f]{12}_x_rm_-rf_$/);
   });
 
   it("uses the delivery timeout, not the call timeout", async () => {
-    await deliver(server(SCP), MEM, { runner, source });
+    await deliver(server(SCP), MEM, { runner, source, teamMode: false });
     expect(calls[0].timeoutMs).toBe(3_600_000);
   });
 
   it("threads the cancel signal into the transfer", async () => {
     const controller = new AbortController();
-    await deliver(server(SCP), MEM, { runner, source, signal: controller.signal });
+    await deliver(server(SCP), MEM, { runner, source, teamMode: false, signal: controller.signal });
     expect(calls[0].signal).toBe(controller.signal);
   });
 
@@ -253,6 +443,7 @@ describe("deliver — scp mode", () => {
       await deliver(server(SCP), localPath, {
         runner: pollingRunner,
         source,
+        teamMode: false,
         progressIntervalMs: 5,
         onProgress: (done, total) => {
           progress.push([done, total]);
@@ -271,7 +462,7 @@ describe("deliver — scp mode", () => {
   it("fails with what scp said when the copy fails", async () => {
     nextResult = { stdout: "", stderr: "Host key verification failed.\n", code: 1 };
 
-    await expect(deliver(server(SCP), MEM, { runner, source })).rejects.toThrow(
+    await expect(deliver(server(SCP), MEM, { runner, source, teamMode: false })).rejects.toThrow(
       /scp to analyst@sift\.example\.com:.*failed \(exit 1\): Host key verification failed\./,
     );
   });
@@ -280,6 +471,7 @@ describe("deliver — scp mode", () => {
     const seen: string[] = [];
     await deliver(server(SCP), MEM, {
       source,
+      teamMode: false,
       runner,
       recordTransfer: async (d) => {
         seen.push(d);
@@ -297,6 +489,7 @@ describe("deliver — scp mode", () => {
     await expect(
       deliver(server(SCP), MEM, {
         source,
+        teamMode: false,
         runner,
         recordTransfer: async (d) => {
           seen.push(d);
@@ -333,6 +526,7 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
     await deliver(server(SCP), MEM, {
       runner: swapping,
       source,
+      teamMode: false,
       recordTransfer: async (_d, info) => void sent.push(info!.sha256),
     });
     expect(sentBytes).toBe(MEM_BYTES);
@@ -347,7 +541,9 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
       await writeFile(join(root, "c2", "case.json"), "other-case-secret");
       await rm(MEM);
       await symlink(join(root, "c2", "case.json"), MEM);
-      await expect(deliver(server(SCP), MEM, { runner, source })).rejects.toThrow(/symlink detected/);
+      await expect(deliver(server(SCP), MEM, { runner, source, teamMode: false })).rejects.toThrow(
+        /symlink detected/,
+      );
       expect(calls).toEqual([]);
       expect(await staged()).toEqual([]);
     },
@@ -358,6 +554,7 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
       deliver(server(SCP), MEM, {
         runner,
         source,
+        teamMode: false,
         recordTransfer: async () => {
           throw new Error("custody log unwritable");
         },
@@ -371,7 +568,9 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
 
   it("removes a partial remote copy when scp fails", async () => {
     nextResult = { stdout: "", stderr: "connection reset", code: 1 };
-    await expect(deliver(server(SCP), MEM, { runner, source })).rejects.toThrow(/scp to .* failed/);
+    await expect(deliver(server(SCP), MEM, { runner, source, teamMode: false })).rejects.toThrow(
+      /scp to .* failed/,
+    );
     expect(rmCalls()).toHaveLength(1);
     expect(await staged()).toEqual([]);
   });
@@ -385,6 +584,7 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
       deliver(server(SCP), MEM, {
         runner: failing,
         source,
+        teamMode: false,
         recordTransfer: async () => {
           throw new Error("custody log unwritable");
         },
@@ -393,15 +593,15 @@ describe("deliver — scp sends a snapshot of the checked file (#1847)", () => {
   });
 
   it("two deliveries of the same file never share a remote name", async () => {
-    const a = await deliver(server(SCP), MEM, { runner, source });
-    const b = await deliver(server(SCP), MEM, { runner, source });
+    const a = await deliver(server(SCP), MEM, { runner, source, teamMode: false });
+    const b = await deliver(server(SCP), MEM, { runner, source, teamMode: false });
     expect(a.remotePath).not.toBe(b.remotePath);
   });
 });
 
 describe("deliver — scp cleanup", () => {
   it("removes the staged copy over ssh, with the path quoted", async () => {
-    const target = await deliver(server(SCP), MEM, { runner, source });
+    const target = await deliver(server(SCP), MEM, { runner, source, teamMode: false });
     calls.length = 0;
 
     await target.cleanup?.();
@@ -420,7 +620,7 @@ describe("deliver — scp cleanup", () => {
   });
 
   it("passes the non-default port with ssh's lowercase flag", async () => {
-    const target = await deliver(server({ ...SCP, port: 2222 }), MEM, { runner, source });
+    const target = await deliver(server({ ...SCP, port: 2222 }), MEM, { runner, source, teamMode: false });
     calls.length = 0;
     await target.cleanup?.();
     expect(calls[0].args).toContain("-p");
@@ -434,7 +634,7 @@ describe("deliver — scp cleanup", () => {
       if (binary === "ssh") throw new Error("connection lost");
       return { stdout: "", stderr: "", code: 0 };
     };
-    const target = await deliver(server(SCP), MEM, { runner: flaky, source });
+    const target = await deliver(server(SCP), MEM, { runner: flaky, source, teamMode: false });
 
     await expect(target.cleanup?.()).resolves.toBeUndefined();
   });

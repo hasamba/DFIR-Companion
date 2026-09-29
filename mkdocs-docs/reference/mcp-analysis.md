@@ -168,6 +168,25 @@ Choose the method that reflects your actual deployment.
     Companion then translates `/srv/cases/CASE-1/imports/memory.raw` to
     `/mnt/dfir/CASE-1/imports/memory.raw`.
 
+    **Single-user mode** copies nothing. Companion hands over the translated path of the evidence
+    file itself.
+
+    **Team mode** (team sign-in enabled) copies the evidence first. The analysis host opens the path
+    later, and in team mode another user could replace the case file in that time. So Companion:
+
+    1. Copies the checked file into a hidden folder on the share, `<cases root>/.mcp-delivery/`,
+       under a random name.
+    2. Hands over the path of that copy, for example
+       `/mnt/dfir/.mcp-delivery/delivery-a1B2c3/4f9e0c1a2b3d_memory.raw`.
+    3. Records the hash of the copy in the chain of custody.
+    4. Deletes the copy when the run ends, also when the run fails.
+
+    The job and the custody entry say **copied to shared path** in team mode and **shared path** in
+    single-user mode. Team mode needs free space on the share for one copy of the file. It also
+    needs the local prefix to be the cases root or a folder above it. Companion refuses the delivery
+    if other users can write to `.mcp-delivery`. If Companion stops during a run, it removes copies
+    older than one day at the next start.
+
 === "SCP"
 
     Use **scp (push the file)** when REMnux or SIFT is a separate VM or workstation. Enter:

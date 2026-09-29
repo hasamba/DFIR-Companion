@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **MCP shared-path delivery in team mode** — hands the analysis host a private copy on the share, records its hash and deletes it after the run, so a swapped case file cannot reach the host; single-user mode still copies nothing (closes #1856)
 - **Seeding the demo case runs the id-reuse checks** — a new demo case id waits out a deleted case's jobs, refuses a part-deleted folder and clears stale roles, like New case (closes #1853)
 - **Crashed exports no longer leave copies behind** — export staging folders older than a day (a case database or evidence copy) are removed at startup and before each export (closes #1851)
 - **A FIFO no longer hangs a drop-folder read or SO-CRATES upload** — the guarded open refuses any non-regular file at once instead of blocking a worker thread (closes #1849)
