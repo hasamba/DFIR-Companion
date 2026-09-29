@@ -111,7 +111,7 @@ describe("openServerPath judges and returns the open handle (#1834)", () => {
   it("refuses a FIFO without blocking", async () => {
     if (process.platform === "win32") return;
     const fifo = join(root, "pipe");
-    execFileSync("mkfifo", [fifo]);
+    execFileSync("mkfifo", [fifo], { stdio: ["ignore", "pipe", "pipe"] });
     const opened = await openImportPath(fifo, store, "c1");
     expect(opened.refusal).toMatchObject({ status: 400 });
     expect(opened.refusal!.error).toMatch(/not a regular file/);
