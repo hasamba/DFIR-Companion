@@ -161,9 +161,9 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
       const message = String((error as Error).message ?? "");
       // FIRST, above the fail() below. Marking a held run `deep_pass_failed` with `retryable: true`
       // would invite a retry that cannot succeed: the gate is on the case, so every retry stops at
-      // the same unresolved pair until the analyst merges. Cancel and report the hold instead.
+      // the same unresolved pair until the analyst merges. Hold the job and report the hold instead.
       if (isAnalystDecisionGate(error)) {
-        if (registered) await options.jobManager?.cancel(registered.jobId);
+        if (registered) await options.jobManager?.hold(registered.jobId, message);
         aiStatus(caseId, "blocked", message);
         return sendPipelineError(res, error);
       }
