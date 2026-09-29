@@ -3,7 +3,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { sanitizeManifestValue } from "./analysisRunHash.js";
 import { jobSchema, type Job } from "./jobRegistry.js";
 import { jobLedgerWorker } from "./jobLedgerWorker.js";
-import { beginCaseWrite, runOutsideCaseScope } from "../storage/caseIncarnation.js";
+import { beginCaseWrite, isCaseWriteRefused, runOutsideCaseScope } from "../storage/caseIncarnation.js";
 
 const GLOBAL_SCOPE = "global";
 const GLOBAL_DB_FILENAME = ".dfir-companion-jobs.sqlite";
@@ -103,10 +103,17 @@ export class JobLedgerStore {
   }
 
   async list(caseId: string | null): Promise<Job[]> {
-    const payloads = await jobLedgerWorker.request<string[]>({
-      op: "listJobs",
-      dbPath: this.dbPath(caseId),
-      scopeKey: this.scopeKey(caseId),
+    // The worker's list opens (and so creates) the database: a list for a case deleted meanwhile
+    // (a startup restore racing a delete) reads as empty instead of recreating its folder (#1866).
+    const list = () =>
+      jobLedgerWorker.request<string[]>({
+        op: "listJobs",
+        dbPath: this.dbPath(caseId),
+        scopeKey: this.scopeKey(caseId),
+      });
+    const payloads = await this.admitted(caseId, list).catch((err: unknown) => {
+      if (isCaseWriteRefused(err)) return [];
+      throw err;
     });
     return payloads.map((payload) => jobSchema.parse(JSON.parse(payload) as unknown));
   }

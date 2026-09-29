@@ -75,10 +75,30 @@ describe("ocr-index CLI and the case incarnation (#1866)", () => {
       }),
     );
     expect(outcome).toBe("case-changed");
-    expect(existsSync(store.ocrIndexPath(CASE_ID)), "the new case must get no OCR index from the old run").toBe(
-      false,
-    );
+    expect(
+      existsSync(store.ocrIndexPath(CASE_ID)),
+      "the new case must get no OCR index from the old run",
+    ).toBe(false);
     expect(JSON.parse(await readFile(join(root, CASE_ID, "case.json"), "utf8")).name).toBe("new");
+  });
+
+  it("reports the change even when the failing step after it is not a write", async () => {
+    let calls = 0;
+    const outcome = await backfillOcrIndex(
+      deps(async () => {
+        calls += 1;
+        await rm(join(root, CASE_ID), { recursive: true, force: true });
+        await new CaseStore(root).createCase({
+          caseId: CASE_ID,
+          name: "new",
+          investigator: "i",
+          aiProvider: null,
+        });
+        throw new Error("tesseract crashed"); // not a refused write: the old code logged "skip" and said "done"
+      }),
+    );
+    expect(outcome).toBe("case-changed");
+    expect(calls).toBe(1);
   });
 
   it("refuses a case that does not exist", async () => {

@@ -20,7 +20,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 export const ARCHIVED_DIRNAME = "_archived";
 export const LEGACY_GENERATION = "legacy";
@@ -152,6 +152,21 @@ export function captureCaseScope(casesRoot: string, caseId: string): <T>(fn: () 
   return (fn) => (generation === null ? fn() : runInCaseScope(casesRoot, caseId, fn, generation));
 }
 
+/**
+ * Is this async context old work of `caseId` — did it capture an incarnation that has since been
+ * deleted or replaced? Matched by case id, so a caller that does not know the cases root (the job
+ * manager) can refuse to register old work against a same-id successor (#1866).
+ */
+export function staleCaseScope(caseId: string): CaseWriteRefusal | null {
+  for (const entry of scope.getStore()?.values() ?? []) {
+    if (basename(entry.active) !== caseId) continue;
+    const now = readCurrent(entry);
+    if (!now || entry.generation === GONE_GENERATION) return "deleted";
+    if (now.generation !== entry.generation) return "replaced";
+  }
+  return null;
+}
+
 /** The generation this async context captured for the case, or null when it captured none. */
 export function capturedGeneration(casesRoot: string, caseId: string): string | null {
   if (!isSafeCaseId(caseId)) return null;
@@ -182,7 +197,12 @@ export function currentGeneration(casesRoot: string, caseId: string): string {
  * NO_CASE_GENERATION entry runs unscoped, as it was recorded: a scope for a case that never existed
  * would refuse every write.
  */
-export function runInGenerationScope<T>(casesRoot: string, caseId: string, generation: string, fn: () => T): T {
+export function runInGenerationScope<T>(
+  casesRoot: string,
+  caseId: string,
+  generation: string,
+  fn: () => T,
+): T {
   return generation === NO_CASE_GENERATION ? fn() : runInCaseScope(casesRoot, caseId, fn, generation);
 }
 

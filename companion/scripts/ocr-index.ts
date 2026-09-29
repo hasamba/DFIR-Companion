@@ -15,7 +15,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { TesseractOcrRunner, type OcrWord } from "../src/analysis/ocrRedact.js";
 import { extractOcrText, isOcrSearchEnabled } from "../src/analysis/ocrSearch.js";
-import { capturedGeneration, isCaseWriteRefused, runInCaseScope } from "../src/storage/caseIncarnation.js";
+import {
+  capturedGeneration,
+  caseWriteRefusalFor,
+  isCaseWriteRefused,
+  runInCaseScope,
+} from "../src/storage/caseIncarnation.js";
 import type { CaptureMetadata } from "../src/types.js";
 
 function casesRoot(): string {
@@ -36,16 +41,18 @@ export interface OcrBackfillDeps {
 export type OcrBackfillOutcome = "done" | "missing" | "no-captures" | "case-changed";
 
 async function readCaptures(store: CaseStore, caseId: string): Promise<CaptureMetadata[] | null> {
+  let log: string;
   try {
-    const log = await readFile(store.capturesLogPath(caseId), "utf8");
-    return log
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as CaptureMetadata);
-  } catch {
-    return null;
+    log = await readFile(store.capturesLogPath(caseId), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
+  return log
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as CaptureMetadata);
 }
 
 /** OCR every un-indexed screenshot of one case incarnation into its index. */
@@ -57,7 +64,17 @@ export function backfillOcrIndex(deps: OcrBackfillDeps): Promise<OcrBackfillOutc
       deps.error(`case "${caseId}" does not exist`);
       return "missing";
     }
+    // Is the incarnation this run captured still the case on disk? Checked before every exit, so a
+    // case deleted or replaced mid-run is reported, never a quiet "done".
+    const changed = () => caseWriteRefusalFor(store.caseDir(caseId)) !== null;
+    const stopped = (done: number): OcrBackfillOutcome => {
+      deps.error(
+        `case "${caseId}" was deleted or replaced during the run — stopped after ${done} screenshot(s); nothing more was written.`,
+      );
+      return "case-changed";
+    };
     const captures = await readCaptures(store, caseId);
+    if (changed()) return stopped(0);
     if (!captures) {
       deps.log(`no captures.jsonl for "${caseId}" — nothing to index.`);
       return "no-captures";
@@ -83,15 +100,11 @@ export function backfillOcrIndex(deps: OcrBackfillDeps): Promise<OcrBackfillOutc
         done++;
         if (done % 10 === 0 || done === todo.length) deps.log(`  indexed ${done}/${todo.length}`);
       } catch (err) {
-        if (isCaseWriteRefused(err)) {
-          deps.error(
-            `case "${caseId}" was deleted or replaced during the run — stopped after ${done} screenshot(s); nothing more was written.`,
-          );
-          return "case-changed";
-        }
+        if (isCaseWriteRefused(err) || changed()) return stopped(done);
         deps.error(`  skip ${file}: ${(err as Error).message}`);
       }
     }
+    if (changed()) return stopped(done);
     deps.log(`Done. Indexed ${done} screenshot(s).`);
     return "done";
   });

@@ -81,6 +81,8 @@ export async function clearStateOutlivingCase(
     ["revoke case access", () => options.teamAuth?.store.deleteCaseAccess(id, actor)],
     ["forget background jobs", () => options.jobManager?.forgetCase(id)],
     ["retire case id", () => store.retireCaseId(id)],
+    // A chat channel bound to the deleted case must not become bound to a same-id successor (#1866).
+    ["unbind chat channels", async () => void (await options.slashCommandChannelStore?.unbindCase(id))],
     // Every per-case in-memory map (capture buffers, synthesis timers and in-flight marks, deferred
     // kicks, enrichment pending, drop-scan state, …) drops the deleted case's entries, and its
     // timers are cleared: nothing of it can be analysed into, or coalesce with, a new case (#1866).

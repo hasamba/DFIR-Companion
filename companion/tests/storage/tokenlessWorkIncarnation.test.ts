@@ -11,7 +11,11 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createOcrIndexer } from "../../src/composition/ocrIndexer.js";
 import { LoggerImpl } from "../../src/logging/logger.js";
 import { JobLedgerStore } from "../../src/analysis/jobLedgerStore.js";
-import { isCaseWriteRefused } from "../../src/storage/caseIncarnation.js";
+import { captureCaseScope, isCaseWriteRefused } from "../../src/storage/caseIncarnation.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
+import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
+import { clearStateOutlivingCase } from "../../src/routes/caseIdentity.js";
+import type { RouteContext } from "../../src/routes/context.js";
 import type { CaptureMetadata } from "../../src/types.js";
 import type { Job } from "../../src/analysis/jobRegistry.js";
 import { pollFor } from "../helpers/poll.js";
@@ -117,5 +121,50 @@ describe("tokenless per-case work across delete + same-id re-create (#1866)", ()
     const err = await ledger.insert(job).catch((e: unknown) => e);
     expect(isCaseWriteRefused(err), String(err)).toBe(true);
     expect(existsSync(join(root, ID)), "the ledger worker must not recreate state/").toBe(false);
+  });
+
+  it("a job-ledger list for a deleted case reads empty and recreates nothing", async () => {
+    await create();
+    const ledger = new JobLedgerStore(store);
+    await deleteCase();
+    expect(await ledger.list(ID)).toEqual([]);
+    expect(existsSync(join(root, ID))).toBe(false);
+  });
+
+  it("old work cannot register a job against a same-id successor, nor supersede its queued job", async () => {
+    const jobs = new JobManager({ perCaseConcurrency: 1 });
+    await create();
+    const old = captureCaseScope(root, ID); // old work, suspended before it registers
+    await deleteCase();
+    await create("new");
+    const blocker = jobs.register({ caseId: ID, kind: "import", label: "new import" });
+    const successor = jobs.register({ caseId: ID, kind: "enrichment", label: "new", exclusive: true });
+    const late = old(() => jobs.register({ caseId: ID, kind: "enrichment", label: "old", exclusive: true }));
+    await expect(late.ready).rejects.toSatisfy(isCaseWriteRefused);
+    expect(late.signal?.aborted).toBe(true);
+    const labels = jobs.list(ID).map((j) => j.label);
+    expect(labels, "the successor's queued job survives").toContain("new");
+    expect(labels).not.toContain("old");
+    await blocker.ready;
+    await jobs.finish(blocker.jobId);
+    await successor.ready;
+    await jobs.finish(successor.jobId);
+  });
+
+  it("a chat channel bound to the deleted case is unbound, so it never serves a same-id successor", async () => {
+    await create();
+    const channels = new SlashCommandChannelStore(`${root}-bindings.json`);
+    await channels.bind("slack:C1", ID);
+    await channels.bind("slack:C2", "other-case");
+    const ctx = {
+      store,
+      options: { slashCommandChannelStore: channels },
+      serverLogger: { error: () => {} },
+      captureBuffers: () => new Map(),
+    } as unknown as RouteContext;
+    await deleteCase();
+    await clearStateOutlivingCase(ctx, ID);
+    expect(await channels.get("slack:C1")).toBeUndefined();
+    expect((await channels.get("slack:C2"))?.caseId).toBe("other-case");
   });
 });

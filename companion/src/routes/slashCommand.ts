@@ -459,11 +459,16 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
       .catch(() => false);
     if (!bound)
       return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
-    audit(cmd.caseId, {
-      category: "collaboration",
-      action: "slash-command-bind",
-      detail: `${platform} channel ${channelId} bound to case ${cmd.caseId} by user ${userId}`,
-    });
+    captureCaseScope(
+      store.casesRoot,
+      cmd.caseId,
+    )(() =>
+      audit(cmd.caseId, {
+        category: "collaboration",
+        action: "slash-command-bind",
+        detail: `${platform} channel ${channelId} bound to case ${cmd.caseId} by user ${userId}`,
+      }),
+    );
     return reply(`Channel bound to case ${cmd.caseId}.`);
   }
 

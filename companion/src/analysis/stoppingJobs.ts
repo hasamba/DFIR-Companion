@@ -15,6 +15,33 @@
  * A job registered for the case while its old jobs are still stopping (a follow-on import or
  * re-synthesis the old work kicked off) joins the same set, so it holds the id too.
  */
+import { randomUUID } from "node:crypto";
+import { CaseWriteRefusedError, staleCaseScope } from "../storage/caseIncarnation.js";
+import type { RegisteredJob } from "./jobManager.js";
+
+/**
+ * A registration refused because it comes from old work (#1866): the calling context captured a
+ * case incarnation that was deleted, or replaced by a new case with the same id. It never enters the
+ * job table, so it cannot supersede, coalesce with or be reused by the successor's jobs; its signal
+ * is aborted and `ready` rejects, which every caller already treats as a cancelled run.
+ */
+export function staleScopeRegistration(caseId: string | null): RegisteredJob | null {
+  const reason = caseId === null ? null : staleCaseScope(caseId);
+  if (!reason) return null;
+  const err = new CaseWriteRefusedError(`a new job for case ${caseId}`, reason);
+  const controller = new AbortController();
+  controller.abort(err);
+  const refused = Promise.reject(err);
+  refused.catch(() => {}); // awaited by the caller; never an unhandled rejection
+  return {
+    jobId: `refused-${randomUUID()}`,
+    signal: controller.signal,
+    ready: refused,
+    durable: refused,
+    reused: false,
+  };
+}
+
 export class StoppingJobs {
   private readonly byCase = new Map<string, Set<string>>();
   private readonly caseOf = new Map<string, string>();
