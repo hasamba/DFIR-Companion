@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runMcpTool, substituteTarget, mentionsTarget } from "../../src/integrations/mcp/mcpRun.js";
 import type { ClaudeRunner, ClaudeRunOptions } from "../../src/providers/claudeRunner.js";
 import type { DeliverySource, TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
+import { aclStub } from "../helpers/aclStub.js";
 import {
   DEFAULT_DELIVERY,
   type McpServer,
@@ -353,7 +354,14 @@ describe("runMcpTool", () => {
         return fakeClaude("ok", calls)(opts);
       };
       const outcome = await runMcpTool(
-        { server: server({}, shared), claudeRunner: claude, transferRunner, deliverySource, teamMode: true },
+        {
+          server: server({}, shared),
+          claudeRunner: claude,
+          transferRunner,
+          deliverySource,
+          teamMode: true,
+          aclRunner: aclStub(),
+        },
         input(),
       );
 
@@ -361,6 +369,29 @@ describe("runMcpTool", () => {
       expect(outcome.remotePath).toContain(join(root, ".mcp-delivery"));
       expect(argsAsked(calls[0])).toEqual({ command: ["vol.py", "-f", outcome.remotePath] });
       expect(await copies()).toEqual([]);
+    });
+
+    it("passes the ACL runner through to the Windows check (#1863)", async () => {
+      const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...real, value: "win32" });
+      const seen: string[][] = [];
+      try {
+        await runMcpTool(
+          {
+            server: server({}, shared),
+            claudeRunner: fakeClaude("ok", []),
+            transferRunner,
+            deliverySource,
+            teamMode: true,
+            aclRunner: aclStub(() => [], seen),
+          },
+          input(),
+        );
+      } finally {
+        Object.defineProperty(process, "platform", real);
+      }
+
+      expect(seen).toHaveLength(1);
     });
 
     it("removes the copy even when the tool call fails", async () => {
@@ -375,6 +406,7 @@ describe("runMcpTool", () => {
             transferRunner,
             deliverySource,
             teamMode: true,
+            aclRunner: aclStub(),
           },
           input(),
         ),
