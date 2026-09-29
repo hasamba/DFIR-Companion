@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Windows team-mode MCP delivery checks folder permissions** — on Windows the cases root and `.mcp-delivery` are refused when Everyone, Authenticated Users, Users, Anonymous or Guests can write them, and when the permissions cannot be read (closes #1863)
 - **Property and attribute-node writes follow the safe-dom policy** — `a.href =`, `img.src =`, `iframe.srcdoc =`, URL-part setters, SVG `href.baseVal`, `setAttributeNode` and `Attr.value` are judged like `setAttribute`; downloads, map tiles and graph glyphs keep working (closes #1858)
+- **The last HTML and script doors go through safe-dom** — `createContextualFragment`, `setHTMLUnsafe`, `parseHTMLUnsafe`, `DOMParser`, XSLT and XHR documents, `document.write` and `execCommand("insertHTML")` are sanitized; script text, script URLs and inserting a script element by script are refused; script-built SVG animations cannot rewrite a link (closes #1864)
 - **A deleted case's late work stays out** — each case incarnation has a generation, and a late write from a deleted case recreates no folder and never lands in a new case with the same id (closes #1855)
 - **A re-created case id starts clean** — queued OCR, pending synthesis, cached AI settings, open dashboards, log files and `npm run ocr-index` from a deleted case never reach a new case with the same id (closes #1866)
 - **Local tool runs read the checked file** — a tool refuses a linked, piped or hard-linked target; in team mode it reads a private copy whose hash goes into custody (closes #1857)
