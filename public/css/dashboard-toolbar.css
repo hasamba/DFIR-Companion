@@ -169,7 +169,7 @@
    toolbar — which is scrolled out of view for anyone working further down the page, making a
    refusal (e.g. "nothing to seed a Sigma draft from") look like a dead button. Fixed to the
    viewport so it is seen wherever the click happened. Borrows the .tip tokens for consistency. */
-.toast { position: fixed; z-index: 1200; left: 50%; bottom: 24px; transform: translateX(-50%);
+.toast { position: fixed; z-index: 1200; left: 50%; bottom: calc(24px + var(--preflight-banner-h, 0px)); transform: translateX(-50%);
   max-width: min(560px, 92vw); background: var(--bg-primary); color: var(--text-primary);
   border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px; font-size: 13px;
   line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none;
@@ -448,9 +448,15 @@
 #diskWarnBanner button { background: rgba(0,0,0,0.3); color: inherit; border: 1px solid rgba(255,255,255,0.2);
   border-radius: 5px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
 #diskWarnBanner button:hover { background: rgba(0,0,0,0.5); }
-/* Pre-flight warning banner (#179). */
-#preflightBanner { display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
-  background: #3a0000; color: #ff5c5c; border-bottom: 1px solid #7a0000; font-size: 12.5px; }
+/* Pre-flight warning banner (#179). Fixed to the bottom of the viewport, out of flow (#1827): it
+   appears after its own fetch, and as an in-flow block it pushed the whole page down after first
+   paint. z-index 40 keeps it above the sticky filter bar (20) and dropdowns (30), below every
+   modal overlay (50+). The body padding keeps the page end reachable while it shows; the JS sets
+   --preflight-banner-h from the banner's height and removes it on dismiss. */
+#preflightBanner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
+  background: #3a0000; color: #ff5c5c; border-top: 1px solid #7a0000; font-size: 12.5px; }
+body { padding-bottom: var(--preflight-banner-h, 0px); }
 #preflightBanner[hidden] { display: none; }
 /* #preflightBanner span is in /css/a11y.css (it stops the banner forcing horizontal scroll). */
 #preflightBanner a { color: #ffaaaa; }

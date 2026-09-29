@@ -1,5 +1,4 @@
 import type { Express, Request, Response } from "express";
-import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import type { RouteContext } from "./context.js";
 import type { SettleDeps } from "./importSettle.js";
@@ -9,7 +8,7 @@ import { detectBinaryImportKind, MAC_LOGIN_ITEM_FILENAMES } from "../analysis/ma
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "./importFileHead.js";
-import { refuseImportPath } from "./serverPathGuard.js";
+import { openImportPath } from "./serverPathGuard.js";
 
 /**
  * The two byte-native import routes for macOS login-item containers — both BTM generations, the
@@ -50,18 +49,17 @@ export function registerMacLoginItemImportRoute(
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath)
       return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
-    // The same deny-list as /import-file (#1792): never the Companion's config or its case storage.
-    const refusal = await refuseImportPath(filePath, store, caseId);
-    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
     const originalName = basename(filePath);
-
+    // The same deny-list as /import-file (#1792): never the Companion's config or its case storage.
+    // The guard opens and judges the handle; the read uses that handle, never the path again (#1834).
     let bytes: Buffer;
     try {
-      const fh = await open(filePath, "r");
+      const opened = await openImportPath(filePath, store, caseId);
+      if (opened.refusal) return res.status(opened.refusal.status).json({ error: opened.refusal.error });
       try {
-        bytes = await readHandleBounded(fh, readCap());
+        bytes = await readHandleBounded(opened.file.handle, readCap());
       } finally {
-        await fh.close();
+        await opened.file.handle.close();
       }
     } catch (err) {
       if (err instanceof FileTooLargeError) {
