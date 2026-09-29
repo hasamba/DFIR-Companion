@@ -81,7 +81,7 @@ export interface VeloHuntsDeps {
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
   demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
-  pushImportCheckpoint: (caseId: string, beforeState: InvestigationState, label: string) => Promise<void>;
+  pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
   resynthesizeInBackground: (caseId: string) => void;
   markConclusionsOutOfDate?: (caseId: string, reason: string) => Promise<void>; // #1599: no run of its own
   /** The diagnostics ring + FAILED log line (#1438); a collect that dies is otherwise only a job status. */
@@ -616,6 +616,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               caseId,
               stateBefore,
               `velociraptor (${lastFile ?? `hunt ${job.huntId}`})`,
+              settled.state,
             );
           }
         } catch {
