@@ -222,7 +222,12 @@ export interface RouteContext {
   /** `analyst`: a person asked for this run now, so it supersedes a running one (#1608). */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;
-  pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
+  pushImportCheckpoint(
+    caseId: string,
+    beforeState: InvestigationState,
+    label: string,
+    afterState?: InvestigationState,
+  ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
   applyDeobfuscationToCase(
