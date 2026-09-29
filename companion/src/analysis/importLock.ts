@@ -29,11 +29,19 @@ export class ImportLock {
 
   /**
    * `admission` runs once the section is granted, before the import does anything (#1874 — the
-   * memory guard, analysis/importMemoryGuard.ts). A refusal releases the section and rejects, so
-   * the next import for the case is not wedged; an admission's reservation is released with the
-   * section.
+   * memory guard, analysis/importMemoryGuard.ts), and ONLY for a caller that passes a size hint. A
+   * hint is the caller's statement that the evidence is already stored, so a refusal loses nothing:
+   * the Velociraptor hunt collect and external ingest store the rows they fetched INSIDE the
+   * section, and a refusal there would drop them, so they pass none. A refusal releases the section
+   * and rejects, so the next import for the case is not wedged; an admission's reservation is
+   * released with the section.
    */
   constructor(private readonly admission?: ImportAdmission) {}
+
+  /** runExclusive with the memory guard's size hint first, so `fn` stays the trailing argument. */
+  runSized<T>(caseId: string, hint: ImportAdmissionHint, fn: () => Promise<T>): Promise<T> {
+    return this.runExclusive(caseId, fn, hint);
+  }
 
   /** Run `fn` with the case's import section held. Prefer this — the release cannot be forgotten. */
   runExclusive<T>(caseId: string, fn: () => Promise<T>, hint?: ImportAdmissionHint): Promise<T> {
@@ -72,6 +80,6 @@ export class ImportLock {
   }
 
   private admit(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
-    return this.admission ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
+    return this.admission && hint ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
   }
 }

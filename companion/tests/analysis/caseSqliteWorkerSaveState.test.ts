@@ -205,3 +205,36 @@ describe("saveState reconciles rows by entity id (#1874)", () => {
     expect(rows(dbPath, "timeline").map((r) => JSON.parse(r.payload).text)).toEqual(["one"]);
   });
 });
+
+describe("saveState duplicate groups at scale (#1874)", () => {
+  let dir: string;
+  let dbPath: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "save-state-dup-"));
+    dbPath = join(dir, "investigation.sqlite");
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("reverses and rewrites a large duplicate group in linear time, keeping unchanged rows", async () => {
+    const group = Array.from({ length: 3000 }, (_, i) =>
+      event("dup", 1 + (i % 28), { description: `d${i}` }),
+    );
+    await save(dbPath, state(group));
+    const before = new Map(
+      rows(dbPath, "forensicTimeline").map((r) => [JSON.parse(r.payload).description, r.row_id]),
+    );
+    const reversed = [...group].reverse();
+    const changed = reversed.map((e, i) => (i % 2 ? e : { ...e, description: `${e.description}-x` }));
+    const started = Date.now();
+    await save(dbPath, state(changed));
+    expect(Date.now() - started).toBeLessThan(5000);
+    const after = rows(dbPath, "forensicTimeline");
+    expect(after.map((r) => JSON.parse(r.payload).description)).toEqual(changed.map((e) => e.description));
+    for (const r of after) {
+      const d = JSON.parse(r.payload).description as string;
+      if (!d.endsWith("-x")) expect(r.row_id).toBe(before.get(d)); // unchanged → its own row
+    }
+  });
+});

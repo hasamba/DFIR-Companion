@@ -47,25 +47,42 @@ function writeStateKindById(db, writer, kind, values) {
   const readPayload = db.prepare("SELECT payload FROM entities WHERE row_id=?");
   const priors = new Array(values.length);
   const kept = new Set();
-  const take = (ordinal, group, at) => {
-    const prior = group.splice(at, 1)[0];
+  const take = (ordinal, prior) => {
     kept.add(prior.row_id);
     priors[ordinal] = prior;
   };
   // Duplicate groups first, identical payloads only, so no other duplicate can claim that row.
+  // Each stored duplicate's payload is read once into a payload -> rows bucket: linear, however
+  // large or reordered the group.
+  const buckets = new Map();
   for (let ordinal = 0; ordinal < values.length; ordinal++) {
     const entityId = entityIdOf(kind, values[ordinal]);
     const group = entityId == null ? null : byId.get(entityId);
-    if (!group || !group.length || !group.duplicated) continue;
-    const payload = entityProjection(kind, values[ordinal], ordinal).payload;
-    const same = group.findIndex((row) => readPayload.get(row.row_id).payload === payload);
-    if (same >= 0) take(ordinal, group, same);
+    if (!group || !group.duplicated) continue;
+    if (!buckets.has(entityId)) {
+      const byPayload = new Map();
+      for (const row of group) {
+        const payload = readPayload.get(row.row_id).payload;
+        const same = byPayload.get(payload);
+        if (same) same.push(row); else byPayload.set(payload, [row]);
+      }
+      buckets.set(entityId, byPayload);
+    }
+    const same = buckets.get(entityId).get(entityProjection(kind, values[ordinal], ordinal).payload);
+    const row = same && same.shift();
+    if (row) take(ordinal, row);
   }
+  // Then every entry still unmatched takes its group's next unclaimed row, in stored order. The
+  // cursor only moves forward, so this pass is linear too.
   for (let ordinal = 0; ordinal < values.length; ordinal++) {
     if (priors[ordinal]) continue;
     const entityId = entityIdOf(kind, values[ordinal]);
     const group = entityId == null ? null : byId.get(entityId);
-    if (group && group.length) take(ordinal, group, 0);
+    if (!group) continue;
+    let next = group.next || 0;
+    while (next < group.length && kept.has(group[next].row_id)) next++;
+    group.next = next + 1;
+    if (next < group.length) take(ordinal, group[next]);
   }
   const deleteRow = db.prepare("DELETE FROM entities WHERE row_id=?");
   for (const row of stored) if (!kept.has(row.row_id)) deleteRow.run(row.row_id);

@@ -109,6 +109,17 @@ describe("createImportMemoryGuard", () => {
     (await guard.admit("small"))();
   });
 
+  it("reserves heap too: two imports that each fit the heap are not both admitted", async () => {
+    const guard = createImportMemoryGuard({
+      countEvents: async () => 30_000,
+      probe: () => ({ availableBytes: 64 * GB, rssBytes: 0.5 * GB, heapLimitBytes: 2.5 * GB }),
+    });
+    const releaseA = await guard.admit("a", { incomingEvents: 0 }); // 30k x 48 KB ≈ 1.4 GB
+    await expect(guard.admit("b", { incomingEvents: 0 })).rejects.toThrow(/held by other imports/);
+    releaseA();
+    (await guard.admit("b", { incomingEvents: 0 }))();
+  });
+
   it("is off when DFIR_IMPORT_MEMORY_GUARD=off, and never counts", async () => {
     process.env.DFIR_IMPORT_MEMORY_GUARD = "off";
     let counted = false;
@@ -144,9 +155,9 @@ describe("ImportLock with an admission check", () => {
 
   it("releases the case when the import is refused, so the next import is not wedged", async () => {
     const lock = new ImportLock(refuseBig);
-    await expect(lock.acquire("big")).rejects.toThrow("too big");
-    await expect(lock.runExclusive("big", async () => "ran")).rejects.toThrow("too big");
-    const release = await lock.acquire("small");
+    await expect(lock.acquire("big", {})).rejects.toThrow("too big");
+    await expect(lock.runSized("big", {}, async () => "ran")).rejects.toThrow("too big");
+    const release = await lock.acquire("small", {});
     release();
   });
 
@@ -154,7 +165,7 @@ describe("ImportLock with an admission check", () => {
     const lock = new ImportLock(refuseBig);
     let ran = false;
     await expect(
-      lock.runExclusive("big", async () => {
+      lock.runSized("big", {}, async () => {
         ran = true;
       }),
     ).rejects.toThrow();
@@ -164,11 +175,17 @@ describe("ImportLock with an admission check", () => {
   it("releases the reservation with the section", async () => {
     let released = 0;
     const lock = new ImportLock({ admit: async () => () => void released++ });
-    const release = await lock.acquire("c");
+    const release = await lock.acquire("c", {});
     expect(released).toBe(0);
     release();
     expect(released).toBe(1);
-    await lock.runExclusive("c", async () => {});
+    await lock.runSized("c", {}, async () => {});
     expect(released).toBe(2);
+  });
+
+  it("admits only a caller that passes a size hint — one that stores evidence inside the section is never refused", async () => {
+    const lock = new ImportLock(refuseBig);
+    (await lock.acquire("big"))();
+    expect(await lock.runExclusive("big", async () => "ran")).toBe("ran");
   });
 });

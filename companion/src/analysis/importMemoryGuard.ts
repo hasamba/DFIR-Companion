@@ -23,8 +23,12 @@ import { maxEventsDefault } from "./eventAggregate.js";
  * the size (a Velociraptor monitor poll), the default cap of 2,000 stands in: an operator who
  * raised DFIR_MAX_EVENTS for a full MFT import must not have every small import refused.
  *
- * Admitted imports RESERVE their estimate until their import section is released, so two cases
- * importing at once cannot both be admitted against the same free memory.
+ * Admitted imports RESERVE their estimates — memory and heap — until their import section is
+ * released, so two cases importing at once cannot both be admitted against the same free memory or
+ * the one process-wide V8 heap.
+ *
+ * Only a caller that has already stored the evidence is admitted through here (analysis/importLock.ts
+ * runs admission only when given a size hint), so "the file is saved in the case" is true.
  */
 export const IMPORT_RSS_BYTES_PER_EVENT = 128 * 1024;
 export const IMPORT_HEAP_BYTES_PER_EVENT = 48 * 1024;
@@ -51,10 +55,12 @@ export interface MemoryAssessmentInput extends MemorySnapshot {
   incomingEvents: number;
   /** Estimates other admitted imports hold. */
   reservedBytes: number;
+  /** Their heap estimates: the V8 heap is one per process, shared by every case's import. */
+  reservedHeapBytes?: number;
 }
 
 export type MemoryAssessment =
-  { ok: true; needBytes: number } | { ok: false; needBytes: number; message: string };
+  { ok: true; needBytes: number; heapNeedBytes: number } | { ok: false; needBytes: number; message: string };
 
 const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 const count = (n: number): string => n.toLocaleString("en-US");
@@ -79,14 +85,19 @@ export function assessImportMemory(input: MemoryAssessmentInput): MemoryAssessme
       "Free memory on the machine, give the server more, or wait for other imports to finish.",
     );
   }
-  if (heapNeed > input.heapLimitBytes) {
+  // Not less the heap in use now: the per-event figure is already a total, and most of what V8
+  // reports as used between imports is garbage it has not collected yet.
+  const reservedHeap = input.reservedHeapBytes ?? 0;
+  if (heapNeed > input.heapLimitBytes - reservedHeap) {
     return refused(
       `processing it needs about ${gb(heapNeed)} of JavaScript heap, but the server's heap limit is ` +
-        `${gb(input.heapLimitBytes)}.`,
-      "Restart the server with a larger heap (node --max-old-space-size=<MB>).",
+        `${gb(input.heapLimitBytes)}${reservedHeap > 0 ? `, ${gb(reservedHeap)} of it held by other imports` : ""}.`,
+      reservedHeap > 0
+        ? "Wait for other imports to finish, or restart the server with a larger heap (node --max-old-space-size=<MB>)."
+        : "Restart the server with a larger heap (node --max-old-space-size=<MB>).",
     );
   }
-  return { ok: true, needBytes };
+  return { ok: true, needBytes, heapNeedBytes: heapNeed };
 }
 
 /** What the caller knows about the import it is about to run. */
@@ -142,6 +153,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
   const probe = deps.probe ?? processMemorySnapshot;
   const maxEvents = deps.maxEvents ?? maxEventsDefault;
   let reserved = 0;
+  let reservedHeap = 0;
   return {
     reservedBytes: () => reserved,
     async admit(caseId, hint) {
@@ -157,15 +169,18 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         caseEvents,
         incomingEvents: estimateIncomingEvents(maxEvents(), hint),
         reservedBytes: reserved,
+        reservedHeapBytes: reservedHeap,
         ...probe(),
       });
       if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message);
       reserved += verdict.needBytes;
+      reservedHeap += verdict.heapNeedBytes;
       let held = true;
       return () => {
         if (!held) return;
         held = false;
         reserved -= verdict.needBytes;
+        reservedHeap -= verdict.heapNeedBytes;
       };
     },
   };
