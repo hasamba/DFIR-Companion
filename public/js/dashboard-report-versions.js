@@ -279,6 +279,51 @@
     );
   }
 
+  // Case Details (report-meta) field labels for the diff's report row (#1779). An unknown key
+  // (a newer server) falls back to the key itself.
+  const RV_META_LABELS = {
+    companyName: "Company name",
+    companyLogo: "Company logo",
+    organization: "Organization",
+    incidentId: "Incident ID",
+    investigators: "Investigators",
+    reviewer: "Reviewer",
+    incidentManager: "Incident manager",
+    restrictions: "Restrictions",
+    revisions: "Report revisions",
+    distribution: "Distribution list",
+    includeDisclaimer: "Disclaimer",
+    intendedAudience: "Intended audience",
+    executiveSummary: "Executive summary",
+    businessImpact: "Business impact",
+    investigationLimitations: "Investigation limitations",
+    investigationGoals: "Investigation goals",
+    glossary: "Glossary",
+    conclusions: "Conclusions",
+    recommendations: "Recommendations",
+  };
+
+  // The report-level row: text or Case Details changed. An older server sends no `report`.
+  function rvReportRow(report) {
+    if (!report) return "";
+    const keys = Array.isArray(report.caseDetailsChanged)
+      ? report.caseDetailsChanged
+      : [];
+    if (!keys.length && !report.textChanged) return "";
+    const what = keys.length
+      ? keys
+          .map((k) =>
+            esc(
+              Object.prototype.hasOwnProperty.call(RV_META_LABELS, k)
+                ? RV_META_LABELS[k]
+                : k,
+            ),
+          )
+          .join(", ")
+      : "report text changed";
+    return `<div>~ <strong>Report text / Case Details changed:</strong> ${what}</div>`;
+  }
+
   async function doReportVersionsDiff() {
     const caseId = document.getElementById("caseId").value.trim();
     const from = document.getElementById("rvFrom").value;
@@ -322,9 +367,11 @@
         rows.push(
           `<div>− <strong>Timeline events removed:</strong> ${d.timeline.removed.length}</div>`,
         );
+      const reportRow = rvReportRow(d.report);
+      if (reportRow) rows.push(reportRow);
       out.innerHTML = rows.length
         ? rows.join("")
-        : "no differences between these versions";
+        : "no finding, IOC or timeline differences, and the report text is unchanged";
     } catch (err) {
       out.textContent = "diff failed: " + err.message;
     }

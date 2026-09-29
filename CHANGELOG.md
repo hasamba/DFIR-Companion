@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Block-list says why nothing matched** — the IOC block-list dialog shows the match count and the TXT header adds "# Matched N of M IOCs" with a count per exclusion reason (closes #1807)
+- **Import a ZIP case archive** — Import case accepts the ZIP from Archive to ZIP, checks paths, case identity and manifest hashes before it writes, and Archive to ZIP shows where it saved the file (closes #1784)
 - **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
 - **Importer debug detail** — every import records the columns it used, skipped-row reasons, fallbacks and parse-failure location to the debug log and the support bundle (closes #1736)
 - **Redacted support bundle** — Diagnostics downloads one zip of redacted logs, an always-on capped debug log and failed-import layouts for bug reports (closes #1735)
@@ -22,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Report diff names text and Case Details changes** — version and release diffs flag a changed report text and list changed Case Details fields instead of saying "no differences", and a meta-only change now mints a version (closes #1779)
+- **Bare usernames redacted** — a username found as CORP\\user, a UPN or a profile path gets one token and is replaced wherever it appears, in the redacted package, AI anonymization and the support bundle; common words are spared (closes #1780)
+- **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
+- **Presidio stops flagging tool names as people** — tool and malware names, timestamps, flags, file names and ATT&CK ids are no longer held as PERSON, and the approval panel offers one-click Leave all visible (closes #1799)
+- **Gate holds are not user cancels** — a Presidio or duplicate-host hold records its job as held for the analyst, not as a ✕ Cancel, on every AI route (closes #1801)
+- **No page jump when a case opens** — the Now cockpit holds its space while it loads, so the panels under it no longer jump down (load CLS 0.33 → 0) (closes #1791)
+- **Import failures say why** — the status line names each failed file with the server's reason (size cap, busy, budget, no AI provider), for data files and screenshots (closes #1786)
+- **Host prompt no longer looks like a hang** — while the "which host did this file come from?" prompt waits, the status line says it is waiting for your answer (closes #1772)
+- **Readable grey IOC badges** — the "low" risk and "telemetry-only" badges meet 4.5:1 contrast in dark and light (closes #1789)
+- **Empty panels say what is missing** — Executive Summary, Attack Path, Narrative, MITRE, Investigation Log, Findings and Forensic Timeline show a short sentence instead of a bare "—" on a new case (closes #1765, #1766, #1767, #1768)
+- **Presidio hold is not a failure** — Executive Summary, Narrative and every other AI button show "held for Presidio approval — review in Anonymization" instead of a red "failed … restart the server" (closes #1782)
+- **Run ledger never hangs on "loading…"** — the run list shows as soon as it arrives, and a stalled list or integrity check says so after 15 s (closes #1783)
 - **CSS image functions blocked** — the style sanitizer drops `image-set()`, `-webkit-image-set()`, `image()` and `src()`, which fetch an external URL like `url()` (closes #1811)
 - **Backslash URLs blocked** — a link or image source starting with `/\` or `\` no longer passes as same-origin; browsers read it as another host (closes #1812)
 - **One attribute policy for script and markup** — `setAttribute` and `setAttributeNS` now drop `action`, `formaction`, `srcset`, `ping` and remote SVG references, the same as rendered markup (closes #1813)

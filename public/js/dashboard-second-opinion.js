@@ -236,8 +236,18 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ deltaId, accept }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const rec = await r.json();
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
+          if (stillOpen(caseId))
+            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply");
+          return null;
+        }
+        return rec;
+      })
       .then((rec) => {
+        if (rec === null) return; // held for Presidio approval, shown above
         if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
@@ -266,8 +276,18 @@
         accept === "referee" ? { followReferee: true } : { accept },
       ),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const rec = await r.json();
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
+          if (stillOpen(caseId))
+            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply-all");
+          return null;
+        }
+        return rec;
+      })
       .then((rec) => {
+        if (rec === null) return; // held for Presidio approval, shown above
         if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =

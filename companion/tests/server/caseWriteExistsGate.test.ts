@@ -140,12 +140,14 @@ describe("writes to a case that does not exist (#1570)", () => {
     expect(unknown.body).toEqual(known.body);
   });
 
-  it("the two /cases/* paths that are not a case are not refused as one", () => {
+  it("the /cases/* paths that are not a case are not refused as one", () => {
     for (const path of [
       "/cases/seed-demo",
       "/cases/seed-demo/",
       "/cases/import/encrypted",
       "/cases/IMPORT/Encrypted",
+      "/cases/import/zip",
+      "/cases/Import/ZIP/",
     ]) {
       expect(bypassesCaseWriteExistsGate(path), path).toBe(true);
     }

@@ -884,15 +884,18 @@ describe("refreshAiState paints only the case on screen, newest answer wins (#16
 // ── The Re-synthesize button ────────────────────────────────────────────────────────────────────
 interface ScopeApi {
   resynthesize: () => void;
+  resynthesizeInFlight: () => boolean;
 }
 
 describe("the Re-synthesize click (#1675)", () => {
   function click(opts: { deep?: boolean; answer: () => Promise<unknown> }) {
     const events: string[] = [];
+    const synthesize = { disabled: false };
     const els: Record<string, unknown> = {
       caseId: { value: "INC-1" },
       status: { textContent: "" },
       deepReasoning: { checked: !!opts.deep },
+      synthesize,
     };
     const api = loadDashboardModule<ScopeApi>("dashboard-search-scope.js", [], {
       document: { getElementById: (id: string) => els[id] ?? null },
@@ -906,8 +909,31 @@ describe("the Re-synthesize click (#1675)", () => {
       loadSynthMeta: () => {},
     });
     api.resynthesize();
-    return Object.assign(events, { status: els.status as { textContent: string } });
+    return Object.assign(events, { status: els.status as { textContent: string }, synthesize, api });
   }
+
+  // Found in the #1800 triage: the button stayed live mid-run, and a second press superseded the
+  // first run, whose 499 then read "synthesis failed: synthesis cancelled".
+  it("disables the button until the POST settles", async () => {
+    let answer: (v: unknown) => void = () => {};
+    const events = click({ answer: () => new Promise((resolve) => (answer = resolve)) });
+    expect(events.synthesize.disabled).toBe(true);
+    expect(events.api.resynthesizeInFlight()).toBe(true);
+    answer({ status: 200, json: () => Promise.resolve({ findings: 1, mitreTechniques: 0 }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.synthesize.disabled).toBe(false);
+    expect(events.api.resynthesizeInFlight()).toBe(false);
+  });
+
+  it("reads a superseded run's 499 as stopped, not failed", async () => {
+    const events = click({
+      answer: () =>
+        Promise.resolve({ status: 499, json: () => Promise.resolve({ error: "synthesis cancelled" }) }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.status.textContent).toBe("synthesis stopped — superseded by a newer run or cancelled");
+    expect(events.at(-1)).toBe("refresh INC-1");
+  });
 
   it("paints the pill before the POST is sent, and re-derives it when the POST ends", async () => {
     const events = click({

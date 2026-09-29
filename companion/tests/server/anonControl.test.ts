@@ -130,6 +130,26 @@ describe("/cases/:id/anon-entities", () => {
     expect((await request(app).get("/cases/c1/anon-entities")).body.custom.length).toBe(2);
   });
 
+  it("GET lists bare usernames derived from the case in the accounts group (#1780)", async () => {
+    const { emptyState } = await import("../../src/analysis/stateTypes.js");
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-01-01T00:00:00Z",
+        description: "read /home/jdoe/.ssh/id_rsa",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+    ];
+    await new StateStore(cases).save(s);
+    const res = await request(app).get("/cases/c1/anon-entities");
+    expect(res.status).toBe(200);
+    expect(res.body.auto.accounts).toContain("jdoe");
+  });
+
   it("GET surfaces OCR-discovered entities in the grouped auto set (by category)", async () => {
     const { DiscoveredEntitiesStore } = await import("../../src/analysis/anonDiscovered.js");
     const disc = new DiscoveredEntitiesStore(cases);

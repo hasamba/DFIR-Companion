@@ -35,9 +35,11 @@
       closeZipArchive();
       loadCaseLifecycle(caseId);
       loadCaseList();
+      // #1784: say WHERE the file went. textContent only — the path holds the case name.
+      const where = typeof body.archivePath === "string" && body.archivePath ? ": " + body.archivePath : "";
       document.getElementById("status").textContent = removeFromList
-        ? "case archived to ZIP and removed from the active list"
-        : "case archived to ZIP";
+        ? "case archived to ZIP" + where + " — and removed from the active list"
+        : "case archived to ZIP" + where;
     } catch (err) {
       msg.textContent = "archive failed: " + err.message;
     } finally {

@@ -503,6 +503,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
     </label>
     <input id="encryptedImportFile" type="file" accept=".dfircase" data-safe-style="display:none" />
+    <input id="zipImportFile" type="file" accept=".zip" data-safe-style="display:none" />
     <span class="tb-group" data-tb-group="Case">
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
@@ -861,6 +862,7 @@
       <p data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 12px">Bring in a whole case from another source.</p>
       <div data-safe-style="display:flex; flex-direction:column; gap:8px;">
         <button id="importCaseEncrypted" type="button" data-safe-style="text-align:left;">🔒 Encrypted case archive (.dfircase) — a teammate's exported case</button>
+        <button id="importCaseZip" type="button" data-safe-style="text-align:left;">🗜️ ZIP case archive (.zip) — made by "Archive to ZIP"</button>
         <button id="importCaseIris" type="button" data-safe-style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
       </div>
       <div data-safe-style="margin-top:12px;">
@@ -1002,6 +1004,7 @@
       <label data-safe-style="display:block; font-size:12px; margin-bottom:4px;"><input type="checkbox" id="blTypeHash" checked /> Hashes</label>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;"><input type="checkbox" id="blTypeEmail" /> Email addresses</label>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:10px;"><input type="checkbox" id="blVerdictOnly" /> Verdict-confirmed only (suspicious or malicious enrichment required)</label>
+      <p id="blMatchCount" role="status" aria-live="polite" data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 8px"></p>
       <div data-safe-style="margin-top:4px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button id="blDlTxt">Download TXT</button>
         <button id="blDlCsv">Download CSV</button>
@@ -5209,7 +5212,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : "—";
+          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : timelineEmptyHtml(((DfirState.lastState() || {}).forensicTimeline || []).length);   // an empty case says so, not "—" (#1765)
         return;
       }
 

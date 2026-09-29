@@ -229,8 +229,15 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ techniqueId: techId, techniqueName }),
     })
-      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-      .then(({ ok, j }) => {
+      .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
+      .then(({ ok, status, j }) => {
+        // A Presidio hold waits for the analyst — it is not a failure (#1782).
+        if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
+          if (msg) msg.textContent = "";
+          if (panel)
+            panel.innerHTML = `<div class="vhs-empty" data-safe-style="color:var(--text-muted)">${esc(presidioHoldText("Technique hunt"))}</div>`;
+          return;
+        }
         if (!ok || j.error) {
           if (msg) msg.textContent = "";
           if (panel)
