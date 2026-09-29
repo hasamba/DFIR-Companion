@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-29
+
 ### Added
 - **Saved-hunt execution history** — selecting a saved hunt in the Hunt Workbench lists its runs newest first (time, analyst, status, matches, duration, parameters), or "Not run yet" (closes #1833)
 - **Block-list says why nothing matched** — the IOC block-list dialog shows the match count and the TXT header adds "# Matched N of M IOCs" with a count per exclusion reason (closes #1807)
@@ -20,9 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
 - **Importer debug detail** — every import records the columns it used, skipped-row reasons, fallbacks and parse-failure location to the debug log and the support bundle (closes #1736)
 - **Redacted support bundle** — Diagnostics downloads one zip of redacted logs, an always-on capped debug log and failed-import layouts for bug reports (closes #1735)
-- **Per-model AI keys become overrides** — per-model key and base-URL fields move to the full Settings view, and a one-click notice moves saved values into the provider fields
-- **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again
-- **Case ID in the case list** — the case dropdown shows each case ID under its name
+- **Per-model AI keys become overrides** — per-model key and base-URL fields move to the full Settings view, and a one-click notice moves saved values into the provider fields (#1722)
+- **Per-provider API keys and base URLs** — save one key and base URL per AI provider and switch any model between providers without typing them again (#1720)
+- **Case ID in the case list** — the case dropdown shows each case ID under its name (#1725)
+- **Synthesis safety-stop fallback** — a synthesis the model's safety filter stops is retried, then falls back once to a fallback model picked in Settings, shown in Essential mode (closes #1734, closes #1740)
+- **Text size and fonts** — choose the dashboard text size, body font and code font (#1723)
+- **Attack Path swimlanes** — show the Attack Path as a step list or as one lane per host (#1731)
+- **Readable Executive Summary and time-rail Narrative Timeline** — a clearer Executive Summary layout and a Narrative Timeline on a time rail (#1728)
+- **Narrative per phase** — synthesis writes one narrative paragraph per attack phase and adds scoping next steps (part of #1579)
+- **Jobs chip always shown** — the jobs chip stays visible and shows times on every job (#1732)
+- **Referee model in Essential mode** — Settings shows the 2nd-opinion referee model in Essential mode (#1724)
+- **Scripting & API manual page** — the manual lists the script-friendly endpoints (#1805)
+
+### Changed
+- **Extraction prompt gives plain reasons** — the extraction prompt states reasons instead of pressure words (part of #1579)
+- **Steadier dashboard under load** — every panel request shares one four-lane cap, and a reconnect makes one bounded catch-up (closes #1713, closes #1709)
 
 ### Fixed
 - **SIEM audit export restarts for a reused case id** — deleting a case clears its export position, so a same-id new case's first activity records are no longer skipped (closes #1868)
@@ -81,6 +95,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Evidence text no longer rewritten on screen** — the sanitizer stops deleting text like ` onload=1`, ` only=`, ` OneDrive=` or ` style=` from timeline rows, comments, tooltips and the exported deck (closes #1787)
 - **Missed-evidence review skips duplicates** — a second tool's copy of an analyzed event is no longer graded, offered or reported as refused, and the timeline note counts what landed (closes #1761)
 - **2nd-opinion keeps staged-kit techniques** — no technique delta when model B's findings still tag it; the referee reads the tagged findings and no longer drops a technique only because a staged tool never ran (closes #1757)
+- **AI findings keep their cited events** — synthesis keeps the events findings cite, and asks again when most findings cite none (closes #1754)
+- **Cited evidence survives decoration, grouping and folding** — a finding keeps a decorated citation, covers the whole burst a grouped row stood for, and keeps every citation of a folded event (closes #1693, closes #1702, closes #1714)
+- **Analyst work follows a folded event** — tags, stars, comments and hypothesis links move with an event that correlation folds (closes #1715)
+- **Build-window fixes** — a build-time note travels with its record, the missed-evidence review sets build-window rows aside, and a user named vagrant, routine Windows Update or the collector's klist no longer open one (closes #1695, closes #1698, closes #1699, closes #1700)
+- **Hayabusa results take the Hayabusa importer** — a Hayabusa result or artifact map pulled from Velociraptor imports through the Hayabusa importer (closes #1726, closes #1756)
+- **Hayabusa Full bundle** — runs from Low severity up and says when to run it (#1696)
+- **Second opinion runs as a job** — the AI pill and the jobs chip stay truthful while it runs, and its status line clears when it ends (closes #1753)
+- **Accepted technique removal holds** — a technique removal accepted from the 2nd opinion is hidden everywhere and can be undone (closes #1742)
+- **Event jumps reveal the Forensic Timeline** — a jump to an event opens the Forensic Timeline when the current view hides it (#1730)
+- **Drop-import job lists every file** — a drop-folder import job names each file, and long names wrap (#1733)
+- **Live socket skips stray frames** — the dashboard ignores a socket frame that is not a live message (closes #1707)
+- **Jobs chip contrast** — jobs chip text meets contrast on every theme (closes #1749)
+- **Finding row actions** — no longer overlap the confidence meter (#1745)
+- **One tooltip per toolbar control** — Undo, Redo, Case lifecycle and Dashboard view show one tooltip, not two (#1694)
 
 ## [0.38.0] - 2026-09-26
 
@@ -1187,7 +1215,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.35.1...v0.36.0
