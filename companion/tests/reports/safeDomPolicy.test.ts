@@ -21,9 +21,13 @@ interface SafeDomApi {
   precleanHtml(value: string): string;
 }
 
-async function loadApi(): Promise<SafeDomApi> {
+const ORIGIN = "https://companion.example.com";
+
+async function loadApi(withOrigin = false): Promise<SafeDomApi> {
   const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
-  const context: { DFIRSafeDOM?: SafeDomApi } = {};
+  const context: { DFIRSafeDOM?: SafeDomApi; URL?: typeof URL; location?: { origin: string } } = withOrigin
+    ? { URL, location: { origin: ORIGIN } }
+    : {};
   runInNewContext(source, context);
   if (!context.DFIRSafeDOM) throw new Error("safe-dom.js did not publish its testable API");
   return context.DFIRSafeDOM;
@@ -274,11 +278,84 @@ function loadPatchedElement(): { make(tag: string, svg?: boolean): FakeElement }
     documentElement: { classList: { add() {} } },
     querySelectorAll: () => [],
   };
-  const context = { Element, document } as Record<string, unknown>;
+  // Reflecting IDL properties, as the browser defines them: an accessor on the interface
+  // prototype that writes the content attribute.
+  const reflecting: Record<string, [string, string][]> = {
+    HTMLAnchorElement: [
+      ["href", "href"],
+      ["ping", "ping"],
+    ],
+    HTMLAreaElement: [["href", "href"]],
+    HTMLLinkElement: [
+      ["href", "href"],
+      ["imageSrcset", "imagesrcset"],
+    ],
+    HTMLBaseElement: [["href", "href"]],
+    HTMLFormElement: [["action", "action"]],
+    HTMLButtonElement: [["formAction", "formaction"]],
+    HTMLInputElement: [
+      ["formAction", "formaction"],
+      ["src", "src"],
+    ],
+    HTMLImageElement: [
+      ["src", "src"],
+      ["srcset", "srcset"],
+    ],
+    HTMLSourceElement: [
+      ["src", "src"],
+      ["srcset", "srcset"],
+    ],
+    HTMLIFrameElement: [
+      ["src", "src"],
+      ["srcdoc", "srcdoc"],
+    ],
+    HTMLObjectElement: [["data", "data"]],
+    HTMLEmbedElement: [["src", "src"]],
+    HTMLMediaElement: [["src", "src"]],
+    HTMLScriptElement: [["src", "src"]],
+    HTMLMetaElement: [["httpEquiv", "http-equiv"]],
+  };
+  const context = { Element, document, URL, location: { origin: ORIGIN } } as Record<string, unknown>;
+  for (const [iface, props] of Object.entries(reflecting)) {
+    const cls = class extends Element {};
+    for (const [prop, attr] of props) {
+      Object.defineProperty(cls.prototype, prop, {
+        configurable: true,
+        enumerable: true,
+        get(this: Element) {
+          return this.attrs.get(attr) ?? "";
+        },
+        set(this: Element, value: unknown) {
+          this.attrs.set(attr, String(value));
+        },
+      });
+    }
+    context[iface] = cls;
+  }
+  const byTag: Record<string, string> = {
+    A: "HTMLAnchorElement",
+    AREA: "HTMLAreaElement",
+    LINK: "HTMLLinkElement",
+    BASE: "HTMLBaseElement",
+    FORM: "HTMLFormElement",
+    BUTTON: "HTMLButtonElement",
+    INPUT: "HTMLInputElement",
+    IMG: "HTMLImageElement",
+    SOURCE: "HTMLSourceElement",
+    IFRAME: "HTMLIFrameElement",
+    OBJECT: "HTMLObjectElement",
+    EMBED: "HTMLEmbedElement",
+    VIDEO: "HTMLMediaElement",
+    SCRIPT: "HTMLScriptElement",
+    META: "HTMLMetaElement",
+  };
   runInNewContext(source, context);
   return {
     make(tag, svg = false) {
-      const el = new Element() as unknown as FakeElement;
+      const cls = (
+        !svg && byTag[tag.toUpperCase()] ? context[byTag[tag.toUpperCase()]] : Element
+      ) as typeof Element;
+      const el = new cls() as unknown as FakeElement;
       el.tagName = svg ? tag.toLowerCase() : tag.toUpperCase();
       el.namespaceURI = svg ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml";
       return el;
@@ -287,11 +364,12 @@ function loadPatchedElement(): { make(tag: string, svg?: boolean): FakeElement }
 }
 
 interface FakeElement {
+  [property: string]: unknown;
   attrs: Map<string, string>;
   tagName: string;
   namespaceURI: string;
-  setAttribute(name: string, value: unknown): void;
-  setAttributeNS(ns: string | null, name: string, value: unknown): void;
+  setAttribute(name: unknown, value: unknown): void;
+  setAttributeNS(ns: string | null, name: unknown, value: unknown): void;
 }
 
 describe("safe DOM policy — script setters share the markup deny rules (#1813)", () => {
@@ -326,6 +404,7 @@ describe("safe DOM policy — script setters share the markup deny rules (#1813)
     expect([...a.attrs.keys()]).toEqual([]);
     const use = dom.make("use", true);
     use.setAttributeNS(XLINK, "xlink:href", "https://attacker.invalid/x.svg#a");
+    use.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:base", "https://attacker.invalid/");
     expect([...use.attrs.keys()]).toEqual([]);
   });
 
@@ -380,6 +459,169 @@ describe("safe DOM policy — script setters share the markup deny rules (#1813)
     for (const name of ["action", "formaction", "srcset", "ping", "background", "srcdoc", "onclick"]) {
       expect(api.attributeAction("A", false, name, "x"), name).toBeNull();
       expect(api.attributeAction("A", false, name, "x", true), name).toBeNull();
+    }
+  });
+});
+
+describe("safe DOM policy — property setters share the script rule (#1858)", () => {
+  const DENIED: [string, string, string][] = [
+    ["A", "href", "javascript:window.__xss=1"],
+    ["A", "href", " jav\tascript:alert(1)"],
+    ["A", "ping", "https://attacker.invalid/"],
+    ["AREA", "href", "javascript:alert(1)"],
+    ["LINK", "href", "https://attacker.invalid/x.css"],
+    ["LINK", "imageSrcset", "https://attacker.invalid/x 1x"],
+    ["BASE", "href", "https://attacker.invalid/"],
+    ["FORM", "action", "https://attacker.invalid/"],
+    ["BUTTON", "formAction", "javascript:alert(1)"],
+    ["INPUT", "formAction", "/same-origin/is/still/denied"],
+    ["INPUT", "src", "https://attacker.invalid/i.png"],
+    ["IMG", "src", "javascript:alert(1)"],
+    ["IMG", "src", "https://attacker.invalid/pixel.png"],
+    ["IMG", "src", "/\\attacker.invalid/x"],
+    ["IMG", "srcset", "/x.png 1x"],
+    ["SOURCE", "srcset", "https://attacker.invalid/x 1x"],
+    ["SOURCE", "src", "https://attacker.invalid/x.mp4"],
+    ["IFRAME", "src", "javascript:alert(1)"],
+    ["IFRAME", "srcdoc", "<script>alert(1)</script>"],
+    ["OBJECT", "data", "javascript:alert(1)"],
+    ["OBJECT", "data", "https://attacker.invalid/x.html"],
+    ["EMBED", "src", "https://attacker.invalid/x.swf"],
+    ["VIDEO", "src", "https://attacker.invalid/x.mp4"],
+    ["SCRIPT", "src", "https://attacker.invalid/x.js"],
+    ["META", "httpEquiv", "refresh"],
+    ["A", "href", `blob:https://attacker.invalid/0b6c6f2a-1e1d-4c1b-9d3e-3f8a2c1d5e7f`],
+    ["A", "href", "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="],
+    ["IMG", "src", "data:text/html,<script>alert(1)</script>"],
+  ];
+
+  it("drops every denied value and leaves the attribute untouched", () => {
+    const dom = loadPatchedElement();
+    for (const [tag, prop, value] of DENIED) {
+      const el = dom.make(tag);
+      el[prop] = value;
+      expect([...el.attrs.entries()], `${tag}.${prop} = ${value}`).toEqual([]);
+    }
+  });
+
+  it("keeps the previous value when a later write is denied", () => {
+    const dom = loadPatchedElement();
+    const a = dom.make("A");
+    a.href = "/cases/demo/report.html";
+    a.href = "javascript:alert(1)";
+    expect(a.href).toBe("/cases/demo/report.html");
+  });
+
+  // Every property write the app and its vendored libraries make today (PLAN-1858 inventory).
+  const LEGITIMATE: [string, string, string][] = [
+    ["A", "href", "/auth/oidc/start?returnTo=%2Fdashboard"],
+    ["A", "href", "/cases/demo/custody/manifest"],
+    ["A", "href", `blob:${ORIGIN}/0b6c6f2a-1e1d-4c1b-9d3e-3f8a2c1d5e7f`],
+    [
+      "A",
+      "href",
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    ],
+    ["A", "href", "#"],
+    ["A", "href", "#close"],
+    ["A", "href", "https://example.com/advisory"],
+    ["IMG", "src", "data:image/jpeg;base64,/9j/4AAQSkZJRg=="],
+    ["IMG", "src", "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="],
+    [
+      "IMG",
+      "src",
+      "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E",
+    ],
+    ["IMG", "src", "/geo-tiles/3/4/2.png"],
+    ["IMG", "src", `${ORIGIN}/vendor/leaflet/images/marker-icon.png`],
+    ["IMG", "src", ""],
+  ];
+
+  it("keeps every write the app makes today, with the caller's value", () => {
+    const dom = loadPatchedElement();
+    for (const [tag, prop, value] of LEGITIMATE) {
+      const el = dom.make(tag);
+      el[prop] = value;
+      expect(el[prop], `${tag}.${prop} = ${value.slice(0, 60)}`).toBe(value);
+    }
+  });
+
+  it("judges and writes one value when toString changes between calls", () => {
+    const dom = loadPatchedElement();
+    const shifty = (first: string, then: string) => {
+      let calls = 0;
+      return { toString: () => (calls++ === 0 ? first : then) };
+    };
+    const a = dom.make("A");
+    a.href = shifty("/safe", "javascript:alert(1)");
+    expect(a.attrs.get("href")).toBe("/safe");
+    const b = dom.make("A");
+    b.setAttribute("href", shifty("/safe", "javascript:alert(1)"));
+    expect(b.attrs.get("href")).toBe("/safe");
+    const c = dom.make("A");
+    c.setAttribute(shifty("title", "onclick"), "alert(1)");
+    expect([...c.attrs.keys()]).toEqual(["title"]);
+    const d = dom.make("a", true);
+    d.setAttributeNS(null, shifty("title", "onclick"), "alert(1)");
+    expect([...d.attrs.keys()]).toEqual(["title"]);
+  });
+});
+
+describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)", () => {
+  it("allows a same-origin blob download link and refuses one from another origin", async () => {
+    const api = await loadApi(true);
+    expect(api.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "a")).toBe(true);
+    expect(api.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "area")).toBe(true);
+    expect(api.isSafeUrl("blob:https://attacker.invalid/0b6c6f2a", "href", "a")).toBe(false);
+    expect(api.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "link")).toBe(false);
+    expect(api.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "src", "iframe")).toBe(false);
+  });
+
+  it("parses a blob link on an opaque-origin page without throwing", async () => {
+    const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
+    const context: { DFIRSafeDOM?: SafeDomApi } & Record<string, unknown> = {
+      URL,
+      location: { origin: "null" },
+    };
+    runInNewContext(source, context);
+    expect(context.DFIRSafeDOM!.isSafeUrl("blob:null/0b6c6f2a-1e1d", "href", "a")).toBe(true);
+    expect(context.DFIRSafeDOM!.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "a")).toBe(false);
+  });
+
+  it("allows a raster data-image download link but no other data URL on an anchor", async () => {
+    const api = await loadApi(true);
+    expect(api.isSafeUrl("data:image/png;base64,iVBORw0KGgo=", "href", "a")).toBe(true);
+    expect(api.isSafeUrl("data:image/svg+xml,<svg onload=alert(1)>", "href", "a")).toBe(false);
+    expect(api.isSafeUrl("data:text/html,<script>alert(1)</script>", "href", "a")).toBe(false);
+    expect(api.isSafeUrl("data:image/png;base64,iVBORw0KGgo=", "href", "link")).toBe(false);
+  });
+
+  it("allows an SVG data URI only as an image source", async () => {
+    const api = await loadApi(true);
+    const glyph = "data:image/svg+xml;utf8,%3Csvg%2F%3E";
+    expect(api.isSafeUrl(glyph, "src", "img")).toBe(true);
+    expect(api.isSafeUrl("data:image/svg+xml;base64,PHN2Zy8+", "src", "img")).toBe(true);
+    expect(api.isSafeUrl(glyph, "src", "iframe")).toBe(false);
+    expect(api.isSafeUrl(glyph, "src", "embed")).toBe(false);
+    expect(api.isSafeUrl(glyph, "href", "use")).toBe(false);
+    expect(api.attributeAction("IMG", false, "src", glyph)).toEqual({ name: "src", value: glyph });
+  });
+
+  it("treats OBJECT data as a URL and denies request-sending attributes on both paths", async () => {
+    const api = await loadApi(true);
+    expect(api.attributeAction("OBJECT", false, "data", "javascript:alert(1)", true)).toBeNull();
+    for (const name of [
+      "imagesrcset",
+      "attributionsrc",
+      "lowsrc",
+      "codebase",
+      "archive",
+      "code",
+      "http-equiv",
+      "xml:base",
+    ]) {
+      expect(api.attributeAction("LINK", false, name, "https://attacker.invalid/", true), name).toBeNull();
+      expect(api.attributeAction("META", false, name, "refresh"), name).toBeNull();
     }
   });
 });

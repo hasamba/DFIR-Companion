@@ -52,8 +52,13 @@
     "stroke-width", "transform", "viewbox", "width", "x", "x1", "x2", "xmlns", "y", "y1", "y2",
   ]);
   var URL_ATTRIBUTES = new Set(["href", "poster", "src", "xlink:href"]);
-  // Attributes that run script, submit a form, or send a request. Denied on every path (#1813).
-  var DENIED_ATTRIBUTES = new Set(["action", "background", "formaction", "ping", "srcdoc", "srcset"]);
+  // Attributes that run script, submit a form, navigate, or send a request. Denied on every path
+  // (#1813, #1858). None is used by the app; http-equiv covers a script-built <meta> refresh.
+  var DENIED_ATTRIBUTES = new Set([
+    "action", "archive", "attributionsrc", "background", "code", "codebase", "formaction",
+    "http-equiv", "imagesrcset", "lowsrc", "ping", "srcdoc", "srcset", "xml:base",
+  ]);
+  var RASTER_DATA_URI = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i;
   // url(), image-set(), -webkit-image-set(), image() and src() all take a URL the browser fetches
   // (#1811). image-set and image are unanchored so a nested cross-fade(image("…")) is caught too.
   var DANGEROUS_CSS = /(?:url\s*\(|image-set\s*\(|image\s*\(|src\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|behavior\s*:|-moz-binding|[{}<>\\])/i;
@@ -73,13 +78,21 @@
     if (stripped[0] === "\\") return false;
     if (compact[0] === "#" || compact[0] === "?" || compact.indexOf("./") === 0 || compact.indexOf("../") === 0) return true;
     if (compact[0] === "/" && compact.indexOf("//") !== 0) return true;
-    if (attr === "src" && tag === "img" && /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(compact)) return true;
+    var isLink = (attr === "href" || attr === "xlink:href") && (tag === "a" || tag === "area");
+    if (attr === "src" && tag === "img" && RASTER_DATA_URI.test(compact)) return true;
+    // Graph node glyphs (#1858). An SVG decoded as an image runs no script and fetches nothing.
+    if (attr === "src" && tag === "img" && /^data:image\/svg\+xml[;,]/.test(compact)) return true;
+    // Canvas PNG exports are downloaded through an anchor (#1858).
+    if (isLink && RASTER_DATA_URI.test(compact)) return true;
     if (compact.indexOf("//") === 0) return false;
     // An external link is fine on an anchor. On any other element an href loads a resource.
-    if ((attr === "href" || attr === "xlink:href") && (tag === "a" || tag === "area") && /^(?:https?|mailto):/i.test(compact)) return true;
+    if (isLink && /^(?:https?|mailto):/i.test(compact)) return true;
 
     var base = root.location && root.location.origin ? root.location.origin : "https://dfir-companion.invalid";
     try {
+      // File downloads click an anchor holding a blob URL minted by this origin (#1858). A blob URL
+      // is absolute, so it is parsed without the base: an opaque origin's "null" base would throw.
+      if (isLink && compact.indexOf("blob:") === 0) return new root.URL(raw).origin === base;
       var parsed = new root.URL(raw, base);
       return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.origin === base;
     } catch (_error) {
@@ -105,7 +118,8 @@
   // fromScript skips only the markup allowlist: app code and Leaflet set SVG attributes such as
   // fill-rule and pointer-events that markup never needs. Every deny rule applies to both paths.
   function attributeAction(tagName, isSvg, name, value, fromScript) {
-    var lower = String(name).toLowerCase();
+    var nameText = String(name);
+    var lower = nameText.toLowerCase();
     var tag = String(tagName || "").toUpperCase();
     var text = String(value == null ? "" : value);
     if (lower === "style" || lower === "data-safe-style") {
@@ -116,9 +130,10 @@
     var allowed = fromScript || lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0 ||
       (isSvg ? SAFE_SVG_ATTRIBUTES.has(lower) : SAFE_ATTRIBUTES.has(lower) || lower === "href");
     if (!allowed) return null;
-    if (URL_ATTRIBUTES.has(lower) && !isSafeUrl(text, lower, tag)) return null;
+    var isUrl = URL_ATTRIBUTES.has(lower) || (lower === "data" && tag === "OBJECT");
+    if (isUrl && !isSafeUrl(text, lower, tag)) return null;
     if (isSvg && lower.indexOf("data-") !== 0 && lower.indexOf("aria-") !== 0 && REMOTE_SVG_REFERENCE.test(text)) return null;
-    return { name: String(name), value: text };
+    return { name: nameText, value: text };
   }
 
   // A first, browser-independent pass that only removes blocked elements. It needs a literal "<",
@@ -146,6 +161,7 @@
   var nativeSetAttribute = root.Element.prototype.setAttribute;
   var nativeSetAttributeNS = root.Element.prototype.setAttributeNS;
   var XLINK_NS = "http://www.w3.org/1999/xlink";
+  var XML_NS = "http://www.w3.org/XML/1998/namespace";
   if (!innerDescriptor || !innerDescriptor.get || !innerDescriptor.set) throw new Error("DOM HTML setters unavailable");
 
   var trustedTypes = root.trustedTypes;
@@ -412,28 +428,226 @@
     return element.namespaceURI === "http://www.w3.org/2000/svg";
   }
 
+  // Every script write below coerces the name, namespace and value ONCE and hands the same strings
+  // to the judge and to the native call: an object whose toString changes between calls cannot
+  // pass one value to the policy and write another (#1858).
+  function applyScriptStyle(element, value) {
+    var state = cssMap(sanitizeCssText(value));
+    styleState.set(element, state);
+    element.removeAttribute("data-safe-style");
+    applyStyleState(element, state, true);
+  }
+
+  // The name the policy judges for a namespaced attribute. A prefix is arbitrary, so any XLink
+  // "…:href" is the XLink href.
+  // xml:base re-bases every relative URL below it, so it is judged (and denied) as xml:base.
+  function policyName(namespace, qualified) {
+    var local = qualified.slice(qualified.indexOf(":") + 1);
+    if (namespace === XLINK_NS && local.toLowerCase() === "href") return "xlink:href";
+    if (namespace === XML_NS && local.toLowerCase() === "base") return "xml:base";
+    return local;
+  }
+
   root.Element.prototype.setAttribute = function (name, value) {
-    if (String(name).toLowerCase() === "style") {
-      var state = cssMap(sanitizeCssText(value));
-      styleState.set(this, state);
-      this.removeAttribute("data-safe-style");
-      applyStyleState(this, state, true);
+    var nameText = String(name);
+    var text = String(value);
+    if (nameText.toLowerCase() === "style") {
+      applyScriptStyle(this, text);
       return;
     }
-    var verdict = attributeAction(this.tagName, isSvgElement(this), name, value, true);
-    // Pass the caller's value through unchanged (setAttribute("x", null) writes "null"), except a
-    // data-safe-style value, which the verdict has sanitized.
-    if (verdict) nativeSetAttribute.call(this, verdict.name, verdict.name === "data-safe-style" ? verdict.value : value);
+    var verdict = attributeAction(this.tagName, isSvgElement(this), nameText, text, true);
+    // setAttribute("x", null) still writes "null"; a data-safe-style value is the sanitized one.
+    if (verdict) nativeSetAttribute.call(this, verdict.name, verdict.value);
   };
   if (nativeSetAttributeNS) root.Element.prototype.setAttributeNS = function (namespace, qualifiedName, value) {
-    // Judge the local name; a prefix is arbitrary, so any XLink "…:href" is the XLink href.
+    var ns = namespace == null ? namespace : String(namespace);
     var qualified = String(qualifiedName);
-    var local = qualified.slice(qualified.indexOf(":") + 1);
-    var judged = namespace === XLINK_NS && local.toLowerCase() === "href" ? "xlink:href" : local;
+    var text = String(value);
+    var judged = policyName(ns, qualified);
     if (judged.toLowerCase() === "style") return;
-    var verdict = attributeAction(this.tagName, isSvgElement(this), judged, value, true);
-    if (verdict) nativeSetAttributeNS.call(this, namespace, qualifiedName, verdict.name === "data-safe-style" ? verdict.value : value);
+    var verdict = attributeAction(this.tagName, isSvgElement(this), judged, text, true);
+    if (verdict) nativeSetAttributeNS.call(this, ns, qualified, verdict.name === "data-safe-style" ? verdict.value : text);
   };
+
+  // Reflecting IDL properties write the same content attributes as setAttribute, so they are judged
+  // by the same rule (#1858). A denied value is dropped and the previous attribute stays; the getter
+  // is untouched. A descriptor an engine does not have is skipped.
+  // Out of scope: a same-origin iframe's clean prototypes. The threat is adversary STRINGS reaching
+  // app-code writes; script that can borrow natives from another realm has already run.
+  var GUARDED_INTERFACES = [
+    "HTMLAnchorElement", "HTMLAreaElement", "HTMLLinkElement", "HTMLBaseElement", "HTMLFormElement",
+    "HTMLButtonElement", "HTMLInputElement", "HTMLImageElement", "HTMLSourceElement",
+    "HTMLIFrameElement", "HTMLFrameElement", "HTMLObjectElement", "HTMLEmbedElement",
+    "HTMLMediaElement", "HTMLVideoElement", "HTMLTrackElement", "HTMLScriptElement",
+    "HTMLBodyElement", "HTMLMetaElement",
+  ];
+  var GUARDED_PROPERTIES = {
+    action: "action", archive: "archive", attributionSrc: "attributionsrc", background: "background",
+    code: "code", codeBase: "codebase", data: "data", formAction: "formaction", href: "href",
+    httpEquiv: "http-equiv", imageSrcset: "imagesrcset", lowsrc: "lowsrc", ping: "ping",
+    poster: "poster", src: "src", srcdoc: "srcdoc", srcset: "srcset",
+  };
+  var URL_PARTS = ["protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash"];
+
+  function ownSetter(prototype, property) {
+    var descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, property);
+    return descriptor && descriptor.set && descriptor.configurable !== false ? descriptor : null;
+  }
+
+  function replaceSetter(prototype, property, descriptor, set) {
+    Object.defineProperty(prototype, property, {
+      configurable: true,
+      enumerable: descriptor.enumerable,
+      get: descriptor.get,
+      set: set,
+    });
+  }
+
+  function guardProperty(prototype, property, attribute) {
+    var descriptor = ownSetter(prototype, property);
+    if (!descriptor) return;
+    replaceSetter(prototype, property, descriptor, function (value) {
+      var text = String(value);
+      if (attributeAction(this.tagName, false, attribute, text, true)) descriptor.set.call(this, text);
+    });
+  }
+
+  // a.protocol = "javascript" turns href="mailto:x" into "javascript:x". Apply the part to a
+  // detached anchor (it fetches nothing) with the native setters, judge the href that results, and
+  // commit exactly that href.
+  function guardUrlPart(prototype, part) {
+    var descriptor = ownSetter(prototype, part);
+    var hrefDescriptor = ownSetter(prototype, "href");
+    if (!descriptor || !hrefDescriptor) return;
+    replaceSetter(prototype, part, descriptor, function (value) {
+      var text = String(value);
+      var current = this.getAttribute("href");
+      if (current === null) return; // No URL: the native part setter is a no-op too.
+      var scratch = (this.ownerDocument || document).createElement(this.localName);
+      nativeSetAttribute.call(scratch, "href", current);
+      descriptor.set.call(scratch, text);
+      var next = scratch.getAttribute("href");
+      if (next === null || next === current) return;
+      if (attributeAction(this.tagName, false, "href", next, true)) hrefDescriptor.set.call(this, next);
+    });
+  }
+
+  GUARDED_INTERFACES.forEach(function (name) {
+    var prototype = root[name] && root[name].prototype;
+    if (!prototype) return;
+    // URL parts first, so each captures the native href setter to commit through.
+    if (name === "HTMLAnchorElement" || name === "HTMLAreaElement") URL_PARTS.forEach(function (part) { guardUrlPart(prototype, part); });
+    Object.keys(GUARDED_PROPERTIES).forEach(function (property) {
+      guardProperty(prototype, property, GUARDED_PROPERTIES[property]);
+    });
+  });
+
+  // SVG href is an SVGAnimatedString: svgA.href.baseVal = "javascript:…" writes the attribute.
+  // The href getter records which element owns the returned object; baseVal judges against it.
+  var animatedHrefOwner = new WeakMap();
+  var baseValDescriptor = ownSetter(root.SVGAnimatedString && root.SVGAnimatedString.prototype, "baseVal");
+  if (baseValDescriptor) {
+    [
+      "SVGAElement", "SVGUseElement", "SVGImageElement", "SVGFEImageElement", "SVGGradientElement",
+      "SVGPatternElement", "SVGTextPathElement", "SVGFilterElement", "SVGScriptElement", "SVGMPathElement",
+    ].forEach(function (name) {
+      var prototype = root[name] && root[name].prototype;
+      var descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "href");
+      if (!descriptor || !descriptor.get || descriptor.configurable === false) return;
+      Object.defineProperty(prototype, "href", {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        get: function () {
+          var animated = descriptor.get.call(this);
+          if (animated && typeof animated === "object") animatedHrefOwner.set(animated, this);
+          return animated;
+        },
+      });
+    });
+    replaceSetter(root.SVGAnimatedString.prototype, "baseVal", baseValDescriptor, function (value) {
+      var text = String(value);
+      var owner = animatedHrefOwner.get(this);
+      if (!owner || attributeAction(owner.tagName, true, "href", text, true)) baseValDescriptor.set.call(this, text);
+    });
+  }
+
+  // Attribute nodes write attributes too: setAttributeNode(NS), attributes.setNamedItem(NS), and
+  // Attr value / nodeValue / textContent on an attached attribute (#1858).
+  var attrValueDescriptor = root.Attr && Object.getOwnPropertyDescriptor(root.Attr.prototype, "value");
+  var attributesDescriptor = Object.getOwnPropertyDescriptor(root.Element.prototype, "attributes");
+  var attributesOwner = new WeakMap();
+
+  // Returns "style", null (drop), or the value to write.
+  function attrVerdict(element, namespace, name, text) {
+    var judged = namespace ? policyName(namespace, name) : name;
+    if (judged.toLowerCase() === "style") return namespace ? null : "style";
+    var verdict = attributeAction(element.tagName, isSvgElement(element), judged, text, true);
+    return verdict ? verdict.value : null;
+  }
+
+  function guardAttachAttr(owner, prototype, method, ownerOf) {
+    var native = owner && owner.prototype && owner.prototype[method];
+    if (typeof native !== "function" || !attrValueDescriptor) return;
+    prototype[method] = function (attr) {
+      var element = ownerOf(this);
+      if (!element || !attr || attr.nodeType !== 2) return native.apply(this, arguments);
+      var text = attrValueDescriptor.get.call(attr);
+      var outcome = attrVerdict(element, attr.namespaceURI, attr.name, text);
+      if (outcome === "style") {
+        applyScriptStyle(element, text);
+        return null;
+      }
+      if (outcome === null) return null;
+      if (outcome !== text) attrValueDescriptor.set.call(attr, outcome);
+      return native.call(this, attr);
+    };
+  }
+
+  // Installed on Attr.prototype only: nodeValue and textContent live on Node.prototype, and an own
+  // Attr accessor shadows them there, so element and text writes keep the native fast path.
+  function guardAttrText(source, property, nullIsEmpty) {
+    var descriptor = ownSetter(source, property);
+    if (!descriptor) return;
+    replaceSetter(root.Attr.prototype, property, descriptor, function (value) {
+      var element = this && this.nodeType === 2 ? this.ownerElement : null;
+      if (!element) {
+        descriptor.set.call(this, value);
+        return;
+      }
+      var text = value === null && nullIsEmpty ? "" : String(value);
+      var outcome = attrVerdict(element, this.namespaceURI, this.name, text);
+      if (outcome === "style") {
+        // The rule lands in the stylesheet; the live style attribute must not outrank it.
+        applyScriptStyle(element, text);
+        element.removeAttribute(this.name);
+      } else if (outcome !== null) descriptor.set.call(this, outcome);
+    });
+  }
+
+  if (attrValueDescriptor) {
+    var selfElement = function (element) { return element; };
+    guardAttachAttr(root.Element, root.Element.prototype, "setAttributeNode", selfElement);
+    guardAttachAttr(root.Element, root.Element.prototype, "setAttributeNodeNS", selfElement);
+    if (attributesDescriptor && attributesDescriptor.get && attributesDescriptor.configurable !== false && root.NamedNodeMap) {
+      Object.defineProperty(root.Element.prototype, "attributes", {
+        configurable: true,
+        enumerable: attributesDescriptor.enumerable,
+        get: function () {
+          var map = attributesDescriptor.get.call(this);
+          if (map) attributesOwner.set(map, this);
+          return map;
+        },
+      });
+      var mapOwner = function (map) { return attributesOwner.get(map); };
+      guardAttachAttr(root.NamedNodeMap, root.NamedNodeMap.prototype, "setNamedItem", mapOwner);
+      guardAttachAttr(root.NamedNodeMap, root.NamedNodeMap.prototype, "setNamedItemNS", mapOwner);
+    }
+    guardAttrText(root.Attr.prototype, "value", false);
+    if (root.Node) {
+      if (!Object.getOwnPropertyDescriptor(root.Attr.prototype, "nodeValue")) guardAttrText(root.Node.prototype, "nodeValue", true);
+      if (!Object.getOwnPropertyDescriptor(root.Attr.prototype, "textContent")) guardAttrText(root.Node.prototype, "textContent", true);
+    }
+  }
   patchStyleGetter(root.HTMLElement && root.HTMLElement.prototype);
   patchStyleGetter(root.SVGElement && root.SVGElement.prototype);
 
