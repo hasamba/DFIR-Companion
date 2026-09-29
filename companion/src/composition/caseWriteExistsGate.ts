@@ -18,8 +18,9 @@
  * exists, and GET /state already 404s. The Velociraptor prefix keeps its own all-method gate.
  *
  * The routes it deliberately lets through, and why:
- *   - /cases/import/encrypted and /cases/seed-demo are not cases at all — Express reads "import"
- *     and "seed-demo" as the :id. Both create a NEW case, so gating them would break both.
+ *   - /cases/import/encrypted, /cases/import/zip and /cases/seed-demo are not cases at all — Express
+ *     reads "import" and "seed-demo" as the :id. All three create a NEW case, so gating them would
+ *     break them.
  *   - /lock only clears this browser's unlock cookie. It is idempotent and must work after the
  *     case is gone (casePassword.ts; pinned by casePasswordRoutes.test.ts).
  *   - /push authenticates its push token BEFORE it checks the case. Answering 404 first would let

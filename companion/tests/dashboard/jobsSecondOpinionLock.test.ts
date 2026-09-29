@@ -21,7 +21,7 @@ function button() {
   };
 }
 
-function harness() {
+function harness(extra: Record<string, unknown> = {}) {
   const so = button();
   const synth = button();
   const elements: Record<string, unknown> = {
@@ -41,6 +41,7 @@ function harness() {
     loadCockpit: () => Promise.resolve(),
     setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id: unknown) => globalThis.clearTimeout(id as number),
+    ...extra,
   });
   return { api, so, synth };
 }
@@ -65,5 +66,34 @@ describe("the Second opinion button stays locked while its job runs (#1753)", ()
     api.scheduleJobUiRefresh("INC-1", soJob("running"));
     api.scheduleJobUiRefresh("INC-1", soJob("succeeded"));
     expect(so.disabled).toBe(false);
+  });
+});
+
+// Found in the #1800 triage, same shape as #1753: the lock set `synthesize.disabled = deepPassBusy`
+// on every push, so a push mid-run re-enabled Re-synthesize, and a second press superseded the run.
+const synthJob = (status: string) => [
+  { id: "job_syn", caseId: "INC-1", kind: "synthesis", status, label: "synthesis" },
+];
+
+describe("the Re-synthesize button stays locked while a synthesis runs", () => {
+  for (const status of ["running", "queued"]) {
+    it(`a ${status} synthesis job keeps the button disabled across a jobs push`, () => {
+      const { api, synth } = harness();
+      api.scheduleJobUiRefresh("INC-1", synthJob(status));
+      expect(synth.disabled).toBe(true);
+    });
+  }
+
+  it("is released once the job ends", () => {
+    const { api, synth } = harness();
+    api.scheduleJobUiRefresh("INC-1", synthJob("running"));
+    api.scheduleJobUiRefresh("INC-1", synthJob("succeeded"));
+    expect(synth.disabled).toBe(false);
+  });
+
+  it("stays locked while the click's POST is pending, before its job is listed", () => {
+    const { api, synth } = harness({ resynthesizeInFlight: () => true });
+    api.scheduleJobUiRefresh("INC-1", []);
+    expect(synth.disabled).toBe(true);
   });
 });

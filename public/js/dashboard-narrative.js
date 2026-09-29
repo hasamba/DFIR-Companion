@@ -27,9 +27,9 @@
   function setNarrativeView(text) {
     const view = document.getElementById("narrativeView");
     view.dataset.raw = text;
-    const state = DfirState.lastState();
     // narrativeViewHtml shows the empty-state sentence for "—"/blank; data-raw keeps the raw value.
-    view.innerHTML = narrativeViewHtml(text, state && state.forensicTimeline);
+    // Read lastState at the point of use, never cached: callers run after refreshes (#1799).
+    view.innerHTML = narrativeViewHtml(text, DfirState.lastState()?.forensicTimeline);
   }
 
   function genNarrative() {

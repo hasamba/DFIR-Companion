@@ -154,6 +154,10 @@ describe("team-auth configuration and policy", () => {
     });
     expect(resolveRequestPolicy("POST", "/cases/import/encrypted/")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("POST", "/cases/import/ENCRYPTED")).toEqual({ kind: "authenticated" });
+    // #1784: the plain-ZIP case import is the same kind of path — it creates a NEW case.
+    expect(resolveRequestPolicy("POST", "/cases/import/zip")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/cases/import/zip/")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/cases/import/ZIP")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });

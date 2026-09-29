@@ -116,6 +116,15 @@ describe("POST /cases/:id/synthesize with an unresolved duplicate host", () => {
     expect(synthesisJobs().map((job) => job.status)).not.toContain("failed");
   });
 
+  // #1801: the hold is recorded as a hold, not as the analyst's ✕ Cancel.
+  it("records the held job as held for the analyst, not as a user cancel", async () => {
+    await request(app).post("/cases/c1/synthesize").send({});
+    const [job] = synthesisJobs();
+    expect(job.status).toBe("cancelled");
+    expect(job.cancelRequestedAt).toBeUndefined();
+    expect(job.failure?.code).toBe("held_for_analyst");
+  });
+
   // Resolving the pair must actually release the route — otherwise "blocked" would just be a nicer
   // word for permanently stuck. The model stub throws, so a 409 here would mean still gated while
   // anything else means the gate let the run through to the provider.
@@ -137,5 +146,10 @@ describe("POST /cases/:id/second-opinion with an unresolved duplicate host", () 
     expect(res.status).toBe(409);
     expect(statusEvents.map((e) => e.status)).toContain("blocked");
     expect(statusEvents.map((e) => e.status)).not.toContain("error");
+    // #1801: the same hold encoding as synthesis, not a `failed` row.
+    const so = jobManager.list("c1").filter((job) => job.kind === "second-opinion");
+    expect(so.map((job) => [job.status, job.failure?.code, job.cancelRequestedAt])).toEqual([
+      ["cancelled", "held_for_analyst", undefined],
+    ]);
   });
 });

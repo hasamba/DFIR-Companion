@@ -6,6 +6,7 @@ import {
   type KnownEntities,
 } from "./anonymize.js";
 import { escapeRegExp } from "./regexEscape.js";
+import { bareUsername, isGuardedUsername } from "./anonUsernames.js";
 
 // Fail-closed redaction of server log text bound for a support bundle (#1735). The bundle leaves
 // the analyst's machine for the maintainer, who needs NONE of the case vocabulary — so unlike the
@@ -32,7 +33,6 @@ export interface SupportRedactor {
 
 const MIN_SECRET_LENGTH = 6;
 const MIN_LITERAL_LENGTH = 2;
-const MIN_BARE_USER_LENGTH = 3;
 const DEFAULT_MAX_LINE_BYTES = 16384;
 const WITHHELD_LINE = "<line withheld: case vocabulary unavailable>";
 const SECRET_ENV_KEY = /KEY|TOKEN|SECRET|PASS|AUTH|CREDENTIAL|COOKIE|WEBHOOK|DSN/i;
@@ -143,10 +143,15 @@ function knownForAnonymizer(known: KnownEntities): KnownEntities {
   // that, the bare user "alice" would fire inside host "WKS-ALICE" before the host pass ran.
   const custom: CustomEntity[] = (known.custom ?? []).filter((c) => c.category !== "PATH");
   for (const h of known.hosts) custom.push({ value: h, category: "HOST" });
+  // A USER entity is tokenized by its bare name (#1780), so "CORP\alice", "alice@corp.example" and
+  // a bare "alice" share one token. Common words ("admin", "test") are never replaced bare.
   for (const a of known.accounts) {
     custom.push({ value: a, category: "USER" });
-    const bare = a.includes("\\") ? a.slice(a.lastIndexOf("\\") + 1) : a.split("@")[0];
-    if (bare && bare.length >= MIN_BARE_USER_LENGTH) custom.push({ value: bare, category: "USER" });
+    const bare = bareUsername(a);
+    if (!isGuardedUsername(bare)) custom.push({ value: bare, category: "USER" });
+  }
+  for (const u of known.usernames ?? []) {
+    if (!isGuardedUsername(u)) custom.push({ value: u, category: "USER" });
   }
   // `suppressed` is dropped on purpose: the analyst's "do not redact" vetoes are for their own
   // exports, not for a bundle that leaves the machine.

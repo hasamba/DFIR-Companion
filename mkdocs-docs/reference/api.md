@@ -267,6 +267,8 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/push \
   detection.
 - `Authorization: Bearer <push token>` also works in place of `X-DFIR-Key`.
 - Returns `202 {"accepted": true, "kind": ..., "source": ...}`. The import runs in the background.
+- If the payload is JSON that no importer recognises, the `202` adds the same `"warning"` sentence
+  as `/import`, and the case log gets a WARN line.
 - No token configured → `403`. Missing or wrong key → `401`.
 - **Team mode:** send a service token with `write` scope as `Authorization: Bearer dfirsvc_...`.
   A push key alone gets `401`.
@@ -446,7 +448,7 @@ curl -s -o block.csv \
 
 | Query | Values |
 |---|---|
-| `format` | `txt` (default), `csv`, `stix` |
+| `format` | `txt` (default), `csv`, `stix`, or `summary` — JSON with the match count and the number of IOCs each filter left out, no download |
 | `minSeverity` | `Critical`, `High`, `Medium`, `Low`, `Info` |
 | `types` | any of `ip,domain,url,hash,email` |
 | `verdictOnly` | `true` to keep only IOCs with an enrichment verdict |

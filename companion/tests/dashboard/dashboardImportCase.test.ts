@@ -106,6 +106,8 @@ const EL_IDS = [
   "importCaseCancel",
   "importCaseEncrypted",
   "importCaseIris",
+  "importCaseZip",
+  "zipImportFile",
   "importCaseHint",
   "encryptedImportFile",
   "importPasswordOverlay",
@@ -118,17 +120,19 @@ const EL_IDS = [
   "caseId",
 ];
 
-/** Run one full import through the real handler and hand back the DOM it left behind. */
-async function runImport(responseBody: Record<string, unknown>) {
+function importHarness(responseBody: Record<string, unknown>) {
   const els = new Map(EL_IDS.map((id) => [id, stubEl(id)]));
-  let connected = 0;
+  const seen = { connected: 0, url: "" };
   const globals: DashboardGlobals = {
     document: { getElementById: (id: string) => els.get(id) ?? null },
-    fetch: async () => ({ status: 201, json: async () => responseBody }),
+    fetch: async (url: string) => {
+      seen.url = url;
+      return { status: 201, json: async () => responseBody };
+    },
     arrayBufferToBase64: () => "AAAA",
     loadCaseList: () => {},
     connect: () => {
-      connected++;
+      seen.connected++;
       // What js/dashboard-case-connect.js really does on ws.onopen. If the warning lives in
       // #status, this is the line that destroys it.
       els.get("status")!.textContent = "connected (live)";
@@ -138,6 +142,12 @@ async function runImport(responseBody: Record<string, unknown>) {
 
   const mod = loadDashboardModule<{ initImportCase(): void }>("dashboard-import-case.js", [], globals);
   mod.initImportCase();
+  return { els, seen };
+}
+
+/** Run one full import through the real handler and hand back the DOM it left behind. */
+async function runImport(responseBody: Record<string, unknown>) {
+  const { els, seen } = importHarness(responseBody);
 
   // Pick a file, then press Import — the two steps the analyst takes.
   els.get("encryptedImportFile")!.onchange!({
@@ -149,7 +159,22 @@ async function runImport(responseBody: Record<string, unknown>) {
   els.get("ipPassword")!.value = "correct horse battery staple"; // the handler refuses an empty one
   await els.get("ipImport")!.onclick!();
 
-  return { els, connected };
+  return { els, connected: seen.connected };
+}
+
+/** Pick a .zip through the Import case modal and let the import finish. */
+async function runZipImport(responseBody: Record<string, unknown>) {
+  const { els, seen } = importHarness(responseBody);
+  els.get("zipImportFile")!.onchange!({
+    target: {
+      files: [{ name: "INC-1 (no password).zip", size: 1024, arrayBuffer: async () => new ArrayBuffer(8) }],
+      value: "",
+    },
+  });
+  // The handler is async and not returned by onchange; let its awaits settle.
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return { els, seen };
 }
 
 // #904: the archive names the case it was exported from. That id is only worth a sentence when the
@@ -285,5 +310,28 @@ describe("a weak-encryption warning survives the import that raised it", () => {
     // "Cancel" would read as "undo the import", which is not on offer — the case is already on
     // disk and the archive is already open. The only thing left to do is close the warning.
     expect(els.get("ipCancel")!.textContent).toBe("Close");
+  });
+});
+
+// #1784: whether the ZIP's hashes were checked is a disclosure, so it must survive the reconnect
+// that rewrites #status — the same trap as #672 and #904.
+describe("ZIP case import", () => {
+  it("posts to the ZIP route and keeps the verified line where the reconnect cannot erase it", async () => {
+    const { els, seen } = await runZipImport({
+      caseId: "INC-1",
+      counts: { forensicEvents: 3 },
+      verified: true,
+    });
+    expect(seen.url).toBe("/cases/import/zip");
+    expect(seen.connected).toBe(1);
+    expect(els.get("importCaseHint")!.textContent).toContain("hashes verified");
+    expect(els.get("importCaseHint")!.textContent).toContain("3 events");
+    expect(els.get("importCaseOverlay")!.classList.contains("open")).toBe(true);
+    expect(els.get("caseId")!.value).toBe("INC-1");
+  });
+
+  it("says so when the archive had no manifest", async () => {
+    const { els } = await runZipImport({ caseId: "INC-1", counts: {}, verified: false });
+    expect(els.get("importCaseHint")!.textContent).toContain("no archive manifest, hashes not verified");
   });
 });
