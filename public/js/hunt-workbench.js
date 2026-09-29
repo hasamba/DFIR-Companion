@@ -198,6 +198,10 @@ function installStyle() {
     #sec-hunt-workbench .hq-bar{height:12px;background:var(--accent-solid);border-radius:3px;min-width:2px}
     #sec-hunt-workbench .hq-history{margin-top:10px;max-height:260px;overflow:auto}
     #sec-hunt-workbench .hq-history:empty{display:none}
+    #sec-hunt-workbench .hq-history table{font-size:11px}
+    #sec-hunt-workbench .hq-history th,#sec-hunt-workbench .hq-history td{padding:4px 5px}
+    #sec-hunt-workbench .hq-history time{white-space:nowrap}
+    #sec-hunt-workbench .hq-history-run td:nth-child(2){overflow-wrap:anywhere}
     #sec-hunt-workbench .hq-history-title{font-size:12px;font-weight:600;margin-bottom:4px}
     #sec-hunt-workbench .hq-history-params td{border-bottom:1px solid var(--border-subtle);padding-top:0}
     #sec-hunt-workbench .hq-history-params summary{font-size:11px;color:var(--text-muted);cursor:pointer}
