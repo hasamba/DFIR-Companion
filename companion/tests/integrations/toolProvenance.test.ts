@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   hashRuleset,
   probeToolVersion,
@@ -144,6 +144,7 @@ describe("describeToolRun", () => {
       stderr: "1 file skipped",
       outputSha256: "a".repeat(64),
       ruleset: { path: "/sigma", sha256: "b".repeat(64), files: 3182, bytes: 4096 },
+      input: null,
     });
     expect(line).toContain("tool chainsaw chainsaw 2.9.1");
     expect(line).toContain("binary /opt/chainsaw");
@@ -165,6 +166,7 @@ describe("describeToolRun", () => {
       stderr: "",
       outputSha256: hashOutputText("x"),
       ruleset: null,
+      input: null,
     });
     expect(line).toContain("ruleset none");
     expect(line).toContain("tool hayabusa |"); // no version → no trailing version token
@@ -217,6 +219,8 @@ describe("runToolAgainstFile fails closed (#688)", () => {
         runner,
         targetPath: join(caseDir, "Security.evtx"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/rule set at .* could not be identified/i);
     expect(spawned).toBe(0);
@@ -239,6 +243,8 @@ describe("runToolAgainstFile fails closed (#688)", () => {
         runner,
         targetPath: join(caseDir, "Security.evtx"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/exited with code 2 — refusing to import a partial parse.*failed to parse chunk 4/is);
   });
@@ -261,6 +267,8 @@ describe("runToolAgainstFile fails closed (#688)", () => {
         runner,
         targetPath: join(caseDir, "Security.evtx"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/was killed by SIGKILL — refusing to import a partial parse/i);
   });
@@ -279,6 +287,8 @@ describe("runToolAgainstFile fails closed (#688)", () => {
       runner,
       targetPath: join(caseDir, "a.bin"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.outputText).toBe("EvilRule /x/a.bin");
     expect(res.provenance.exitCode).toBe(1);
@@ -304,6 +314,8 @@ describe("runToolAgainstFile records what the run was (#688)", () => {
       runner,
       targetPath: join(caseDir, "a.bin"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
 
     expect(res.provenance.toolId).toBe("yara");
@@ -332,6 +344,8 @@ describe("runToolAgainstFile records what the run was (#688)", () => {
       runner,
       targetPath: join(caseDir, "Security.evtx"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.provenance.version).toBe("");
     expect(res.provenance.ruleset).toBeNull();
@@ -409,6 +423,8 @@ describe("ToolRunCache — one derivation per import job (#721)", () => {
         runner,
         targetPath: join(caseDir, name),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
         cache,
       });
       expect(res.provenance.ruleset?.sha256).toMatch(/^[a-f0-9]{64}$/);
