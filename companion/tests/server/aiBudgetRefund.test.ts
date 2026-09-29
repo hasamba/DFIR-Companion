@@ -218,3 +218,54 @@ describe("the AI gate's refund rule (#1825)", () => {
     expect(Number(res.headers["retry-after"])).toBeGreaterThanOrEqual(1);
   });
 });
+
+// #1832 — non-AI routes are off the AI gate, and a gated route that answered without reaching a
+// model gives its slot back. A real model call on the same routes still counts.
+describe("answers that made no model call leave the AI budget alone (#1832)", () => {
+  async function fire25(app: express.Express, path: string, body: object = {}): Promise<number[]> {
+    const out: number[] = [];
+    for (let i = 0; i < 25; i++) out.push((await request(app).post(`/cases/c1${path}`).send(body)).status);
+    return out;
+  }
+
+  it.each([
+    ["/velociraptor/suggest-hunts", {}], // nothing to pivot on in an empty case
+    ["/timeline-gaps/hypothesize", {}], // no gaps
+    ["/memory/next-steps", {}], // no memory evidence
+  ])("%s on an empty case: 200, no model call, budget whole", async (path, body) => {
+    const { app, a } = await makeApp();
+    const statuses = await fire25(app, path, body);
+    expect(statuses).toEqual(Array(25).fill(200));
+    expect(a.calls).toBe(0);
+    expect(budgetIsWhole("c1")).toBe(true);
+  });
+
+  it("/false-positive/suggest without ai: 200, budget whole", async () => {
+    const { app, a, stateStore } = await makeApp();
+    await seedEvent(stateStore);
+    const statuses = await fire25(app, "/false-positive/suggest", { kind: "event", ref: "e1" });
+    expect(statuses).toEqual(Array(25).fill(200));
+    expect(a.calls).toBe(0);
+    expect(budgetIsWhole("c1")).toBe(true);
+  });
+
+  it("/anon-control is not metered at all", async () => {
+    const { app } = await makeApp();
+    const statuses = await fire25(app, "/anon-control", { enabled: true });
+    expect(statuses).toEqual(Array(25).fill(200));
+    expect(budgetIsWhole("c1")).toBe(true);
+  });
+
+  it("a real model call on one of those routes still uses the budget", async () => {
+    const { app, a } = await makeApp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 21; i++)
+      statuses.push(
+        (await request(app).post("/cases/c1/adversary-hints/hunt-technique").send({ techniqueId: "T1059" }))
+          .status,
+      );
+    expect(a.calls).toBeGreaterThanOrEqual(20);
+    expect(statuses.slice(0, 20).every((s) => s !== 429)).toBe(true);
+    expect(statuses[20]).toBe(429);
+  });
+});
