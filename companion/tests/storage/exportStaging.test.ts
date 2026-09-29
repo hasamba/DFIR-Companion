@@ -1,15 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   EXPORT_STAGING_DIRNAME,
   EXPORT_STAGING_MAX_AGE_MS,
+  SHARED_DELIVERY_DIRNAME,
   createStagingDir,
   sweepStaleStaging,
 } from "../../src/storage/exportStaging.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { exportEncryptedCase } from "../../src/analysis/caseExportArchive.js";
+import { startMaintenanceTasks } from "../../src/composition/maintenanceTasks.js";
+import { CustodyStore } from "../../src/analysis/custody.js";
+import type { Notifier } from "../../src/integrations/notify/notifyDispatch.js";
 
 // #1851: every export stages a private copy (a whole case database, or an evidence file) under
 // <casesRoot>/.export-staging and removes it in a finally block. A process that dies mid-export never
@@ -72,5 +76,33 @@ describe("an export sweeps what a crashed export left behind", () => {
     await exportEncryptedCase(store, "c1", "a-long-enough-password");
 
     expect(await readdir(staging)).toEqual([]);
+  });
+});
+
+// #1856: a team-mode MCP delivery copies evidence to <casesRoot>/.mcp-delivery on the share. A crash
+// mid-run leaves that copy exactly as a crashed export leaves its staging, so startup sweeps it too.
+describe("startup sweeps day-old staging leftovers", () => {
+  it("removes stale folders from both the export staging and the shared MCP delivery folder", async () => {
+    const cases = new CaseStore(root);
+    const oldExport = await leftover("old-export", EXPORT_STAGING_MAX_AGE_MS + 60_000);
+    const delivery = join(root, SHARED_DELIVERY_DIRNAME);
+    const oldCopy = join(delivery, "delivery-old");
+    const liveCopy = join(delivery, "delivery-live");
+    await mkdir(oldCopy, { recursive: true });
+    await mkdir(liveCopy, { recursive: true });
+    const when = new Date(Date.now() - EXPORT_STAGING_MAX_AGE_MS - 60_000);
+    await utimes(oldCopy, when, when);
+
+    startMaintenanceTasks({
+      store: cases,
+      custodyStore: new CustodyStore(cases),
+      notifier: { dispatch: async () => {} } as unknown as Notifier,
+      dashboardBaseUrl: "http://localhost:4773",
+    });
+
+    await vi.waitFor(async () => {
+      expect(await readdir(delivery)).toEqual(["delivery-live"]);
+      await expect(stat(oldExport)).rejects.toThrow();
+    });
   });
 });
