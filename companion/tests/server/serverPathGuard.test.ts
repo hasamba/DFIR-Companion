@@ -16,7 +16,9 @@ import {
 
 // The guard now opens and judges the handle (#1834). These unit cases only need the verdict:
 // the refusal, or null when the route may read it (the handle is closed here).
-async function verdict(p: Promise<Awaited<ReturnType<typeof openServerPath>>>): Promise<ServerPathRefusal | null> {
+async function verdict(
+  p: Promise<Awaited<ReturnType<typeof openServerPath>>>,
+): Promise<ServerPathRefusal | null> {
   const opened = await p;
   if (opened.refusal) return opened.refusal;
   await opened.file.handle.close();

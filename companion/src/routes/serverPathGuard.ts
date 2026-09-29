@@ -45,7 +45,8 @@ export interface GuardedFile {
   stat: BigIntStats;
 }
 
-export type ServerPathOpen = { refusal: ServerPathRefusal; file?: undefined } | { refusal?: undefined; file: GuardedFile };
+export type ServerPathOpen =
+  { refusal: ServerPathRefusal; file?: undefined } | { refusal?: undefined; file: GuardedFile };
 
 const CONFIG_REFUSAL =
   "refused: that file is the Companion's own configuration (it holds the API keys) — it is never read as evidence";
@@ -139,7 +140,9 @@ async function judgeOpened(
  */
 export async function openServerPath(filePath: string, policy: ServerPathPolicy): Promise<ServerPathOpen> {
   if (!isAbsolute(filePath))
-    return { refusal: { status: 400, error: "path must be an absolute path to a file on the Companion machine" } };
+    return {
+      refusal: { status: 400, error: "path must be an absolute path to a file on the Companion machine" },
+    };
   const target = await realpath(filePath);
   // Never open a device or a FIFO in the ordinary case; the fstat below covers a swap after this.
   if (!(await stat(target)).isFile()) return { refusal: { status: 400, error: NOT_A_FILE } };

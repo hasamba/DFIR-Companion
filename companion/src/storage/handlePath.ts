@@ -41,7 +41,11 @@ async function procPath(handle: FileHandle): Promise<string | null> {
 }
 
 /** The path of the open handle's inode, or null when it cannot be pinned (the caller refuses). */
-export async function openedPath(handle: FileHandle, target: string, st: BigIntStats): Promise<string | null> {
+export async function openedPath(
+  handle: FileHandle,
+  target: string,
+  st: BigIntStats,
+): Promise<string | null> {
   const viaProc = await procPath(handle);
   if (viaProc === null) return confirmedPath(target, st);
   if (!isAbsolute(viaProc)) return null;
