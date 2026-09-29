@@ -403,6 +403,11 @@ describe("jobRowHtml", () => {
     resume: false,
   };
 
+  it("shows the view's status text for a gate hold (#1801)", () => {
+    const held = { ...view, job: { ...view.job, status: "cancelled" }, statusText: "held for analyst" };
+    expect(f.jobRowHtml(held)).toContain('<span class="job-st job-cancelled">held for analyst</span>');
+  });
+
   it("renders the job's identity and offers only the actions the view allows", () => {
     const html = f.jobRowHtml(view);
     expect(html).toContain('data-job-id="j1"');

@@ -767,7 +767,8 @@ export const FEATURES: Feature[] = [
     initializer: "initSearchAndScope",
     // resynthesize (#1675) is the Synthesize click, published so its pill paint can be driven
     // without the ~20 other bindings initSearchAndScope needs a whole page for.
-    publish: ["initSearchAndScope", "setDeepReasoningCapability", "resynthesize"],
+    // resynthesizeInFlight lets dashboard-jobs.js keep the button off while the POST is pending.
+    publish: ["initSearchAndScope", "setDeepReasoningCapability", "resynthesize", "resynthesizeInFlight"],
     private: [],
   },
   {
@@ -1673,6 +1674,7 @@ export const FEATURES: Feature[] = [
       "loadPresidioPending",
       "renderPresidioPending",
       "setPresidioPending",
+      "suppressAllPresidioPending",
       // #1782: the one predicate and wording every AI button uses for a Presidio hold.
       "presidioHold",
       "presidioHoldText",

@@ -276,6 +276,9 @@
     // No native title here: the button carries a data-tip, and a title would stack a second
     // tooltip on it (noDoubleTooltip.test.ts). The status line already says a run is in progress.
     if (soBtn && soRunning) soBtn.disabled = true;
+    // Same for Re-synthesize (#1800 triage): a running synthesis, or a click whose POST has not
+    // settled yet (its job may not be in this list), keeps the button off.
+    if (synthBtn && (synth || window.resynthesizeInFlight?.())) synthBtn.disabled = true;
     const cancel = document.getElementById("deepPassCancel");
     if (cancel) cancel.style.display = deepPassJob() ? "" : "none";
     const prog = document.getElementById("deepPassProgress");

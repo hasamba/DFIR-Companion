@@ -54,9 +54,10 @@ export async function sendSynthesisRouteFailure(
   };
 
   if (isAnalystDecisionGate(err)) {
-    // cancel, not fail: the gate throws before a prompt is built, so nothing ran to fail. A `failed`
-    // job is what put "synthesis failed" in the Now cockpit for a run that never started.
-    if (job) await options.jobManager?.cancel(job.jobId);
+    // hold, not fail: the gate throws before a prompt is built, so nothing ran to fail. A `failed`
+    // job is what put "synthesis failed" in the Now cockpit for a run that never started. And hold,
+    // not cancel: a cancel reads as the analyst's ✕ Cancel in the job history (#1801).
+    if (job) await options.jobManager?.hold(job.jobId, message);
     options.onAiStatus?.(caseId, { status: "blocked", at: new Date().toISOString(), detail: message });
     note(`synthesis on hold — ${message}`); // no outcome: a hold is not an errored synthesis
     return sendPipelineError(res, err);
