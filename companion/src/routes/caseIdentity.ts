@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { RouteContext } from "./context.js";
 import { CaseImportConflictError } from "../analysis/caseExportArchive.js";
+import { forgetCaseKeyedState } from "../storage/caseKeyedState.js";
 
 /**
  * A case id's life apart from its folder — the two ends of it.
@@ -80,8 +81,12 @@ export async function clearStateOutlivingCase(
     ["revoke case access", () => options.teamAuth?.store.deleteCaseAccess(id, actor)],
     ["forget background jobs", () => options.jobManager?.forgetCase(id)],
     ["retire case id", () => store.retireCaseId(id)],
-    // Captures of the deleted case must not be analysed into a new case with this id (#1855).
-    ["drop pending captures", () => void ctx.captureBuffers().delete(id)],
+    // Every per-case in-memory map (capture buffers, synthesis timers and in-flight marks, deferred
+    // kicks, enrichment pending, drop-scan state, …) drops the deleted case's entries, and its
+    // timers are cleared: nothing of it can be analysed into, or coalesce with, a new case (#1866).
+    // CaseStore.deleteCaseFolder already did this; repeated here so a delete path that bypasses
+    // it still forgets (idempotent).
+    ["drop in-memory case state", () => forgetCaseKeyedState(store.casesRoot, id)],
   ];
   for (const [what, run] of steps) {
     try {

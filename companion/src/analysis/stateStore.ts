@@ -165,6 +165,11 @@ export class StateStore implements InvestigationStateStorage {
     this.operationalMetrics = deps.operationalMetrics;
   }
 
+  /** The cases root this store reads (per-case in-memory state keys on its generations, #1866). */
+  get casesRoot(): string {
+    return this.cases.casesRoot;
+  }
+
   private recordQuery(operation: QueryOperation, index: QueryIndex, startedAt: number, rows: number): void {
     void this.operationalMetrics?.record({
       type: "query",

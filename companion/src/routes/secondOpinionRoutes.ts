@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
@@ -22,7 +23,7 @@ const NOTHING_TO_REVIEW = "nothing to review — import evidence and synthesize 
  */
 export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
-  const running = new Set<string>(); // cases with a second opinion in flight (#1753)
+  const running = new CaseKeyedSet(() => ctx.store.casesRoot); // in flight (#1753), per incarnation (#1866)
 
   // #1590 — every record the panel receives marks the accepted decisions that match no finding
   // now, against the case as it is at this moment, so none of them is skipped silently.

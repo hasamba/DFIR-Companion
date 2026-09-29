@@ -23,6 +23,7 @@
  * and the hunt's resultRows froze at the previous value forever. It read as flake; it was a drop.
  */
 import type { CaseStore } from "../storage/caseStore.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase, RouteContext } from "../routes/context.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -89,7 +90,7 @@ export interface VeloHuntsDeps {
 
 export interface VeloHunts {
   /** Fixed-delay auto-collect timers, keyed by hunt id. The launch route arms them. */
-  readonly veloHuntTimers: Map<string, NodeJS.Timeout>;
+  readonly veloHuntTimers: CaseKeyedMap<NodeJS.Timeout>; // (caseId, timer, huntId) — #1866
   /** Start a collect in the background; says synchronously whether it started or was queued. */
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
   /**
@@ -132,12 +133,11 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   // their own. Lost on a server restart BY DESIGN — the jobs are persisted (veloHuntStore), so after a
   // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
   // pending timer never blocks exit.
-  const veloHuntTimers = new Map<string, NodeJS.Timeout>();
-  // In-flight collects, keyed `caseId huntId`; claimed synchronously before any await, which is what
+  const veloHuntTimers = new CaseKeyedMap<NodeJS.Timeout>(() => store.casesRoot, clearTimeout); // #1866
+  // In-flight collects, keyed (caseId, huntId); claimed synchronously before any await, which is what
   // closes the TOCTOU race between the fixed-delay timer, the status poller and a manual "Collect
   // now" all deciding to collect the same hunt at the same moment (VeloHuntStore has no lock/CAS).
-  const collectingNow = new Map<string, { rerun: boolean }>();
-  const collectKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
+  const collectingNow = new CaseKeyedMap<{ rerun: boolean }>(() => store.casesRoot); // #1866: + generation
 
   // ── The case's import slot ───────────────────────────────────────────────────────────────────
   // A collect writes to the same forensic timeline the dashboard's imports write to, and reports
@@ -203,10 +203,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
     if (!client || !huntStore || !pipeline) return;
-    const pending = veloHuntTimers.get(huntId);
+    const pending = veloHuntTimers.get(caseId, huntId);
     if (pending) {
       clearTimeout(pending);
-      veloHuntTimers.delete(huntId);
+      veloHuntTimers.delete(caseId, huntId);
     }
     stopVeloHuntStatusPoll(caseId, huntId); // an import is starting — it now owns this job's status
 
@@ -738,19 +738,18 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   // file header for why dropping the second request instead was a real, silent bug (#195).
   async function listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]> {
     const jobs = (await options.veloHuntStore?.list(caseId)) ?? [];
-    return jobs.map((j) => ({ ...j, collectActive: collectingNow.has(collectKey(caseId, j.huntId)) }));
+    return jobs.map((j) => ({ ...j, collectActive: collectingNow.has(caseId, j.huntId) }));
   }
 
   function startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued" {
-    const key = collectKey(caseId, huntId);
-    const inFlight = collectingNow.get(key);
+    const inFlight = collectingNow.get(caseId, huntId);
     if (inFlight) {
       inFlight.rerun = true;
       return "queued";
     }
 
     const entry = { rerun: false };
-    collectingNow.set(key, entry);
+    collectingNow.set(caseId, entry, huntId);
     void (async () => {
       try {
         // Re-check `rerun` AFTER each pass: requests that landed during the pass are served by one
@@ -766,7 +765,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           }
         } while (entry.rerun);
       } finally {
-        collectingNow.delete(key);
+        collectingNow.delete(caseId, huntId);
       }
     })();
     return "started";

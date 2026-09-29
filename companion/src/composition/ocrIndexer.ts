@@ -19,6 +19,7 @@ import { TesseractOcrRunner, type OcrRunner } from "../analysis/ocrRedact.js";
 import { extractOcrText, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { CaptureMetadata } from "../types.js";
+import { currentGeneration, runInGenerationScope, runOutsideCaseScope } from "../storage/caseIncarnation.js";
 
 const OCR_MAX_CONCURRENT = 2;
 const OCR_MAX_QUEUE = 1000;
@@ -35,14 +36,18 @@ export interface OcrIndexer {
 }
 
 export function createOcrIndexer({ store, ocrRunner }: OcrIndexerDeps): OcrIndexer {
-  const queue: CaptureMetadata[] = [];
+  // #1866: each item remembers the case incarnation it was queued for, and runs as its work — never
+  // in the scope of the item before it, which may be another case or the same id's deleted case.
+  const queue: { metadata: CaptureMetadata; generation: string }[] = [];
   let active = 0;
 
   function pump(): void {
     while (active < OCR_MAX_CONCURRENT && queue.length > 0) {
-      const metadata = queue.shift()!;
+      const { metadata, generation } = queue.shift()!;
       active++;
-      void (async () => {
+      const run = (fn: () => Promise<void>) =>
+        runOutsideCaseScope(() => runInGenerationScope(store.casesRoot, metadata.caseId, generation, fn));
+      void run(async () => {
         try {
           const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
           const bytes = await readFile(path);
@@ -64,7 +69,7 @@ export function createOcrIndexer({ store, ocrRunner }: OcrIndexerDeps): OcrIndex
           active--;
           pump();
         }
-      })();
+      });
     }
   }
 
@@ -78,7 +83,7 @@ export function createOcrIndexer({ store, ocrRunner }: OcrIndexerDeps): OcrIndex
         });
         return;
       }
-      queue.push(metadata);
+      queue.push({ metadata, generation: currentGeneration(store.casesRoot, metadata.caseId) });
       pump();
     },
   };

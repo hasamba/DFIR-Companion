@@ -20,12 +20,18 @@
  * newest kick's start function winning.
  */
 import { isHeldJob, type Job } from "../analysis/jobRegistry.js";
+import { CaseKeyedMap, type PerCaseMap } from "../storage/caseKeyedState.js";
 
 export interface SynthesisDeferralDeps {
   /** The job registry. Absent → only `inFlight` makes a kick wait. */
   jobManager?: { list(caseId: string): Job[]; get(jobId: string): Job | undefined };
   /** Cases whose automatic scheduled synthesis holds the slot (queued or running) — also busy. */
-  inFlight?: ReadonlySet<string>;
+  inFlight?: { has(caseId: string): boolean };
+  /**
+   * The cases root. When set, waiters key on (case id, generation) (#1866): a deleted case's waiter
+   * never absorbs, or starts inside its own old scope, a same-id successor's kick.
+   */
+  casesRoot?: () => string;
   /** How long to wait between checks. */
   retryMs: number;
 }
@@ -51,7 +57,9 @@ export interface SynthesisDeferral {
 }
 
 export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisDeferral {
-  const waiting = new Map<string, Waiter>();
+  const waiting: PerCaseMap<Waiter> = deps.casesRoot
+    ? new CaseKeyedMap<Waiter>(deps.casesRoot)
+    : new Map<string, Waiter>();
 
   function runningIds(caseId: string): string[] {
     const jobs = deps.jobManager?.list(caseId) ?? [];

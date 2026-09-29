@@ -35,6 +35,7 @@ import {
   sweepStaleStaging,
 } from "../storage/exportStaging.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 /**
  * Delay before the FIRST evidence-integrity sweep after boot. Long enough to stay out of the startup
@@ -121,7 +122,7 @@ export function startMaintenanceTasks({
   const backupManager = new BackupManager(store, backupConfig);
   if (backupConfig.intervalMs > 0) {
     // Time-based: only back up cases that have changed since the last scheduled backup.
-    const lastScheduledBackupAt = new Map<string, number>();
+    const lastScheduledBackupAt = new CaseKeyedMap<number>(() => store.casesRoot); // #1866
     const runScheduledBackups = async (): Promise<void> => {
       const cases = await store.listCases().catch(() => []);
       for (const c of cases) {

@@ -1,3 +1,4 @@
+import type { PerCaseMap } from "../../storage/caseKeyedState.js";
 import type { VeloHuntJob, VeloHuntStore } from "../veloHuntStore.js";
 import {
   buildCollectionInventory,
@@ -139,7 +140,7 @@ export interface SynthesisContext
    * Hash of the last successfully-synthesized inputs per case. Owned by the pipeline so it lives as
    * long as the process does: a fresh process (or an explicit `force`) always synthesizes.
    */
-  readonly lastSynthHash: Map<string, string>;
+  readonly lastSynthHash: PerCaseMap<string>;
 }
 
 async function detectSkew(

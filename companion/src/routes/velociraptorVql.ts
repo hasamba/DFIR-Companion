@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { normalizeHuntExpirySeconds } from "../integrations/velociraptor/velociraptorApi.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
@@ -74,13 +75,19 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       return warning;
     }
   }
+  // #1866: these routes carry the case id in the body, outside the /cases/:id gate. The audit line
+  // is work of the incarnation that exists when the request arrives, captured before any await.
+  const inBodyCase = <T>(req: Request, fn: () => T): T => {
+    const bodyCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
+    return runInCaseScope(store.casesRoot, bodyCaseId, fn);
+  };
   const withWarning = <T extends object>(body: T, auditWarning?: string): T =>
     auditWarning ? { ...body, auditWarning } : body;
 
   // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
   // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
   // analyst-authored (from the generated pivots) — localhost only, opt-in via DFIR_VELOCIRAPTOR_*.
-  app.post("/velociraptor/run", async (req: Request, res: Response) => {
+  async function runVql(req: Request, res: Response) {
     if (!options.velociraptorClient)
       return res
         .status(501)
@@ -111,11 +118,12 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       );
       return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
-  });
+  }
+  app.post("/velociraptor/run", (req: Request, res: Response) => inBodyCase(req, () => runVql(req, res)));
 
   // Launch a HUNT that runs the pivot VQL on ALL enrolled endpoints (packages it as a CLIENT
   // artifact, then creates the hunt). This is the dashboard's "Run hunt on all clients" action.
-  app.post("/velociraptor/hunt", async (req: Request, res: Response) => {
+  async function launchHunt(req: Request, res: Response) {
     if (!options.velociraptorClient)
       return res
         .status(501)
@@ -151,5 +159,8 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       );
       return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
-  });
+  }
+  app.post("/velociraptor/hunt", (req: Request, res: Response) =>
+    inBodyCase(req, () => launchHunt(req, res)),
+  );
 }

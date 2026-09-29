@@ -1,5 +1,7 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve, sep } from "node:path";
+import { caseDirsOf, caseWriteRefusalFor } from "../storage/caseIncarnation.js";
+import { onCaseForgotten } from "../storage/caseKeyedState.js";
 import type { DebugLogSink } from "./debugLogSink.js";
 
 // Leveled, greppable logging that tees to the console AND to log files. A single shared
@@ -107,12 +109,18 @@ export interface LoggerOptions {
 // Lazy append-only file writer: one WriteStream per path, parent dirs created on first use.
 // Logging must NEVER crash the server, so every fs failure is swallowed — a path that errors
 // (e.g. a Dropbox/OneDrive lock on cases/) is disabled and reported once on the console.
+//
+// #1866: a line for a case that was deleted (or whose folder is closing) is dropped rather than
+// recreating `<case>/logs/`, and the delete closes that case's cached streams, so a same-id
+// successor's lines open a fresh file instead of landing in the deleted case's unlinked one.
 class FileLogWriter implements LogWriter {
   private readonly streams = new Map<string, WriteStream | null>();
+  private readonly unsubscribe = onCaseForgotten((root, caseId) => this.closeUnder(root, caseId));
 
   write(path: string, line: string): void {
     let stream = this.streams.get(path);
     if (stream === undefined) {
+      if (caseWriteRefusalFor(path)) return; // not cached: a re-created case may log here again
       stream = this.open(path);
       this.streams.set(path, stream);
     }
@@ -139,7 +147,18 @@ class FileLogWriter implements LogWriter {
     }
   }
 
+  private closeUnder(root: string, caseId: string): void {
+    const { active, archived } = caseDirsOf(root, caseId);
+    for (const [path, stream] of [...this.streams]) {
+      const at = resolve(path);
+      if (!at.startsWith(active + sep) && !at.startsWith(archived + sep)) continue;
+      this.streams.delete(path);
+      stream?.end();
+    }
+  }
+
   async close(): Promise<void> {
+    this.unsubscribe();
     const open = [...this.streams.values()].filter((s): s is WriteStream => s !== null);
     this.streams.clear();
     await Promise.all(open.map((s) => new Promise<void>((resolve) => s.end(resolve))));

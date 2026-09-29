@@ -29,7 +29,8 @@ import type { Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "../routes/importDebugEmit.js";
-import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 export interface VeloMonitorsDeps {
   store: CaseStore;
@@ -82,15 +83,13 @@ export interface VeloMonitors {
 }
 
 export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonitorsDeps): VeloMonitors {
-  // Per-monitor self-rescheduling timers, keyed `caseId<NUL>monitorId`.
-  //
-  // The separator is a literal NUL, written as an escape rather than pasted as a raw byte: a raw
-  // 0x00 anywhere in a source file makes grep/ripgrep treat the WHOLE file as binary and silently
-  // report no matches in it — which is exactly what it did to server.ts before this move. NUL is
-  // still the right separator (it is the one character a caseId or artifact name can never contain,
-  // so no pair of ids can collide), it just has to be spelled, not embedded.
-  const timers = new Map<string, NodeJS.Timeout>();
-  const monitorKey = (caseId: string, id: string): string => `${caseId}\u0000${id}`;
+  // Per-monitor self-rescheduling timers, keyed by (case, generation, monitor id) (#1866): a
+  // deleted case's poll chain never re-arms, cancels or reads a same-id successor's monitor timer,
+  // and the delete clears the old case's timers.
+  const timers = new CaseKeyedMap<NodeJS.Timeout>(
+    () => store.casesRoot,
+    (timer) => clearTimeout(timer),
+  );
 
   async function refreshVeloClients(): Promise<number> {
     const client = options.velociraptorClient;
@@ -139,7 +138,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     const monStore = options.veloMonitorStore;
     const client = options.velociraptorClient;
     if (!monStore || !client) {
-      timers.delete(monitorKey(caseId, id));
+      timers.delete(caseId, id);
       return;
     }
     let monitor: VeloMonitor | null = null;
@@ -149,7 +148,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       /* treat as gone */
     }
     if (!monitor || monitor.status === "stopped") {
-      timers.delete(monitorKey(caseId, id));
+      timers.delete(caseId, id);
       return;
     }
 
@@ -169,28 +168,26 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     }
     options.onVeloMonitor?.(caseId);
     // Reschedule only if it's still meant to run (a concurrent stop/delete clears the timer below).
-    if (timers.has(monitorKey(caseId, id))) scheduleVeloMonitor(caseId, updated);
+    if (timers.has(caseId, id)) scheduleVeloMonitor(caseId, updated);
   }
 
   // Arm (or re-arm) a monitor's timer for one poll interval out. Clears any existing timer first so
   // start is idempotent. Clamped 5s..1h so a bad value can't busy-loop or stall forever.
   function scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void {
-    const key = monitorKey(caseId, monitor.id);
-    const existing = timers.get(key);
+    const existing = timers.get(caseId, monitor.id);
     if (existing) clearTimeout(existing);
     const seconds = Math.min(3600, Math.max(5, Math.floor(monitor.pollSeconds) || 30));
     // #1855: the chain of polls runs as work of the case incarnation that armed it.
     const poll = () => void pollVeloMonitor(caseId, monitor.id);
     const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(poll, seconds * 1000));
     timer.unref?.();
-    timers.set(key, timer);
+    timers.set(caseId, timer, monitor.id);
   }
 
   function stopVeloMonitorTimer(caseId: string, id: string): void {
-    const key = monitorKey(caseId, id);
-    const timer = timers.get(key);
+    const timer = timers.get(caseId, id);
     if (timer) clearTimeout(timer);
-    timers.delete(key);
+    timers.delete(caseId, id);
   }
 
   // Re-arm timers for every active monitor across all cases (called once at startup so monitoring
@@ -198,7 +195,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
   async function resumeVeloMonitors(): Promise<void> {
     const monStore = options.veloMonitorStore;
     if (!monStore || !options.velociraptorClient) return;
-    let cases: { caseId: string }[] = [];
+    let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
     } catch {
@@ -207,9 +204,16 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     let resumed = 0;
     for (const c of cases) {
       try {
-        for (const m of await monStore.list(c.caseId)) {
+        // #1866: armed as work of the incarnation just listed, not of whichever exists later.
+        const monitors = await monStore.list(c.caseId);
+        for (const m of monitors) {
           if (m.status !== "stopped") {
-            scheduleVeloMonitor(c.caseId, m);
+            runInCaseScope(
+              store.casesRoot,
+              c.caseId,
+              () => scheduleVeloMonitor(c.caseId, m),
+              generationOf(c),
+            );
             resumed++;
           }
         }

@@ -27,7 +27,8 @@ import { validateProcessChains, hasChainWork, type ChainSummary } from "../enric
 import { recordEnrichmentRun } from "../analysis/analysisRunRecorders.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
-import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
+import { CaseKeyedMap, CaseKeyedSet, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry. */
 function shortValue(value: string): string {
@@ -51,7 +52,7 @@ export interface EnrichmentEngine {
   /** Shared reachability cache; the diagnostics route reads it. */
   readonly health: ProviderHealthCache;
   /** Cases waiting on a down provider, resumed by the poller on recovery. */
-  readonly pending: Set<string>;
+  readonly pending: PerCaseSet;
   /**
    * Self-coalescing, so N rapid kicks (a multi-file import) cost one run, not N. A kick supersedes
    * runs still QUEUED, and waits behind one already in flight — replaying after it saves, so
@@ -86,10 +87,12 @@ export function createEnrichmentEngine({
       logLine(`[enrich] health ${name} ${h.ok ? "UP" : `DOWN (${h.detail ?? "unreachable"})`}`),
   });
   // Cases waiting for a down provider; the poller resumes only their unchecked IOCs on recovery.
-  const pending = new Set<string>();
+  // #1866: both keyed by (case id, generation) — a deleted case's pending mark or deferred kick is
+  // never replayed under, or absorbed by, a same-id successor.
+  const pending = new CaseKeyedSet(() => store.casesRoot);
   // Cases kicked while a run was already IN FLIGHT, holding the strongest `force` asked for. Replayed
   // once that run has saved — see the deferral in enrichInBackground for why waiting beats racing.
-  const deferredKicks = new Map<string, boolean>();
+  const deferredKicks = new CaseKeyedMap<boolean>(() => store.casesRoot);
 
   const isEnriching = (caseId: string): boolean =>
     options.jobManager?.list(caseId).some((j) => j.kind === "enrichment" && j.status === "running") ?? false;
@@ -362,10 +365,12 @@ export function createEnrichmentEngine({
         }
         const recovered = down.some((p) => health.peek(p.name)?.ok === true);
         if (recovered && pending.size > 0) {
-          const cases = [...pending];
+          const cases = pending.list();
           pending.clear();
           logLine(`[enrich] health recovered — resuming ${cases.length} case(s)`);
-          for (const c of cases) enrichInBackground(c);
+          // Each resumes as work of the incarnation that was waiting, never of a same-id successor.
+          for (const c of cases)
+            runInGenerationScope(store.casesRoot, c.caseId, c.generation, () => enrichInBackground(c.caseId));
         }
       })()
         .catch(() => {})

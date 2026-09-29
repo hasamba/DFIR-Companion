@@ -20,6 +20,7 @@ import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
+import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -236,6 +237,15 @@ export class CaseStore {
 
   // Close the case to new writes, wait for admitted ones, then act; a late write to a place the case
   // left is refused afterwards instead of recreating it (#1855). The caller holds metaLock.
+  // #1866: a deleted or replaced case's in-memory state (sequence high-water marks, and every
+  // CaseKeyedMap/Set under this root, clearing their timers) never carries into a same-id successor.
+  private forgetInMemory(caseId: string): void {
+    for (const key of [...this.seqHighWater.keys()]) {
+      if (key.slice(key.indexOf(":") + 1) === caseId) this.seqHighWater.delete(key);
+    }
+    forgetCaseKeyedState(this.root, caseId);
+  }
+
   private whileClosed<T>(caseId: string, reason: CaseWriteRefusal, act: () => Promise<T>, vacated: Vacated) {
     const busy = () =>
       new CaseLifecycleError(`writes to case ${caseId} are still in progress — try again`, 409);
@@ -316,6 +326,7 @@ export class CaseStore {
           );
         }
         await this.whileClosed(caseId, "deleted", () => rm(dir, { recursive: true }), ["active", "archived"]);
+        this.forgetInMemory(caseId);
         await opts.afterDelete?.();
       });
     } finally {
@@ -393,6 +404,7 @@ export class CaseStore {
       // visible without one. A reseed replaces the case: old work is shut out while it runs.
       const generation = newCaseGeneration();
       const seed = async () => {
+        if (!isNew) this.forgetInMemory(caseId); // a reseed replaces the case (#1866)
         const value = await fn(isNew, generation);
         await this.ensureSeedGeneration(caseId, generation);
         return value;

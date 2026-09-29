@@ -307,7 +307,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const velociraptorClientStore = new VelociraptorClientStore(
     join(dirname(casesRoot), "velociraptor", "clients.json"),
   );
-  const hub = new LiveHub();
+  const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
   const jobManager = new JobManager({
     onJob: (caseId) => {
       // The push carries the list (#1453); `jobManager` is assigned by the time any job emits.

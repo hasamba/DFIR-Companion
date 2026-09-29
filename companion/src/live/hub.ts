@@ -1,3 +1,4 @@
+import { CaseForgetter } from "../storage/caseKeyedState.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import { withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -25,6 +26,22 @@ export function jobsChangedMessage(jobs: readonly unknown[]): {
 
 export class LiveHub {
   private subs = new Map<string, Set<SocketLike>>();
+  // #1866: with a cases root, a deleted (or reseeded) case's sockets are closed, so a dashboard
+  // left open on it never receives a same-id successor's pushes. The client reconnects and is
+  // re-checked against the new case.
+  private readonly forgetter?: CaseForgetter;
+
+  constructor(casesRoot?: string) {
+    if (casesRoot !== undefined)
+      this.forgetter = new CaseForgetter(casesRoot, (caseId) => this.dropCase(caseId));
+  }
+
+  /** Close and forget every socket subscribed to the case. */
+  dropCase(caseId: string): void {
+    const set = this.subs.get(caseId);
+    this.subs.delete(caseId);
+    for (const socket of set ?? []) socket.terminate?.();
+  }
 
   subscribe(caseId: string, socket: SocketLike): void {
     const set = this.subs.get(caseId) ?? new Set<SocketLike>();
