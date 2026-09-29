@@ -189,6 +189,8 @@ export interface CaseFileSnapshot {
   path: string;
   bytes: number;
   sha256: string;
+  /** The permission bits of the file that was copied — read from the checked handle, not the name. */
+  mode: number;
   /**
    * Removes the copy and its folder, retrying a locked file (antivirus, sync clients). Never throws:
    * resolves with what is left behind and why, or null when it is gone — the caller logs it.
@@ -243,7 +245,7 @@ export async function snapshotCaseFile(
     if (copied !== size) {
       throw new CaseFileRefusedError("changed file", absPath, "the file shrank while it was being copied");
     }
-    return { path, bytes: copied, sha256: hash.digest("hex"), dispose };
+    return { path, bytes: copied, sha256: hash.digest("hex"), mode: Number(file.stat.mode) & 0o777, dispose };
   } catch (err) {
     await dispose();
     throw err;

@@ -307,6 +307,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
               if (job) options.jobManager?.progress(job.jobId, 0, 1, detail);
             },
             deliverySource: mcpDeliverySource(store, caseId),
+            teamMode: Boolean(options.teamAuth),
             recordTransfer: mcpTransferRecorder(options.custodyStore, caseId, targetPath, server.id),
           },
           { tool, args, targetPath },
@@ -726,6 +727,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           const delivered = await deliver(servers[0], targetPath, {
             runner: transferRunner,
             source: mcpDeliverySource(store, caseId),
+            teamMode: Boolean(options.teamAuth),
             signal: job?.signal,
             onProgress: (done, total) => {
               const percent = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0;

@@ -39,6 +39,8 @@ export interface McpRunDeps {
   signal?: AbortSignal;
   /** The case the target belongs to; required whenever a target is delivered (#1847). */
   deliverySource?: DeliverySource;
+  /** Team auth is on: a remote-path target is handed over as a private copy on the share (#1856). */
+  teamMode: boolean;
   recordTransfer?: (destination: string, sent?: { sha256: string }) => Promise<void>;
   onProgress?: (detail: string) => void;
 }
@@ -103,6 +105,7 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
       const target = await deliver(server, input.targetPath, {
         runner: deps.transferRunner,
         source: deps.deliverySource,
+        teamMode: deps.teamMode,
         signal: deps.signal,
         recordTransfer: deps.recordTransfer,
       });
