@@ -1,4 +1,4 @@
-import { readdir, readFile, mkdir, mkdtemp, rm, lstat } from "node:fs/promises";
+import { readdir, readFile, rm, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
@@ -15,7 +15,7 @@ import {
   verifyArchiveManifest,
   type CaseArchiveProvenance,
 } from "./caseArchiveManifest.js";
-import { EXPORT_STAGING_DIRNAME } from "./caseArchive.js";
+import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -226,9 +226,7 @@ async function buildCaseArchive(
   const relPaths = await walkDir(caseDir);
   if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);
 
-  const stagingRoot = join(store.casesRoot, EXPORT_STAGING_DIRNAME);
-  await mkdir(stagingRoot, { recursive: true });
-  const staging = await mkdtemp(join(stagingRoot, `${caseId}-`));
+  const staging = await createStagingDir(join(store.casesRoot, EXPORT_STAGING_DIRNAME), `${caseId}-`);
   try {
     return await archiveGeneration(
       store.casesRoot,

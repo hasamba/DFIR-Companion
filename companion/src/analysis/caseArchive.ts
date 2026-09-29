@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile, rename, unlink } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import {
   CaseFileRefusedError,
@@ -13,11 +14,9 @@ import {
   type CaseScope,
 } from "../storage/caseFileRead.js";
 
-// Where an archive stages the database snapshot it packages instead of the live file. Dotted and a
-// level above the cases for the same reason import staging is: nothing that enumerates the cases
-// root, and nothing that walks a case, may mistake it for case content. Shared with the encrypted
-// export, which stages its snapshot the same way.
-export const EXPORT_STAGING_DIRNAME = ".export-staging";
+// Where an archive stages the database snapshot it packages instead of the live file. Defined, with
+// the stale-leftover sweep every export staging folder gets (#1851), in storage/exportStaging.ts.
+export { EXPORT_STAGING_DIRNAME } from "../storage/exportStaging.js";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
 const CRC_TABLE = (() => {
@@ -311,9 +310,7 @@ async function snapshotDatabase(
 ): Promise<DatabaseSnapshot | null> {
   const liveDbPath = join(caseDir, "state", INVESTIGATION_DB_FILENAME);
   if (!(await stat(liveDbPath).catch(() => null))) return null;
-  const stagingRoot = join(casesRoot, EXPORT_STAGING_DIRNAME);
-  await mkdir(stagingRoot, { recursive: true });
-  const staging = await mkdtemp(join(stagingRoot, `${caseId}-`));
+  const staging = await createStagingDir(join(casesRoot, EXPORT_STAGING_DIRNAME), `${caseId}-`);
   const path = join(staging, INVESTIGATION_DB_FILENAME);
   try {
     const snapshotted = await caseSqliteWorker.request<boolean>({
