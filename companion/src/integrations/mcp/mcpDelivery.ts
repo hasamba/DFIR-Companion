@@ -12,6 +12,7 @@ import { SHARED_DELIVERY_DIRNAME } from "../../storage/exportStaging.js";
 import { retryTransientSpawn } from "../velociraptor/velociraptorApi.js";
 import { getServerLogger } from "../../logging/serverLogger.js";
 import type { McpServer } from "./mcpServerStore.js";
+import { aclProblem, readWindowsAcls } from "./windowsAcl.js";
 
 // Getting evidence onto the analysis host (#296 §6). This layer, not MCP, is the hard part: a
 // multi-gigabyte memory image cannot travel inside a JSON-RPC argument, and MCP has no file-transfer
@@ -92,6 +93,8 @@ export interface DeliveryContext {
   keepAliveMs?: number;
   /** Injectable only to simulate a delivery folder this process cannot tighten (a 0777 CIFS mount). */
   chmod?: (path: string, mode: number) => Promise<void>;
+  /** Runs powershell.exe for the Windows ACL check (#1863). Injectable so no test spawns; default spawns. */
+  aclRunner?: TransferRunner;
   /**
    * Records that the evidence left this machine. Called after the bytes land and BEFORE the remote
    * path is handed back, so a transfer that succeeded always has its chain entry — wiring custody
@@ -207,9 +210,46 @@ function isInside(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+function casesRootWritable(casesRoot: string, fix: string): Error {
+  return new Error(
+    `other users can write the cases root ${casesRoot}, so a copy handed over from it could be swapped ` +
+      `before the analysis host reads it${fix}`,
+  );
+}
+
+function deliveryRootWritable(root: string, why: string): Error {
+  return new Error(
+    `other users can write the MCP delivery folder ${root}${why}, so a copy there could be swapped before ` +
+      `the analysis host reads it — make it writable by the Companion's user only`,
+  );
+}
+
+/**
+ * Windows (#1863): mode bits say nothing, so read both folders' ACLs by SID and refuse a write right
+ * for Everyone, Authenticated Users, Users, Anonymous or Guests. Fails closed when the ACLs cannot be
+ * read — a copy that cannot be proven private is not handed over.
+ */
+async function checkWindowsAcls(casesRoot: string, root: string, ctx: DeliveryContext): Promise<void> {
+  let acls;
+  try {
+    acls = await readWindowsAcls([casesRoot, root], ctx.aclRunner ?? spawnTransferRunner());
+  } catch (e) {
+    throw new Error(
+      `cannot read the Windows permissions of the cases root ${casesRoot} or the MCP delivery folder, so ` +
+        `team mode cannot prove the copy private and refuses to hand it over: ${(e as Error).message}`,
+    );
+  }
+  const rootProblem = aclProblem(acls.get(casesRoot)!);
+  if (rootProblem) {
+    throw casesRootWritable(casesRoot, ` (${rootProblem}) — make it writable by the Companion's user only`);
+  }
+  const folderProblem = aclProblem(acls.get(root)!);
+  if (folderProblem) throw deliveryRootWritable(root, ` (${folderProblem})`);
+}
+
 /**
  * The shared delivery folder, checked (#1856): a real directory at `<casesRoot>/.mcp-delivery`, not a
- * link, and on POSIX writable by nobody but this process's user — a folder another user can write is
+ * link, and writable by nobody but this process's user (mode bits on POSIX, ACLs on Windows — #1863) — a folder another user can write is
  * one where the copy could be renamed away and a link put in its place before the host opens it.
  * Resolves with its path as the prefix rewrite sees it, and its real path for the after-copy check.
  */
@@ -236,26 +276,22 @@ async function sharedDeliveryRoot(
       `the MCP delivery folder ${root} is not a plain folder — refusing to copy evidence there`,
     );
   }
-  if (process.platform !== "win32") {
+  if (process.platform === "win32") await checkWindowsAcls(casesRoot, root, ctx);
+  else {
     // Whoever can write the cases root can rename .mcp-delivery away and put a link in its place,
     // unless the sticky bit stops them renaming entries they do not own.
     const parent = await stat(casesRoot);
     if ((parent.mode & 0o022) !== 0 && (parent.mode & 0o1000) === 0) {
-      throw new Error(
-        `other users can write the cases root ${casesRoot}, so a copy handed over from it could be swapped ` +
-          `before the analysis host reads it — make it writable by the Companion's user only, or set the sticky bit`,
+      throw casesRootWritable(
+        casesRoot,
+        " — make it writable by the Companion's user only, or set the sticky bit",
       );
     }
     // mkdir's mode is masked by umask (a 0700 folder the host cannot enter) and an existing folder
     // keeps its own: set it outright, then check what actually stuck.
     await (ctx.chmod ?? chmod)(root, 0o755).catch(() => undefined);
     info = await lstat(root);
-    if (info.isSymbolicLink() || (info.mode & 0o022) !== 0) {
-      throw new Error(
-        `other users can write the MCP delivery folder ${root}, so a copy there could be swapped before ` +
-          `the analysis host reads it — make it writable by the Companion's user only`,
-      );
-    }
+    if (info.isSymbolicLink() || (info.mode & 0o022) !== 0) throw deliveryRootWritable(root, "");
   }
   return { root, rootReal: await realpath(root) };
 }
