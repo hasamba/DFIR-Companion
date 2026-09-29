@@ -626,6 +626,119 @@ describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)",
   });
 });
 
+describe("safe DOM policy — script URLs and SVG animation (#1864)", () => {
+  const XLINK = "http://www.w3.org/1999/xlink";
+
+  it("denies a script URL from every path, even a same-origin one", async () => {
+    const api = await loadApi(true);
+    for (const [name, value] of [
+      ["src", "/js/dashboard-render.js"],
+      ["src", `${ORIGIN}/js/x.js`],
+      ["src", "https://attacker.invalid/x.js"],
+      ["href", "/js/x.js"],
+      ["xlink:href", "data:text/javascript,alert(1)"],
+    ]) {
+      expect(api.attributeAction("SCRIPT", false, name, value, true), `${name}=${value}`).toBeNull();
+      expect(api.attributeAction("script", true, name, value, true), `svg ${name}=${value}`).toBeNull();
+      expect(api.attributeAction("SCRIPT", false, name, value), `markup ${name}=${value}`).toBeNull();
+    }
+    const dom = loadPatchedElement();
+    const script = dom.make("SCRIPT");
+    script.src = "/js/dashboard-render.js";
+    script.setAttribute("src", "/js/dashboard-render.js");
+    expect([...script.attrs.entries()]).toEqual([]);
+    const svgScript = dom.make("script", true);
+    svgScript.setAttributeNS(XLINK, "evil:href", "/js/x.js");
+    svgScript.setAttribute("href", "/js/x.js");
+    expect([...svgScript.attrs.entries()]).toEqual([]);
+  });
+
+  const ANIMATIONS = ["ANIMATE", "SET", "ANIMATEMOTION", "ANIMATETRANSFORM"];
+
+  it("denies an animation of href, a handler or style", async () => {
+    const api = await loadApi(true);
+    for (const tag of ANIMATIONS) {
+      for (const target of [
+        "href",
+        "xlink:href",
+        "HREF",
+        " href ",
+        "evil:href",
+        "onclick",
+        "OnMouseOver",
+        "style",
+        "src",
+      ]) {
+        expect(api.attributeAction(tag, true, "attributeName", target, true), `${tag} ${target}`).toBeNull();
+        expect(api.attributeAction(tag, true, "attributename", target, true), `${tag} ${target}`).toBeNull();
+      }
+      for (const target of ["opacity", "fill", "transform", "x", "r", "stroke-width"]) {
+        expect(api.attributeAction(tag, true, "attributeName", target, true), `${tag} ${target}`).toEqual({
+          name: "attributeName",
+          value: target,
+        });
+      }
+    }
+  });
+
+  it("denies a to, from, by or values item that is an unsafe URL", async () => {
+    const api = await loadApi(true);
+    const unsafe = [
+      "javascript:alert(1)",
+      " java\tscript:alert(1)",
+      "JAVASCRIPT:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "https://attacker.invalid/x",
+      "//attacker.invalid/x",
+      "/\\attacker.invalid/x",
+      "0;javascript:alert(1)",
+      "#a; javascript:alert(1)",
+    ];
+    for (const tag of ANIMATIONS) {
+      for (const name of ["to", "from", "by", "values"]) {
+        for (const value of unsafe) {
+          expect(api.attributeAction(tag, true, name, value, true), `${tag} ${name}=${value}`).toBeNull();
+        }
+      }
+    }
+  });
+
+  it("keeps plain animation values, on an opaque-origin page too", async () => {
+    const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
+    const opaque: { DFIRSafeDOM?: SafeDomApi } & Record<string, unknown> = {
+      URL,
+      location: { origin: "null" },
+    };
+    runInNewContext(source, opaque);
+    for (const api of [await loadApi(true), opaque.DFIRSafeDOM!]) {
+      for (const value of [
+        "0;1;0",
+        "red",
+        "#fff",
+        "10 20",
+        "rotate(45)",
+        "0.5",
+        "rgb(1, 2, 3)",
+        "#section",
+      ]) {
+        for (const name of ["to", "from", "by", "values"]) {
+          expect(api.attributeAction("ANIMATE", true, name, value, true), `${name}=${value}`).toEqual({
+            name,
+            value,
+          });
+        }
+      }
+    }
+    expect((await loadApi(true)).attributeAction("SET", true, "to", "/cases/demo", true)).not.toBeNull();
+  });
+
+  it("leaves the same names alone on elements that are not animations", async () => {
+    const api = await loadApi(true);
+    expect(api.attributeAction("RECT", true, "to", "javascript:x", true)).not.toBeNull();
+    expect(api.attributeAction("DIV", false, "data-attribute-name", "href", true)).not.toBeNull();
+  });
+});
+
 describe("browser documents — governed rendering only", () => {
   const browserFiles = [
     "../../../public/dashboard.html",

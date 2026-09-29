@@ -34,6 +34,11 @@ const EVIDENCE = [
 
 // Each payload sets window.__xss if any part of it ever runs.
 const X = "window.__xss=1";
+
+interface AuditWindow {
+  __audit(node: ParentNode): string[];
+  __xss?: number;
+}
 const PAYLOADS = [
   `<img src=x onerror="${X}">`,
   `<IMG SRC=x ONERROR=${X}>`,
@@ -79,26 +84,81 @@ function watchAttackerRequests(page: Page): string[] {
 // A routed http origin (no server): blob: URLs, relative links and URL-part setters behave as on
 // the real dashboard, which about:blank (an opaque origin with no base URL) cannot show.
 const APP_ORIGIN = "http://companion.example.com";
-const PAGE = "<!doctype html><html><head></head><body><main id=root></main></body></html>";
+// The production Trusted Types directives (companion/src/http/securityHeaders.ts), so the "with
+// Trusted Types" runs are enforced, as on the dashboard (#1864).
+const TT_CSP = "require-trusted-types-for 'script'; trusted-types default dfir-parser dfir-safe-html";
 
-async function loadGuard(page: Page, withoutTrustedTypes: boolean, onAppOrigin = false): Promise<void> {
+// Reports every executable or fetch-capable leftover under a node. Installed in the page as
+// window.__audit, next to the scripts under test.
+function audit(node: ParentNode): string[] {
+  const problems: string[] = [];
+  const blocked =
+    "script,iframe,object,embed,foreignobject,math,style,template,base,meta,link,noscript,animate,set";
+  node.querySelectorAll(blocked).forEach((el) => problems.push(`element ${el.tagName}`));
+  node.querySelectorAll("*").forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (/^on|^srcdoc$|^style$|^action$|^formaction$|^srcset$/.test(name))
+        problems.push(`${el.tagName} ${name}`);
+      if (/javascript:|vbscript:/i.test(attr.value.replace(/[\u0000-\u0020]/g, "")))
+        problems.push(`${el.tagName} ${name}=${attr.value}`);
+    }
+    if (el.shadowRoot) problems.push(`${el.tagName} has a shadow root`);
+  });
+  return problems;
+}
+
+// The page carries safe-dom.js and any app or vendored script as static inline scripts, in load
+// order, as the dashboard does. Playwright's addScriptTag builds a script element by script, which
+// safe-dom now refuses by design (#1864). The last inline script proves static scripts still run.
+async function pageHtml(withoutTrustedTypes: boolean, scripts: URL[]): Promise<string> {
+  const sources = await Promise.all([SAFE_DOM, ...scripts].map((url) => readFile(url, "utf8")));
+  const inline = sources.map((source) => `<script>${source.replace(/<\/script/gi, "<\\/script")}</script>`);
+  const csp = withoutTrustedTypes ? "" : `<meta http-equiv="Content-Security-Policy" content="${TT_CSP}">`;
+  return (
+    `<!doctype html><html><head>${csp}${inline.join("")}</head><body><main id=root></main>` +
+    `<script>window.__audit = ${audit.toString()}; window.__static = 1;</script></body></html>`
+  );
+}
+
+interface GuardOptions {
+  onAppOrigin?: boolean;
+  scripts?: URL[];
+  // Extra same-origin responses (path → [content type, body]); app origin only.
+  responses?: Record<string, [string, string]>;
+}
+
+async function loadGuard(
+  page: Page,
+  withoutTrustedTypes: boolean,
+  options: GuardOptions | boolean = {},
+): Promise<void> {
+  const {
+    onAppOrigin = false,
+    scripts = [],
+    responses = {},
+  } = typeof options === "boolean" ? { onAppOrigin: options } : options;
   if (withoutTrustedTypes) {
     await page.addInitScript(() => {
       Object.defineProperty(window, "trustedTypes", { value: undefined, configurable: true });
     });
   }
+  const html = await pageHtml(withoutTrustedTypes, scripts);
   if (onAppOrigin) {
-    await page.route(`${APP_ORIGIN}/**`, (route) =>
-      route.request().url() === `${APP_ORIGIN}/`
-        ? route.fulfill({ contentType: "text/html", body: PAGE })
-        : route.fulfill({ status: 404, body: "" }),
-    );
+    await page.route(`${APP_ORIGIN}/**`, (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/") return route.fulfill({ contentType: "text/html", body: html });
+      const extra = responses[path];
+      return extra
+        ? route.fulfill({ contentType: extra[0], body: extra[1] })
+        : route.fulfill({ status: 404, body: "" });
+    });
     await page.goto(`${APP_ORIGIN}/`);
   } else {
     await page.goto("about:blank");
-    await page.setContent(PAGE);
+    await page.setContent(html);
   }
-  await page.addScriptTag({ content: await readFile(SAFE_DOM, "utf8") });
+  expect(await page.evaluate(() => (window as unknown as { __static?: number }).__static)).toBe(1);
 }
 
 // Every sink a renderer can reach, in every parse context: the native setter re-parses the
@@ -337,7 +397,7 @@ for (const withoutTrustedTypes of [false, true]) {
       expect(requests).toEqual([]);
     });
 
-    test("every security-sensitive setter is wrapped in this engine (#1858)", async ({ page }) => {
+    test("every security-sensitive setter is wrapped in this engine (#1858, #1864)", async ({ page }) => {
       await loadGuard(page, withoutTrustedTypes);
       const unwrapped = await page.evaluate(() => {
         const expected: [string, string][] = [
@@ -371,6 +431,12 @@ for (const withoutTrustedTypes of [false, true]) {
           ["Attr", "nodeValue"],
           ["Attr", "textContent"],
           ["SVGAnimatedString", "baseVal"],
+          ["HTMLScriptElement", "text"],
+          ["HTMLScriptElement", "textContent"],
+          ["HTMLScriptElement", "innerText"],
+          ["HTMLScriptElement", "innerHTML"],
+          ["SVGScriptElement", "textContent"],
+          ["SVGScriptElement", "innerHTML"],
         ];
         const w = window as unknown as Record<string, { prototype: object }>;
         const out: string[] = [];
@@ -389,10 +455,34 @@ for (const withoutTrustedTypes of [false, true]) {
           ["Element", "setAttributeNodeNS"],
           ["NamedNodeMap", "setNamedItem"],
           ["NamedNodeMap", "setNamedItemNS"],
+          ["Range", "createContextualFragment"],
+          ["Range", "insertNode"],
+          ["Range", "surroundContents"],
+          ["DOMParser", "parseFromString"],
+          ["Node", "appendChild"],
+          ["Node", "insertBefore"],
+          ["Node", "replaceChild"],
+          ["Element", "append"],
+          ["Element", "prepend"],
+          ["Element", "replaceChildren"],
+          ["Element", "before"],
+          ["Element", "after"],
+          ["Element", "replaceWith"],
+          ["Element", "insertAdjacentElement"],
+          ["DocumentFragment", "append"],
+          ["Document", "append"],
+          ["CharacterData", "before"],
+          ["CharacterData", "after"],
+          ["CharacterData", "replaceWith"],
         ]) {
           const fn = (w[iface].prototype as Record<string, unknown>)[method];
           if (typeof fn !== "function" || /\[native code\]/.test(Function.prototype.toString.call(fn)))
             out.push(`${iface}.${method}`);
+        }
+        const doc = document as unknown as Record<string, unknown>;
+        for (const method of ["write", "writeln", "execCommand"]) {
+          if (/\[native code\]/.test(Function.prototype.toString.call(doc[method])))
+            out.push(`document.${method}`);
         }
         return out;
       });
@@ -401,8 +491,7 @@ for (const withoutTrustedTypes of [false, true]) {
 
     test("every write the app makes today still lands (#1858 inventory)", async ({ page }) => {
       const requests = watchAttackerRequests(page);
-      await loadGuard(page, withoutTrustedTypes, true);
-      await page.addScriptTag({ content: await readFile(GLYPHS, "utf8") });
+      await loadGuard(page, withoutTrustedTypes, { onAppOrigin: true, scripts: [GLYPHS] });
       const broken = await page.evaluate(async () => {
         const root = document.getElementById("root")!;
         const out: string[] = [];
@@ -448,10 +537,10 @@ for (const withoutTrustedTypes of [false, true]) {
     test("vendored Leaflet tiles and Cytoscape glyph images still load their URLs (#1858)", async ({
       page,
     }) => {
-      await loadGuard(page, withoutTrustedTypes, true);
-      await page.addScriptTag({ content: await readFile(GLYPHS, "utf8") });
-      await page.addScriptTag({ content: await readFile(LEAFLET, "utf8") });
-      await page.addScriptTag({ content: await readFile(CYTOSCAPE, "utf8") });
+      await loadGuard(page, withoutTrustedTypes, {
+        onAppOrigin: true,
+        scripts: [GLYPHS, LEAFLET, CYTOSCAPE],
+      });
       const result = await page.evaluate(async () => {
         const root = document.getElementById("root")!;
         const mapDiv = root.appendChild(document.createElement("div"));
@@ -489,6 +578,456 @@ for (const withoutTrustedTypes of [false, true]) {
       for (const src of result.tiles) expect(src).toMatch(/^\/geo-tiles\/\d+\/\d+\/\d+\.png$/);
       expect(result.glyphSrcKept).toBe(true);
       expect(result.glyphDecoded).toBe(true);
+    });
+
+    test("Range.createContextualFragment output is sanitized in its context (#1864)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes);
+      for (const payload of PAYLOADS) {
+        const problems = await page.evaluate(async (markup) => {
+          const w = window as unknown as AuditWindow;
+          const root = document.getElementById("root")!;
+          root.textContent = "";
+          const div = root.appendChild(document.createElement("div"));
+          const tbody = root
+            .appendChild(document.createElement("table"))
+            .appendChild(document.createElement("tbody"));
+          const svg = root.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
+          for (const host of [div, tbody, svg]) {
+            const range = document.createRange();
+            range.selectNodeContents(host);
+            host.appendChild(range.createContextualFragment(markup));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return [...w.__audit(root), ...(w.__xss ? ["payload executed"] : [])];
+        }, payload);
+        expect(problems, payload).toEqual([]);
+      }
+      expect(
+        await page.evaluate(() => {
+          const range = document.createRange();
+          range.selectNodeContents(document.getElementById("root")!);
+          const fragment = range.createContextualFragment('<b class="k" title="onload=1">kept</b>');
+          return (fragment.firstChild as Element).outerHTML;
+        }),
+      ).toBe('<b class="k" title="onload=1">kept</b>');
+      expect(requests).toEqual([]);
+    });
+
+    test("setHTMLUnsafe and Document.parseHTMLUnsafe go through the sanitizer (#1864)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes);
+      const dsd = `<div><template shadowrootmode="open"><img src=x onerror="${X}"></template>host</div>`;
+      for (const payload of [...PAYLOADS, dsd]) {
+        const result = await page.evaluate(async (markup) => {
+          const w = window as unknown as AuditWindow;
+          const root = document.getElementById("root")!;
+          root.textContent = "";
+          const absent: string[] = [];
+          const problems: string[] = [];
+          const element = root.appendChild(document.createElement("div"));
+          if (typeof element.setHTMLUnsafe === "function") element.setHTMLUnsafe(markup);
+          else absent.push("Element.setHTMLUnsafe");
+          // A detached host: the audit below reports any shadow root under #root as a planted one.
+          const shadow = document.createElement("div").attachShadow({ mode: "open" });
+          if (typeof shadow.setHTMLUnsafe === "function") {
+            shadow.setHTMLUnsafe(markup);
+            problems.push(...w.__audit(shadow));
+          } else absent.push("ShadowRoot.setHTMLUnsafe");
+          const parse = (Document as unknown as { parseHTMLUnsafe?: (html: string) => Document })
+            .parseHTMLUnsafe;
+          if (typeof parse === "function") {
+            const doc = parse.call(Document, markup);
+            problems.push(...w.__audit(doc.body).map((p) => `parsed: ${p}`));
+            root.appendChild(document.importNode(doc.body, true));
+          } else absent.push("Document.parseHTMLUnsafe");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          problems.push(...w.__audit(root));
+          if (w.__xss) problems.push("payload executed");
+          return { absent, problems };
+        }, payload);
+        expect(result.problems, payload).toEqual([]);
+        if (result.absent.length)
+          test.info().annotations.push({ type: "absent", description: result.absent.join(", ") });
+      }
+      expect(requests).toEqual([]);
+    });
+
+    test("DOMParser returns only sanitized nodes, for HTML and XML types (#1864)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes);
+      const xml: [string, string][] = [
+        [
+          "image/svg+xml",
+          `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="${X}">` +
+            `<a href="javascript:${X}"><text>t</text></a><a xlink:href="javascript:${X}"><text>u</text></a>` +
+            `<script>${X}</script><image href="https://attacker.invalid/i.png"/>` +
+            `<foreignObject><img xmlns="http://www.w3.org/1999/xhtml" src="x" onerror="${X}"/></foreignObject>` +
+            `<set attributeName="href" to="javascript:${X}"/><rect width="4" height="4" fill="red"/></svg>`,
+        ],
+        [
+          "application/xhtml+xml",
+          `<html xmlns="http://www.w3.org/1999/xhtml"><body onload="${X}"><img src="x" onerror="${X}"/>` +
+            `<script>${X}</script><a href="javascript:${X}">a</a><p class="k">kept</p></body></html>`,
+        ],
+        [
+          "application/xml",
+          `<data xmlns:h="http://www.w3.org/1999/xhtml"><h:img src="x" onerror="${X}"/><h:script>${X}</h:script>` +
+            `<item>text</item></data>`,
+        ],
+      ];
+      const result = await page.evaluate(
+        async ({ payloads, xmlCases }) => {
+          const w = window as unknown as AuditWindow;
+          const root = document.getElementById("root")!;
+          const problems: string[] = [];
+          const parser = new DOMParser();
+          for (const markup of payloads) {
+            const doc = parser.parseFromString(markup, "text/html");
+            problems.push(...w.__audit(doc.documentElement).map((p) => `html doc: ${p} (${markup})`));
+            root.appendChild(document.importNode(doc.body, true));
+            root.append(...Array.from(doc.body.childNodes).map((n) => document.adoptNode(n)));
+          }
+          for (const [type, markup] of xmlCases) {
+            const doc = parser.parseFromString(markup, type as DOMParserSupportedType);
+            problems.push(...w.__audit(doc).map((p) => `${type} doc: ${p}`));
+            root.appendChild(document.importNode(doc.documentElement, true));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          problems.push(...w.__audit(root));
+          if (w.__xss) problems.push("payload executed");
+          const kept = {
+            svgRect: !!parser
+              .parseFromString(xmlCases[0][1], "image/svg+xml")
+              .querySelector("rect[fill=red]"),
+            xhtmlText: parser.parseFromString(xmlCases[1][1], "application/xhtml+xml").querySelector("p")
+              ?.textContent,
+            xmlItem: parser.parseFromString(xmlCases[2][1], "application/xml").querySelector("item")
+              ?.textContent,
+            parseError:
+              parser.parseFromString("<a><b></a>", "application/xml").getElementsByTagName("parsererror")
+                .length > 0,
+            title: parser.parseFromString("<title>t</title><p>x</p>", "text/html").body.textContent,
+          };
+          return { problems, kept };
+        },
+        { payloads: PAYLOADS, xmlCases: xml },
+      );
+      expect(result.problems).toEqual([]);
+      expect(result.kept).toEqual({
+        svgRect: true,
+        xhtmlText: "kept",
+        xmlItem: "text",
+        parseError: true,
+        title: "tx",
+      });
+      expect(requests).toEqual([]);
+    });
+
+    test("XSLT output and XHR documents are sanitized before they are returned (#1864)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      const evil = `<html><body><img src=x onerror="${X}"><script>${X}</script><p>kept</p></body></html>`;
+      await loadGuard(page, withoutTrustedTypes, {
+        onAppOrigin: true,
+        responses: {
+          "/evil.html": ["text/html", evil],
+          "/evil.svg": [
+            "image/svg+xml",
+            `<svg xmlns="http://www.w3.org/2000/svg" onload="${X}"><script>${X}</script></svg>`,
+          ],
+        },
+      });
+      const result = await page.evaluate(async (payload) => {
+        const w = window as unknown as AuditWindow;
+        const root = document.getElementById("root")!;
+        const problems: string[] = [];
+        const absent: string[] = [];
+        const XslProcessor = (window as unknown as { XSLTProcessor?: typeof XSLTProcessor }).XSLTProcessor;
+        if (XslProcessor) {
+          const xsl = new DOMParser().parseFromString(
+            '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/">' +
+              '<xsl:element name="div" namespace="http://www.w3.org/1999/xhtml">' +
+              '<xsl:element name="img" namespace="http://www.w3.org/1999/xhtml"><xsl:attribute name="src">x</xsl:attribute>' +
+              `<xsl:attribute name="onerror">${payload}</xsl:attribute></xsl:element>` +
+              `<xsl:element name="script" namespace="http://www.w3.org/1999/xhtml">${payload}</xsl:element>` +
+              "</xsl:element></xsl:template></xsl:stylesheet>",
+            "application/xml",
+          );
+          const processor = new XslProcessor();
+          processor.importStylesheet(xsl);
+          const input = new DOMParser().parseFromString("<r/>", "application/xml");
+          const fragment = processor.transformToFragment(input, document);
+          if (fragment) {
+            problems.push(...w.__audit(fragment).map((p) => `xslt fragment: ${p}`));
+            root.appendChild(fragment);
+          }
+          const doc = processor.transformToDocument(input);
+          if (doc) problems.push(...w.__audit(doc).map((p) => `xslt document: ${p}`));
+        } else absent.push("XSLTProcessor");
+        const fetchDoc = (url: string, type: XMLHttpRequestResponseType) =>
+          new Promise<Document | null>((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", url);
+            xhr.responseType = type;
+            xhr.onload = () => resolve(type === "document" ? (xhr.response as Document) : xhr.responseXML);
+            xhr.onerror = () => resolve(null);
+            xhr.send();
+          });
+        const html = await fetchDoc("/evil.html", "document");
+        const svg = await fetchDoc("/evil.svg", "");
+        for (const [label, doc] of [
+          ["xhr html", html],
+          ["xhr svg", svg],
+        ] as const) {
+          if (!doc) {
+            problems.push(`${label}: no document`);
+            continue;
+          }
+          problems.push(...w.__audit(doc).map((p) => `${label}: ${p}`));
+          root.appendChild(document.importNode(doc.documentElement, true));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        problems.push(...w.__audit(root));
+        if (w.__xss) problems.push("payload executed");
+        return { problems, absent, kept: html?.querySelector("p")?.textContent };
+      }, X);
+      expect(result.problems).toEqual([]);
+      expect(result.kept).toBe("kept");
+      if (result.absent.length)
+        test.info().annotations.push({ type: "absent", description: result.absent.join(", ") });
+      expect(requests).toEqual([]);
+    });
+
+    test("document.write and writeln go through the sanitizer, split tokens included (#1864)", async ({
+      page,
+    }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes);
+      const splits = [
+        ["<img src=x on", `error="${X}">`],
+        ["<scr", `ipt>${X}</scr`, "ipt>"],
+        ['<a id=l href="java', `script:${X}">x</a>`],
+        ["<svg><a href='", `javascript:${X}'>x</a></svg>`],
+        ["<img src=x ", `onerror=${X}>`],
+        ["<!--", `--><img src=x onerror=${X}>`],
+        ["<textarea>", `</textarea><img src=x onerror=${X}>`],
+      ];
+      const result = await page.evaluate(
+        async ({ payloads, chunks }) => {
+          const w = window as unknown as AuditWindow;
+          document.open();
+          for (const payload of payloads) document.write(payload);
+          for (const parts of chunks) for (const part of parts) document.write(part);
+          for (const parts of chunks) document.writeln(...parts);
+          document.write('<p id="w">written</p>');
+          document.close();
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          const problems = w.__audit(document.body);
+          if (w.__xss) problems.push("payload executed");
+          return { problems, written: document.getElementById("w")?.textContent };
+        },
+        { payloads: PAYLOADS, chunks: splits },
+      );
+      expect(result.problems).toEqual([]);
+      expect(result.written).toBe("written");
+      expect(requests).toEqual([]);
+    });
+
+    test("execCommand insertHTML is sanitized and copy still works (#1864)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes);
+      for (const payload of PAYLOADS) {
+        const problems = await page.evaluate(async (markup) => {
+          const w = window as unknown as AuditWindow;
+          const root = document.getElementById("root")!;
+          root.textContent = "";
+          const editor = root.appendChild(document.createElement("div"));
+          editor.contentEditable = "true";
+          editor.focus();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          const selection = window.getSelection()!;
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.execCommand("insertHTML", false, markup);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return [...w.__audit(root), ...(w.__xss ? ["payload executed"] : [])];
+        }, payload);
+        expect(problems, payload).toEqual([]);
+      }
+      expect(
+        await page.evaluate(() => {
+          const area = document.getElementById("root")!.appendChild(document.createElement("textarea"));
+          area.value = "copy me";
+          area.select();
+          return typeof document.execCommand("copy");
+        }),
+      ).toBe("boolean");
+      expect(requests).toEqual([]);
+    });
+
+    test("script content, script URLs and inserting a script element are refused (#1864)", async ({
+      page,
+    }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes, true);
+      const out = await page.evaluate(async () => {
+        const X = "window.__xss=1";
+        const svgNs = "http://www.w3.org/2000/svg";
+        const root = document.getElementById("root")!;
+        const out: string[] = [];
+        const before = document.scripts.length;
+        const script = document.createElement("script");
+        for (const prop of ["text", "textContent", "innerText", "innerHTML"]) {
+          try {
+            (script as unknown as Record<string, string>)[prop] = X;
+          } catch (error) {
+            out.push(`script.${prop} threw ${String(error)}`);
+          }
+          if (script.textContent) out.push(`script.${prop} wrote ${script.textContent}`);
+        }
+        script.src = "/js/dashboard-render.js";
+        script.setAttribute("src", "https://attacker.invalid/s.js");
+        script.setAttributeNS(null, "src", "/js/x.js");
+        const attr = document.createAttribute("src");
+        attr.value = "/js/x.js";
+        script.setAttributeNode(attr);
+        if (script.hasAttribute("src")) out.push(`script src kept ${script.getAttribute("src")}`);
+        const svgScript = document.createElementNS(svgNs, "script");
+        svgScript.textContent = X;
+        svgScript.innerHTML = X;
+        svgScript.href.baseVal = "/js/x.js";
+        svgScript.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "/js/x.js");
+        svgScript.setAttribute("href", "/js/x.js");
+        if (svgScript.textContent || svgScript.attributes.length)
+          out.push("svg script kept content or a URL");
+        // A script that did get content (a child text node) and a clone of the page's own scripts:
+        // no insertion method may connect either.
+        const filled = document.createElement("script");
+        filled.appendChild(document.createTextNode(X));
+        const headClone = document.head.cloneNode(true) as HTMLElement;
+        const svg = root.appendChild(document.createElementNS(svgNs, "svg"));
+        svg.appendChild(document.createElementNS(svgNs, "script")).textContent = X;
+        const anchor = root.appendChild(document.createElement("span"));
+        const attempts: [string, () => unknown][] = [
+          ["appendChild", () => root.appendChild(filled)],
+          ["insertBefore", () => root.insertBefore(filled, anchor)],
+          ["replaceChild", () => root.replaceChild(filled, anchor)],
+          ["append", () => root.append("t", filled)],
+          ["prepend", () => root.prepend(filled)],
+          ["replaceChildren", () => root.replaceChildren(filled)],
+          ["before", () => anchor.before(filled)],
+          ["after", () => anchor.after(filled)],
+          ["replaceWith", () => anchor.replaceWith(filled)],
+          ["insertAdjacentElement", () => anchor.insertAdjacentElement("afterend", filled)],
+          ["head clone", () => root.appendChild(headClone)],
+          [
+            "fragment",
+            () => {
+              const fragment = document.createDocumentFragment();
+              fragment.appendChild(filled);
+              root.appendChild(fragment);
+            },
+          ],
+          [
+            "Range.insertNode",
+            () => {
+              const range = document.createRange();
+              range.selectNodeContents(root);
+              range.insertNode(filled);
+            },
+          ],
+          [
+            "Range.surroundContents",
+            () => {
+              const range = document.createRange();
+              range.selectNodeContents(anchor);
+              range.surroundContents(filled);
+            },
+          ],
+          ["svg script", () => svg.appendChild(document.createElementNS(svgNs, "script"))],
+          [
+            "moveBefore",
+            () =>
+              (root as unknown as { moveBefore?(n: Node, c: Node | null): void }).moveBefore?.(filled, null),
+          ],
+        ];
+        for (const [label, attempt] of attempts) {
+          try {
+            attempt();
+          } catch (error) {
+            out.push(`${label} threw ${String(error)}`);
+          }
+          if (document.scripts.length !== before || root.querySelector("script"))
+            out.push(`${label} connected a script`);
+        }
+        if (!anchor.isConnected) out.push("a refused call still removed the anchor");
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        if ((window as unknown as { __xss?: number }).__xss) out.push("payload executed");
+        // Ordinary insertion is untouched.
+        const row = root.appendChild(document.createElement("div"));
+        row.append("text", document.createElement("b"));
+        anchor.after(document.createElement("i"));
+        if (row.childNodes.length !== 2 || anchor.nextElementSibling?.tagName !== "I")
+          out.push("ordinary insertion broke");
+        return out;
+      });
+      expect(out).toEqual([]);
+      expect(requests).toEqual([]);
+    });
+
+    test("script-built SVG animation cannot target href or carry a javascript: value (#1864)", async ({
+      page,
+    }) => {
+      await loadGuard(page, withoutTrustedTypes, true);
+      const result = await page.evaluate(async () => {
+        const X = "javascript:window.__xss=1";
+        const svgNs = "http://www.w3.org/2000/svg";
+        const root = document.getElementById("root")!;
+        const out: string[] = [];
+        const svg = root.appendChild(document.createElementNS(svgNs, "svg"));
+        const link = svg.appendChild(document.createElementNS(svgNs, "a"));
+        link.setAttribute("href", "/cases/demo");
+        link.appendChild(document.createElementNS(svgNs, "text")).textContent = "open";
+        for (const tag of ["set", "animate"]) {
+          const anim = document.createElementNS(svgNs, tag);
+          anim.setAttribute("attributeName", "href");
+          anim.setAttributeNS(null, "attributeName", "xlink:href");
+          const name = document.createAttribute("attributeName");
+          name.value = "href";
+          anim.setAttributeNode(name);
+          anim.setAttribute("to", X);
+          anim.setAttribute("from", X);
+          anim.setAttribute("by", X);
+          anim.setAttribute("values", `/cases/demo;${X}`);
+          anim.setAttribute("begin", "0s");
+          anim.setAttribute("dur", "10s");
+          link.appendChild(anim);
+          for (const attr of ["attributeName", "to", "from", "by", "values"])
+            if (anim.hasAttribute(attr)) out.push(`${tag} kept ${attr}=${anim.getAttribute(attr)}`);
+        }
+        const fade = svg.appendChild(document.createElementNS(svgNs, "rect"));
+        fade.setAttribute("width", "10");
+        fade.setAttribute("height", "10");
+        const animate = fade.appendChild(document.createElementNS(svgNs, "animate"));
+        const legit: [string, string][] = [
+          ["attributeName", "opacity"],
+          ["values", "0;1;0"],
+          ["from", "0"],
+          ["to", "1"],
+          ["dur", "1s"],
+          ["href", "#target"],
+        ];
+        for (const [attr, value] of legit) animate.setAttribute(attr, value);
+        for (const [attr, value] of legit)
+          if (animate.getAttribute(attr) !== value)
+            out.push(`legit ${attr} lost: ${animate.getAttribute(attr)}`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        if (link.href.animVal !== "/cases/demo") out.push(`link animated to ${link.href.animVal}`);
+        if ((window as unknown as { __xss?: number }).__xss) out.push("payload executed");
+        return out;
+      });
+      expect(result).toEqual([]);
     });
 
     test("kept SVG attributes keep their case (viewBox)", async ({ page }) => {

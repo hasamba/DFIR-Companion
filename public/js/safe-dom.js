@@ -66,6 +66,9 @@
   // paint server or clip path (url(#id)), never a remote one, and never hold a CSS escape: "\75rl("
   // is url( to the browser but not to a regex.
   var REMOTE_SVG_REFERENCE = /\\|url\s*\(\s*(?!['"]?\s*#)|image-set\s*\(|image\s*\(|src\s*\(/i;
+  // SMIL animation elements rewrite another attribute at run time (#1864).
+  var ANIMATION_ELEMENTS = new Set(["ANIMATE", "ANIMATECOLOR", "ANIMATEMOTION", "ANIMATETRANSFORM", "SET"]);
+  var ANIMATION_VALUES = new Set(["by", "from", "to", "values"]);
 
   function isSafeUrl(value, attribute, tagName) {
     var raw = String(value == null ? "" : value).trim();
@@ -113,6 +116,23 @@
     return clean.join(";");
   }
 
+  // An animation may not target a URL, a handler or style (#1864). Any "prefix:href" is href.
+  function isAnimatableName(value) {
+    var name = String(value).trim().toLowerCase();
+    var local = name.slice(name.lastIndexOf(":") + 1);
+    return !(local.indexOf("on") === 0 || local === "style" || local === "base" ||
+      URL_ATTRIBUTES.has(local) || DENIED_ATTRIBUTES.has(local) || DENIED_ATTRIBUTES.has(name));
+  }
+
+  // Each ";" item of an animation value that names a scheme or a network path must be a safe URL.
+  // Plain values (0, red, 10 20) are no URL, so they pass on an opaque-origin page (the deck) too.
+  function isSafeAnimationValue(value, tag) {
+    return String(value).split(";").every(function (item) {
+      var compact = item.replace(/[\u0000-\u0020\u007f]+/g, "").replace(/\\/g, "/");
+      return !/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(compact) || isSafeUrl(item, "href", tag);
+    });
+  }
+
   // The one attribute policy for markup (the DOM walk) and for script (setAttribute) (#1813).
   // Returns null to drop the attribute, or { name, value } to keep it (style becomes data-safe-style).
   // fromScript skips only the markup allowlist: app code and Leaflet set SVG attributes such as
@@ -127,6 +147,10 @@
       return css ? { name: "data-safe-style", value: css } : null;
     }
     if (lower.indexOf("on") === 0 || DENIED_ATTRIBUTES.has(lower)) return null;
+    // No page script has a URL of its own making: every script the pages run is static markup (#1864).
+    if (tag === "SCRIPT" && (lower === "src" || lower === "href" || lower === "xlink:href")) return null;
+    if (ANIMATION_ELEMENTS.has(tag) && ((lower === "attributename" && !isAnimatableName(text)) ||
+      (ANIMATION_VALUES.has(lower) && !isSafeAnimationValue(text, tag)))) return null;
     var allowed = fromScript || lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0 ||
       (isSvg ? SAFE_SVG_ATTRIBUTES.has(lower) : SAFE_ATTRIBUTES.has(lower) || lower === "href");
     if (!allowed) return null;
@@ -145,12 +169,7 @@
     return html.replace(/<\/?(?:script|iframe|object|embed|style|template|base|meta|link|math)\b[^>]*>/gi, "");
   }
 
-  var api = {
-    attributeAction: attributeAction,
-    isSafeUrl: isSafeUrl,
-    precleanHtml: precleanHtml,
-    sanitizeCssText: sanitizeCssText,
-  };
+  var api = { attributeAction: attributeAction, isSafeUrl: isSafeUrl, precleanHtml: precleanHtml, sanitizeCssText: sanitizeCssText };
   root.DFIRSafeDOM = api;
   if (!root.document || !root.Element) return;
 
@@ -178,6 +197,13 @@
       return;
     }
 
+    sanitizeAttributes(element, name);
+    if (name === "A" && element.getAttribute("target") === "_blank") {
+      element.setAttribute("rel", "noopener noreferrer");
+    }
+  }
+
+  function sanitizeAttributes(element, name) {
     var isSvg = element.namespaceURI === "http://www.w3.org/2000/svg";
     Array.prototype.slice.call(element.attributes).forEach(function (attribute) {
       var verdict = attributeAction(name, isSvg, attribute.name, attribute.value);
@@ -189,10 +215,6 @@
       if (verdict.name !== attribute.name) element.removeAttribute(attribute.name);
       element.setAttribute(verdict.name, verdict.value);
     });
-
-    if (name === "A" && element.getAttribute("target") === "_blank") {
-      element.setAttribute("rel", "noopener noreferrer");
-    }
   }
 
   function sanitizeHtml(value) {
@@ -205,13 +227,10 @@
   }
 
   var safePolicy = trustedTypes ? trustedTypes.createPolicy("dfir-safe-html", { createHTML: sanitizeHtml }) : null;
-  if (trustedTypes) trustedTypes.createPolicy("default", {
-    createHTML: sanitizeHtml,
-    createScriptURL: function (value) {
-      if (isSafeUrl(value, "src", "script")) return value;
-      throw new TypeError("Blocked cross-origin script URL");
-    },
-  });
+  if (trustedTypes) trustedTypes.createPolicy("default", { createHTML: sanitizeHtml, createScriptURL: function (value) {
+    if (isSafeUrl(value, "src", "script")) return value;
+    throw new TypeError("Blocked cross-origin script URL");
+  } });
 
   function trustedHtml(value) {
     return safePolicy ? safePolicy.createHTML(String(value == null ? "" : value)) : sanitizeHtml(value);
@@ -386,13 +405,10 @@
   }
 
   function patchStyleGetter(prototype) {
-    if (!prototype) return;
-    var descriptor = Object.getOwnPropertyDescriptor(prototype, "style");
+    var descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "style");
     if (!descriptor || !descriptor.get || descriptor.configurable === false) return;
     Object.defineProperty(prototype, "style", {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get: function () { return proxyForStyle(this, descriptor.get.call(this)); },
+      configurable: true, enumerable: descriptor.enumerable, get: function () { return proxyForStyle(this, descriptor.get.call(this)); },
     });
   }
 
@@ -406,14 +422,9 @@
 
   function patchHtmlSetter(prototype, property, descriptor) {
     if (!prototype || !descriptor || !descriptor.get || !descriptor.set || descriptor.configurable === false) return;
-    Object.defineProperty(prototype, property, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get: descriptor.get,
-      set: function (value) {
-        descriptor.set.call(this, trustedHtml(value));
-        hydrateStyles(property === "outerHTML" ? this.parentNode : this);
-      },
+    replaceSetter(prototype, property, descriptor, function (value) {
+      descriptor.set.call(this, trustedHtml(value));
+      hydrateStyles(property === "outerHTML" ? this.parentNode : this);
     });
   }
 
@@ -495,12 +506,7 @@
   }
 
   function replaceSetter(prototype, property, descriptor, set) {
-    Object.defineProperty(prototype, property, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get: descriptor.get,
-      set: set,
-    });
+    Object.defineProperty(prototype, property, { configurable: true, enumerable: descriptor.enumerable, get: descriptor.get, set: set });
   }
 
   function guardProperty(prototype, property, attribute) {
@@ -554,15 +560,11 @@
       var prototype = root[name] && root[name].prototype;
       var descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, "href");
       if (!descriptor || !descriptor.get || descriptor.configurable === false) return;
-      Object.defineProperty(prototype, "href", {
-        configurable: true,
-        enumerable: descriptor.enumerable,
-        get: function () {
-          var animated = descriptor.get.call(this);
-          if (animated && typeof animated === "object") animatedHrefOwner.set(animated, this);
-          return animated;
-        },
-      });
+      Object.defineProperty(prototype, "href", { configurable: true, enumerable: descriptor.enumerable, get: function () {
+        var animated = descriptor.get.call(this);
+        if (animated && typeof animated === "object") animatedHrefOwner.set(animated, this);
+        return animated;
+      } });
     });
     replaceSetter(root.SVGAnimatedString.prototype, "baseVal", baseValDescriptor, function (value) {
       var text = String(value);
@@ -629,15 +631,11 @@
     guardAttachAttr(root.Element, root.Element.prototype, "setAttributeNode", selfElement);
     guardAttachAttr(root.Element, root.Element.prototype, "setAttributeNodeNS", selfElement);
     if (attributesDescriptor && attributesDescriptor.get && attributesDescriptor.configurable !== false && root.NamedNodeMap) {
-      Object.defineProperty(root.Element.prototype, "attributes", {
-        configurable: true,
-        enumerable: attributesDescriptor.enumerable,
-        get: function () {
-          var map = attributesDescriptor.get.call(this);
-          if (map) attributesOwner.set(map, this);
-          return map;
-        },
-      });
+      Object.defineProperty(root.Element.prototype, "attributes", { configurable: true, enumerable: attributesDescriptor.enumerable, get: function () {
+        var map = attributesDescriptor.get.call(this);
+        if (map) attributesOwner.set(map, this);
+        return map;
+      } });
       var mapOwner = function (map) { return attributesOwner.get(map); };
       guardAttachAttr(root.NamedNodeMap, root.NamedNodeMap.prototype, "setNamedItem", mapOwner);
       guardAttachAttr(root.NamedNodeMap, root.NamedNodeMap.prototype, "setNamedItemNS", mapOwner);
@@ -648,6 +646,127 @@
       if (!Object.getOwnPropertyDescriptor(root.Attr.prototype, "textContent")) guardAttrText(root.Node.prototype, "textContent", true);
     }
   }
+  // ---- The other parsers, and script elements (#1864). Nothing in the pages or the vendored
+  // libraries calls any of these (inventory in PLAN-1864); each API absent from an engine is skipped.
+  var XHTML_NS = "http://www.w3.org/1999/xhtml";
+  var BEHAVIOUR_NS = new Set([XHTML_NS, "http://www.w3.org/2000/svg", "http://www.w3.org/1998/Math/MathML"]);
+  var KEPT_IN_PLACE = new Set(["HTML", "HEAD", "BODY", "PARSERERROR"]);
+  function wrapMethod(prototype, name, make) {
+    var native = prototype && Object.prototype.hasOwnProperty.call(prototype, name) ? prototype[name] : null;
+    if (typeof native === "function") prototype[name] = make(native);
+  }
+  // Walks a parsed tree the markup rule has not seen in its final form. HTML, SVG and MathML elements
+  // get that rule; html/head/body and Chromium's XML parsererror keep their place with judged
+  // attributes; an element in any other namespace is XML data with no behaviour.
+  function sanitizeTree(node) {
+    if (!node || !node.querySelectorAll) return node;
+    var top = node.nodeType === 9 ? node.documentElement : null;
+    Array.prototype.slice.call(node.querySelectorAll("*")).forEach(function (element) {
+      if (!BEHAVIOUR_NS.has(element.namespaceURI)) return;
+      var name = element.tagName.toUpperCase();
+      if (element.namespaceURI === XHTML_NS && KEPT_IN_PLACE.has(name)) sanitizeAttributes(element, name);
+      else if (element !== top || (!BLOCKED_ELEMENTS.has(name) && (HTML_ELEMENTS.has(name) || SVG_ELEMENTS.has(name)))) sanitizeElement(element);
+      else { // A document cannot hold a text node in its element's place: empty the element instead.
+        element.replaceChildren();
+        Array.prototype.slice.call(element.attributes).forEach(function (a) { element.removeAttributeNode(a); });
+      }
+    });
+    return node;
+  }
+  var parseThenWalk = function (native) { return function (value) { return sanitizeTree(native.call(this, trustedHtml(value))); }; };
+  wrapMethod(root.Range && root.Range.prototype, "createContextualFragment", parseThenWalk);
+  wrapMethod(root.Document, "parseHTMLUnsafe", parseThenWalk);
+  [root.Element, root.ShadowRoot].forEach(function (ctor) {
+    // Routed to the sanitizing innerHTML setter. Declarative shadow roots are dropped on purpose.
+    wrapMethod(ctor && ctor.prototype, "setHTMLUnsafe", function () { return function (value) { this.innerHTML = value; }; });
+  });
+  // The returned document holds only sanitized nodes, so none can go live by appendChild/importNode.
+  wrapMethod(root.DOMParser && root.DOMParser.prototype, "parseFromString", function (native) {
+    return function (value, type) {
+      var mime = String(type), xml = mime !== "text/html", text = xml ? String(value) : trustedHtml(value);
+      return sanitizeTree(native.call(this, xml && parserPolicy ? parserPolicy.createHTML(text) : text, mime));
+    };
+  });
+  // XSLT builds HTML/SVG nodes no sanitizer saw. The fragment is built in an inert document (a live
+  // one would start image loads at once), sanitized, and only then imported into the caller's.
+  var xsltPrototype = root.XSLTProcessor && root.XSLTProcessor.prototype;
+  wrapMethod(xsltPrototype, "transformToDocument", function (native) { return function () { return sanitizeTree(native.apply(this, arguments)); }; });
+  wrapMethod(xsltPrototype, "transformToFragment", function (native) {
+    return function (source, output) {
+      if (!output || !output.implementation || !output.importNode) return sanitizeTree(native.apply(this, arguments));
+      var inert = output.contentType === "text/html" ? output.implementation.createHTMLDocument("") : output.implementation.createDocument(null, null, null);
+      var fragment = sanitizeTree(native.call(this, source, inert));
+      return fragment ? output.importNode(fragment, true) : fragment;
+    };
+  });
+  var sanitizedResponses = new WeakSet();
+  ["responseXML", "response"].forEach(function (property) {
+    var prototype = root.XMLHttpRequest && root.XMLHttpRequest.prototype;
+    var descriptor = prototype && Object.getOwnPropertyDescriptor(prototype, property);
+    if (!descriptor || !descriptor.get || descriptor.configurable === false || !root.Document) return;
+    Object.defineProperty(prototype, property, { configurable: true, enumerable: descriptor.enumerable, get: function () {
+      var value = descriptor.get.call(this);
+      if (value instanceof root.Document && !sanitizedResponses.has(value)) { sanitizedResponses.add(value); sanitizeTree(value); }
+      return value;
+    } });
+  });
+  // Each call's markup is parsed to its end and re-serialized, and the serializer only emits whole
+  // tags, quoted values and closed elements, so a token split across calls cannot rejoin.
+  [root.Document, root.HTMLDocument].forEach(function (ctor) {
+    var prototype = ctor && ctor.prototype;
+    ["write", "writeln"].forEach(function (method) {
+      wrapMethod(prototype, method, function (native) { return function () { return native.call(this, trustedHtml(Array.prototype.join.call(arguments, ""))); }; });
+    });
+    wrapMethod(prototype, "execCommand", function (native) {
+      return function (command, showUi, value) {
+        var name = String(command); // Only insertHTML takes markup; copy and the rest pass through.
+        return native.call(this, name, showUi, name.toLowerCase() === "inserthtml" ? trustedHtml(value) : value);
+      };
+    });
+  });
+  // Script text is refused on the script prototypes only; no other element pays (#1864).
+  [[root.HTMLScriptElement, ["text", "textContent", "innerText", "innerHTML"]], [root.SVGScriptElement, ["textContent", "innerHTML"]]].forEach(function (entry) {
+    var prototype = entry[0] && entry[0].prototype;
+    if (prototype) entry[1].forEach(function (property) {
+      var owner = prototype;
+      while (owner && !Object.getOwnPropertyDescriptor(owner, property)) owner = Object.getPrototypeOf(owner);
+      var descriptor = ownSetter(owner, property);
+      if (descriptor) replaceSetter(prototype, property, descriptor, function () {});
+    });
+  });
+  // No script element joins a tree through script (#1864): every page script is static markup that
+  // has run, and nothing inserts one. A script that never connects never runs, whatever text or src
+  // it got through any door. Text nodes and leaf elements cost one check; only a subtree is searched.
+  function holdsScript(node) {
+    if (!node || (node.nodeType !== 1 && node.nodeType !== 11)) return false;
+    if (node.nodeType === 1 && node.localName === "script") return true;
+    return !!node.firstElementChild && !!node.querySelector("script");
+  }
+  function guardInsertion(prototype, method, index, refused) {
+    wrapMethod(prototype, method, function (native) {
+      return function () {
+        var nodes = index < 0 ? arguments : [arguments[index]];
+        for (var i = 0; i < nodes.length; i += 1) if (holdsScript(nodes[i])) return refused ? refused(arguments) : undefined;
+        return native.apply(this, arguments);
+      };
+    });
+  }
+  // A refused call inserts nothing and keeps the native return shape.
+  var nodePrototype = root.Node && root.Node.prototype, rangePrototype = root.Range && root.Range.prototype;
+  guardInsertion(nodePrototype, "appendChild", 0, function (args) { return args[0]; });
+  guardInsertion(nodePrototype, "insertBefore", 0, function (args) { return args[0]; });
+  guardInsertion(nodePrototype, "replaceChild", 0, function (args) { return args[1]; });
+  guardInsertion(root.Element.prototype, "insertAdjacentElement", 1, function () { return null; });
+  guardInsertion(rangePrototype, "insertNode", 0);
+  guardInsertion(rangePrototype, "surroundContents", 0);
+  [root.Element, root.Document, root.DocumentFragment].forEach(function (ctor) {
+    ["append", "prepend", "replaceChildren"].forEach(function (method) { guardInsertion(ctor && ctor.prototype, method, -1); });
+    guardInsertion(ctor && ctor.prototype, "moveBefore", 0);
+  });
+  [root.Element, root.CharacterData, root.DocumentType].forEach(function (ctor) {
+    ["before", "after", "replaceWith"].forEach(function (method) { guardInsertion(ctor && ctor.prototype, method, -1); });
+  });
+
   patchStyleGetter(root.HTMLElement && root.HTMLElement.prototype);
   patchStyleGetter(root.SVGElement && root.SVGElement.prototype);
 
