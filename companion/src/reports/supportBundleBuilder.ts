@@ -18,7 +18,7 @@ import type { ImporterFailure } from "../analysis/diagnostics.js";
 import { sanitizeImportDebugSummary } from "../analysis/importDebug.js";
 import type { LogPaths } from "../logging/logger.js";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
-import { openNoFollow } from "../storage/noFollowRead.js";
+import { openCaseFile, readCaseFileTail, type CaseScope } from "../storage/caseFileRead.js";
 
 // I/O half of the redacted support bundle (#1735). One redactor instance per bundle, so a real value
 // gets the same placeholder in every file. The redactor's vocabulary is every case's ID, name and
@@ -147,8 +147,9 @@ async function loadVocabulary(
   return { known, withheld };
 }
 
-async function scanShape(path: string, budget: { left: number }) {
-  const handle = await openNoFollow(path);
+async function scanShape(scope: CaseScope, path: string, budget: { left: number }) {
+  // One judged handle (#1846): no link at the file or above it, and a FIFO is refused, not waited on.
+  const { handle } = await openCaseFile(scope, path);
   try {
     const st = await handle.stat();
     if (!st.isFile()) throw new Error("not a regular file");
@@ -225,7 +226,8 @@ async function importReports(
     }
     try {
       const stored = await storedImportName(deps, f.caseId, name);
-      const shape = await scanShape(join(deps.store.importsDir(f.caseId), stored), budget);
+      const scope = { casesRoot: deps.store.casesRoot, caseDir: deps.store.caseDir(f.caseId) };
+      const shape = await scanShape(scope, join(deps.store.importsDir(f.caseId), stored), budget);
       reports.push({ ...base, shape });
     } catch {
       reports.push({ ...base, shapeUnavailable: "the stored file is missing or could not be read safely." });
@@ -254,7 +256,13 @@ async function readCaseLog(
     return { text: "", truncated: false, omitted: "the case is password-protected and locked." };
   const path = caseLogPath(deps, id);
   if (!path) return { text: "", truncated: false, omitted: "file logging is off." };
-  return readTail(deps, path, SUPPORT_LOG_CAPS.caseBytes);
+  // The case log sits inside the case folder, so it is read from one judged handle (#1846): a name
+  // swapped for a link would put another case's log, or a host file, into the bundle.
+  const scope = { casesRoot: deps.store.casesRoot, caseDir: deps.store.caseDir(id) };
+  const guarded = deps.readTail
+    ? deps
+    : { ...deps, readTail: (p: string, n: number) => readCaseFileTail(scope, p, n) };
+  return readTail(guarded, path, SUPPORT_LOG_CAPS.caseBytes);
 }
 
 export async function buildSupportBundleZip(

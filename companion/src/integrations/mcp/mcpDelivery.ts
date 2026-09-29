@@ -1,7 +1,14 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { basename, posix } from "node:path";
-import { stat } from "node:fs/promises";
+import {
+  openCaseFile,
+  snapshotCaseFile,
+  type CaseFileSnapshot,
+  type CaseScope,
+} from "../../storage/caseFileRead.js";
 import { retryTransientSpawn } from "../velociraptor/velociraptorApi.js";
+import { getServerLogger } from "../../logging/serverLogger.js";
 import type { McpServer } from "./mcpServerStore.js";
 
 // Getting evidence onto the analysis host (#296 §6). This layer, not MCP, is the hard part: a
@@ -53,8 +60,20 @@ export interface DeliveredTarget {
   cleanup?: () => Promise<void>;
 }
 
+/**
+ * The case the evidence belongs to (#1847). The file is opened through storage/caseFileRead.ts — no
+ * link at the file or above it, no FIFO, no hard link — and scp sends a private SNAPSHOT taken from
+ * that open handle, never the case path: scp opens its source by name, and a name can be swapped for
+ * a link to another case's file between any check and scp's own open. The snapshot lives in its own
+ * mkdtemp folder under `stagingDir` and is removed whatever happens.
+ */
+export interface DeliverySource extends CaseScope {
+  stagingDir: string;
+}
+
 export interface DeliveryContext {
   runner: TransferRunner;
+  source: DeliverySource;
   signal?: AbortSignal;
   /** Byte progress for SCP delivery. Raw SSH diagnostics are never exposed. */
   onProgress?: (done: number, total: number) => void;
@@ -66,7 +85,7 @@ export interface DeliveryContext {
    * at the call site instead would make it forgettable, and a custody chain that omits "this left
    * the building" is not a custody chain (#231).
    */
-  recordTransfer?: (destination: string) => Promise<void>;
+  recordTransfer?: (destination: string, sent?: { sha256: string }) => Promise<void>;
 }
 
 /**
@@ -142,32 +161,81 @@ export async function deliver(
 ): Promise<DeliveredTarget> {
   if (server.delivery.mode === "remote-path") {
     const remotePath = rewriteToRemote(server, localPath);
+    // Nothing is read here, but the file must be one this case may hand over: a link, a FIFO or a
+    // hard link is refused before the path leaves. The analysis host still opens the path by name
+    // later — a shared mount cannot carry a handle (stated residual, PLAN-1846).
+    const judged = await openCaseFile(ctx.source, localPath);
+    await judged.handle.close();
     const destination = `${server.label} (shared path ${remotePath})`;
     // Nothing is copied, but the evidence is being handed to another system to read, so the chain
     // records it. Over-recording a custody event is recoverable; under-recording one is not.
     await ctx.recordTransfer?.(destination);
     return { remotePath, destination };
   }
+  const snapshot = await snapshotCaseFile(ctx.source, localPath, ctx.source.stagingDir, {
+    name: safeRemoteName(localPath),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  });
+  try {
+    return await sendSnapshot(server, localPath, snapshot, ctx);
+  } finally {
+    const left = await snapshot.dispose();
+    if (left) getServerLogger().warn(`MCP delivery could not remove its local snapshot: ${left}`);
+  }
+}
 
+/** A remote name no other delivery shares, so concurrent jobs never overwrite or delete each other's copy. */
+function uniqueRemoteName(localPath: string): string {
+  return `${randomBytes(6).toString("hex")}_${safeRemoteName(localPath)}`;
+}
+
+function sshArgsFor(server: McpServer): string[] {
+  const { port } = server.delivery;
+  const sshArgs = [...scpBaseArgs(server)];
+  if (port && port !== 22) sshArgs.push("-p", String(port));
+  return sshArgs;
+}
+
+/** Removes the remote copy. Resolves with an error message, or null when it is gone. Never throws. */
+async function removeRemote(
+  server: McpServer,
+  ctx: DeliveryContext,
+  remotePath: string,
+): Promise<string | null> {
+  const sshArgs = sshArgsFor(server);
+  // `--` then a quoted path: rm must not read a filename beginning with "-" as a flag, and the far
+  // side runs this through a shell.
+  sshArgs.push(remoteLogin(server), "rm", "-f", "--", shellQuote(remotePath));
+  try {
+    const r = await ctx.runner("ssh", sshArgs, { timeoutMs: server.delivery.timeoutMs });
+    return r.code === 0 ? null : `ssh rm exited ${r.code}`;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+async function sendSnapshot(
+  server: McpServer,
+  localPath: string,
+  snapshot: CaseFileSnapshot,
+  ctx: DeliveryContext,
+): Promise<DeliveredTarget> {
   const { remoteDir, port, timeoutMs } = server.delivery;
-  const remotePath = posix.join(remoteDir, safeRemoteName(localPath));
+  const remotePath = posix.join(remoteDir, uniqueRemoteName(localPath));
   const login = remoteLogin(server);
   const destination = `${login}:${remotePath}`;
 
   const args = [...scpBaseArgs(server)];
   if (port && port !== 22) args.push("-P", String(port));
-  args.push("--", localPath, `${login}:${remotePath}`);
+  args.push("--", snapshot.path, `${login}:${remotePath}`);
 
-  const total = await stat(localPath)
-    .then((s) => s.size)
-    .catch(() => 0);
+  const total = snapshot.bytes;
   if (total > 0) ctx.onProgress?.(0, total);
   let probing = false;
   const probe = async (): Promise<void> => {
     if (probing || !ctx.onProgress || total <= 0) return;
     probing = true;
-    const sshArgs = [...scpBaseArgs(server)];
-    if (port && port !== 22) sshArgs.push("-p", String(port));
+    const sshArgs = sshArgsFor(server);
     sshArgs.push(login, "stat", "-c", "%s", "--", shellQuote(remotePath));
     try {
       const measured = await ctx.runner("ssh", sshArgs, {
@@ -191,39 +259,45 @@ export async function deliver(
         }, ctx.progressIntervalMs ?? 2_000)
       : undefined;
   progressTimer?.unref();
-  let result: TransferResult;
+  // From here on a copy may exist on the remote host (scp can fail, time out or be cancelled after
+  // writing part of it). Any failure removes it before the error reaches the caller — a copy nobody
+  // tracks is evidence sitting on a machine outside the custody chain.
   try {
-    result = await retryTransientSpawn(() => ctx.runner("scp", args, { timeoutMs, signal: ctx.signal }));
-  } finally {
-    if (progressTimer) clearInterval(progressTimer);
-  }
-  if (result.code !== 0) {
+    let result: TransferResult;
+    try {
+      result = await retryTransientSpawn(() => ctx.runner("scp", args, { timeoutMs, signal: ctx.signal }));
+    } finally {
+      if (progressTimer) clearInterval(progressTimer);
+    }
+    if (result.code !== 0) {
+      throw new Error(
+        `scp to ${destination} failed (exit ${result.code})` +
+          `${result.stderr.trim() ? `: ${result.stderr.trim().split("\n").slice(0, 3).join(" ")}` : ""}`,
+      );
+    }
+    if (total > 0) ctx.onProgress?.(total, total);
+    await ctx.recordTransfer?.(destination, { sha256: snapshot.sha256 });
+  } catch (err) {
+    const left = await removeRemote(server, ctx, remotePath);
+    if (left === null) throw err;
     throw new Error(
-      `scp to ${destination} failed (exit ${result.code})` +
-        `${result.stderr.trim() ? `: ${result.stderr.trim().split("\n").slice(0, 3).join(" ")}` : ""}`,
+      `${(err as Error).message} — and the copy at ${destination} could not be removed (${left}); remove it by hand`,
+      { cause: err },
     );
   }
-  if (total > 0) ctx.onProgress?.(total, total);
-
-  await ctx.recordTransfer?.(destination);
 
   return {
     remotePath,
     destination,
+    // Best-effort by design — see the note on deliver().
     cleanup: async () => {
-      const sshArgs = [...scpBaseArgs(server)];
-      if (port && port !== 22) sshArgs.push("-p", String(port));
-      // `--` then a quoted path: rm must not read a filename beginning with "-" as a flag, and the
-      // far side runs this through a shell.
-      sshArgs.push(login, "rm", "-f", "--", shellQuote(remotePath));
-      try {
-        await ctx.runner("ssh", sshArgs, { timeoutMs });
-      } catch {
-        // Best-effort by design — see the note on deliver().
-      }
+      await removeRemote(server, ctx, remotePath);
     },
   };
 }
+
+/** How long a stopped transfer gets to exit after each signal. */
+const STOP_GRACE_MS = 5_000;
 
 /**
  * The real transfer runner. Mirrors spawnToolOnce's discipline: no shell, discrete argv,
@@ -262,19 +336,32 @@ export function spawnTransferRunner(): TransferRunner {
         }
       };
 
-      const timer = setTimeout(() => {
+      // A stopped transfer settles only once the child has EXITED (#1847): the caller removes the
+      // remote copy next, and an scp still running could write it again after that removal. A
+      // child that ignores the polite signal is killed hard; one that still does not exit is given
+      // up on after a second grace period so the job cannot hang.
+      let stopped: Error | undefined;
+      const graceTimers: NodeJS.Timeout[] = [];
+      const stop = (why: Error): void => {
+        if (stopped || done) return;
+        stopped = why;
         child.kill();
-        finish(() => reject(new Error(`${binary} timed out after ${opts.timeoutMs}ms`)));
-      }, opts.timeoutMs);
-
-      const onAbort = (): void => {
-        child.kill();
-        finish(() => reject(new Error(`${binary} cancelled`)));
+        graceTimers.push(
+          setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS),
+          setTimeout(() => finish(() => reject(why)), 2 * STOP_GRACE_MS),
+        );
       };
+      const timer = setTimeout(
+        () => stop(new Error(`${binary} timed out after ${opts.timeoutMs}ms`)),
+        opts.timeoutMs,
+      );
+
+      const onAbort = (): void => stop(new Error(`${binary} cancelled`));
       opts.signal?.addEventListener("abort", onAbort, { once: true });
 
       function cleanup(): void {
         clearTimeout(timer);
+        graceTimers.forEach(clearTimeout);
         opts.signal?.removeEventListener("abort", onAbort);
       }
 
@@ -297,6 +384,8 @@ export function spawnTransferRunner(): TransferRunner {
         err.spawnCode = (e as NodeJS.ErrnoException).code || "ESPAWN";
         finish(() => reject(err));
       });
-      child.on("close", (code) => finish(() => resolve({ stdout, stderr, code: code ?? 0 })));
+      child.on("close", (code) =>
+        finish(() => (stopped ? reject(stopped) : resolve({ stdout, stderr, code: code ?? 0 }))),
+      );
     });
 }

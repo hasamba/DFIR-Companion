@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, symlink, link } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, link, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -90,4 +91,38 @@ describe("GET /cases/:id/evidence/:file — link guard (#818)", () => {
     expect(res.text).toContain("ws1,clean");
     expect((await request(app).get("/cases/c1/evidence/missing.csv")).status).toBe(404);
   });
+
+  // #1846: the final-component check left the FOLDER above the file open, and a FIFO hung the request.
+  it.skipIf(process.platform === "win32")(
+    "refuses a screenshots/ folder swapped for a link into another case",
+    async () => {
+      await store.createCase({ caseId: "c2", name: "Other", investigator: "bob", aiProvider: null });
+      await mkdir(store.screenshotsDir("c2"), { recursive: true });
+      await writeFile(join(store.screenshotsDir("c2"), "000001_x.png"), SECRET);
+      await rm(store.screenshotsDir("c1"), { recursive: true });
+      await symlink(store.screenshotsDir("c2"), store.screenshotsDir("c1"));
+
+      const res = await request(app).get("/cases/c1/evidence/000001_x.png");
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/symlink detected/);
+      expect(res.text).not.toContain("not-for-the-dashboard");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a FIFO instead of hanging the request",
+    async () => {
+      try {
+        execFileSync("mkfifo", [join(store.importsDir("c1"), "0003_results.csv")], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch {
+        return;
+      }
+      const res = await request(app).get("/cases/c1/evidence/0003_results.csv");
+      expect(res.status).toBe(403);
+    },
+    5_000,
+  );
 });

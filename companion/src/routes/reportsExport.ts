@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
+import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
 import { join } from "node:path";
 import { injectPrintTrigger } from "../reports/html.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -121,7 +122,12 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "unknown report file" });
     }
     try {
-      const buf = await readFile(join(store.reportsDir(req.params.id), file));
+      // Read from one judged handle (#1846): report.md/.html are server-written, but anyone who can
+      // write in the case folder could swap the name for a link to another case's file.
+      const buf = await readCaseFile(
+        { casesRoot: store.casesRoot, caseDir: store.caseDir(req.params.id) },
+        join(store.reportsDir(req.params.id), file),
+      );
       res.type(types[file]);
       const download = req.query.download !== undefined;
       if (download) {
@@ -139,6 +145,11 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       }
       return res.send(buf);
     } catch (err) {
+      if (err instanceof CaseFileRefusedError) {
+        return res
+          .status(403)
+          .json({ error: `${err.kind} detected at "${file}" — refusing to serve (security)` });
+      }
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         return res.status(404).json({ error: "report not generated yet — POST /cases/:id/report first" });
       }

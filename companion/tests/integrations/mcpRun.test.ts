@@ -1,14 +1,17 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runMcpTool, substituteTarget, mentionsTarget } from "../../src/integrations/mcp/mcpRun.js";
 import type { ClaudeRunner, ClaudeRunOptions } from "../../src/providers/claudeRunner.js";
-import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
+import type { DeliverySource, TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
 import {
   DEFAULT_DELIVERY,
   type McpServer,
   type McpDelivery,
 } from "../../src/integrations/mcp/mcpServerStore.js";
 
-const SCP = { mode: "scp" as const, host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" };
+const SCP = { mode: "scp" as const, host: "sift.example.com", user: "analyst", remoteDir: "/cases/incoming" };
 
 const server = (over: Partial<McpServer> = {}, delivery: Partial<McpDelivery> = {}): McpServer => ({
   id: "sift-mcp",
@@ -47,8 +50,19 @@ const transferRunner: TransferRunner = async (binary, args) => {
   return { stdout: "", stderr: "", code: 0 };
 };
 
-beforeEach(() => {
+// Delivery opens the target through the case-file guard (#1847), so the case and file are real.
+let root: string;
+let MEM: string;
+let deliverySource: DeliverySource;
+const STAGED = /^\/cases\/incoming\/[0-9a-f]{12}_mem\.raw$/;
+
+beforeEach(async () => {
   transfers = [];
+  root = await mkdtemp(join(tmpdir(), "dfir-mcprun-"));
+  await mkdir(join(root, "c1"), { recursive: true });
+  MEM = join(root, "c1", "mem.raw");
+  await writeFile(MEM, "memory");
+  deliverySource = { casesRoot: root, caseDir: join(root, "c1"), stagingDir: join(root, ".export-staging") };
 });
 
 describe("substituteTarget", () => {
@@ -91,25 +105,35 @@ describe("runMcpTool", () => {
   it("delivers, substitutes, calls, and returns the tool's text", async () => {
     const calls: ClaudeRunOptions[] = [];
     const outcome = await runMcpTool(
-      { server: server({}, SCP), claudeRunner: fakeClaude("pid 4 System", calls), transferRunner },
+      {
+        server: server({}, SCP),
+        claudeRunner: fakeClaude("pid 4 System", calls),
+        transferRunner,
+        deliverySource,
+      },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>", "pslist"] },
-        targetPath: "/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
 
     expect(transfers[0].binary).toBe("scp");
     // Exactly one tool may be reached, and the delivered path is what gets asked for.
     expect(calls[0].args[calls[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command");
-    expect(argsAsked(calls[0])).toEqual({ command: ["vol.py", "-f", "/cases/incoming/mem.raw", "pslist"] });
+    expect(outcome.remotePath).toMatch(STAGED);
+    expect(argsAsked(calls[0])).toEqual({ command: ["vol.py", "-f", outcome.remotePath, "pslist"] });
     expect(outcome.text).toBe("pid 4 System");
-    expect(outcome.remotePath).toBe("/cases/incoming/mem.raw");
   });
 
   it("runs a tool that needs no evidence at all", async () => {
     const outcome = await runMcpTool(
-      { server: server({ allowedTools: ["check_lolbin"] }), claudeRunner: fakeClaude("{}"), transferRunner },
+      {
+        server: server({ allowedTools: ["check_lolbin"] }),
+        claudeRunner: fakeClaude("{}"),
+        transferRunner,
+        deliverySource,
+      },
       { tool: "check_lolbin", args: { filename: "certutil.exe" } },
     );
 
@@ -126,8 +150,9 @@ describe("runMcpTool", () => {
           server: server({ allowedTools: ["check_tools"] }, SCP),
           claudeRunner: fakeClaude(),
           transferRunner,
+          deliverySource,
         },
-        { tool: "run_command", args: { command: ["vol.py"] }, targetPath: "/cases/c1/mem.raw" },
+        { tool: "run_command", args: { command: ["vol.py"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/not allowed to run the tool/);
 
@@ -137,8 +162,8 @@ describe("runMcpTool", () => {
   it("refuses a disallowed command before delivering anything", async () => {
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner },
-        { tool: "run_command", args: { command: ["curl", "http://x"] }, targetPath: "/cases/c1/mem.raw" },
+        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
+        { tool: "run_command", args: { command: ["curl", "http://x"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/not allowed to run "curl"/);
 
@@ -149,8 +174,8 @@ describe("runMcpTool", () => {
   it("refuses a target the arguments never mention", async () => {
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner },
-        { tool: "run_command", args: { command: ["vol.py", "pslist"] }, targetPath: "/cases/c1/mem.raw" },
+        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
+        { tool: "run_command", args: { command: ["vol.py", "pslist"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/never reference <target>/);
 
@@ -162,11 +187,16 @@ describe("runMcpTool", () => {
   // output and would be ingested. Preview is the mitigation — the analyst sees it before it lands.
   it("returns a tool's own failure text as output, having no way to tell it apart", async () => {
     const outcome = await runMcpTool(
-      { server: server({}, SCP), claudeRunner: fakeClaude("unsupported profile"), transferRunner },
+      {
+        server: server({}, SCP),
+        claudeRunner: fakeClaude("unsupported profile"),
+        transferRunner,
+        deliverySource,
+      },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
-        targetPath: "/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
     expect(outcome.text).toBe("unsupported profile");
@@ -179,6 +209,7 @@ describe("runMcpTool", () => {
         server: server({}, SCP),
         claudeRunner: fakeClaude(),
         transferRunner,
+        deliverySource,
         recordTransfer: async (d) => {
           seen.push(d);
         },
@@ -186,20 +217,21 @@ describe("runMcpTool", () => {
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
-        targetPath: "/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
 
-    expect(seen).toEqual(["analyst@sift.lab:/cases/incoming/mem.raw"]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/^analyst@sift\.example\.com:\/cases\/incoming\/[0-9a-f]{12}_mem\.raw$/);
   });
 
   it("removes the staged copy after a successful run", async () => {
     await runMcpTool(
-      { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner },
+      { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
-        targetPath: "/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
 
@@ -215,11 +247,11 @@ describe("runMcpTool", () => {
 
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: failing, transferRunner },
+        { server: server({}, SCP), claudeRunner: failing, transferRunner, deliverySource },
         {
           tool: "run_command",
           args: { command: ["vol.py", "-f", "<target>"] },
-          targetPath: "/cases/c1/mem.raw",
+          targetPath: MEM,
         },
       ),
     ).rejects.toThrow();
@@ -234,12 +266,13 @@ describe("runMcpTool", () => {
         server: server({}, SCP),
         claudeRunner: fakeClaude(),
         transferRunner,
+        deliverySource,
         onProgress: (d) => steps.push(d),
       },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
-        targetPath: "/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
 
@@ -250,16 +283,26 @@ describe("runMcpTool", () => {
     ]);
   });
 
+  it("refuses to deliver a target without the case it belongs to (#1847)", async () => {
+    await expect(
+      runMcpTool(
+        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner },
+        { tool: "run_command", args: { command: ["vol.py", "-f", "<target>"] }, targetPath: MEM },
+      ),
+    ).rejects.toThrow(/needs the case it belongs to/);
+    expect(transfers).toHaveLength(0);
+  });
+
   it("uses a shared mount without copying anything", async () => {
-    const s = server({}, { mode: "remote-path", localPrefix: "/srv/cases", remotePrefix: "/mnt/dfir" });
+    const s = server({}, { mode: "remote-path", localPrefix: root, remotePrefix: "/mnt/dfir" });
     const calls: ClaudeRunOptions[] = [];
 
     const outcome = await runMcpTool(
-      { server: s, claudeRunner: fakeClaude("ok", calls), transferRunner },
+      { server: s, claudeRunner: fakeClaude("ok", calls), transferRunner, deliverySource },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
-        targetPath: "/srv/cases/c1/mem.raw",
+        targetPath: MEM,
       },
     );
 

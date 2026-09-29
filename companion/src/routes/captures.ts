@@ -6,7 +6,7 @@ import { ingestCapture, CaseNotFoundError, InvalidImageError } from "../ingest/c
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { detectImageFormat } from "../ingest/imageFormat.js";
-import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
+import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
 import {
   parseCookieHeader,
   unlockCookieName,
@@ -212,14 +212,15 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       join(store.screenshotsDir(req.params.id), file),
       join(store.importsDir(req.params.id), file),
     ];
+    const scope = { casesRoot: store.casesRoot, caseDir: store.caseDir(req.params.id) };
     for (const path of candidates) {
       try {
-        // The link check and the read are ONE operation on ONE descriptor (see
-        // storage/noFollowRead.ts). The filename above is a safe path component, but the FILE it
-        // names is whatever is in the case directory right now: a plain readFile follows a symlink
-        // planted there (or swapped in after any path check) and serves the target — /etc/shadow,
-        // another case's files — to the dashboard as this case's evidence (#818).
-        const buf = await readFileNoFollow(path);
+        // The check and the read are ONE operation on ONE descriptor (storage/caseFileRead.ts). The
+        // filename above is a safe path component, but the FILE it names is whatever is in the case
+        // directory right now: a plain readFile follows a symlink planted there — at the file (#818)
+        // or at the folder above it (#1846) — and serves another case's file or a host file as this
+        // case's evidence. The same open refuses a FIFO instead of hanging the request.
+        const buf = await readCaseFile(scope, path);
         // Bytes first, name second. The extension map below is right for imports (csv/json/log),
         // but a screenshot written before ingest preserved the source format carries a ".webp"
         // suffix over PNG/JPEG/GIF bytes, and serving those as image/webp is how the browser gets
@@ -229,7 +230,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
         res.setHeader("Cache-Control", "private, max-age=300");
         return res.send(buf);
       } catch (err) {
-        if (err instanceof LinkGuardError) {
+        if (err instanceof CaseFileRefusedError) {
           // Named by the filename the client asked for, not the on-disk path the error carries.
           return res
             .status(403)

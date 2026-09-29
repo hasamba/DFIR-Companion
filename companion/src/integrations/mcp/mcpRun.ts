@@ -1,4 +1,4 @@
-import { deliver, type TransferRunner } from "./mcpDelivery.js";
+import { deliver, type DeliverySource, type TransferRunner } from "./mcpDelivery.js";
 import { assertCallAllowed } from "./mcpGuard.js";
 import { callTool } from "./mcpBridge.js";
 import type { ClaudeRunner } from "../../providers/claudeRunner.js";
@@ -37,7 +37,9 @@ export interface McpRunDeps {
   model?: string;
   transferRunner: TransferRunner;
   signal?: AbortSignal;
-  recordTransfer?: (destination: string) => Promise<void>;
+  /** The case the target belongs to; required whenever a target is delivered (#1847). */
+  deliverySource?: DeliverySource;
+  recordTransfer?: (destination: string, sent?: { sha256: string }) => Promise<void>;
   onProgress?: (detail: string) => void;
 }
 
@@ -96,9 +98,11 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
 
   try {
     if (input.targetPath) {
+      if (!deps.deliverySource) throw new Error("evidence delivery needs the case it belongs to");
       deps.onProgress?.(`delivering evidence to ${server.label}`);
       const target = await deliver(server, input.targetPath, {
         runner: deps.transferRunner,
+        source: deps.deliverySource,
         signal: deps.signal,
         recordTransfer: deps.recordTransfer,
       });

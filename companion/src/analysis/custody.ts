@@ -342,16 +342,28 @@ export class CustodyStore {
    */
   async recordTransfer(
     caseId: string,
-    opts: { artifactPaths: string[]; transferredBy: string; destination: string; trigger?: string },
+    opts: {
+      artifactPaths: string[];
+      transferredBy: string;
+      destination: string;
+      trigger?: string;
+      /**
+       * The hash of the bytes that actually left, per path, when the sender took it from the bytes it
+       * sent (#1847: SCP sends a snapshot). Re-hashing the name afterwards could describe a file that
+       * has changed since.
+       */
+      knownSha256?: Readonly<Record<string, string>>;
+    },
   ): Promise<CustodyRecord[]> {
     const transferredAt = new Date().toISOString();
     const inputs: CustodyRecordInput[] = [];
     const rehash = this.rehasher(caseId);
 
     for (const artifactPath of new Set(opts.artifactPaths)) {
+      const known = opts.knownSha256?.[artifactPath];
       let found: Rehash;
       try {
-        found = await rehash(artifactPath);
+        found = known ? { sha256: known } : await rehash(artifactPath);
       } catch (err) {
         throw new Error(`cannot record transfer of "${artifactPath}": ${(err as Error).message}`);
       }

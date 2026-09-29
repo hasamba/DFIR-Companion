@@ -1,4 +1,5 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
+import { readCaseFile } from "../storage/caseFileRead.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
@@ -166,5 +167,11 @@ function defaultListScreenshots(store: CaseStore): (caseId: string) => Promise<s
 }
 
 function defaultReadScreenshot(store: CaseStore): (caseId: string, file: string) => Promise<Buffer> {
-  return (caseId, file) => readFile(join(store.screenshotsDir(caseId), file));
+  // One judged handle per screenshot (#1846): a name swapped for a link would otherwise put another
+  // case's image — or any host file — into a package meant to leave the organisation.
+  return (caseId, file) =>
+    readCaseFile(
+      { casesRoot: store.casesRoot, caseDir: store.caseDir(caseId) },
+      join(store.screenshotsDir(caseId), file),
+    );
 }
