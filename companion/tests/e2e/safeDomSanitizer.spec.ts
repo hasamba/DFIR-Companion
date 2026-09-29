@@ -11,6 +11,9 @@ import { renderStandalonePresentation } from "../../src/reports/presentationExpo
 // has none), and in the exported deck opened from file:// with no CSP. It needs no server.
 
 const SAFE_DOM = new URL("../../../public/js/safe-dom.js", import.meta.url);
+const GLYPHS = new URL("../../../public/js/dashboard-glyphs.js", import.meta.url);
+const LEAFLET = new URL("../../../public/vendor/leaflet/leaflet.js", import.meta.url);
+const CYTOSCAPE = new URL("../../../public/vendor/cytoscape/cytoscape.min.js", import.meta.url);
 
 function esc(value: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -73,14 +76,28 @@ function watchAttackerRequests(page: Page): string[] {
   return seen;
 }
 
-async function loadGuard(page: Page, withoutTrustedTypes: boolean): Promise<void> {
+// A routed http origin (no server): blob: URLs, relative links and URL-part setters behave as on
+// the real dashboard, which about:blank (an opaque origin with no base URL) cannot show.
+const APP_ORIGIN = "http://companion.example.com";
+const PAGE = "<!doctype html><html><head></head><body><main id=root></main></body></html>";
+
+async function loadGuard(page: Page, withoutTrustedTypes: boolean, onAppOrigin = false): Promise<void> {
   if (withoutTrustedTypes) {
     await page.addInitScript(() => {
       Object.defineProperty(window, "trustedTypes", { value: undefined, configurable: true });
     });
   }
-  await page.goto("about:blank");
-  await page.setContent("<!doctype html><html><head></head><body><main id=root></main></body></html>");
+  if (onAppOrigin) {
+    await page.route(`${APP_ORIGIN}/**`, (route) =>
+      route.request().url() === `${APP_ORIGIN}/`
+        ? route.fulfill({ contentType: "text/html", body: PAGE })
+        : route.fulfill({ status: 404, body: "" }),
+    );
+    await page.goto(`${APP_ORIGIN}/`);
+  } else {
+    await page.goto("about:blank");
+    await page.setContent(PAGE);
+  }
   await page.addScriptTag({ content: await readFile(SAFE_DOM, "utf8") });
 }
 
@@ -174,6 +191,252 @@ for (const withoutTrustedTypes of [false, true]) {
         return out;
       });
       expect(kept).toEqual([]);
+    });
+
+    test("property setters and URL parts refuse what setAttribute refuses (#1858)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes, true);
+      const kept = await page.evaluate(async () => {
+        const X = "javascript:window.__xss=1";
+        const root = document.getElementById("root")!;
+        const out: string[] = [];
+        const cases: [string, string, string, string][] = [
+          ["a", "href", "href", X],
+          ["a", "ping", "ping", "https://attacker.invalid/ping"],
+          ["area", "href", "href", X],
+          ["link", "href", "href", "https://attacker.invalid/x.css"],
+          ["base", "href", "href", "https://attacker.invalid/"],
+          ["form", "action", "action", "https://attacker.invalid/"],
+          ["button", "formAction", "formaction", X],
+          ["input", "formAction", "formaction", X],
+          ["input", "src", "src", "https://attacker.invalid/input.png"],
+          ["img", "src", "src", "https://attacker.invalid/img.png"],
+          ["img", "srcset", "srcset", "https://attacker.invalid/set.png 1x"],
+          ["source", "srcset", "srcset", "https://attacker.invalid/src.png 1x"],
+          ["source", "src", "src", "https://attacker.invalid/src.mp4"],
+          ["iframe", "src", "src", X],
+          ["iframe", "srcdoc", "srcdoc", "<script>parent.__xss=1</script>"],
+          ["object", "data", "data", "https://attacker.invalid/obj.html"],
+          ["embed", "src", "src", "https://attacker.invalid/embed.swf"],
+          ["video", "src", "src", "https://attacker.invalid/v.mp4"],
+          ["video", "poster", "poster", "https://attacker.invalid/poster.png"],
+          ["audio", "src", "src", "https://attacker.invalid/a.mp3"],
+          ["track", "src", "src", "https://attacker.invalid/t.vtt"],
+          ["script", "src", "src", "https://attacker.invalid/s.js"],
+          ["meta", "httpEquiv", "http-equiv", "refresh"],
+        ];
+        for (const [tag, prop, attr, value] of cases) {
+          const el = root.appendChild(document.createElement(tag)) as unknown as Record<string, unknown> & Element;
+          try {
+            el[prop] = value;
+          } catch (error) {
+            out.push(`${tag}.${prop} threw ${String(error)}`);
+          }
+          if (el.hasAttribute(attr)) out.push(`${tag}.${prop} kept ${el.getAttribute(attr)}`);
+        }
+        for (const tag of ["a", "area"]) {
+          const link = root.appendChild(document.createElement(tag)) as HTMLAnchorElement;
+          link.href = "mailto:analyst@example.com";
+          link.protocol = "javascript";
+          if (link.getAttribute("href") !== "mailto:analyst@example.com") out.push(`${tag}.protocol → ${link.getAttribute("href")}`);
+          link.href = "/cases/demo";
+          link.hash = "#section";
+          if (!/\/cases\/demo#section$/.test(link.getAttribute("href") || "")) out.push(`${tag}.hash lost: ${link.getAttribute("href")}`);
+        }
+        const svgNs = "http://www.w3.org/2000/svg";
+        const svg = root.appendChild(document.createElementNS(svgNs, "svg"));
+        const svgA = svg.appendChild(document.createElementNS(svgNs, "a")) as SVGAElement;
+        svgA.href.baseVal = X;
+        if (svgA.hasAttribute("href")) out.push(`svg a href.baseVal kept ${svgA.getAttribute("href")}`);
+        const use = svg.appendChild(document.createElementNS(svgNs, "use")) as SVGUseElement;
+        use.href.baseVal = "https://attacker.invalid/sprite.svg#x";
+        if (use.hasAttribute("href")) out.push("svg use href.baseVal kept a remote sprite");
+        use.href.baseVal = "#local";
+        if (use.getAttribute("href") !== "#local") out.push("svg use lost a local #ref");
+        const image = svg.appendChild(document.createElementNS(svgNs, "image")) as SVGImageElement;
+        image.href.baseVal = "https://attacker.invalid/svg-image.png";
+        if (image.hasAttribute("href")) out.push("svg image href.baseVal kept a remote image");
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        if ((window as unknown as { __xss?: number }).__xss) out.push("payload executed");
+        return out;
+      });
+      expect(kept).toEqual([]);
+      expect(requests).toEqual([]);
+    });
+
+    test("attribute nodes are judged like setAttribute (#1858)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes, true);
+      const kept = await page.evaluate(async () => {
+        const X = "javascript:window.__xss=1";
+        const root = document.getElementById("root")!;
+        const out: string[] = [];
+        const attr = (name: string, value: string) => {
+          const a = document.createAttribute(name);
+          a.value = value;
+          return a;
+        };
+        const a1 = root.appendChild(document.createElement("a"));
+        a1.setAttributeNode(attr("href", X));
+        a1.setAttributeNode(attr("onclick", "window.__xss=1"));
+        if (a1.attributes.length) out.push(`setAttributeNode kept ${a1.getAttributeNames()}`);
+        const a2 = root.appendChild(document.createElement("a"));
+        a2.setAttributeNodeNS(attr("href", X));
+        const xl = document.createAttributeNS("http://www.w3.org/1999/xlink", "evil:href");
+        xl.value = X;
+        const svgA = root
+          .appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"))
+          .appendChild(document.createElementNS("http://www.w3.org/2000/svg", "a"));
+        svgA.setAttributeNodeNS(xl);
+        if (a2.attributes.length || svgA.attributes.length) out.push("setAttributeNodeNS kept a URL");
+        const iframe = root.appendChild(document.createElement("iframe"));
+        iframe.attributes.setNamedItem(attr("srcdoc", "<script>parent.__xss=1</script>"));
+        iframe.attributes.setNamedItemNS(attr("src", X));
+        if (iframe.attributes.length) out.push(`setNamedItem kept ${iframe.getAttributeNames()}`);
+        const a3 = root.appendChild(document.createElement("a"));
+        a3.setAttribute("href", "/cases/demo");
+        a3.setAttribute("title", "tip");
+        const href = a3.getAttributeNode("href")!;
+        href.value = X;
+        href.nodeValue = X;
+        href.textContent = X;
+        if (a3.getAttribute("href") !== "/cases/demo") out.push(`Attr value wrote ${a3.getAttribute("href")}`);
+        const title = a3.getAttributeNode("title")!;
+        title.value = "onload=1 still text";
+        if (a3.getAttribute("title") !== "onload=1 still text") out.push("Attr value dropped a plain title");
+        const img = root.appendChild(document.createElement("img"));
+        img.setAttribute("alt", "x");
+        img.getAttributeNode("alt")!.value = "fine";
+        const src = document.createAttribute("src");
+        img.setAttributeNode(src);
+        img.getAttributeNode("src")!.value = "https://attacker.invalid/attr.png";
+        if (img.getAttribute("src") !== "") out.push(`attached src Attr wrote ${img.getAttribute("src")}`);
+        const detached = document.createAttribute("href");
+        detached.value = X; // Not attached: harmless, and setAttributeNode judges it later.
+        if (detached.value !== X) out.push("a detached Attr lost its value");
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        if ((window as unknown as { __xss?: number }).__xss) out.push("payload executed");
+        return out;
+      });
+      expect(kept).toEqual([]);
+      expect(requests).toEqual([]);
+    });
+
+    test("every security-sensitive setter is wrapped in this engine (#1858)", async ({ page }) => {
+      await loadGuard(page, withoutTrustedTypes);
+      const unwrapped = await page.evaluate(() => {
+        const expected: [string, string][] = [
+          ["HTMLAnchorElement", "href"], ["HTMLAnchorElement", "ping"], ["HTMLAnchorElement", "protocol"],
+          ["HTMLAnchorElement", "host"], ["HTMLAreaElement", "href"], ["HTMLAreaElement", "protocol"],
+          ["HTMLLinkElement", "href"], ["HTMLBaseElement", "href"], ["HTMLFormElement", "action"],
+          ["HTMLButtonElement", "formAction"], ["HTMLInputElement", "formAction"], ["HTMLInputElement", "src"],
+          ["HTMLImageElement", "src"], ["HTMLImageElement", "srcset"], ["HTMLSourceElement", "src"],
+          ["HTMLSourceElement", "srcset"], ["HTMLIFrameElement", "src"], ["HTMLIFrameElement", "srcdoc"],
+          ["HTMLObjectElement", "data"], ["HTMLEmbedElement", "src"], ["HTMLMediaElement", "src"],
+          ["HTMLVideoElement", "poster"], ["HTMLTrackElement", "src"], ["HTMLScriptElement", "src"],
+          ["HTMLMetaElement", "httpEquiv"], ["HTMLLinkElement", "imageSrcset"],
+          ["Attr", "value"], ["Node", "nodeValue"], ["Node", "textContent"], ["SVGAnimatedString", "baseVal"],
+        ];
+        const w = window as unknown as Record<string, { prototype: object }>;
+        const out: string[] = [];
+        for (const [iface, prop] of expected) {
+          const d = Object.getOwnPropertyDescriptor(w[iface].prototype, prop);
+          if (!d || !d.set || /\[native code\]/.test(Function.prototype.toString.call(d.set))) out.push(`${iface}.${prop}`);
+        }
+        for (const [iface, method] of [
+          ["Element", "setAttributeNode"], ["Element", "setAttributeNodeNS"],
+          ["NamedNodeMap", "setNamedItem"], ["NamedNodeMap", "setNamedItemNS"],
+        ]) {
+          const fn = (w[iface].prototype as Record<string, unknown>)[method];
+          if (typeof fn !== "function" || /\[native code\]/.test(Function.prototype.toString.call(fn))) out.push(`${iface}.${method}`);
+        }
+        return out;
+      });
+      expect(unwrapped).toEqual([]);
+    });
+
+    test("every write the app makes today still lands (#1858 inventory)", async ({ page }) => {
+      const requests = watchAttackerRequests(page);
+      await loadGuard(page, withoutTrustedTypes, true);
+      await page.addScriptTag({ content: await readFile(GLYPHS, "utf8") });
+      const broken = await page.evaluate(async () => {
+        const root = document.getElementById("root")!;
+        const out: string[] = [];
+        const download = (href: string) => {
+          const a = document.createElement("a");
+          a.href = href;
+          a.download = "x";
+          if (a.getAttribute("href") !== href) out.push(`download href dropped: ${href.slice(0, 40)}`);
+        };
+        const blobUrl = URL.createObjectURL(new Blob(["a,b\n1,2"], { type: "text/csv" }));
+        download(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 4;
+        download(canvas.toDataURL("image/png"));
+        download("/cases/demo/custody/manifest");
+        download("/auth/oidc/start?returnTo=%2Fdashboard");
+        const load = (src: string) =>
+          new Promise<string>((resolve) => {
+            const img = root.appendChild(document.createElement("img"));
+            img.onload = () => resolve(img.naturalWidth > 0 ? "" : `empty image ${src.slice(0, 40)}`);
+            img.onerror = () => resolve(`image failed ${src.slice(0, 40)}`);
+            img.src = src;
+            if (img.getAttribute("src") !== src) resolve(`img.src dropped ${src.slice(0, 40)}`);
+          });
+        const glyphs = (window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }).DfirGlyphs;
+        const glyph = glyphs.glyphDataUri('<circle cx="6" cy="6" r="5" fill="red"/>', 12);
+        for (const problem of await Promise.all([
+          load(glyph),
+          load(canvas.toDataURL("image/png")),
+          load("data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="),
+        ])) {
+          if (problem) out.push(problem);
+        }
+        return out;
+      });
+      expect(broken).toEqual([]);
+      expect(requests).toEqual([]);
+    });
+
+    test("vendored Leaflet tiles and Cytoscape glyph images still load their URLs (#1858)", async ({ page }) => {
+      await loadGuard(page, withoutTrustedTypes, true);
+      await page.addScriptTag({ content: await readFile(GLYPHS, "utf8") });
+      await page.addScriptTag({ content: await readFile(LEAFLET, "utf8") });
+      await page.addScriptTag({ content: await readFile(CYTOSCAPE, "utf8") });
+      const result = await page.evaluate(async () => {
+        const root = document.getElementById("root")!;
+        const mapDiv = root.appendChild(document.createElement("div"));
+        mapDiv.style.width = "256px";
+        mapDiv.style.height = "256px";
+        const L = (window as unknown as { L: any }).L; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const map = L.map(mapDiv).setView([0, 0], 1);
+        L.tileLayer("/geo-tiles/{z}/{x}/{y}.png").addTo(map);
+        const tiles = Array.from(mapDiv.querySelectorAll("img.leaflet-tile")).map((t) => t.getAttribute("src") || "");
+
+        const glyphs = (window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }).DfirGlyphs;
+        const glyph = glyphs.glyphDataUri('<circle cx="6" cy="6" r="5" fill="red"/>', 12);
+        const cyDiv = root.appendChild(document.createElement("div"));
+        cyDiv.style.width = "200px";
+        cyDiv.style.height = "200px";
+        const cytoscape = (window as unknown as { cytoscape: any }).cytoscape; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const cy = cytoscape({
+          container: cyDiv,
+          elements: [{ data: { id: "n1", glyph } }],
+          style: [{ selector: "node", style: { "background-image": "data(glyph)" } }],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const cached = cy.renderer().imageCache?.[glyph]?.image as HTMLImageElement | undefined;
+        return {
+          tiles,
+          glyphSrcKept: cached ? cached.getAttribute("src") === glyph : false,
+          glyphDecoded: cached ? cached.complete && cached.naturalWidth > 0 : false,
+        };
+      });
+      expect(result.tiles.length).toBeGreaterThan(0);
+      for (const src of result.tiles) expect(src).toMatch(/^\/geo-tiles\/\d+\/\d+\/\d+\.png$/);
+      expect(result.glyphSrcKept).toBe(true);
+      expect(result.glyphDecoded).toBe(true);
     });
 
     test("kept SVG attributes keep their case (viewBox)", async ({ page }) => {
