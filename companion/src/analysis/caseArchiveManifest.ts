@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 /**
  * The provenance record a `.dfircase` package carries, and the check that the package matches it.
  *
@@ -25,6 +23,13 @@ import { createHash } from "node:crypto";
 export interface ArchiveEntry {
   path: string;
   data: Buffer;
+}
+
+/** A file the importer has staged, reduced to what verification needs (#1828: entries stream to
+ * disk, so their bytes are never held in memory at once). */
+export interface ArchiveDigest {
+  path: string;
+  sha256: string;
 }
 
 export const ARCHIVE_MANIFEST_PATH = "archive-manifest.json";
@@ -106,7 +111,7 @@ export function parseArchiveManifest(entry: ArchiveEntry | undefined): CaseArchi
 }
 
 /**
- * Throw unless `entries` is exactly what the manifest describes, byte for byte.
+ * Throw unless `entries` is exactly what the manifest describes, byte for byte (by SHA-256).
  *
  * `entries` must already exclude archive-manifest.json itself: the manifest is written after the
  * file list is closed, so it never lists itself, and passing it in would read as an unlisted file.
@@ -114,7 +119,7 @@ export function parseArchiveManifest(entry: ArchiveEntry | undefined): CaseArchi
  * Every message starts with "not a valid case archive" so routes/encryptedImport.ts classifies it
  * as a 400 alongside the path and container failures, not a 500.
  */
-export function verifyArchiveManifest(manifest: CaseArchiveManifest, entries: ArchiveEntry[]): void {
+export function verifyArchiveManifest(manifest: CaseArchiveManifest, entries: ArchiveDigest[]): void {
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
   const listed = new Set<string>();
   for (const file of manifest.files) {
@@ -134,8 +139,7 @@ export function verifyArchiveManifest(manifest: CaseArchiveManifest, entries: Ar
         `not a valid case archive: manifest lists a file the archive does not contain "${file.path}"`,
       );
     }
-    const actual = createHash("sha256").update(entry.data).digest("hex");
-    if (actual !== file.sha256) {
+    if (entry.sha256 !== file.sha256) {
       throw new Error(`not a valid case archive: manifest checksum mismatch for "${file.path}"`);
     }
   }

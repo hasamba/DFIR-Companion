@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
 - **Report diff names text and Case Details changes** — version and release diffs flag a changed report text and list changed Case Details fields instead of saying "no differences", and a meta-only change now mints a version (closes #1779)
 - **Bare usernames redacted** — a username found as CORP\\user, a UPN or a profile path gets one token and is replaced wherever it appears, in the redacted package, AI anonymization and the support bundle; common words are spared (closes #1780)
 - **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
