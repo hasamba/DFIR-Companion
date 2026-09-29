@@ -190,9 +190,17 @@ poor worst-case behavior.
 ## Saved hunts and result actions
 
 **Save hunt** stores the name, exact query, selected dataset, author, and parameters with the case.
-Each execution adds its time, analyst, status, parameters, match/scan counts, and duration. The
-history is newest-first and bounded. Saved hunts travel with investigation snapshots and survive
+Each executed run adds its time, analyst, status, parameters, match/scan counts, and duration. The
+history keeps the newest 50 runs. Saved hunts travel with investigation snapshots and survive
 synthesis.
+
+Select a saved hunt to see its **Execution history** under the saved-hunt list. Each row shows one
+run, newest first: time (UTC), analyst, status (completed, cancelled, limited, or failed), match
+count, and duration. Hover the match count to see how many rows the run scanned. Open
+**Parameters** under a row to see the parameter values that run used, and the error text of a run
+that did not complete. A hunt that has never run shows "Not run yet". The history refreshes when a
+Run finishes, and the saved hunt stays selected. A request that the server refuses before the query
+starts (for example, a case with no indexed store) is not a run, so it adds no row.
 
 Results can be:
 

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Saved-hunt execution history** — selecting a saved hunt in the Hunt Workbench lists its runs newest first (time, analyst, status, matches, duration, parameters), or "Not run yet" (closes #1833)
 - **Block-list says why nothing matched** — the IOC block-list dialog shows the match count and the TXT header adds "# Matched N of M IOCs" with a count per exclusion reason (closes #1807)
 - **Import a ZIP case archive** — Import case accepts the ZIP from Archive to ZIP, checks paths, case identity and manifest hashes before it writes, and Archive to ZIP shows where it saved the file (closes #1784)
 - **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
