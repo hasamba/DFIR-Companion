@@ -8,7 +8,29 @@
   // Fetches /diagnostics/preflight once on load (cached 30s server-side).
   // Shows a red banner only when a CRITICAL check (AI provider) failed.
   // "Disable checks" persists the setting so the banner never reappears.
+  //
+  // The banner is a fixed strip at the bottom of the viewport, not an in-flow block (#1827): the
+  // answer arrives after first paint, and an in-flow banner then pushed all of <main> down — a
+  // load-time layout shift. An overlay moves nothing. --preflight-banner-h gives the page bottom
+  // padding of the banner's height so the end of the page is not hidden under it; padding at the
+  // end of the document moves nothing above it either.
+  const BANNER_HEIGHT_VAR = "--preflight-banner-h";
   let preflightDismissed = false;
+  let bannerResize = null;
+
+  function syncBannerHeight(banner) {
+    const rootStyle = document.documentElement.style;
+    if (banner.hidden) rootStyle.removeProperty(BANNER_HEIGHT_VAR);
+    else rootStyle.setProperty(BANNER_HEIGHT_VAR, banner.offsetHeight + "px");
+  }
+
+  function hideBanner(banner) {
+    preflightDismissed = true;
+    banner.hidden = true;
+    if (bannerResize) bannerResize.disconnect();
+    bannerResize = null;
+    syncBannerHeight(banner);
+  }
   function loadPreflightBanner() {
     if (preflightDismissed) return;
     fetch("/diagnostics/preflight")
@@ -42,26 +64,37 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ disabled: true }),
           })
-            .then(() => {
-              preflightDismissed = true;
-              banner.hidden = true;
+            .then(async (r) => {
+              // Hide only when the server saved the setting; otherwise the warning still holds and
+              // the analyst is told why, so the button does not look dead.
+              if (r && r.ok) return hideBanner(banner);
+              const data = await r.json().catch(() => null);
+              throw new Error((data && data.error) || `server returned ${r ? r.status : "no answer"}`);
             })
-            .catch(() => {});
+            .catch((err) => {
+              if (typeof showToast === "function")
+                showToast(`Could not disable the pre-flight checks: ${err.message}`, "warn");
+            });
         };
         const btn = document.createElement("button");
         btn.type = "button";
         btn.title = "Dismiss for this session";
+        btn.setAttribute("aria-label", "Dismiss the pre-flight warning for this session");
         btn.textContent = "✕";
-        btn.onclick = () => {
-          preflightDismissed = true;
-          banner.hidden = true;
-        };
+        btn.onclick = () => hideBanner(banner);
         banner.innerHTML = "";
         banner.appendChild(span);
         banner.appendChild(openBtn);
         banner.appendChild(disableBtn);
         banner.appendChild(btn);
         banner.hidden = false;
+        if (typeof ResizeObserver !== "undefined") {
+          // Follows the banner when it wraps (narrow window) and fires once on observe.
+          bannerResize = new ResizeObserver(() => syncBannerHeight(banner));
+          bannerResize.observe(banner);
+        } else {
+          syncBannerHeight(banner);
+        }
       })
       .catch(() => {});
   }
