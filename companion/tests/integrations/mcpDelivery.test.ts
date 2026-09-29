@@ -493,11 +493,8 @@ describe("deliver — team mode on Windows checks the folder ACLs (#1863)", () =
     it.each([
       ["PowerShell is missing", failing('cannot run "powershell.exe": spawn powershell.exe ENOENT')],
       ["PowerShell times out", failing("powershell.exe timed out after 30000ms")],
-      [
-        "PowerShell exits non-zero",
-        (async () => ({ code: 1, stdout: "", stderr: "denied" })) as TransferRunner,
-      ],
-      ["the output is not an ACL", (async () => ({ code: 0, stdout: "oops", stderr: "" })) as TransferRunner],
+      ["PowerShell exits non-zero", async () => ({ code: 1, stdout: "", stderr: "denied" })],
+      ["the output is not an ACL", async () => ({ code: 0, stdout: "oops", stderr: "" })],
     ])("fails closed when %s", async (_why, aclRunner) => {
       await expect(
         deliver(server(shared()), MEM, { runner, source, teamMode: true, aclRunner }),
