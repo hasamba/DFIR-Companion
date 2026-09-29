@@ -34,6 +34,7 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1070.003": "Indicator Removal: Clear Command History",
   "T1070.002": "Indicator Removal: Clear Linux or Mac System Logs",
   "T1070.001": "Indicator Removal: Clear Windows Event Logs",
+  T1531: "Account Access Removal",
   T1036: "Masquerading",
   "T1204.002": "User Execution: Malicious File",
   "T1566.002": "Phishing: Spearphishing Link",
