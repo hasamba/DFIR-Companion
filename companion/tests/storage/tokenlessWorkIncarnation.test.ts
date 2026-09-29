@@ -72,7 +72,9 @@ describe("tokenless per-case work across delete + same-id re-create (#1866)", ()
       return recognized.length === 4 ? true : undefined;
     });
     while (released < gates.length) gates[released++]();
-    await pollFor("the new case's index", async () => (existsSync(store.ocrIndexPath(ID)) ? true : undefined));
+    await pollFor("the new case's index", async () =>
+      existsSync(store.ocrIndexPath(ID)) ? true : undefined,
+    );
     await new Promise((r) => setTimeout(r, 50));
     const index = JSON.parse(await readFile(store.ocrIndexPath(ID), "utf8")) as Record<string, unknown>;
     expect(Object.keys(index), "only the new case's screenshot is indexed").toEqual(["n.png"]);
@@ -117,7 +119,7 @@ describe("tokenless per-case work across delete + same-id re-create (#1866)", ()
       maxRetries: 0,
       resumable: false,
       cancellable: true,
-    } as Job;
+    };
     const err = await ledger.insert(job).catch((e: unknown) => e);
     expect(isCaseWriteRefused(err), String(err)).toBe(true);
     expect(existsSync(join(root, ID)), "the ledger worker must not recreate state/").toBe(false);

@@ -187,7 +187,8 @@ describe("per-case background starters run in a case scope (#1866)", () => {
         problems.push(`${path}: sweeps listCases() but does not scope with the listed generation`);
     }
     for (const path of Object.keys(LIST_SWEEPS))
-      if (!sweeping.some((f) => f.path === path)) problems.push(`${path}: no sweep any more — drop the entry`);
+      if (!sweeping.some((f) => f.path === path))
+        problems.push(`${path}: no sweep any more — drop the entry`);
     expect(problems).toEqual([]);
   });
 
@@ -196,7 +197,8 @@ describe("per-case background starters run in a case scope (#1866)", () => {
     const routes = mutatingRoutesOutsideGate();
     for (const { key, file } of routes) {
       const path = key.slice(key.indexOf(" ") + 1);
-      if (OUTSIDE_GATE_GLOBAL_PREFIXES.some((prefix) => path.startsWith(prefix)) && !OUTSIDE_GATE[key]) continue;
+      if (OUTSIDE_GATE_GLOBAL_PREFIXES.some((prefix) => path.startsWith(prefix)) && !OUTSIDE_GATE[key])
+        continue;
       const why = OUTSIDE_GATE[key];
       if (!why) {
         problems.push(`${key} (${file}): outside the case gate — classify it in OUTSIDE_GATE`);
@@ -206,7 +208,8 @@ describe("per-case background starters run in a case scope (#1866)", () => {
         problems.push(`${key} (${file}): classified scoped, but the file uses no case-scope helper`);
     }
     for (const key of Object.keys(OUTSIDE_GATE))
-      if (!routes.some((r) => r.key === key)) problems.push(`${key}: no such route any more — drop the entry`);
+      if (!routes.some((r) => r.key === key))
+        problems.push(`${key}: no such route any more — drop the entry`);
     expect(problems).toEqual([]);
   });
 
