@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createExternalTools } from "../../src/composition/externalTools.js";
 import { loadAllToolConfigs } from "../../src/integrations/tools/toolConfig.js";
@@ -86,6 +87,20 @@ describe("runDropToolAndIngest — HTTP transport reads through the link guard (
       tools.runDropToolAndIngest("c1", "socrates", planted, { name: "planted.pcap" }),
     ).rejects.toThrow(/symlink/);
   });
+
+  // #1849: a FIFO at the path blocked the open for good and held a threadpool thread.
+  it.skipIf(process.platform === "win32")(
+    "refuses a FIFO at once instead of hanging the upload",
+    async () => {
+      const { root, tools } = await harness();
+      const pipe = join(root, "capture.pcap");
+      execFileSync("mkfifo", [pipe], { stdio: ["ignore", "pipe", "pipe"] });
+
+      await expect(
+        tools.runDropToolAndIngest("c1", "socrates", pipe, { name: "capture.pcap" }),
+      ).rejects.toThrow(/special file/);
+    },
+  );
 });
 
 describe("dropMaxBytesFromEnv", () => {

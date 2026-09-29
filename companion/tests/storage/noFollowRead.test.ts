@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, symlink, link, rm, mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -155,6 +156,25 @@ describe("openNoFollow", () => {
     const path = join(dir, "aliased-2");
     await link(secretPath, path);
     await expect(openNoFollow(path)).rejects.toBeInstanceOf(LinkGuardError);
+  });
+  // #1849: a FIFO has no writer, so a blocking open never returns and holds a threadpool thread.
+  // A FIFO swapped into the drop folder, or handed to the SO-CRATES upload, hung the read for good.
+  it.skipIf(process.platform === "win32")("refuses a FIFO at once instead of blocking on it", async () => {
+    const path = join(dir, "pipe");
+    execFileSync("mkfifo", [path], { stdio: ["ignore", "pipe", "pipe"] });
+    const started = Date.now();
+    const err = await openNoFollow(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LinkGuardError);
+    expect((err as LinkGuardError).kind).toBe("special file");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("refuses a directory as a special file, not a later EISDIR", async () => {
+    const path = join(dir, "a-folder");
+    await mkdir(path);
+    const err = await readFileNoFollow(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LinkGuardError);
+    expect((err as LinkGuardError).kind).toBe("special file");
   });
 });
 

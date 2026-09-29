@@ -27,7 +27,14 @@ export const NOFOLLOW_SUPPORTED = typeof constants.O_NOFOLLOW === "number";
  */
 const SWAP_RETRIES = 5;
 
-export type LinkGuardKind = "symlink" | "hardlink";
+/**
+ * O_NONBLOCK where the platform has it. A FIFO opened for reading without it blocks until a writer
+ * appears — in practice never — and holds a libuv threadpool thread the whole time (#1849). With it
+ * the open returns at once and the fstat below refuses the handle. Regular-file reads ignore it.
+ */
+const NONBLOCK = typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0;
+
+export type LinkGuardKind = "symlink" | "hardlink" | "special file";
 
 /**
  * The path was, or became, something other than the plain unshared file it was taken for. Carries
@@ -49,7 +56,8 @@ export class LinkGuardError extends Error {
  * followed to reach and that no other directory entry aliases.
  *
  * Throws LinkGuardError("symlink") if the path is a link, LinkGuardError("hardlink") if the opened
- * file has more than one link. A hardlink is invisible to a symlink check and to readdir alike —
+ * file has more than one link, LinkGuardError("special file") if it is not a regular file (a FIFO,
+ * device, socket or directory). A hardlink is invisible to a symlink check and to readdir alike —
  * only the link count reveals that some other path, anywhere on the same filesystem, names this
  * exact inode. Every file this application writes into a case is nlink === 1.
  *
@@ -74,7 +82,10 @@ export async function openNoFollow(path: string): Promise<FileHandle> {
 
     let handle: FileHandle;
     try {
-      handle = await open(path, constants.O_RDONLY | (NOFOLLOW_SUPPORTED ? constants.O_NOFOLLOW : 0));
+      handle = await open(
+        path,
+        constants.O_RDONLY | NONBLOCK | (NOFOLLOW_SUPPORTED ? constants.O_NOFOLLOW : 0),
+      );
     } catch (err) {
       // ELOOP is precisely "you asked me not to follow a symlink, and it is one".
       if ((err as NodeJS.ErrnoException).code === "ELOOP") throw new LinkGuardError("symlink", path);
@@ -83,6 +94,7 @@ export async function openNoFollow(path: string): Promise<FileHandle> {
 
     try {
       const opened = await handle.stat();
+      if (!opened.isFile()) throw new LinkGuardError("special file", path);
       if (opened.nlink > 1) throw new LinkGuardError("hardlink", path);
       // Windows fallback: the file the descriptor points at must be the file that was checked.
       // Inode and device are the identity a rename or relink cannot preserve.
