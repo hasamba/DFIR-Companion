@@ -3352,9 +3352,6 @@
     <button id="diskWarnDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
-  <!-- Pre-flight warning (#179): shown when a critical check fails at startup. -->
-  <div id="preflightBanner" hidden></div>
-
   <!-- Cross-case warning: shown when screenshots arrive for a case other than the one being viewed. -->
   <div id="caseMismatchBanner" hidden>
     <span id="caseMismatchText"></span>
@@ -4291,6 +4288,10 @@
   <footer data-safe-style="padding:14px 16px 28px; text-align:center; color:var(--text-muted); font-size:12px; border-top:1px solid var(--border-color); margin-top:8px;">
     That's every panel for this layout — refresh to pick up new data. More panels can be shown, hidden, or reordered from Settings → General → Dashboard sections.
   </footer>
+  <!-- Pre-flight warning (#179): shown when a critical check fails at startup. It is a fixed strip
+       at the bottom of the viewport (#1827), so it sits here, after the footer, to keep reading and
+       tab order the same as what is on screen. -->
+  <div id="preflightBanner" role="alert" hidden></div>
   <!-- Lifecycle dropdown — lives outside toolbarMain so it never triggers the fitToolbar
        MutationObserver. Positioned via JS (position:fixed). Must be before the script. -->
   <div id="lifecycleMenu" data-safe-style="display:none;position:fixed;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:9999;min-width:220px;">
