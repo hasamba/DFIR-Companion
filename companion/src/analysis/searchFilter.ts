@@ -18,6 +18,7 @@ const CANONICAL_METADATA_KEYS = new Set([
   "confidenceMap",
   "producer",
   "fieldProvenance",
+  "fieldProvenanceDefaults", // #1874: the compact form's shared provenance values
   "evidence",
   "schemaVersion",
   // Enum-valued describers of the TIME, not the time itself: "millisecond", "recorded", "utc".

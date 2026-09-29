@@ -167,7 +167,7 @@ describe("buildMarkerKind", () => {
     const row = ev("c1", "2026-08-26T13:52:13Z", {
       description: "User account created (EID 4720)",
       canonical: {
-        schemaVersion: "1.0.0",
+        schemaVersion: "1.1.0",
         event: { category: "other", type: "event" },
         subject: { kind: "account", name: "WORKGROUP\\WIN-0NNTB2RTNB1$" },
       },

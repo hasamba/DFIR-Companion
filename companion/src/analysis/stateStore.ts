@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
 import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
@@ -263,8 +264,14 @@ export class StateStore implements InvestigationStateStorage {
 
   async save(state: InvestigationState): Promise<void> {
     const startedAt = performance.now();
+    // #1874: a verbose (pre-1.1.0) envelope is written back compact — lossless, and only once.
     const canonicalState = state.forensicTimeline.length
-      ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
+      ? {
+          ...state,
+          forensicTimeline: state.forensicTimeline.map((e) =>
+            compactEventProvenance(upgradeForensicEvent(e)),
+          ),
+        }
       : state;
     await caseSqliteWorker.request<void>({
       op: "saveState",

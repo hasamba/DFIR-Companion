@@ -32,7 +32,7 @@ function realSourceCount(sources, hidden) {
 // "commandLine" or "timestamp" match every event that merely has such a field. Mirrors
 // CANONICAL_METADATA_KEYS in companion/src/analysis/searchFilter.ts.
 var _CANON_META = ["rawFieldMap", "derivationMap", "confidenceMap", "producer", "fieldProvenance",
-  "evidence", "schemaVersion", "precision", "clockConfidence", "timezone"];
+  "fieldProvenanceDefaults", "evidence", "schemaVersion", "precision", "clockConfidence", "timezone"];
 
 // Every scalar VALUE inside the canonical envelope. Values only, never keys.
 function _canonValues(v, out, depth) {

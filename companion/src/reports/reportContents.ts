@@ -1,5 +1,6 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
+import { withExpandedEventProvenance } from "../analysis/canonicalProvenanceCompact.js";
 import { stateEventResolver } from "../analysis/eventAliasLookup.js";
 import { resolveHypothesisLinks } from "../analysis/hypothesisLineage.js";
 import type { AssetGraph } from "../analysis/assetGraph.js";
@@ -107,7 +108,8 @@ export function renderReportContents(
     iocsCsv: iocsCsv(state),
     timelineCsv: timelineCsv(state),
     forensicTimelineCsv: forensicTimelineCsv(state),
-    // The correlation lineage (#1715) is server bookkeeping, not a finding of the report.
-    stateJson: JSON.stringify(withoutEventAliases(state), null, 2),
+    // The correlation lineage (#1715) is server bookkeeping, not a finding of the report. Field
+    // provenance is written out in full (#1874): the export reads as it did before storage compacted it.
+    stateJson: JSON.stringify(withExpandedEventProvenance(withoutEventAliases(state)), null, 2),
   };
 }

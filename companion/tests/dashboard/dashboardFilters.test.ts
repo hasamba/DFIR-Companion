@@ -127,6 +127,17 @@ describe("_iocMatchesSearch / _findingMatchesSearch / _fpMatchesSearch", () => {
     expect(f._evMatchesSearch(ev, "commandline")).toBe(false);
   });
 
+  it("does not search the compact provenance defaults block (#1874)", () => {
+    const ev = {
+      description: "x",
+      canonical: {
+        fieldProvenanceDefaults: { derivation: "m: deterministic mapping", recordLocators: ["row:42"] },
+      },
+    };
+    expect(f._evMatchesSearch(ev, "deterministic mapping")).toBe(false);
+    expect(f._evMatchesSearch(ev, "row:42")).toBe(false);
+  });
+
   it("excludes an event on the four legacy fields only", () => {
     const ev = { description: "routine logon", asset: "HOST01", message: "mimikatz sekurlsa" };
     expect(f._evMatchesSearch(ev, "mimikatz")).toBe(true);

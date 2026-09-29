@@ -1,6 +1,7 @@
 // #993 — web request chains inside one upload: Zeek http/files and Suricata http/fileinfo rows,
 // joined only through identifiers both records carry; every missing hop named; a digest a file
 // identity only when the sensor's counters say it covers the whole object.
+import { expandFieldProvenance } from "../../src/analysis/canonicalProvenanceCompact.js";
 import { describe, it, expect } from "vitest";
 import { parseNetworkLogs } from "../../src/analysis/networkImport.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
@@ -113,10 +114,10 @@ describe("the full chain — request → response → body, transfer → request
   it("every joined leaf points at the record it came from", () => {
     // An array is one provenance leaf: it rests on the record that named the identifier AND on
     // every record the identifier joined.
-    const prov = xfer.canonical!.fieldProvenance;
+    const prov = expandFieldProvenance(xfer.canonical);
     expect(prov["transfer.requests"].recordLocators).toEqual(["record:1", "record:0"]);
     expect(prov["transfer.coverage"].recordLocators).toEqual(["record:1"]);
-    const reqProv = req.canonical!.fieldProvenance;
+    const reqProv = expandFieldProvenance(req.canonical);
     expect(reqProv["web.bodies"].recordLocators).toEqual(["record:0", "record:1"]);
     expect(reqProv["web.method"].recordLocators).toEqual(["record:0"]);
     expect(canonicalConformanceIssues(req.canonical)).toEqual([]);
@@ -160,8 +161,12 @@ describe("the redirect hop — what the record says, never the target", () => {
       targetState: "not in this record",
       nextState: "observed",
     });
-    expect(req.canonical?.fieldProvenance["web.redirect.next.method"].recordLocators).toEqual(["record:1"]);
-    expect(req.canonical?.fieldProvenance["web.redirect.targetState"].recordLocators).toEqual(["record:0"]);
+    expect(expandFieldProvenance(req.canonical)["web.redirect.next.method"].recordLocators).toEqual([
+      "record:1",
+    ]);
+    expect(expandFieldProvenance(req.canonical)["web.redirect.targetState"].recordLocators).toEqual([
+      "record:0",
+    ]);
   });
 
   it("absence is 'not in this upload'; a gap names the later depth without calling it adjacent", () => {
@@ -693,8 +698,8 @@ describe("createCanonicalEvent locatorMap", () => {
       producer: { importer: "network", parserVersion: "1", mappingVersion: "web-chain-v1" },
       locatorMap: { "web.bodies.0.transfer": "record:1" },
     });
-    expect(env.fieldProvenance["web.bodies"].recordLocators).toEqual(["record:0", "record:1"]);
-    expect(env.fieldProvenance["web.method"].recordLocators).toEqual(["record:0"]);
+    expect(expandFieldProvenance(env)["web.bodies"].recordLocators).toEqual(["record:0", "record:1"]);
+    expect(expandFieldProvenance(env)["web.method"].recordLocators).toEqual(["record:0"]);
     expect(() =>
       createCanonicalEvent({
         event: { category: "network", type: "http" },

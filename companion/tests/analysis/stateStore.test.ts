@@ -4,8 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { emptyState } from "../../src/analysis/stateTypes.js";
-import { upgradeForensicEvent } from "../../src/analysis/canonicalEvent.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  CANONICAL_EVENT_SCHEMA_VERSION,
+  canonicalConformanceIssues,
+  upgradeForensicEvent,
+} from "../../src/analysis/canonicalEvent.js";
+import {
+  expandFieldProvenance,
+  withExpandedFieldProvenance,
+} from "../../src/analysis/canonicalProvenanceCompact.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -204,6 +212,44 @@ describe("StateStore", () => {
       actor: { name: "CORP\\jdoe" },
       target: { name: "SRV-01" },
     });
+  });
+
+  // #1874: an envelope stored before 1.1.0 is verbose. It loads and reads as it always did, and the
+  // next save writes it back compact without losing a single provenance value.
+  it("writes a stored verbose (1.0.0) envelope back compact on save, provenance unchanged", async () => {
+    const upgraded = upgradeForensicEvent({
+      id: "old-1",
+      timestamp: "2026-07-30T10:00:00Z",
+      description: "powershell.exe -enc AAAA on HOST-1",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "HOST-1",
+      processName: "powershell.exe",
+      commandLine: "powershell -enc AAAA",
+      dstIp: "192.0.2.1",
+      port: 443,
+    });
+    const verbose = { ...withExpandedFieldProvenance(upgraded.canonical!), schemaVersion: "1.0.0" };
+    const stored = { ...upgraded, canonical: verbose } as unknown as ForensicEvent;
+    const state = emptyState("c1");
+    state.forensicTimeline = [stored];
+    const before = JSON.parse(JSON.stringify(verbose.fieldProvenance));
+
+    // Loads and reads without a migration step first…
+    expect(expandFieldProvenance(upgradeForensicEvent(stored).canonical)).toEqual(before);
+    await stateStore.save(state);
+    const [loaded] = (await stateStore.load("c1")).forensicTimeline;
+    // …and is written back compact, the same provenance value for value.
+    expect(loaded.canonical?.schemaVersion).toBe(CANONICAL_EVENT_SCHEMA_VERSION);
+    expect(loaded.canonical?.fieldProvenanceDefaults).toBeDefined();
+    expect(expandFieldProvenance(loaded.canonical)).toEqual(before);
+    expect(JSON.stringify(loaded.canonical).length).toBeLessThan(JSON.stringify(verbose).length);
+    expect(canonicalConformanceIssues(loaded.canonical)).toEqual([]);
+    // A second save of the loaded state changes nothing.
+    await stateStore.save(await stateStore.load("c1"));
+    expect((await stateStore.load("c1")).forensicTimeline[0]).toEqual(loaded);
   });
 
   it("queries indexed event fields with a stable cursor", async () => {

@@ -1,3 +1,4 @@
+import { expandFieldProvenance } from "./canonicalProvenanceCompact.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import type { Hypothesis, HypothesisStatus } from "./hypothesis.js";
 
@@ -320,7 +321,7 @@ export function eventUncertainty(e: ForensicEvent): string[] {
   if (!(e.sources ?? []).length && !e.artifactName) out.push("no named source artifact");
   const clock = e.canonical?.time?.clockConfidence;
   if (clock && clock !== "recorded") out.push(`clock: ${clock}`);
-  for (const [path, p] of Object.entries(e.canonical?.fieldProvenance ?? {})) {
+  for (const [path, p] of Object.entries(expandFieldProvenance(e.canonical))) {
     if (p?.confidence === "low") out.push(`${path} read with low confidence`);
   }
   return out;

@@ -242,6 +242,22 @@ describe("eventMatchesSearch (widened, #928)", () => {
     expect(eventMatchesSearch(e, "203.0.113.9")).toBe(true);
     expect(eventMatchesSearch(e, "4444")).toBe(true);
   });
+  // #1874: the compact provenance form moves the repeated derivation text and record locators into
+  // one defaults block; that block is mapping metadata exactly like fieldProvenance itself.
+  it("does not search the compact provenance defaults block", () => {
+    const e = mkEvent({
+      description: "x",
+      canonical: partialCanonical({
+        fieldProvenanceDefaults: {
+          derivation: "windows-event-v1: deterministic mapping from referenced raw record",
+          recordLocators: ["row:42"],
+        },
+      }),
+    });
+    expect(eventMatchesSearch(e, "deterministic mapping")).toBe(false);
+    expect(eventMatchesSearch(e, "row:42")).toBe(false);
+  });
+
   it("does not match canonical FIELD NAMES, only values", () => {
     const e = mkEvent({ canonical: partialCanonical({ process: { commandLine: "whoami" } }) });
     expect(eventMatchesSearch(e, "commandline")).toBe(false);

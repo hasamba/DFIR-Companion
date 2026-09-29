@@ -183,7 +183,7 @@ describe("renderStructuredTags — canonical fallback for network rows", () => {
       asset: "DESKTOP-16OJFO6",
       description: "Velociraptor Sigma: Net Conn (Sysmon Alert) - Sysmon Network connection (EID 3)",
       canonical: {
-        schemaVersion: "1.0.0",
+        schemaVersion: "1.1.0",
         event: { category: "network", type: "connection" },
         network: {
           source: { address: "192.168.195.133" },
@@ -230,7 +230,7 @@ describe("renderStructuredTags — the canonical image fallback is network-only"
       ev({
         description: "file created",
         canonical: {
-          schemaVersion: "1.0.0",
+          schemaVersion: "1.1.0",
           event: { category: "file", type: "create" },
           file: { path: "C:\\Users\\a\\Desktop\\invoice.xlsm", name: "invoice.xlsm" },
           time: { observed: "2026-05-02 10:00:00", normalized: "2026-05-02T10:00:00Z" },
