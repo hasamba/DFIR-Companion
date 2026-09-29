@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Saved-hunt execution history** — selecting a saved hunt in the Hunt Workbench lists its runs newest first (time, analyst, status, matches, duration, parameters), or "Not run yet" (closes #1833)
 - **Block-list says why nothing matched** — the IOC block-list dialog shows the match count and the TXT header adds "# Matched N of M IOCs" with a count per exclusion reason (closes #1807)
 - **Import a ZIP case archive** — Import case accepts the ZIP from Archive to ZIP, checks paths, case identity and manifest hashes before it writes, and Archive to ZIP shows where it saved the file (closes #1784)
 - **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
+- **AI-provider warning no longer moves the page** — the pre-flight banner is a strip fixed to the bottom of the window, so a late answer does not push the dashboard down (closes #1827)
 - **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)
 - **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)
 - **Refused requests keep the AI budget** — a malformed request, a refusal or a skip answer no longer uses one of the case's 20 AI requests a minute (closes #1825)

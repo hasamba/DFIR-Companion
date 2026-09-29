@@ -121,6 +121,60 @@ export function csvFromRows(columns, rows) {
   ].join("\r\n") + "\r\n";
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// The statuses savedHuntStore records. Anything else is shown as text but never becomes a class.
+const RUN_STATUSES = new Set(["completed", "cancelled", "limited", "failed"]);
+const HISTORY_COLUMNS = ["Time", "Analyst", "Status", "Matches", "Duration"];
+// A cancelled run is recorded when the server's query unwinds, which can be after the client has
+// already seen its own abort. Wait this long before reloading, so the "cancelled" row is there.
+const CANCEL_RECORD_SETTLE_MS = 750;
+
+function formatRunTime(iso) {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(String(iso ?? ""));
+  return match ? `${match[1]} ${match[2]} UTC` : String(iso ?? "");
+}
+
+function formatDuration(ms) {
+  const value = Number(ms) || 0;
+  return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`;
+}
+
+function historyParams(entry) {
+  const pairs = Object.entries(entry.parameters || {});
+  const list = pairs.length
+    ? `<ul>${pairs.map(([key, value]) => `<li><code>${escapeHtml(key)}</code> = <code>${escapeHtml(value === null ? "null" : value)}</code></li>`).join("")}</ul>`
+    : "<div class='hq-help'>No parameters</div>";
+  const error = entry.error ? `<div class="hq-error">${escapeHtml(entry.error)}</div>` : "";
+  return `<tr class="hq-history-params"><td colspan="${HISTORY_COLUMNS.length}"><details><summary>Parameters</summary>${list}${error}</details></td></tr>`;
+}
+
+function historyRow(entry) {
+  const status = RUN_STATUSES.has(entry.status) ? ` hq-run-${entry.status}` : "";
+  return `<tr class="hq-history-run${status}"><td><time datetime="${escapeHtml(entry.executedAt)}">${escapeHtml(formatRunTime(entry.executedAt))}</time></td><td>${escapeHtml(entry.executedBy)}</td><td>${escapeHtml(entry.status)}</td><td title="${escapeHtml(entry.scanned)} row(s) scanned">${escapeHtml(entry.matched)}</td><td>${escapeHtml(formatDuration(entry.durationMs))}</td></tr>${historyParams(entry)}`;
+}
+
+/**
+ * The execution history of one saved hunt, newest first (#1833). "" when no hunt is selected.
+ * Analyst names, parameters and error text are untrusted: every value goes through escapeHtml.
+ */
+export function renderHuntHistory(hunt) {
+  if (!hunt) return "";
+  const runs = [...(Array.isArray(hunt.history) ? hunt.history : [])].sort((a, b) =>
+    String(b.executedAt).localeCompare(String(a.executedAt)),
+  );
+  const title = "<div class='hq-history-title'>Execution history</div>";
+  if (!runs.length) return `${title}<div class='hq-help'>Not run yet</div>`;
+  return `${title}<table><thead><tr>${HISTORY_COLUMNS.map((column) => `<th>${column}</th>`).join("")}</tr></thead><tbody>${runs.map(historyRow).join("")}</tbody></table>`;
+}
+
 function installStyle() {
   const style = document.createElement("style");
   const runtimeStyles = document.getElementById("dfir-runtime-styles");
@@ -142,6 +196,18 @@ function installStyle() {
     #sec-hunt-workbench .hq-timeline-row{display:grid;grid-template-columns:28px 190px 72px minmax(220px,1fr);gap:7px;border-bottom:1px solid var(--border-subtle);padding:5px}
     #sec-hunt-workbench .hq-chart-row{display:grid;grid-template-columns:minmax(120px,1fr) 3fr 60px;gap:8px;align-items:center;margin:5px 0;font-size:12px}
     #sec-hunt-workbench .hq-bar{height:12px;background:var(--accent-solid);border-radius:3px;min-width:2px}
+    #sec-hunt-workbench .hq-history{margin-top:10px;max-height:260px;overflow:auto}
+    #sec-hunt-workbench .hq-history:empty{display:none}
+    #sec-hunt-workbench .hq-history table{font-size:11px}
+    #sec-hunt-workbench .hq-history th,#sec-hunt-workbench .hq-history td{padding:4px 5px}
+    #sec-hunt-workbench .hq-history time{white-space:nowrap}
+    #sec-hunt-workbench .hq-history-run td:nth-child(2){overflow-wrap:anywhere}
+    #sec-hunt-workbench .hq-history-title{font-size:12px;font-weight:600;margin-bottom:4px}
+    #sec-hunt-workbench .hq-history-params td{border-bottom:1px solid var(--border-subtle);padding-top:0}
+    #sec-hunt-workbench .hq-history-params summary{font-size:11px;color:var(--text-muted);cursor:pointer}
+    #sec-hunt-workbench .hq-history-params ul{margin:4px 0;padding-left:18px}
+    #sec-hunt-workbench .hq-history-run td{border-bottom:0}
+    #sec-hunt-workbench .hq-run-failed td:nth-child(3),#sec-hunt-workbench .hq-run-cancelled td:nth-child(3){color:var(--badge-danger-text)}
     .hq-pivot{font-size:10px!important;padding:1px 4px!important;margin-left:4px!important;background:transparent!important;color:var(--accent)!important;border:1px solid var(--border-color)!important}
     @media(max-width:800px){#sec-hunt-workbench .hq-grid{grid-template-columns:1fr}#sec-hunt-workbench .hq-timeline-row{grid-template-columns:28px 1fr}}
   `;
@@ -160,6 +226,7 @@ function initialize() {
   const results = document.getElementById("hqResults");
   const suggestions = document.getElementById("hqSuggestions");
   const savedSelect = document.getElementById("hqSaved");
+  const history = document.getElementById("hqHistory");
   const runButton = document.getElementById("hqRun");
   const cancelButton = document.getElementById("hqCancel");
   const nextButton = document.getElementById("hqNext");
@@ -177,17 +244,15 @@ function initialize() {
   let statusSeq = 0;
   // Only the newest saved-hunt list may land: a slow reply for the previous case must not win.
   let loadSeq = 0;
+  // The case the saved-hunt list was asked for, and the case it belongs to. History shows only
+  // when the list belongs to the open case: another case's analysts and parameters never leak.
+  let requestedCase = "";
+  let savedCase = "";
+  let cancelRequest = null;
 
   const caseId = () => (document.getElementById("caseId")?.value || "").trim();
   const endpoint = (suffix) =>
     `/cases/${encodeURIComponent(caseId())}/hunt-query${suffix}`;
-  const escapeHtml = (value) =>
-    String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
   const selectedIds = () =>
     selected.size
       ? [...selected]
@@ -212,6 +277,15 @@ function initialize() {
     statusSeq += 1;
     status.className = isError ? "hq-status hq-error" : "hq-status";
     status.textContent = text;
+  }
+
+  function renderHistory() {
+    if (!history) return;
+    const current =
+      savedCase === caseId()
+        ? savedHunts.find((hunt) => hunt.id === savedSelect.value)
+        : null;
+    history.innerHTML = renderHuntHistory(current);
   }
 
   function reportActionError(error) {
@@ -353,8 +427,9 @@ function initialize() {
     cancelButton.disabled = false;
     setStatus("Running bounded indexed query…");
     if (!cursor) selected = new Set();
+    const savedHuntId = savedSelect.value || undefined;
+    let cancelled = false;
     try {
-      const savedHuntId = savedSelect.value || undefined;
       const body = await jsonRequest(endpoint("/execute"), {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -377,15 +452,22 @@ function initialize() {
       );
       renderResults();
       updateActionState();
-      if (savedHuntId && !cursor) await loadSaved();
     } catch (error) {
-      setStatus(error.name === "AbortError" ? "Query cancelled." : error.message, true);
+      cancelled = error.name === "AbortError";
+      setStatus(cancelled ? "Query cancelled." : error.message, true);
     } finally {
       running = null;
       executionId = null;
       runButton.disabled = false;
       cancelButton.disabled = true;
     }
+    // The server records failed runs too, so the history refreshes either way (#1833).
+    if (!savedHuntId || cursor) return;
+    if (cancelled) {
+      await cancelRequest;
+      await new Promise((resolve) => setTimeout(resolve, CANCEL_RECORD_SETTLE_MS));
+    }
+    await loadSaved();
   }
 
   // Rebuilding the options resets the select, so a Run of a saved hunt used to drop the selection
@@ -393,12 +475,19 @@ function initialize() {
   // a case change passes keep: false, because the old id does not belong to the new case.
   async function loadSaved({ keep = true } = {}) {
     const load = ++loadSeq;
-    if (!caseId()) return;
+    const forCase = caseId();
+    requestedCase = forCase;
+    if (!keep) {
+      savedHunts = [];
+      renderHistory();
+    }
+    if (!forCase) return;
     const previous = keep ? savedSelect.value : "";
     try {
       const hunts = await jsonRequest(endpoint("/saved"));
       if (load !== loadSeq) return;
       savedHunts = hunts;
+      savedCase = forCase;
       savedSelect.innerHTML =
         '<option value="">Unsaved query</option>' +
         savedHunts
@@ -408,8 +497,11 @@ function initialize() {
           )
           .join("");
       if (previous && savedHunts.some((hunt) => hunt.id === previous)) savedSelect.value = previous;
+      renderHistory();
     } catch {
-      if (load === loadSeq) savedHunts = [];
+      if (load !== loadSeq) return;
+      savedHunts = [];
+      renderHistory();
     }
   }
 
@@ -438,6 +530,7 @@ function initialize() {
       );
       await loadSaved();
       savedSelect.value = saved.id;
+      renderHistory();
       setStatus(`Saved “${saved.name}”.`);
     } catch (error) {
       setStatus(error.message, true);
@@ -543,6 +636,7 @@ function initialize() {
   });
   savedSelect.addEventListener("change", () => {
     const hunt = savedHunts.find((item) => item.id === savedSelect.value);
+    renderHistory();
     if (!hunt) return;
     query.value = hunt.query;
     dataset.value = hunt.dataset;
@@ -563,9 +657,10 @@ function initialize() {
   cancelButton.addEventListener("click", async () => {
     running?.abort();
     if (executionId) {
-      await fetch(endpoint(`/executions/${executionId}/cancel`), {
+      cancelRequest = fetch(endpoint(`/executions/${executionId}/cancel`), {
         method: "POST",
       }).catch(() => {});
+      await cancelRequest;
     }
   });
   nextButton.addEventListener("click", () => run(lastCursor));
@@ -661,6 +756,12 @@ function initialize() {
     requestAnimationFrame(() => {
       pivotQueued = false;
       addPivotButtons();
+      // New-case, demo-case and import set the case box without an input/change event. The
+      // dashboard re-renders after any case opens, so this is where a silent switch is noticed.
+      if (caseId() !== requestedCase) {
+        loadSavedForCase();
+        loadCatalog();
+      }
     });
   }).observe(document.body, { childList: true, subtree: true });
 
