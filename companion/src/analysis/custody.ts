@@ -37,7 +37,11 @@ export function custodyPathPolicy(
   cases: { casesRoot: string; caseDir(caseId: string): string },
   caseId: string,
 ): ServerPathPolicy {
-  return { casesRoot: cases.casesRoot, allowUnder: [cases.caseDir(caseId)], allowedLabel: "this case's own files" };
+  return {
+    casesRoot: cases.casesRoot,
+    allowUnder: [cases.caseDir(caseId)],
+    allowedLabel: "this case's own files",
+  };
 }
 
 /** What re-hashing a recorded path found. `refused` carries the guard's reason; no hash is taken. */
@@ -352,7 +356,8 @@ export class CustodyStore {
         throw new Error(`cannot record transfer of "${artifactPath}": ${(err as Error).message}`);
       }
       if ("missing" in found) throw new Error(`cannot record transfer of "${artifactPath}": file not found`);
-      if ("refused" in found) throw new Error(`cannot record transfer of "${artifactPath}": ${found.refused}`);
+      if ("refused" in found)
+        throw new Error(`cannot record transfer of "${artifactPath}": ${found.refused}`);
       inputs.push({
         artifactPath,
         sha256: found.sha256,

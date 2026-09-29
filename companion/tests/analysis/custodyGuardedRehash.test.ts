@@ -168,7 +168,11 @@ describe("recordExport and recordTransfer re-hash through the guard (#1841)", ()
     const before = await readFile(cases.custodyLogPath("c1"), "utf8");
 
     await expect(
-      custody.recordTransfer("c1", { artifactPaths: [evidence], transferredBy: "alice", destination: "sift" }),
+      custody.recordTransfer("c1", {
+        artifactPaths: [evidence],
+        transferredBy: "alice",
+        destination: "sift",
+      }),
     ).rejects.toThrow(/cannot record transfer.*refused/);
     expect(await readFile(cases.custodyLogPath("c1"), "utf8")).toBe(before);
   });
