@@ -199,7 +199,7 @@ export function commitDedicatedImport(
           // #76: snapshot the pre-import state for undo — only when the import changed something,
           // so a no-op re-import does not pile up dead levels.
           if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-            await pushImportCheckpoint(caseId, stateBefore, label);
+            await pushImportCheckpoint(caseId, stateBefore, label, settled.state);
           }
         } catch {
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */

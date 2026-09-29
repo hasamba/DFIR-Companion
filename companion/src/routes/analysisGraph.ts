@@ -479,12 +479,14 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
       await ctx.runStateExclusive(caseId, async () => {
         const state = await stateStore.load(caseId);
         result = mergeIocs(state, from, into);
+        await stateStore.save(result.state);
+        // After the save, so a failed save leaves no checkpoint for a merge that never happened.
         await ctx.pushImportCheckpoint(
           caseId,
           state,
           `merge IOC ${result.from.value} -> ${result.into.value}`,
+          result.state,
         );
-        await stateStore.save(result.state);
         options.onState?.(result.state);
       });
       if (options.iocAliasStore && result)

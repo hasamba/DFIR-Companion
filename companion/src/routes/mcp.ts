@@ -180,7 +180,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       updatedEvents: (delta.forensicEvents ?? []).filter((event) => beforeEventIds.has(event.id)).length,
     };
     if (Object.values(counts).some((count) => count > 0)) {
-      await pushImportCheckpoint(caseId, before, `MCP agent: ${serverLabel}`);
+      await pushImportCheckpoint(caseId, before, `MCP agent: ${serverLabel}`, merged);
     }
     options.onState?.(merged);
     return counts;

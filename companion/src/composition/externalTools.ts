@@ -80,7 +80,12 @@ export interface ExternalToolsDeps {
     bytes: Buffer,
     provenance?: ArtifactProvenance,
   ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
-  pushImportCheckpoint: (caseId: string, beforeState: InvestigationState, label: string) => Promise<void>;
+  pushImportCheckpoint: (
+    caseId: string,
+    beforeState: InvestigationState,
+    label: string,
+    afterState?: InvestigationState,
+  ) => Promise<void>;
 }
 
 export interface ExternalTools {
