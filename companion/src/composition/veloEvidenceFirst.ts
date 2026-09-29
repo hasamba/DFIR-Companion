@@ -67,6 +67,23 @@ export async function storeHuntArtifacts<T extends { name: string; file: string 
   return stored;
 }
 
+/** CSV and log imports are themselves an LLM call, gated by the case's AI toggle. */
+export function needsAi(kind: string): boolean {
+  return kind === "csv" || kind === "log";
+}
+
+/**
+ * The AI gate again, at dispatch, inside the import section: the plan was made before the section,
+ * and the analyst may have turned AI off while this import waited its turn.
+ */
+export async function aiGateClosed(
+  kind: string,
+  getControl: (caseId: string) => Promise<{ enabled: boolean }>,
+  caseId: string,
+): Promise<boolean> {
+  return needsAi(kind) && !(await getControl(caseId)).enabled;
+}
+
 export interface PlannedUpload {
   up: HuntUpload;
   kind: string;
@@ -106,7 +123,7 @@ export async function planUploads(
       skipped.push(up.name);
       continue;
     }
-    if ((kind === "csv" || kind === "log") && !(await deps.aiEnabled())) {
+    if (needsAi(kind) && !(await deps.aiEnabled())) {
       skipped.push(up.name);
       continue;
     }
@@ -183,7 +200,8 @@ export interface HuntEvidenceInput<T extends { name: string; file: string }> {
 }
 
 /**
- * The collect's evidence step: plan the uploads, store every artifact and planned upload, and size
+ * The collect's evidence step: store every artifact, plan the uploads and store those that will
+ * import, and size
  * the import section that follows. Returns what the section imports and the guard's hint.
  * `onAttempt` is told which artifact's import attempt is in progress — see storeHuntArtifacts.
  */
@@ -193,12 +211,8 @@ export async function storeHuntEvidence<T extends { name: string; file: string }
   onAttempt: (debug: ImportDebugRecorder | undefined) => void,
 ) {
   const { caseId } = input;
-  const { planned } = await planUploads(input.uploads, {
-    resolveImportKind: deps.resolveImportKind,
-    aiEnabled: async () => (await deps.getControl(caseId)).enabled,
-    superOnly: input.superOnly,
-    logLine: deps.logLine,
-  });
+  // The rows first: they are fetched and on scratch disk, and nothing that can fail — the upload
+  // plan reads the case's AI toggle — may run before they are stored.
   const artifacts = await storeHuntArtifacts(
     deps.persistEvidence,
     caseId,
@@ -207,6 +221,12 @@ export async function storeHuntEvidence<T extends { name: string; file: string }
     onAttempt,
   );
   onAttempt(undefined); // every artifact is stored; a later failure is not one of theirs
+  const { planned } = await planUploads(input.uploads, {
+    resolveImportKind: deps.resolveImportKind,
+    aiEnabled: async () => (await deps.getControl(caseId)).enabled,
+    superOnly: input.superOnly,
+    logLine: deps.logLine,
+  });
   const uploads = await storeUploads(deps.persistEvidence, caseId, planned, (p, e) => {
     deps.logLine(`[velociraptor] upload import failed (${p.up.name}): ${(e as Error).message}`);
     deps.recordImportFailure?.(caseId, `velociraptor-upload:${p.kind}`, p.up.name, e, p.debug); // FAILED line (#1438)

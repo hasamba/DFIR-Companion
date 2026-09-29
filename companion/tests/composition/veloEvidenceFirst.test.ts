@@ -9,6 +9,8 @@ import {
   planUploads,
   storeHuntArtifacts,
   storeUploads,
+  storeHuntEvidence,
+  aiGateClosed,
   utf8Bytes,
   HUNT_REFUSAL_WORDING,
 } from "../../src/composition/veloEvidenceFirst.js";
@@ -123,5 +125,49 @@ describe("storing before the section", () => {
     );
     expect(stored.map((s) => s.up.name)).toEqual(["b.json"]);
     expect(failed).toEqual(["a.json"]);
+  });
+});
+
+describe("storeHuntEvidence", () => {
+  it("stores the hunt's rows before anything that can fail reads the AI toggle", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-velo-ev-"));
+    const file = join(dir, "0_A.json");
+    await writeFile(file, JSON.stringify({ "A.One": [{ x: 1 }] }), "utf8");
+    const stored: string[] = [];
+    const run = storeHuntEvidence(
+      {
+        persistEvidence: async (_c, name) => {
+          stored.push(name);
+          return { storedName: `0001_${name}`, importedAt: "t", seq: 1 };
+        },
+        resolveImportKind: () => "csv",
+        getControl: async () => {
+          throw new Error("ai-control.json is corrupt");
+        },
+        logLine: () => {},
+      },
+      {
+        caseId: "c1",
+        huntId: "H.X",
+        artifacts: [{ name: "A.One", file, rows: 1 }],
+        totalRows: 1,
+        uploads: [upload("c.csv", "a,b")],
+        superOnly: false,
+      },
+      () => {},
+    );
+    await expect(run).rejects.toThrow(/corrupt/);
+    expect(stored).toEqual(["velo-hunt_H.X_A.One.json"]); // the rows survived the failure
+  });
+});
+
+describe("aiGateClosed", () => {
+  it("closes only for an AI-dependent kind while AI is off", async () => {
+    const off = async () => ({ enabled: false });
+    const on = async () => ({ enabled: true });
+    expect(await aiGateClosed("csv", off, "c1")).toBe(true);
+    expect(await aiGateClosed("log", off, "c1")).toBe(true);
+    expect(await aiGateClosed("csv", on, "c1")).toBe(false);
+    expect(await aiGateClosed("thor", off, "c1")).toBe(false);
   });
 });

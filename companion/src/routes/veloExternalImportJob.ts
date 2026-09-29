@@ -21,6 +21,15 @@ import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import type { TruncatedArtifact, UnreadArtifact } from "../analysis/veloHuntStore.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { ImportMemoryRefusedError } from "../analysis/importMemoryGuard.js";
+
+/**
+ * The status a failed external import answers with. A memory-guard refusal (#1874) is the server
+ * protecting itself — 503, and the evidence is already stored — not Velociraptor failing (502).
+ */
+export function errorStatusOf(err: unknown): 502 | 503 {
+  return err instanceof ImportMemoryRefusedError ? 503 : 502;
+}
 
 // The slice of the server's AiStatusEvent this loop emits, spelled out here: routes may not import
 // composition types (check:boundaries), and the server's own callback accepts this subset.

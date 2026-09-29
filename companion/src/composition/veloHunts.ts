@@ -535,6 +535,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // 4) The uploaded JSON reports planned and stored above → dispatch. The skips (unknown kind,
       // super-only bundle, CSV/log with AI off) were made by planUploads, before the section.
       for (const { up, kind: upKind, debug: upDebug, storedName, importedAt, seq } of evidence.uploads) {
+        if (await ev.aiGateClosed(upKind, getControl, caseId)) continue; // AI turned off while it waited
         try {
           lastFile = storedName;
           options.onAiStatus?.(caseId, {

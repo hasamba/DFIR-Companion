@@ -33,6 +33,7 @@ import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import { siemFallbackNotes } from "../routes/importNotes.js";
 import type { VeloUploadsOutcome } from "../routes/veloUploadFields.js";
 import {
+  aiGateClosed,
   EXTERNAL_REFUSAL_WORDING,
   evidenceSizeHint,
   planUploads,
@@ -394,6 +395,10 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       const importedKinds: Array<{ file: string; kind: string; debug: ImportDebugRecorder }> = []; // #1824
       let lastStoredName: string | undefined;
       for (const { up, kind, debug, storedName, importedAt, seq } of stored) {
+        if (await aiGateClosed(kind, getControl, caseId)) {
+          skipped.push(up.name); // AI was turned off while this import waited its turn
+          continue;
+        }
         try {
           lastStoredName = storedName;
           await dispatchImport(kind, caseId, up.content, {
