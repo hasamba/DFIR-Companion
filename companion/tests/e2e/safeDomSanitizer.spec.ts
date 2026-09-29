@@ -226,7 +226,8 @@ for (const withoutTrustedTypes of [false, true]) {
           ["meta", "httpEquiv", "http-equiv", "refresh"],
         ];
         for (const [tag, prop, attr, value] of cases) {
-          const el = root.appendChild(document.createElement(tag)) as unknown as Record<string, unknown> & Element;
+          const el = root.appendChild(document.createElement(tag)) as unknown as Record<string, unknown> &
+            Element;
           try {
             el[prop] = value;
           } catch (error) {
@@ -238,22 +239,24 @@ for (const withoutTrustedTypes of [false, true]) {
           const link = root.appendChild(document.createElement(tag)) as HTMLAnchorElement;
           link.href = "mailto:analyst@example.com";
           link.protocol = "javascript";
-          if (link.getAttribute("href") !== "mailto:analyst@example.com") out.push(`${tag}.protocol → ${link.getAttribute("href")}`);
+          if (link.getAttribute("href") !== "mailto:analyst@example.com")
+            out.push(`${tag}.protocol → ${link.getAttribute("href")}`);
           link.href = "/cases/demo";
           link.hash = "#section";
-          if (!/\/cases\/demo#section$/.test(link.getAttribute("href") || "")) out.push(`${tag}.hash lost: ${link.getAttribute("href")}`);
+          if (!/\/cases\/demo#section$/.test(link.getAttribute("href") || ""))
+            out.push(`${tag}.hash lost: ${link.getAttribute("href")}`);
         }
         const svgNs = "http://www.w3.org/2000/svg";
         const svg = root.appendChild(document.createElementNS(svgNs, "svg"));
-        const svgA = svg.appendChild(document.createElementNS(svgNs, "a")) as SVGAElement;
+        const svgA = svg.appendChild(document.createElementNS(svgNs, "a"));
         svgA.href.baseVal = X;
         if (svgA.hasAttribute("href")) out.push(`svg a href.baseVal kept ${svgA.getAttribute("href")}`);
-        const use = svg.appendChild(document.createElementNS(svgNs, "use")) as SVGUseElement;
+        const use = svg.appendChild(document.createElementNS(svgNs, "use"));
         use.href.baseVal = "https://attacker.invalid/sprite.svg#x";
         if (use.hasAttribute("href")) out.push("svg use href.baseVal kept a remote sprite");
         use.href.baseVal = "#local";
         if (use.getAttribute("href") !== "#local") out.push("svg use lost a local #ref");
-        const image = svg.appendChild(document.createElementNS(svgNs, "image")) as SVGImageElement;
+        const image = svg.appendChild(document.createElementNS(svgNs, "image"));
         image.href.baseVal = "https://attacker.invalid/svg-image.png";
         if (image.hasAttribute("href")) out.push("svg image href.baseVal kept a remote image");
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -300,7 +303,8 @@ for (const withoutTrustedTypes of [false, true]) {
         href.value = X;
         href.nodeValue = X;
         href.textContent = X;
-        if (a3.getAttribute("href") !== "/cases/demo") out.push(`Attr value wrote ${a3.getAttribute("href")}`);
+        if (a3.getAttribute("href") !== "/cases/demo")
+          out.push(`Attr value wrote ${a3.getAttribute("href")}`);
         const title = a3.getAttributeNode("title")!;
         title.value = "onload=1 still text";
         if (a3.getAttribute("title") !== "onload=1 still text") out.push("Attr value dropped a plain title");
@@ -322,7 +326,7 @@ for (const withoutTrustedTypes of [false, true]) {
         const styleAttr = document.createAttribute("style");
         styled.setAttributeNode(styleAttr);
         if (styled.hasAttribute("style")) out.push("setAttributeNode attached a live style attribute");
-                const detached = document.createAttribute("href");
+        const detached = document.createAttribute("href");
         detached.value = X; // Not attached: harmless, and setAttributeNode judges it later.
         if (detached.value !== X) out.push("a detached Attr lost its value");
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -337,33 +341,58 @@ for (const withoutTrustedTypes of [false, true]) {
       await loadGuard(page, withoutTrustedTypes);
       const unwrapped = await page.evaluate(() => {
         const expected: [string, string][] = [
-          ["HTMLAnchorElement", "href"], ["HTMLAnchorElement", "ping"], ["HTMLAnchorElement", "protocol"],
-          ["HTMLAnchorElement", "host"], ["HTMLAreaElement", "href"], ["HTMLAreaElement", "protocol"],
-          ["HTMLLinkElement", "href"], ["HTMLBaseElement", "href"], ["HTMLFormElement", "action"],
-          ["HTMLButtonElement", "formAction"], ["HTMLInputElement", "formAction"], ["HTMLInputElement", "src"],
-          ["HTMLImageElement", "src"], ["HTMLImageElement", "srcset"], ["HTMLSourceElement", "src"],
-          ["HTMLSourceElement", "srcset"], ["HTMLIFrameElement", "src"], ["HTMLIFrameElement", "srcdoc"],
-          ["HTMLObjectElement", "data"], ["HTMLEmbedElement", "src"], ["HTMLMediaElement", "src"],
-          ["HTMLVideoElement", "poster"], ["HTMLTrackElement", "src"], ["HTMLScriptElement", "src"],
-          ["HTMLMetaElement", "httpEquiv"], ["HTMLLinkElement", "imageSrcset"],
-          ["Attr", "value"], ["Attr", "nodeValue"], ["Attr", "textContent"], ["SVGAnimatedString", "baseVal"],
+          ["HTMLAnchorElement", "href"],
+          ["HTMLAnchorElement", "ping"],
+          ["HTMLAnchorElement", "protocol"],
+          ["HTMLAnchorElement", "host"],
+          ["HTMLAreaElement", "href"],
+          ["HTMLAreaElement", "protocol"],
+          ["HTMLLinkElement", "href"],
+          ["HTMLBaseElement", "href"],
+          ["HTMLFormElement", "action"],
+          ["HTMLButtonElement", "formAction"],
+          ["HTMLInputElement", "formAction"],
+          ["HTMLInputElement", "src"],
+          ["HTMLImageElement", "src"],
+          ["HTMLImageElement", "srcset"],
+          ["HTMLSourceElement", "src"],
+          ["HTMLSourceElement", "srcset"],
+          ["HTMLIFrameElement", "src"],
+          ["HTMLIFrameElement", "srcdoc"],
+          ["HTMLObjectElement", "data"],
+          ["HTMLEmbedElement", "src"],
+          ["HTMLMediaElement", "src"],
+          ["HTMLVideoElement", "poster"],
+          ["HTMLTrackElement", "src"],
+          ["HTMLScriptElement", "src"],
+          ["HTMLMetaElement", "httpEquiv"],
+          ["HTMLLinkElement", "imageSrcset"],
+          ["Attr", "value"],
+          ["Attr", "nodeValue"],
+          ["Attr", "textContent"],
+          ["SVGAnimatedString", "baseVal"],
         ];
         const w = window as unknown as Record<string, { prototype: object }>;
         const out: string[] = [];
         for (const [iface, prop] of expected) {
           const d = Object.getOwnPropertyDescriptor(w[iface].prototype, prop);
-          if (!d || !d.set || /\[native code\]/.test(Function.prototype.toString.call(d.set))) out.push(`${iface}.${prop}`);
+          if (!d || !d.set || /\[native code\]/.test(Function.prototype.toString.call(d.set)))
+            out.push(`${iface}.${prop}`);
         }
         for (const prop of ["textContent", "nodeValue"]) {
           const d = Object.getOwnPropertyDescriptor(Node.prototype, prop);
-          if (!d || !d.set || !/\[native code\]/.test(Function.prototype.toString.call(d.set))) out.push(`Node.${prop} is wrapped (hot path)`);
+          if (!d || !d.set || !/\[native code\]/.test(Function.prototype.toString.call(d.set)))
+            out.push(`Node.${prop} is wrapped (hot path)`);
         }
         for (const [iface, method] of [
-          ["Element", "setAttributeNode"], ["Element", "setAttributeNodeNS"],
-          ["NamedNodeMap", "setNamedItem"], ["NamedNodeMap", "setNamedItemNS"],
+          ["Element", "setAttributeNode"],
+          ["Element", "setAttributeNodeNS"],
+          ["NamedNodeMap", "setNamedItem"],
+          ["NamedNodeMap", "setNamedItemNS"],
         ]) {
           const fn = (w[iface].prototype as Record<string, unknown>)[method];
-          if (typeof fn !== "function" || /\[native code\]/.test(Function.prototype.toString.call(fn))) out.push(`${iface}.${method}`);
+          if (typeof fn !== "function" || /\[native code\]/.test(Function.prototype.toString.call(fn)))
+            out.push(`${iface}.${method}`);
         }
         return out;
       });
@@ -399,7 +428,9 @@ for (const withoutTrustedTypes of [false, true]) {
             img.src = src;
             if (img.getAttribute("src") !== src) resolve(`img.src dropped ${src.slice(0, 40)}`);
           });
-        const glyphs = (window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }).DfirGlyphs;
+        const glyphs = (
+          window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }
+        ).DfirGlyphs;
         const glyph = glyphs.glyphDataUri('<circle cx="6" cy="6" r="5" fill="red"/>', 12);
         for (const problem of await Promise.all([
           load(glyph),
@@ -414,7 +445,9 @@ for (const withoutTrustedTypes of [false, true]) {
       expect(requests).toEqual([]);
     });
 
-    test("vendored Leaflet tiles and Cytoscape glyph images still load their URLs (#1858)", async ({ page }) => {
+    test("vendored Leaflet tiles and Cytoscape glyph images still load their URLs (#1858)", async ({
+      page,
+    }) => {
       await loadGuard(page, withoutTrustedTypes, true);
       await page.addScriptTag({ content: await readFile(GLYPHS, "utf8") });
       await page.addScriptTag({ content: await readFile(LEAFLET, "utf8") });
@@ -427,9 +460,13 @@ for (const withoutTrustedTypes of [false, true]) {
         const L = (window as unknown as { L: any }).L; // eslint-disable-line @typescript-eslint/no-explicit-any
         const map = L.map(mapDiv).setView([0, 0], 1);
         L.tileLayer("/geo-tiles/{z}/{x}/{y}.png").addTo(map);
-        const tiles = Array.from(mapDiv.querySelectorAll("img.leaflet-tile")).map((t) => t.getAttribute("src") || "");
+        const tiles = Array.from(mapDiv.querySelectorAll("img.leaflet-tile")).map(
+          (t) => t.getAttribute("src") || "",
+        );
 
-        const glyphs = (window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }).DfirGlyphs;
+        const glyphs = (
+          window as unknown as { DfirGlyphs: { glyphDataUri(svg: string, size?: number): string } }
+        ).DfirGlyphs;
         const glyph = glyphs.glyphDataUri('<circle cx="6" cy="6" r="5" fill="red"/>', 12);
         const cyDiv = root.appendChild(document.createElement("div"));
         cyDiv.style.width = "200px";

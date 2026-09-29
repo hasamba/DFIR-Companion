@@ -21,12 +21,13 @@ interface SafeDomApi {
   precleanHtml(value: string): string;
 }
 
-const ORIGIN = "https://companion.example";
+const ORIGIN = "https://companion.example.com";
 
 async function loadApi(withOrigin = false): Promise<SafeDomApi> {
   const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
-  const context: { DFIRSafeDOM?: SafeDomApi; URL?: typeof URL; location?: { origin: string } } =
-    withOrigin ? { URL, location: { origin: ORIGIN } } : {};
+  const context: { DFIRSafeDOM?: SafeDomApi; URL?: typeof URL; location?: { origin: string } } = withOrigin
+    ? { URL, location: { origin: ORIGIN } }
+    : {};
   runInNewContext(source, context);
   if (!context.DFIRSafeDOM) throw new Error("safe-dom.js did not publish its testable API");
   return context.DFIRSafeDOM;
@@ -280,16 +281,34 @@ function loadPatchedElement(): { make(tag: string, svg?: boolean): FakeElement }
   // Reflecting IDL properties, as the browser defines them: an accessor on the interface
   // prototype that writes the content attribute.
   const reflecting: Record<string, [string, string][]> = {
-    HTMLAnchorElement: [["href", "href"], ["ping", "ping"]],
+    HTMLAnchorElement: [
+      ["href", "href"],
+      ["ping", "ping"],
+    ],
     HTMLAreaElement: [["href", "href"]],
-    HTMLLinkElement: [["href", "href"], ["imageSrcset", "imagesrcset"]],
+    HTMLLinkElement: [
+      ["href", "href"],
+      ["imageSrcset", "imagesrcset"],
+    ],
     HTMLBaseElement: [["href", "href"]],
     HTMLFormElement: [["action", "action"]],
     HTMLButtonElement: [["formAction", "formaction"]],
-    HTMLInputElement: [["formAction", "formaction"], ["src", "src"]],
-    HTMLImageElement: [["src", "src"], ["srcset", "srcset"]],
-    HTMLSourceElement: [["src", "src"], ["srcset", "srcset"]],
-    HTMLIFrameElement: [["src", "src"], ["srcdoc", "srcdoc"]],
+    HTMLInputElement: [
+      ["formAction", "formaction"],
+      ["src", "src"],
+    ],
+    HTMLImageElement: [
+      ["src", "src"],
+      ["srcset", "srcset"],
+    ],
+    HTMLSourceElement: [
+      ["src", "src"],
+      ["srcset", "srcset"],
+    ],
+    HTMLIFrameElement: [
+      ["src", "src"],
+      ["srcdoc", "srcdoc"],
+    ],
     HTMLObjectElement: [["data", "data"]],
     HTMLEmbedElement: [["src", "src"]],
     HTMLMediaElement: [["src", "src"]],
@@ -333,8 +352,9 @@ function loadPatchedElement(): { make(tag: string, svg?: boolean): FakeElement }
   runInNewContext(source, context);
   return {
     make(tag, svg = false) {
-      const cls = (!svg && byTag[tag.toUpperCase()] ? context[byTag[tag.toUpperCase()]] : Element) as
-        typeof Element;
+      const cls = (
+        !svg && byTag[tag.toUpperCase()] ? context[byTag[tag.toUpperCase()]] : Element
+      ) as typeof Element;
       const el = new cls() as unknown as FakeElement;
       el.tagName = svg ? tag.toLowerCase() : tag.toUpperCase();
       el.namespaceURI = svg ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml";
@@ -348,8 +368,8 @@ interface FakeElement {
   attrs: Map<string, string>;
   tagName: string;
   namespaceURI: string;
-  setAttribute(name: string, value: unknown): void;
-  setAttributeNS(ns: string | null, name: string, value: unknown): void;
+  setAttribute(name: unknown, value: unknown): void;
+  setAttributeNS(ns: string | null, name: unknown, value: unknown): void;
 }
 
 describe("safe DOM policy — script setters share the markup deny rules (#1813)", () => {
@@ -497,13 +517,21 @@ describe("safe DOM policy — property setters share the script rule (#1858)", (
     ["A", "href", "/auth/oidc/start?returnTo=%2Fdashboard"],
     ["A", "href", "/cases/demo/custody/manifest"],
     ["A", "href", `blob:${ORIGIN}/0b6c6f2a-1e1d-4c1b-9d3e-3f8a2c1d5e7f`],
-    ["A", "href", "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="],
+    [
+      "A",
+      "href",
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    ],
     ["A", "href", "#"],
     ["A", "href", "#close"],
     ["A", "href", "https://example.com/advisory"],
     ["IMG", "src", "data:image/jpeg;base64,/9j/4AAQSkZJRg=="],
     ["IMG", "src", "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="],
-    ["IMG", "src", "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E"],
+    [
+      "IMG",
+      "src",
+      "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E",
+    ],
     ["IMG", "src", "/geo-tiles/3/4/2.png"],
     ["IMG", "src", `${ORIGIN}/vendor/leaflet/images/marker-icon.png`],
     ["IMG", "src", ""],
@@ -551,7 +579,10 @@ describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)",
 
   it("parses a blob link on an opaque-origin page without throwing", async () => {
     const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
-    const context: { DFIRSafeDOM?: SafeDomApi } & Record<string, unknown> = { URL, location: { origin: "null" } };
+    const context: { DFIRSafeDOM?: SafeDomApi } & Record<string, unknown> = {
+      URL,
+      location: { origin: "null" },
+    };
     runInNewContext(source, context);
     expect(context.DFIRSafeDOM!.isSafeUrl("blob:null/0b6c6f2a-1e1d", "href", "a")).toBe(true);
     expect(context.DFIRSafeDOM!.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "a")).toBe(false);
@@ -579,7 +610,16 @@ describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)",
   it("treats OBJECT data as a URL and denies request-sending attributes on both paths", async () => {
     const api = await loadApi(true);
     expect(api.attributeAction("OBJECT", false, "data", "javascript:alert(1)", true)).toBeNull();
-    for (const name of ["imagesrcset", "attributionsrc", "lowsrc", "codebase", "archive", "code", "http-equiv", "xml:base"]) {
+    for (const name of [
+      "imagesrcset",
+      "attributionsrc",
+      "lowsrc",
+      "codebase",
+      "archive",
+      "code",
+      "http-equiv",
+      "xml:base",
+    ]) {
       expect(api.attributeAction("LINK", false, name, "https://attacker.invalid/", true), name).toBeNull();
       expect(api.attributeAction("META", false, name, "refresh"), name).toBeNull();
     }
