@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **A FIFO no longer hangs a drop-folder read or SO-CRATES upload** — the guarded open refuses any non-regular file at once instead of blocking a worker thread (closes #1849)
 - **MCP SCP delivery sends the file that was checked** — scp sends a private snapshot of the judged file under a unique remote name, custody records the hash of the bytes sent, and any failure after scp starts removes the remote copy (closes #1847)
 - **Case files that leave the host are read from the file that was checked** — Archive to ZIP, the .dfircase export, evidence and report downloads, the redacted package, the support bundle and AI screenshot analysis refuse a file or folder swapped for a link, a hard link or a FIFO (closes #1846)
 - **Stale anonymization saves refused** — a second window's Save can no longer erase a value just hidden from the AI or turn masking off under it; the modal reloads with your unsaved edits kept (closes #1839)
