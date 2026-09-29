@@ -15,6 +15,7 @@ import {
 } from "../analysis/casePassword.js";
 import { getUnlockLimiter } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
 // served as text/plain so a click opens them in a tab rather than downloading.
@@ -86,7 +87,15 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
     return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
   });
 
-  app.post("/captures", async (req: Request, res: Response) => {
+  // #1855: the case id rides in the body, so this route is outside the /cases/:id gate's scope. The
+  // capture is work of the incarnation that exists when the request arrives — captured before the
+  // first await, so a delete + re-create during the password check or the queue cannot adopt it.
+  app.post("/captures", (req: Request, res: Response) => {
+    const bodyCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
+    return runInCaseScope(store.casesRoot, bodyCaseId, () => postCapture(req, res));
+  });
+
+  const postCapture = async (req: Request, res: Response) => {
     try {
       const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
       if (rawCaseId && !isValidCaseId(rawCaseId)) {
@@ -197,7 +206,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       }
       return res.status(500).json({ error: (err as Error).message });
     }
-  });
+  };
 
   // Serve a piece of evidence (a screenshot or an imported CSV) by filename so the
   // dashboard can link findings/events straight to the artifact they came from.

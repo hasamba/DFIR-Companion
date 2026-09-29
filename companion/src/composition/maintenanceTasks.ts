@@ -22,7 +22,7 @@ import { milestoneEvent } from "../analysis/notifications.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import type { AuditExporter } from "../integrations/audit/auditExporter.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
-import { seedDemoCase } from "../analysis/seedDemoCase.js";
+import { DEMO_CASE_ID_DEFAULT, seedDemoCase } from "../analysis/seedDemoCase.js";
 import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateCheck.js";
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
@@ -239,7 +239,11 @@ export function startPostListenTasks({
   if (demoMode) {
     const resetHours = Math.max(1, Number(process.env.DFIR_DEMO_RESET_HOURS) || 1);
     const seedDemo = (): void => {
-      void seedDemoCase(store.casesRoot, { force: true })
+      // Through the seed slot (#1855): the reset is a new incarnation, and old work is shut out.
+      const reseed = (_isNew: boolean, generation: string) =>
+        seedDemoCase(store.casesRoot, { force: true, generation });
+      void store
+        .withSeedSlot(DEMO_CASE_ID_DEFAULT, reseed)
         .then((r) =>
           logLine(
             `[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`,

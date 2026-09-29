@@ -384,15 +384,17 @@ export class CaseStore {
    * while a delete of the id is in flight, and, when the id has no case yet, while a part-deleted
    * folder still holds files. `fn` learns whether the id is new, so it can clear stale access first.
    */
-  async withSeedSlot<T>(caseId: string, fn: (isNew: boolean) => Promise<T>): Promise<T> {
+  async withSeedSlot<T>(caseId: string, fn: (isNew: boolean, generation: string) => Promise<T>): Promise<T> {
     if (this.deleting.has(caseId)) throw new CaseBeingDeletedError(caseId);
     return this.metaLock.runExclusive(caseId, async () => {
       const isNew = !(await this.caseExists(caseId));
       if (isNew) await this.refuseLeftoverFolder(caseId, this.caseDir(caseId));
-      // A reseed replaces the case: old work is shut out while it runs and by the new generation after.
+      // #1855: the seeder writes this generation in its first case.json, so the new case is never
+      // visible without one. A reseed replaces the case: old work is shut out while it runs.
+      const generation = newCaseGeneration();
       const seed = async () => {
-        const value = await fn(isNew);
-        await this.stampNewGeneration(caseId);
+        const value = await fn(isNew, generation);
+        await this.ensureSeedGeneration(caseId, generation);
         return value;
       };
       return isNew ? seed() : this.whileClosed(caseId, "replaced", seed, []);
@@ -404,12 +406,13 @@ export class CaseStore {
     return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));
   }
 
-  // The seeder writes its own case.json; give it a fresh generation (#1855). Written past the guard:
-  // the caller holds the case lock, and a reseed holds the folder closed.
-  private async stampNewGeneration(caseId: string): Promise<void> {
+  // A seeder that did not write the generation it was given gets it now (#1855). Past the guard: the
+  // caller holds the case lock, and a reseed holds the folder closed.
+  private async ensureSeedGeneration(caseId: string, generation: string): Promise<void> {
     const meta = await this.getCaseMeta(caseId);
-    const next = JSON.stringify({ ...meta, generation: newCaseGeneration() }, null, 2);
-    if (meta) await atomicWrite(this.caseMetaPath(caseId), next, { caseGuard: false });
+    if (!meta || meta.generation === generation) return;
+    const next = JSON.stringify({ ...meta, generation }, null, 2);
+    await atomicWrite(this.caseMetaPath(caseId), next, { caseGuard: false });
   }
 
   private async createCaseLocked(input: CreateCaseInput): Promise<CaseMeta> {

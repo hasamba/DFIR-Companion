@@ -94,6 +94,24 @@ describe("guarded writers refuse a deleted case and recreate nothing (#1855)", (
     }
   });
 
+  it("analysis-run record: the whole marker-to-removal append is one admitted write", async () => {
+    const { AnalysisRunStore } = await import("../../src/analysis/analysisRunStore.js");
+    await create();
+    const runs = new AnalysisRunStore(store, { appVersion: "0.0.0" });
+    const run = (id: string) => ({
+      id,
+      kind: "deterministic" as const,
+      startedAt: "2026-07-31T10:00:00.000Z",
+      finishedAt: "2026-07-31T10:00:01.000Z",
+      versions: {},
+      input: { artifacts: [], eventIds: [], entityIds: [] },
+      output: { entityIds: [], hashes: [], claims: [] },
+    });
+    await runs.record("c1", run("run-1"));
+    await deleted();
+    await expectRefusedAndNoFolder(() => runs.record("c1", run("run-2")));
+  });
+
   it("the same writers still work on a live case", async () => {
     await create();
     await new BackupManager(store, resolveBackupConfig({})).createBackup("c1", "scheduled");
@@ -116,17 +134,33 @@ describe("new incarnations get a fresh generation (#1855)", () => {
     expect(imported).not.toBe(exported);
   });
 
-  it("a seed (and a reseed) stamps a new generation", async () => {
+  it("a seed writes its generation in its first case.json, and a reseed gets a new one", async () => {
+    const seen: (string | undefined)[] = [];
     const seed = () =>
-      store.withSeedSlot("demo", async () => {
+      store.withSeedSlot("demo", async (_isNew, gen) => {
         await mkdir(join(root, "demo"), { recursive: true }); // the seeder writes its own files
-        await writeFile(join(root, "demo", "case.json"), JSON.stringify({ caseId: "demo" }));
+        await writeFile(join(root, "demo", "case.json"), JSON.stringify({ caseId: "demo", generation: gen }));
+        seen.push(await generation("demo"));
       });
     await seed();
-    const first = await generation("demo");
-    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(seen[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await generation("demo")).toBe(seen[0]);
     await seed();
-    expect(await generation("demo")).not.toBe(first);
+    expect(seen[1]).not.toBe(seen[0]);
+  });
+
+  it("a seeder that ignores the generation still ends with one", async () => {
+    await store.withSeedSlot("demo2", async () => {
+      await mkdir(join(root, "demo2"), { recursive: true });
+      await writeFile(join(root, "demo2", "case.json"), JSON.stringify({ caseId: "demo2" }));
+    });
+    expect(await generation("demo2")).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("the demo seeder writes the generation it is given", async () => {
+    const { seedDemoCase } = await import("../../src/analysis/seedDemoCase.js");
+    await seedDemoCase(root, { caseId: "demo3", generation: "gen-from-slot" });
+    expect(await generation("demo3")).toBe("gen-from-slot");
   });
 
   it("API responses do not carry the generation", async () => {
