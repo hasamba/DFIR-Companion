@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { constants, createWriteStream, type BigIntStats } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readlink, realpath, rm, stat, type FileHandle } from "node:fs/promises";
+import { lstat, open, readlink, realpath, rm, stat, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { GuardedFile } from "./serverPathGuard.js";
+import { createStagingDir } from "./exportStaging.js";
 
 /**
  * Reading a case's OWN file for something that leaves the host or the case (#1846, #1847): an
@@ -217,8 +218,7 @@ export async function snapshotCaseFile(
     );
   };
   try {
-    await mkdir(stagingRoot, { recursive: true });
-    dir = await mkdtemp(join(stagingRoot, "delivery-"));
+    dir = await createStagingDir(stagingRoot, "delivery-");
     const path = join(dir, (opts.name ?? "evidence.dat").split(sep).join("_"));
     const size = Number(file.stat.size);
     const hash = createHash("sha256");
