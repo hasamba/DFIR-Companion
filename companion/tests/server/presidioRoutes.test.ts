@@ -15,7 +15,7 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { LoggerImpl, createConsoleLogger } from "../../src/logging/logger.js";
 import { createApp, setServerLogger } from "../../src/server.js";
 import { awaitActivityEntries } from "../helpers/activityLog.js";
-import { createAnonymizer, type AnonPolicy } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, type AnonPolicy, type CustomEntity } from "../../src/analysis/anonymize.js";
 import { MAX_CUSTOM_ENTITIES } from "../../src/analysis/anonEntities.js";
 
 let app: ReturnType<typeof createApp>;
@@ -194,7 +194,8 @@ describe("presidio approval routes", () => {
 // #1822: "Leave visible" must never undo "Hide from AI". The stricter choice wins in every order:
 // two tabs, the bulk "Leave all visible", concurrent requests, a stale pending list.
 describe("presidio decisions: the stricter choice wins (#1822)", () => {
-  const JANE = { value: "Jane Doe", category: "PERSON" };
+  const JANE: CustomEntity = { value: "Jane Doe", category: "PERSON" };
+  const TOOL: CustomEntity = { value: "Suricata", category: "PERSON" };
   const approve = () => request(app).post("/cases/c1/presidio-pending/approve").send(JANE);
   const suppress = (value = "Jane Doe") =>
     request(app).post("/cases/c1/presidio-pending/suppress").send({ value });
@@ -268,17 +269,16 @@ describe("presidio decisions: the stricter choice wins (#1822)", () => {
   });
 
   it("a refused Leave visible writes no activity entry and leaves the pending list alone", async () => {
-    await pendingStore.save("c1", [JANE, { value: "Suricata", category: "PERSON" }]);
+    await pendingStore.save("c1", [JANE, TOOL]);
     await customStore.save("c1", [JANE]);
     expect((await suppress()).status).toBe(409);
-    expect(await pendingStore.load("c1")).toEqual([JANE, { value: "Suricata", category: "PERSON" }]);
+    expect(await pendingStore.load("c1")).toEqual([JANE, TOOL]);
     const log = await request(app).get("/cases/c1/activity-log");
     expect((log.body as { action: string }[]).filter((e) => e.action === "presidio-suppress")).toEqual([]);
     expect(loggedLines.some((l) => l.includes("Jane Doe"))).toBe(false);
   });
 
   it("bulk Leave visible skips a hidden value and still leaves the rest visible", async () => {
-    const TOOL = { value: "Suricata", category: "PERSON" };
     await pendingStore.save("c1", [TOOL, JANE]);
     await approve(); // another tab hides Jane Doe while the bulk run is going
     const results = [await suppress("Suricata"), await suppress("Jane Doe")];
@@ -304,7 +304,7 @@ describe("presidio decisions: the stricter choice wins (#1822)", () => {
   });
 
   it("refuses Hide with 409 when the custom list is full, and keeps the value pending", async () => {
-    const full = Array.from({ length: MAX_CUSTOM_ENTITIES }, (_, i) => ({
+    const full: CustomEntity[] = Array.from({ length: MAX_CUSTOM_ENTITIES }, (_, i) => ({
       value: `entity-${i}`,
       category: "OTHER",
     }));
