@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -166,9 +166,9 @@ describe("POST /cases/:id/custody/verify", () => {
     const res = await request(app).post("/cases/c1/custody/verify").send({});
 
     expect(res.status).toBe(202);
-    // The check runs in the background; the status reflects it once it lands.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(monitor.status().casesVerified).toBe(1);
+    // The check runs in the background; the status reflects it once it lands. Polled, not a fixed
+    // sleep: a slow Windows runner once missed a 50 ms window ("expected +0 to be 1").
+    await vi.waitFor(() => expect(monitor.status().casesVerified).toBe(1), { timeout: 5000, interval: 10 });
   });
 
   it("404s for a case that does not exist", async () => {
