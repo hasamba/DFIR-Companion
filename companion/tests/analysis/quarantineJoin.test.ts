@@ -412,17 +412,15 @@ describe("code review round — Codex findings", () => {
     const [a] = attrRows(r);
     const locs = a.canonical!.evidence.rawRecords.map((x) => x.locator);
     expect(locs).toEqual(["attribute:2", "record:0", "record:1"]);
-    expect(a.canonical!.fieldProvenance["quarantineAttribute.join.state"].recordLocators.sort()).toEqual([
-      "attribute:2",
-      "record:0",
-      "record:1",
-    ]);
+    expect(
+      expandFieldProvenance(a.canonical)["quarantineAttribute.join.state"].recordLocators.sort(),
+    ).toEqual(["attribute:2", "record:0", "record:1"]);
     expect(a.canonical!.evidence.rawRecords[1].recordId).toBe(UUID);
   });
 
   it("6. several files: each listed path rests on its own attribute record; the state on the database record and every file", () => {
     const r = rowsOf([db(), attr({ path: "/a" }), attr({ path: "/b" })]);
-    const prov = dbRow(r).canonical!.fieldProvenance;
+    const prov = expandFieldProvenance(dbRow(r).canonical);
     expect(prov["quarantine.localFile.paths"].recordLocators.sort()).toEqual(["attribute:1", "attribute:2"]);
     expect(prov["quarantine.localFile.state"].recordLocators.sort()).toEqual([
       "attribute:1",
