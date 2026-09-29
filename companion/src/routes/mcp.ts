@@ -17,6 +17,7 @@ import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis
 import { registerMcpServerRoutes } from "./mcpServers.js";
 import * as detect from "./mcpPreviewDetection.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { mcpDeliverySource, mcpTransferRecorder } from "./mcpDeliveryWiring.js";
 
 /**
  * MCP policy + run routes (#296).
@@ -305,20 +306,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             onProgress: (detail) => {
               if (job) options.jobManager?.progress(job.jobId, 0, 1, detail);
             },
-            // Where recordTransfer (#231) meets its producer: evidence leaving this box for an
-            // analysis host is the canonical `transferred` event, and the chain records it before the
-            // tool ever runs.
-            recordTransfer:
-              options.custodyStore && targetPath
-                ? async (destination) => {
-                    await options.custodyStore!.recordTransfer(caseId, {
-                      artifactPaths: [targetPath],
-                      transferredBy: "analyst",
-                      destination,
-                      trigger: `mcp:${server.id}`,
-                    });
-                  }
-                : undefined,
+            deliverySource: mcpDeliverySource(store, caseId),
+            recordTransfer: mcpTransferRecorder(options.custodyStore, caseId, targetPath, server.id),
           },
           { tool, args, targetPath },
         );
@@ -736,6 +725,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           );
           const delivered = await deliver(servers[0], targetPath, {
             runner: transferRunner,
+            source: mcpDeliverySource(store, caseId),
             signal: job?.signal,
             onProgress: (done, total) => {
               const percent = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0;
@@ -744,16 +734,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
                 1,
               );
             },
-            recordTransfer: options.custodyStore
-              ? async (destination) => {
-                  await options.custodyStore!.recordTransfer(caseId, {
-                    artifactPaths: [targetPath],
-                    transferredBy: "analyst",
-                    destination,
-                    trigger: `mcp:${servers[0].id}`,
-                  });
-                }
-              : undefined,
+            recordTransfer: mcpTransferRecorder(options.custodyStore, caseId, targetPath, servers[0].id),
           });
           cleanupRemote = delivered.cleanup;
           prompt = [

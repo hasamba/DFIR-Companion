@@ -52,6 +52,22 @@ describe("CustodyStore.recordTransfer", () => {
     expect(written.every((r) => r.collectedBy === "alice")).toBe(true);
   });
 
+  // #1847: SCP sends a snapshot; the chain records the hash of the bytes that left, not a re-hash of
+  // the name, which may hold something else by the time the record is written.
+  it("records the sender's hash of the bytes that left when it is given", async () => {
+    await collect(one, "first\n");
+    await writeFile(one, "changed after the send\n", "utf8");
+
+    const [written] = await store.recordTransfer("c1", {
+      artifactPaths: [one],
+      transferredBy: "alice",
+      destination: "sift.example.com:/cases/incoming",
+      knownSha256: { [one]: sha("first\n") },
+    });
+
+    expect(written.sha256).toBe(sha("first\n"));
+  });
+
   // The behaviour that separates a transfer from an export: an export claims everything under
   // custody left; a transfer must claim only what the caller actually sent.
   it("records only the artifacts named, not everything under custody", async () => {

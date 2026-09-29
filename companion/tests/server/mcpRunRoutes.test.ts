@@ -73,7 +73,7 @@ async function harness(opts: { text?: string } = {}) {
     id: "sift-mcp",
     allowedTools: ["run_command"],
     allowedCommands: ["vol.py"],
-    delivery: { mode: "scp", host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" },
+    delivery: { mode: "scp", host: "sift.example.com", user: "analyst", remoteDir: "/cases/incoming" },
   });
 
   return {
@@ -145,7 +145,8 @@ describe("POST /cases/:id/mcp/:serverId/run", { timeout: MCP_TEST_TIMEOUT }, () 
     const transferred = (await custodyStore.load("c1")).filter((r) => r.event === "transferred");
     expect(transferred).toHaveLength(1);
     expect(transferred[0]).toMatchObject({
-      source: "analyst@sift.lab:/cases/incoming/mem.raw",
+      // A unique name per delivery (#1847), so concurrent jobs never overwrite each other's copy.
+      source: expect.stringMatching(/^analyst@sift\.example\.com:\/cases\/incoming\/[0-9a-f]{12}_mem\.raw$/),
       trigger: "mcp:sift-mcp",
     });
     expect(transferred[0].artifactPath).toContain("mem.raw");
@@ -551,7 +552,7 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
     expect(res.status).toBe(202);
     expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
     expect(prompt).toContain("Investigate this RAM dump");
-    expect(prompt).toContain("/cases/incoming/mem.raw");
+    expect(prompt).toMatch(/\/cases\/incoming\/[0-9a-f]{12}_mem\.raw/);
     expect(transfers.map((t) => t.binary)).toEqual(["scp", "ssh"]);
     expect((await custodyStore.load("c1")).some((r) => r.event === "transferred")).toBe(true);
   });
@@ -579,7 +580,7 @@ describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
       });
     expect(res.status).toBe(202);
     expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
-    expect(prompt).toContain("/cases/incoming/sample.exe");
+    expect(prompt).toMatch(/\/cases\/incoming\/[0-9a-f]{12}_sample\.exe/);
     expect(transfers[0].args.some((a) => a.includes("sample.exe"))).toBe(true);
   });
 });
