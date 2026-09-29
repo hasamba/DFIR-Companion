@@ -69,7 +69,9 @@ Each case has a status: **Open** or **Closed**.
 Toolbar **☰ Case lifecycle** menu lets you:
 
 - **Close** a case (marks it inactive)
-- **Archive** a case — packages it as a ZIP with a SHA-256 manifest
+- **Archive** a case — packages it as a ZIP with a SHA-256 manifest. When it finishes, the status line
+  shows where the ZIP file was saved (in the cases folder). See [ZIP Case Archive](#zip-case-archive-restore)
+  to bring it back.
 - **🔒 Password…** — set, change, or remove a password on this case (see below)
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 
@@ -94,6 +96,36 @@ currently unlocked and has a password set.
 dialog offers an optional ZIP/encrypted archive taken first, so you can keep an off-disk copy before
 the case is wiped. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
 delete an already-archived case's live folder out from under its archive.
+
+## ZIP Case Archive (Restore)
+
+**Archive to ZIP** writes `<caseId> (no password).zip` into the cases folder. The ZIP holds one
+`<caseId>/` folder with every case file, plus `<caseId>/archive-manifest.json`. The manifest lists
+the SHA-256 hash and size of each file. The ZIP has no password.
+
+**Import it:** toolbar → **Import case → ZIP case archive (.zip)**. Pick the file. It restores as a
+new case. The import checks the archive before it writes anything:
+
+- Every file must sit inside one case folder, and no path may leave that folder.
+- The folder name, the manifest's case ID and `case.json` must name the same case.
+- When the manifest is present, every file must match its SHA-256 hash and size. A changed, extra or
+  missing file stops the import. A damaged manifest also stops it.
+- When the manifest is missing, the import still runs. The result line says
+  **"no archive manifest, hashes not verified"**.
+
+If the case ID already exists, you are asked for a different case ID. The result line shows the event,
+finding and IOC counts, and whether the hashes were verified.
+
+A few filenames cannot go into a ZIP unchanged (for example, names Windows refuses). The archive
+stores those under a portable name, and the manifest records the original name as `originalPath`.
+The import keeps the portable name. The `.dfircase` import does the same.
+
+**Restore by hand** (no dashboard):
+
+1. Extract the `<caseId>/` folder from the ZIP into the cases folder.
+2. Compare each file with its SHA-256 value in `<caseId>/archive-manifest.json`.
+3. Delete `archive-manifest.json` from the case folder. It is not a case file.
+4. Refresh the case list in the dashboard.
 
 ## Encrypted Case Archive (Export / Import)
 

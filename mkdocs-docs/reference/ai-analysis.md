@@ -170,10 +170,11 @@ By default, the Companion **tokenizes identifying information** before sending a
 | IPv4 addresses (public, routable) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible, and the known limitation for what "public" excludes |
 | IPv6 addresses (internal, or public within `2000::/3` / IPv4-mapped) | `ANON_IP_n` / `ANON_EXTIP_n` — see the IPv6 note below for what's out of scope |
 | Hostnames | `ANON_HOST_1`, … |
-| Usernames (`DOMAIN\user`, UPNs on an internal domain) | `ANON_USER_1`, … — **ASCII names only**, see below |
+| Usernames (`DOMAIN\user`, UPNs on an internal domain) | `ANON_DOMAIN_1\ANON_USER_1`, `ANON_USER_1@ANON_DOMAIN_2` — **ASCII names only**, see below |
+| Bare usernames in prose (`the account jdoe ran scp`) | the same `ANON_USER_n` the qualified form got. A username found in any qualified form (account, UPN, profile path) is replaced wherever it appears as a whole word. Common words used as account names (`admin`, `test`, `user`, `guest`, `system`, `root`, …) are replaced only in their qualified forms |
 | Email addresses | `ANON_EMAIL_1`, … — **ASCII local parts only**, see below |
 | Domain names | `ANON_DOMAIN_1`, … |
-| User profile paths (`C:\Users\<name>`, `/home/<name>`) | the username segment becomes `ANON_USER_n`; the rest of the path is left readable |
+| User profile paths (`C:\Users\<name>`, `/home/<name>`) | the username segment becomes `ANON_USER_n` (the same token as `CORP\<name>`); the rest of the path is left readable |
 | Credit card numbers | `ANON_CARD_1`, … |
 | Phone numbers | `ANON_PHONE_1`, … |
 | National ID numbers (currently: Israeli Teudat Zehut) | `ANON_NATID_1`, … |
@@ -190,7 +191,7 @@ This anonymization is applied transparently. The timeline and findings shown to 
     - `mail יוסי@example.co.il` → the domain is tokenized, but the local part `יוסי` is sent as-is.
     - `mail josé@example.co.il` → same; `jose@example.co.il` (unaccented) is tokenized in full.
     - `logon CORP\יוסי` → not detected at all.
-    - `logon CORP\josé` → **worse: partially matched.** The pattern stops at the unaccented prefix, so this is sent as `ANON_USER_1é` — a dangling accented character next to the token. Treat a trailing stray character after an `ANON_USER_n` token as this bug, not as model output.
+    - `logon CORP\josé` → **worse: partially matched.** The pattern stops at the unaccented prefix, so this is sent as `ANON_DOMAIN_1\ANON_USER_1é` — a dangling accented character next to the token. Treat a trailing stray character after an `ANON_USER_n` token as this bug, not as model output.
 
     Two things do work regardless of script: **user profile paths** (`C:\Users\יוסי\…` → `C:\Users\ANON_USER_1\…`), because that pattern matches the name segment by exclusion rather than by an allow-list; and **any value on the case's known-entity or custom-entity lists**, which is matched exactly and is script-independent.
 

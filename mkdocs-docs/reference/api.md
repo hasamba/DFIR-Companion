@@ -449,7 +449,7 @@ curl -s -o block.csv \
 
 | Query | Values |
 |---|---|
-| `format` | `txt` (default), `csv`, `stix` |
+| `format` | `txt` (default), `csv`, `stix`, or `summary` — JSON with the match count and the number of IOCs each filter left out, no download |
 | `minSeverity` | `Critical`, `High`, `Medium`, `Low`, `Info` |
 | `types` | any of `ip,domain,url,hash,email` |
 | `verdictOnly` | `true` to keep only IOCs with an enrichment verdict |

@@ -126,7 +126,7 @@ async function loadVocabulary(
   deps: SupportBundleDeps,
   caseIds: readonly string[],
 ): Promise<{ known: KnownEntities; withheld: string[] }> {
-  const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [] };
+  const known: KnownEntities = { hosts: [], accounts: [], usernames: [], internalDomains: [], custom: [] };
   const withheld: string[] = [];
   for (const caseId of caseIds) {
     try {
@@ -134,6 +134,7 @@ async function loadVocabulary(
         const derived = deriveKnownEntities(await deps.loadState(caseId));
         known.hosts.push(...derived.hosts);
         known.accounts.push(...derived.accounts);
+        known.usernames!.push(...(derived.usernames ?? []));
         known.internalDomains.push(...derived.internalDomains);
         known.custom!.push(...(derived.custom ?? []));
       }

@@ -9,6 +9,7 @@ import { StateLock } from "../analysis/stateLock.js";
 import { authenticatedActorFields } from "../auth/identityContext.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { ReportTemplate } from "./reportTemplate.js";
+import { reportMetaHash } from "./reportTextDiff.js";
 import {
   ReportReleaseStore,
   type ReportReleaseInput,
@@ -45,6 +46,8 @@ export interface ReportVersionSummary {
   version: string; // auto-numbered "v1", "v2", ... (display label)
   manualVersion: string; // the human-authored revisions[] latest entry's version string, if any ("" if none)
   contentHash: string; // sha256 of the rendered markdown — lets snapshot() dedupe unchanged regenerations
+  /** sha256 of the normalized report-meta (#1779). Absent on summaries written before it existed. */
+  metaHash?: string;
   findingsCount: number;
   iocsCount: number;
   eventsCount: number;
@@ -238,8 +241,10 @@ export class ReportVersionStore {
   }
 
   // Persist a version snapshot after a report regeneration. Skips writing a new version (returns the
-  // existing latest summary instead) when the rendered markdown is byte-identical to the most recent
-  // version — a re-generation with nothing changed shouldn't grow the history. Best-effort: callers
+  // existing latest summary instead) when the rendered markdown AND the report-meta are identical to
+  // the most recent version — a re-generation with nothing changed shouldn't grow the history. A
+  // meta-only change (same markdown) still mints a version (#1779); a legacy summary with no metaHash
+  // counts as different once. Best-effort: callers
   // (ReportWriter.writeAll) should swallow errors from this so a version-store failure never breaks
   // report generation itself.
   snapshot(
@@ -254,12 +259,14 @@ export class ReportVersionStore {
   ): Promise<ReportVersionSummary> {
     return this.lock.runExclusive(caseId, async () => {
       const contentHash = createHash("sha256").update(input.markdown).digest("hex");
+      const metaHash = reportMetaHash(input.meta);
       const existing = await this.list(caseId);
       const latest = existing[0];
       const analysisRunIds = input.analysisRunIds ?? [];
       if (
         latest &&
         latest.contentHash === contentHash &&
+        latest.metaHash === metaHash &&
         JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
       )
         return latest;
@@ -275,6 +282,7 @@ export class ReportVersionStore {
         version: nextVersionLabel(existing),
         manualVersion,
         contentHash,
+        metaHash,
         findingsCount: input.state.findings.length,
         iocsCount: input.state.iocs.length,
         eventsCount: input.state.forensicTimeline.length,
