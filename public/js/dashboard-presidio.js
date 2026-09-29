@@ -289,7 +289,7 @@
             category: btn.getAttribute("data-presidio-cat"),
           }),
         })
-          .then((r) => (r.ok ? r.json() : { pending: presidioPending }))
+          .then((r) => readDecision(r, "presidio_custom_list_full", CUSTOM_FULL_TEXT))
           .then((d) => {
             presidioPending = d.pending || [];
             renderPresidioPending();
@@ -309,7 +309,7 @@
         const caseId = document.getElementById("caseId").value.trim();
         if (!caseId) return;
         postPresidioSuppress(caseId, btn.getAttribute("data-presidio-suppress"))
-          .then((r) => (r.ok ? r.json() : { pending: presidioPending }))
+          .then((r) => readDecision(r, "presidio_not_pending", NOT_LEFT_VISIBLE_TEXT))
           .then((d) => {
             presidioPending = d.pending || [];
             renderPresidioPending();
@@ -325,6 +325,34 @@
       }),
     );
   }
+  // #1822: the stricter choice wins. The server refuses "Leave visible" (409 presidio_not_pending)
+  // for a value that is already hidden from the AI or that another window decided first, and
+  // refuses "Hide from AI" (409 presidio_custom_list_full) when the custom list is full. Both answers
+  // carry the current list; the panel shows it and says why the click did nothing.
+  const NOT_LEFT_VISIBLE_TEXT =
+    "Not left visible: this value is already hidden from the AI, or another window decided it first. " +
+    "Hidden values stay hidden.";
+  const CUSTOM_FULL_TEXT =
+    "Could not hide this value: the custom entity list is full. Remove entries you do not need, then try again.";
+  function setAnonMsg(text) {
+    const m = document.getElementById("anonMsg");
+    if (m) m.textContent = text;
+  }
+  function refusalBody(r, code) {
+    if (r.status !== 409) return Promise.resolve(null);
+    return r.json().then(
+      (d) => (d && d.error === code ? d : null),
+      () => null,
+    );
+  }
+  function readDecision(r, code, text) {
+    if (r.ok) return r.json();
+    return refusalBody(r, code).then((d) => {
+      if (!d) return { pending: presidioPending };
+      setAnonMsg(text);
+      return d;
+    });
+  }
   function postPresidioSuppress(caseId, value) {
     return fetch(`/cases/${caseId}/presidio-pending/suppress`, {
       method: "POST",
@@ -333,25 +361,41 @@
     });
   }
   // #1799: one click for a list that is all tool names and timestamps. One request per value, in
-  // order, through the same endpoint as the per-row button. A refused request stops the run, and the
+  // order, through the same endpoint as the per-row button. A failed request stops the run, and the
   // list is then re-read from the server so it shows exactly what is still pending.
   //
   // Every decision button is off while it runs, and a value is posted only while the latest server
-  // answer still lists it: a value hidden from the AI meanwhile (another tab) is never suppressed.
+  // answer still lists it. #1822: a value the server refuses (already hidden from the AI, or decided
+  // in another window) is skipped, not a stop — and the panel says how many were skipped.
   function suppressAllPresidioPending(caseId) {
     const values = presidioPending.map((e) => e.value);
     const el = document.getElementById("presidioPending");
     if (el) el.querySelectorAll("button").forEach((b) => (b.disabled = true));
     const stillPending = (value) => presidioPending.some((e) => e.value === value);
+    let skipped = 0;
+    const skip = (d) => {
+      skipped++;
+      return d;
+    };
+    const tellSkipped = () => {
+      if (skipped > 0)
+        setAnonMsg(
+          `${skipped} value(s) not left visible: already hidden from the AI, or decided in another window. ` +
+            "Hidden values stay hidden.",
+        );
+    };
     return values
       .reduce(
         (chain, value) =>
           chain
             .then(() => (stillPending(value) ? postPresidioSuppress(caseId, value) : null))
             .then((r) => {
-              if (!r) return { pending: presidioPending };
-              if (!r.ok) throw new Error("HTTP " + r.status);
-              return r.json();
+              if (!r) return skip({ pending: presidioPending });
+              if (r.ok) return r.json();
+              return refusalBody(r, "presidio_not_pending").then((d) => {
+                if (!d) throw new Error("HTTP " + r.status);
+                return skip(d);
+              });
             })
             .then((d) => {
               presidioPending = d.pending || [];
@@ -359,6 +403,7 @@
         Promise.resolve(),
       )
       .then(renderPresidioPending, () => loadPresidioPending(caseId))
+      .then(tellSkipped)
       .then(() => refreshAiState(caseId));
   }
   function renderCustomEntities() {

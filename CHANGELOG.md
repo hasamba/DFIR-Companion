@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)
 - **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
 - **Presidio stops flagging tool names as people** — tool and malware names, timestamps, flags, file names and ATT&CK ids are no longer held as PERSON, and the approval panel offers one-click Leave all visible (closes #1799)
 - **Gate holds are not user cancels** — a Presidio or duplicate-host hold records its job as held for the analyst, not as a ✕ Cancel, on every AI route (closes #1801)
