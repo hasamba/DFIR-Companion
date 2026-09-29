@@ -720,7 +720,7 @@ export const FEATURES: Feature[] = [
     // with the setup-wizard bindings and could not move in the same splice.
     file: "dashboard-wizard-ai-step.js",
     initializer: "initWizardAiStep",
-    publish: ["initWizardAiStep", "wizResetAiStep"],
+    publish: ["initWizardAiStep", "wizResetAiStep", "wizAiSynthUpdates"],
     private: [],
   },
   {

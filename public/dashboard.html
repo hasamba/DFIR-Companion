@@ -3246,12 +3246,12 @@
                 <div class="wiz-modelhint"><span id="ai-model-status-wizard-vision" role="status"></span> <span id="wizModelHint"></span></div>
               </div>
               <div class="wiz-field">
-                <label>API key<span class="wiz-hint">DFIR_VISION_KEY — stored only in your local .env (gitignored).</span></label>
+                <label>API key<span class="wiz-hint">Saved as the provider's key (DFIR_AI_KEY_&lt;PROVIDER&gt;), only in your local .env (gitignored).</span></label>
                 <input id="wizKey" type="password" placeholder="(not set)" autocomplete="new-password" />
               </div>
             </div>
             <div class="wiz-field" id="wizBaseUrlField" data-safe-style="display:none">
-              <label>Base URL override<span class="wiz-hint">DFIR_VISION_BASE_URL — for a local proxy / self-hosted endpoint.</span></label>
+              <label>Base URL<span class="wiz-hint">Saved as the provider's base URL (DFIR_AI_BASE_URL_&lt;PROVIDER&gt;) — for a local proxy / self-hosted endpoint.</span></label>
               <input id="wizBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
             </div>
             <div class="wiz-actions">
@@ -3287,11 +3287,11 @@
             </div>
             <div class="wiz-row">
               <div class="wiz-field">
-                <label>Synth API key<span class="wiz-hint">DFIR_AI_SYNTH_KEY — stored only in your local .env.</span></label>
+                <label>Synth API key<span class="wiz-hint">Saved as the provider's key. A key that differs from the vision key on the same provider stays a synthesis-only override (DFIR_AI_SYNTH_KEY).</span></label>
                 <input id="wizSynthKey" type="password" placeholder="(not set)" autocomplete="new-password" />
               </div>
               <div class="wiz-field">
-                <label>Synth base URL<span class="wiz-hint">DFIR_AI_SYNTH_BASE_URL — for a local proxy / self-hosted endpoint.</span></label>
+                <label>Synth base URL<span class="wiz-hint">Saved as the provider's base URL. A different URL on the vision provider stays a synthesis-only override (DFIR_AI_SYNTH_BASE_URL).</span></label>
                 <input id="wizSynthBaseUrl" placeholder="e.g. http://localhost:11434/v1" autocomplete="off" />
               </div>
             </div>

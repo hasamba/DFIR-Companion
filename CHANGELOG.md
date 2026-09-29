@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Setup wizard saves provider keys** — the AI step writes the key and base URL to the provider, so Settings → AI no longer asks to move them after a fresh setup (closes #1870)
+
 ## [0.39.0] - 2026-09-29
 
 ### Added

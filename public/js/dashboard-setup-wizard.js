@@ -37,14 +37,27 @@
     const baseUrl = wizEl("wizSynthBaseUrl").value.trim();
     if (provider) updates.DFIR_AI_SYNTH_PROVIDER = provider;
     if (model) updates.DFIR_AI_SYNTH_MODEL = model;
-    if (key) updates.DFIR_AI_SYNTH_KEY = key;
-    if (baseUrl) updates.DFIR_AI_SYNTH_BASE_URL = baseUrl;
-    if (Object.keys(updates).length === 0) {
+    if (!provider && !model && !key && !baseUrl) {
       result.style.color = "#ffb05a";
       result.textContent =
         "Enter at least one value first — or leave everything blank to keep reusing the extraction model for synthesis.";
       return;
     }
+    // The key and base URL go to the provider's slot unless they must differ from it (#1870).
+    // The helper lives with the AI step; without it, the old per-model writes.
+    const writes =
+      typeof wizAiSynthUpdates === "function"
+        ? wizAiSynthUpdates(provider, key, baseUrl)
+        : {
+            updates: Object.assign(
+              {},
+              key ? { DFIR_AI_SYNTH_KEY: key } : {},
+              baseUrl ? { DFIR_AI_SYNTH_BASE_URL: baseUrl } : {},
+            ),
+            unset: [],
+          };
+    Object.assign(updates, writes.updates);
+    const unset = writes.unset;
     const btn = wizEl("wizSynthSaveBtn");
     btn.disabled = true;
     result.style.color = "#9aa4b2";
@@ -53,7 +66,7 @@
       const save = await fetch("/settings/env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates }),
+        body: JSON.stringify({ updates, unset }),
       });
       if (!save.ok) {
         const j = await save.json().catch(() => ({}));
@@ -72,10 +85,13 @@
     await fetch("/settings/reload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefix: "DFIR_AI_SYNTH_" }),
+      // DFIR_AI_, not DFIR_AI_SYNTH_: the provider slots (DFIR_AI_KEY_<PROVIDER>) share it.
+      body: JSON.stringify({ prefix: "DFIR_AI_" }),
     }).catch(() => {});
+    // The running synthesis model is built at startup, so a save is not live.
     result.style.color = "#5ad17a";
-    result.textContent = "✓ Saved. Used on the next synthesis run.";
+    result.textContent =
+      "✓ Saved to .env. Restart the companion server to use it for synthesis.";
     btn.disabled = false;
   }
 

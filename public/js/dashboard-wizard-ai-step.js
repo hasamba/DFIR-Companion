@@ -61,8 +61,66 @@
     },
   ];
 
+  // The provider slots a key and base URL are saved in (#1870) — a browser copy of the server's
+  // PROVIDER_ENV_NAMES, pinned equal to it by tests/settings/setupWizardProviderKeys.test.ts. The
+  // CLI providers (claude-code, codex) sign in on their own and have no entry.
+  const WIZ_PROVIDER_SLOTS = {
+    openai: "OPENAI",
+    openrouter: "OPENROUTER",
+    ollama: "OLLAMA",
+    litellm: "LITELLM",
+    gemini: "GEMINI",
+    anthropic: "ANTHROPIC",
+  };
+  const WIZ_CREDENTIAL_SETTINGS = ["KEY", "BASE_URL"];
+  // What the last SUCCESSFUL vision save wrote, so the synthesis save can tell a shared key from a
+  // different one. Never the form fields: the wizard opens with them blank, and a typed key whose
+  // save failed is not in the file.
+  let wizSavedVision = null;
+
+  // Where one model's key and base URL go (#1870). On a provider with a slot the value goes into
+  // DFIR_AI_<KEY|BASE_URL>_<PROVIDER>, and the model's own name is unset so an override from an
+  // earlier run cannot shadow the provider value. `clearBlank` unsets it for a blank field too.
+  // `keepOwn[setting]` keeps that setting a per-model override instead. With no slot the model's
+  // own names are written, as before.
+  function wizCredentialWrites(provider, values, ownNames, keepOwn, clearBlank) {
+    const slot = WIZ_PROVIDER_SLOTS[String(provider || "").trim().toLowerCase()];
+    const updates = {};
+    const unset = [];
+    for (const setting of WIZ_CREDENTIAL_SETTINGS) {
+      const value = values[setting];
+      if (!slot || keepOwn[setting]) {
+        if (value) updates[ownNames[setting]] = value;
+      } else {
+        if (value) updates["DFIR_AI_" + setting + "_" + slot] = value;
+        if (value || clearBlank) unset.push(ownNames[setting]);
+      }
+    }
+    return { updates, unset };
+  }
+
+  // The synthesis model's key and base URL. Its provider is its own, else the saved vision one.
+  // On the vision provider a value becomes a synthesis-only override unless it equals the saved
+  // vision value — writing it to the slot would silently switch the vision model's key. A blank
+  // field keeps whatever override is saved: the wizard opens with these fields empty, so blank is
+  // "not changed", not "cleared". With no successful vision save this session the old per-model
+  // writes stand.
+  function wizAiSynthUpdates(provider, key, baseUrl) {
+    const saved = wizSavedVision;
+    const values = { KEY: key, BASE_URL: baseUrl };
+    const ownNames = { KEY: "DFIR_AI_SYNTH_KEY", BASE_URL: "DFIR_AI_SYNTH_BASE_URL" };
+    if (!saved) return wizCredentialWrites("", values, ownNames, {}, false);
+    const effective = provider || saved.provider;
+    const shared = effective === saved.provider;
+    const keepOwn = {};
+    for (const setting of WIZ_CREDENTIAL_SETTINGS)
+      keepOwn[setting] = shared && !!values[setting] && values[setting] !== saved[setting];
+    return wizCredentialWrites(effective, values, ownNames, keepOwn, false);
+  }
+
   // ── AI step logic (#181, preserved) ──
   function wizResetAiStep() {
+    wizSavedVision = null;
     wizEl("wizProvider").value = "";
     wizEl("wizModel").value = "";
     wizEl("wizKey").value = "";
@@ -117,17 +175,26 @@
     btn.disabled = true;
     result.style.color = "#9aa4b2";
     result.textContent = "Saving configuration…";
+    const writes = wizCredentialWrites(
+      provider,
+      { KEY: key, BASE_URL: baseUrl },
+      { KEY: "DFIR_VISION_KEY", BASE_URL: "DFIR_VISION_BASE_URL" },
+      {},
+      // The vision step sets the whole vision model, and the base URL field is hidden for a
+      // hosted provider: a stale override left behind would send the new key to an old endpoint.
+      true,
+    );
     const updates = {
       DFIR_VISION_PROVIDER: provider,
       DFIR_VISION_MODEL: model,
+      ...writes.updates,
     };
-    if (key) updates.DFIR_VISION_KEY = key;
-    if (baseUrl) updates.DFIR_VISION_BASE_URL = baseUrl;
+    const unset = writes.unset;
     try {
       const save = await fetch("/settings/env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates }),
+        body: JSON.stringify({ updates, unset }),
       });
       if (!save.ok) {
         const j = await save.json().catch(() => ({}));
@@ -145,6 +212,7 @@
       btn.disabled = false;
       return;
     }
+    wizSavedVision = { provider, KEY: key, BASE_URL: baseUrl };
     result.textContent = "Applying & testing the connection…";
     await fetch("/settings/ai-reload", { method: "POST" }).catch(() => {});
     try {
@@ -266,5 +334,6 @@
   }
 
   window.wizResetAiStep = wizResetAiStep;
+  window.wizAiSynthUpdates = wizAiSynthUpdates;
   window.initWizardAiStep = initWizardAiStep;
 })();
