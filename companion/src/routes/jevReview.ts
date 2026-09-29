@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
+import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
@@ -184,6 +185,10 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
     // The same (known entities, anonymizer) pair every chat model sits behind. Null means the
     // analyst turned masking off for this case; the identity function is then the honest mask.
+    // #1840: the review masks every batch with this one snapshot, so it records the revision the
+    // snapshot was built at (read BEFORE the lists load) and holds any batch that would leave after
+    // a Hide or a settings change. Batches already sent cannot be recalled; the rest are not sent.
+    const maskedAt = anonRevision(caseId);
     const anon = await buildImportAnonContext({ log: getServerLogger(), opts: options }, caseId, state);
     const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
 
@@ -191,8 +196,9 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       const result = await gradeEvents(
         {
           mask,
-          ask: (jevState, questions) =>
-            askJev(
+          ask: (jevState, questions) => {
+            assertAnonRevision(caseId, maskedAt, "the missed-evidence review");
+            return askJev(
               {
                 baseUrl: settings.baseUrl,
                 model: settings.model,
@@ -201,7 +207,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
               },
               jevState,
               questions,
-            ),
+            );
+          },
         },
         candidates,
         { batchSize: settings.batchSize },

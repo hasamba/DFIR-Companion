@@ -117,6 +117,7 @@ describe("/cases/:id/anon-entities", () => {
     const post = await request(app)
       .post("/cases/c1/anon-entities")
       .send({
+        version: get0.body.customVersion,
         entities: [
           { value: "DC9", category: "HOST" },
           { value: "x", category: "bogus" },

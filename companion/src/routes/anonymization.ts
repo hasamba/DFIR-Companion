@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
-import { AnonControlStore, type AnonControl } from "../analysis/anonControl.js";
+import { AnonControlStore, anonControlVersion, type AnonControl } from "../analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
@@ -55,7 +55,12 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
-  const presidioDecisions = new PresidioDecisions(customEntities, discoveredEntities, presidioPending);
+  const presidioDecisions = new PresidioDecisions(
+    customEntities,
+    discoveredEntities,
+    presidioPending,
+    anonControl,
+  );
 
   /**
    * Tell the analyst the held case is ready, once nothing is left to approve.
@@ -100,32 +105,53 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
       const c = await anonControl.load(req.params.id);
-      return res
-        .status(200)
-        .json({ ...c, screenshotWarning: c.enabled && !visionIsLocal, presidioConfigured });
+      return res.status(200).json({
+        ...c,
+        version: anonControlVersion(c),
+        screenshotWarning: c.enabled && !visionIsLocal,
+        presidioConfigured,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
   app.post("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
-      const cur = await anonControl.load(req.params.id);
       // Only accept KNOWN category keys with BOOLEAN values; anything else keeps the current value.
       // (A blind spread would let `{categories:{IP:null}}` persist a falsy non-boolean and silently
       // disable a category while `enabled` stays true.)
       const reqCats = (req.body?.categories ?? {}) as Record<string, unknown>;
-      const categories = { ...cur.categories };
-      for (const k of Object.keys(categories) as (keyof AnonControl["categories"])[]) {
-        if (typeof reqCats[k] === "boolean") categories[k] = reqCats[k];
-      }
-      const next: AnonControl = {
-        enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
-        categories,
-        redactSecrets:
-          typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
-        presidio: typeof req.body?.presidio === "boolean" ? req.body.presidio : cur.presidio,
+      const build = (cur: AnonControl): AnonControl => {
+        const categories = { ...cur.categories };
+        for (const k of Object.keys(categories) as (keyof AnonControl["categories"])[]) {
+          if (typeof reqCats[k] === "boolean") categories[k] = reqCats[k];
+        }
+        return {
+          enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
+          categories,
+          redactSecrets:
+            typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
+          presidio: typeof req.body?.presidio === "boolean" ? req.body.presidio : cur.presidio,
+        };
       };
-      await anonControl.save(req.params.id, next);
+      // #1839: the modal sends the version it loaded. A stale form (another window changed the
+      // settings since) is refused with the current settings, so it can never turn masking off
+      // under a value just hidden. A caller that names only the fields it changes may omit it.
+      const base = typeof req.body?.version === "string" ? req.body.version : undefined;
+      const outcome = await presidioDecisions.replaceControl(req.params.id, build, base);
+      if (!outcome.applied) {
+        logLine(`[anon] refused a stale anonymization settings save for case ${req.params.id}`);
+        return res.status(409).json({
+          error: "anon_control_stale",
+          control: {
+            ...outcome.control,
+            version: outcome.version,
+            screenshotWarning: outcome.control.enabled && !visionIsLocal,
+            presidioConfigured,
+          },
+        });
+      }
+      const { control: next, previous: cur } = outcome;
       // #1599: a policy change alters what the model would see, so the stored conclusions no longer
       // match — but it starts no run. This used to call synthesize() directly, with no job and no busy
       // check, and ran alongside the AI-on catch-up synthesis for seven minutes on a lab case.
@@ -149,9 +175,12 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           detail: `Presidio PII scanning ${next.presidio ? "enabled" : "disabled"} for this case`,
         });
       }
-      return res
-        .status(200)
-        .json({ ...next, screenshotWarning: next.enabled && !visionIsLocal, presidioConfigured });
+      return res.status(200).json({
+        ...next,
+        version: outcome.version,
+        screenshotWarning: next.enabled && !visionIsLocal,
+        presidioConfigured,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -160,10 +189,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   // The entities that will be anonymized for a case: `auto` (auto-discovery — derived from the
   // timeline PLUS entities the OCR pass tokenized out of screenshots, grouped by category, with
   // analyst-suppressed values removed) + `custom` (analyst-added) + `suppressed` (removed values).
-  // POST replaces the custom list; the /suppress + /unsuppress routes manage auto-discovery removals.
+  // POST replaces the custom list from a versioned base (#1839); the /suppress + /unsuppress routes manage auto-discovery removals.
   app.get("/cases/:id/anon-entities", async (req: Request, res: Response) => {
     try {
-      const custom = await customEntities.load(req.params.id);
+      const { entities: custom, version: customVersion } = await customEntities.loadVersioned(req.params.id);
       const disc = await discoveredEntities.load(req.params.id);
       const suppressed = new Set(disc.suppressed);
       const groups: Record<AnonTokenCategory, string[]> = {
@@ -211,16 +240,28 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         paths: clean(groups.PATH),
         other: clean(groups.OTHER),
       };
-      return res.status(200).json({ auto, custom, suppressed: disc.suppressed });
+      return res.status(200).json({ auto, custom, customVersion, suppressed: disc.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
   app.post("/cases/:id/anon-entities", async (req: Request, res: Response) => {
     try {
-      const entities = sanitizeCustomEntities(req.body?.entities);
-      await customEntities.save(req.params.id, entities);
-      return res.status(200).json({ custom: entities });
+      // #1839: a versioned save. The editor sends the version it loaded; a stale base (another
+      // window hid or changed a value since) is refused with the current list, under the same
+      // per-case lock as "Hide from AI", so a stale window can never erase a value just hidden.
+      const outcome = await presidioDecisions.replaceCustom(
+        req.params.id,
+        req.body?.entities,
+        req.body?.version,
+      );
+      if (!outcome.applied) {
+        logLine(`[anon] refused a stale custom entity list save for case ${req.params.id}`);
+        return res
+          .status(409)
+          .json({ error: "anon_entities_stale", custom: outcome.custom, customVersion: outcome.version });
+      }
+      return res.status(200).json({ custom: outcome.custom, customVersion: outcome.version });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

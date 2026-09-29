@@ -152,6 +152,7 @@
     "anonControl.ts": "analysis/privacy",
     "anonDiscovered.ts": "analysis/privacy",
     "anonEntities.ts": "analysis/privacy",
+    "anonRevision.ts": "analysis/privacy",
     "anonUsernames.ts": "analysis/privacy",
     "anonymize.ts": "analysis/privacy",
     "answerContradiction.ts": "analysis/ai",

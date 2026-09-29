@@ -1686,6 +1686,8 @@ export const FEATURES: Feature[] = [
       "loadAnonToggle",
       "renderAnonToggle",
       "renderAutoEntities",
+      // #1839: the stale-save rebase, published so its merge rules are unit-tested directly.
+      "rebaseAnonCustom",
     ],
     private: [
       "presidioPending",
@@ -1694,6 +1696,9 @@ export const FEATURES: Feature[] = [
       "anonAuto",
       "anonControl",
       "anonCustom",
+      "anonCustomBase",
+      "anonCustomVersion",
+      "anonCustomCase",
       "anonSuppressed",
     ],
   },

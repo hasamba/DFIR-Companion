@@ -52,6 +52,11 @@
     other: [],
   };
   let anonCustom = []; // working copy: [{ value, category }]
+  // #1839: the custom list as loaded, its server version, and the case it belongs to. Save sends the
+  // version; a stale one is refused (409) and the list is rebased, never overwritten.
+  let anonCustomBase = [];
+  let anonCustomVersion = null;
+  let anonCustomCase = null;
   let anonSuppressed = []; // values removed from auto-discovery (server-persisted)
   // Whether the CONFIGURED analyzer actually answers — a different fact from anonControl's
   // presidioConfigured, which only says DFIR_PRESIDIO_URL is non-empty. null until the modal has
@@ -90,17 +95,54 @@
       })
       .catch(() => anonUnavailable());
   }
-  function loadAnonEntities(caseId) {
+  const currentCase = () => document.getElementById("caseId")?.value.trim();
+  // `customToo` is only for the modal's first load. Every other refresh (after Hide from AI, or an
+  // auto-list remove/restore) updates the auto lists alone, so it never drops unsaved editor edits.
+  function loadAnonEntities(caseId, customToo) {
     return fetch(`/cases/${caseId}/anon-entities`)
       .then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then((d) => {
+        if (currentCase() !== caseId) return; // a late answer for a case the analyst has left
         anonAuto = d.auto || {};
-        anonCustom = (d.custom || []).map((e) => ({ ...e }));
         anonSuppressed = d.suppressed || [];
+        if (customToo === true) setCustomBase(caseId, d.custom, d.customVersion);
       });
+  }
+  function setCustomBase(caseId, list, version) {
+    anonCustomBase = (list || []).map((e) => ({ ...e }));
+    anonCustom = anonCustomBase.map((e) => ({ ...e }));
+    anonCustomVersion = typeof version === "number" ? version : null;
+    anonCustomCase = caseId;
+  }
+  // #1839: re-apply the analyst's unsaved edits on top of the list another window saved. Additions
+  // and category changes are kept. A removal is NOT re-applied: the other window may have just hidden
+  // that value again, and the stricter choice wins — the analyst removes it again on purpose.
+  function rebaseAnonCustom(base, working, server, max) {
+    const key = (e) => e.value.trim().toLowerCase();
+    const baseBy = new Map(base.map((e) => [key(e), e]));
+    const workBy = new Set(working.map(key));
+    const merged = server.map((e) => ({ ...e }));
+    const at = new Map(merged.map((e, i) => [key(e), i]));
+    let kept = 0;
+    let dropped = 0;
+    for (const w of working) {
+      const b = baseBy.get(key(w));
+      if (b && b.value === w.value && b.category === w.category) continue; // not an edit
+      if (at.has(key(w))) merged[at.get(key(w))] = { ...w };
+      else if (merged.length >= max) {
+        dropped++;
+        continue;
+      } else {
+        at.set(key(w), merged.length);
+        merged.push({ ...w });
+      }
+      kept++;
+    }
+    const removed = base.filter((e) => !workBy.has(key(e)) && at.has(key(e))).map((e) => e.value);
+    return { merged, kept, dropped, removed };
   }
   function renderAutoEntities() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -565,14 +607,7 @@
       return;
     }
     if (!anonControl) return;
-    document.getElementById("anonEnabled").checked = !!anonControl.enabled;
-    document.getElementById("anonRedactSecrets").checked =
-      anonControl.redactSecrets !== false;
-    document.getElementById("anonCategories").innerHTML = ANON_CATEGORIES.map(
-      ([k, label]) =>
-        `<label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0"><input type="checkbox" class="anon-cb" value="${escAttr(k)}" ${anonControl.categories && anonControl.categories[k] ? "checked" : ""}> ${esc(label)}</label>`,
-    ).join("");
-    renderPresidioCategory();
+    fillAnonControlFields();
     document.getElementById("anonCustCat").innerHTML =
       ANON_ENTITY_CATEGORIES.map(
         (c) => `<option value="${escAttr(c)}">${esc(c)}</option>`,
@@ -586,7 +621,20 @@
       warn.style.display = "none";
     }
     document.getElementById("anonMsg").textContent = "loading entities…";
-    loadAnonEntities(caseId)
+    // Fresh settings too, so a modal opened after another window saved does not start stale.
+    fetch(`/cases/${caseId}/anon-control`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => {
+        // Unchanged: leave the fields alone, the analyst may already be editing them.
+        if (!c || currentCase() !== caseId || (anonControl && c.version === anonControl.version)) return;
+        anonControl = c;
+        renderAnonToggle();
+        fillAnonControlFields();
+      })
+      .catch(() => {});
+    anonCustomVersion = null; // Save waits for this load (#1839)
+    anonCustomCase = null;
+    loadAnonEntities(caseId, true)
       .then(() => {
         renderAutoEntities();
         renderCustomEntities();
@@ -610,6 +658,16 @@
     probePresidioHealth();
     document.getElementById("anonOverlay").classList.add("open");
   }
+  function fillAnonControlFields() {
+    document.getElementById("anonEnabled").checked = !!anonControl.enabled;
+    document.getElementById("anonRedactSecrets").checked =
+      anonControl.redactSecrets !== false;
+    document.getElementById("anonCategories").innerHTML = ANON_CATEGORIES.map(
+      ([k, label]) =>
+        `<label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0"><input type="checkbox" class="anon-cb" value="${escAttr(k)}" ${anonControl.categories && anonControl.categories[k] ? "checked" : ""}> ${esc(label)}</label>`,
+    ).join("");
+    renderPresidioCategory();
+  }
   function saveAnon() {
     const caseId = document.getElementById("caseId").value.trim();
     const enabled = document.getElementById("anonEnabled").checked;
@@ -630,38 +688,66 @@
         ? presidioBox.checked
         : undefined;
     const msg = document.getElementById("anonMsg");
+    // #1839: both halves are versioned saves. The list goes first; a stale list stops the settings
+    // too, so a stale window never half-applies. Nothing saves before the list has loaded.
+    if (anonCustomVersion === null || anonCustomCase !== caseId) {
+      msg.textContent = "The hidden-values list has not loaded yet. Wait a moment, or close and reopen this window, then press Save again.";
+      return;
+    }
+    const version = anonControl && anonControl.version;
+    const control =
+      presidio === undefined
+        ? { enabled, categories, redactSecrets, version }
+        : { enabled, categories, redactSecrets, presidio, version };
     msg.textContent = "saving…";
-    Promise.all([
-      fetch(`/cases/${caseId}/anon-control`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          presidio === undefined
-            ? { enabled, categories, redactSecrets }
-            : { enabled, categories, redactSecrets, presidio },
-        ),
-      }).then((r) => {
-        if (!r.ok) throw new Error("control HTTP " + r.status);
-        return r.json();
-      }),
-      fetch(`/cases/${caseId}/anon-entities`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entities: anonCustom }),
-      }).then((r) => {
+    postJson(`/cases/${caseId}/anon-entities`, { entities: anonCustom, version: anonCustomVersion })
+      .then(({ r, d }) => {
+        if (currentCase() !== caseId) throw new Error("case changed");
+        if (r.status === 409 && d.error === "anon_entities_stale") return staleCustom(caseId, d);
         if (!r.ok) throw new Error("entities HTTP " + r.status);
-        return r.json();
-      }),
-    ])
-      .then(([c]) => {
-        anonControl = c;
-        renderAnonToggle();
-        document.getElementById("anonOverlay").classList.remove("open");
-        document.getElementById("status").textContent = enabled
-          ? "Anonymization on — sensitive data tokenized before the AI"
-          : "Anonymization off";
+        setCustomBase(caseId, d.custom, d.customVersion);
+        return postJson(`/cases/${caseId}/anon-control`, control).then(({ r: rc, d: c }) => {
+          if (currentCase() !== caseId) throw new Error("case changed");
+          if (rc.status === 409 && c.error === "anon_control_stale") return staleControl(c.control);
+          if (!rc.ok) throw new Error("control HTTP " + rc.status);
+          anonControl = c;
+          renderAnonToggle();
+          document.getElementById("anonOverlay").classList.remove("open");
+          document.getElementById("status").textContent = enabled
+            ? "Anonymization on — sensitive data tokenized before the AI"
+            : "Anonymization off";
+        });
       })
       .catch((e) => (msg.textContent = "failed: " + e.message));
+  }
+  function postJson(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => r.json().then((d) => ({ r, d }), () => ({ r, d: {} })));
+  }
+  // Another window saved the list first. Show its list with this window's edits on top; save nothing.
+  function staleCustom(caseId, d) {
+    const x = rebaseAnonCustom(anonCustomBase, anonCustom, d.custom || [], 500);
+    setCustomBase(caseId, d.custom, d.customVersion);
+    anonCustom = x.merged;
+    renderCustomEntities();
+    document.getElementById("anonMsg").textContent =
+      `Nothing was saved: another window changed the hidden-values list. It is reloaded below with ${x.kept} unsaved change(s) of yours kept. ` +
+      (x.dropped ? `${x.dropped} addition(s) did not fit: the list is full. ` : "") +
+      (x.removed.length
+        ? `You had removed ${x.removed.join(", ")}; still hidden — remove again if you meant it. `
+        : "") +
+      "Check the list, then press Save again.";
+  }
+  // Another window changed the settings. Show the current ones; the analyst makes the change again.
+  function staleControl(c) {
+    anonControl = c;
+    renderAnonToggle();
+    fillAnonControlFields();
+    document.getElementById("anonMsg").textContent =
+      "Hidden values saved. The settings were NOT saved: another window changed them. The current settings are shown — make your change again, then press Save.";
   }
 
   function setAi(kind, text) {
@@ -692,6 +778,7 @@
   window.saveAnon = saveAnon;
   window.setAi = setAi;
   window.loadAnonEntities = loadAnonEntities;
+  window.rebaseAnonCustom = rebaseAnonCustom;
   window.loadAnonToggle = loadAnonToggle;
   window.renderAnonToggle = renderAnonToggle;
   window.renderAutoEntities = renderAutoEntities;
