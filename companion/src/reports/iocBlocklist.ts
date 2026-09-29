@@ -11,7 +11,25 @@ import {
 import { iocToStixPattern } from "./stix.js";
 import type { StixBundle, StixObject } from "./stix.js";
 
+/** The downloadable block-list file formats. */
 export type IocBlocklistFormat = "txt" | "csv" | "stix";
+/** What GET /cases/:id/export/ioc-blocklist accepts: a file format, or the match summary (#1807). */
+export type IocBlocklistRequestFormat = IocBlocklistFormat | "summary";
+export const IOC_BLOCKLIST_REQUEST_FORMATS: readonly IocBlocklistRequestFormat[] = [
+  "txt",
+  "csv",
+  "stix",
+  "summary",
+];
+/** Response content type and file extension per downloadable format. */
+export const IOC_BLOCKLIST_FILE_FORMATS: Record<
+  IocBlocklistFormat,
+  { contentType: string; extension: string }
+> = {
+  txt: { contentType: "text/plain; charset=utf-8", extension: "txt" },
+  csv: { contentType: "text/csv; charset=utf-8", extension: "csv" },
+  stix: { contentType: "application/json; charset=utf-8", extension: "stix.json" },
+};
 export type BlocklistIocType = "ip" | "domain" | "url" | "hash" | "email";
 
 export interface IocBlocklistOptions {
@@ -79,6 +97,45 @@ const DEFAULT_TYPES: BlocklistIocType[] = ["ip", "domain", "url", "hash"];
 const DEFAULT_MIN_SEVERITY: Severity = "Medium";
 
 /**
+ * Why a block-list leaves an IOC out (#1807), or null when it is kept. One reason per IOC: the
+ * FIRST check it fails, in the order the filter applies them.
+ *   - no-actionable-intel: fails the severity floor with no actionable verdict at all (never
+ *     enriched, or every assertion expired / was revoked / is not actionable).
+ *   - below-min-severity: has an actionable verdict, but it maps below the floor.
+ */
+export const BLOCKLIST_EXCLUSION_REASONS = [
+  "retired",
+  "client-reported",
+  "ineligible-type",
+  "no-actionable-intel",
+  "below-min-severity",
+  "not-verdict-confirmed",
+] as const;
+export type BlocklistExclusionReason = (typeof BLOCKLIST_EXCLUSION_REASONS)[number];
+
+export function blocklistExclusionReason(
+  ioc: IOC,
+  opts: IocBlocklistOptions,
+): BlocklistExclusionReason | null {
+  if (opts.excludeIocIds?.has(ioc.id)) return "retired";
+  // #1266: a block-list ACTS, and a client-reported value (a sender-controlled header, e.g.
+  // X-Originating-IP) is a claim, not an observation — a forged header must never be able to
+  // put an address on it, whatever intel says about that address. Same rule as MISP to_ids.
+  if (ioc.provenance === "client-reported") return "client-reported";
+  const eff = effectiveType(ioc);
+  if (!eff || !(opts.types ?? DEFAULT_TYPES).includes(eff)) return "ineligible-type";
+  // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
+  if (SEVERITY_RANK[iocSeverity(ioc)] > SEVERITY_RANK[opts.minSeverity ?? DEFAULT_MIN_SEVERITY]) {
+    return worstVerdict(ioc) === null ? "no-actionable-intel" : "below-min-severity";
+  }
+  if (opts.verdictOnly) {
+    const v = worstVerdict(ioc);
+    if (v !== "malicious" && v !== "suspicious") return "not-verdict-confirmed";
+  }
+  return null;
+}
+
+/**
  * Apply block-list filters to an IOC list.
  * The state must already be scope/legitimate-filtered (ReportWriter.loadFilteredState does this).
  */
@@ -86,28 +143,60 @@ export function filterBlocklistIocs(
   iocs: IOC[],
   opts: IocBlocklistOptions,
 ): { ioc: IOC; effectiveType: BlocklistIocType }[] {
-  const types = opts.types ?? DEFAULT_TYPES;
-  const minSev = opts.minSeverity ?? DEFAULT_MIN_SEVERITY;
-  const verdictOnly = opts.verdictOnly ?? false;
-
   const results: { ioc: IOC; effectiveType: BlocklistIocType }[] = [];
   for (const ioc of iocs) {
-    if (opts.excludeIocIds?.has(ioc.id)) continue;
-    // #1266: a block-list ACTS, and a client-reported value (a sender-controlled header, e.g.
-    // X-Originating-IP) is a claim, not an observation — a forged header must never be able to
-    // put an address on it, whatever intel says about that address. Same rule as MISP to_ids.
-    if (ioc.provenance === "client-reported") continue;
     const eff = effectiveType(ioc);
-    if (!eff || !types.includes(eff)) continue;
-    // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
-    if (SEVERITY_RANK[iocSeverity(ioc)] > SEVERITY_RANK[minSev]) continue;
-    if (verdictOnly) {
-      const v = worstVerdict(ioc);
-      if (v !== "malicious" && v !== "suspicious") continue;
-    }
-    results.push({ ioc, effectiveType: eff });
+    if (eff && blocklistExclusionReason(ioc, opts) === null) results.push({ ioc, effectiveType: eff });
   }
   return results;
+}
+
+export interface BlocklistSummary {
+  total: number;
+  matched: number;
+  excluded: Record<BlocklistExclusionReason, number>;
+}
+
+/** How many IOCs the block-list keeps, and how many each reason leaves out (#1807). */
+export function summarizeBlocklist(iocs: IOC[], opts: IocBlocklistOptions): BlocklistSummary {
+  const excluded = Object.fromEntries(BLOCKLIST_EXCLUSION_REASONS.map((r) => [r, 0])) as Record<
+    BlocklistExclusionReason,
+    number
+  >;
+  let matched = 0;
+  for (const ioc of iocs) {
+    const reason = blocklistExclusionReason(ioc, opts);
+    if (reason === null) matched += 1;
+    else excluded[reason] += 1;
+  }
+  return { total: iocs.length, matched, excluded };
+}
+
+function reasonText(reason: BlocklistExclusionReason, minSev: Severity): string {
+  switch (reason) {
+    case "retired":
+      return "retired";
+    case "client-reported":
+      return "client-reported (sender-controlled header)";
+    case "ineligible-type":
+      return "IOC type not in the block-list or not selected";
+    case "no-actionable-intel":
+      return "no usable threat-intel verdict (never enriched, or the verdict expired or was revoked) — run enrichment and export again";
+    case "below-min-severity":
+      return `below minimum severity ${minSev}`;
+    case "not-verdict-confirmed":
+      return "not verdict-confirmed";
+  }
+}
+
+// The TXT header lines that say how many IOCs matched and why the rest were left out.
+function summaryHeaderLines(summary: BlocklistSummary, minSev: Severity): string[] {
+  return [
+    `# Matched ${summary.matched} of ${summary.total} IOCs`,
+    ...BLOCKLIST_EXCLUSION_REASONS.filter((r) => summary.excluded[r] > 0).map(
+      (r) => `#   ${summary.excluded[r]} ${reasonText(r, minSev)}`,
+    ),
+  ];
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -143,7 +232,8 @@ const withRetired = (state: InvestigationState, opts: IocBlocklistOptions): IocB
 });
 
 export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlocklistOptions = {}): string {
-  const filtered = filterBlocklistIocs(state.iocs, withRetired(state, opts));
+  const resolved = withRetired(state, opts);
+  const filtered = filterBlocklistIocs(state.iocs, resolved);
   const minSev = opts.minSeverity ?? DEFAULT_MIN_SEVERITY;
   const types = opts.types ?? DEFAULT_TYPES;
   const ts = opts.generatedAt ?? new Date().toISOString();
@@ -153,6 +243,7 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
     `# Case: ${opts.caseName?.trim() || state.caseId}`,
     `# Generated: ${ts}`,
     `# Filters: scope applied, legitimate excluded, client-reported excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
+    ...summaryHeaderLines(summarizeBlocklist(state.iocs, resolved), minSev),
     "",
   ];
 
@@ -273,4 +364,39 @@ export function buildIocBlocklistStix(state: InvestigationState, opts: IocBlockl
     id: `bundle--${uuidv5(`${state.caseId}|ioc-blocklist`)}`,
     objects,
   };
+}
+
+// ── Format dispatch ───────────────────────────────────────────────────────────
+
+/** Build the requested block-list output: a file format, or the match summary (#1807). */
+export function buildIocBlocklist(
+  format: IocBlocklistRequestFormat,
+  state: InvestigationState,
+  opts: IocBlocklistOptions = {},
+): string | StixBundle | BlocklistSummary {
+  if (format === "summary") return summarizeBlocklist(state.iocs, withRetired(state, opts));
+  if (format === "csv") return buildIocBlocklistCsv(state, opts);
+  if (format === "stix") return buildIocBlocklistStix(state, opts);
+  return buildIocBlocklistTxt(state, opts);
+}
+
+const VALID_SEVERITIES: readonly Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
+const VALID_TYPES: readonly BlocklistIocType[] = ["ip", "domain", "url", "hash", "email"];
+
+/** Read the block-list filter options from untrusted query parameters. Unknown values are dropped. */
+export function parseBlocklistQuery(query: Record<string, unknown>): IocBlocklistOptions {
+  const opts: IocBlocklistOptions = {};
+  const { minSeverity, types, verdictOnly } = query;
+  if (typeof minSeverity === "string" && VALID_SEVERITIES.includes(minSeverity as Severity)) {
+    opts.minSeverity = minSeverity as Severity;
+  }
+  // A present but empty `types=` means the analyst unticked every type: no IOC matches. Only an
+  // ABSENT parameter falls back to the defaults, or unticking everything would export them all.
+  if (typeof types === "string") {
+    opts.types = types
+      .split(",")
+      .filter((t): t is BlocklistIocType => VALID_TYPES.includes(t as BlocklistIocType));
+  }
+  if (verdictOnly === "true") opts.verdictOnly = true;
+  return opts;
 }

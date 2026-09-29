@@ -144,7 +144,7 @@ const PATH_DOMAINS =
 // The right-hand side ends in a file extension → it's a path segment (e.g. Zip\7z.exe), not a
 // DOMAIN\user. Real Windows usernames don't end in .exe/.dll/etc. Curated (not "any dotted suffix")
 // so legitimate dotted accounts like CORP\first.last are NOT rejected.
-const FILE_EXT_USER =
+export const FILE_EXT_USER =
   /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|lnk|url|reg|inf|zip|rar|7z|gz|tgz|tar|cab|iso|img|txt|log|csv|tsv|json|xml|yaml|yml|ini|cfg|conf|dat|bin|db|sqlite|tmp|temp|dmp|mem|evtx|pcap|doc|docx|xls|xlsx|ppt|pptx|pdf|rtf|png|jpe?g|gif|bmp|svg|ico|md|sh|py|pl|rb|php|jar|so|dylib|key|pem|crt|cer|pfx)$/i;
 
 // NETBIOS_ACCT's lookbehind only rejects a separator ADJACENT to the domain, so it misses every

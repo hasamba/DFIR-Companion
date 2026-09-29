@@ -57,6 +57,52 @@ describe("ReportVersionStore", () => {
     expect(await versions.list("c1")).toHaveLength(1);
   });
 
+  it("mints a new version when only the report-meta changes (#1779)", async () => {
+    const first = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: emptyReportMeta(),
+      state: emptyDiffState(),
+    });
+    expect(first.metaHash).toMatch(/^[a-f0-9]{64}$/);
+    const changed = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: { ...emptyReportMeta(), incidentId: "INC-0001" },
+      state: emptyDiffState(),
+    });
+    expect(changed.id).not.toBe(first.id);
+    expect(changed.version).toBe("v2");
+    const again = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: { ...emptyReportMeta(), incidentId: "INC-0001" },
+      state: emptyDiffState(),
+    });
+    expect(again.id).toBe(changed.id);
+    expect(await versions.list("c1")).toHaveLength(2);
+  });
+
+  it("counts an older summary without a meta hash as different once", async () => {
+    const first = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: emptyReportMeta(),
+      state: emptyDiffState(),
+    });
+    const indexPath = join(caseStore.stateDir("c1"), "report-versions", "index.json");
+    const { metaHash: _drop, ...legacy } = first;
+    await writeFile(indexPath, JSON.stringify([legacy]));
+    const upgraded = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: emptyReportMeta(),
+      state: emptyDiffState(),
+    });
+    expect(upgraded.id).not.toBe(first.id);
+    const settled = await versions.snapshot("c1", {
+      markdown: "# same",
+      meta: emptyReportMeta(),
+      state: emptyDiffState(),
+    });
+    expect(settled.id).toBe(upgraded.id);
+  });
+
   it("retrieves a full record by id, including markdown/meta/state", async () => {
     const meta = { ...emptyReportMeta(), organization: "ExampleCorp" };
     const state = {
