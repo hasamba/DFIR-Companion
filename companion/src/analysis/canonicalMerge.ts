@@ -3,6 +3,12 @@ import {
   LEGACY_UPGRADE_IMPORTER,
   type CanonicalEventEnvelope,
 } from "./canonicalEvent.js";
+import {
+  compactFieldProvenance,
+  expandFieldProvenance,
+  migrateCanonicalEnvelope,
+  type FieldProvenance,
+} from "./canonicalProvenanceCompact.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 // Merging two canonical envelopes that describe one row (#965). Two paths bring a second envelope
@@ -47,10 +53,12 @@ function fillLeaves(winner: Plain, filler: Plain): Plain {
   return out ?? winner;
 }
 
+// Both sides EXPANDED (#1874): each may carry its own defaults block, so the union is taken over the
+// complete records and the merged envelope is compacted afresh.
 function unionProvenance(
-  winner: CanonicalEventEnvelope["fieldProvenance"],
-  filler: CanonicalEventEnvelope["fieldProvenance"],
-): CanonicalEventEnvelope["fieldProvenance"] {
+  winner: Record<string, FieldProvenance>,
+  filler: Record<string, FieldProvenance>,
+): Record<string, FieldProvenance> {
   const out = { ...winner };
   for (const [path, provenance] of Object.entries(filler)) {
     const existing = out[path];
@@ -73,12 +81,14 @@ export function fillCanonicalGaps(
   winner: CanonicalEventEnvelope,
   filler: CanonicalEventEnvelope,
 ): CanonicalEventEnvelope {
-  const { schemaVersion, evidence, producer, fieldProvenance, ...normalized } = winner;
+  const { schemaVersion, evidence, producer, fieldProvenance, fieldProvenanceDefaults, ...normalized } =
+    winner;
   const {
     schemaVersion: _v,
     evidence: fillerEvidence,
     producer: _p,
     fieldProvenance: fillerProvenance,
+    fieldProvenanceDefaults: fillerDefaults,
     ...fillerNormalized
   } = filler;
   // The same record cited by both sides is one pointer, and it keeps the durable record id
@@ -90,7 +100,7 @@ export function fillCanonicalGaps(
     else if (pointers[at].recordId === undefined && pointer.recordId !== undefined)
       pointers[at] = { ...pointers[at], recordId: pointer.recordId };
   }
-  return {
+  return compactFieldProvenance({
     schemaVersion,
     ...(fillLeaves(normalized, fillerNormalized) as typeof normalized),
     evidence: {
@@ -100,8 +110,11 @@ export function fillCanonicalGaps(
         : {}),
     },
     producer,
-    fieldProvenance: unionProvenance(fieldProvenance, fillerProvenance),
-  };
+    fieldProvenance: unionProvenance(
+      expandFieldProvenance({ fieldProvenance, fieldProvenanceDefaults }),
+      expandFieldProvenance({ fieldProvenance: fillerProvenance, fieldProvenanceDefaults: fillerDefaults }),
+    ),
+  });
 }
 
 function isCurrent(envelope: CanonicalEventEnvelope | undefined): envelope is CanonicalEventEnvelope {
@@ -124,11 +137,14 @@ export function mergeCanonicalEvents(
 ): CanonicalEventEnvelope | undefined {
   if (!first) return incoming;
   if (!incoming) return first;
-  if (!isCurrent(first)) return first;
-  if (!isCurrent(incoming)) return incoming;
-  return incoming.producer.importer === LEGACY_UPGRADE_IMPORTER
-    ? fillCanonicalGaps(first, incoming)
-    : fillCanonicalGaps(incoming, first);
+  // A stored 1.0.0 envelope is current once relabelled (#1874) — never kept opaque for that alone.
+  const stored = migrateCanonicalEnvelope(first);
+  const next = migrateCanonicalEnvelope(incoming);
+  if (!isCurrent(stored)) return stored;
+  if (!isCurrent(next)) return next;
+  return next.producer.importer === LEGACY_UPGRADE_IMPORTER
+    ? fillCanonicalGaps(stored, next)
+    : fillCanonicalGaps(next, stored);
 }
 
 /**
@@ -140,11 +156,13 @@ export function mergeGroupCanonical(
   primary: ForensicEvent,
   members: readonly ForensicEvent[],
 ): CanonicalEventEnvelope | undefined {
-  if (primary.canonical && !isCurrent(primary.canonical)) return primary.canonical;
-  let out = primary.canonical;
+  const primaryCanonical = migrateCanonicalEnvelope(primary.canonical);
+  if (primaryCanonical && !isCurrent(primaryCanonical)) return primaryCanonical;
+  let out = primaryCanonical;
   for (const member of members) {
-    if (member === primary || !isCurrent(member.canonical)) continue;
-    out = out ? fillCanonicalGaps(out, member.canonical) : member.canonical;
+    const canonical = migrateCanonicalEnvelope(member.canonical);
+    if (member === primary || !isCurrent(canonical)) continue;
+    out = out ? fillCanonicalGaps(out, canonical) : canonical;
   }
   return out;
 }

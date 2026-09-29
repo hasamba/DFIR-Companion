@@ -1,3 +1,4 @@
+import { expandFieldProvenance } from "../../src/analysis/canonicalProvenanceCompact.js";
 import { describe, it, expect } from "vitest";
 import { parseGoogleWorkspaceReport } from "../../src/analysis/googleWorkspaceImport.js";
 import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
@@ -231,11 +232,11 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       principalId: "1234",
       principalType: "user",
     });
-    expect(e.canonical?.fieldProvenance["cloud.principalId"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["cloud.principalId"]).toMatchObject({
       rawFields: ["actor.profileId"],
     });
     // No callerType in the record: the type is derived from the fields present, and says so.
-    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["cloud.principalType"]).toMatchObject({
       origin: "derived",
       derivation: expect.stringContaining("email/profileId → user"),
     });
@@ -244,11 +245,11 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       { source: "google-workspace", locator: "record:0/event:0", recordId: "-1" },
     ]);
     expect(e.canonical?.evidence.sourceArtifactHash).toMatch(/^sha256:/);
-    expect(e.canonical?.fieldProvenance["actor.id"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["actor.id"]).toMatchObject({
       origin: "raw",
       rawFields: ["actor.profileId"],
     });
-    expect(e.canonical?.fieldProvenance["object.id"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["object.id"]).toMatchObject({
       origin: "raw",
       rawFields: ["client_id"],
     });
@@ -280,11 +281,11 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       principalType: "application",
       resource: "drive.drive.files.get",
     });
-    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["cloud.principalType"]).toMatchObject({
       origin: "derived",
       derivation: expect.stringContaining("token's client"),
     });
-    expect(e.canonical?.fieldProvenance["cloud.resource"]).toMatchObject({
+    expect(expandFieldProvenance(e.canonical)["cloud.resource"]).toMatchObject({
       rawFields: ["api_name", "method_name"],
     });
   });

@@ -1,3 +1,4 @@
+import { expandFieldProvenance } from "../../src/analysis/canonicalProvenanceCompact.js";
 import { describe, it, expect } from "vitest";
 import { parseMacos } from "../../src/analysis/macosImport.js";
 import {
@@ -156,13 +157,13 @@ describe("the join, by the event identifier inside one upload", () => {
     // provenance: the path rests on the attribute record, the download facts on the database record
     const aLocs = a.canonical!.evidence.rawRecords.map((x) => x.locator);
     expect(aLocs).toHaveLength(2);
-    const prov = a.canonical!.fieldProvenance;
+    const prov = expandFieldProvenance(a.canonical);
     expect(prov["quarantineAttribute.path"].recordLocators).toEqual([aLocs[0]]);
     expect(prov["quarantineAttribute.download.dataUrl"].recordLocators).toEqual([aLocs[1]]);
     expect(prov["quarantineAttribute.join.agentAgreement"].recordLocators.sort()).toEqual([...aLocs].sort());
     const dLocs = d.canonical!.evidence.rawRecords.map((x) => x.locator);
     expect(dLocs).toHaveLength(2);
-    const dProv = d.canonical!.fieldProvenance;
+    const dProv = expandFieldProvenance(d.canonical);
     expect(dProv["quarantine.dataUrl"].recordLocators).toEqual([dLocs[0]]);
     expect(dProv["quarantine.localFile.paths"].recordLocators).toEqual([dLocs[1]]);
     // no new indicators from the join
@@ -411,17 +412,15 @@ describe("code review round — Codex findings", () => {
     const [a] = attrRows(r);
     const locs = a.canonical!.evidence.rawRecords.map((x) => x.locator);
     expect(locs).toEqual(["attribute:2", "record:0", "record:1"]);
-    expect(a.canonical!.fieldProvenance["quarantineAttribute.join.state"].recordLocators.sort()).toEqual([
-      "attribute:2",
-      "record:0",
-      "record:1",
-    ]);
+    expect(
+      expandFieldProvenance(a.canonical)["quarantineAttribute.join.state"].recordLocators.sort(),
+    ).toEqual(["attribute:2", "record:0", "record:1"]);
     expect(a.canonical!.evidence.rawRecords[1].recordId).toBe(UUID);
   });
 
   it("6. several files: each listed path rests on its own attribute record; the state on the database record and every file", () => {
     const r = rowsOf([db(), attr({ path: "/a" }), attr({ path: "/b" })]);
-    const prov = dbRow(r).canonical!.fieldProvenance;
+    const prov = expandFieldProvenance(dbRow(r).canonical);
     expect(prov["quarantine.localFile.paths"].recordLocators.sort()).toEqual(["attribute:1", "attribute:2"]);
     expect(prov["quarantine.localFile.state"].recordLocators.sort()).toEqual([
       "attribute:1",

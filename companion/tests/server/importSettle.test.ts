@@ -506,7 +506,7 @@ describe("settleForensicImport — first-party update traffic", () => {
     return {
       ...ev(id, "Medium", "Sigma: Net Conn (Sysmon Alert) - Sysmon Network connection (EID 3)"),
       canonical: {
-        schemaVersion: "1.0.0",
+        schemaVersion: "1.1.0",
         event: { category: "network", type: "connection" },
         network: { source: { address: "192.0.2.10" }, destination: { address: "150.171.109.82", port: 443 } },
         file: {

@@ -2,6 +2,16 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
 import { restampEdgeObserved } from "./canonicalProvenanceRestamp.js";
+import {
+  COMPACT_PROVENANCE_SCHEMA_VERSION,
+  compactFieldProvenance,
+  expandFieldProvenance,
+  fieldProvenanceDefaultsSchema,
+  acceptingStoredProvenance,
+  migrateCanonicalEnvelope,
+  storedFieldProvenanceSchema,
+  type FieldProvenance,
+} from "./canonicalProvenanceCompact.js";
 import { smbBlockSchema, transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
@@ -45,11 +55,11 @@ import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 
-export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const; // exact-match barrier; bump policy: #1315
+// exact-match barrier; bump policy: #1315. 1.1.0 (#1874): compact field provenance; 1.0.0 is migrated on read.
+export const CANONICAL_EVENT_SCHEMA_VERSION = COMPACT_PROVENANCE_SCHEMA_VERSION;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
 export const LEGACY_UPGRADE_IMPORTER = "legacy-upgrade";
 
-const confidenceSchema = z.enum(["high", "medium", "low"]);
 const entityKindSchema = z.enum([
   "account",
   "host",
@@ -97,15 +107,7 @@ const rawRecordPointerSchema = z.object({
   recordId: z.string().optional(),
 });
 
-const fieldProvenanceSchema = z.object({
-  origin: z.enum(["raw", "derived"]),
-  confidence: confidenceSchema,
-  rawFields: z.array(z.string()).optional(),
-  derivation: z.string().optional(),
-  recordLocators: z.array(z.string().min(1)).min(1),
-});
-
-export const canonicalEventEnvelopeSchema = z.object({
+const envelopeObjectSchema = z.object({
   schemaVersion: z.literal(CANONICAL_EVENT_SCHEMA_VERSION),
   event: z.object({
     category: z.enum([
@@ -398,16 +400,19 @@ export const canonicalEventEnvelopeSchema = z.object({
     mappingVersion: z.string().min(1),
     ruleVersions: z.array(z.string()).optional(),
   }),
-  fieldProvenance: z.record(fieldProvenanceSchema),
+  fieldProvenance: z.record(storedFieldProvenanceSchema),
+  fieldProvenanceDefaults: fieldProvenanceDefaultsSchema.optional(), // #1874: canonicalProvenanceCompact.ts
 });
+export const canonicalEventEnvelopeSchema = acceptingStoredProvenance(envelopeObjectSchema);
 export type CanonicalEntity = z.infer<typeof canonicalEntitySchema>;
 export type CanonicalEventEnvelope = z.infer<typeof canonicalEventEnvelopeSchema>;
 export type CanonicalEventCategory = CanonicalEventEnvelope["event"]["category"];
-export type CanonicalFieldProvenance = CanonicalEventEnvelope["fieldProvenance"][string];
+/** One field's provenance as readers see it — complete. Read it with expandFieldProvenance. */
+export type CanonicalFieldProvenance = FieldProvenance;
 
 type CanonicalNormalizedFields = Omit<
   CanonicalEventEnvelope,
-  "schemaVersion" | "evidence" | "producer" | "fieldProvenance"
+  "schemaVersion" | "evidence" | "producer" | "fieldProvenance" | "fieldProvenanceDefaults"
 >;
 
 export type CreateCanonicalEventInput = Omit<CanonicalNormalizedFields, "time"> & {
@@ -457,6 +462,7 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
     evidence: _evidence,
     producer: _producer,
     fieldProvenance: _fieldProvenance,
+    fieldProvenanceDefaults: _fieldProvenanceDefaults,
     ...normalized
   } = envelope;
   return normalized;
@@ -494,7 +500,7 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
     if (!known.has(locator))
       throw new Error(`locatorMap names a record not in evidence.rawRecords: ${locator}`);
   }
-  const fieldProvenance: CanonicalEventEnvelope["fieldProvenance"] = {};
+  const fieldProvenance: Record<string, FieldProvenance> = {};
   for (const path of normalizedLeafPaths(base).filter(
     (path) => !path.startsWith("evidence.") && !path.startsWith("producer."),
   )) {
@@ -517,11 +523,9 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
           recordLocators,
         };
   }
-  return canonicalEventEnvelopeSchema.parse({
-    schemaVersion: CANONICAL_EVENT_SCHEMA_VERSION,
-    ...base,
-    fieldProvenance,
-  });
+  return canonicalEventEnvelopeSchema.parse(
+    compactFieldProvenance({ schemaVersion: CANONICAL_EVENT_SCHEMA_VERSION, ...base, fieldProvenance }),
+  );
 }
 
 export function canonicalConformanceIssues(envelope: unknown): string[] {
@@ -533,10 +537,10 @@ export function canonicalConformanceIssues(envelope: unknown): string[] {
   const issues: string[] = [];
   const canonical = parsed.data;
   const rawLocators = new Set(canonical.evidence.rawRecords.map((record) => record.locator));
-  for (const path of normalizedLeafPaths(normalizedPart(canonical))) {
-    if (!canonical.fieldProvenance[path]) issues.push(`missing field provenance: ${path}`);
-  }
-  for (const [path, provenance] of Object.entries(canonical.fieldProvenance)) {
+  const fieldProvenance = expandFieldProvenance(canonical);
+  for (const path of normalizedLeafPaths(normalizedPart(canonical)))
+    if (!fieldProvenance[path]) issues.push(`missing field provenance: ${path}`);
+  for (const [path, provenance] of Object.entries(fieldProvenance)) {
     if (provenance.origin === "raw" && !provenance.rawFields?.length) {
       issues.push(`raw provenance has no source field: ${path}`);
     }
@@ -753,6 +757,8 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
   if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return restampEdgeObserved(event); // #1352
+  const migrated = event.canonical && migrateCanonicalEnvelope(event.canonical); // 1.0.0 → 1.1.0 (#1874)
+  if (migrated !== event.canonical) return restampEdgeObserved({ ...event, canonical: migrated });
   if (event.canonical) return event; // an unknown version is preserved verbatim; no migration is registered yet — a bump must add one here first
   return { ...event, canonical: legacyCanonical(event) };
 }

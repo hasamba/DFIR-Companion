@@ -8,6 +8,8 @@ import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { FalsePositiveStore, markerId } from "../../src/analysis/falsePositive.js";
 import { ScopeStore } from "../../src/analysis/scope.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { parseSiemExport } from "../../src/analysis/siemImport.js";
+import { withExpandedFieldProvenance } from "../../src/analysis/canonicalProvenanceCompact.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -41,6 +43,39 @@ describe("ReportWriter", () => {
 
     const exported = JSON.parse(await readFile(paths.stateJson, "utf8"));
     expect(exported.caseId).toBe("c1");
+  });
+
+  // #1874: storage keeps field provenance compact; the exported state writes it out in full, the
+  // exact record the export carried before, so nothing an analyst reads there changes.
+  it("exports every forensic event's field provenance in full, without the compact defaults block", async () => {
+    const state = emptyState("c1");
+    const [event] = parseSiemExport(
+      JSON.stringify([
+        {
+          "@timestamp": "2026-07-06T10:00:00.000Z",
+          log_name: "System",
+          computer_name: "S1-HOST",
+          event_id: 7045,
+          event_data: { ServiceName: "svc-1", ServiceFileName: "C:\\Windows\\Temp\\svc-1.exe" },
+        },
+      ]),
+    ).events;
+    const { aggKey: _k, ...rest } = event;
+    state.forensicTimeline.push({ ...rest, id: "e1", relatedFindingIds: [], sourceScreenshots: [] });
+    expect(state.forensicTimeline[0].canonical?.fieldProvenanceDefaults).toBeDefined();
+    await stateStore.save(state);
+    const writer = new ReportWriter(caseStore, stateStore);
+    const paths = await writer.writeAll("c1");
+    const [exported] = JSON.parse(await readFile(paths.stateJson, "utf8")).forensicTimeline;
+    expect(exported.canonical).not.toHaveProperty("fieldProvenanceDefaults");
+    const verbose = withExpandedFieldProvenance(state.forensicTimeline[0].canonical!);
+    expect(exported.canonical.fieldProvenance).toEqual(verbose.fieldProvenance);
+    expect(exported.canonical.fieldProvenance["service.name"]).toEqual({
+      origin: "derived",
+      confidence: "high",
+      derivation: expect.stringMatching(/: deterministic mapping from referenced raw record$/),
+      recordLocators: ["row:0"],
+    });
   });
 
   it("excludes client-confirmed legitimate forensic events from the report", async () => {

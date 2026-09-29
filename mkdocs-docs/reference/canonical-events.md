@@ -35,6 +35,11 @@ Every normalized leaf field carries its own provenance:
 - **derived** names the deterministic mapping or migration rule that produced it; and
 - **confidence** is high, medium, or low for that individual mapping.
 
+Most fields in one event share the same record, confidence and mapping rule. Since version `1.1.0`
+the case stores each shared value once per event and leaves it out of every field that uses it,
+which makes a stored event about half the size. Every reader and every export rebuilds the full
+per-field record, so the provenance you see, including `state-export.json`, has not changed.
+
 Importer conformance tests reject an envelope that contains an untraceable normalized field. This
 provenance is internal evidence lineage; it does not replace the case's Chain of Custody record.
 It is also distinct from the `network.source.provenance` trust stamp, a developer-facing contract
@@ -43,10 +48,11 @@ between importers and host-attribution readers that is documented in the reposit
 
 ## Schema and migration policy
 
-The schema version is `1.0.0`, and it has not changed since the envelope was introduced. The version
-is not a changelog stamp. Every reader matches it exactly: the envelope schema, the Login Graph and
-Evidence Chain readers, and the re-import merge all treat an envelope with any other version as
-opaque. They preserve it verbatim and read nothing from it.
+The schema version is `1.1.0`. It changed once, from `1.0.0`, when field provenance got its compact
+stored form. The version is not a changelog stamp. Every reader matches it exactly: the envelope
+schema, the Login Graph and Evidence Chain readers, and the re-import merge all treat an envelope
+with a version they have no migration for as opaque. They preserve it verbatim and read nothing
+from it.
 
 - **Adding an optional field does not bump the version.** Every reader must fail closed when the
   field is absent, so an envelope written before the field existed is still read in full. Every
@@ -57,11 +63,14 @@ opaque. They preserve it verbatim and read nothing from it.
   else about it changes.
 - **Changing how a persisted envelope is read bumps the version.** Removing a field, changing its
   meaning, or making a reader depend on a field that older envelopes lack all qualify.
-- **A bump is only safe together with a registered migration**, and none exists today. The upgrade
-  path knows one migration: an event with no envelope at all is a legacy event, upgraded on read
-  from its existing structured fields, with guarded description parsing confined to that one-time
-  step; the original event stays intact and the new envelope is persisted on the next normal case
-  save. A bump without a migration for the previous version makes every stored envelope in every
+- **A bump is only safe together with a registered migration.** The upgrade path knows two
+  migrations. An event with no envelope at all is a legacy event, upgraded on read from its existing
+  structured fields, with guarded description parsing confined to that one-time step; the original
+  event stays intact and the new envelope is persisted on the next normal case save. A `1.0.0`
+  envelope always spells out every field's provenance in full, which is still a valid `1.1.0`
+  envelope, so it is relabelled on read and nothing else changes; the next normal case save writes
+  it back in the compact form, with the same provenance value for value. A bump without a
+  migration for the previous version makes every stored envelope in every
   existing case invisible to the Login Graph, the Evidence Chain and the merge, and no test would
   catch it.
 - An unknown future schema version is preserved, not silently rewritten or downgraded.

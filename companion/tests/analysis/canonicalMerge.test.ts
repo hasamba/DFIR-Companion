@@ -1,3 +1,4 @@
+import { expandFieldProvenance } from "../../src/analysis/canonicalProvenanceCompact.js";
 import { describe, it, expect } from "vitest";
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "../../src/analysis/canonicalEvent.js";
 import { mergeCanonicalEvents } from "../../src/analysis/canonicalMerge.js";
@@ -91,7 +92,7 @@ describe("mergeCanonicalEvents (state merge of a re-imported row)", () => {
     const twice = mergeCanonicalEvents(once, decoded)!;
     expect(twice).toEqual(once);
     expect(once.evidence.rawRecords).toEqual([{ source: "windows-event", locator: "row:0" }]);
-    for (const p of Object.values(once.fieldProvenance)) {
+    for (const p of Object.values(expandFieldProvenance(once))) {
       expect(new Set(p.recordLocators).size).toBe(p.recordLocators.length);
     }
   });
