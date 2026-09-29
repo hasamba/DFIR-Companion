@@ -1,6 +1,7 @@
 import type { ImportLock } from "../analysis/importLock.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import type { ImportAdmissionHint } from "../analysis/importMemoryGuard.js";
 
 /**
  * The critical section an import route runs inside: the case's import lock, held, plus the state
@@ -24,13 +25,18 @@ export interface ImportSection {
   release(): void;
 }
 
-/** Take the case's import section: wait for the lock, then snapshot inside it. */
+/**
+ * Take the case's import section: wait for the lock, then snapshot inside it. `size` sizes the
+ * import for the memory guard (#1874), which may refuse it here — before the snapshot is loaded:
+ * a number is the artifact's size in bytes.
+ */
 export async function beginImportSection(
   importLock: ImportLock,
   caseId: string,
   stateStore?: StateStore,
+  size?: number | ImportAdmissionHint,
 ): Promise<ImportSection> {
-  const release = await importLock.acquire(caseId);
+  const release = await importLock.acquire(caseId, typeof size === "number" ? { incomingBytes: size } : size);
   let stateBefore: InvestigationState | null = null;
   try {
     stateBefore = (await stateStore?.load(caseId)) ?? null;

@@ -555,7 +555,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     // ingest and the Velociraptor monitors all land here, none of them passes through the job queue,
     // and any of them writing inside another import's section would be counted as that import's own
     // work (and swept into its undo checkpoint). See analysis/importLock.ts.
-    const counts = await importLock.runExclusive(caseId, async () => {
+    const counts = await importLock.runSized(caseId, { incomingBytes: text.length }, async () => {
       let stateBefore: InvestigationState | null = null;
       if (options.stateStore) {
         try {

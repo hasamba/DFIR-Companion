@@ -31,7 +31,7 @@ const RULES = compileRuleset({
 });
 
 // The tag writes are not what this test is about; a no-op store keeps it to the promotion question.
-const tagsStore = { load: async () => [], add: async () => undefined } as never;
+const tagsStore = { load: async () => [], add: async () => undefined, addMany: async () => [] } as never;
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
