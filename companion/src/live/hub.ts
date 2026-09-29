@@ -1,6 +1,7 @@
 import { CaseForgetter } from "../storage/caseKeyedState.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import { withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
+import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
 
@@ -97,8 +98,9 @@ export class LiveHub {
   // `?? []` because this is transport, not the route: a caller may hand over a partial state (the
   // socket-gate tests do), and a throw here would surface inside a route that has already saved.
   broadcast(saved: InvestigationState): void {
-    // The analyst's technique removals (#1742) are hidden here, as GET /cases/:id/state hides them.
-    const state = withoutRejectedTechniques(saved);
+    // The analyst's technique removals (#1742) are hidden here, as GET /cases/:id/state hides them —
+    // after the finding-text techniques (#1873) are added, the same order as that route.
+    const state = withoutRejectedTechniques(withFindingTextTechniques(saved));
     const techniqueNames = techniqueNamesFor(state.mitreTechniques ?? [], state.forensicTimeline ?? []);
     // The correlation lineage (#1715) is server bookkeeping; the dashboard gets resolved records instead.
     this.broadcastTo(state.caseId, {
