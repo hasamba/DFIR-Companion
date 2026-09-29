@@ -71,7 +71,7 @@ remembered Essential/All preference, and closing Settings clears the box.
 
 - Case root location
 - Server port
-- Log level (debug / info / warn / error) — live toggle, no restart
+- Log level (debug / info / warn / error) — live toggle, no restart. `DFIR_LOG_LEVEL` (default `info`) sets the level at startup.
 - **Open setup wizard** link
 - Push ingest token management
 - Update check (opt-in dashboard banner for new GitHub releases)
@@ -129,6 +129,8 @@ identities, emergency access, and the one-writer deployment model.
 **Second opinion** — `DFIR_AI_SECOND_OPINION_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` configure model B, the rival model behind the **2nd opinion** button. Setting `_MODEL` turns the feature on; the other three fall back to the vision provider settings when blank.
 
 **Referee for 2nd-opinion verdicts** — `DFIR_AI_RECONCILE_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` choose the model that writes the *referee suggests* line on each disagreement. Leave `_MODEL` blank and model A (the synthesis model) referees. Set it to `same-as-b` and model B referees its own findings. Set it to any other model ID for a neutral third referee. The other three fall back to the vision provider settings when blank. See [AI Analysis → Second opinion](ai-analysis.md#6-second-opinion-a-rival-model).
+
+**Fallback synthesis model** — `DFIR_AI_SYNTH_FALLBACK_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL` choose a second synthesis model. It is used only when the synthesis model's safety filter stops a synthesis answer partway. Setting `_MODEL` turns it on; blank means no fallback. A blank provider uses the synthesis provider, and a blank key or base URL uses that provider's settings. Pick a model from a different vendor, so the same filter does not stop it too. `DFIR_AI_SYNTH_SAFETY_RETRIES` (0–3, default 1) sets how many times the stopped model is asked again before the fallback runs; `0` switches to the fallback at once. The provider and model pickers sit in **Settings → AI** beside the synthesis model and show in Essential mode. Restart after you change these values. See [AI Analysis → Synthesis](ai-analysis.md#3-synthesis-the-normal-run).
 
 **Missed evidence review** — `DFIR_JEV_ENABLED`/`_PROVIDER`/`_MODEL`/`_KEY`/`_MAX_ROWS`/`_BATCH_SIZE`/`_TIMEOUT_MS` configure the fast decision model that re-grades Info rows. The review is off until `DFIR_JEV_ENABLED` is set. See [Advanced → Missed Evidence Review](advanced.md#missed-evidence-review).
 

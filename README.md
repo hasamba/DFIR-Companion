@@ -322,6 +322,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
 - **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini, Anthropic, Claude Code CLI, Codex CLI; optional two-tier (cheap extract + strong synth) with context budgeting
+- **Per-provider keys** — one API key and base URL per provider; every model uses its provider's values, so switching a model to another provider needs nothing new. Per-model keys become optional overrides
+- **Synthesis safety-stop fallback** — a synthesis the model's safety filter stops is retried on the same model, then runs once on a fallback model you pick (ideally another vendor)
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
 - **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand
@@ -396,7 +398,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Sigma → VQL hunts** — paste a Sigma rule, compile it deterministically (one fixed template per logsource category, every unsupported line refused by name), launch it as a recorded fleet hunt; `process_creation` rules also hunt Sysmon / 4688 history
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
-- **Internal Hunt Workbench** — typed field queries with Boolean logic, ranges, regex, grouping, saved hunts and entity pivots over the forensic or super-timeline; raw hits stay out of AI until promoted
+- **Internal Hunt Workbench** — typed field queries with Boolean logic, ranges, regex, grouping, saved hunts and entity pivots over the forensic or super-timeline; each saved hunt lists its past runs; raw hits stay out of AI until promoted
 - **Velociraptor triage bundles** — browse artifacts, save bundles (built-ins include **Hayabusa Full**), run them as hunts, and auto-collect + import the results
 - **AI-suggested fleet hunts** — AI proposes proactive fleet-sweep hunts grounded in the causal evidence graph (spawn chains, file lineage, lateral movement), so hunts target the relationship, not just the leaf indicator
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)
@@ -437,6 +439,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Help icon** — a `?` button beside the settings gear opens the online [user manual](https://hasamba.github.io/DFIR-Companion/manual/) in a new tab
 - **Background jobs** — a toolbar popover tracks imports, synthesis and enrichment, names the model version each AI job ran on, and Cancel hard-aborts a stuck run
 - **Dark/light theme** — toggle or OS preference
+- **Text size and fonts** — choose the dashboard text size, body font and code font
+- **Attack Path views** — show the attacker path as a step list or as one swimlane per host
 - **Forensic timeline rows** — affected host + clickable finding links; report has Host column
 - **Manual add** — record missed events/IOCs (tagged `manual`, survives re-analysis)
 - **MITRE techniques** link to [attack.mitre.org](https://attack.mitre.org/)
@@ -446,10 +450,12 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Pre-export evidence-safety check** — every human-readable export is checked against the case's own indicators and evidence text; a live indicator or unescaped evidence still ships, with a banner in the document and a dashboard warning
 - **Related Cases** — a panel listing other investigations that share an indicator with this one, ranked so a flagged hash outweighs a private address; off unless `DFIR_CROSS_CASE=on`
 - **ATT&CK Navigator layer** — techniques colored by severity; upload to [Navigator](https://mitre-attack.github.io/attack-navigator/)
+- **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with a platform filter, a hits-only view and per-technique findings and events
 - **STIX 2.1 bundle** — for OpenCTI, MISP, Anomali, etc.
 - **IOC block-list** — TXT/CSV/STIX-only; filters by severity/type/verdict
 - **Automatic state backup / rotation** — pre-synthesis + hourly snapshots of all per-case state files; configurable retention; Settings → Diagnostics → restore with one click
 - **Encrypted case archive** — password-protected .dfircase export of the ENTIRE case (evidence and screenshots included, AES-256-GCM encrypted); cross-machine sharing + restore as new case
+- **Import a ZIP case archive** — Import case also accepts the Archive to ZIP file, and checks paths, case identity and manifest hashes before it writes anything
 - **Redacted case package** — ZIP with tokenized IPs/hosts/users, blurred PII in screenshots, adversary indicators preserved
 - **AI executive summary** — management-facing (no ATT&CK ids/hashes/tool names)
 - **Narrative Timeline** — prose story for non-technical stakeholders
@@ -477,6 +483,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — overrides the default 2000-event-per-import safety cap
 - **Prompt regression / eval harness** — CI-safe and real-provider golden-output testing for AI extraction/synthesis quality
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
+- **Redacted support bundle** — **Settings → Diagnostics** downloads one zip of redacted logs, the capped always-on debug log (`DFIR_DEBUG_LOG_MAX_MB`) and failed-import layouts for a bug report; every import records the columns it used and why it skipped rows
 - **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or Firefox 140+ from any [release](https://github.com/hasamba/DFIR-Companion/releases/latest); needs the local server
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
@@ -895,6 +902,7 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_ALLOWED_HOST_SUFFIXES` | _(none)_ | Same as above but matched on a domain suffix, e.g. `.lab.example.com`, for platforms that mint a fresh hostname per session. Matching is on a label boundary, so `.acme.com` never matches `evilacme.com` |
 | `DFIR_LOG_LEVEL` | `info` | Log verbosity (`debug`/`info`/`warn`/`error`). Tees to console + `logs/session-<time>.log` (global) + `cases/<id>/logs/session-<time>.log` (per-case). `debug` traces AI calls, captures, OCR, anonymization, enrichment. Change live (no restart) via Settings → Log verbosity |
 | `DFIR_LOG_DIR` | `logs/` beside cases root | Folder for the **global** session log. Relative paths anchor to `companion/`. Per-case logs always stay in the case folder |
+| `DFIR_DEBUG_LOG_MAX_MB` | `50` | Cap for the always-on debug log (`debug.log` + `debug.1.log` in the global log folder, every level, never inside a case folder). The support bundle uses it. `0` = off. Read at startup only |
 
 ### Authentication (optional team deployment)
 
@@ -906,6 +914,8 @@ complete variable list, HTTPS setup, first-admin bootstrap, role matrix, extensi
 single-writer process model.
 
 ### AI — extraction (required to enable analysis)
+
+**Provider keys** — `DFIR_AI_KEY_<PROVIDER>` and `DFIR_AI_BASE_URL_<PROVIDER>` (`OPENAI`, `OPENROUTER`, `GEMINI`, `ANTHROPIC`, `OLLAMA`, `LITELLM`) hold one key and base URL per provider. Every model (vision, synthesis, Velociraptor, 2nd opinion, referee) uses the values of its provider. A model's own `*_KEY` / `*_BASE_URL` still win when set, then the provider value, then `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL`. Settings → AI offers a one-click move of saved per-model values into the provider fields.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -957,6 +967,9 @@ Recommended: cheap vision model for screenshots, strong reasoning model for text
 | `DFIR_AI_SYNTH_MODEL` | = `DFIR_VISION_MODEL` | Text model id — CSV/log extraction + synthesis (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
 | `DFIR_AI_SYNTH_KEY` | = `DFIR_VISION_KEY` | Text-model API key |
 | `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_VISION_BASE_URL` | Synthesis base URL |
+| `DFIR_AI_SYNTH_FALLBACK_MODEL` | _(unset)_ | Opt-in fallback used **only** when the synthesis model's safety filter stops a synthesis; that run switches once to this model. Blank = no fallback. Pick a different vendor |
+| `DFIR_AI_SYNTH_FALLBACK_PROVIDER` / `_KEY` / `_BASE_URL` | = synthesis values | Provider and credentials for the fallback model |
+| `DFIR_AI_SYNTH_SAFETY_RETRIES` | `1` | Same-model retries (0–3) for a safety-stopped synthesis before the fallback |
 
 ### AI — Velociraptor hunt model (optional)
 

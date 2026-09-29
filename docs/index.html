@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.38.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.39.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.38.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.39.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -888,6 +888,18 @@
           <h3>Story So Far</h3>
           <p>The Now cockpit shows one card per kill-chain stage: first seen, host, headline event and top finding, with the intrusion's span, dwell, hosts and accounts above it. A stage with no evidence is greyed and links to Evidence Gaps. Copy the whole story as a plain-text brief. Derived from the case — no AI call.</p>
           <span class="tag">v0.38.0 — the intrusion at a glance</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon red">🧩</div>
+          <h3>ATT&amp;CK Matrix</h3>
+          <p>A Navigator-style matrix, built in and fully offline, in the MITRE panel and the interactive HTML report. Filter by platform, show only the techniques the case hit, and click a technique to see its findings and events. No upload, no second tool.</p>
+          <span class="tag">v0.39.0 — the whole matrix, inside the case</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon green">🛟</div>
+          <h3>Synthesis Safety-Stop Fallback</h3>
+          <p>Heavy credential-theft evidence can trip a model's safety filter partway through a synthesis. The run now tries the same model again, then switches once to a fallback model you picked, and the Investigation Log says so. The case gets its findings instead of an error.</p>
+          <span class="tag">v0.39.0 — a stopped synthesis still finishes</span>
         </div>
       </div>
     </div>

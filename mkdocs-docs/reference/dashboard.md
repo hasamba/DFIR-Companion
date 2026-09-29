@@ -64,6 +64,19 @@ The top of the dashboard shows:
 
 **Synthesis coverage audit** — the synth-meta card (next to the last-synthesis time) shows how many in-window events a run actually considered vs. omitted (by prompt-size budget, false-positive filter, or scope window), plus how many budget-omitted events were Critical/High — visibility into what a large-timeline synthesis run left out.
 
+**Background jobs chip** — the **⚙ jobs** chip in the toolbar is always shown. At rest it reads **⚙ 0 jobs**. Its tooltip and the popover header name the last synthesis, when it ran and its outcome. Click it to open the job list. Each row shows when the job started and ended and how long it ran. A drop-folder import row lists every file it covers under a fold (up to 500 names). See [Advanced → Restart-safe Background Jobs](advanced.md#restart-safe-background-jobs).
+
+---
+
+## Executive Summary
+
+The panel opens with a fact strip: the hosts, the accounts, the High+ activity window in UTC, its span, and the count of Critical and High findings. Below it, the AI summary sits on the left. On the right, when the synthesis recorded them, it lists what it knows and what it does not:
+
+- **Assessment** — claims the synthesis marks as confirmed or inferred.
+- **Still unconfirmed** — speculated and unknown claims, each with the gap that would settle it.
+
+All of this comes from the current case state, so no new AI call runs. Below 900 px wide, the two columns stack. **✨ Generate** drafts a management-facing summary with AI. Review it before you save it to the report.
+
 ---
 
 ## Command Palette
@@ -85,6 +98,8 @@ Press **Ctrl+K** (or **⌘K** on macOS) anywhere on the dashboard to open a fuzz
 Click the sun/moon icon beside the **⚙ Settings** button to open the theme menu — over twenty built-in palettes grouped into **Dark**, **Light**, and **Fun**, beyond the plain dark/light toggle. Each entry shows a two-tone swatch before you apply it. The choice is remembered in the browser (`localStorage`) and takes effect instantly, including on canvas-based views (e.g. the timeline swimlane) that bake colours rather than reading CSS variables live.
 
 Every theme — built-in or the vendor-imported palettes (Nord, Gruvbox, Catppuccin, Tokyo Night, Rose Pine, and others) — is generated from one underlying role-based colour system: each UI element maps to a semantic role (e.g. "critical severity text", "hover background") rather than a hardcoded hex value, so a new theme only has to supply values for the roles, not re-derive every colour used across the dashboard.
+
+**Text size and fonts** — the **Text** block at the top of the theme menu sets the text size (80–150% in 5% steps, with **Reset**), the body **Font**, and the **Code font** used for hashes, paths and command lines. The font lists show only fonts installed on your computer. The choices are remembered in the browser and apply to the dashboard only; exported reports keep their fixed fonts.
 
 ---
 
@@ -152,6 +167,15 @@ A narrative paragraph written by the AI describing the full attacker journey —
 Rewrites the Attack Path into client-readable prose for stakeholders, then lets you polish the wording before it lands in a report.
 
 **✨ Generate** — one AI call that produces a prose incident narrative and saves it to case state (it is skipped if the panel is hidden, and refused server-side if the report's Timeline section is disabled in the template). **✏ Edit / Save** hand-edits the generated text; the edit survives until the next synthesis.
+
+The narrative has one paragraph per phase of the intrusion. When at least two paragraphs start with a time or a date ("At 08:49, …", "From 08:55 onward, …"), the panel shows a time rail:
+
+- the time sits in its own column, with qualifiers such as *onward*;
+- a dot on the spine marks each paragraph, coloured by the most severe event at that time; hover the dot to see why;
+- the first sentence of each paragraph is shown in bold;
+- each time is a link that opens the Forensic Timeline at the most severe event of that minute (or second). Times are read as UTC. A time with no matching event stays plain text.
+
+Text that does not start with times keeps the plain prose layout. **✏ Edit** still loads the raw text.
 
 ---
 
@@ -631,6 +655,8 @@ Open questions the AI thinks you should be pursuing based on the current evidenc
 ## Recommended Next Steps
 
 Prioritised list of concrete investigation actions: what files to check, what hunts to run, what questions to answer. Synthesis-generated.
+
+Each step names the exact host, account and log. Steps include the scoping work a senior responder does next, for example a payment review after a mailbox takeover, a search of other recipients' mailboxes after a phishing delivery, or logon events on the source host after lateral movement.
 
 ---
 

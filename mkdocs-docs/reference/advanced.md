@@ -113,7 +113,7 @@ The two retention numbers bound how *many* backups a case keeps, not how much di
 
 ## Restart-safe Background Jobs
 
-The jobs badge in the top toolbar is rebuilt from a durable ledger whenever the dashboard connects.
+The jobs badge in the top toolbar is always shown (**⚙ 0 jobs** when idle) and is rebuilt from a durable ledger whenever the dashboard connects.
 It shows queued and running work plus recent outcomes, progress, speed, ETA, warnings, and the last
 committed checkpoint.
 

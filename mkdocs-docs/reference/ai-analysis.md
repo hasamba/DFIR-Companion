@@ -46,6 +46,8 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 !!! note "Skip-if-unchanged"
     Synthesis is skipped automatically if nothing in the timeline changed since last time. Click **AI Re-synthesize** → **Force** to override.
 
+**If the safety filter stops a run.** A model's safety filter can stop a synthesis answer partway. Today only the Claude Code provider reports this stop. Synthesis then asks the same model again, up to `DFIR_AI_SYNTH_SAFETY_RETRIES` times (default 1). If the model is still stopped, the run moves once to the fallback synthesis model (`DFIR_AI_SYNTH_FALLBACK_MODEL`) and stays on it for the rest of that run. The Investigation Log line says whether the model passed on a retry or the fallback wrote the run, and how many stops occurred. With no fallback set, you get one clear error that names both settings. The second-opinion model (B) and replays retry, but never switch to the fallback. See [Settings → AI](settings.md#ai).
+
 **Settings.** `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` / `DFIR_AI_SYNTH_BASE_URL` (a separate, stronger model than the vision one is the recommended setup), `DFIR_AI_SYNTH_MAX_EVENTS` (how many timeline rows fit in the prompt — default 600), `DFIR_SYNTH_INCLUDE_INFO=1` (give Info-severity events prompt space too; off by default), `DFIR_SYNTH_GROUP*` (collapse repeated detection bursts into one row so more of the case fits), `DFIR_AI_SYNTH_PROMPT_FILE`.
 
 ### 4. Second look — chasing the questions synthesis just asked
