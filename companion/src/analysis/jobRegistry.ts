@@ -318,7 +318,6 @@ function terminate(
           updatedAt: now,
           endedAt: now,
           etaAt: undefined,
-          ...(status === "cancelled" ? { cancelRequestedAt: now } : {}),
         },
   );
 }
@@ -339,7 +338,31 @@ export function failJob(table: JobTable, id: string, failure: JobFailure | strin
 }
 
 export function cancelJob(table: JobTable, id: string, now: string): JobTable {
-  return terminate(table, id, "cancelled", now);
+  return terminate(table, id, "cancelled", now, { cancelRequestedAt: now });
+}
+
+/** The failure code every analyst-decision gate hold carries, whichever route or job it stopped. */
+export const HELD_FOR_ANALYST = "held_for_analyst";
+
+/**
+ * A gate hold (#1801): a Presidio or duplicate-host gate stopped the run before a prompt was sent.
+ *
+ * Status `cancelled`, not `failed`: nothing ran to fail, and a failed synthesis is what put
+ * "synthesis failed" in the Now cockpit. But NO `cancelRequestedAt` — nobody asked for a cancel —
+ * and a `held_for_analyst` failure code with the gate's message, so the job history can tell a
+ * hold from the analyst's ✕ Cancel. The job's own owner ends it, so a non-cancellable job (second
+ * opinion) is held the same way.
+ */
+export function holdJob(table: JobTable, id: string, reason: string, now: string): JobTable {
+  return terminate(table, id, "cancelled", now, {
+    detail: `on hold — ${reason}`,
+    failure: { code: HELD_FOR_ANALYST, message: reason, retryable: false, at: now },
+  });
+}
+
+/** Did a gate hold end this job, rather than an analyst's Cancel? */
+export function isHeldJob(job: Pick<Job, "status" | "failure"> | undefined): boolean {
+  return job?.status === "cancelled" && job.failure?.code === HELD_FOR_ANALYST;
 }
 
 export function interruptJob(table: JobTable, id: string, now: string): JobTable {

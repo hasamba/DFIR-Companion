@@ -278,9 +278,21 @@
     });
   }
 
+  // True from the click until the POST settles (#1800 triage). applyHeavyAiJobLock reads it: a jobs
+  // push that lands before the server has registered the new job must not re-enable the button.
+  let synthRequestInFlight = false;
+  function resynthesizeInFlight() {
+    return synthRequestInFlight;
+  }
+
   function resynthesize() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
+    // A second press superseded the first run, and the first request's 499 then read "synthesis
+    // failed". The button stays off until this request settles.
+    const button = document.getElementById("synthesize");
+    synthRequestInFlight = true;
+    if (button) button.disabled = true;
     const deep = !!document.getElementById("deepReasoning")?.checked;
     document.getElementById("status").textContent = deep
       ? "synthesizing (deep reasoning)…"
@@ -307,6 +319,13 @@
             return null;
           }
         }
+        // 499: this run was superseded by a newer one, or cancelled from the jobs list. Neither is a
+        // failure, so the status line must not say "synthesis failed".
+        if (r.status === 499) {
+          document.getElementById("status").textContent =
+            "synthesis stopped — superseded by a newer run or cancelled";
+          return null;
+        }
         if (r.status === 423)
           return r.json().then((p) => {
             throw Object.assign(new Error(p.error || "Case is closed"), {
@@ -316,7 +335,7 @@
         return r.json();
       })
       .then((p) => {
-        if (!p) return; // handled above (409 presidio hold)
+        if (!p) return; // handled above (409 presidio hold, 499 superseded)
         if (p.error) {
           document.getElementById("status").textContent =
             "synthesis failed: " + p.error;
@@ -342,7 +361,15 @@
       )
       // Whatever the outcome — done, held by Presidio, case closed, failed — ask the case what the
       // pill should say, so the optimistic "synthesizing" above never outlives the run.
-      .finally(() => refreshAiState(caseId));
+      .finally(() => {
+        synthRequestInFlight = false;
+        if (button) button.disabled = false;
+        // Re-apply the shared lock rather than trust `false`: a deep pass or another synthesis may
+        // hold the button now. loadJobs refreshes the list that lock reads.
+        window.applyHeavyAiJobLock?.();
+        window.loadJobs?.();
+        refreshAiState(caseId);
+      });
   }
 
   // The 🧠 deep-reasoning box (#1468). Written by the page's /health poller. Only a provider that
@@ -374,4 +401,5 @@
   // Published for the #1675 tests: the click is bound in initSearchAndScope, whose ~20 other
   // bindings need a whole page to run.
   window.resynthesize = resynthesize;
+  window.resynthesizeInFlight = resynthesizeInFlight;
 })();
