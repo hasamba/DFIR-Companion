@@ -56,7 +56,7 @@
   // (#1813, #1858). None is used by the app; http-equiv covers a script-built <meta> refresh.
   var DENIED_ATTRIBUTES = new Set([
     "action", "archive", "attributionsrc", "background", "code", "codebase", "formaction",
-    "http-equiv", "imagesrcset", "lowsrc", "ping", "srcdoc", "srcset",
+    "http-equiv", "imagesrcset", "lowsrc", "ping", "srcdoc", "srcset", "xml:base",
   ]);
   var RASTER_DATA_URI = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i;
   // url(), image-set(), -webkit-image-set(), image() and src() all take a URL the browser fetches
@@ -90,9 +90,10 @@
 
     var base = root.location && root.location.origin ? root.location.origin : "https://dfir-companion.invalid";
     try {
+      // File downloads click an anchor holding a blob URL minted by this origin (#1858). A blob URL
+      // is absolute, so it is parsed without the base: an opaque origin's "null" base would throw.
+      if (isLink && compact.indexOf("blob:") === 0) return new root.URL(raw).origin === base;
       var parsed = new root.URL(raw, base);
-      // File downloads click an anchor holding a blob URL minted by this origin (#1858).
-      if (isLink && parsed.protocol === "blob:") return parsed.origin === base;
       return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.origin === base;
     } catch (_error) {
       return false;
@@ -160,6 +161,7 @@
   var nativeSetAttribute = root.Element.prototype.setAttribute;
   var nativeSetAttributeNS = root.Element.prototype.setAttributeNS;
   var XLINK_NS = "http://www.w3.org/1999/xlink";
+  var XML_NS = "http://www.w3.org/XML/1998/namespace";
   if (!innerDescriptor || !innerDescriptor.get || !innerDescriptor.set) throw new Error("DOM HTML setters unavailable");
 
   var trustedTypes = root.trustedTypes;
@@ -438,9 +440,12 @@
 
   // The name the policy judges for a namespaced attribute. A prefix is arbitrary, so any XLink
   // "…:href" is the XLink href.
+  // xml:base re-bases every relative URL below it, so it is judged (and denied) as xml:base.
   function policyName(namespace, qualified) {
     var local = qualified.slice(qualified.indexOf(":") + 1);
-    return namespace === XLINK_NS && local.toLowerCase() === "href" ? "xlink:href" : local;
+    if (namespace === XLINK_NS && local.toLowerCase() === "href") return "xlink:href";
+    if (namespace === XML_NS && local.toLowerCase() === "base") return "xml:base";
+    return local;
   }
 
   root.Element.prototype.setAttribute = function (name, value) {
@@ -598,10 +603,12 @@
     };
   }
 
-  function guardAttrText(prototype, property, nullIsEmpty) {
-    var descriptor = ownSetter(prototype, property);
+  // Installed on Attr.prototype only: nodeValue and textContent live on Node.prototype, and an own
+  // Attr accessor shadows them there, so element and text writes keep the native fast path.
+  function guardAttrText(source, property, nullIsEmpty) {
+    var descriptor = ownSetter(source, property);
     if (!descriptor) return;
-    replaceSetter(prototype, property, descriptor, function (value) {
+    replaceSetter(root.Attr.prototype, property, descriptor, function (value) {
       var element = this && this.nodeType === 2 ? this.ownerElement : null;
       if (!element) {
         descriptor.set.call(this, value);
@@ -609,8 +616,11 @@
       }
       var text = value === null && nullIsEmpty ? "" : String(value);
       var outcome = attrVerdict(element, this.namespaceURI, this.name, text);
-      if (outcome === "style") applyScriptStyle(element, text);
-      else if (outcome !== null) descriptor.set.call(this, outcome);
+      if (outcome === "style") {
+        // The rule lands in the stylesheet; the live style attribute must not outrank it.
+        applyScriptStyle(element, text);
+        element.removeAttribute(this.name);
+      } else if (outcome !== null) descriptor.set.call(this, outcome);
     });
   }
 
@@ -634,8 +644,8 @@
     }
     guardAttrText(root.Attr.prototype, "value", false);
     if (root.Node) {
-      guardAttrText(root.Node.prototype, "nodeValue", true);
-      guardAttrText(root.Node.prototype, "textContent", true);
+      if (!Object.getOwnPropertyDescriptor(root.Attr.prototype, "nodeValue")) guardAttrText(root.Node.prototype, "nodeValue", true);
+      if (!Object.getOwnPropertyDescriptor(root.Attr.prototype, "textContent")) guardAttrText(root.Node.prototype, "textContent", true);
     }
   }
   patchStyleGetter(root.HTMLElement && root.HTMLElement.prototype);

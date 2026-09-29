@@ -384,6 +384,7 @@ describe("safe DOM policy — script setters share the markup deny rules (#1813)
     expect([...a.attrs.keys()]).toEqual([]);
     const use = dom.make("use", true);
     use.setAttributeNS(XLINK, "xlink:href", "https://attacker.invalid/x.svg#a");
+    use.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:base", "https://attacker.invalid/");
     expect([...use.attrs.keys()]).toEqual([]);
   });
 
@@ -548,6 +549,14 @@ describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)",
     expect(api.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "src", "iframe")).toBe(false);
   });
 
+  it("parses a blob link on an opaque-origin page without throwing", async () => {
+    const source = await readFile(new URL("../../../public/js/safe-dom.js", import.meta.url), "utf8");
+    const context: { DFIRSafeDOM?: SafeDomApi } & Record<string, unknown> = { URL, location: { origin: "null" } };
+    runInNewContext(source, context);
+    expect(context.DFIRSafeDOM!.isSafeUrl("blob:null/0b6c6f2a-1e1d", "href", "a")).toBe(true);
+    expect(context.DFIRSafeDOM!.isSafeUrl(`blob:${ORIGIN}/0b6c6f2a-1e1d`, "href", "a")).toBe(false);
+  });
+
   it("allows a raster data-image download link but no other data URL on an anchor", async () => {
     const api = await loadApi(true);
     expect(api.isSafeUrl("data:image/png;base64,iVBORw0KGgo=", "href", "a")).toBe(true);
@@ -570,7 +579,7 @@ describe("safe DOM policy — URL rules for downloads and graph glyphs (#1858)",
   it("treats OBJECT data as a URL and denies request-sending attributes on both paths", async () => {
     const api = await loadApi(true);
     expect(api.attributeAction("OBJECT", false, "data", "javascript:alert(1)", true)).toBeNull();
-    for (const name of ["imagesrcset", "attributionsrc", "lowsrc", "codebase", "archive", "code", "http-equiv"]) {
+    for (const name of ["imagesrcset", "attributionsrc", "lowsrc", "codebase", "archive", "code", "http-equiv", "xml:base"]) {
       expect(api.attributeAction("LINK", false, name, "https://attacker.invalid/", true), name).toBeNull();
       expect(api.attributeAction("META", false, name, "refresh"), name).toBeNull();
     }

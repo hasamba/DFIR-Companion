@@ -311,7 +311,18 @@ for (const withoutTrustedTypes of [false, true]) {
         img.setAttributeNode(src);
         img.getAttributeNode("src")!.value = "https://attacker.invalid/attr.png";
         if (img.getAttribute("src") !== "") out.push(`attached src Attr wrote ${img.getAttribute("src")}`);
-        const detached = document.createAttribute("href");
+        const svgG = root
+          .appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"))
+          .appendChild(document.createElementNS("http://www.w3.org/2000/svg", "g"));
+        svgG.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:base", "https://attacker.invalid/");
+        svgG.setAttribute("xml:base", "https://attacker.invalid/");
+        if (svgG.attributes.length) out.push("xml:base kept");
+        const styled = root.appendChild(document.createElement("div"));
+        styled.setAttribute("title", "t");
+        const styleAttr = document.createAttribute("style");
+        styled.setAttributeNode(styleAttr);
+        if (styled.hasAttribute("style")) out.push("setAttributeNode attached a live style attribute");
+                const detached = document.createAttribute("href");
         detached.value = X; // Not attached: harmless, and setAttributeNode judges it later.
         if (detached.value !== X) out.push("a detached Attr lost its value");
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -335,13 +346,17 @@ for (const withoutTrustedTypes of [false, true]) {
           ["HTMLObjectElement", "data"], ["HTMLEmbedElement", "src"], ["HTMLMediaElement", "src"],
           ["HTMLVideoElement", "poster"], ["HTMLTrackElement", "src"], ["HTMLScriptElement", "src"],
           ["HTMLMetaElement", "httpEquiv"], ["HTMLLinkElement", "imageSrcset"],
-          ["Attr", "value"], ["Node", "nodeValue"], ["Node", "textContent"], ["SVGAnimatedString", "baseVal"],
+          ["Attr", "value"], ["Attr", "nodeValue"], ["Attr", "textContent"], ["SVGAnimatedString", "baseVal"],
         ];
         const w = window as unknown as Record<string, { prototype: object }>;
         const out: string[] = [];
         for (const [iface, prop] of expected) {
           const d = Object.getOwnPropertyDescriptor(w[iface].prototype, prop);
           if (!d || !d.set || /\[native code\]/.test(Function.prototype.toString.call(d.set))) out.push(`${iface}.${prop}`);
+        }
+        for (const prop of ["textContent", "nodeValue"]) {
+          const d = Object.getOwnPropertyDescriptor(Node.prototype, prop);
+          if (!d || !d.set || !/\[native code\]/.test(Function.prototype.toString.call(d.set))) out.push(`Node.${prop} is wrapped (hot path)`);
         }
         for (const [iface, method] of [
           ["Element", "setAttributeNode"], ["Element", "setAttributeNodeNS"],
