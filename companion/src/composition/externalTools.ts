@@ -22,6 +22,7 @@
  */
 import { basename, join, resolve } from "node:path";
 import { openNoFollow } from "../storage/noFollowRead.js";
+import { EXPORT_STAGING_DIRNAME } from "../storage/exportStaging.js";
 import { resolveInsideDropDir } from "../storage/dropRelpath.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { randomUUID } from "node:crypto";
@@ -316,7 +317,12 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       cfg,
       runner: options.toolRunner,
       targetPath: contained,
-      workDir: join(caseDir, ".toolwork"),
+      // The run folder (staged input + output) lives OUTSIDE the case folder, where a case writer
+      // cannot swap the copy the tool reads or the output that is read back (#1857).
+      workDir: join(store.casesRoot, EXPORT_STAGING_DIRNAME),
+      scope: { casesRoot: store.casesRoot, caseDir },
+      // Team mode: a <target> tool reads a private snapshot; single-user stays zero-copy (#1857).
+      teamMode: Boolean(options.teamAuth),
       cache: opts.cache,
     });
     const outName = `${basename(contained)}.${toolId}.out`;

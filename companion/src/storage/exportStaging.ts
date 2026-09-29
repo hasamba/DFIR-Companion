@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 // Where an export stages the private copy it packages or sends: the database snapshot of "Archive to
-// ZIP…", the encrypted export's staging, the MCP delivery snapshot. Dotted and a level above the
-// cases for the same reason import staging is: nothing that enumerates the cases root, and nothing
-// that walks a case, may mistake it for case content.
+// ZIP…", the encrypted export's staging, the MCP delivery snapshot, a local tool run's input copy and
+// output (#1857). Dotted and a level above the cases for the same reason import staging is: nothing
+// that enumerates the cases root, and nothing that walks a case, may mistake it for case content.
 export const EXPORT_STAGING_DIRNAME = ".export-staging";
 
 // Each export removes its own folder in a finally block, on every path the process survives. A kill

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import type { ToolConfig } from "./toolConfig.js";
 import { cleanToolOutput, type ToolRunner } from "./toolRunner.js";
+import type { ToolInputIdentity } from "./toolInput.js";
 
 /**
  * What a parser run must be able to prove afterwards (#688).
@@ -45,6 +46,11 @@ export interface ToolRunProvenance {
   /** SHA-256 of the output text the importer was handed. */
   outputSha256: string;
   ruleset: RulesetIdentity | null;
+  /**
+   * The bytes the tool read, when it was handed a private copy of the case file (team mode, or a
+   * `<targetdir>` tool) — null when it read the case file in place (#1857).
+   */
+  input: ToolInputIdentity | null;
 }
 
 /**
@@ -283,6 +289,7 @@ export function describeToolRun(p: ToolRunProvenance): string {
       : "ruleset none",
     `output sha256:${p.outputSha256}`,
   ];
+  if (p.input) parts.push(`input sha256:${p.input.sha256} (${p.input.bytes} bytes)`);
   const stderr = p.stderr.trim();
   if (stderr) parts.push(`stderr ${JSON.stringify(stderr.slice(-STDERR_TAIL_CHARS))}`);
   return parts.join(" | ");
