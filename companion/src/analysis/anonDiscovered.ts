@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
+import { bumpAnonRevision } from "./anonRevision.js";
 import { sanitizeCustomEntities } from "./anonEntities.js";
 import type { CustomEntity } from "./anonymize.js";
 
@@ -124,17 +125,25 @@ export class DiscoveredEntitiesStore {
 
   suppress(caseId: string, value: string): Promise<AnonDiscovered> {
     return discoveredLock.runExclusive(caseId, async () => {
-      const next = suppressValue(await this.load(caseId), value);
-      await this.save(caseId, next);
-      return next;
+      try {
+        const next = suppressValue(await this.load(caseId), value);
+        await this.save(caseId, next);
+        return next;
+      } finally {
+        bumpAnonRevision(caseId); // #1840 — an analyst decision; addDiscovered (the OCR pass) does not bump
+      }
     });
   }
 
   unsuppress(caseId: string, value: string): Promise<AnonDiscovered> {
     return discoveredLock.runExclusive(caseId, async () => {
-      const next = unsuppressValue(await this.load(caseId), value);
-      await this.save(caseId, next);
-      return next;
+      try {
+        const next = unsuppressValue(await this.load(caseId), value);
+        await this.save(caseId, next);
+        return next;
+      } finally {
+        bumpAnonRevision(caseId); // #1840 — an analyst decision; addDiscovered (the OCR pass) does not bump
+      }
     });
   }
 }

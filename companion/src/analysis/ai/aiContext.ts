@@ -12,6 +12,7 @@ import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
+import type { PresidioCoverage } from "./providerCall.js";
 
 /**
  * What an AI-backed pipeline method needs from AnalysisPipeline, and nothing else (#418).
@@ -72,7 +73,7 @@ export interface AiCallContext {
     provider: AIProvider,
     req: AnalyzeRequest,
     label?: string,
-    skipPresidioGate?: boolean,
+    skipPresidioGate?: PresidioCoverage,
   ): Promise<unknown>;
 }
 

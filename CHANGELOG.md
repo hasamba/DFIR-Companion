@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Case ID in the case list** — the case dropdown shows each case ID under its name
 
 ### Fixed
+- **Stale anonymization saves refused** — a second window's Save can no longer erase a value just hidden from the AI or turn masking off under it; the modal reloads with your unsaved edits kept (closes #1839)
+- **Hide reaches AI calls already under way** — an AI call masks again when a value is hidden while it is being prepared, and a Jev review stops sending (closes #1840)
 - **Reused case id starts clean** — creating a deleted case's id clears its stale roles, and is refused while its old jobs still stop or a half-deleted folder remains (closes #1831)
 - **Non-AI clicks keep the AI budget** — second-opinion apply, anonymization toggles and AI routes that answer without a model call no longer count toward the per-case AI limit (closes #1832)
 - **Custody verify cannot be pointed at a protected file** — verify, export and transfer re-open recorded paths through the server-path guard; a path swapped for a link or FIFO reports "refused" with no hash (closes #1841)

@@ -15,7 +15,13 @@ import { buildStateSummary } from "../summary.js";
 import { detectTool } from "../toolDetect.js";
 import { getCsvPrompt, getLogPrompt, getSystemPrompt } from "./prompts/index.js";
 import { type AiCallContext } from "./aiContext.js";
-import { buildImportAnonContext, presidioPreScan, type ProviderCallContext } from "./providerCall.js";
+import {
+  buildImportAnonContext,
+  presidioPreScan,
+  type PresidioCoverage,
+  type ProviderCallContext,
+} from "./providerCall.js";
+import { anonRevision } from "../anonRevision.js";
 
 /**
  * The three AI EXTRACTION calls (#418): screenshots, CSV rows, log lines → forensic events.
@@ -186,10 +192,13 @@ async function preScanWholeImport(
   caseId: string,
   state: InvestigationState,
   payloadText: string,
-): Promise<void> {
-  if (!ctx.opts.presidio) return;
+): Promise<PresidioCoverage> {
+  if (!ctx.opts.presidio) return true; // no Presidio layer: the per-batch gate is a no-op anyway
+  // #1840: read BEFORE the lists load. A batch skips its own gate only while this revision is
+  // still current; after an entity or settings change the batch is gated itself.
+  const revision = anonRevision(caseId);
   const importAnonCtx = await buildImportAnonContext(ctx, caseId, state);
-  if (!importAnonCtx) return;
+  if (!importAnonCtx) return revision;
   await presidioPreScan(
     ctx,
     caseId,
@@ -198,11 +207,13 @@ async function preScanWholeImport(
     importAnonCtx.anon,
     importAnonCtx.control,
   );
+  return revision;
 }
 
 /**
- * One batch's model call. `skipPresidioGate=true` because `preScanWholeImport` already covered this
- * whole payload — that flag and the pre-scan are a pair, and neither is safe without the other.
+ * One batch's model call. It passes the pre-scan's coverage because `preScanWholeImport` already
+ * covered this whole payload — that coverage and the pre-scan are a pair, and neither is safe
+ * without the other. The coverage is a revision, so it lapses when the anonymization changes (#1840).
  */
 async function extractBatch<T>(
   ctx: ExtractionContext,
@@ -212,6 +223,7 @@ async function extractBatch<T>(
   opts: ImportExtractionOptions,
   spec: ImportExtractionSpec<T>,
   userPrompt: string,
+  coverage: PresidioCoverage,
 ): Promise<ReturnType<typeof stripAiExtractedFrom>> {
   const parsed = await ctx.analyzeRestored(
     caseId,
@@ -224,7 +236,7 @@ async function extractBatch<T>(
       ...(opts.signal ? { signal: opts.signal } : {}),
     },
     spec.kind,
-    true,
+    coverage,
   );
   return stripAiExtractedFrom(deltaSchema.parse(parsed));
 }
@@ -280,7 +292,7 @@ async function runBatchedImport<T>(
     // Scanned once for the whole payload, not per batch: the question is whether the SOURCE names a
     // year anywhere, and a batch boundary is an artifact of the token budget, not of the evidence.
     const sourceYears = yearsPresentIn(spec.payloadText);
-    await preScanWholeImport(ctx, caseId, state, spec.payloadText);
+    const coverage = await preScanWholeImport(ctx, caseId, state, spec.payloadText);
     const batches = spec.planBatches(state);
 
     let kept = 0;
@@ -295,7 +307,7 @@ async function runBatchedImport<T>(
         .withRetry(
           caseId,
           spec.kind,
-          () => extractBatch(ctx, caseId, state, provider, opts, spec, userPrompt),
+          () => extractBatch(ctx, caseId, state, provider, opts, spec, userPrompt, coverage),
           ctx.opts.retries ?? 3,
           ctx.opts.backoffMs ?? 500,
         )

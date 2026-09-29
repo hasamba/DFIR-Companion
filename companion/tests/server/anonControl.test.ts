@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { createApp } from "../../src/server.js";
+import { postAnonControl } from "../helpers/anonControl.js";
 
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
@@ -25,15 +26,13 @@ describe("/cases/:id/anon-control", () => {
     expect(typeof res.body.screenshotWarning).toBe("boolean");
   });
   it("POST persists changes", async () => {
-    const res = await request(app).post("/cases/c1/anon-control").send({ enabled: false });
+    const res = await postAnonControl(app, "c1", { enabled: false });
     expect(res.status).toBe(200);
     expect(res.body.enabled).toBe(false);
     expect((await request(app).get("/cases/c1/anon-control")).body.enabled).toBe(false);
   });
   it("POST coerces categories: a boolean false disables; a non-boolean keeps the current value", async () => {
-    const res = await request(app)
-      .post("/cases/c1/anon-control")
-      .send({ categories: { IP: false, USER: null } });
+    const res = await postAnonControl(app, "c1", { categories: { IP: false, USER: null } });
     expect(res.status).toBe(200);
     expect(res.body.categories.IP).toBe(false); // valid boolean applied
     expect(res.body.categories.USER).toBe(true); // non-boolean ignored → kept at default (true)
@@ -47,30 +46,28 @@ describe("/cases/:id/anon-control", () => {
   it("defaults presidio to on and round-trips it off and back", async () => {
     expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(true);
 
-    const off = await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    const off = await postAnonControl(app, "c1", { presidio: false });
     expect(off.status).toBe(200);
     expect(off.body.presidio).toBe(false);
     expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(false);
 
-    const on = await request(app).post("/cases/c1/anon-control").send({ presidio: true });
+    const on = await postAnonControl(app, "c1", { presidio: true });
     expect(on.body.presidio).toBe(true);
     expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(true);
   });
 
   it("keeps the current presidio value when the field is absent or not a boolean", async () => {
-    await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    await postAnonControl(app, "c1", { presidio: false });
     // A POST from an older client that never sends the field must not silently switch it back on.
-    const absent = await request(app).post("/cases/c1/anon-control").send({ enabled: true });
+    const absent = await postAnonControl(app, "c1", { enabled: true });
     expect(absent.body.presidio).toBe(false);
-    const nonBool = await request(app).post("/cases/c1/anon-control").send({ presidio: "yes" });
+    const nonBool = await postAnonControl(app, "c1", { presidio: "yes" });
     expect(nonBool.body.presidio).toBe(false);
   });
 
   it("does not let the presidio switch disturb the other fields", async () => {
-    await request(app)
-      .post("/cases/c1/anon-control")
-      .send({ categories: { IP: false }, redactSecrets: false });
-    const res = await request(app).post("/cases/c1/anon-control").send({ presidio: false });
+    await postAnonControl(app, "c1", { categories: { IP: false }, redactSecrets: false });
+    const res = await postAnonControl(app, "c1", { presidio: false });
     expect(res.body.categories.IP).toBe(false);
     expect(res.body.redactSecrets).toBe(false);
     expect(res.body.enabled).toBe(true);
@@ -81,7 +78,7 @@ describe("/cases/:id/anon-control", () => {
   // Both verbs answer with the same shape — the panel re-reads the control from the POST response.
   it("reports presidioConfigured=false when DFIR_PRESIDIO_URL is unset", async () => {
     expect((await request(app).get("/cases/c1/anon-control")).body.presidioConfigured).toBe(false);
-    const post = await request(app).post("/cases/c1/anon-control").send({ enabled: true });
+    const post = await postAnonControl(app, "c1", { enabled: true });
     expect(post.body.presidioConfigured).toBe(false);
   });
   it("reports presidioConfigured=true when DFIR_PRESIDIO_URL is set", async () => {
@@ -91,7 +88,7 @@ describe("/cases/:id/anon-control", () => {
     try {
       const withPresidio = createApp(cases, { stateStore: new StateStore(cases) });
       expect((await request(withPresidio).get("/cases/c1/anon-control")).body.presidioConfigured).toBe(true);
-      const post = await request(withPresidio).post("/cases/c1/anon-control").send({ enabled: false });
+      const post = await postAnonControl(withPresidio, "c1", { enabled: false });
       expect(post.body.presidioConfigured).toBe(true);
     } finally {
       delete process.env.DFIR_PRESIDIO_URL;
@@ -117,6 +114,7 @@ describe("/cases/:id/anon-entities", () => {
     const post = await request(app)
       .post("/cases/c1/anon-entities")
       .send({
+        version: get0.body.customVersion,
         entities: [
           { value: "DC9", category: "HOST" },
           { value: "x", category: "bogus" },

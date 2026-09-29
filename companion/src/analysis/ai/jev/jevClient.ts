@@ -47,6 +47,12 @@ export interface JevRequestConfig {
   readonly apiKey: string;
   readonly timeoutMs: number;
   readonly maxRetries?: number; // retries AFTER the first attempt; default 4
+  /**
+   * Runs synchronously right before EVERY attempt, retries included; a throw stops the request and
+   * propagates as is. The review route uses it to hold a batch whose masked body went stale when the
+   * analyst hid a value during a retry backoff (#1840).
+   */
+  readonly beforeSend?: () => void;
 }
 
 export interface JevBatchResult {
@@ -278,6 +284,7 @@ export async function askJev(
   }
   const maxRetries = cfg.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {
+    cfg.beforeSend?.();
     try {
       return parseBatch(cfg.model, await requestOnce(cfg, body, fetchImpl), questions);
     } catch (err) {

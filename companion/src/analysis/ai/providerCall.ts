@@ -36,6 +36,7 @@ import type { PresidioPendingStore } from "../presidioPending.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
 import { noteAiCallStarted } from "../../http/rateLimiter.js";
+import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 
 /**
  * The AI-call gate (#418).
@@ -552,30 +553,47 @@ async function persistOcrDiscoveries(
   }
 }
 
-// Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema
-// validation so real values containing JSON metacharacters cannot corrupt parsing.
-export async function analyzeRestored(
+/** A request ready to send, and the anonymizer (null when masking is off) that restores its answer. */
+interface PreparedCall {
+  readonly req: AnalyzeRequest;
+  readonly anon: Anonymizer | null;
+}
+
+// How many times a call masks again because the anonymization changed under it (#1840) before it
+// holds instead. Three changes inside one call's preparation is an analyst mid-edit or a loop; the
+// fail-closed answer is to send nothing.
+const MAX_ANON_ATTEMPTS = 3;
+
+/**
+ * Presidio coverage an import pre-scan already gave this call (#1840): `true` for a caller that
+ * never re-checks, or the anonymization revision the pre-scan masked with. A revision only skips
+ * the gate while it is still current — an entity change after the pre-scan can expose text the
+ * scan never saw, so the call is then gated itself.
+ */
+export type PresidioCoverage = boolean | number;
+
+function presidioCovered(skip: PresidioCoverage, revision: number): boolean {
+  return typeof skip === "number" ? skip === revision : skip;
+}
+
+/** Everything before the send: control, entities, anonymizer, OCR, mask, Presidio gate. */
+async function prepareCall(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
   provider: AIProvider,
   req: AnalyzeRequest,
-  label = "ai",
-  skipPresidioGate = false,
-): Promise<unknown> {
+  label: string,
+  skipPresidioGate: boolean,
+): Promise<PreparedCall> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
   ctx.log.debug(
-    `AI call [${label}] provider=${provider.name} images=${req.images.length} ` +
-      `promptChars=${req.userPrompt.length} anonymize=${policy.enabled ? "on" : "off"}`,
+    `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${req.userPrompt.length} ` +
+      `anonymize=${policy.enabled ? "on" : "off"}`,
     { caseId },
   );
-  if (!policy.enabled) {
-    const result = await analyzeProvider(ctx, provider, req, label);
-    logAiUsage(ctx, caseId, label, provider, result);
-    await recordAiCost(ctx, caseId, label, provider, result);
-    return parseAnswer(result.rawText, (t) => t);
-  }
+  if (!policy.enabled) return { req, anon: null };
   const known = await knownEntitiesFor(ctx, caseId, state);
   const anon = createAnonymizer(policy, known);
   ctx.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
@@ -589,13 +607,65 @@ export async function analyzeRestored(
   // username, email, SID or secret — only what our own detectors could not find.
   const maskedPrompt = anon.apply(req.userPrompt);
   // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
-  // pass skipPresidioGate=true so the loop that calls this per-chunk doesn't re-gate (and
-  // re-approve) the same import one chunk at a time.
+  // pass their coverage so the loop that calls this per-chunk doesn't re-gate (and re-approve)
+  // the same import one chunk at a time.
   if (!skipPresidioGate) await presidioGate(ctx, caseId, maskedPrompt, known, control);
+  return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
+}
 
-  const result = await analyzeProvider(ctx, provider, { ...req, userPrompt: maskedPrompt, images }, label);
+// Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema
+// validation so real values containing JSON metacharacters cannot corrupt parsing.
+//
+// #1840: preparing a call takes time (OCR, a Presidio scan over the network), and a "Hide from AI"
+// can land inside it. The call reads the case's anonymization revision BEFORE it loads anything and
+// compares it right before the send — synchronously, with no await between the check and the
+// provider call. A change masks the request again from fresh lists (and re-runs the Presidio gate);
+// after MAX_ANON_ATTEMPTS changes the call holds and sends nothing. See anonRevision.ts.
+export async function analyzeRestored(
+  ctx: ProviderCallContext,
+  caseId: string,
+  state: InvestigationState,
+  provider: AIProvider,
+  req: AnalyzeRequest,
+  label = "ai",
+  skipPresidioGate: PresidioCoverage = false,
+): Promise<unknown> {
+  for (let attempt = 1; attempt <= MAX_ANON_ATTEMPTS; attempt++) {
+    const revision = anonRevision(caseId);
+    const prepared = await prepareCall(
+      ctx,
+      caseId,
+      state,
+      provider,
+      req,
+      label,
+      presidioCovered(skipPresidioGate, revision),
+    );
+    if (anonRevision(caseId) === revision) return sendPrepared(ctx, caseId, provider, prepared, label);
+    ctx.log.warn(
+      `[anon] anonymization changed while [${label}] was being prepared — masking again before sending`,
+      { caseId },
+    );
+  }
+  throw new AnonymizationChangedError(
+    `The anonymization settings or hidden values kept changing while this AI call was being ` +
+      `prepared, so nothing was sent. Run it again.`,
+  );
+}
+
+/** The send and its bookkeeping. Starts the provider call before its first await. */
+async function sendPrepared(
+  ctx: ProviderCallContext,
+  caseId: string,
+  provider: AIProvider,
+  prepared: PreparedCall,
+  label: string,
+): Promise<unknown> {
+  const result = await analyzeProvider(ctx, provider, prepared.req, label);
   logAiUsage(ctx, caseId, label, provider, result);
   await recordAiCost(ctx, caseId, label, provider, result);
+  const anon = prepared.anon;
+  if (!anon) return parseAnswer(result.rawText, (t) => t);
   return anon.restoreDeep(parseAnswer(result.rawText, (t) => anon.restore(t)));
 }
 

@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { createHash } from "node:crypto";
 import type { AnonCategory, AnonPolicy } from "./anonymize.js";
+import { bumpAnonRevision } from "./anonRevision.js";
 
 // Per-case anonymization control. Default ON (privacy-first) — flip the default for NEW cases
 // with DFIR_ANONYMIZE=off. Real values always stay in state; this only governs the wire to the
@@ -57,6 +59,20 @@ export function toAnonPolicy(control: AnonControl | null): AnonPolicy {
   };
 }
 
+/**
+ * A version for the stale-save check on the Anonymization modal (#1839): a hash of the normalized
+ * control, so a modal loaded before another window changed the settings is refused. Content-derived
+ * is enough here, unlike the custom list: a control save carries no "reaffirm" that leaves the
+ * contents unchanged but must still invalidate a stale form.
+ */
+export function anonControlVersion(control: AnonControl): string {
+  const cats = Object.keys(control.categories)
+    .sort()
+    .map((k) => [k, control.categories[k as keyof AnonControl["categories"]] === true]);
+  const canon = JSON.stringify([control.enabled, control.redactSecrets, control.presidio, cats]);
+  return createHash("sha256").update(canon).digest("hex").slice(0, 16);
+}
+
 export class AnonControlStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -83,6 +99,10 @@ export class AnonControlStore {
   }
 
   async save(caseId: string, control: AnonControl): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify(control, null, 2));
+    try {
+      await atomicWrite(this.path(caseId), JSON.stringify(control, null, 2));
+    } finally {
+      bumpAnonRevision(caseId); // #1840: an AI call being prepared masks again before it sends
+    }
   }
 }
