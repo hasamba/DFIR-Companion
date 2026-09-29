@@ -496,6 +496,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               at: new Date().toISOString(),
               detail: "import processing cancelled; stored evidence retained",
             });
+            if (job) await options.jobManager?.fail(job.jobId, err); // a case delete's abort: settles the job (#1831)
             return;
           }
           if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });
@@ -758,6 +759,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               at: new Date().toISOString(),
               detail: "import processing cancelled; stored evidence retained",
             });
+            if (job) await options.jobManager?.fail(job.jobId, err); // a case delete's abort: settles the job (#1831)
             return;
           }
           if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true });

@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
-import type { AuthIdentity } from "../auth/types.js";
+import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { RouteContext } from "./context.js";
+import { CaseImportConflictError } from "../analysis/caseExportArchive.js";
 
 /**
  * A case id's life apart from its folder — the two ends of it.
@@ -87,4 +88,28 @@ export async function clearStateOutlivingCase(
       serverLogger.error(`[delete] case=${id} deleted, but could not ${what}: ${(err as Error).message}`);
     }
   }
+}
+
+/** The 409 for a create of an id whose deleted case still has jobs winding down (#1831). */
+export function stoppingMessage(caseId: string): string {
+  return `case ${caseId} was just deleted and its background jobs are still stopping — try again in a moment`;
+}
+
+/**
+ * The check a whole-case import (.dfircase, ZIP) runs right before it publishes a new case under
+ * `caseId` (#1831). It refuses an id whose delete is still in flight or whose deleted case still has
+ * jobs winding down, then clears access rows such a case may have left behind — before the publish,
+ * so a failed clear leaves nothing published. The id is free at this point, so any row is stale.
+ */
+export function importedCaseIdClaim(ctx: RouteContext, req: Request): (caseId: string) => void {
+  return (caseId) => {
+    if (ctx.store.isDeleting(caseId))
+      throw new CaseImportConflictError(
+        caseId,
+        `case ${caseId} is being deleted — try again once the delete finishes`,
+      );
+    if (ctx.options.jobManager?.isStopping(caseId))
+      throw new CaseImportConflictError(caseId, stoppingMessage(caseId));
+    ctx.options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity);
+  };
 }

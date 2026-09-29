@@ -8,7 +8,7 @@ import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templa
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
-import { registerCaseIdentityRoutes, clearStateOutlivingCase } from "./caseIdentity.js";
+import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
@@ -126,11 +126,16 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (invalid) return res.status(400).json({ error: invalid });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
+      if (options.jobManager?.isStopping(caseId))
+        return res.status(409).json({ error: stoppingMessage(caseId) });
       const meta = await store.createCase({
         caseId,
         name,
         investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown",
         aiProvider: aiProvider ?? null,
+        // A deleted case with this id may have left roles behind if its cleanup failed (#1831).
+        onClaimed: () =>
+          options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity),
       });
       options.teamAuth?.grantCreator(req, caseId);
       if (templateId && options.templateStore && options.stateStore) {

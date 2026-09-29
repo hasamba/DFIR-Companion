@@ -255,8 +255,9 @@ const AI_CHARGE_LOCAL = "aiBudgetCharge";
 // 409 at the final synthesis gate, and that 409 must not refund the calls already made.
 const aiSpendScope = new AsyncLocalStorage<AiBudgetCharge>();
 
-/** Called by every model call (analyzeRestored, askJev) just before it goes out: the request that
- *  caused it keeps its AI-budget slot, whatever status it answers with. */
+/** Called by the provider-call chokepoint (analyzeProvider, under analyzeRestored) just before a
+ *  model call goes out: the request that caused it keeps its AI-budget slot, whatever status it
+ *  answers with. The Jev client does not call it — the Jev route marks its own no-call answer. */
 export function noteAiCallStarted(): void {
   const charge = aiSpendScope.getStore();
   if (charge) charge.spent = true;

@@ -34,6 +34,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import {
   chargeAiBudget,
   getDeterministicImportLimiter,
+  markAiBudgetUnspent,
   runWithAiSpendTracking,
   sendRateLimited,
 } from "../http/rateLimiter.js";
@@ -51,9 +52,7 @@ export const AI_LIMIT_PATHS = new Set([
   "/synthesize",
   "/deep-pass", // explicit synthesis
   "/second-look", // promotes, then re-synthesizes by default (#1554)
-  "/second-opinion",
-  "/second-opinion/apply",
-  "/second-opinion/apply-all", // 2nd LLM opinion
+  "/second-opinion", // 2nd LLM opinion
   "/second-opinion/referee", // referee-only re-run (#1587)
   "/ask", // Ask-the-case GraphRAG
   "/executive-summary",
@@ -70,8 +69,25 @@ export const AI_LIMIT_PATHS = new Set([
   "/tagger/suggest-rule",
   "/velociraptor/suggest-hunts",
   "/adversary-hints/hunt-technique", // per-technique hunt suggestions
-  "/anon-control", // flipping the toggle forces a re-synthesis
   "/jev/review", // Jev missed-evidence review — bills per press (#1577)
+]);
+
+/**
+ * Gated routes that make a model call only when there is something to ask about, and wait for every
+ * model call before they answer (#1832): hunts on a case with nothing to pivot on, gap hypotheses
+ * with no gaps, memory next-steps with no memory evidence, false-positive suggestions without `ai`.
+ * Their charge is marked unspent up front; a model call inside the request (noteAiCallStarted, at the
+ * provider-call chokepoint) marks it spent, and spent wins. So only an answer that reached no model
+ * gives its slot back. A route belongs here only if ALL its model calls go through that chokepoint
+ * before the answer is sent — not an import that answers 202 first, not the Jev review.
+ */
+export const AI_ANSWER_AFTER_MODEL_PATHS = new Set([
+  "/timeline-gaps/hypothesize",
+  "/false-positive/suggest",
+  "/playbook/suggest-hunts",
+  "/velociraptor/suggest-hunts",
+  "/adversary-hints/hunt-technique",
+  "/memory/next-steps",
 ]);
 
 /** AI-cost POST routes carrying a dynamic segment, so the static set cannot express them. */
@@ -79,9 +95,10 @@ export const AI_LIMIT_PATTERNS = [/^\/events\/[^/]+\/explain$/, /^\/sessions\/[^
 
 export function mountAiRateLimit(app: Express): void {
   // Charged here, refunded when the route refuses before any AI work (#1825) — see chargeAiBudget.
-  const aiLimited = (req: Request, res: Response, next: NextFunction): void => {
+  const aiLimited = (req: Request, res: Response, next: NextFunction, rel: string): void => {
     const charge = chargeAiBudget(res, req.params.id);
     if (!charge.ok) return sendRateLimited(res, charge.retryAfterMs, "rate limit exceeded, slow down");
+    if (AI_ANSWER_AFTER_MODEL_PATHS.has(rel)) markAiBudgetUnspent(res); // until a model call (#1832)
     runWithAiSpendTracking(res, next); // a model call inside the route pins the charge
   };
   const importLimited = getDeterministicImportLimiter().middleware((req) => req.params.id);
@@ -104,7 +121,7 @@ export function mountAiRateLimit(app: Express): void {
       return importLimited(req, res, next);
     }
     if (AI_LIMIT_PATHS.has(rel) || AI_LIMIT_PATTERNS.some((re) => re.test(rel))) {
-      return aiLimited(req, res, next);
+      return aiLimited(req, res, next, rel);
     }
     next();
   });

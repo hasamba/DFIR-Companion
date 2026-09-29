@@ -16,6 +16,7 @@ import {
   type JobModelIdentity,
 } from "./jobServedModel.js";
 import type { ServedModelRegistry } from "./servedModels.js";
+import { StoppingJobs } from "./stoppingJobs.js";
 import {
   emptyJobTable,
   createJob,
@@ -142,13 +143,10 @@ function deferred(): Deferred {
     resolve = ok;
     reject = fail;
   });
-  // Cancelling a job that never started REJECTS these (see cancel()), and the reject can land
-  // before anyone is waiting: resume() publishes its admission into this.admissions and only
-  // attaches runResumedJob's handler after the ledger write returns. A rejection with no handler
-  // at that moment is an unhandled rejection, which Node makes fatal — one cancel would take the
-  // whole server down mid-investigation. This keep-alive handler makes the rejection safe to
-  // observe late, or never. It swallows nothing: .catch() returns a NEW promise and the original
-  // still rejects, so every real awaiter of `ready` still sees the AbortError.
+  // Cancelling a job that never started REJECTS these (see cancel()), possibly before anyone waits:
+  // resume() attaches runResumedJob's handler only after the ledger write. Unhandled, Node makes that
+  // rejection fatal. This keep-alive swallows nothing — .catch() returns a NEW promise, and every
+  // real awaiter of `ready` still sees the AbortError.
   promise.catch(() => {});
   let done = false;
   return {
@@ -191,6 +189,7 @@ export class JobManager {
   private readonly durabilities = new Map<string, Deferred>();
   private readonly budgetTimers = new Map<string, NodeJS.Timeout>();
   private readonly resumeHandlers = new Map<JobKind, ResumeHandlerRegistration>();
+  private readonly stopping = new StoppingJobs(); // a deleted case's work still winding down (#1831)
   private readonly onJob?: (caseId: string | null) => void;
   private readonly onError?: (error: Error) => void;
   private readonly ledger?: JobLedgerStore;
@@ -270,6 +269,7 @@ export class JobManager {
     if (existing) return existing;
     this.supersedeExclusiveJobs(input, caseId);
     const jobId = this.appendQueuedJob(input, caseId);
+    this.stopping.adopt(caseId, jobId);
     return this.prepareRegistration(jobId, input);
   }
 
@@ -425,7 +425,7 @@ export class JobManager {
     if (!job) return { ok: false, reason: "unknown" };
     if (isTerminal(job.status)) return { ok: false, reason: "terminal" };
     if (!job.cancellable) return { ok: false, reason: "not-cancellable" };
-
+    this.stopping.aborted(job); // its row turns terminal now; its work may run on (#1831)
     this.controllers.get(jobId)?.abort();
     this.clearBudgetTimer(jobId);
     this.table = cancelJob(this.table, jobId, this.now());
@@ -440,18 +440,15 @@ export class JobManager {
     return { ok: true, job: cancelled };
   }
 
-  // Called once a case's folder is gone: its jobs must not outlive it. The table is keyed by case
-  // id alone, so any row left behind is inherited wholesale by the next case that claims the id —
-  // and every one of them still offers a live Resume, which would replay the deleted case's import
-  // into the new one and persist it there. Anything still in flight is aborted first; the work
-  // functions themselves land on a table that no longer holds the row, and every registry
-  // transition ignores an unknown id, so their late checkpoints and completions are no-ops.
-  //
+  // Called once a case's folder is gone: its rows would otherwise be inherited by the next case
+  // with the id, each with a live Resume. In-flight work is aborted, but it may still be running:
+  // it stays in `stopping` until it reports its end, and the id cannot be reused until then (#1831).
   // No ledger write: the case's jobs.sqlite lives inside the case folder and was deleted with it.
   async forgetCase(caseId: string): Promise<void> {
     await this.ready();
     const doomed = listJobs(this.table, { caseId });
     if (doomed.length === 0) return;
+    this.stopping.add(caseId, doomed);
     for (const job of doomed) {
       this.controllers.get(job.id)?.abort();
       this.clearBudgetTimer(job.id);
@@ -463,6 +460,11 @@ export class JobManager {
     this.table = dropCaseJobs(this.table, caseId);
     this.emit(caseId);
     await this.scheduleQueued();
+  }
+
+  /** True while a deleted case's aborted work has not yet reported its end (#1831). */
+  isStopping(caseId: string): boolean {
+    return this.stopping.has(caseId);
   }
 
   registerResumeHandler(kind: JobKind, handler: ResumeHandler, options: ResumeHandlerOptions = {}): void {
@@ -586,17 +588,11 @@ export class JobManager {
     await this.scheduleQueued();
   }
 
-  // A SUPERSEDE, not a cancellation — the row is REMOVED rather than marked cancelled.
-  //
-  // Every `exclusive` caller registers a "the case changed, re-derive it" kick whose newest
-  // registration subsumes all the older ones, so a superseded job is a queue entry that was
-  // replaced, not a result. Marking it `cancelled` claimed otherwise: that is the exact status the
-  // ✕ Cancel button produces, and a multi-file import mints one kick per file — so an eleven-file
-  // import filled the jobs popover with eleven "cancelled" rows the analyst never cancelled, and
-  // pushed the still-queued imports the badge was counting past the end of the list.
-  //
-  // Removal changes nothing about scheduling: `cancelled` was terminal too, so the case's
-  // concurrency slot was already freed at this same point.
+  // A SUPERSEDE, not a cancellation — the row is REMOVED rather than marked cancelled. Every
+  // `exclusive` caller registers a "the case changed, re-derive it" kick whose newest registration
+  // subsumes the older ones, so a superseded job was replaced, not cancelled: an eleven-file import
+  // used to fill the jobs popover with eleven "cancelled" rows the analyst never cancelled.
+  // Removal changes nothing about scheduling: the case's concurrency slot is freed here either way.
   private dropForExclusiveRegistration(job: Job): void {
     if (!job.cancellable) return;
     // WHO DELETES THE LEDGER ROW depends on whether the INSERT has already landed, because
@@ -608,6 +604,7 @@ export class JobManager {
     // come back as a `cancelled` job the analyst never cancelled.
     const durability = this.durabilities.get(job.id);
     const inLedger = durability?.settled() === true;
+    this.stopping.aborted(job);
     this.controllers.get(job.id)?.abort();
     this.clearBudgetTimer(job.id);
     this.table = dropJob(this.table, job.id);
@@ -713,6 +710,7 @@ export class JobManager {
     apply: (table: JobTable, now: string) => JobTable,
   ): Promise<void> {
     await this.ready();
+    this.stopping.settle(jobId); // the work reported its end, even for a row forgetCase dropped
     const job = getJob(this.table, jobId);
     if (!job || isTerminal(job.status)) return;
     this.table = apply(this.table, this.now());
@@ -749,6 +747,7 @@ export class JobManager {
       await handler(job, this.controllers.get(jobId)?.signal);
       await this.finish(jobId);
     } catch (error) {
+      this.stopping.settle(jobId); // the handler ended, even when its row is gone or terminal
       const job = getJob(this.table, jobId);
       if (!job || isTerminal(job.status)) return;
       await this.fail(jobId, error, {
