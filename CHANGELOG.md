@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Case import refuses zip bombs** — both case imports stream each file to disk with per-file, total and compression-ratio caps, so a crafted archive can no longer fill memory (closes #1828)
+- **Import-from-path and custody read the file they checked** — a path swapped for a link after the check, a hard-linked alias of a case file, or a FIFO is refused instead of read (closes #1834)
 - **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)
 - **Refused requests keep the AI budget** — a malformed request, a refusal or a skip answer no longer uses one of the case's 20 AI requests a minute (closes #1825)
 - **Reusing a deleted case ID keeps its roles** — creating a case whose ID is still being deleted answers 409, and the delete's role cleanup can no longer revoke a new case's access (closes #1826)

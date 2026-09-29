@@ -1,5 +1,4 @@
-import { readFile, appendFile, mkdir } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { readFile, appendFile, mkdir, open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative, isAbsolute, sep } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -10,8 +9,18 @@ import { authenticatedActorFields } from "../auth/identityContext.js";
 // past V8's ~512 MB string ceiling. readFile() would OOM on exactly the artifacts custody matters
 // most for, so hash in 1 MB chunks and never hold the file in memory.
 export async function hashFile(path: string): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    return await hashHandle(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** hashFile on a handle already open — the one a path guard judged (#1834). Leaves it open. */
+export async function hashHandle(handle: FileHandle): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path, { highWaterMark: 1 << 20 })) {
+  for await (const chunk of handle.createReadStream({ start: 0, autoClose: false, highWaterMark: 1 << 20 })) {
     hash.update(chunk as Buffer);
   }
   return hash.digest("hex");

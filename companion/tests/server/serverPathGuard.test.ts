@@ -7,7 +7,25 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { refuseImportPath, refuseServerPath } from "../../src/routes/serverPathGuard.js";
+import {
+  openImportPath,
+  openServerPath,
+  type ServerPathPolicy,
+  type ServerPathRefusal,
+} from "../../src/routes/serverPathGuard.js";
+
+// The guard now opens and judges the handle (#1834). These unit cases only need the verdict:
+// the refusal, or null when the route may read it (the handle is closed here).
+async function verdict(
+  p: Promise<Awaited<ReturnType<typeof openServerPath>>>,
+): Promise<ServerPathRefusal | null> {
+  const opened = await p;
+  if (opened.refusal) return opened.refusal;
+  await opened.file.handle.close();
+  return null;
+}
+const refuseImportPath = (p: string, s: CaseStore, caseId: string) => verdict(openImportPath(p, s, caseId));
+const refuseServerPath = (p: string, policy: ServerPathPolicy) => verdict(openServerPath(p, policy));
 
 // #1792: /import-file copied any server path into a case — the Companion's own .env included, whose
 // API keys GET /settings/env masks even for admins — and every case reader could then download it.
@@ -71,11 +89,13 @@ describe("refuseImportPath", () => {
     const otherDrop = join(store.caseDir("c2"), "drop");
     await mkdir(otherDrop, { recursive: true });
     await writeFile(join(otherDrop, "e.jsonl"), THOR);
-    for (const p of [join(store.caseDir("c1"), "case.json"), join(otherDrop, "e.jsonl"), store.casesRoot]) {
+    for (const p of [join(store.caseDir("c1"), "case.json"), join(otherDrop, "e.jsonl")]) {
       const r = await refuseImportPath(p, store, "c1");
       expect(r, p).toMatchObject({ status: 403 });
       expect(r!.error).toMatch(/case storage/);
     }
+    // A folder is never opened as a file (#1834): refused before anything is read.
+    expect(await refuseImportPath(store.casesRoot, store, "c1")).toMatchObject({ status: 400 });
   });
 
   it("allows the target case's own drop folder, but not a hardlink placed in it", async () => {
@@ -87,11 +107,13 @@ describe("refuseImportPath", () => {
     expect(await refuseImportPath(join(drop, "sneaky.json"), store, "c1")).toMatchObject({ status: 403 });
   });
 
-  it("allows an ordinary evidence file outside the Companion, and lets a missing file through", async () => {
+  it("allows an ordinary evidence file outside the Companion; a missing file throws for the route to report", async () => {
     const evidence = join(root, "evidence.jsonl");
     await writeFile(evidence, THOR);
     expect(await refuseImportPath(evidence, store, "c1")).toBeNull();
-    expect(await refuseImportPath(join(root, "missing.jsonl"), store, "c1")).toBeNull();
+    await expect(refuseImportPath(join(root, "missing.jsonl"), store, "c1")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("custody policy: this case's own files are allowed, other cases' are not", async () => {
