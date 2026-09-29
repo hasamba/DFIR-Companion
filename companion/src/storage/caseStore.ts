@@ -414,6 +414,21 @@ export class CaseStore {
     return this.deleting.has(caseId);
   }
 
+  /**
+   * For a caller that writes a case folder itself instead of calling createCase — the demo seeder
+   * (#1853). Runs `fn` under the same per-case lock and id-reuse refusals createCase applies: refused
+   * while a delete of the id is in flight, and, when the id has no case yet, while a part-deleted
+   * folder still holds files. `fn` learns whether the id is new, so it can clear stale access first.
+   */
+  async withSeedSlot<T>(caseId: string, fn: (isNew: boolean) => Promise<T>): Promise<T> {
+    if (this.deleting.has(caseId)) throw new CaseBeingDeletedError(caseId);
+    return this.metaLock.runExclusive(caseId, async () => {
+      const isNew = !(await this.caseExists(caseId));
+      if (isNew) await this.refuseLeftoverFolder(caseId, this.caseDir(caseId));
+      return fn(isNew);
+    });
+  }
+
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
     if (this.deleting.has(input.caseId)) throw new CaseBeingDeletedError(input.caseId);
     return this.metaLock.runExclusive(input.caseId, () => this.createCaseLocked(input));

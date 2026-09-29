@@ -1,8 +1,10 @@
 import type { Express, Request, Response } from "express";
-import { isValidCaseId } from "../storage/caseStore.js";
-import { seedDemoCase } from "../analysis/seedDemoCase.js";
+import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
+import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../analysis/seedDemoCase.js";
 import { isTerminal } from "../analysis/jobRegistry.js";
 import type { RouteContext } from "./context.js";
+import { stoppingMessage } from "./caseIdentity.js";
+import { requestAuthentication } from "../auth/types.js";
 
 /**
  * Seed the built-in demo case ("GlobalTech Industries — BEC & Ransomware Precursor").
@@ -67,12 +69,23 @@ export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
           }
         }
       }
-      const result = await seedDemoCase(store.casesRoot, { caseId, force });
+      // A seed that creates a new id is a case being born, so it gets the id-reuse checks POST /cases
+      // runs (#1853, after #1831): the deleted case's work must have stopped, a part-deleted folder is
+      // never adopted, and roles a failed delete cleanup left on the id are cleared before the grant.
+      // A force-reseed of an existing case keeps its roles, as before.
+      const seedId = caseId ?? DEMO_CASE_ID_DEFAULT;
+      if (options.jobManager?.isStopping(seedId))
+        return res.status(409).json({ error: stoppingMessage(seedId) });
+      const result = await store.withSeedSlot(seedId, async (isNew) => {
+        if (isNew) options.teamAuth?.store.deleteCaseAccess(seedId, requestAuthentication(req)?.identity);
+        return seedDemoCase(store.casesRoot, { caseId, force });
+      });
       options.teamAuth?.grantCreator(req, result.caseId);
       return res.status(201).json(result);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code === "EEXIST") return res.status(409).json({ error: e.message });
+      if (e.code === "EEXIST" || err instanceof CaseAlreadyExistsError)
+        return res.status(409).json({ error: e.message });
       // seedDemoCase re-validates the id itself (the CLI shares it). If its check fires when the
       // one above did not, that is a caller bug, not a server fault — 400, not 500.
       if (e.code === "EINVAL") return res.status(400).json({ error: e.message });
