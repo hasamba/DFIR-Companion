@@ -1,7 +1,7 @@
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportRefused } from "./importDebugEmit.js";
 import type { Response } from "express";
-import { getAiLimiter, sendRateLimited } from "../http/rateLimiter.js";
+import { chargeAiBudget, markAiBudgetUnspent, sendRateLimited } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 
 // The import kinds whose parsers STREAM: they report parse progress and honor the abort signal
@@ -37,12 +37,11 @@ export function isAiDependent(kind: string): boolean {
 // 501 check, so it only fires when an LLM call will actually be made.
 export function rejectIfAiImportOverBudget(kind: string, caseId: string, res: Response): boolean {
   if (!isAiDependent(kind)) return false;
-  const limiter = getAiLimiter();
-  const now = Date.now();
-  if (!limiter.tryAcquire(caseId, now)) {
+  const charge = chargeAiBudget(res, caseId); // refunded if the import ends up refused (#1825)
+  if (!charge.ok) {
     sendRateLimited(
       res,
-      limiter.retryAfterMs(caseId, now),
+      charge.retryAfterMs,
       "AI-analysis import rate exceeded for this case, try again shortly",
     );
     return true;
@@ -102,6 +101,7 @@ export async function refuseAiOffImport(o: {
     detail: `AI is off — ${o.kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)`,
   });
   emitImportRefused(o.caseId, o.debug, "ai_off"); // stored as evidence, not analyzed (#1736)
+  markAiBudgetUnspent(o.res); // saved, never sent to a model: the AI-budget slot goes back (#1825)
   o.res.status(202).json({ accepted: true, kind: o.kind, ...o.body, analyzed: false, reason: "ai-off" });
   return true;
 }

@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { decodeImportedText } from "../ingest/decodeText.js";
 import { closeTruncatedJsonArray } from "../analysis/extractJson.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
@@ -25,44 +25,37 @@ import { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes } from "../analysis/inge
 export const IMPORT_FILE_HEAD_BYTES = 1 << 18;
 
 /**
- * A BOM-aware decoded head sample for kind detection. Throws what open/read throw.
+ * A BOM-aware decoded head sample for kind detection, read from the handle the path guard judged
+ * (#1834) — never a re-open of the path. Throws what read throws. The caller closes the handle.
  *
  * A head that cuts a JSON array mid-way is completed to its whole elements HERE, on this path
  * only (#953): the detector is shared with the upload and drop-folder paths, which hand it whole
  * files, and a genuinely malformed whole file must still be refused rather than classified from
  * its one good row and then imported as nothing. See closeTruncatedJsonArray.
  */
-export async function sniffImportFileHead(filePath: string): Promise<string> {
-  const fh = await open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(IMPORT_FILE_HEAD_BYTES);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    const sample = decodeImportedText(buf.subarray(0, bytesRead));
-    return closeTruncatedJsonArray(sample) ?? sample;
-  } finally {
-    await fh.close();
-  }
+export async function sniffImportFileHead(fh: FileHandle): Promise<string> {
+  const buf = Buffer.alloc(IMPORT_FILE_HEAD_BYTES);
+  const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+  const sample = decodeImportedText(buf.subarray(0, bytesRead));
+  return closeTruncatedJsonArray(sample) ?? sample;
 }
 
 /**
- * The whole file as text, or the 413 message when it is over the cap. One open: the size check
- * and the read share the descriptor, and the read stops the moment it passes the size it was
+ * The whole file as text, or the 413 message when it is over the cap. One descriptor — the one the
+ * path guard judged (#1834): the size check and the read share it, and the read stops the moment it passes the size it was
  * promised. I/O errors and "Invalid string length" propagate as before. Decoded BOM-aware, the
  * same as the head sample: a UTF-16 CSV was sniffed as csv and then parsed as UTF-8 mojibake.
  */
 export async function readImportFileBounded(
-  filePath: string,
+  fh: FileHandle,
   kind: string,
   maxBytes = maxImportFileBytes(),
 ): Promise<{ text: string; tooLarge?: undefined } | { text?: undefined; tooLarge: string }> {
-  const fh = await open(filePath, "r");
   try {
     return { text: decodeImportedText(await readHandleBounded(fh, maxBytes)) };
   } catch (err) {
     if (err instanceof FileTooLargeError) return { tooLarge: importFileTooLarge(err.size, kind, maxBytes)! };
     throw err;
-  } finally {
-    await fh.close();
   }
 }
 

@@ -224,7 +224,10 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/import-file \
   A relative path is refused with `400`.
 - The Companion's own configuration file (`.env`) and the cases root are refused with `403`. The
   one exception is this case's `drop/` folder, so a file the drop folder refused as too large can
-  still be imported from there.
+  still be imported from there. A hard link to one of those files is refused too.
+- A path that is not a regular file (a folder, a FIFO, a device) is refused with `400`. A file that
+  is moved, replaced or deleted while the Companion checks it is refused with `409`: try again.
+  The Companion reads the exact file it checked, never the path a second time.
 - A Plaso CSV streams from disk with no size limit. Other formats have a limit of 256 MB
   (`DFIR_MAX_IMPORT_FILE_MB`).
 - In team mode, this endpoint needs a **global administrator**, because it reads the server's disk.
@@ -267,6 +270,8 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/push \
   detection.
 - `Authorization: Bearer <push token>` also works in place of `X-DFIR-Key`.
 - Returns `202 {"accepted": true, "kind": ..., "source": ...}`. The import runs in the background.
+- If the payload is JSON that no importer recognises, the `202` adds the same `"warning"` sentence
+  as `/import`, and the case log gets a WARN line.
 - No token configured → `403`. Missing or wrong key → `401`.
 - **Team mode:** send a service token with `write` scope as `Authorization: Bearer dfirsvc_...`.
   A push key alone gets `401`.

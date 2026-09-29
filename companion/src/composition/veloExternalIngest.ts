@@ -29,7 +29,9 @@ import type { InvestigationState, Severity, ForensicEvent } from "../analysis/st
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
-import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
+import { siemFallbackNotes } from "../routes/importNotes.js";
+import type { VeloUploadsOutcome } from "../routes/veloUploadFields.js";
 
 // The case's rename ledger for a super-only parse (#1495): what the forensic path reads through
 // importState.ts knownHostIdentity, from the snapshot this path already holds. Nothing when the
@@ -78,7 +80,7 @@ export interface VeloExternalIngest {
     caseId: string,
     uploads: HuntUpload[],
     opts: { minSeverity?: Severity; label: string },
-  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }>;
+  ): Promise<VeloUploadsOutcome>;
 }
 
 // The diff of the merged state as imported, with no demote — the superOnly-without-store fallback.
@@ -335,7 +337,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     caseId: string,
     uploads: HuntUpload[],
     opts: { minSeverity?: Severity; label: string },
-  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }> {
+  ): Promise<VeloUploadsOutcome> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
     // One import writer per case: the section spans the snapshot, the merge and the diff
@@ -354,6 +356,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
 
       const imported: string[] = [];
       const skipped: string[] = [];
+      const importedKinds: Array<{ file: string; kind: string; debug: ImportDebugRecorder }> = []; // #1824
       let lastStoredName: string | undefined;
       for (const up of uploads) {
         const debug = createImportDebugRecorder(); // one recorder per uploaded file (#1736)
@@ -380,6 +383,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             debug,
           });
           imported.push(up.name);
+          importedKinds.push({ file: up.name, kind, debug }); // only a file that actually imported
+          logSiemFallback(caseId, up.name, kind, debug);
         } catch (e) {
           // No failure ring on this path: the upload is skipped and logged, so its line is written here.
           emitImportDebug(caseId, debug, "failed");
@@ -431,7 +436,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         }
         resynthesizeInBackground(caseId);
       }
-      return { addedEvents, addedIocs, imported, skipped };
+      return { addedEvents, addedIocs, imported, skipped, ...siemFallbackNotes(importedKinds) };
     } finally {
       releaseImportLock(); // a lock left held would wedge every later import for this case
     }

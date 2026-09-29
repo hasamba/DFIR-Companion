@@ -23,7 +23,18 @@ describe("DropStatusStore", () => {
       imported: [],
       failed: [],
       pendingRawInputs: [],
+      warnings: [],
     });
+  });
+
+  // #1824: a file that imported but whose JSON kind was only guessed.
+  it("records sweep warnings, caps them, and reads a record written before them as []", async () => {
+    const warnings = Array.from({ length: 205 }, (_, i) => ({ relpath: `w${i}.json`, reason: "guessed" }));
+    await store.record("c1", { dropPath: "/d", imported: ["w0.json"], failed: [], warnings });
+    const s = await store.load("c1");
+    expect(s.warnings).toHaveLength(200);
+    expect(s.warnings[0]).toEqual({ relpath: "w0.json", reason: "guessed" });
+    expect((await store.clear("c1")).warnings).toEqual([]);
   });
 
   it("records a sweep (imported + failed) and loads it back", async () => {
@@ -84,5 +95,18 @@ describe("DropStatusStore — pendingRawInputs relpath guard (#919)", () => {
     expect(s.pendingRawInputs).toEqual([
       { relpath: "triage/security.evtx", ext: ".evtx", suggestedTool: null, configured: true },
     ]);
+  });
+});
+
+describe("DropStatusStore: records without warnings (#1824)", () => {
+  it("loads a legacy record with no warnings field, and a malformed one, as []", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-dropstatus-legacy-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const file = join(cases.stateDir("c1"), "drop-status.json");
+    await writeFile(file, JSON.stringify({ lastSweepAt: "t", imported: ["a.json"] }), "utf8");
+    expect((await new DropStatusStore(cases).load("c1")).warnings).toEqual([]);
+    await writeFile(file, JSON.stringify({ lastSweepAt: "t", warnings: "nope" }), "utf8");
+    expect((await new DropStatusStore(cases).load("c1")).warnings).toEqual([]);
   });
 });

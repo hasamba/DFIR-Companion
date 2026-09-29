@@ -822,6 +822,18 @@ describe("anonymizer — suppression (analyst removed a wrong entity)", () => {
     expect(out).not.toContain("WIN11\\vagrant"); // a real account is still tokenized
     expect(out).toMatch(/ANON_USER_1/);
   });
+  // #1822: a value that is both custom ("Hide from AI") and suppressed ("Leave visible") is masked.
+  // The stricter choice wins, whatever wrote the veto — a stale tab, the bulk action, or the auto list.
+  it("never lets a suppression unmask a custom entity", () => {
+    const a = createAnonymizer(policy(), {
+      ...NONE,
+      custom: [{ value: "Jane Doe", category: "PERSON" }],
+      suppressed: ["jane doe"],
+    });
+    const out = a.apply("logon by Jane Doe");
+    expect(out).toBe("logon by ANON_PERSON_1");
+    expect(a.restore(out)).toBe("logon by Jane Doe");
+  });
   it("suppression is case-insensitive", () => {
     const a = createAnonymizer(policy({ HOST: true }), {
       hosts: ["WIN11"],
