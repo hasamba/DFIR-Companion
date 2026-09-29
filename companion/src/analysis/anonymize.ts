@@ -1,7 +1,23 @@
 import type { InvestigationState } from "./stateTypes.js";
-import { extractAccounts } from "./assetGraph.js";
+import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { escapeRegExp } from "./regexEscape.js";
+import {
+  NETBIOS_ACCT,
+  UPN_ACCT,
+  PATH_DOMAINS,
+  USER_PATH_RE,
+  WELL_KNOWN_PROFILE,
+  bareUsername,
+  collectUsernames,
+  insideSuppressedAccount,
+  isGuardedUsername,
+  isNoiseAccount,
+  isNoiseDomain,
+  preservedSpans,
+  strictlyInside,
+  usernameRegExp,
+} from "./anonUsernames.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
@@ -74,6 +90,7 @@ export interface AnonPolicy {
 export interface KnownEntities {
   hosts: string[]; // victim hostnames / FQDNs (longest-first)
   accounts: string[]; // DOMAIN\user or user@domain
+  usernames?: string[]; // bare victim usernames (#1780) — replaced as whole words wherever they appear
   internalDomains: string[]; // AD/email domains to tokenize (lowercased, longest-first)
   custom?: CustomEntity[]; // analyst-added + auto-discovered exact-match entities (tokenized when enabled)
   // Values the analyst REMOVED from auto-discovery (lowercased). Never tokenized — even when a
@@ -256,11 +273,6 @@ const IPV6_RE =
   /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}/gi;
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
-// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
-const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
-const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
-const PATH_DOMAINS =
-  /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
 
 // Private-key blocks in every armor this is likely to meet: PEM (RSA / EC / DSA / OPENSSH /
 // ENCRYPTED PKCS#8 / bare PKCS#8), the PGP form (which ends "PRIVATE KEY BLOCK", not "PRIVATE KEY"),
@@ -417,29 +429,64 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     const d = domain.toLowerCase();
     return known.internalDomains.some((kd) => d === kd || d.endsWith("." + kd));
   }
+  // #1780: ONE person, ONE token. The USER token is keyed by the bare username, so CORP\jdoe,
+  // jdoe@corp.example, /home/jdoe and a bare "jdoe" all read ANON_USER_n. The qualifier gets its
+  // own token (HOST when it is a known machine, else DOMAIN), so every token restores to exactly one
+  // real piece and restore() still round-trips. It is tokenized whatever the HOST/DOMAIN toggles say:
+  // the USER pass always hid the whole account, and a visible "ANON_USER_1@corp.example" would be
+  // swept up whole by the EMAIL pass — a token nested in a token, which restore() cannot undo.
+  const learned = new Set<string>();
+  let bareRe: RegExp | null | undefined;
+  function learn(name: string): void {
+    const k = name.toLowerCase();
+    if (isGuardedUsername(k) || learned.has(k) || suppressed.has(k)) return;
+    learned.add(k);
+    bareRe = undefined;
+  }
+  for (const n of known.usernames ?? []) learn(n);
+  const knownHosts = new Set(known.hosts.map((h) => h.toLowerCase()));
+  const qualifier = (q: string) => assign(knownHosts.has(q.toLowerCase()) ? "HOST" : "DOMAIN", q);
+  function userToken(user: string): string {
+    learn(user);
+    return assign("USER", user);
+  }
+  function accountToken(account: string): string {
+    if (suppressed.has(account.toLowerCase())) return account; // the analyst vetoed this account
+    // A registry hive, Windows principal, tactic folder or Folder\file.exe is not a person: it keeps
+    // its old single whole-value token and teaches the bare pass nothing ("evil.exe", "Execution").
+    if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return assign("USER", account);
+    const slash = account.lastIndexOf("\\");
+    if (slash > 0) return `${qualifier(account.slice(0, slash))}\\${userToken(account.slice(slash + 1))}`;
+    const at = account.indexOf("@");
+    if (at > 0) return `${userToken(account.slice(0, at))}@${qualifier(account.slice(at + 1))}`;
+    return userToken(account);
+  }
   function anonAccounts(t: string): string {
-    let out = t.replace(NETBIOS_ACCT, (m, dom: string, user: string) =>
-      PATH_DOMAINS.test(dom) ? m : assign("USER", `${dom}\\${user}`),
-    );
+    let out = t.replace(NETBIOS_ACCT, (m, dom: string) => (PATH_DOMAINS.test(dom) ? m : accountToken(m)));
     // Only UPNs on an internal domain are AD accounts → USER. Others stay for anonEmails.
-    out = out.replace(UPN_ACCT, (m) => {
-      const domain = m.split("@")[1] ?? "";
-      return isInternalDomain(domain) ? assign("USER", m) : m;
-    });
+    out = out.replace(UPN_ACCT, (m) => (isInternalDomain(m.split("@")[1] ?? "") ? accountToken(m) : m));
     return out;
+  }
+  // Every learned username as a whole word, after HOST and DOMAIN have claimed their spans (so
+  // "jdoe-laptop" is a host first). Guarded words (admin, test, root, …) are never learned.
+  function anonBareUsernames(t: string): string {
+    if (bareRe === undefined) bareRe = usernameRegExp(learned);
+    if (!bareRe) return t;
+    let spans: Array<[number, number]> | undefined; // computed once, only when a name matches
+    return t.replace(bareRe, (m: string, offset: number, whole: string) => {
+      if (insideSuppressedAccount(whole, offset, m, suppressed)) return m;
+      spans ??= preservedSpans(whole);
+      return strictlyInside(spans, offset, m.length) ? m : assign("USER", m);
+    });
   }
   const EMAIL_RE =
     /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
-  // Capture the profile-dir prefix + the username segment; tokenize only the username.
-  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
-  const WELL_KNOWN_PROFILE =
-    /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
   function anonUserPaths(t: string): string {
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
-      WELL_KNOWN_PROFILE.test(name) ? m : prefix + assign("USER", name),
+      WELL_KNOWN_PROFILE.test(name) ? m : prefix + userToken(name),
     );
   }
   // Encoded command-line blobs: the base64 after PowerShell -e/-ec/-enc/-EncodedCommand and inside
@@ -577,7 +624,9 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       // hide adversary infrastructure that policy explicitly says to keep visible, even though
       // anonIpv4()/restoreIpv6Literals() themselves correctly leave live public-IP text alone.
       if (category === "EXTIP" && !policy.maskPublicIps) continue;
-      out = out.replace(exactValueRegExp(value), (m) => assign(category, m));
+      out = out.replace(exactValueRegExp(value), (m) =>
+        category === "USER" ? accountToken(m) : assign(category, m),
+      );
     }
     return out;
   }
@@ -602,6 +651,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.REG) t = anonSids(t);
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
+    if (policy.categories.USER) t = anonBareUsernames(t);
     if (policy.categories.IP) {
       t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
       t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
@@ -630,135 +680,9 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   return { apply, restore, restoreDeep, discoveries };
 }
 
-// Tokens that LOOK like a "DOMAIN\user" or "host.domain" but are NEVER a victim/customer
-// domain. extractAccounts()'s DOMAIN\user regex has three big false-positive sources, and
-// deriveKnownEntities() would otherwise promote each to an "internal domain": registry hives
-// (HKU\Software), Windows well-known principals (BUILTIN\…, NT AUTHORITY\…, FONT DRIVER HOST\…),
-// and EVTX-ATTACK-SAMPLES-style tactic folders (Execution\…, Persistence\…). Promoting them is
-// doubly harmful: it pollutes the analyst's anonymization list AND, because anonDomains() does a
-// word-boundary replace, it tokenizes these ultra-common words ("access", "code", "files",
-// "execution") throughout the timeline — wrecking the text the model reads. All single-label,
-// lowercase. A dotted FQDN (windomain.local) is always treated as a real domain and kept.
-export const NON_VICTIM_DOMAINS: ReadonlySet<string> = new Set([
-  // Windows well-known principals / NETBIOS authorities (the DOMAIN half of e.g. BUILTIN\Administrators)
-  "nt",
-  "authority",
-  "service",
-  "builtin",
-  "workgroup",
-  "virtual",
-  "machine",
-  "iis",
-  "apppool",
-  "window",
-  "manager",
-  "font",
-  "driver",
-  "host",
-  "dwm",
-  "umfd",
-  "everyone",
-  "system",
-  "owner",
-  "creator",
-  // Registry hives (HKU\Software → "hku")
-  "hku",
-  "hklm",
-  "hkcu",
-  "hkcr",
-  "hkcc",
-  "hkey_users",
-  "hkey_local_machine",
-  "hkey_current_user",
-  "hkey_classes_root",
-  "hkey_current_config",
-  // Bare single-label LAN suffixes (a 2-label host like dc.local would otherwise add "local")
-  "local",
-  "localdomain",
-  "lan",
-  "home",
-  // MITRE ATT&CK tactics — the EVTX-ATTACK-SAMPLES folder names that keep getting mis-parsed
-  "reconnaissance",
-  "resource",
-  "development",
-  "initial",
-  "access",
-  "execution",
-  "persistence",
-  "privilege",
-  "escalation",
-  "defense",
-  "evasion",
-  "credential",
-  "discovery",
-  "lateral",
-  "movement",
-  "collection",
-  "command",
-  "control",
-  "exfiltration",
-  "impact",
-  "tactics",
-  "techniques",
-  "mitre",
-  "attack",
-  // Common tool / process / generic folder names that get mis-parsed as a DOMAIN
-  "defender",
-  "explorer",
-  "vgauth",
-  "ransomware",
-  "malware",
-  "samples",
-  "results",
-  "tools",
-  "setup",
-  "files",
-  "hours",
-  "global",
-  "launch",
-  "layers",
-  "code",
-  "jobs",
-  "lite",
-  "csv",
-  "zip",
-  "logs",
-  "temp",
-  "data",
-  "output",
-  "report",
-  "reports",
-  "evidence",
-  "downloads",
-  "desktop",
-  "documents",
-  "users",
-  "public",
-  "default",
-  "windows",
-  "programdata",
-  "program",
-  "system32",
-  "appdata",
-]);
-
-// A single-label token is "noise" when it's a known non-victim word; a dotted FQDN is kept.
-export function isNoiseDomain(domain: string): boolean {
-  const d = domain.toLowerCase().trim();
-  if (!d) return true;
-  if (d.includes(".")) return false; // real FQDN (windomain.local) — always keep
-  return NON_VICTIM_DOMAINS.has(d);
-}
-
-// An extracted account is noise when its domain part is a non-victim word — e.g.
-// HKU\Software, BUILTIN\Administrators, NT AUTHORITY\SYSTEM, Execution\evil.exe.
-export function isNoiseAccount(account: string): boolean {
-  const slash = account.indexOf("\\");
-  if (slash > 0) return isNoiseDomain(account.slice(0, slash));
-  const at = account.indexOf("@");
-  if (at > 0) return isNoiseDomain(account.slice(at + 1));
-  return false;
-}
+// The noise vocabulary (registry hives, Windows principals, ATT&CK tactic folders, generic words)
+// lives beside the username guard list in anonUsernames.ts; re-exported for existing importers.
+export { NON_VICTIM_DOMAINS, isNoiseDomain, isNoiseAccount } from "./anonUsernames.js";
 
 // Special-use / private-namespace TLDs (RFC 6761/6762 plus the conventional enterprise ones).
 // A host under one of these is never routable adversary infrastructure, so a domain/url IOC on
@@ -834,14 +758,19 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     if (!isNoiseDomain(parent)) internalDomains.add(parent);
   }
   const byLenDesc = (a: string, b: string) => b.length - a.length || a.localeCompare(b);
-  return {
-    hosts: [...hosts].sort(byLenDesc),
-    accounts: [...accounts],
-    internalDomains: [...internalDomains]
-      .map((d) => d.toLowerCase())
-      .filter((d) => !isNoiseDomain(d)) // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
-      .sort(byLenDesc),
-  };
+  const domains = [...internalDomains]
+    .map((d) => d.toLowerCase())
+    .filter((d) => !isNoiseDomain(d)) // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
+    .sort(byLenDesc);
+  // #1780: every victim username the case names in a qualified shape, from the timeline AND the
+  // findings (AI prose is where a bare name most often follows a qualified one) and IOC values.
+  const texts = [
+    ...state.forensicTimeline.flatMap((e) => [e.description, e.path ?? ""]),
+    ...state.findings.flatMap((f) => [f.title, f.description]),
+    ...state.iocs.map((i) => i.value),
+  ];
+  const usernames = collectUsernames({ texts, accountsOf: extractAccounts, internalDomains: domains });
+  return { hosts: [...hosts].sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }
 
 // Is the configured AI provider on-box (so screenshots sent to it don't leave the machine)?

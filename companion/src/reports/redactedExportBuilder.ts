@@ -95,6 +95,7 @@ export async function buildRedactedExport(
   const known: KnownEntities = {
     hosts: derived.hosts,
     accounts: derived.accounts,
+    usernames: derived.usernames,
     internalDomains: [...derived.internalDomains, ...targets.domains.map((d) => d.toLowerCase())],
     custom: [...custom, ...disc.discovered, ...targetEmails, ...orgEntity],
     suppressed: disc.suppressed,

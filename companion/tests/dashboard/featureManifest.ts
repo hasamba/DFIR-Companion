@@ -736,7 +736,7 @@ export const FEATURES: Feature[] = [
     file: "dashboard-ioc-blocklist.js",
     initializer: "initIocBlocklist",
     publish: ["initIocBlocklist", "openIocBlocklist", "closeIocBlocklist", "downloadIocBlocklist"],
-    private: [],
+    private: ["blSummaryGen"],
   },
   {
     // Its one control passes saveCaseTemplate as a value.

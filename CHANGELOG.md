@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Block-list says why nothing matched** — the IOC block-list dialog shows the match count and the TXT header adds "# Matched N of M IOCs" with a count per exclusion reason (closes #1807)
+- **Import a ZIP case archive** — Import case accepts the ZIP from Archive to ZIP, checks paths, case identity and manifest hashes before it writes, and Archive to ZIP shows where it saved the file (closes #1784)
 - **ATT&CK matrix** — Navigator-style offline matrix in the MITRE panel and the interactive HTML report, with platform filter, hits-only view and per-technique findings and events (closes #1764)
 - **Importer debug detail** — every import records the columns it used, skipped-row reasons, fallbacks and parse-failure location to the debug log and the support bundle (closes #1736)
 - **Redacted support bundle** — Diagnostics downloads one zip of redacted logs, an always-on capped debug log and failed-import layouts for bug reports (closes #1735)
@@ -23,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Hide from AI always wins** — "Leave visible" from another window or the bulk action can no longer unmask a value the analyst hid; refused values are counted in the panel (closes #1822)
+- **Report diff names text and Case Details changes** — version and release diffs flag a changed report text and list changed Case Details fields instead of saying "no differences", and a meta-only change now mints a version (closes #1779)
+- **Bare usernames redacted** — a username found as CORP\\user, a UPN or a profile path gets one token and is replaced wherever it appears, in the redacted package, AI anonymization and the support bundle; common words are spared (closes #1780)
 - **Re-synthesize locks while it runs** — the button stays disabled until the run ends, and a superseded run no longer reports "synthesis failed" (part of #1799)
 - **Presidio stops flagging tool names as people** — tool and malware names, timestamps, flags, file names and ATT&CK ids are no longer held as PERSON, and the approval panel offers one-click Leave all visible (closes #1799)
 - **Gate holds are not user cancels** — a Presidio or duplicate-host hold records its job as held for the analyst, not as a ✕ Cancel, on every AI route (closes #1801)

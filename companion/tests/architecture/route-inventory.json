@@ -452,6 +452,7 @@
     "ROUTE GET /cases/:id/export/ioc-blocklist",
     "ROUTE POST /cases/:id/export/encrypted",
     "ROUTE POST /cases/import/encrypted",
+    "ROUTE POST /cases/import/zip",
     "ROUTE GET /cases/:id/backups",
     "ROUTE POST /cases/:id/restore-backup",
     "ROUTE POST /cases/:id/push/iris",
