@@ -11,6 +11,7 @@ export const DEMO_CASE_ID_DEFAULT = "demo";
 export interface SeedDemoOptions {
   caseId?: string;
   force?: boolean;
+  generation?: string; // the case incarnation to write into case.json (#1855, CaseStore.withSeedSlot)
 }
 
 export interface SeedDemoResult {
@@ -55,11 +56,9 @@ export async function seedDemoCase(
       (err as NodeJS.ErrnoException).code = "EEXIST";
       throw err;
     }
-    // force: clear the existing case directory before re-seeding so orphan files (extra
-    // screenshots/imports the analyst added, custom state files) don't survive into the "fresh"
-    // demo case. Previously force overwrote only the demo's own files and left everything else,
-    // so the re-seeded demo shipped with stale evidence and a metadata/imports.jsonl that no longer
-    // matched the imports/ directory (#19). The route already refuses force on an OPEN/busy case.
+    // force: clear the case directory first so orphan files (extra screenshots/imports, custom state)
+    // don't survive into the "fresh" demo — overwriting only the demo's own files shipped stale
+    // evidence (#19). The route already refuses force on an OPEN/busy case.
     await rm(caseDir, { recursive: true, force: true });
   }
 
@@ -74,6 +73,7 @@ export async function seedDemoCase(
     createdAt: "2026-05-22T14:00:00.000Z",
     investigator: "Demo Analyst",
     aiProvider: "anthropic",
+    generation: options.generation,
   });
 
   // ── investigation.json ─────────────────────────────────────────────────────

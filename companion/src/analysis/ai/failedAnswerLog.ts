@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { withCaseWrite } from "../../storage/caseIncarnation.js";
 
 /**
  * Keep a model answer that failed parsing or validation (#1602), so an analyst can see WHY a
@@ -40,13 +41,16 @@ function capped(text: string): string {
 /** Write one failed answer and return its path. Throws on a write error — the caller decides. */
 export async function writeFailedAnswer(caseDir: string, a: FailedAnswer, now = new Date()): Promise<string> {
   const dir = join(caseDir, "logs");
-  await mkdir(dir, { recursive: true });
   const stamp = now.toISOString().replace(/[:.]/g, "-");
   const name = `ai-failed-${safeKind(a.kind)}-${stamp}-a${a.attempt}-${randomBytes(4).toString("hex")}.txt`;
   const path = join(dir, name);
   const body =
     `# AI answer that failed (${a.kind}, attempt ${a.attempt}, ${now.toISOString()})\n` +
     `# Error: ${a.error}\n\n${capped(a.text)}`;
-  await writeFile(path, body, { encoding: "utf8", flag: "wx" });
+  // Refused for a deleted or replaced case (#1855): its late failed answer recreates nothing.
+  await withCaseWrite(path, async () => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(path, body, { encoding: "utf8", flag: "wx" });
+  });
   return path;
 }

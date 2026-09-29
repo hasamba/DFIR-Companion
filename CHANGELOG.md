@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Property and attribute-node writes follow the safe-dom policy** — `a.href =`, `img.src =`, `iframe.srcdoc =`, URL-part setters, SVG `href.baseVal`, `setAttributeNode` and `Attr.value` are judged like `setAttribute`; downloads, map tiles and graph glyphs keep working (closes #1858)
+- **A deleted case's late work stays out** — each case incarnation has a generation, and a late write from a deleted case recreates no folder and never lands in a new case with the same id (closes #1855)
 - **Local tool runs read the checked file** — a tool refuses a linked, piped or hard-linked target; in team mode it reads a private copy whose hash goes into custody (closes #1857)
 - **MCP shared-path delivery in team mode** — hands the analysis host a private copy on the share, records its hash and deletes it after the run, so a swapped case file cannot reach the host; single-user mode still copies nothing (closes #1856)
 - **Seeding the demo case runs the id-reuse checks** — a new demo case id waits out a deleted case's jobs, refuses a part-deleted folder and clears stale roles, like New case (closes #1853)

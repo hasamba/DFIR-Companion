@@ -210,12 +210,15 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   ): Promise<void> {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
-    await mkdir(dir, { recursive: true });
     const { text, reportText, ...rest } = p;
     const meta: StagedPreview = rest;
-    await writeFile(join(dir, `${jobId}.out`), text, "utf8");
-    if (reportText !== undefined) await writeFile(join(dir, `${jobId}.report`), reportText, "utf8");
-    await writeFile(join(dir, `${jobId}.json`), JSON.stringify(meta), "utf8");
+    // One admitted write (#1855): a deleted case's late preview never lands in a new case's folder.
+    await store.withCaseWrite(dir, async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${jobId}.out`), text, "utf8");
+      if (reportText !== undefined) await writeFile(join(dir, `${jobId}.report`), reportText, "utf8");
+      await writeFile(join(dir, `${jobId}.json`), JSON.stringify(meta), "utf8");
+    });
   }
 
   async function readPreview(
@@ -597,7 +600,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         .slice(0, 120) || "raw.bin";
     let stageDir = "";
     try {
-      await mkdir(work, { recursive: true });
+      await store.mkdirInCase(work);
       stageDir = await mkdtemp(join(work, "up-"));
       const staged = join(stageDir, safe);
       await writeFile(staged, Buffer.from(dataBase64, "base64"));
@@ -864,7 +867,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         .slice(0, 120) || "evidence.dat";
     let stageDir = "";
     try {
-      await mkdir(work, { recursive: true });
+      await store.mkdirInCase(work);
       stageDir = await mkdtemp(join(work, "agent-up-"));
       const staged = join(stageDir, safe);
       await writeFile(staged, Buffer.from(dataBase64, "base64"));

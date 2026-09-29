@@ -80,6 +80,8 @@ export async function clearStateOutlivingCase(
     ["revoke case access", () => options.teamAuth?.store.deleteCaseAccess(id, actor)],
     ["forget background jobs", () => options.jobManager?.forgetCase(id)],
     ["retire case id", () => store.retireCaseId(id)],
+    // Captures of the deleted case must not be analysed into a new case with this id (#1855).
+    ["drop pending captures", () => void ctx.captureBuffers().delete(id)],
   ];
   for (const [what, run] of steps) {
     try {

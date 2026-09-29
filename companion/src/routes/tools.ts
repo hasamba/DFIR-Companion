@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
-import { writeFile, rm, mkdir, mkdtemp } from "node:fs/promises";
+import { writeFile, rm, mkdtemp } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import {
   TOOL_DEFS,
@@ -201,7 +201,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     let stageDir = "";
     const debug = createImportDebugRecorder(); // this run's import attempt (#1736)
     try {
-      await mkdir(toolWork, { recursive: true });
+      await store.mkdirInCase(toolWork);
       stageDir = await mkdtemp(join(toolWork, "up-"));
       const staged = join(stageDir, safe);
       const bytes = Buffer.from(dataBase64, "base64");

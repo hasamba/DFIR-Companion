@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { loadDatabaseSync } from "./sqliteRuntime.js";
+import { beginCaseWrite } from "../storage/caseIncarnation.js";
 
 // #1454: the main-thread client for the case SQLite worker source in caseSqliteWorker.ts.
 //
@@ -131,6 +132,22 @@ class WorkerLane {
   }
 }
 
+// #1855: every op that writes a case file is admitted by the late-write check first, synchronously
+// (the writer keeps its FIFO order), and holds its admission until it settles. The worker's
+// mkdirSync on open is never reached for a deleted, replaced or moved case.
+function admitWrite(message: WorkerMessage): () => void {
+  const releases: (() => void)[] = [];
+  try {
+    for (const path of [message.dbPath, message.targetPath]) {
+      if (typeof path === "string" && path) releases.push(beginCaseWrite(path));
+    }
+  } catch (err) {
+    for (const release of releases) release();
+    throw err;
+  }
+  return () => releases.forEach((release) => release());
+}
+
 function pathKey(message: WorkerMessage): string | null {
   const path = message.dbPath ?? message.targetPath;
   return typeof path === "string" && path ? path : null;
@@ -155,9 +172,16 @@ export class CaseSqliteWorkerPool {
 
   request<T>(message: WorkerMessage): Promise<T> {
     const op = String(message.op);
-    if (EXCLUSIVE_OPS.has(op)) return this.exclusiveRequest<T>(message);
     if (READ_OPS.has(op)) return this.readRequest<T>(message);
-    return this.writeRequest<T>(message);
+    let release: () => void;
+    try {
+      release = admitWrite(message);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+    const promise = EXCLUSIVE_OPS.has(op) ? this.exclusiveRequest<T>(message) : this.writeRequest<T>(message);
+    void promise.then(release, release);
+    return promise;
   }
 
   private writeRequest<T>(message: WorkerMessage): Promise<T> {
@@ -213,7 +237,14 @@ export class CaseSqliteWorkerPool {
   private ensureDatabase(key: string): Promise<boolean> {
     const running = this.ensuring.get(key);
     if (running) return running;
+    let release: () => void;
+    try {
+      release = admitWrite({ dbPath: key }); // it opens the file for write (#1855)
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
     const promise = this.writer.request<boolean>({ op: "ensureDatabase", dbPath: key });
+    void promise.then(release, release);
     this.ensuring.set(key, promise);
     void promise.then(settle, settle).then(() => this.ensuring.delete(key));
     return promise;

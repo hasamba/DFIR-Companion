@@ -5,6 +5,7 @@ import { SNAPSHOT_BINARY_STATE_FILES, SNAPSHOT_STATE_FILES } from "../analysis/i
 import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "../analysis/stateStore.js";
 import type { CaseStore } from "./caseStore.js";
+import { beginCaseWrite, withCaseWrite } from "./caseIncarnation.js";
 
 export type BackupTrigger = "pre-synthesis" | "pre-import" | "scheduled" | "shutdown";
 
@@ -177,6 +178,16 @@ export class BackupManager {
     caseId: string,
     trigger: BackupTrigger,
     now: string = new Date().toISOString(),
+  ): Promise<BackupInfo & { prune: BackupPruneResult }> {
+    // One admitted write (#1855): a delete waits for it, and a deleted or replaced case's late
+    // backup is refused before its mkdir.
+    return withCaseWrite(this.backupDir(caseId), () => this.createBackupAdmitted(caseId, trigger, now));
+  }
+
+  private async createBackupAdmitted(
+    caseId: string,
+    trigger: BackupTrigger,
+    now: string,
   ): Promise<BackupInfo & { prune: BackupPruneResult }> {
     const dir = this.backupDir(caseId);
     await this.deps.mkdir(dir, { recursive: true });
@@ -439,6 +450,7 @@ export class BackupManager {
     }
 
     let deleted = 0;
+    const release = doomed.size ? beginCaseWrite(this.backupDir(caseId)) : () => undefined; // #1855
     for (const filename of doomed) {
       try {
         try {
@@ -457,6 +469,7 @@ export class BackupManager {
         // Best-effort: a file that's already gone is not an error
       }
     }
+    release();
     return { deleted, totalBytes, overBudget };
   }
 }

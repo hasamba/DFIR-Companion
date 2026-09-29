@@ -1,5 +1,6 @@
 import { writeFile as fsWriteFile, rename as fsRename, unlink as fsUnlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { beginCaseWrite } from "./caseIncarnation.js";
 
 // fs error codes that mean "the file is briefly locked by another process" on Windows. A
 // syncing client (Dropbox / OneDrive), antivirus, or the search indexer can hold a file open
@@ -65,6 +66,9 @@ export interface AtomicWriteDeps {
   // server can surface a "state dir is contended (AV/indexer?)" warning. Never called on first-try
   // success or on final failure (that path throws). Best-effort: exceptions here are ignored.
   onRetry?: (attempts: number) => void;
+  // false skips the late-write check (#1855). Only for a creator that holds the case lock while it
+  // stamps a new case.json (CaseStore.stampNewGeneration); every other writer is checked.
+  caseGuard?: boolean;
 }
 
 // Write `content` to `target` atomically: write a temp file, then rename it over the target.
@@ -90,6 +94,26 @@ export async function atomicWrite(
   const sleep = deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
   const retries = deps.retries ?? atomicWriteRetries();
 
+  // A deleted, replaced or moved case refuses the write before the temp file exists (#1855).
+  const release = deps.caseGuard === false ? () => undefined : beginCaseWrite(target);
+  try {
+    await writeThenRename(target, content, { write, rename, unlink, sleep, retries, onRetry: deps.onRetry });
+  } finally {
+    release();
+  }
+}
+
+interface WriteIo {
+  write: (path: string, content: string | Uint8Array) => Promise<void>;
+  rename: (from: string, to: string) => Promise<void>;
+  unlink: (path: string) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  retries: number;
+  onRetry?: (attempts: number) => void;
+}
+
+async function writeThenRename(target: string, content: string | Uint8Array, io: WriteIo): Promise<void> {
+  const { write, rename, unlink, sleep, retries } = io;
   const tmp = tempPathFor(target);
   await write(tmp, content);
   try {
@@ -98,7 +122,7 @@ export async function atomicWrite(
         await rename(tmp, target);
         if (attempt > 0) {
           try {
-            deps.onRetry?.(attempt);
+            io.onRetry?.(attempt);
           } catch {
             /* observability is best-effort */
           }

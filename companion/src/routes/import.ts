@@ -1,6 +1,5 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
-import { mkdir } from "node:fs/promises";
 import { parseCsv } from "../analysis/csvImport.js";
 import { parseLogLines } from "../analysis/logImport.js";
 import { parseThorReport } from "../analysis/thorImport.js";
@@ -594,7 +593,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const importedAt = new Date().toISOString();
       // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
       // never string-decode is still persisted faithfully) and append the audit line.
-      await mkdir(store.importsDir(caseId), { recursive: true });
+      await store.mkdirInCase(store.importsDir(caseId));
       // Exclusive: never overwrite evidence already on disk (#214). From the judged handle (#1834).
       const size = await copyHandleExclusive(src.handle, join(store.importsDir(caseId), storedName));
       await store.appendImport(caseId, {

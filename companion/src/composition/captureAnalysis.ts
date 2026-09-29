@@ -35,6 +35,7 @@ import { SynthMetaStore } from "../analysis/synthMeta.js";
 // header pill and the gate's own 409 can never drift into saying different things.
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import { isAnalystDecisionGate } from "../routes/presidioApproval.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 export interface CaptureAnalysisDeps {
   store: CaseStore;
@@ -213,7 +214,13 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     return true;
   }
 
+  // #1855: each kick below runs as work of the case incarnation it was kicked for (or the one its
+  // caller already captured), so its timers and writes are refused once that case is deleted.
   function scheduleSynthesis(caseId: string): void {
+    runInCaseScope(store.casesRoot, caseId, () => scheduleSynthesisInScope(caseId));
+  }
+
+  function scheduleSynthesisInScope(caseId: string): void {
     // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
     // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
     // DFIR_AI_SYNTH_PROVIDER set) must still auto-synthesize after imports.
@@ -301,7 +308,11 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
-  async function flush(caseId: string): Promise<void> {
+  function flush(caseId: string): Promise<void> {
+    return runInCaseScope(store.casesRoot, caseId, () => flushInScope(caseId));
+  }
+
+  async function flushInScope(caseId: string): Promise<void> {
     const buf = captureBuffers.get(caseId) ?? [];
     if (buf.length === 0 || !options.pipeline || !hasAiProvider()) return;
     captureBuffers.set(caseId, []);
@@ -314,7 +325,8 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     try {
       await options.pipeline.analyzeWindow(caseId, buf);
       // Analysis recovered — drop any stale failure marker from a prior window.
-      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
+      const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
+      await store.withCaseWrite(markerPath, () => rm(markerPath, { force: true })); // #1855
       const maxSeq = Math.max(...buf.map((c) => c.sequenceNumber));
       const cur = await getControl(caseId);
       if (maxSeq > cur.lastAnalyzedSeq) await setControl(caseId, { lastAnalyzedSeq: maxSeq });
@@ -323,11 +335,9 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     } catch (err) {
       recordAiError(caseId, "extracting", err);
       const seqs = buf.map((c) => c.sequenceNumber);
-      await writeFile(
-        join(store.stateDir(caseId), "pending_analysis.json"),
-        JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2),
-        "utf8",
-      );
+      const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
+      const marker = JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2);
+      await store.withCaseWrite(markerPath, () => writeFile(markerPath, marker, "utf8")); // #1855
       options.onAiStatus?.(caseId, {
         status: "error",
         at: new Date().toISOString(),
@@ -355,7 +365,11 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
 
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
   // is switched back on after capturing with it off. Runs in the background.
-  async function backfill(caseId: string): Promise<void> {
+  function backfill(caseId: string): Promise<void> {
+    return runInCaseScope(store.casesRoot, caseId, () => backfillInScope(caseId));
+  }
+
+  async function backfillInScope(caseId: string): Promise<void> {
     // Fired on an AI off→on transition. EVERY exit path must emit a terminal status — see the
     // file header for why a missing one is a visible bug rather than a cosmetic one.
     const idle = (detail?: string) =>
@@ -450,7 +464,8 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
           lastAnalyzedSeq: Math.max(...win.map((c) => c.sequenceNumber)),
         });
       }
-      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
+      const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
+      await store.withCaseWrite(markerPath, () => rm(markerPath, { force: true })); // #1855
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       scheduleSynthesis(caseId);
     } catch (err) {
@@ -507,6 +522,10 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   }
 
   function resynthesizeInBackground(caseId: string, opts: { analyst?: boolean } = {}): void {
+    runInCaseScope(store.casesRoot, caseId, () => resynthesizeInScope(caseId, opts));
+  }
+
+  function resynthesizeInScope(caseId: string, opts: { analyst?: boolean }): void {
     // FIRST, above every early return below. The two guards that follow (no pipeline, no synthesis
     // provider) are exactly the AI-disabled install this notification exists to serve: put this
     // inside the IIFE and the case that can never reach the synthesize() gate also never gets told.
