@@ -188,6 +188,13 @@ describe("computeUndoDelta / applyUndoDelta", () => {
       expect(ids(restored.forensicTimeline)).toEqual(["c", "b"]);
     });
 
+    it("keeps a later-added row after the CHANGED row it followed, with a full order", () => {
+      const b3 = st([ev("a"), ev("b"), ev("c")]);
+      const a3 = st([ev("c"), ev("b", { description: "b'" }), ev("a")]);
+      const later = st([ev("c"), ev("b", { description: "b'" }), ev("x"), ev("a")]);
+      expect(ids(undo(b3, a3, later).forensicTimeline)).toEqual(["a", "b", "x", "c"]);
+    });
+
     it("keeps later-added rows when the delta carries a full order", () => {
       const b2 = st([ev("a"), ev("b"), ev("c")]);
       const a2 = st([ev("c"), ev("a"), ev("b")]);

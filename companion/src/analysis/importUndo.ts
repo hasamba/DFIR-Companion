@@ -380,9 +380,11 @@ export interface UndoStepDeps {
 // updatedAt. A checkpoint is a delta applied to the CURRENT state (#1874), so the step holds the
 // import section (no import is mid-write) and the state lock (no other writer between the load and
 // the save), in the order every import takes them. The state is saved INSIDE the stack mutation: a
-// failed save throws before the stack is written, so the checkpoint stays on the stack. Applying a
-// delta twice gives the same state, so a failed STACK write after a good state save is harmless.
-// `summary` is null when there is nothing to undo/redo.
+// failed state save throws before the stack is written, so the checkpoint stays on the stack. A
+// failed STACK write after a good state save puts the pre-step state back, so the stack and the
+// state never disagree (a retry would otherwise re-apply the delta and record an empty redo). Only a
+// process crash between the two writes can still leave them apart. `summary` is null when there is
+// nothing to undo/redo.
 export async function runUndoStep(
   deps: UndoStepDeps,
   caseId: string,
@@ -393,14 +395,26 @@ export async function runUndoStep(
   const summary = await deps.importLock.runExclusive(caseId, () =>
     deps.runStateExclusive(caseId, async () => {
       const state = await stateStore.load(caseId);
-      return undoStore.mutate(caseId, async (stack) => {
-        const result = step(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
-        if (!result) return { stack, result: null };
-        const saved: InvestigationState = { ...result.restore, caseId, updatedAt: new Date().toISOString() };
-        await stateStore.save(saved);
-        next = saved;
-        return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
-      });
+      try {
+        return await undoStore.mutate(caseId, async (stack) => {
+          const result = step(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
+          if (!result) return { stack, result: null };
+          const saved: InvestigationState = {
+            ...result.restore,
+            caseId,
+            updatedAt: new Date().toISOString(),
+          };
+          await stateStore.save(saved);
+          next = saved;
+          return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
+        });
+      } catch (err) {
+        if (next) {
+          next = null;
+          await stateStore.save(state); // the stack write failed: put the case back as it was
+        }
+        throw err;
+      }
     }),
   );
   return { summary, next };

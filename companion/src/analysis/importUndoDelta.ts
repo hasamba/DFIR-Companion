@@ -120,7 +120,8 @@ function applyWithOrder(cur: Row[], d: KeyedArrayDelta, order: string[]): Row[] 
   const foreignAfter = new Map<string | null, Row[]>();
   let last: string | null = null;
   for (const r of cur) {
-    if (orderSet.has(r.id) && !dropped.has(r.id)) last = r.id;
+    // A restored row is still a target row, so it anchors the foreign rows that follow it.
+    if (orderSet.has(r.id)) last = r.id;
     else if (!dropped.has(r.id)) {
       const list = foreignAfter.get(last);
       if (list) list.push(r);

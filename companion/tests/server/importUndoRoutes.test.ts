@@ -239,4 +239,26 @@ describe("import undo/redo routes (#76)", () => {
     expect(stack.canUndo).toBe(true);
     expect(stack.canRedo).toBe(false);
   });
+
+  it("a failed undo-stack write puts the post-import state back, so a retry still undoes and redoes", async () => {
+    const h = await harness();
+    const { before, after } = await seedDelta(h, "INC-8");
+    const saveStack = h.importUndoStore.save.bind(h.importUndoStore);
+    h.importUndoStore.save = async () => {
+      throw new Error("disk full");
+    };
+    expect((await request(h.app).post("/cases/INC-8/import/undo")).status).toBeGreaterThanOrEqual(500);
+    h.importUndoStore.save = saveStack;
+    const { updatedAt: _a, ...still } = await h.stateStore.load("INC-8");
+    const { updatedAt: _b, ...wantAfter } = after;
+    expect(still).toEqual(wantAfter);
+
+    expect((await request(h.app).post("/cases/INC-8/import/undo")).status).toBe(200);
+    const { updatedAt: _c, ...undone } = await h.stateStore.load("INC-8");
+    const { updatedAt: _d, ...wantBefore } = await loadAs(h, before);
+    expect(undone).toEqual(wantBefore);
+    expect((await request(h.app).post("/cases/INC-8/import/redo")).status).toBe(200);
+    const { updatedAt: _e, ...redone } = await h.stateStore.load("INC-8");
+    expect(redone).toEqual(wantAfter);
+  });
 });
