@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMcpTool, substituteTarget, mentionsTarget } from "../../src/integrations/mcp/mcpRun.js";
@@ -110,6 +110,7 @@ describe("runMcpTool", () => {
         claudeRunner: fakeClaude("pid 4 System", calls),
         transferRunner,
         deliverySource,
+        teamMode: false,
       },
       {
         tool: "run_command",
@@ -133,6 +134,7 @@ describe("runMcpTool", () => {
         claudeRunner: fakeClaude("{}"),
         transferRunner,
         deliverySource,
+        teamMode: false,
       },
       { tool: "check_lolbin", args: { filename: "certutil.exe" } },
     );
@@ -151,6 +153,7 @@ describe("runMcpTool", () => {
           claudeRunner: fakeClaude(),
           transferRunner,
           deliverySource,
+          teamMode: false,
         },
         { tool: "run_command", args: { command: ["vol.py"] }, targetPath: MEM },
       ),
@@ -162,7 +165,13 @@ describe("runMcpTool", () => {
   it("refuses a disallowed command before delivering anything", async () => {
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
+        {
+          server: server({}, SCP),
+          claudeRunner: fakeClaude(),
+          transferRunner,
+          deliverySource,
+          teamMode: false,
+        },
         { tool: "run_command", args: { command: ["curl", "http://x"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/not allowed to run "curl"/);
@@ -174,7 +183,13 @@ describe("runMcpTool", () => {
   it("refuses a target the arguments never mention", async () => {
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
+        {
+          server: server({}, SCP),
+          claudeRunner: fakeClaude(),
+          transferRunner,
+          deliverySource,
+          teamMode: false,
+        },
         { tool: "run_command", args: { command: ["vol.py", "pslist"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/never reference <target>/);
@@ -192,6 +207,7 @@ describe("runMcpTool", () => {
         claudeRunner: fakeClaude("unsupported profile"),
         transferRunner,
         deliverySource,
+        teamMode: false,
       },
       {
         tool: "run_command",
@@ -210,6 +226,7 @@ describe("runMcpTool", () => {
         claudeRunner: fakeClaude(),
         transferRunner,
         deliverySource,
+        teamMode: false,
         recordTransfer: async (d) => {
           seen.push(d);
         },
@@ -227,7 +244,13 @@ describe("runMcpTool", () => {
 
   it("removes the staged copy after a successful run", async () => {
     await runMcpTool(
-      { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, deliverySource },
+      {
+        server: server({}, SCP),
+        claudeRunner: fakeClaude(),
+        transferRunner,
+        deliverySource,
+        teamMode: false,
+      },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
@@ -247,7 +270,7 @@ describe("runMcpTool", () => {
 
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: failing, transferRunner, deliverySource },
+        { server: server({}, SCP), claudeRunner: failing, transferRunner, deliverySource, teamMode: false },
         {
           tool: "run_command",
           args: { command: ["vol.py", "-f", "<target>"] },
@@ -267,6 +290,7 @@ describe("runMcpTool", () => {
         claudeRunner: fakeClaude(),
         transferRunner,
         deliverySource,
+        teamMode: false,
         onProgress: (d) => steps.push(d),
       },
       {
@@ -286,7 +310,7 @@ describe("runMcpTool", () => {
   it("refuses to deliver a target without the case it belongs to (#1847)", async () => {
     await expect(
       runMcpTool(
-        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner },
+        { server: server({}, SCP), claudeRunner: fakeClaude(), transferRunner, teamMode: false },
         { tool: "run_command", args: { command: ["vol.py", "-f", "<target>"] }, targetPath: MEM },
       ),
     ).rejects.toThrow(/needs the case it belongs to/);
@@ -298,7 +322,7 @@ describe("runMcpTool", () => {
     const calls: ClaudeRunOptions[] = [];
 
     const outcome = await runMcpTool(
-      { server: s, claudeRunner: fakeClaude("ok", calls), transferRunner, deliverySource },
+      { server: s, claudeRunner: fakeClaude("ok", calls), transferRunner, deliverySource, teamMode: false },
       {
         tool: "run_command",
         args: { command: ["vol.py", "-f", "<target>"] },
@@ -309,5 +333,54 @@ describe("runMcpTool", () => {
     expect(transfers).toHaveLength(0);
     expect(argsAsked(calls[0])).toEqual({ command: ["vol.py", "-f", "/mnt/dfir/c1/mem.raw"] });
     expect(outcome.remotePath).toBe("/mnt/dfir/c1/mem.raw");
+  });
+
+  // #1856: team mode hands the host a private copy on the share, removed whatever the run did.
+  describe("team-mode remote-path copy", () => {
+    const shared = { mode: "remote-path" as const, localPrefix: "", remotePrefix: "" };
+    const copies = async (): Promise<string[]> => readdir(join(root, ".mcp-delivery")).catch(() => []);
+    const input = () => ({
+      tool: "run_command",
+      args: { command: ["vol.py", "-f", "<target>"] },
+      targetPath: MEM,
+    });
+
+    it("hands the tool the copy's path and removes the copy after the run", async () => {
+      const calls: ClaudeRunOptions[] = [];
+      let during: string[] = [];
+      const claude: ClaudeRunner = async (opts) => {
+        during = await copies();
+        return fakeClaude("ok", calls)(opts);
+      };
+      const outcome = await runMcpTool(
+        { server: server({}, shared), claudeRunner: claude, transferRunner, deliverySource, teamMode: true },
+        input(),
+      );
+
+      expect(during).toHaveLength(1);
+      expect(outcome.remotePath).toContain(join(root, ".mcp-delivery"));
+      expect(argsAsked(calls[0])).toEqual({ command: ["vol.py", "-f", outcome.remotePath] });
+      expect(await copies()).toEqual([]);
+    });
+
+    it("removes the copy even when the tool call fails", async () => {
+      const failing: ClaudeRunner = async () => {
+        throw new Error("claude exploded");
+      };
+      await expect(
+        runMcpTool(
+          {
+            server: server({}, shared),
+            claudeRunner: failing,
+            transferRunner,
+            deliverySource,
+            teamMode: true,
+          },
+          input(),
+        ),
+      ).rejects.toThrow(/claude exploded/);
+
+      expect(await copies()).toEqual([]);
+    });
   });
 });

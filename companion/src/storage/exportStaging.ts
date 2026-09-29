@@ -2,10 +2,15 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 // Where an export stages the private copy it packages or sends: the database snapshot of "Archive to
-// ZIP…", the encrypted export's staging, the MCP delivery snapshot. Dotted and a level above the
-// cases for the same reason import staging is: nothing that enumerates the cases root, and nothing
-// that walks a case, may mistake it for case content.
+// ZIP…", the encrypted export's staging, the MCP delivery snapshot, a local tool run's input copy and
+// output (#1857). Dotted and a level above the cases for the same reason import staging is: nothing
+// that enumerates the cases root, and nothing that walks a case, may mistake it for case content.
 export const EXPORT_STAGING_DIRNAME = ".export-staging";
+
+// Where a team-mode MCP remote-path delivery puts the private copy it hands the analysis host
+// (#1856). It must be on the share, so it sits inside the cases root rather than beside it — dotted,
+// so nothing that enumerates the cases root mistakes it for a case. Swept like export staging.
+export const SHARED_DELIVERY_DIRNAME = ".mcp-delivery";
 
 // Each export removes its own folder in a finally block, on every path the process survives. A kill
 // or a power loss mid-export does not run that finally, and the folder — often a full copy of a case

@@ -1,5 +1,7 @@
-import { mkdtemp, mkdir, readFile, rm, copyFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import type { CaseScope } from "../../storage/caseFileRead.js";
+import { createStagingDir } from "../../storage/exportStaging.js";
 import type { ToolConfig } from "./toolConfig.js";
 import { substituteArgs, tokenizeArgs, stripAnsi, cleanToolOutput, type ToolRunner } from "./toolRunner.js";
 import {
@@ -10,12 +12,14 @@ import {
   type ToolRunCache,
   type ToolRunProvenance,
 } from "./toolProvenance.js";
+import { mapStagedPath, stageToolInput } from "./toolInput.js";
 import { withCaseWrite } from "../../storage/caseIncarnation.js";
 
 // Orchestrates "run the analyst's tool against a raw file on disk → hand its TEXT output to the existing
 // importer". Pure of any server/HTTP concern; the ToolRunner is injected so tests never spawn. Security
-// is enforced here: the TARGET path must be contained in the case dir, and the OUTPUT path is
-// server-owned (a temp dir under the case work dir) so the tool can't overwrite an arbitrary file.
+// is enforced here: the TARGET is judged on an open handle at hand-over and, where a copy is made, the
+// tool reads the judged bytes (toolInput.ts, #1857); the OUTPUT path is server-owned (a run folder
+// under `workDir`) so the tool can't overwrite an arbitrary file.
 
 // Resolve `userPath` (case-relative or absolute) to an absolute path and assert it is strictly INSIDE
 // `caseDir` — rejecting `..` traversal and absolute escapes. Throws otherwise. The caseDir itself is not
@@ -40,14 +44,19 @@ export interface RunToolResult {
 }
 
 // Run `cfg` against `targetPath` and return the tool's output text + its importKind. `workDir` is a
-// server-owned scratch directory (created if missing) under which a unique run dir holds any output
-// file; it is removed afterwards. A tool whose template needs <rules> but has no rules path configured
+// server-owned scratch directory (created if missing) under which a unique run dir holds any staged
+// input and output file; it is removed afterwards, on success and failure. The production caller puts
+// it OUTSIDE the case folder, so a case writer can swap neither the staged copy nor the output (#1857). A tool whose template needs <rules> but has no rules path configured
 // fails fast with an actionable message.
 export async function runToolAgainstFile(opts: {
   cfg: ToolConfig;
   runner: ToolRunner;
-  targetPath: string; // already validated/absolute
-  workDir: string; // e.g. cases/<id>/.toolwork
+  targetPath: string; // contained by text (resolveContainedPath); judged here on an open handle
+  workDir: string; // server-owned, outside the case folder (e.g. <casesRoot>/.export-staging)
+  scope: CaseScope; // the case the target must belong to
+  // Team mode (a second writer can exist): a <target> tool reads a private snapshot. From the
+  // caller's options.teamAuth — never read from env here (#1857).
+  teamMode: boolean;
   rulesPath?: string; // overrides cfg.rulesPath when provided
   definitions?: string; // overrides cfg.definitions when provided
   // Per-import-job memo for the ruleset hash + version probe. Omit for a one-off run (#721).
@@ -81,9 +90,16 @@ export async function runToolAgainstFile(opts: {
 
   // Refused instead of recreating a deleted case's folder (#1855); runs below live in unique temp dirs.
   await withCaseWrite(workDir, () => mkdir(workDir, { recursive: true }));
-  const runDir = await mkdtemp(join(workDir, "run-"));
-  let inputDir: string | undefined;
+  const runDir = await createStagingDir(workDir, "run-");
   try {
+    const staged = await stageToolInput({
+      scope: opts.scope,
+      targetPath,
+      runDir,
+      needsTarget: cfg.runArgs.includes("<target>"),
+      needsTargetDir: cfg.runArgs.includes("<targetdir>"),
+      teamMode: opts.teamMode,
+    });
     let outputArg: string | undefined;
     let readPath: string | undefined;
     if (cfg.outputMode === "file") {
@@ -95,14 +111,8 @@ export async function runToolAgainstFile(opts: {
     }
 
     // Folder-root tools (Velociraptor `--ROOT`) run against a DIRECTORY and glob the files inside — and
-    // detect the log channel from the filename — so place the target in a fresh dir under its ORIGINAL
-    // name and pass that dir as <targetdir>. Isolating it in its own dir avoids processing siblings.
-    let targetDirArg: string | undefined;
-    if (cfg.runArgs.includes("<targetdir>")) {
-      inputDir = await mkdtemp(join(workDir, "in-"));
-      await copyFile(targetPath, join(inputDir, basename(targetPath)));
-      targetDirArg = inputDir;
-    }
+    // detect the log channel from the filename — so stageToolInput places the target in a fresh dir
+    // under its ORIGINAL name, isolated from its siblings, and that dir is passed as <targetdir>.
 
     let tokens = tokenizeArgs(cfg.runArgs);
     // Shell-style stdout redirect `> <file>`: the tool writes results to stdout and the analyst's command
@@ -118,8 +128,8 @@ export async function runToolAgainstFile(opts: {
     }
 
     const argv = substituteArgs(tokens, {
-      target: targetPath,
-      targetdir: targetDirArg,
+      target: staged.target,
+      targetdir: staged.targetDir,
       output: outputArg,
       rules: rules || undefined,
       definitions: definitions || undefined,
@@ -159,10 +169,14 @@ export async function runToolAgainstFile(opts: {
 
     // Redirected/file/dir output → read the file. Pure stdout tools (YARA/Snort) → strip ANSI so a
     // colour-forcing CLI can't break the importer parser.
-    const outputText =
+    const rawOutput =
       stdoutFile || cfg.outputMode !== "stdout"
         ? await readFile(readPath as string, "utf8").catch(() => "")
         : stripAnsi(res.stdout);
+    // The staged copy's path names a folder deleted below; events must name the case file.
+    const outputText = staged.stagedPath
+      ? mapStagedPath(rawOutput, staged.stagedPath, targetPath)
+      : rawOutput;
 
     if (!outputText.trim()) {
       const cleanErr = cleanToolOutput(res.stderr, 4);
@@ -183,11 +197,13 @@ export async function runToolAgainstFile(opts: {
         stderr: cleanToolOutput(stderr, 20),
         outputSha256: hashOutputText(outputText),
         ruleset,
+        input: staged.input,
       },
     };
   } finally {
-    await rm(runDir, { recursive: true, force: true }).catch(() => {});
-    if (inputDir) await rm(inputDir, { recursive: true, force: true }).catch(() => {});
+    // The staged copy lives in runDir. A removal that fails (a locked file) is left for the day-old
+    // sweep createStagingDir runs, and the startup sweep of the export staging root.
+    await rm(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
   }
 }
 

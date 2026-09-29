@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import {
   tokenizeArgs,
   substituteArgs,
@@ -218,6 +218,8 @@ describe("runToolAgainstFile", () => {
       runner,
       targetPath: join(caseDir, "a.bin"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.importKind).toBe("yara");
     expect(res.outputText).toBe("EvilRule /x/a.bin");
@@ -241,6 +243,8 @@ describe("runToolAgainstFile", () => {
         runner,
         targetPath: join(caseDir, "Security.evtx"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/definitions path is required/i);
 
@@ -268,6 +272,8 @@ describe("runToolAgainstFile", () => {
       runner: runner2,
       targetPath: join(caseDir, "Security.evtx"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.importKind).toBe("velociraptor");
     expect(res.outputText).toBe('[{"a":1}]');
@@ -293,6 +299,8 @@ describe("runToolAgainstFile", () => {
       runner,
       targetPath: join(caseDir, "a.evtx"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.importKind).toBe("hayabusa");
     expect(res.outputText).toMatch(/RuleTitle/);
@@ -309,6 +317,8 @@ describe("runToolAgainstFile", () => {
         runner,
         targetPath: join(caseDir, "a.bin"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/rules file is required/i);
   });
@@ -333,6 +343,8 @@ describe("runToolAgainstFile", () => {
         runner,
         targetPath: join(caseDir, "a.bin"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/killed by SIGKILL.*refusing to import a partial parse/i);
   });
@@ -352,6 +364,8 @@ describe("runToolAgainstFile", () => {
       runner,
       targetPath: join(caseDir, "a.bin"),
       workDir: join(caseDir, ".toolwork"),
+      scope: { casesRoot: dirname(caseDir), caseDir },
+      teamMode: false,
     });
     expect(res.outputText).toBe("EvilRule /x/a.bin");
     expect(res.provenance.exitCode).toBe(1);
@@ -372,6 +386,8 @@ describe("runToolAgainstFile", () => {
         runner,
         targetPath: join(caseDir, "a.evtx"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/killed by SIGSEGV/i);
   });
@@ -387,6 +403,8 @@ describe("runToolAgainstFile", () => {
         runner,
         targetPath: join(caseDir, "a.bin"),
         workDir: join(caseDir, ".toolwork"),
+        scope: { casesRoot: dirname(caseDir), caseDir },
+        teamMode: false,
       }),
     ).rejects.toThrow(/no output.*bad rule syntax/i);
   });

@@ -29,7 +29,11 @@ import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import type { AuthStore } from "../auth/authStore.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
-import { EXPORT_STAGING_DIRNAME, sweepStaleStaging } from "../storage/exportStaging.js";
+import {
+  EXPORT_STAGING_DIRNAME,
+  SHARED_DELIVERY_DIRNAME,
+  sweepStaleStaging,
+} from "../storage/exportStaging.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 
 /**
@@ -93,12 +97,24 @@ export function startMaintenanceTasks({
   // Export staging (#1851): an export killed mid-run never reaches the finally that removes its
   // private copy (a whole case database, or an evidence file). Each new export sweeps day-old
   // leftovers; this sweep at startup removes them without waiting for the next export.
-  void sweepStaleStaging(join(store.casesRoot, EXPORT_STAGING_DIRNAME)).then(
-    (removed) => {
-      if (removed > 0) logLine(`[export] removed ${removed} stale export staging folder(s)`);
-    },
-    (e: unknown) => warnLine(`[export] staging sweep failed: ${(e as Error).message}`),
+  // The team-mode MCP delivery copies on the share (#1856) are swept the same way — and again every
+  // six hours, because a copy whose removal failed is evidence readable on the share, and waiting for
+  // the next restart or the next delivery could mean waiting for ever.
+  const sweepStaging = (dirname: string): void => {
+    void sweepStaleStaging(join(store.casesRoot, dirname)).then(
+      (removed) => {
+        if (removed > 0) logLine(`[export] removed ${removed} stale staging folder(s) from ${dirname}`);
+      },
+      (e: unknown) => warnLine(`[export] ${dirname} sweep failed: ${(e as Error).message}`),
+    );
+  };
+  sweepStaging(EXPORT_STAGING_DIRNAME);
+  sweepStaging(SHARED_DELIVERY_DIRNAME);
+  const deliverySweepTimer = setInterval(
+    () => sweepStaging(SHARED_DELIVERY_DIRNAME),
+    SESSION_SWEEP_INTERVAL_MS,
   );
+  deliverySweepTimer.unref();
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
