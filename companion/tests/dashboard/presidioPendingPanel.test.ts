@@ -9,8 +9,9 @@ interface Api {
 function stubDom() {
   const badge = { style: { display: "" }, textContent: "" };
   const el = { innerHTML: "", querySelectorAll: () => [] as unknown[] };
-  const els: Record<string, unknown> = { presidioPendingBadge: badge, presidioPending: el };
-  return { badge, el, document: { getElementById: (id: string) => els[id] ?? null } };
+  const msg = { textContent: "" };
+  const els: Record<string, unknown> = { presidioPendingBadge: badge, presidioPending: el, anonMsg: msg };
+  return { badge, el, msg, document: { getElementById: (id: string) => els[id] ?? null } };
 }
 
 function render(findings: { value: string; category: string }[]) {
@@ -106,7 +107,7 @@ describe("presidio approval: leave all visible (#1799)", () => {
     suppressAllPresidioPending(caseId: string): Promise<void>;
   }
 
-  function bulk(answers: Array<{ ok: boolean; pending?: unknown[] }>) {
+  function bulk(answers: Array<{ ok: boolean; pending?: unknown[]; status?: number; error?: string }>) {
     const dom = stubDom();
     const posted: string[] = [];
     const events: string[] = [];
@@ -122,8 +123,8 @@ describe("presidio approval: leave all visible (#1799)", () => {
         const a = answers.shift() ?? { ok: false };
         return Promise.resolve({
           ok: a.ok,
-          status: a.ok ? 200 : 500,
-          json: () => Promise.resolve({ pending: a.pending }),
+          status: a.status ?? (a.ok ? 200 : 500),
+          json: () => Promise.resolve({ error: a.error, pending: a.pending }),
         });
       },
     });
@@ -156,5 +157,76 @@ describe("presidio approval: leave all visible (#1799)", () => {
     await api.suppressAllPresidioPending("INC-1");
     expect(posted).toEqual(["Suricata", "08:19:10Z"]);
     expect(events).toEqual(["reload", "refresh INC-1"]);
+  });
+
+  // #1822: the server refuses "Leave visible" for a value another window hid first. The bulk run
+  // skips it, carries on, and says how many values were not left visible.
+  it("skips a refused value, carries on, and says how many were skipped", async () => {
+    const { api, dom, posted, events } = bulk([
+      { ok: false, status: 409, error: "presidio_not_pending", pending: [TIME] },
+      { ok: true, pending: [] },
+    ]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(posted).toEqual(["Suricata", "08:19:10Z"]);
+    expect(dom.el.innerHTML).toBe("");
+    expect(dom.msg.textContent).toContain("1 value(s) not left visible");
+    expect(dom.msg.textContent).toContain("already hidden from the AI");
+    expect(events).toEqual(["refresh INC-1"]);
+  });
+
+  it("counts a value the server no longer lists as skipped", async () => {
+    const { api, dom } = bulk([{ ok: true, pending: [] }]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(dom.msg.textContent).toContain("1 value(s) not left visible");
+  });
+
+  it("says nothing when every value was left visible", async () => {
+    const { api, dom } = bulk([
+      { ok: true, pending: [TIME] },
+      { ok: true, pending: [] },
+    ]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(dom.msg.textContent).toBe("");
+  });
+
+  it("still stops at a 409 that is not a refusal of this kind", async () => {
+    const { api, posted, events } = bulk([{ ok: false, status: 409, error: "something_else" }]);
+    await api.suppressAllPresidioPending("INC-1");
+    expect(posted).toEqual(["Suricata"]);
+    expect(events).toEqual(["reload", "refresh INC-1"]);
+  });
+
+  it("a refused per-row Leave visible shows why and re-renders from the server's list", async () => {
+    const dom = stubDom();
+    const clicks: Record<string, () => void> = {};
+    const btn = (sel: string, attr: string) => ({
+      disabled: false,
+      getAttribute: () => attr,
+      addEventListener: (_t: string, fn: () => void) => (clicks[sel] = fn),
+    });
+    dom.el.querySelectorAll = ((sel: string) =>
+      sel === "[data-presidio-suppress]" ? [btn(sel, "Suricata")] : []) as () => unknown[];
+    const caseEl = { value: "INC-1" };
+    const doc = {
+      getElementById: (id: string) => (id === "caseId" ? caseEl : dom.document.getElementById(id)),
+    };
+    let refreshed = 0;
+    const api = loadDashboardModule<Api>("dashboard-presidio.js", ["dashboard-escape.js"], {
+      document: doc,
+      refreshAiState: () => refreshed++,
+      fetch: () =>
+        Promise.resolve({
+          ok: false,
+          status: 409,
+          json: () => Promise.resolve({ error: "presidio_not_pending", pending: [TIME] }),
+        }),
+    });
+    api.setPresidioPending([TOOL, TIME]);
+    clicks["[data-presidio-suppress]"]();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(dom.msg.textContent).toContain("Not left visible");
+    expect(dom.badge.textContent).toBe("⚠ Presidio: 1");
+    expect(refreshed).toBe(1);
   });
 });
