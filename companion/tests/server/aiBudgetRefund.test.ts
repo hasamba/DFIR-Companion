@@ -251,7 +251,10 @@ describe("answers that made no model call leave the AI budget alone (#1832)", ()
 
   it("/anon-control is not metered at all", async () => {
     const { app } = await makeApp();
-    const statuses = await fire25(app, "/anon-control", { enabled: true });
+    // #1839: a settings save names the version it loaded. "enabled: true" on an enabled case
+    // changes nothing, so one version stays current for all 25 posts.
+    const { version } = (await request(app).get("/cases/c1/anon-control")).body;
+    const statuses = await fire25(app, "/anon-control", { enabled: true, version });
     expect(statuses).toEqual(Array(25).fill(200));
     expect(budgetIsWhole("c1")).toBe(true);
   });
