@@ -663,7 +663,7 @@ function foldLeftoverWal(targetPath) {
   }
 }
 
-function restoreDatabase(sourcePath, targetPath) {
+function restoreDatabase(sourcePath, targetPath, tags) {
   if (!existsSync(sourcePath)) {
     const error = new Error("backup database does not exist");
     error.code = "ENOENT";
@@ -686,7 +686,7 @@ function restoreDatabase(sourcePath, targetPath) {
     // stamp on the copy, before it goes live, means no cached scan survives a restore. A failure
     // here aborts the restore with the current file untouched.
     const stampDb = openDatabase(temporary);
-    try { stampSuperContent(stampDb); } finally { stampDb.close(); }
+    try { stampSuperContent(stampDb); settleRestoredTags(stampDb, targetPath, tags); } finally { stampDb.close(); }
     // The pool runs this op exclusively (no reader holds the file), so renaming the checked copy
     // over the destination makes the authoritative file switch atomic without loading it into V8
     // memory. Any WAL beside the destination belongs to the OLD file and is folded in first.
@@ -729,7 +729,7 @@ async function dispatch(message) {
     case "iocCandidates": return iocCandidates(message.dbPath, message.keys, message.ids);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
-    case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);
+    case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath, message.tags);
     default: return dispatchMerge(message); // #1874: caseSqliteWorkerMerge.ts, caseSqliteWorkerRows.ts, caseSqliteWorkerFacts.ts, …Ioc.ts, …Tags.ts
   }
 }

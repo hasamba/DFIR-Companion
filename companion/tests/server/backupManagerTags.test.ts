@@ -13,6 +13,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { TagsStore, type Tag } from "../../src/analysis/tags.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 
 async function setup() {
   const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-backup-tags-")));
@@ -130,5 +131,34 @@ describe("BackupManager and the tag table (#1874)", () => {
     await tags.add("c1", { targetType: "ioc", targetId: "i2", author: "a", label: "current" });
     await mgr.restoreBackup("c1", info.filename);
     expect(await tags.load("c1")).toEqual(fromBundle);
+  });
+
+  it("a backup taken between an analyst tag's protect and its insert restores no lasting protection", async () => {
+    const { cases, mgr } = await setup();
+    const store = new SuperTimelineStore(cases, 1);
+    const ev = (id: string, day: number) =>
+      ({ id, timestamp: `2026-06-0${day}T00:00:00Z`, description: id, severity: "Info" }) as never;
+    await store.append("c1", [ev("row0", 1)]);
+    let filename = "";
+    // The sink takes the backup mid-request: the in-flight record is in the snapshot, the tag is not.
+    const sink = {
+      protect: async (caseId: string, id: string) => {
+        const ok = await store.protect(caseId, id);
+        filename = (await mgr.createBackup("c1", "scheduled", "2026-07-01T00:00:00.000Z")).filename;
+        return ok;
+      },
+      unprotect: (caseId: string, id: string) => store.unprotect(caseId, id),
+    };
+    const tags = new TagsStore(cases, sink);
+    await tags.add("c1", { targetType: "event", targetId: "row0", author: "analyst", label: "starred" });
+    await mgr.restoreBackup("c1", filename); // same worker process: same boot id as the snapshot's record
+    const [kept] = await tags.load("c1"); // the bundle had no tags.json: the current tags are carried
+    expect(kept.targetId).toBe("row0");
+    await tags.remove("c1", kept.id);
+    // Another analyst tag moves the protect generation, so the next store call re-derives protection.
+    await tags.add("c1", { targetType: "event", targetId: "elsewhere", author: "analyst", label: "x" });
+    await store.append("c1", [ev("r1", 2)]);
+    expect(await store.protectedIds("c1")).not.toContain("row0");
+    expect(await store.get("c1", "row0")).toBeNull(); // released to the cap, as with no tag at all
   });
 });

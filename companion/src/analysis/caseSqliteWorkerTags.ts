@@ -6,9 +6,9 @@ import { TAGGER_PREFIX_SQL } from "./caseSqliteSchema.js";
 //
 // analysis/tags.ts (TagsStore) is the only caller of the list and write ops; the super-timeline
 // fragment calls ensureTagsMigrated and reads the table for its protection (caseSqliteWorkerSuper.ts);
-// BackupManager uses tagsBackup / tagsRestore / tagsReplace. Every op that reads or writes tags first
-// migrates tags.json when the database has no 'tags_migrated' marker. The marker is set only when a
-// file was migrated or a tag was written, so "marker set" means what "tags.json exists" meant: the
+// BackupManager uses tagsBackup / tagsRestore, and restoreDatabase calls settleRestoredTags. Every op
+// that reads or writes tags first migrates tags.json when the database has no 'tags_migrated' marker.
+// The marker is set only when a file was migrated or a tag was written, so "marker set" means what "tags.json exists" meant: the
 // case has a tag list of its own. The file is never renamed or deleted; once the marker is set the
 // database is the authority and the file is a stale migration source, like investigation.json.
 export const TAGS_WORKER_SOURCE =
@@ -281,6 +281,37 @@ function tagsBackup(dbPath) {
   }
 }
 
+// A restored database's in-flight protection records belong to requests that will never finish in it:
+// dropped, and protection re-derived from the tag table on the next super-timeline call.
+function dropRestoredPending(db) {
+  if (!db.prepare("SELECT 1 AS x FROM tags_protect_pending LIMIT 1").get()) return;
+  db.prepare("DELETE FROM tags_protect_pending").run();
+  db.prepare("DELETE FROM storage_meta WHERE key='super_protected_sync'").run();
+}
+
+// Inside restoreDatabase, on the checked copy BEFORE it replaces the live file, so the restore and the
+// case's final tag list go live together (#1874). tags.bundle: the bundle's "tags.json" value becomes
+// the list (as a migration of that file would make it). tags.carry: the live database's list is kept
+// (a bundle without tags.json leaves the tags alone, as it left the file alone) — read here, inside the
+// exclusive op, so no tag write can fall between the read and the swap. A live database whose tags were
+// never migrated has none to carry: they are still in tags.json, which the restore keeps.
+function settleRestoredTags(db, livePath, tags) {
+  withTransaction(db, () => {
+    dropRestoredPending(db);
+    if (!tags || typeof tags !== "object") return;
+    let list = null;
+    if (Object.prototype.hasOwnProperty.call(tags, "bundle")) list = tagsFromFileValue(tags.bundle);
+    else if (tags.carry && existsSync(livePath)) {
+      const live = openDatabase(livePath);
+      try { if (hasTagsTable(live) && tagsMarkerSet(live)) list = listTagRows(live); } finally { live.close(); }
+    }
+    if (!list) return;
+    db.prepare("DELETE FROM tags").run();
+    insertTagRows(db, list);
+    setTagsMarker(db);
+  });
+}
+
 // After a restore that wrote tags.json: the table becomes that file's list, whatever the (restored or
 // kept) database held.
 function tagsRestore(dbPath, tagsPath) {
@@ -288,25 +319,10 @@ function tagsRestore(dbPath, tagsPath) {
   const db = openDatabase(dbPath);
   try {
     withTransaction(db, () => {
+      dropRestoredPending(db);
       db.prepare("DELETE FROM tags").run();
       db.prepare("DELETE FROM storage_meta WHERE key='tags_migrated'").run();
       migrateTagsFile(db, tagsPath);
-    });
-    return true;
-  } finally {
-    db.close();
-  }
-}
-
-// After a restore that replaced the database but carried no tags.json: the tags the case had before.
-function tagsReplace(dbPath, tags) {
-  if (!existsSync(dbPath)) return false;
-  const db = openDatabase(dbPath);
-  try {
-    withTransaction(db, () => {
-      db.prepare("DELETE FROM tags").run();
-      insertTagRows(db, tags || []);
-      setTagsMarker(db);
     });
     return true;
   } finally {
@@ -326,7 +342,6 @@ function dispatchTags(message) {
     case "tagsRemoveByPrefix": return tagsRemoveByPrefix(message.dbPath, message.tagsPath, message.prefix);
     case "tagsBackup": return tagsBackup(message.dbPath);
     case "tagsRestore": return tagsRestore(message.dbPath, message.tagsPath);
-    case "tagsReplace": return tagsReplace(message.dbPath, message.tags);
     default: throw new Error("unknown SQLite worker operation: " + message.op);
   }
 }
