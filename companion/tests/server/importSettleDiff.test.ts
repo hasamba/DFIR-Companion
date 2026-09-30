@@ -9,7 +9,7 @@ import { captureImportBaseline, releaseImportBaseline } from "../../src/analysis
 import { outlineEvents } from "../../src/analysis/forensicRows.js";
 import { diffTimeline } from "../../src/analysis/timelineDiff.js";
 import { refreshRowFacts } from "../../src/analysis/rowFacts.js";
-import { settleTimelineDiff } from "../../src/routes/importSettleDiff.js";
+import { ImportJournalLostError, settleTimelineDiff } from "../../src/routes/importSettleDiff.js";
 
 // #1874: the settle's timeline diff reads keys only for the rows the import changed. It must equal
 // diffTimeline over the whole timeline before and after — membership, displayed row, order.
@@ -165,7 +165,7 @@ describe("settleTimelineDiff (#1874)", () => {
     expect(got.timelineDiff).toStrictEqual({ added: [], removed: [] });
   });
 
-  it("without the journal, counts the inserted rows' new keys and says it cannot count the rest", async () => {
+  it("fails, rather than report a partial diff, when the journal is gone", async () => {
     await store.save({
       ...emptyState("c1"),
       forensicTimeline: [randomEvent(rng(1), "a"), randomEvent(rng(2), "b")],
@@ -173,15 +173,8 @@ describe("settleTimelineDiff (#1874)", () => {
     await refreshRowFacts(store, "c1");
     const baseline = await captureImportBaseline(store, "c1");
     await releaseImportBaseline(store, baseline); // the journal goes (a replaced database, in life)
-    const fresh = {
-      ...randomEvent(rng(3), "c"),
-      description: "brand new",
-      timestamp: "2027-01-01T00:00:00Z",
-    };
-    await store.appendForensicEvents("c1", [fresh]);
-    const got = await settleTimelineDiff(store, "c1", baseline);
-    expect(got.timelineDiff.added.map((d) => d.description)).toEqual(["brand new"]);
-    expect(got.timelineDiff.removed).toEqual([]);
+    await store.appendForensicEvents("c1", [randomEvent(rng(3), "c")]);
+    await expect(settleTimelineDiff(store, "c1", baseline)).rejects.toBeInstanceOf(ImportJournalLostError);
   });
 
   it("reads back only pre-import rows from the journal: rows the import inserted stay out", async () => {

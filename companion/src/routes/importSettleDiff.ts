@@ -9,7 +9,6 @@ import {
   type FactsStore,
 } from "../analysis/rowFacts.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
-import { getServerLogger } from "../logging/serverLogger.js";
 
 /**
  * The settle's post-demote timeline diff against the import's baseline (#1874) — diffTimeline over the
@@ -44,9 +43,10 @@ export async function settleTimelineDiff(
     : baseline.journalToken && store.readImportJournal
       ? await store.readImportJournal(caseId, baseline.journalToken, baseline.journalFence)
       : null;
-  const timelineDiff = journal
-    ? await diffFromRows(store, caseId, baseline, after.rowIds, journal)
-    : await diffWithoutJournal(store, caseId, baseline);
+  // Without the journal the rows the import changed or removed have lost their old keys: no diff
+  // can be shown honestly, so the settle fails rather than report a partial one.
+  if (!journal) throw new ImportJournalLostError(caseId);
+  const timelineDiff = await diffFromRows(store, caseId, baseline, after.rowIds, journal);
   return { timelineDiff, forensicCount: after.ids.length };
 }
 
@@ -155,29 +155,13 @@ function diffEntries(before: readonly Entry[], after: readonly Entry[], held: Se
   };
 }
 
-// The journal is gone (only when the case database was replaced during the import): the changed and
-// removed rows' old keys went with it. Say so, and count only what can be shown — the keys the
-// inserted rows brought that no baseline row holds now.
-async function diffWithoutJournal(
-  store: ForensicRowStore,
-  caseId: string,
-  baseline: ImportBaseline,
-): Promise<TimelineDiff> {
-  getServerLogger().warn(
-    `[import] ${caseId}: the import journal is gone (the case database was replaced during the import); ` +
-      "this import's added rows are counted, its changed or removed rows are not",
-    { caseId },
-  );
-  const outline = await store.forensicOutline(caseId);
-  const base = new Set(baseline.outline.rowIds);
-  const keep = outline.rowIds.map((rowId) => base.has(rowId));
-  const pick = <T>(xs: T[]): T[] => xs.filter((_, i) => keep[i]);
-  const kept = {
-    rowIds: pick(outline.rowIds),
-    ids: pick(outline.ids),
-    timestamps: pick(outline.timestamps),
-    descriptions: pick(outline.descriptions),
-    severities: pick(outline.severities),
-  };
-  return diffTimeline(outlineEvents(kept), outlineEvents(outline));
+/** The import journal went away before the settle read it (the case database was replaced mid-import). */
+export class ImportJournalLostError extends Error {
+  constructor(caseId: string) {
+    super(
+      `the import journal of case ${caseId} is gone (was the case database replaced during the import?): ` +
+        "this import's changed and removed rows cannot be counted, and it cannot be undone",
+    );
+    this.name = "ImportJournalLostError";
+  }
 }
