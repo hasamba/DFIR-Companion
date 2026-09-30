@@ -28,17 +28,21 @@ const IOC_SEQ_WHERE = ` +
 // (entityIdOf); the few whose id is anything else are read from their payload, so ids[i] is exactly
 // iocs[i].id of a full load. objects counts IOCs whose value is an object or array: diffIocs keys by
 // identity, so such a value never matches itself across two loads and only the full lists say what
-// the diff reports.
+// the diff reports. The id walk reads array rows ([row_id, entity_id]), about twice as fast as
+// object rows on 20k IOCs (#1887).
 function iocOutlineRows(db) {
   const rowIds = [];
   const ids = [];
   const at = new Map();
-  for (const row of db.prepare(
+  const walk = db.prepare(
     "SELECT row_id, entity_id FROM entities INDEXED BY entities_order_idx WHERE kind='iocs' ORDER BY ordinal"
-  ).iterate()) {
-    at.set(Number(row.row_id), ids.length);
-    rowIds.push(Number(row.row_id));
-    ids.push(row.entity_id);
+  );
+  walk.setReturnArrays(true);
+  for (const row of walk.iterate()) {
+    const rowId = Number(row[0]);
+    at.set(rowId, ids.length);
+    rowIds.push(rowId);
+    ids.push(row[1]);
   }
   for (const row of db.prepare(
     "SELECT row_id, payload FROM entities INDEXED BY entities_ioc_badid_idx WHERE " + IOC_BAD_ID_WHERE

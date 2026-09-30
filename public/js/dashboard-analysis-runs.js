@@ -167,6 +167,20 @@
     document.getElementById("arTo").selectedIndex = 0;
   }
 
+  // #1887: an import receipt lists what the import added and removed, with the entity counts before
+  // and after; an older manifest (no count) lists every input entity. Ids are adversary-controlled.
+  function entityLines(run) {
+    const ids = (list) => esc((list || []).join(", ") || "none");
+    const count = (n) => (typeof n === "number" ? esc(String(n)) : "unknown");
+    if (typeof run.input.entityCount !== "number") {
+      return `<strong>Input entities (${run.input.entityIds?.length || 0})</strong><div>${ids(run.input.entityIds)}</div>`;
+    }
+    return `<strong>Entities before: ${count(run.input.entityCount)}</strong>
+        <div><strong>Added (${run.output.entityIds?.length || 0})</strong></div><div>${ids(run.output.entityIds)}</div>
+        <div><strong>Removed (${run.output.removedEntityIds?.length || 0})</strong></div><div>${ids(run.output.removedEntityIds)}</div>
+        <div><strong>Entities after: ${count(run.output.entityCount)}</strong></div>`;
+  }
+
   async function viewAnalysisRun(id) {
     const caseId = document.getElementById("caseId").value.trim();
     const detail = document.getElementById("arDetail");
@@ -212,7 +226,7 @@
         manifest SHA-256 ${esc(run.manifestHash)}<br>previous ${run.previousManifestHash ? esc(run.previousManifestHash) : "ledger start"}</div>
         <strong>Source artifacts</strong><div>${artifacts}</div>
         <strong>Evidence events (${run.input.eventIds?.length || 0})</strong><div>${eventLinks(run.input.eventIds)}</div>
-        <strong>Input entities (${run.input.entityIds?.length || 0})</strong><div>${esc((run.input.entityIds || []).join(", ") || "none")}</div>
+        ${entityLines(run)}
         <strong>Pinned versions and configuration</strong>
         <pre data-safe-style="white-space:pre-wrap;margin:3px 0">${esc(JSON.stringify({ versions: run.versions, configuration: run.configuration, execution: run.execution }, null, 2))}</pre>
         <strong>Output claims (${run.output.claims?.length || 0})</strong><div>${claims}</div>`;

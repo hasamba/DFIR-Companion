@@ -6,6 +6,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore, INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
 import { emptyState, type IOC } from "../../src/analysis/stateTypes.js";
 import {
+  baselineEntities,
   baselineEntityIds,
   captureImportBaseline,
   releaseImportBaseline,
@@ -127,6 +128,11 @@ async function roundTrip(seed: number, o: Opts): Promise<void> {
     expect(applyUndoDelta(after, checkpoint!.delta!), `undo seed ${seed}`).toEqual(before);
     expect(checkpoint!.counts?.iocs).toBe(before.iocs.length);
     expect(baselineEntityIds(baseline)).toEqual(before.iocs.map((i) => i.id));
+    // #1887: the import receipt's before and after entity lists (no forensic rows here)
+    expect(baselineEntities(baseline)).toEqual(before.iocs.map((i) => i.id));
+    expect((await store.iocJournal.outline(C))?.ids ?? [], `outline seed ${seed}`).toEqual(
+      after.iocs.map((i) => i.id),
+    );
   } finally {
     await releaseImportBaseline(store, baseline);
   }

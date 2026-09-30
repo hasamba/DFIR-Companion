@@ -57,6 +57,11 @@ export class IocJournalReader {
     });
   }
 
+  /** The IOC ids in list order, index-only; null when the case has no database (#1887). */
+  outline(caseId: string): Promise<IocOutline | null> {
+    return caseSqliteWorker.request<IocOutline | null>({ op: "iocOutline", dbPath: this.dbPath(caseId) });
+  }
+
   diffInputs(ref: IocJournalRef): Promise<DiffInputs | null> {
     return this.request<DiffInputs>("iocDiffInputs", ref);
   }

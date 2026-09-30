@@ -152,6 +152,74 @@ function factsFingerprint(dbPath, stamp) {
   }
 }
 
+// #1887: the run record's fingerprint, investigation-state/v3 (analysis/analysisRunSnapshot.ts), from
+// the bucket hashes kept in fp_buckets (caseSqliteSchema.ts; the row_facts triggers mark a bucket
+// dirty whenever a digest enters or leaves it). storage_meta 'fp_buckets' stamps the facts the kept
+// hashes were computed from: under another stamp, or on a case that never had them, every bucket
+// present in row_facts is marked dirty, in the same transaction as the re-hash, so a crash keeps the
+// old stamp and seeds again.
+const { createHash } = require("node:crypto");
+const FP_SQL = {
+  seed:
+    "INSERT INTO fp_buckets(kind, bucket, hash) SELECT k.kind, b.bucket, NULL FROM " +
+    "(SELECT DISTINCT substr(digest, 1, 4) AS bucket FROM row_facts) b, " +
+    "(SELECT 'forensicTimeline' AS kind UNION ALL SELECT 'iocs') k",
+  missing:
+    "SELECT 1 AS x FROM entities e WHERE e.kind IN " + FACT_KINDS_SQL +
+    " AND NOT EXISTS (SELECT 1 FROM row_facts f WHERE f.row_id=e.row_id) LIMIT 1",
+  digests:
+    "SELECT f.digest FROM row_facts f INDEXED BY row_facts_bucket_idx JOIN entities e ON e.row_id=f.row_id " +
+    "WHERE substr(f.digest, 1, 4)=? AND e.kind=? ORDER BY substr(f.digest, 1, 4), f.digest",
+};
+
+function fpSeed(db, stamp) {
+  const row = db.prepare("SELECT value FROM storage_meta WHERE key='fp_buckets'").get();
+  if (row && row.value === stamp) return;
+  db.exec("DELETE FROM fp_buckets;" + FP_SQL.seed);
+  db.prepare(
+    "INSERT INTO storage_meta(key, value) VALUES('fp_buckets', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+  ).run(stamp);
+}
+
+// Re-hash every dirty bucket: its digests of that kind, sorted ascending, joined with a newline. A
+// bucket with none left is dropped.
+function fpRehash(db) {
+  const digests = db.prepare(FP_SQL.digests);
+  const put = db.prepare("UPDATE fp_buckets SET hash=? WHERE kind=? AND bucket=?");
+  const drop = db.prepare("DELETE FROM fp_buckets WHERE kind=? AND bucket=?");
+  const dirty = db.prepare("SELECT kind, bucket FROM fp_buckets WHERE hash IS NULL").all();
+  for (const d of dirty) {
+    const list = digests.all(d.bucket, d.kind).map((row) => row.digest);
+    if (list.length) put.run(createHash("sha256").update(list.join("\n")).digest("hex"), d.kind, d.bucket);
+    else drop.run(d.kind, d.bucket);
+  }
+}
+
+// The case's findings and, per kind, every non-empty bucket with its hash in bucket order. Null for
+// a case with no state; { needsFull: true } when the facts are another build's or a forensic or IOC
+// row's facts are unknown (queued, or missing): the caller then hashes the full listing.
+function factsFingerprintV3(dbPath, stamp) {
+  if (!existsSync(dbPath)) return null;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      if (!db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='investigation'").get()) return null;
+      if (!factsStampOk(db, stamp)) return { needsFull: true };
+      if (db.prepare("SELECT 1 AS x FROM row_facts_pending LIMIT 1").get()) return { needsFull: true };
+      if (db.prepare(FP_SQL.missing).get()) return { needsFull: true };
+      fpSeed(db, stamp);
+      fpRehash(db);
+      const findings = db.prepare("SELECT payload FROM entities WHERE kind='findings' ORDER BY ordinal")
+        .all().map((row) => JSON.parse(row.payload));
+      const buckets = (kind) => db.prepare("SELECT bucket, hash FROM fp_buckets WHERE kind=? ORDER BY bucket")
+        .all(kind).map((row) => [row.bucket, row.hash]);
+      return { needsFull: false, findings, forensic: buckets("forensicTimeline"), iocs: buckets("iocs") };
+    });
+  } finally {
+    db.close();
+  }
+}
+
 // The forensic rows a sweep has to look at, in timeline order: the deobfuscation candidates
 // ("deob": rows the pass would decode) or the rows carrying a file hash ("nsrl"), plus every row
 // whose facts are unknown. Payloads for the unknown rows, and for every row in "deob" mode.
@@ -227,6 +295,7 @@ function dispatchFacts(message) {
     case "factsPending": return factsPending(message.dbPath, message.stamp, message.limit);
     case "factsWrite": return factsWrite(message.dbPath, message.stamp, message.rows);
     case "factsFingerprint": return factsFingerprint(message.dbPath, message.stamp);
+    case "factsFingerprintV3": return factsFingerprintV3(message.dbPath, message.stamp);
     case "factsCandidates": return factsCandidates(message.dbPath, message.stamp, message.mode);
     case "forensicKeyFields": return forensicKeyFields(message.dbPath, message.rowIds);
     case "factsKeyHolders": return factsKeyHolders(message.dbPath, message.stamp, message.keys, message.exclude);
@@ -268,6 +337,11 @@ export interface FactsFingerprint {
   iocs: FactsListing;
   payloads: [number, unknown][];
 }
+
+/** The kept v3 bucket hashes ([bucket, hash], ascending), or a request to hash the full listing. */
+export type FactsFingerprintV3 =
+  | { needsFull: true }
+  | { needsFull: false; findings: unknown[]; forensic: [string, string][]; iocs: [string, string][] };
 
 export interface FactCandidate {
   rowId: number;

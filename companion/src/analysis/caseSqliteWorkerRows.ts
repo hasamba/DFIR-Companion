@@ -21,18 +21,21 @@
 export const ROWS_WORKER_SOURCE = String.raw`
 // One multi-path json_extract returns the three fields as a JSON array, so each keeps its JSON type
 // (a string stays a string, an object an object) exactly as a full load would parse it. A missing
-// field and a JSON null both read as null. Without keys, only ids and row ids are read.
+// field and a JSON null both read as null. Without keys, only ids and row ids are read. Array rows
+// ([row_id, entity_id, k]), not objects: about twice as fast on a 20k-row timeline (#1887).
 function outlineRows(db, withKeys) {
   const out = { rowIds: [], ids: [], timestamps: [], descriptions: [], severities: [] };
   const sql = withKeys
     ? "SELECT row_id, entity_id, json_extract(payload, '$.timestamp', '$.description', '$.severity') AS k " +
       "FROM entities WHERE kind='forensicTimeline' ORDER BY ordinal"
     : "SELECT row_id, entity_id FROM entities WHERE kind='forensicTimeline' ORDER BY ordinal";
-  for (const row of db.prepare(sql).iterate()) {
-    out.rowIds.push(Number(row.row_id));
-    out.ids.push(row.entity_id);
+  const stmt = db.prepare(sql);
+  stmt.setReturnArrays(true);
+  for (const row of stmt.iterate()) {
+    out.rowIds.push(Number(row[0]));
+    out.ids.push(row[1]);
     if (!withKeys) continue;
-    const k = JSON.parse(row.k);
+    const k = JSON.parse(row[2]);
     out.timestamps.push(k[0]);
     out.descriptions.push(k[1]);
     out.severities.push(k[2]);

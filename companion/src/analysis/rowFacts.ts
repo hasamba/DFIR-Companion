@@ -82,6 +82,7 @@ export type FactsStore = Pick<
   | "factsPending"
   | "factsWrite"
   | "factsFingerprint"
+  | "factsFingerprintV3"
   | "factsCandidates"
   | "forensicKeyFields"
   | "factsKeyHolders"

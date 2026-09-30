@@ -46,6 +46,11 @@ export interface AnalysisRunInput {
   eventIds: string[];
   entityIds: string[];
   selectionHash?: string;
+  /**
+   * #1887: the entities (forensic events + IOCs) the case held before the run. An import receipt sets
+   * it and leaves `entityIds` empty; a manifest without it lists its input entities in `entityIds`.
+   */
+  entityCount?: number;
 }
 
 export interface AnalysisRunConfiguration {
@@ -69,7 +74,12 @@ export interface AnalysisRunExecution {
 }
 
 export interface AnalysisRunOutput {
+  /** Every output entity; on an import receipt with `entityCount` (#1887), the ids the import added. */
   entityIds: string[];
+  /** #1887: the ids an import receipt removed (a multiset difference, as `entityIds` is). */
+  removedEntityIds?: string[];
+  /** #1887: the entities (forensic events + IOCs) the case held after an import. */
+  entityCount?: number;
   hashes: AnalysisRunHash[];
   claims: AnalysisRunClaim[];
 }
@@ -132,6 +142,7 @@ export const analysisRunManifestSchema: z.ZodType<AnalysisRunManifest> = z.objec
     eventIds: z.array(z.string()),
     entityIds: z.array(z.string()),
     selectionHash: sha256Schema.optional(),
+    entityCount: z.number().int().nonnegative().optional(),
   }),
   configuration: z
     .object({
@@ -154,6 +165,8 @@ export const analysisRunManifestSchema: z.ZodType<AnalysisRunManifest> = z.objec
   }),
   output: z.object({
     entityIds: z.array(z.string()),
+    removedEntityIds: z.array(z.string()).optional(),
+    entityCount: z.number().int().nonnegative().optional(),
     hashes: z.array(z.object({ id: z.string(), sha256: sha256Schema })),
     claims: z.array(
       z.object({

@@ -225,6 +225,7 @@
     "networkImportDecisions.ts": "analysis/ingest",
     "parseDebugTally.ts": "analysis/ingest",
     "rowDecisionDebug.ts": "analysis/ingest",
+    "runEntityDelta.ts": "analysis/case",
     "siemFieldPick.ts": "analysis/ingest",
     "siemImportDebug.ts": "analysis/ingest",
     "veloCsvRows.ts": "analysis/ingest",

@@ -94,6 +94,35 @@ describe("analysis-run routes", () => {
     });
   });
 
+  it("lists an import receipt's entity counts, and an older manifest's id-list lengths (#1887)", async () => {
+    const { app, analysisRunStore } = await harness();
+    const at = (s: number) => `2026-09-30T10:00:0${s}.000Z`;
+    await analysisRunStore.record("c1", {
+      id: "old",
+      kind: "import",
+      startedAt: at(0),
+      finishedAt: at(1),
+      versions: {},
+      input: { artifacts: [], eventIds: [], entityIds: ["e1", "i1"] },
+      output: { entityIds: ["i1", "e1", "e2"], hashes: [], claims: [] },
+    });
+    await analysisRunStore.record("c1", {
+      id: "new",
+      kind: "import",
+      startedAt: at(2),
+      finishedAt: at(3),
+      versions: {},
+      input: { artifacts: [], eventIds: [], entityIds: [], entityCount: 3 },
+      output: { entityIds: ["e3"], removedEntityIds: [], entityCount: 4, hashes: [], claims: [] },
+    });
+    const listed = await request(app).get("/cases/c1/analysis-runs");
+    const byId = Object.fromEntries(listed.body.map((run: { id: string }) => [run.id, run]));
+    expect(byId.old.input.entityCount).toBe(2);
+    expect(byId.old.output.entityCount).toBe(3);
+    expect(byId.new.input.entityCount).toBe(3);
+    expect(byId.new.output.entityCount).toBe(4);
+  });
+
   it("replays a report into a child run and pins both runs to the report version", async () => {
     const { app, analysisRunStore, cases } = await harness();
     await analysisRunStore.record("c1", {

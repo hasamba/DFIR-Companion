@@ -1,9 +1,15 @@
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
-import { importedArtifact, investigationOutputOfCase } from "../analysis/analysisRunSnapshot.js";
-import { baselineEntityIds, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import {
+  importedArtifact,
+  investigationFingerprintOfCase,
+  STATE_HASH_ID,
+} from "../analysis/analysisRunSnapshot.js";
+import { baselineEntities, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import { importReceipt } from "../analysis/runEntityDelta.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
+import type { StateStore } from "../analysis/stateStore.js";
 import type { RouteContext } from "./context.js";
 
 export interface ImportRunRecord {
@@ -24,6 +30,21 @@ export interface ImportRunRecord {
   parameters?: Record<string, ManifestValue>;
 }
 
+/**
+ * The case after the import, read inside the state lock (#1887): the fingerprint (hash id
+ * STATE_HASH_ID) and the forensic and IOC ids in order, index-only. One exclusive section, so the
+ * counts, the delta and the hash describe one snapshot. The fingerprint refreshes row facts and
+ * migrates the case first, so the IOC read that follows finds the database.
+ */
+async function caseAfterImport(ctx: RouteContext, stateStore: StateStore, caseId: string) {
+  return ctx.runStateExclusive(caseId, async () => {
+    const fingerprint = await investigationFingerprintOfCase(stateStore, caseId);
+    const events = await stateStore.forensicOutline(caseId, false);
+    const iocs = await stateStore.iocJournal.outline(caseId);
+    return { fingerprint, entities: [...events.ids, ...(iocs?.ids ?? [])] };
+  });
+}
+
 export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord): Promise<void> {
   const { options, store } = ctx;
   if (!options.analysisRunStore || !options.stateStore) return;
@@ -33,6 +54,16 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
   const rules = options.taggerStore
     ? hashManifestValue((await options.taggerStore.readActive()).text)
     : undefined;
+  // #1887: the receipt lists what the import added and removed (events + IOCs) and the counts before
+  // and after, not every id the case holds; the fingerprint still covers the whole case.
+  const before = input.baseline ? baselineEntities(toImportBaseline(input.baseline)) : [];
+  const after = await caseAfterImport(ctx, stateStore, input.caseId);
+  const receipt = importReceipt(
+    before,
+    after.entities,
+    [{ id: STATE_HASH_ID, sha256: after.fingerprint.sha256 }],
+    after.fingerprint.findings,
+  );
   await options.analysisRunStore.record(input.caseId, {
     kind: "import",
     startedAt: input.startedAt,
@@ -42,11 +73,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       schema: "investigation-state/v1",
       ...(rules ? { rules } : {}),
     },
-    input: {
-      artifacts: [await importedArtifact(store, input.caseId, input.storedName)],
-      eventIds: [],
-      entityIds: input.baseline ? baselineEntityIds(toImportBaseline(input.baseline)) : [],
-    },
+    input: { artifacts: [await importedArtifact(store, input.caseId, input.storedName)], ...receipt.input },
     configuration: {
       ...(textProvider ?? {}),
       ...(prompt ? { promptHash: hashManifestValue(prompt) } : {}),
@@ -60,11 +87,6 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
         forensicMinimumSeverity: input.minSeverity ?? "case-default",
       },
     },
-    // #1874: the output hash covers the whole case from its per-row digests (investigation-state/v2),
-    // read in one transaction; only the rows written since the last record are digested again.
-    // Inside the state lock, so no writer lands between the refresh and the read.
-    output: await ctx.runStateExclusive(input.caseId, () =>
-      investigationOutputOfCase(stateStore, input.caseId),
-    ),
+    output: receipt.output,
   });
 }
