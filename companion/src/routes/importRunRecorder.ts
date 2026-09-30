@@ -1,6 +1,5 @@
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
-import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
-import { importedArtifact, investigationOutputStreamed } from "../analysis/analysisRunSnapshot.js";
+import { importedArtifact, investigationOutputOfCase } from "../analysis/analysisRunSnapshot.js";
 import { baselineEntityIds, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
@@ -61,13 +60,11 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
         forensicMinimumSeverity: input.minSeverity ?? "case-default",
       },
     },
-    // Streamed (#1874): the output hash covers the whole case, read a page at a time.
-    // Inside the state lock, so no writer lands between the overview and the pages it hashes.
-    output: await ctx.runStateExclusive(input.caseId, async () =>
-      investigationOutputStreamed(
-        await stateStore.loadOverview(input.caseId),
-        stateStore.forensicTimelineBatches(input.caseId, { limit: SCAN_PAGE_ROWS }),
-      ),
+    // #1874: the output hash covers the whole case from its per-row digests (investigation-state/v2),
+    // read in one transaction; only the rows written since the last record are digested again.
+    // Inside the state lock, so no writer lands between the refresh and the read.
+    output: await ctx.runStateExclusive(input.caseId, () =>
+      investigationOutputOfCase(stateStore, input.caseId),
     ),
   });
 }

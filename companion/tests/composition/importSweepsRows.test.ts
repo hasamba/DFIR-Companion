@@ -7,7 +7,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import { applyDeobfuscation } from "../../src/analysis/applyDeobfuscation.js";
 import { deobfuscateRows } from "../../src/composition/deobfuscationRows.js";
-import { investigationOutput, investigationOutputStreamed } from "../../src/analysis/analysisRunSnapshot.js";
+import { investigationOutput, investigationOutputOfCase } from "../../src/analysis/analysisRunSnapshot.js";
 import { createStateBroadcaster } from "../../src/composition/stateBroadcast.js";
 
 // #1874: the per-import sweeps that used to load (and save) the whole case now read it a page at a
@@ -108,8 +108,8 @@ describe("deobfuscateRows — duplicate event ids (#1874)", () => {
   });
 });
 
-describe("investigationOutputStreamed (#1874)", () => {
-  it("hashes the same bytes as investigationOutput over the whole case", async () => {
+describe("investigationOutputOfCase (#1874)", () => {
+  it("gives the whole-case investigationOutput from the stored row digests", async () => {
     const state: InvestigationState = {
       ...emptyState("c1"),
       findings: [
@@ -122,11 +122,7 @@ describe("investigationOutputStreamed (#1874)", () => {
     };
     await store.save(state);
     const full = await store.load("c1");
-    const streamed = await investigationOutputStreamed(
-      await store.loadOverview("c1"),
-      store.forensicTimelineBatches("c1"),
-    );
-    expect(streamed).toEqual(investigationOutput(full));
+    expect(await investigationOutputOfCase(store, "c1")).toEqual(investigationOutput(full));
   });
 });
 

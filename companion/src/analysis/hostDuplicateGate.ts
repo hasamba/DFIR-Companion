@@ -36,9 +36,18 @@ export class HostMergeDecisionRequired extends Error {
 // only there cannot reach the prompt — and scanning it here would put a full table scan on every
 // synthesis. See the design doc's "Source of truth" section.
 export function hostNamesFromState(state: InvestigationState): string[] {
+  return hostNamesFromAssets((state.forensicTimeline ?? []).map((e) => e.asset));
+}
+
+/**
+ * The trimmed, non-empty host names among `assets`, each once, in first-seen order. `assets` may be
+ * every row's asset in timeline order, or each distinct stored host in the order of its first row
+ * (StateStore.forensicHostsInOrder, #1874) — the same list either way.
+ */
+export function hostNamesFromAssets(assets: Iterable<string | null | undefined>): string[] {
   const seen = new Set<string>();
-  for (const e of state.forensicTimeline ?? []) {
-    const asset = (e.asset ?? "").trim();
+  for (const raw of assets) {
+    const asset = (raw ?? "").trim();
     if (asset) seen.add(asset);
   }
   return [...seen];

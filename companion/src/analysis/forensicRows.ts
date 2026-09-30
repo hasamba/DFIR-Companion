@@ -42,6 +42,8 @@ export interface RowWriteResult {
 
 export interface ForensicRowStore {
   loadOverview(caseId: string): Promise<InvestigationState>;
+  /** loadOverview with an empty IOC list; a store without it serves loadOverview. */
+  loadOverviewWithoutIocs?(caseId: string): Promise<InvestigationState>;
   forensicOutline(caseId: string, withKeys?: boolean): Promise<ForensicOutline>;
   forensicRowsById(caseId: string, ids: readonly string[]): Promise<ForensicRow[]>;
   forensicRowsByRowId(caseId: string, rowIds: readonly number[]): Promise<ForensicRow[]>;
@@ -54,8 +56,11 @@ export interface ForensicRowStore {
   updateForensicRows(caseId: string, rows: readonly ForensicRow[]): Promise<RowWriteResult>;
   deleteForensicRows(caseId: string, rowIds: readonly number[]): Promise<number>;
   patchStateMeta(caseId: string, patch: Record<string, unknown>): Promise<void>;
-  /** The armed import journal's pre-images; null when `token` no longer holds it. */
-  readImportJournal?(caseId: string, token: string): Promise<JournalEntry[] | null>;
+  /**
+   * The armed import journal's pre-images; null when `token` no longer holds it. `fence` (the
+   * baseline's highest row id) leaves out the rows the import itself inserted.
+   */
+  readImportJournal?(caseId: string, token: string, fence?: number): Promise<JournalEntry[] | null>;
 }
 
 /**

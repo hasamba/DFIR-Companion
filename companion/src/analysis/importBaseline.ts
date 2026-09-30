@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { emptyState, type InvestigationState } from "./stateTypes.js";
 import { EMPTY_OUTLINE, type ForensicOutline } from "./forensicRows.js";
 import type { StateStore } from "./stateStore.js";
+import { rowFactsStamp } from "./rowFacts.js";
 
 /**
  * What an import compares itself against (#1874), in place of a full copy of the case held from the
@@ -9,7 +10,11 @@ import type { StateStore } from "./stateStore.js";
  *
  * - `overview` is every field but the forensic timeline — the IOCs the IOC diff reads, the rename
  *   ledger, the small fields the undo checkpoint restores.
- * - `outline` is the forensic timeline as ids, row ids and the three fields the timeline diff reads.
+ * - `outline` is the forensic timeline as ids and row ids, in order. A legacy full-state baseline also
+ *   carries the three fields the timeline diff reads; a captured one does not (#1874): its diff reads
+ *   keys only for the rows the import changed and for `unfresh` (routes/importSettleDiff.ts).
+ * - `unfresh` (captured baselines) lists the forensic rows whose row facts were unknown at capture —
+ *   null when none could be trusted (analysis/rowFacts.ts).
  * - `journalToken` names the armed import journal (analysis/caseSqliteWorkerRows.ts): the stored
  *   image of every forensic row changed or removed after the snapshot, which is what the undo
  *   checkpoint restores and what "old rows this import touched" means. The snapshot and the arming
@@ -27,6 +32,10 @@ export interface ImportBaseline {
   journalToken: string | null;
   /** The case had no state at capture: no old row exists, so none can have been touched. */
   empty: boolean;
+  /** Forensic rows whose facts were unknown at capture (null: every row). Absent on a legacy baseline. */
+  unfresh?: number[] | null;
+  /** The highest row id at capture: a journaled row above it was inserted by the import (#1874). */
+  journalFence?: number;
   /** The full pre-import state, only when a legacy caller supplied one. */
   full?: InvestigationState;
 }
@@ -38,7 +47,7 @@ export function isImportBaseline(v: unknown): v is ImportBaseline {
 /** Snapshot the case and arm its import journal. Release it with releaseImportBaseline. */
 export async function captureImportBaseline(stateStore: StateStore, caseId: string): Promise<ImportBaseline> {
   const token = randomUUID();
-  const captured = await stateStore.captureImportBaseline(caseId, token);
+  const captured = await stateStore.captureImportBaseline(caseId, token, rowFactsStamp());
   if (!captured) {
     return {
       kind: "import-baseline",
@@ -47,6 +56,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
       outline: { ...EMPTY_OUTLINE },
       journalToken: null,
       empty: true,
+      unfresh: [],
     };
   }
   return {
@@ -56,6 +66,8 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
     outline: captured.outline,
     journalToken: token,
     empty: false,
+    unfresh: captured.unfresh ?? null,
+    ...(captured.fence === undefined ? {} : { journalFence: captured.fence }),
   };
 }
 

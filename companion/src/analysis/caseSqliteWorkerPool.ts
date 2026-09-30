@@ -41,6 +41,7 @@ const READ_OPS = new Set([
   "entityRows",
   "forensicRowsOutsideSeverities",
   "distinctHosts",
+  "forensicHostsInOrder",
 ]);
 // Ops that replace the database file underneath any open connection.
 const EXCLUSIVE_OPS = new Set(["restoreDatabase"]);

@@ -7,6 +7,11 @@
  * source string and appends the PRAGMA that stamps SCHEMA_VERSION, so bumping the version stays
  * next to the migrations that care about it.
  */
+// A written row's facts are dropped and the row queued under the next sequence number.
+const FACTS_REQUEUE =
+  "UPDATE row_facts_seq SET n = n + 1 WHERE id = 1; DELETE FROM row_facts WHERE row_id = new.row_id; " +
+  "INSERT OR REPLACE INTO row_facts_pending(row_id, seq) VALUES (new.row_id, (SELECT n FROM row_facts_seq WHERE id = 1));";
+
 export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE TABLE IF NOT EXISTS storage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);CREATE TABLE IF NOT EXISTS entities (row_id INTEGER PRIMARY KEY,kind TEXT NOT NULL,entity_id TEXT,ordinal INTEGER NOT NULL,version INTEGER NOT NULL DEFAULT 1,timestamp TEXT,timestamp_ms INTEGER,host TEXT,source TEXT,severity TEXT,content_key TEXT,payload TEXT NOT NULL,UNIQUE(kind, ordinal));CREATE INDEX IF NOT EXISTS entities_time_idx ON entities(kind, timestamp_ms, row_id);CREATE INDEX IF NOT EXISTS entities_host_idx ON entities(kind, host);CREATE INDEX IF NOT EXISTS entities_source_idx ON entities(kind, source);CREATE INDEX IF NOT EXISTS entities_severity_idx ON entities(kind, severity);CREATE INDEX IF NOT EXISTS entities_id_idx ON entities(kind, entity_id);CREATE INDEX IF NOT EXISTS entities_content_idx ON entities(kind, content_key);CREATE TABLE IF NOT EXISTS entity_counts (kind TEXT PRIMARY KEY,count INTEGER NOT NULL);CREATE TABLE IF NOT EXISTS entity_values (row_id INTEGER NOT NULL REFERENCES entities(row_id) ON DELETE CASCADE,name TEXT NOT NULL,value TEXT NOT NULL,kind TEXT NOT NULL,host TEXT,ordinal INTEGER NOT NULL,PRIMARY KEY(row_id, name, value));CREATE INDEX IF NOT EXISTS entity_values_lookup_idx ON entity_values(name, value, kind, ordinal, row_id);CREATE INDEX IF NOT EXISTS entity_values_host_lookup_idx ON entity_values(name, value, kind, host, ordinal, row_id);CREATE TABLE IF NOT EXISTS super_labels (event_id TEXT NOT NULL,label TEXT NOT NULL,PRIMARY KEY(event_id, label));CREATE TABLE IF NOT EXISTS super_protected (event_id TEXT PRIMARY KEY);CREATE TABLE IF NOT EXISTS super_set_aside (event_id TEXT PRIMARY KEY);" +
   // #1535: the rows a NAMED rule deliberately graded Info. Not protection — the cap still
@@ -61,4 +66,32 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE TRIGGER IF NOT EXISTS meta_merge_gen_insert AFTER INSERT ON storage_meta " +
   "WHEN new.key = 'investigation' BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
   "CREATE TRIGGER IF NOT EXISTS meta_merge_gen_update AFTER UPDATE ON storage_meta " +
-  "WHEN new.key = 'investigation' BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;";
+  "WHEN new.key = 'investigation' BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
+  // #1874: the timeline's ids in order, read from the index alone (the settle and the run record
+  // read them on every import; reading the rows themselves touched every page of the case).
+  "CREATE INDEX IF NOT EXISTS entities_order_idx ON entities(kind, ordinal, entity_id);" +
+  // #1874: each host's first row, for the host-duplicate check every import runs (hostScopeLoad.ts).
+  "CREATE INDEX IF NOT EXISTS entities_host_order_idx ON entities(kind, host, ordinal);" +
+  // #1874: per-row facts (analysis/rowFacts.ts computes them; caseSqliteWorkerFacts.ts stores them)
+  // for the forensic and IOC rows: the row's own digest and id, and for a forensic row its timeline
+  // diff key, whether the deobfuscation pass would decode it and its file hashes. Computed from the
+  // stored payload only, so they hold until the payload changes: inserting a row or writing its
+  // payload drops its facts and queues it in row_facts_pending under a fresh sequence number, and a
+  // computation is stored only if the row is still queued under the number it read. Deleting a row
+  // cascades both. An ordinal move changes no fact. storage_meta 'row_facts' stamps the code that
+  // computed them; another stamp means none of them is trusted.
+  "CREATE TABLE IF NOT EXISTS row_facts (row_id INTEGER PRIMARY KEY REFERENCES entities(row_id) ON DELETE CASCADE, " +
+  "id TEXT, digest TEXT NOT NULL, diff_key TEXT, deob INTEGER NOT NULL DEFAULT 0, sha TEXT, md5 TEXT);" +
+  "CREATE INDEX IF NOT EXISTS row_facts_diff_idx ON row_facts(diff_key) WHERE diff_key IS NOT NULL;" +
+  "CREATE TABLE IF NOT EXISTS row_facts_pending (row_id INTEGER PRIMARY KEY REFERENCES entities(row_id) ON DELETE CASCADE, " +
+  "seq INTEGER NOT NULL);" +
+  "CREATE TABLE IF NOT EXISTS row_facts_seq (id INTEGER PRIMARY KEY CHECK (id = 1), n INTEGER NOT NULL);" +
+  "INSERT OR IGNORE INTO row_facts_seq(id, n) VALUES (1, 0);" +
+  "CREATE TRIGGER IF NOT EXISTS entities_facts_insert AFTER INSERT ON entities " +
+  "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
+  FACTS_REQUEUE +
+  " END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_facts_update AFTER UPDATE OF payload ON entities " +
+  "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
+  FACTS_REQUEUE +
+  " END;";

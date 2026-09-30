@@ -23,7 +23,8 @@ const norm = (s: string): string =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-const keyOf = (e: { timestamp: string; description: string }): string =>
+/** The normalized time|description key both diffs compare on; "|" is a fully empty row (skipped). */
+export const keyOf = (e: { timestamp: string; description: string }): string =>
   `${norm(e.timestamp)}|${norm(e.description)}`;
 
 // Only these three fields are read, so an outline of the timeline (analysis/forensicRows.ts) diffs

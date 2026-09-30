@@ -21,6 +21,13 @@ import type {
   MergeSnapshot,
   MergeStoredRow,
 } from "./caseSqliteWorkerMerge.js";
+import type {
+  FactCandidate,
+  FactsFingerprint,
+  KeyFieldsRow,
+  PendingFactRow,
+  RowFactRecord,
+} from "./caseSqliteWorkerFacts.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
 const LEGACY_STATE_FILENAME = "investigation.json";
@@ -186,6 +193,10 @@ export type MergeRowSelect = (
 export interface CapturedBaseline {
   overview: InvestigationState;
   outline: ForensicOutline;
+  /** With a facts stamp: forensic rows whose facts were unknown at capture; null = every row. */
+  unfresh?: number[] | null;
+  /** With a facts stamp: the highest row id at capture (readImportJournal's fence). */
+  fence?: number;
 }
 
 export class StateStore implements InvestigationStateStorage, ForensicRowStore {
@@ -276,6 +287,20 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
 
   async loadOverview(caseId: string): Promise<InvestigationState> {
     return this.loadState(caseId, ["forensicTimeline"]);
+  }
+
+  /** Each distinct forensic host (as stored, untrimmed) in the order of its first row. */
+  async forensicHostsInOrder(caseId: string): Promise<string[]> {
+    if (!(await this.ensureMigrated(caseId))) return [];
+    return caseSqliteWorker.request<string[]>({
+      op: "forensicHostsInOrder",
+      dbPath: this.databasePath(caseId),
+    });
+  }
+
+  /** The overview with an empty IOC list, for a caller that reads none of it (#1874: the settle's rename ledger). */
+  async loadOverviewWithoutIocs(caseId: string): Promise<InvestigationState> {
+    return this.loadState(caseId, ["forensicTimeline", "iocs"]);
   }
 
   private async loadState(caseId: string, excludedKinds: string[]): Promise<InvestigationState> {
@@ -465,21 +490,84 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
    * The import section's snapshot: overview + outline, read in the same transaction that arms the
    * import journal under `token`. Null when the case has no state yet.
    */
-  async captureImportBaseline(caseId: string, token: string): Promise<CapturedBaseline | null> {
+  async captureImportBaseline(
+    caseId: string,
+    token: string,
+    factsStamp?: string,
+  ): Promise<CapturedBaseline | null> {
     if (!(await this.ensureMigrated(caseId))) return null;
     const got = await caseSqliteWorker.request<{
       overview: Partial<InvestigationState> | null;
       outline: ForensicOutline;
-    } | null>({ op: "captureImportBaseline", dbPath: this.databasePath(caseId), token });
+      unfresh?: number[] | null;
+      fence?: number;
+    } | null>({ op: "captureImportBaseline", dbPath: this.databasePath(caseId), token, factsStamp });
     if (!got) return null;
-    return { overview: { ...emptyState(caseId), ...(got.overview ?? {}), caseId }, outline: got.outline };
+    const overview = { ...emptyState(caseId), ...(got.overview ?? {}), caseId };
+    return got.unfresh === undefined
+      ? { overview, outline: got.outline }
+      : { overview, outline: got.outline, unfresh: got.unfresh, fence: got.fence };
   }
 
-  /** The journaled pre-images, or null when `token` no longer holds the journal. */
-  async readImportJournal(caseId: string, token: string): Promise<JournalEntry[] | null> {
+  // ── #1874: per-row facts (analysis/caseSqliteWorkerFacts.ts; computed by analysis/rowFacts.ts) ──
+
+  private async factsRequest<T>(
+    caseId: string,
+    op: string,
+    args: Record<string, unknown>,
+    none: T,
+  ): Promise<T> {
+    if (!(await this.ensureMigrated(caseId))) return none;
+    return caseSqliteWorker.request<T>({ op, dbPath: this.databasePath(caseId), ...args });
+  }
+
+  factsPending(caseId: string, stamp: string, limit: number): Promise<PendingFactRow[]> {
+    return this.factsRequest(caseId, "factsPending", { stamp, limit }, []);
+  }
+
+  factsWrite(caseId: string, stamp: string, rows: readonly RowFactRecord[]): Promise<number> {
+    return rows.length
+      ? this.factsRequest(caseId, "factsWrite", { stamp, rows: [...rows] }, 0)
+      : Promise.resolve(0);
+  }
+
+  factsFingerprint(caseId: string, stamp: string): Promise<FactsFingerprint | null> {
+    return this.factsRequest(caseId, "factsFingerprint", { stamp }, null);
+  }
+
+  factsCandidates(caseId: string, stamp: string, mode: "deob" | "nsrl"): Promise<FactCandidate[]> {
+    return this.factsRequest(caseId, "factsCandidates", { stamp, mode }, []);
+  }
+
+  forensicKeyFields(caseId: string, rowIds: readonly number[]): Promise<KeyFieldsRow[]> {
+    return rowIds.length
+      ? this.factsRequest(caseId, "forensicKeyFields", { rowIds: [...rowIds] }, [])
+      : Promise.resolve([]);
+  }
+
+  /** Null when the facts' stamp is not `stamp` (none of them is trusted). */
+  factsKeyHolders(
+    caseId: string,
+    stamp: string,
+    keys: readonly string[],
+    exclude: readonly number[],
+  ): Promise<KeyFieldsRow[] | null> {
+    return this.factsRequest(
+      caseId,
+      "factsKeyHolders",
+      { stamp, keys: [...keys], exclude: [...exclude] },
+      [],
+    );
+  }
+
+  /**
+   * The journaled pre-images, or null when `token` no longer holds the journal. With `fence`, only
+   * rows at or below it (the baseline's row ids; above it are rows the import inserted).
+   */
+  async readImportJournal(caseId: string, token: string, fence?: number): Promise<JournalEntry[] | null> {
     const rows = await caseSqliteWorker.request<
       { rowId: number; entityId: string | null; payload: ForensicEvent }[] | null
-    >({ op: "readImportJournal", dbPath: this.databasePath(caseId), token });
+    >({ op: "readImportJournal", dbPath: this.databasePath(caseId), token, fence });
     return rows
       ? rows.map((r) => ({ rowId: r.rowId, entityId: r.entityId, event: upgradeForensicEvent(r.payload) }))
       : null;
