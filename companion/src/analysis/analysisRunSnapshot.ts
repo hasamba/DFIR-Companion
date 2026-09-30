@@ -16,6 +16,7 @@ import {
   type FactsStore,
 } from "./rowFacts.js";
 import type { AnalysisRunArtifact, AnalysisRunOutput } from "./analysisRunTypes.js";
+import { ltHex, ltSum } from "./ltHash.js";
 
 export async function importedArtifact(
   cases: CaseStore,
@@ -34,53 +35,28 @@ export async function importedArtifact(
  *
  *   SHA-256 of JSON.stringify(canonicalize({ findings, forensicTimeline: E, iocs: I }))
  *
- * where each item's digest is SHA-256 (lowercase hex) of its canonical JSON (itemDigest), the event as
- * the loaders return it (upgradeForensicEvent applied), and E and I are lists of [bucket, bucketHash]:
- * an item's bucket is the first FP_BUCKET_CHARS hex characters of its digest, and a bucket's hash is
- * SHA-256 of its items' digests sorted ascending and joined with "\n", duplicates kept. Only non-empty
- * buckets are listed, in ascending order. canonicalize sorts every object's keys, so the top level reads
- * {"findings":…,"forensicTimeline":[…],"iocs":[…]}.
+ * where E and I are LtHash sums (Lewi, Kim, Maykov, Weis 2019; analysis/ltHash.ts) of the events' and
+ * the IOCs' item digests, as lowercase hex of 1024 little-endian 32-bit lanes. An item's digest is
+ * SHA-256 (lowercase hex) of its canonical JSON (itemDigest), the event as the loaders return it
+ * (upgradeForensicEvent applied); its element is SHAKE128("dfir-companion/v3\n" + digest), 4096
+ * bytes read as the 1024 lanes; a sum is the lane-wise sum mod 2^32 of its items' elements, a
+ * duplicate counted twice. canonicalize sorts every object's keys, so the top level reads
+ * {"findings":…,"forensicTimeline":"…","iocs":"…"}.
  *
  * It commits to every finding and their order, and to the events and the IOCs as multisets of their
  * content (an event's time is part of its content): a change to any finding, event or IOC, or one
  * more copy of an item, changes it. Unlike `investigation-state/v2` (the per-item digests in list
- * order) it does NOT cover the order the rows are stored in. The case database keeps each bucket's hash
- * (fp_buckets, caseSqliteSchema.ts) and re-hashes only the buckets a write touched, so a case's
+ * order) it does NOT cover the order the rows are stored in. The case database keeps both sums and
+ * folds in only the rows a write changed (fp_rows and fp_log, caseSqliteSchema.ts), so a case's
  * fingerprint costs the changed rows, not the case. The ids are different constructions: compare
  * hashes only under the same id. Manifests written before keep `investigation-state` or
  * `investigation-state/v2` and read as they always did.
  */
 export const STATE_HASH_ID = "investigation-state/v3";
 
-/** Hex characters of an item digest that name its bucket (65,536 buckets per list). */
-export const FP_BUCKET_CHARS = 4;
-
-const sha256Hex = (text: string): string => createHash("sha256").update(text).digest("hex");
-
-/** One bucket's hash: its digests sorted ascending, joined with "\n". */
-export function bucketHash(digests: readonly string[]): string {
-  return sha256Hex([...digests].sort().join("\n"));
-}
-
-/** Every non-empty bucket of a list of item digests, with its hash, in ascending bucket order. */
-export function bucketHashes(digests: readonly string[]): [string, string][] {
-  const byBucket = new Map<string, string[]>();
-  for (const digest of digests) {
-    const bucket = digest.slice(0, FP_BUCKET_CHARS);
-    const list = byBucket.get(bucket);
-    if (list) list.push(digest);
-    else byBucket.set(bucket, [digest]);
-  }
-  return [...byBucket.keys()].sort().map((bucket) => [bucket, bucketHash(byBucket.get(bucket)!)]);
-}
-
-/** The v3 hash from the bucket lists (as the case database keeps them). */
-export function stateHashOfBuckets(
-  findings: readonly unknown[],
-  eventBuckets: readonly (readonly [string, string])[],
-  iocBuckets: readonly (readonly [string, string])[],
-): string {
-  return hashManifestValue({ findings, forensicTimeline: eventBuckets, iocs: iocBuckets });
+/** The v3 hash from the two sums as hex (as the case database keeps them). */
+export function stateHashOfSums(findings: readonly unknown[], eventSum: string, iocSum: string): string {
+  return hashManifestValue({ findings, forensicTimeline: eventSum, iocs: iocSum });
 }
 
 export function stateHash(
@@ -88,7 +64,7 @@ export function stateHash(
   eventDigests: readonly string[],
   iocDigests: readonly string[],
 ): string {
-  return stateHashOfBuckets(findings, bucketHashes(eventDigests), bucketHashes(iocDigests));
+  return stateHashOfSums(findings, ltHex(ltSum(eventDigests)), ltHex(ltSum(iocDigests)));
 }
 
 function outputOf(
@@ -160,19 +136,22 @@ export async function investigationOutputOfCase(
 export interface InvestigationFingerprint {
   sha256: string;
   findings: InvestigationState["findings"];
+  /** The forensic then IOC ids, in order, from the snapshot the hash covers (#1887). */
+  entityIds: unknown[];
 }
 
 function fingerprintOfState(state: InvestigationState): InvestigationFingerprint {
   return {
     sha256: stateHash(state.findings, state.forensicTimeline.map(itemDigest), state.iocs.map(itemDigest)),
     findings: state.findings,
+    entityIds: [...state.forensicTimeline.map((e) => e.id), ...state.iocs.map((i) => i.id)],
   };
 }
 
 /**
- * The case's `investigation-state/v3` hash as stored, and its findings (#1887). Reads only the
- * buckets written since the last call: the case database re-hashes those from the row facts and
- * keeps the rest (factsFingerprintV3, caseSqliteWorkerFacts.ts). When a row's facts are unknown after
+ * The case's `investigation-state/v3` hash as stored, its findings, and its forensic then IOC ids
+ * (#1887). Reads only the rows written since the last call: the case database folds those into the
+ * kept sums (factsFingerprintV3, caseSqliteWorkerFacts.ts). When a row's facts are unknown after
  * the refresh (a writer raced it) or the facts are another build's, it hashes the full per-row
  * listing instead. Call it inside the case's state lock, as the import run recorder does.
  */
@@ -187,11 +166,15 @@ export async function investigationFingerprintOfCase(
   if (!kept) return fingerprintOfState(emptyState(caseId));
   if (!kept.needsFull) {
     const findings = kept.findings as InvestigationState["findings"];
-    return { sha256: stateHashOfBuckets(findings, kept.forensic, kept.iocs), findings };
+    return {
+      sha256: stateHashOfSums(findings, kept.forensic, kept.iocs),
+      findings,
+      entityIds: kept.entities,
+    };
   }
   const fp = await store.factsFingerprint(caseId, stamp);
   if (!fp) return fingerprintOfState(emptyState(caseId));
   const { events, iocs } = digestsOf(fp);
   const findings = fp.findings as InvestigationState["findings"];
-  return { sha256: stateHash(findings, events.digests, iocs.digests), findings };
+  return { sha256: stateHash(findings, events.digests, iocs.digests), findings, entityIds: fp.entities };
 }

@@ -875,13 +875,14 @@ instead, and the ledger shows them that way.
 
 A run's output hash `investigation-state/v3` fingerprints the case as the run left it: every finding
 in order, and every forensic event and IOC by its content. Each event and each IOC is reduced to the
-SHA-256 of its own canonical JSON (keys sorted). The digests are grouped by their first four hex
-characters, and each group is hashed: the SHA-256 of its digests, sorted and joined with newlines.
-The output hash is the SHA-256 of the canonical JSON of `{findings, forensicTimeline, iocs}`, where
-the two lists hold `[group, group hash]` pairs in ascending order. A change to any finding, event or
-IOC changes it, and so does one more copy of an event. The order of the rows in the timeline is not
-part of it. The case database keeps each group's hash and recomputes only the groups a write touched,
-so the hashing work follows what changed, not the size of the case.
+SHA-256 of its own canonical JSON (keys sorted). The events' digests are combined into one LtHash
+sum (Lewi et al., 2019), and so are the IOCs' digests: each digest is expanded with SHAKE128 to 1,024
+32-bit numbers, and the sum adds them slot by slot, wrapping at 2^32. The output hash is the SHA-256
+of the canonical JSON of `{findings, forensicTimeline, iocs}`, where the two fields hold the sums as
+hex. A change to any finding, event or IOC changes it, and so does one more copy of an event. The
+order of the rows in the timeline is not part of it. The case database keeps both sums and adds or
+subtracts only the rows a write changed, so the hashing work follows what changed, not the size of
+the case.
 
 Manifests written by earlier versions carry `investigation-state` (the same JSON with every item
 inline) or `investigation-state/v2` (each item's digest, in timeline and list order). These are

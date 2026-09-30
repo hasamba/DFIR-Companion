@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,8 +11,11 @@ import { canonicalize } from "../../src/analysis/analysisRunHash.js";
 import {
   investigationFingerprintOfCase,
   investigationOutput,
+  stateHash,
+  stateHashOfSums,
   STATE_HASH_ID,
 } from "../../src/analysis/analysisRunSnapshot.js";
+import { LT_HASH_WORKER_SOURCE, ltHex, ltSum } from "../../src/analysis/ltHash.js";
 import { itemDigest, refreshRowFacts, rowFactsStamp } from "../../src/analysis/rowFacts.js";
 import { deltaSchema, type AnalysisDelta } from "../../src/analysis/responseSchema.js";
 import { mergeDelta, type WindowContext } from "../../src/analysis/stateMerge.js";
@@ -21,10 +25,10 @@ import { scriptBlockSignal } from "../../src/analysis/tradecraftRules.js";
 import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
 
-// #1887: the run record's case fingerprint, investigation-state/v3. Events and IOCs are hashed per
-// bucket (the first four hex characters of each item's digest), and the case database keeps each
-// bucket's hash, re-hashing only the buckets a write touched. The kept hashes must always give what
-// hashing the loaded case gives, whatever wrote to the case.
+// #1887: the run record's case fingerprint, investigation-state/v3. Events and IOCs are LtHash sums
+// of their item digests, and the case database keeps both sums, folding in only the rows a write
+// changed (the row_facts triggers log them in fp_log). The kept sums must always give what hashing
+// the loaded case gives, whatever wrote to the case.
 
 function ev(id: string, description: string, p: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
@@ -68,27 +72,33 @@ const seeded = (): InvestigationState => ({
   forensicTimeline: Array.from({ length: 30 }, (_, i) => ev(`e${i}`, `row ${i}`, { asset: "H1" })),
 });
 
-/** The v3 hash written out from its definition, from a loaded case. */
+/** The v3 hash written out from its definition, from a loaded case, with node:crypto alone. */
 function v3Reference(state: InvestigationState): string {
-  const buckets = (items: readonly unknown[]): [string, string][] => {
-    const by = new Map<string, string[]>();
-    for (const d of items.map((item) => hex(JSON.stringify(canonicalize(item))))) {
-      by.set(d.slice(0, 4), [...(by.get(d.slice(0, 4)) ?? []), d]);
+  const sum = (items: readonly unknown[]): string => {
+    const lanes = new Array<number>(1024).fill(0);
+    for (const item of items) {
+      const digest = hex(JSON.stringify(canonicalize(item)));
+      const el = createHash("shake128", { outputLength: 4096 })
+        .update("dfir-companion/v3\n" + digest)
+        .digest();
+      for (let i = 0; i < 1024; i++) lanes[i] = (lanes[i] + el.readUInt32LE(4 * i)) % 2 ** 32;
     }
-    return [...by.keys()].sort().map((b) => [b, hex([...by.get(b)!].sort().join("\n"))]);
+    const out = Buffer.alloc(4096);
+    lanes.forEach((lane, i) => out.writeUInt32LE(lane, 4 * i));
+    return out.toString("hex");
   };
   return hex(
     JSON.stringify(
       canonicalize({
         findings: state.findings,
-        forensicTimeline: buckets(state.forensicTimeline),
-        iocs: buckets(state.iocs),
+        forensicTimeline: sum(state.forensicTimeline),
+        iocs: sum(state.iocs),
       }),
     ),
   );
 }
 
-/** The incremental fingerprint equals the pure one of a load, and came from the kept buckets. */
+/** The incremental fingerprint equals the pure one of a load, and came from the kept sums. */
 async function expectFresh(caseId = "c1"): Promise<string> {
   const state = await store.load(caseId);
   const pure = investigationOutput(state).hashes[0].sha256;
@@ -96,11 +106,12 @@ async function expectFresh(caseId = "c1"): Promise<string> {
   expect(await investigationFingerprintOfCase(store, caseId)).toEqual({
     sha256: pure,
     findings: state.findings,
+    entityIds: [...state.forensicTimeline.map((e) => e.id), ...state.iocs.map((i) => i.id)],
   });
-  // The op itself answered from its buckets (not the full-listing fallback): nothing is left dirty.
+  // The op itself answered from its kept sums (not the full-listing fallback) and folded the log.
   const op = await store.factsFingerprintV3(caseId, rowFactsStamp());
   expect(op && op.needsFull).toBe(false);
-  expect(dirtyBuckets(caseId)).toBe(0);
+  expect(logRows(caseId)).toBe(0);
   return pure;
 }
 
@@ -113,14 +124,8 @@ function withDb<T>(caseId: string, fn: (db: InstanceType<ReturnType<typeof loadD
   }
 }
 
-const dirtyBuckets = (caseId: string): number =>
-  Number(
-    (
-      withDb(caseId, (db) => db.prepare("SELECT count(*) AS n FROM fp_buckets WHERE hash IS NULL").get()) as {
-        n: number;
-      }
-    ).n,
-  );
+const logRows = (caseId: string): number =>
+  Number((withDb(caseId, (db) => db.prepare("SELECT count(*) AS n FROM fp_log").get()) as { n: number }).n);
 
 let step = 0;
 function importDelta(prefix: string, n: number): { d: AnalysisDelta; ctx: WindowContext } {
@@ -187,12 +192,47 @@ describe("investigation-state/v3 (#1887)", () => {
     expect(h(moved)).not.toBe(h(base));
   });
 
-  it("gives the empty case's hash for a case with no state", async () => {
-    const empty = investigationOutput(emptyState("c1")).hashes[0].sha256;
-    expect(await investigationFingerprintOfCase(store, "c1")).toEqual({ sha256: empty, findings: [] });
+  it("equals a reference written from the definition, duplicates included", () => {
+    const small: InvestigationState = {
+      ...emptyState("c1"),
+      findings: seeded().findings,
+      iocs: [seeded().iocs[0]],
+      forensicTimeline: [ev("e1", "one"), ev("e2", "two"), ev("e1", "one")],
+    };
+    expect(investigationOutput(small).hashes[0].sha256).toBe(v3Reference(small));
   });
 
-  it("keeps the database's bucket hashes equal to hashing the loaded case after every kind of write", async () => {
+  it("runs the same arithmetic in the worker's copy as in the module", () => {
+    const context: Record<string, unknown> = { require, Buffer };
+    runInNewContext(LT_HASH_WORKER_SOURCE, context);
+    const apply = context.ltApply as (sum: Uint32Array, digest: string, sign: number) => void;
+    const encode = context.ltWorkerEncode as (sum: Uint32Array, encoding: string) => string;
+    const decode = context.ltWorkerDecode as (text: string, encoding: string) => Uint32Array | null;
+    const digests = ["a", "b", "c", "a"].map(hex);
+    const sum = new Uint32Array(1024);
+    for (const d of [...digests, hex("gone")]) apply(sum, d, 1);
+    apply(sum, hex("gone"), -1);
+    expect(encode(sum, "hex")).toBe(ltHex(ltSum(digests)));
+    expect(encode(decode(encode(sum, "base64"), "base64")!, "hex")).toBe(ltHex(ltSum(digests)));
+    expect(decode("AAAA", "base64")).toBeNull();
+    expect(ltHex(ltSum([]))).toBe("0".repeat(8192));
+  });
+
+  it("does not wrap a multiplicity at 65,536 copies (32-bit lanes)", () => {
+    const one = hex("same event");
+    expect(ltHex(ltSum(Array.from({ length: 65_536 }, () => one)))).not.toBe(ltHex(ltSum([])));
+  });
+
+  it("gives the empty case's hash for a case with no state", async () => {
+    const empty = investigationOutput(emptyState("c1")).hashes[0].sha256;
+    expect(await investigationFingerprintOfCase(store, "c1")).toEqual({
+      sha256: empty,
+      findings: [],
+      entityIds: [],
+    });
+  });
+
+  it("keeps the database's sums equal to hashing the loaded case after every kind of write", async () => {
     await store.save(seeded());
     const hashes = [await expectFresh()];
     // An importer merge (the incremental path after the first one).
@@ -248,7 +288,7 @@ describe("investigation-state/v3 (#1887)", () => {
     expect(new Set(hashes).size).toBe(hashes.length);
   });
 
-  it("re-hashes every bucket after the row facts' stamp changes", async () => {
+  it("rebuilds the sums after the row facts' stamp changes", async () => {
     await store.save(seeded());
     const before = await expectFresh();
     // Other code's facts: every row is dropped and queued; the next fingerprint recomputes them all.
@@ -257,17 +297,42 @@ describe("investigation-state/v3 (#1887)", () => {
     expect(await expectFresh()).toBe(before);
   });
 
-  it("seeds the buckets of a case that has row facts but no bucket hashes yet", async () => {
+  it("seeds the sums of a case that has row facts but no kept sums yet", async () => {
     await store.save(seeded());
     await refreshRowFacts(store, "c1");
     const before = await expectFresh();
-    // A case from before v3: facts are there, fp_buckets is empty and unstamped. A wrong clean
-    // bucket left behind must not survive the seed either.
+    // A case from before v3: facts are there, the mirror is empty and nothing is stamped. A wrong
+    // mirror row and a stray log entry left behind must not survive the seed either.
     withDb("c1", (db) => {
-      db.exec("DELETE FROM fp_buckets; DELETE FROM storage_meta WHERE key='fp_buckets';");
-      db.exec("INSERT INTO fp_buckets(kind, bucket, hash) VALUES ('iocs', 'zzzz', 'stale')");
+      db.exec("DELETE FROM fp_rows; DELETE FROM fp_log; DELETE FROM storage_meta WHERE key='fp_sum';");
+      db.exec("INSERT INTO fp_rows(row_id, kind, digest) VALUES (999999, 'iocs', 'stale')");
+      db.exec("INSERT INTO fp_log(kind, digest, sign) VALUES ('iocs', 'stale', 1)");
     });
     expect(await expectFresh()).toBe(before);
+    // A damaged kept value is rebuilt too.
+    withDb("c1", (db) => db.exec("UPDATE storage_meta SET value='{\"stamp\":1}' WHERE key='fp_sum'"));
+    expect(await expectFresh()).toBe(before);
+    // So is a kept sum that still decodes but no longer matches its check (one lane damaged).
+    withDb("c1", (db) => {
+      const kept = JSON.parse(
+        (db.prepare("SELECT value FROM storage_meta WHERE key='fp_sum'").get() as { value: string }).value,
+      ) as { forensic: string };
+      const bytes = Buffer.from(kept.forensic, "base64");
+      bytes[0] ^= 1;
+      db.prepare("UPDATE storage_meta SET value=? WHERE key='fp_sum'").run(
+        JSON.stringify({ ...kept, forensic: bytes.toString("base64") }),
+      );
+    });
+    expect(await expectFresh()).toBe(before);
+  });
+
+  it("gives the same fingerprint from the full listing as from the kept sums", async () => {
+    await store.save(seeded());
+    const kept = await investigationFingerprintOfCase(store, "c1");
+    const listingOnly = Object.assign(Object.create(store) as StateStore, {
+      factsFingerprintV3: async () => ({ needsFull: true as const }),
+    });
+    expect(await investigationFingerprintOfCase(listingOnly, "c1")).toEqual(kept);
   });
 
   it("falls back to the full listing when a row's facts are unknown", async () => {
@@ -280,56 +345,82 @@ describe("investigation-state/v3 (#1887)", () => {
   });
 });
 
-describe("the bucket triggers on row_facts (#1887)", () => {
-  async function freshCase(): Promise<{ rowId: number; bucket: string }> {
+describe("the LtHash triggers on row_facts (#1887)", () => {
+  async function freshCase(): Promise<{ rowId: number; digest: string }> {
     await store.save(seeded());
     await caseSqliteWorker.request({ op: "ensureDatabase", dbPath: store.databasePath("c1") });
     await expectFresh();
     const [row] = await store.forensicRowsById("c1", ["e1"]);
     const digest = itemDigest((await store.load("c1")).forensicTimeline.find((e) => e.id === "e1"));
-    return { rowId: row.rowId, bucket: digest.slice(0, 4) };
+    return { rowId: row.rowId, digest };
   }
 
-  const bucketRows = (bucket: string): { kind: string; hash: string | null }[] =>
-    withDb("c1", (db) =>
-      db.prepare("SELECT kind, hash FROM fp_buckets WHERE bucket=? ORDER BY kind").all(bucket),
-    ) as { kind: string; hash: string | null }[];
+  const fake = "f".repeat(64);
 
-  it("an INSERT OR REPLACE with another digest marks the old bucket dirty, for both kinds", async () => {
-    const { rowId, bucket } = await freshCase();
-    const other = bucket === "ffff" ? "0000" : "ffff";
-    withDb("c1", (db) =>
-      db
-        .prepare("INSERT OR REPLACE INTO row_facts(row_id, id, digest) VALUES (?, 'e1', ?)")
-        .run(rowId, other + "0".repeat(60)),
-    );
-    expect(bucketRows(bucket)).toEqual([
-      { kind: "forensicTimeline", hash: null },
-      { kind: "iocs", hash: null },
-    ]);
-    expect(bucketRows(other)).toEqual([
-      { kind: "forensicTimeline", hash: null },
-      { kind: "iocs", hash: null },
-    ]);
+  /** The pure v3 of the digests row_facts holds now (what the kept sums must track). */
+  async function factsHash(): Promise<string> {
+    const findings = (await store.load("c1")).findings;
+    const digests = (kind: string): string[] =>
+      (
+        withDb("c1", (db) =>
+          db
+            .prepare("SELECT f.digest FROM row_facts f JOIN entities e ON e.row_id=f.row_id WHERE e.kind=?")
+            .all(kind),
+        ) as { digest: string }[]
+      ).map((r) => r.digest);
+    return stateHash(findings, digests("forensicTimeline"), digests("iocs"));
+  }
+
+  /** The op's own hash, without the facts refresh in front of it. */
+  async function opHash(): Promise<string> {
+    const op = await store.factsFingerprintV3("c1", rowFactsStamp());
+    if (!op || op.needsFull) throw new Error("expected kept sums");
+    expect(logRows("c1")).toBe(0);
+    return stateHashOfSums(op.findings, op.forensic, op.iocs);
+  }
+
+  const run = (sql: string, ...args: (string | number)[]): void =>
+    withDb("c1", (db) => {
+      db.prepare(sql).run(...args);
+    });
+
+  it("an INSERT OR REPLACE with another digest takes the old digest out and puts the new one in", async () => {
+    const { rowId, digest } = await freshCase();
+    const before = await opHash();
+    run("INSERT OR REPLACE INTO row_facts(row_id, id, digest) VALUES (?, 'e1', ?)", rowId, fake);
+    expect(await opHash()).toBe(await factsHash());
+    expect(await opHash()).not.toBe(before);
+    run("INSERT OR REPLACE INTO row_facts(row_id, id, digest) VALUES (?, 'e1', ?)", rowId, digest);
+    expect(await opHash()).toBe(before);
+    await expectFresh();
   });
 
-  it("a cascade delete of the entity fires the row_facts delete trigger", async () => {
-    const { rowId, bucket } = await freshCase();
+  it("an INSERT OR IGNORE that inserts nothing changes nothing", async () => {
+    const { rowId } = await freshCase();
+    const before = await opHash();
+    run("INSERT OR IGNORE INTO row_facts(row_id, id, digest) VALUES (?, 'e1', ?)", rowId, fake);
+    expect(await opHash()).toBe(before);
+    await expectFresh();
+  });
+
+  it("a cascade delete of the entity takes its digest out", async () => {
+    const { rowId } = await freshCase();
     withDb("c1", (db) => {
       db.exec("PRAGMA foreign_keys=ON");
       db.prepare("DELETE FROM entities WHERE row_id=?").run(rowId);
       expect(db.prepare("SELECT count(*) AS n FROM row_facts WHERE row_id=?").get(rowId)).toEqual({ n: 0 });
     });
-    expect(bucketRows(bucket).map((r) => r.hash)).toEqual([null, null]);
+    expect(await opHash()).toBe(await factsHash());
+    await expectFresh();
   });
 
-  it("an update of a digest marks the old and the new bucket dirty", async () => {
-    const { rowId, bucket } = await freshCase();
-    const other = bucket === "aaaa" ? "bbbb" : "aaaa";
-    withDb("c1", (db) =>
-      db.prepare("UPDATE row_facts SET digest=? WHERE row_id=?").run(other + "0".repeat(60), rowId),
-    );
-    expect(bucketRows(bucket).map((r) => r.hash)).toEqual([null, null]);
-    expect(bucketRows(other).map((r) => r.hash)).toEqual([null, null]);
+  it("an update of a digest takes the old one out and puts the new one in", async () => {
+    const { rowId, digest } = await freshCase();
+    const before = await opHash();
+    run("UPDATE row_facts SET digest=? WHERE row_id=?", fake, rowId);
+    expect(await opHash()).toBe(await factsHash());
+    run("UPDATE row_facts SET digest=? WHERE row_id=?", digest, rowId);
+    expect(await opHash()).toBe(before);
+    await expectFresh();
   });
 });

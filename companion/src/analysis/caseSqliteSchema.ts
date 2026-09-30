@@ -13,37 +13,37 @@ const FACTS_REQUEUE =
   "INSERT OR REPLACE INTO row_facts_pending(row_id, seq) VALUES (new.row_id, (SELECT n FROM row_facts_seq WHERE id = 1));";
 
 // #1887: the run record's case fingerprint (investigation-state/v3, analysis/analysisRunSnapshot.ts)
-// hashes the events and the IOCs per bucket, a bucket being the first 4 hex characters of a row's
-// digest (FP_BUCKET_CHARS there; tests/analysis/fingerprintV3.test.ts holds the two together). fp_buckets keeps each (kind, bucket)'s hash; NULL means dirty, re-hashed from
-// row_facts by the next fingerprint (factsFingerprintV3, caseSqliteWorkerFacts.ts). Triggers on
-// row_facts mark a bucket dirty whenever a digest enters or leaves it, so no writer has to remember:
-// a row whose payload is written loses its facts (DELETE), a deleted entity cascades its facts
-// (DELETE; SQLite fires triggers for a cascade), and a refresh inserts the new ones. The BEFORE
-// INSERT trigger covers INSERT OR REPLACE, whose implicit delete fires no trigger while
-// recursive_triggers is off. A mark covers BOTH kinds: on a cascade the entity row, and its kind, is
-// already gone, and re-hashing a clean bucket is harmless. A mark never conflicts (an UPDATE, then an
-// INSERT of the missing rows only), so the firing statement's conflict policy cannot turn it off.
-const FP_KINDS_ROWS = "(SELECT 'forensicTimeline' AS kind UNION ALL SELECT 'iocs')";
-const fpMark = (bucket: string): string =>
-  `UPDATE fp_buckets SET hash = NULL WHERE kind IN ('forensicTimeline', 'iocs') AND bucket = ${bucket} AND hash IS NOT NULL; ` +
-  `INSERT INTO fp_buckets(kind, bucket, hash) SELECT k.kind, ${bucket}, NULL FROM ${FP_KINDS_ROWS} k ` +
-  `WHERE NOT EXISTS (SELECT 1 FROM fp_buckets x WHERE x.kind = k.kind AND x.bucket = ${bucket});`;
-const FP_BUCKETS_SQL =
-  "CREATE TABLE IF NOT EXISTS fp_buckets (kind TEXT NOT NULL, bucket TEXT NOT NULL, hash TEXT, " +
-  "PRIMARY KEY(kind, bucket)) WITHOUT ROWID;" +
-  "CREATE INDEX IF NOT EXISTS fp_buckets_dirty_idx ON fp_buckets(kind, bucket) WHERE hash IS NULL;" +
-  "CREATE INDEX IF NOT EXISTS row_facts_bucket_idx ON row_facts(substr(digest, 1, 4), digest);" +
-  "CREATE TRIGGER IF NOT EXISTS row_facts_fp_replace BEFORE INSERT ON row_facts " +
-  "WHEN EXISTS (SELECT 1 FROM row_facts WHERE row_id = new.row_id) BEGIN " +
-  fpMark("(SELECT substr(digest, 1, 4) FROM row_facts WHERE row_id = new.row_id)") +
-  " END;" +
-  `CREATE TRIGGER IF NOT EXISTS row_facts_fp_insert AFTER INSERT ON row_facts BEGIN ${fpMark("substr(new.digest, 1, 4)")} END;` +
-  `CREATE TRIGGER IF NOT EXISTS row_facts_fp_delete AFTER DELETE ON row_facts BEGIN ${fpMark("substr(old.digest, 1, 4)")} END;` +
-  "CREATE TRIGGER IF NOT EXISTS row_facts_fp_update AFTER UPDATE OF digest, row_id ON row_facts BEGIN " +
-  fpMark("substr(old.digest, 1, 4)") +
-  " " +
-  fpMark("substr(new.digest, 1, 4)") +
-  " END;";
+// keeps an LtHash sum per kind (analysis/ltHash.ts) and folds in only what changed. fp_rows mirrors
+// each forensic and IOC row's (kind, digest) as the sums count it, with no foreign key, so a cascade
+// delete of the entity can still read the kind; fp_log records every digest that entered (+1) or left
+// (-1) a sum since the last fingerprint (factsFingerprintV3, caseSqliteWorkerFacts.ts, folds and
+// clears it). Triggers on row_facts keep both, so no writer has to remember: a row whose payload is
+// written loses its facts (DELETE), a deleted entity cascades its facts (DELETE; SQLite fires
+// triggers for a cascade), and a refresh inserts the new ones. An INSERT OR REPLACE deletes the old
+// row without firing a trigger while recursive_triggers is off, so every insert first takes out any
+// mirror row already under its row_id (in the AFTER trigger, so an INSERT OR IGNORE that inserts
+// nothing changes nothing). No statement here can conflict (fp_log's key is a fresh rowid; fp_rows is
+// cleared before it is written), so the firing statement's conflict policy cannot skip one.
+const fpTakeOut = (rowId: string): string =>
+  `INSERT INTO fp_log(kind, digest, sign) SELECT kind, digest, -1 FROM fp_rows WHERE row_id = ${rowId}; ` +
+  `DELETE FROM fp_rows WHERE row_id = ${rowId};`;
+const FP_PUT_IN =
+  "INSERT INTO fp_log(kind, digest, sign) SELECT e.kind, new.digest, 1 FROM entities e " +
+  "WHERE e.row_id = new.row_id AND e.kind IN ('forensicTimeline', 'iocs'); " +
+  "INSERT INTO fp_rows(row_id, kind, digest) SELECT e.row_id, e.kind, new.digest FROM entities e " +
+  "WHERE e.row_id = new.row_id AND e.kind IN ('forensicTimeline', 'iocs');";
+const FP_LTHASH_SQL =
+  // The bucket design this replaced, on a database a development build opened.
+  "DROP TRIGGER IF EXISTS row_facts_fp_replace; DROP TRIGGER IF EXISTS row_facts_fp_insert;" +
+  "DROP TRIGGER IF EXISTS row_facts_fp_delete; DROP TRIGGER IF EXISTS row_facts_fp_update;" +
+  "DROP INDEX IF EXISTS row_facts_bucket_idx; DROP TABLE IF EXISTS fp_buckets;" +
+  "CREATE TABLE IF NOT EXISTS fp_rows (row_id INTEGER PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL);" +
+  "CREATE TABLE IF NOT EXISTS fp_log (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, " +
+  "sign INTEGER NOT NULL);" +
+  `CREATE TRIGGER IF NOT EXISTS row_facts_lt_insert AFTER INSERT ON row_facts BEGIN ${fpTakeOut("new.row_id")} ${FP_PUT_IN} END;` +
+  `CREATE TRIGGER IF NOT EXISTS row_facts_lt_delete AFTER DELETE ON row_facts BEGIN ${fpTakeOut("old.row_id")} END;` +
+  "CREATE TRIGGER IF NOT EXISTS row_facts_lt_update AFTER UPDATE OF digest, row_id ON row_facts BEGIN " +
+  `${fpTakeOut("old.row_id")} ${fpTakeOut("new.row_id")} ${FP_PUT_IN} END;`;
 
 // #1874: the IOC side of the import journal, and the indexes that let an import find IOC rows without
 // reading every IOC payload. The journal copies the stored image of an IOC row the first time it is
@@ -189,6 +189,6 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
   FACTS_REQUEUE +
   " END;" +
-  FP_BUCKETS_SQL +
+  FP_LTHASH_SQL +
   IOC_JOURNAL_SQL +
   TAGS_SQL;

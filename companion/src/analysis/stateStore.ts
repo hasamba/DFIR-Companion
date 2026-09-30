@@ -548,7 +548,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     return this.factsRequest(caseId, "factsFingerprint", { stamp }, null);
   }
 
-  /** #1887: the case's kept investigation-state/v3 bucket hashes (analysis/analysisRunSnapshot.ts). */
+  /** #1887: the case's kept investigation-state/v3 LtHash sums (analysis/analysisRunSnapshot.ts). */
   factsFingerprintV3(caseId: string, stamp: string): Promise<FactsFingerprintV3 | null> {
     return this.factsRequest(caseId, "factsFingerprintV3", { stamp }, null);
   }

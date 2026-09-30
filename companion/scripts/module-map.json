@@ -285,6 +285,7 @@
     "caseSqliteWorkerSuperQuery.ts": "storage",
     "caseSqliteWorkerSaveState.ts": "storage",
     "caseSqliteWorkerFacts.ts": "storage",
+    "ltHash.ts": "storage",
     "caseSqliteWorkerMerge.ts": "storage",
     "caseSqliteWorkerIoc.ts": "storage",
     "caseSqliteWorkerTags.ts": "storage",

@@ -90,21 +90,26 @@ const seeded = (): InvestigationState => ({
 const hex = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 describe("the run record's state hash, investigation-state/v3 (#1874, #1887)", () => {
-  it("is SHA-256 of the canonical {findings, per-bucket event digests, per-bucket IOC digests}", async () => {
+  it("is SHA-256 of the canonical {findings, LtHash of the event digests, LtHash of the IOC digests}", async () => {
     await store.save(seeded());
     const state = await store.load("c1");
     const digest = (v: unknown): string => hex(JSON.stringify(canonicalize(v)));
-    const buckets = (items: readonly unknown[]): [string, string][] => {
-      const sorted = items.map(digest).sort();
-      const names = [...new Set(sorted.map((d) => d.slice(0, 4)))];
-      return names.map((b) => [b, hex(sorted.filter((d) => d.startsWith(b)).join("\n"))]);
+    const sum = (items: readonly unknown[]): string => {
+      const lanes = new Uint32Array(1024);
+      for (const d of items.map(digest)) {
+        const el = createHash("shake128", { outputLength: 4096 }).update(`dfir-companion/v3\n${d}`).digest();
+        for (let i = 0; i < 1024; i++) lanes[i] += el.readUInt32LE(4 * i);
+      }
+      const bytes = Buffer.alloc(4096);
+      lanes.forEach((lane, i) => bytes.writeUInt32LE(lane, 4 * i));
+      return bytes.toString("hex");
     };
     const expected = hex(
       JSON.stringify(
         canonicalize({
           findings: state.findings,
-          forensicTimeline: buckets(state.forensicTimeline),
-          iocs: buckets(state.iocs),
+          forensicTimeline: sum(state.forensicTimeline),
+          iocs: sum(state.iocs),
         }),
       ),
     );

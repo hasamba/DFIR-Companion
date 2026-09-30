@@ -9,7 +9,6 @@ import { importReceipt } from "../analysis/runEntityDelta.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
-import type { StateStore } from "../analysis/stateStore.js";
 import type { RouteContext } from "./context.js";
 
 export interface ImportRunRecord {
@@ -30,21 +29,6 @@ export interface ImportRunRecord {
   parameters?: Record<string, ManifestValue>;
 }
 
-/**
- * The case after the import, read inside the state lock (#1887): the fingerprint (hash id
- * STATE_HASH_ID) and the forensic and IOC ids in order, index-only. One exclusive section, so the
- * counts, the delta and the hash describe one snapshot. The fingerprint refreshes row facts and
- * migrates the case first, so the IOC read that follows finds the database.
- */
-async function caseAfterImport(ctx: RouteContext, stateStore: StateStore, caseId: string) {
-  return ctx.runStateExclusive(caseId, async () => {
-    const fingerprint = await investigationFingerprintOfCase(stateStore, caseId);
-    const events = await stateStore.forensicOutline(caseId, false);
-    const iocs = await stateStore.iocJournal.outline(caseId);
-    return { fingerprint, entities: [...events.ids, ...(iocs?.ids ?? [])] };
-  });
-}
-
 export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord): Promise<void> {
   const { options, store } = ctx;
   if (!options.analysisRunStore || !options.stateStore) return;
@@ -57,12 +41,16 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
   // #1887: the receipt lists what the import added and removed (events + IOCs) and the counts before
   // and after, not every id the case holds; the fingerprint still covers the whole case.
   const before = input.baseline ? baselineEntities(toImportBaseline(input.baseline)) : [];
-  const after = await caseAfterImport(ctx, stateStore, input.caseId);
+  // The hash, the findings and the ids after come from ONE database transaction, inside the state
+  // lock, so the counts and change lists describe the snapshot the hash covers.
+  const after = await ctx.runStateExclusive(input.caseId, () =>
+    investigationFingerprintOfCase(stateStore, input.caseId),
+  );
   const receipt = importReceipt(
     before,
-    after.entities,
-    [{ id: STATE_HASH_ID, sha256: after.fingerprint.sha256 }],
-    after.fingerprint.findings,
+    after.entityIds,
+    [{ id: STATE_HASH_ID, sha256: after.sha256 }],
+    after.findings,
   );
   await options.analysisRunStore.record(input.caseId, {
     kind: "import",
