@@ -865,12 +865,28 @@ rules version, prompt or report-template hash, provider/model, filters, anonymiz
 warnings, and output hashes. **View manifest** exposes the exact evidence IDs and links them back to
 the forensic timeline.
 
-A run's output hash `investigation-state/v2` fingerprints the case as the run left it: the findings,
-the IOC list and the forensic timeline, in order. It is the SHA-256 of the canonical JSON (keys sorted)
-of `{findings, forensicTimeline, iocs}`, where each event and each IOC is replaced by the SHA-256 of
-its own canonical JSON. A change to any finding, IOC or event, or to the timeline's order, changes it.
-Manifests written by earlier versions carry `investigation-state`, the same JSON with every item
-inline. The two are different constructions, so compare output hashes only under the same id.
+An import's manifest records what the import changed, not the whole case. It lists the forensic
+event and IOC IDs the import added and removed, and the number of events and IOCs the case held
+before and after. **View manifest** shows these as **Entities before**, **Added**, **Removed** and
+**Entities after**. An ID counts once per row: a second row with an ID the case already held counts
+as added. A row without a text ID is counted but not listed. Findings appear as output claims. The
+manifest stays small on a large case. Manifests written by earlier versions list every input ID
+instead, and the ledger shows them that way.
+
+A run's output hash `investigation-state/v3` fingerprints the case as the run left it: every finding
+in order, and every forensic event and IOC by its content. Each event and each IOC is reduced to the
+SHA-256 of its own canonical JSON (keys sorted). The events' digests are combined into one LtHash
+sum (Lewi et al., 2019), and so are the IOCs' digests: each digest is expanded with SHAKE128 to 1,024
+32-bit numbers, and the sum adds them slot by slot, wrapping at 2^32. The output hash is the SHA-256
+of the canonical JSON of `{findings, forensicTimeline, iocs}`, where the two fields hold the sums as
+hex. A change to any finding, event or IOC changes it, and so does one more copy of an event. The
+order of the rows in the timeline is not part of it. The case database keeps both sums and adds or
+subtracts only the rows a write changed, so the hashing work follows what changed, not the size of
+the case.
+
+Manifests written by earlier versions carry `investigation-state` (the same JSON with every item
+inline) or `investigation-state/v2` (each item's digest, in timeline and list order). These are
+different constructions, so compare output hashes only under the same id.
 
 The integrity banner verifies both every manifest hash and the case's append-only hash chain.
 Changing or deleting a historical manifest makes that check fail. The ledger is included in the

@@ -1,6 +1,11 @@
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
-import { importedArtifact, investigationOutputOfCase } from "../analysis/analysisRunSnapshot.js";
-import { baselineEntityIds, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import {
+  importedArtifact,
+  investigationFingerprintOfCase,
+  STATE_HASH_ID,
+} from "../analysis/analysisRunSnapshot.js";
+import { baselineEntities, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import { importReceipt } from "../analysis/runEntityDelta.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
@@ -33,6 +38,20 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
   const rules = options.taggerStore
     ? hashManifestValue((await options.taggerStore.readActive()).text)
     : undefined;
+  // #1887: the receipt lists what the import added and removed (events + IOCs) and the counts before
+  // and after, not every id the case holds; the fingerprint still covers the whole case.
+  const before = input.baseline ? baselineEntities(toImportBaseline(input.baseline)) : [];
+  // The hash, the findings and the ids after come from ONE database transaction, inside the state
+  // lock, so the counts and change lists describe the snapshot the hash covers.
+  const after = await ctx.runStateExclusive(input.caseId, () =>
+    investigationFingerprintOfCase(stateStore, input.caseId),
+  );
+  const receipt = importReceipt(
+    before,
+    after.entityIds,
+    [{ id: STATE_HASH_ID, sha256: after.sha256 }],
+    after.findings,
+  );
   await options.analysisRunStore.record(input.caseId, {
     kind: "import",
     startedAt: input.startedAt,
@@ -42,11 +61,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       schema: "investigation-state/v1",
       ...(rules ? { rules } : {}),
     },
-    input: {
-      artifacts: [await importedArtifact(store, input.caseId, input.storedName)],
-      eventIds: [],
-      entityIds: input.baseline ? baselineEntityIds(toImportBaseline(input.baseline)) : [],
-    },
+    input: { artifacts: [await importedArtifact(store, input.caseId, input.storedName)], ...receipt.input },
     configuration: {
       ...(textProvider ?? {}),
       ...(prompt ? { promptHash: hashManifestValue(prompt) } : {}),
@@ -60,11 +75,6 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
         forensicMinimumSeverity: input.minSeverity ?? "case-default",
       },
     },
-    // #1874: the output hash covers the whole case from its per-row digests (investigation-state/v2),
-    // read in one transaction; only the rows written since the last record are digested again.
-    // Inside the state lock, so no writer lands between the refresh and the read.
-    output: await ctx.runStateExclusive(input.caseId, () =>
-      investigationOutputOfCase(stateStore, input.caseId),
-    ),
+    output: receipt.output,
   });
 }

@@ -12,6 +12,39 @@ const FACTS_REQUEUE =
   "UPDATE row_facts_seq SET n = n + 1 WHERE id = 1; DELETE FROM row_facts WHERE row_id = new.row_id; " +
   "INSERT OR REPLACE INTO row_facts_pending(row_id, seq) VALUES (new.row_id, (SELECT n FROM row_facts_seq WHERE id = 1));";
 
+// #1887: the run record's case fingerprint (investigation-state/v3, analysis/analysisRunSnapshot.ts)
+// keeps an LtHash sum per kind (analysis/ltHash.ts) and folds in only what changed. fp_rows mirrors
+// each forensic and IOC row's (kind, digest) as the sums count it, with no foreign key, so a cascade
+// delete of the entity can still read the kind; fp_log records every digest that entered (+1) or left
+// (-1) a sum since the last fingerprint (factsFingerprintV3, caseSqliteWorkerFacts.ts, folds and
+// clears it). Triggers on row_facts keep both, so no writer has to remember: a row whose payload is
+// written loses its facts (DELETE), a deleted entity cascades its facts (DELETE; SQLite fires
+// triggers for a cascade), and a refresh inserts the new ones. An INSERT OR REPLACE deletes the old
+// row without firing a trigger while recursive_triggers is off, so every insert first takes out any
+// mirror row already under its row_id (in the AFTER trigger, so an INSERT OR IGNORE that inserts
+// nothing changes nothing). No statement here can conflict (fp_log's key is a fresh rowid; fp_rows is
+// cleared before it is written), so the firing statement's conflict policy cannot skip one.
+const fpTakeOut = (rowId: string): string =>
+  `INSERT INTO fp_log(kind, digest, sign) SELECT kind, digest, -1 FROM fp_rows WHERE row_id = ${rowId}; ` +
+  `DELETE FROM fp_rows WHERE row_id = ${rowId};`;
+const FP_PUT_IN =
+  "INSERT INTO fp_log(kind, digest, sign) SELECT e.kind, new.digest, 1 FROM entities e " +
+  "WHERE e.row_id = new.row_id AND e.kind IN ('forensicTimeline', 'iocs'); " +
+  "INSERT INTO fp_rows(row_id, kind, digest) SELECT e.row_id, e.kind, new.digest FROM entities e " +
+  "WHERE e.row_id = new.row_id AND e.kind IN ('forensicTimeline', 'iocs');";
+const FP_LTHASH_SQL =
+  // The bucket design this replaced, on a database a development build opened.
+  "DROP TRIGGER IF EXISTS row_facts_fp_replace; DROP TRIGGER IF EXISTS row_facts_fp_insert;" +
+  "DROP TRIGGER IF EXISTS row_facts_fp_delete; DROP TRIGGER IF EXISTS row_facts_fp_update;" +
+  "DROP INDEX IF EXISTS row_facts_bucket_idx; DROP TABLE IF EXISTS fp_buckets;" +
+  "CREATE TABLE IF NOT EXISTS fp_rows (row_id INTEGER PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL);" +
+  "CREATE TABLE IF NOT EXISTS fp_log (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, " +
+  "sign INTEGER NOT NULL);" +
+  `CREATE TRIGGER IF NOT EXISTS row_facts_lt_insert AFTER INSERT ON row_facts BEGIN ${fpTakeOut("new.row_id")} ${FP_PUT_IN} END;` +
+  `CREATE TRIGGER IF NOT EXISTS row_facts_lt_delete AFTER DELETE ON row_facts BEGIN ${fpTakeOut("old.row_id")} END;` +
+  "CREATE TRIGGER IF NOT EXISTS row_facts_lt_update AFTER UPDATE OF digest, row_id ON row_facts BEGIN " +
+  `${fpTakeOut("old.row_id")} ${fpTakeOut("new.row_id")} ${FP_PUT_IN} END;`;
+
 // #1874: the IOC side of the import journal, and the indexes that let an import find IOC rows without
 // reading every IOC payload. The journal copies the stored image of an IOC row the first time it is
 // written or deleted while an import section holds the journal armed (import_journal_arm), exactly
@@ -156,5 +189,6 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
   FACTS_REQUEUE +
   " END;" +
+  FP_LTHASH_SQL +
   IOC_JOURNAL_SQL +
   TAGS_SQL;

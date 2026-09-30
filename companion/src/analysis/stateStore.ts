@@ -25,6 +25,7 @@ import type {
 import type {
   FactCandidate,
   FactsFingerprint,
+  FactsFingerprintV3,
   KeyFieldsRow,
   PendingFactRow,
   RowFactRecord,
@@ -545,6 +546,11 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
 
   factsFingerprint(caseId: string, stamp: string): Promise<FactsFingerprint | null> {
     return this.factsRequest(caseId, "factsFingerprint", { stamp }, null);
+  }
+
+  /** #1887: the case's kept investigation-state/v3 LtHash sums (analysis/analysisRunSnapshot.ts). */
+  factsFingerprintV3(caseId: string, stamp: string): Promise<FactsFingerprintV3 | null> {
+    return this.factsRequest(caseId, "factsFingerprintV3", { stamp }, null);
   }
 
   factsCandidates(caseId: string, stamp: string, mode: "deob" | "nsrl"): Promise<FactCandidate[]> {

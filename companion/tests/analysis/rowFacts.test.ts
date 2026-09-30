@@ -89,26 +89,37 @@ const seeded = (): InvestigationState => ({
 
 const hex = (text: string): string => createHash("sha256").update(text).digest("hex");
 
-describe("the run record's state hash, investigation-state/v2 (#1874)", () => {
-  it("is SHA-256 of the canonical {findings, per-event digests, per-IOC digests}", async () => {
+describe("the run record's state hash, investigation-state/v3 (#1874, #1887)", () => {
+  it("is SHA-256 of the canonical {findings, LtHash of the event digests, LtHash of the IOC digests}", async () => {
     await store.save(seeded());
     const state = await store.load("c1");
     const digest = (v: unknown): string => hex(JSON.stringify(canonicalize(v)));
+    const sum = (items: readonly unknown[]): string => {
+      const lanes = new Uint32Array(1024);
+      for (const d of items.map(digest)) {
+        const el = createHash("shake128", { outputLength: 4096 }).update(`dfir-companion/v3\n${d}`).digest();
+        for (let i = 0; i < 1024; i++) lanes[i] += el.readUInt32LE(4 * i);
+      }
+      const bytes = Buffer.alloc(4096);
+      lanes.forEach((lane, i) => bytes.writeUInt32LE(lane, 4 * i));
+      return bytes.toString("hex");
+    };
     const expected = hex(
       JSON.stringify(
         canonicalize({
           findings: state.findings,
-          forensicTimeline: state.forensicTimeline.map(digest),
-          iocs: state.iocs.map(digest),
+          forensicTimeline: sum(state.forensicTimeline),
+          iocs: sum(state.iocs),
         }),
       ),
     );
     const out = investigationOutput(state);
+    expect(STATE_HASH_ID).toBe("investigation-state/v3");
     expect(out.hashes).toEqual([{ id: STATE_HASH_ID, sha256: expected }]);
     expect(out.entityIds).toEqual(["f1", "i001", "i002", ...state.forensicTimeline.map((e) => e.id)]);
   });
 
-  it("changes with any event's content and with the timeline's order", () => {
+  it("changes with any event's or IOC's content, not with the timeline's order", () => {
     const base = { ...seeded(), forensicTimeline: seeded().forensicTimeline.slice(0, 3) };
     const h = (s: InvestigationState): string => investigationOutput(s).hashes[0].sha256;
     const edited = {
@@ -122,7 +133,8 @@ describe("the run record's state hash, investigation-state/v2 (#1874)", () => {
       forensicTimeline: [base.forensicTimeline[1], base.forensicTimeline[0], base.forensicTimeline[2]],
     };
     const iocEdited = { ...base, iocs: [{ ...base.iocs[0], value: "203.0.113.10" }, base.iocs[1]] };
-    expect(new Set([h(base), h(edited), h(swapped), h(iocEdited)]).size).toBe(4);
+    expect(new Set([h(base), h(edited), h(iocEdited)]).size).toBe(3);
+    expect(h(swapped)).toBe(h(base)); // v3 covers content as a multiset; v2 covered the order too
   });
 
   it("reads the same from the stored facts as from the whole case — fresh, stale and unknown rows", async () => {

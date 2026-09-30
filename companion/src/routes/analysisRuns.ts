@@ -13,6 +13,8 @@ import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
 import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
+import { importReceipt } from "../analysis/runEntityDelta.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
 import type { RouteContext } from "./context.js";
@@ -123,6 +125,11 @@ async function replayEnvironment(
   };
 }
 
+/** A case's entities for an import receipt: forensic event ids then IOC ids, one per row. */
+function replayEntities(state: InvestigationState): unknown[] {
+  return [...state.forensicTimeline.map((event) => event.id), ...state.iocs.map((ioc) => ioc.id)];
+}
+
 async function replayImport(
   ctx: RouteContext,
   run: AnalysisRunManifest,
@@ -158,6 +165,13 @@ async function replayImport(
     iocsAdded: replayIocs.added.length,
     iocsRemoved: replayIocs.removed.length,
   });
+  // #1887: the same changed-only receipt a live import records (routes/importRunRecorder.ts).
+  const receipt = importReceipt(
+    replayEntities(before),
+    replayEntities(after),
+    investigationOutput(after).hashes,
+    after.findings,
+  );
   await options.analysisRunStore.record(run.caseId, {
     kind: "import",
     parentRunId: run.id,
@@ -168,13 +182,9 @@ async function replayImport(
       schema: run.versions.schema,
       rules: run.versions.rules,
     },
-    input: {
-      artifacts: [artifact],
-      eventIds: [],
-      entityIds: [...before.forensicTimeline.map((event) => event.id), ...before.iocs.map((ioc) => ioc.id)],
-    },
+    input: { artifacts: [artifact], ...receipt.input },
     configuration: run.configuration,
-    output: investigationOutput(after),
+    output: receipt.output,
   });
   ctx.resynthesizeInBackground(run.caseId);
 }
@@ -323,10 +333,11 @@ export function registerAnalysisRunRoutes(app: Express, ctx: RouteContext): void
         input: {
           artifacts: run.input.artifacts,
           eventCount: run.input.eventIds.length,
-          entityCount: run.input.entityIds.length,
+          // #1887: an import receipt counts its entities; older manifests list them all.
+          entityCount: run.input.entityCount ?? run.input.entityIds.length,
         },
         output: {
-          entityCount: run.output.entityIds.length,
+          entityCount: run.output.entityCount ?? run.output.entityIds.length,
           claimCount: run.output.claims.length,
         },
         manifestHash: run.manifestHash,

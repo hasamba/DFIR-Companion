@@ -1,3 +1,5 @@
+import { LT_HASH_WORKER_SOURCE } from "./ltHash.js";
+
 // The per-row facts of the case SQLite worker (#1874). Spliced into caseSqliteWorker.ts's
 // WORKER_SOURCE as plain text, so everything here runs inside the worker thread with that file's
 // helpers in scope (openDatabase, withTransaction, existsSync). Keep it backtick-free: the fragment
@@ -14,7 +16,9 @@
 // None of these ops is a read-pool op (caseSqliteWorkerPool.ts): they run on the writer, whose
 // openDatabase creates the tables, and each one is a single transaction on the only connection that
 // writes, so what it returns is one version of the case.
-export const FACTS_WORKER_SOURCE = String.raw`
+export const FACTS_WORKER_SOURCE =
+  LT_HASH_WORKER_SOURCE +
+  String.raw`
 const FACT_KINDS_SQL = "('forensicTimeline', 'iocs')";
 
 function factsStampOk(db, stamp) {
@@ -145,7 +149,108 @@ function factsFingerprint(dbPath, stamp) {
         list.digests.forEach((digest, i) => { if (digest === null) unknown.push(list.rowIds[i]); });
       }
       const payloads = payloadsByRowId(db, unknown);
-      return { findings, forensic, iocs, payloads: [...payloads] };
+      return { findings, forensic, iocs, payloads: [...payloads], entities: caseEntityIds(db) };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// #1887: the run record's fingerprint, investigation-state/v3 (analysis/analysisRunSnapshot.ts): an
+// LtHash sum per kind (LT_HASH_WORKER_SOURCE, analysis/ltHash.ts, prepended to this fragment).
+// storage_meta 'fp_sum' keeps { stamp, forensic, iocs, check }, the sums as base64, a SHA-256 over the
+// three (accidental damage fails it and forces a rebuild; it is not a defence against someone who can
+// rewrite the database, which could rewrite the row digests too), and the stamp of the
+// facts they were computed from plus FP_SUM_MARK. The row_facts triggers (caseSqliteSchema.ts) log
+// every digest that entered or left a sum in fp_log; a fingerprint folds the log into the kept sums
+// and clears it, so it costs the changed rows, not the case. Under another stamp, or on a case that
+// never had sums, fp_rows is rebuilt from row_facts and both sums from scratch, in the same
+// transaction, so a crash keeps the old value and rebuilds again.
+const FP_SUM_MARK = "|lthash32-1";
+const FP_SQL = {
+  missing:
+    "SELECT 1 AS x FROM entities e WHERE e.kind IN " + FACT_KINDS_SQL +
+    " AND NOT EXISTS (SELECT 1 FROM row_facts f WHERE f.row_id=e.row_id) LIMIT 1",
+  mirror:
+    "INSERT INTO fp_rows(row_id, kind, digest) SELECT f.row_id, e.kind, f.digest FROM row_facts f " +
+    "JOIN entities e ON e.row_id=f.row_id WHERE e.kind IN " + FACT_KINDS_SQL,
+};
+
+function fpSumCheck(kept) {
+  return createHash("sha256").update(String(kept.stamp) + "|" + String(kept.forensic) + "|" + String(kept.iocs)).digest("hex");
+}
+
+function fpKeptSums(db, stamp) {
+  const row = db.prepare("SELECT value FROM storage_meta WHERE key='fp_sum'").get();
+  let kept = null;
+  try { kept = row ? JSON.parse(row.value) : null; } catch { kept = null; }
+  if (!kept || kept.stamp !== stamp || kept.check !== fpSumCheck(kept)) return null;
+  const forensic = ltWorkerDecode(kept.forensic, "base64");
+  const iocs = ltWorkerDecode(kept.iocs, "base64");
+  return forensic && iocs ? { forensicTimeline: forensic, iocs } : null;
+}
+
+function fpSumValue(stamp, sums) {
+  const kept = {
+    stamp,
+    forensic: ltWorkerEncode(sums.forensicTimeline, "base64"),
+    iocs: ltWorkerEncode(sums.iocs, "base64"),
+  };
+  return { ...kept, check: fpSumCheck(kept) };
+}
+
+function fpRebuild(db) {
+  db.exec("DELETE FROM fp_rows; DELETE FROM fp_log;" + FP_SQL.mirror);
+  const sums = { forensicTimeline: new Uint32Array(LT_LANES), iocs: new Uint32Array(LT_LANES) };
+  const rows = db.prepare("SELECT kind, digest FROM fp_rows");
+  rows.setReturnArrays(true);
+  for (const row of rows.iterate()) ltApply(sums[row[0]], row[1], 1);
+  return sums;
+}
+
+// Fold every logged change into the sums, then clear the log.
+function fpFold(db, sums) {
+  const rows = db.prepare("SELECT kind, digest, sign FROM fp_log");
+  rows.setReturnArrays(true);
+  for (const row of rows.iterate()) {
+    const sum = sums[row[0]];
+    if (sum) ltApply(sum, row[1], Number(row[2]) < 0 ? -1 : 1);
+  }
+  db.exec("DELETE FROM fp_log");
+}
+
+// The case's findings and both sums (hex). Null for a case with no state; { needsFull: true } when
+// the facts are another build's or a forensic or IOC row's facts are unknown (queued, or missing):
+// the caller then hashes the full listing.
+// The forensic then IOC ids, in order, as the outlines read them (#1887): read in the fingerprint's
+// own transaction, so a receipt's counts and change lists describe the snapshot its hash covers.
+function caseEntityIds(db) {
+  return outlineRows(db, false).ids.concat(iocOutlineRows(db).ids);
+}
+
+function factsFingerprintV3(dbPath, stamp) {
+  if (!existsSync(dbPath)) return null;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      if (!db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='investigation'").get()) return null;
+      if (!factsStampOk(db, stamp)) return { needsFull: true };
+      if (db.prepare("SELECT 1 AS x FROM row_facts_pending LIMIT 1").get()) return { needsFull: true };
+      if (db.prepare(FP_SQL.missing).get()) return { needsFull: true };
+      const sumStamp = stamp + FP_SUM_MARK;
+      let sums = fpKeptSums(db, sumStamp);
+      if (sums) fpFold(db, sums);
+      else sums = fpRebuild(db);
+      db.prepare(
+        "INSERT INTO storage_meta(key, value) VALUES('fp_sum', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+      ).run(JSON.stringify(fpSumValue(sumStamp, sums)));
+      const findings = db.prepare("SELECT payload FROM entities WHERE kind='findings' ORDER BY ordinal")
+        .all().map((row) => JSON.parse(row.payload));
+      return {
+        needsFull: false, findings,
+        forensic: ltWorkerEncode(sums.forensicTimeline, "hex"), iocs: ltWorkerEncode(sums.iocs, "hex"),
+        entities: caseEntityIds(db),
+      };
     });
   } finally {
     db.close();
@@ -227,6 +332,7 @@ function dispatchFacts(message) {
     case "factsPending": return factsPending(message.dbPath, message.stamp, message.limit);
     case "factsWrite": return factsWrite(message.dbPath, message.stamp, message.rows);
     case "factsFingerprint": return factsFingerprint(message.dbPath, message.stamp);
+    case "factsFingerprintV3": return factsFingerprintV3(message.dbPath, message.stamp);
     case "factsCandidates": return factsCandidates(message.dbPath, message.stamp, message.mode);
     case "forensicKeyFields": return forensicKeyFields(message.dbPath, message.rowIds);
     case "factsKeyHolders": return factsKeyHolders(message.dbPath, message.stamp, message.keys, message.exclude);
@@ -267,7 +373,21 @@ export interface FactsFingerprint {
   forensic: FactsListing;
   iocs: FactsListing;
   payloads: [number, unknown][];
+  /** The forensic then IOC ids, in order, from the same transaction. */
+  entities: unknown[];
 }
+
+/** The kept v3 LtHash sums (hex, analysis/ltHash.ts), or a request to hash the full listing. */
+export type FactsFingerprintV3 =
+  | { needsFull: true }
+  | {
+      needsFull: false;
+      findings: unknown[];
+      forensic: string;
+      iocs: string;
+      /** The forensic then IOC ids, in order, from the same transaction. */
+      entities: unknown[];
+    };
 
 export interface FactCandidate {
   rowId: number;

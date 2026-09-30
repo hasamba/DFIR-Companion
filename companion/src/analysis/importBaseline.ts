@@ -116,7 +116,18 @@ export function toImportBaseline(before: InvestigationState | ImportBaseline): I
   return isImportBaseline(before) ? before : baselineFromState(before);
 }
 
-/** Every id the case held before the import — forensic rows then IOCs (importRunRecorder). */
+/**
+ * Every entity id the case held before the import — forensic rows then IOCs, one per row, a row
+ * without a string id included as it was read (importRunRecorder counts it).
+ */
+export function baselineEntities(baseline: ImportBaseline): unknown[] {
+  return [
+    ...baseline.outline.ids,
+    ...(baseline.iocOutline ? baseline.iocOutline.ids : baseline.overview.iocs.map((ioc) => ioc.id)),
+  ];
+}
+
+/** baselineEntities less the forensic rows without a string id. */
 export function baselineEntityIds(baseline: ImportBaseline): string[] {
   return [
     ...baseline.outline.ids.filter((id): id is string => typeof id === "string"),

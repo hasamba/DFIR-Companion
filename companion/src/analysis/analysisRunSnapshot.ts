@@ -5,7 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { claimSnapshot, hashManifestValue } from "./analysisRunHash.js";
 import { emptyState, type InvestigationState } from "./stateTypes.js";
 import type { InvestigationStateStorage } from "./stateStore.js";
-import type { FactsListing } from "./caseSqliteWorkerFacts.js";
+import type { FactsFingerprint, FactsListing } from "./caseSqliteWorkerFacts.js";
 import {
   forensicFacts,
   hasRowFacts,
@@ -16,6 +16,7 @@ import {
   type FactsStore,
 } from "./rowFacts.js";
 import type { AnalysisRunArtifact, AnalysisRunOutput } from "./analysisRunTypes.js";
+import { ltHex, ltSum } from "./ltHash.js";
 
 export async function importedArtifact(
   cases: CaseStore,
@@ -30,28 +31,40 @@ export async function importedArtifact(
 }
 
 /**
- * The run record's fingerprint of the case (#1874), hash id `investigation-state/v2`:
+ * The run record's fingerprint of the case (#1887), hash id `investigation-state/v3`:
  *
  *   SHA-256 of JSON.stringify(canonicalize({ findings, forensicTimeline: E, iocs: I }))
  *
- * where E and I are, in timeline and list order, each event's and each IOC's own digest —
- * SHA-256 (lowercase hex) of that item's canonical JSON (itemDigest), the event as the loaders return
- * it (upgradeForensicEvent applied). canonicalize sorts every object's keys, so the top level reads
- * {"findings":…,"forensicTimeline":[…],"iocs":[…]}. It fingerprints what the first version
- * (`investigation-state`, the same JSON with each item inline) did — every finding, every IOC, every
- * event and their order; a change to any of them changes the hash — but a case's digest can be
- * computed from per-row digests kept in the case database instead of from every row's bytes. The two
- * ids are different constructions: compare hashes only under the same id. Manifests written before
- * keep `investigation-state` and read as they always did.
+ * where E and I are LtHash sums (Lewi, Kim, Maykov, Weis 2019; analysis/ltHash.ts) of the events' and
+ * the IOCs' item digests, as lowercase hex of 1024 little-endian 32-bit lanes. An item's digest is
+ * SHA-256 (lowercase hex) of its canonical JSON (itemDigest), the event as the loaders return it
+ * (upgradeForensicEvent applied); its element is SHAKE128("dfir-companion/v3\n" + digest), 4096
+ * bytes read as the 1024 lanes; a sum is the lane-wise sum mod 2^32 of its items' elements, a
+ * duplicate counted twice. canonicalize sorts every object's keys, so the top level reads
+ * {"findings":…,"forensicTimeline":"…","iocs":"…"}.
+ *
+ * It commits to every finding and their order, and to the events and the IOCs as multisets of their
+ * content (an event's time is part of its content): a change to any finding, event or IOC, or one
+ * more copy of an item, changes it. Unlike `investigation-state/v2` (the per-item digests in list
+ * order) it does NOT cover the order the rows are stored in. The case database keeps both sums and
+ * folds in only the rows a write changed (fp_rows and fp_log, caseSqliteSchema.ts), so a case's
+ * fingerprint costs the changed rows, not the case. The ids are different constructions: compare
+ * hashes only under the same id. Manifests written before keep `investigation-state` or
+ * `investigation-state/v2` and read as they always did.
  */
-export const STATE_HASH_ID = "investigation-state/v2";
+export const STATE_HASH_ID = "investigation-state/v3";
+
+/** The v3 hash from the two sums as hex (as the case database keeps them). */
+export function stateHashOfSums(findings: readonly unknown[], eventSum: string, iocSum: string): string {
+  return hashManifestValue({ findings, forensicTimeline: eventSum, iocs: iocSum });
+}
 
 export function stateHash(
   findings: readonly unknown[],
   eventDigests: readonly string[],
   iocDigests: readonly string[],
 ): string {
-  return hashManifestValue({ findings, forensicTimeline: eventDigests, iocs: iocDigests });
+  return stateHashOfSums(findings, ltHex(ltSum(eventDigests)), ltHex(ltSum(iocDigests)));
 }
 
 function outputOf(
@@ -85,6 +98,22 @@ export function investigationOutput(state: InvestigationState): AnalysisRunOutpu
   );
 }
 
+/** Ids and digests of a facts listing, the unknown rows digested from their payloads. */
+function digestsOf(fp: FactsFingerprint) {
+  const payloads = new Map(fp.payloads);
+  const fill = (list: FactsListing, facts: (payload: unknown) => { id: string | null; digest: string }) => {
+    const ids = [...list.ids];
+    const digests = list.digests.map((digest, i) => {
+      if (digest !== null) return digest;
+      const computed = facts(payloads.get(list.rowIds[i]));
+      ids[i] = computed.id;
+      return computed.digest;
+    });
+    return { ids, digests };
+  };
+  return { events: fill(fp.forensic, forensicFacts), iocs: fill(fp.iocs, iocFacts) };
+}
+
 /**
  * investigationOutput of the case as stored, without reading every row (#1874): the per-row digests
  * come from the case database's row facts (analysis/rowFacts.ts), refreshed first; a row whose facts
@@ -99,19 +128,53 @@ export async function investigationOutputOfCase(
   await refreshRowFacts(store, caseId);
   const fp = await store.factsFingerprint(caseId, rowFactsStamp());
   if (!fp) return investigationOutput(emptyState(caseId));
-  const payloads = new Map(fp.payloads);
-  const fill = (list: FactsListing, facts: (payload: unknown) => { id: string | null; digest: string }) => {
-    const ids = [...list.ids];
-    const digests = list.digests.map((digest, i) => {
-      if (digest !== null) return digest;
-      const computed = facts(payloads.get(list.rowIds[i]));
-      ids[i] = computed.id;
-      return computed.digest;
-    });
-    return { ids, digests };
-  };
-  const events = fill(fp.forensic, forensicFacts);
-  const iocs = fill(fp.iocs, iocFacts);
+  const { events, iocs } = digestsOf(fp);
   const findings = fp.findings as InvestigationState["findings"];
   return outputOf(findings, iocs.ids, events.ids, stateHash(findings, events.digests, iocs.digests));
+}
+
+export interface InvestigationFingerprint {
+  sha256: string;
+  findings: InvestigationState["findings"];
+  /** The forensic then IOC ids, in order, from the snapshot the hash covers (#1887). */
+  entityIds: unknown[];
+}
+
+function fingerprintOfState(state: InvestigationState): InvestigationFingerprint {
+  return {
+    sha256: stateHash(state.findings, state.forensicTimeline.map(itemDigest), state.iocs.map(itemDigest)),
+    findings: state.findings,
+    entityIds: [...state.forensicTimeline.map((e) => e.id), ...state.iocs.map((i) => i.id)],
+  };
+}
+
+/**
+ * The case's `investigation-state/v3` hash as stored, its findings, and its forensic then IOC ids
+ * (#1887). Reads only the rows written since the last call: the case database folds those into the
+ * kept sums (factsFingerprintV3, caseSqliteWorkerFacts.ts). When a row's facts are unknown after
+ * the refresh (a writer raced it) or the facts are another build's, it hashes the full per-row
+ * listing instead. Call it inside the case's state lock, as the import run recorder does.
+ */
+export async function investigationFingerprintOfCase(
+  store: InvestigationStateStorage | FactsStore,
+  caseId: string,
+): Promise<InvestigationFingerprint> {
+  if (!hasRowFacts(store)) return fingerprintOfState(await store.load(caseId));
+  const stamp = rowFactsStamp();
+  await refreshRowFacts(store, caseId);
+  const kept = await store.factsFingerprintV3(caseId, stamp);
+  if (!kept) return fingerprintOfState(emptyState(caseId));
+  if (!kept.needsFull) {
+    const findings = kept.findings as InvestigationState["findings"];
+    return {
+      sha256: stateHashOfSums(findings, kept.forensic, kept.iocs),
+      findings,
+      entityIds: kept.entities,
+    };
+  }
+  const fp = await store.factsFingerprint(caseId, stamp);
+  if (!fp) return fingerprintOfState(emptyState(caseId));
+  const { events, iocs } = digestsOf(fp);
+  const findings = fp.findings as InvestigationState["findings"];
+  return { sha256: stateHash(findings, events.digests, iocs.digests), findings, entityIds: fp.entities };
 }
