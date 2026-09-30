@@ -13,8 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Import memory guard** — an import that would exhaust the server's memory on a very large case is refused with a message naming the case size and memory needed; the file stays saved (`DFIR_IMPORT_MEMORY_GUARD`, part of #1874)
+
+### Changed
+- **Faster imports into large cases** — an import merges, settles, tags and checks only the rows it changed; the 10th of ten imports into one case takes about 1.6× the first instead of about 5×, and peak memory fell from about 3.2 GB to 1.4 GB (closes #1874)
+- **Delta undo** — an import's undo level stores only what it changed (about 34 KB instead of 58 MB for 2,000 rows) and keeps later edits to rows it did not touch (part of #1874)
+- **Smaller stored events** — shared field provenance is stored once per event, about 42% less per event; canonical schema 1.1.0 (part of #1874)
+- **Tags in the case database** — tags move from `tags.json` into the case database; old files migrate once and are kept (part of #1874)
+- **Run-record fingerprint v2** — new run records fingerprint the case as `investigation-state/v2`; older records keep their original fingerprint (part of #1874)
+- **Scope ledger cache** — per-host totals are cached until the super-timeline changes (#1883)
+
 ### Fixed
 - **Setup wizard saves provider keys** — the AI step writes the key and base URL to the provider, so Settings → AI no longer asks to move them after a fresh setup (closes #1870)
+- **Velociraptor hunts keep their evidence** — hunt and external imports store fetched rows before the memory guard runs, so a refused import loses nothing (part of #1874)
+- **Second look without AI** — with no AI provider, Second look refuses before it promotes any rows instead of changing the timeline and reporting failure (#1872)
+- **Word report with control characters** — a NUL or other control byte in evidence no longer makes report.docx unopenable; it shows as a visible symbol (#1872)
+- **Gap findings stop piling up** — the gap-finding cap counts gaps already in the case, so re-synthesis no longer adds five more each run (#1872)
+- **Tagger hints and Hayabusa rules** — a zero-match tagger preview names empty fields, and three bundled rules also match Hayabusa descriptions (#1872)
+- **Request validation** — deep links keep `?caseId=`, malformed URLs answer 400, and blank case names and bad hypothesis, narrative and AI-toggle bodies are refused (#1872)
+- **MITRE techniques named in findings** — a finding's own text adds the techniques it names (closes #1873)
 
 ## [0.39.0] - 2026-09-29
 
