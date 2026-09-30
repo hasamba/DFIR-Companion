@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Scope ledger cache** — per-host totals are cached until the super-timeline changes (#1883)
 
 ### Fixed
+- **Import replay waits its turn** — replaying an import run now holds the case's import lock, so it no longer overlaps a live import (whose counts and undo would absorb the replay's rows) and a memory-guard refusal says to replay the run again (closes #1890)
 - **Setup wizard saves provider keys** — the AI step writes the key and base URL to the provider, so Settings → AI no longer asks to move them after a fresh setup (closes #1870)
 - **Velociraptor hunts keep their evidence** — hunt and external imports store fetched rows before the memory guard runs, so a refused import loses nothing (part of #1874)
 - **Second look without AI** — with no AI provider, Second look refuses before it promotes any rows instead of changing the timeline and reporting failure (#1872)

@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { compareAnalysisRuns } from "../analysis/analysisRunCompare.js";
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
@@ -141,9 +141,47 @@ async function replayImport(
   if (!artifact) throw new Error("import run has no source artifact");
   const kind = run.versions.importer?.split("/")[0];
   if (!kind) throw new Error("importer version is missing");
-  const text = await readFile(resolve(store.caseDir(run.caseId), artifact.path), "utf8");
+  const path = resolve(store.caseDir(run.caseId), artifact.path);
+  // #1890: a replay imports into the case, so it holds the case's import section from its snapshot
+  // through its child run record, like every other import path (analysis/importLock.ts). Otherwise
+  // an import running at the same time counts the replay's rows as its own (and sweeps them into its
+  // undo checkpoint), and this receipt claims the other import's rows. Sized from the file on disk,
+  // read inside the section: the source is already stored, so a memory-guard refusal loses nothing.
+  const hint = { incomingBytes: (await stat(path)).size, wording: REPLAY_REFUSAL_WORDING };
+  const source: ReplaySource = {
+    path,
+    artifact,
+    kind,
+    stateStore: options.stateStore,
+    runStore: options.analysisRunStore,
+  };
+  await ctx.importLock.runSized(run.caseId, hint, () => replayImportSection(ctx, run, source, debug));
+  ctx.resynthesizeInBackground(run.caseId);
+}
+
+const REPLAY_REFUSAL_WORDING = {
+  saved: "The replay's source file is still stored in the case",
+  retry: "replay the run again",
+};
+
+interface ReplaySource {
+  path: string;
+  artifact: AnalysisRunManifest["input"]["artifacts"][number];
+  kind: string;
+  stateStore: NonNullable<RouteContext["options"]["stateStore"]>;
+  runStore: NonNullable<RouteContext["options"]["analysisRunStore"]>;
+}
+
+/** The replay itself, inside the case's import section: snapshot, import, demote, child run record. */
+async function replayImportSection(
+  ctx: RouteContext,
+  run: AnalysisRunManifest,
+  { path, artifact, kind, stateStore, runStore }: ReplaySource,
+  debug?: ImportDebugRecorder,
+): Promise<void> {
+  const text = await readFile(path, "utf8");
   const startedAt = new Date().toISOString();
-  const before = await options.stateStore.load(run.caseId);
+  const before = await stateStore.load(run.caseId);
   // The kind is the recorded run's, so nothing was sniffed (#1736).
   debug?.detected(kind, { confident: true, decision: "replay" });
   await ctx.dispatchImport(kind, run.caseId, text, {
@@ -154,7 +192,7 @@ async function replayImport(
   });
   // The replay settles inline: demote is its only super-timeline append, so the rows the demote
   // moved are what "super +N" reports; the done line is the seam's (#1438).
-  const merged = await options.stateStore.load(run.caseId);
+  const merged = await stateStore.load(run.caseId);
   const after = await ctx.demoteForensicForCase(run.caseId);
   const replayDiff = diffTimeline(before.forensicTimeline, after.forensicTimeline);
   const replayIocs = diffIocs(before.iocs, after.iocs);
@@ -172,7 +210,7 @@ async function replayImport(
     investigationOutput(after).hashes,
     after.findings,
   );
-  await options.analysisRunStore.record(run.caseId, {
+  await runStore.record(run.caseId, {
     kind: "import",
     parentRunId: run.id,
     startedAt,
@@ -186,7 +224,6 @@ async function replayImport(
     configuration: run.configuration,
     output: receipt.output,
   });
-  ctx.resynthesizeInBackground(run.caseId);
 }
 
 async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promise<void> {
