@@ -15,6 +15,12 @@ import {
   type JournalEntry,
   type RowWriteResult,
 } from "./forensicRows.js";
+import type {
+  MergeApplyPlan,
+  MergeIndexRecord,
+  MergeSnapshot,
+  MergeStoredRow,
+} from "./caseSqliteWorkerMerge.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
 const LEGACY_STATE_FILENAME = "investigation.json";
@@ -164,7 +170,17 @@ const toForensicRow = (row: WorkerRow): ForensicRow => ({
   event: upgradeForensicEvent(row.entity),
 });
 // What save() writes for a forensic row, so a targeted write stores exactly what a full save would.
-const storedForm = (e: ForensicEvent): ForensicEvent => compactEventProvenance(upgradeForensicEvent(e));
+export const storedForm = (e: ForensicEvent): ForensicEvent =>
+  compactEventProvenance(upgradeForensicEvent(e));
+
+/** Which forensic rows mergeRows reads (analysis/caseSqliteWorkerMerge.ts). */
+export type MergeRowSelect = (
+  | { rowIds: readonly number[] }
+  | { ids: readonly string[] }
+  | { keys: readonly string[] }
+  | { flagMask: number }
+  | { clampYear: number }
+) & { excludeRowIds?: readonly number[] };
 
 /** What captureImportBaseline reads in one transaction (analysis/importBaseline.ts). */
 export interface CapturedBaseline {
@@ -560,6 +576,96 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
       super: found.super.map(upgradeForensicEvent),
       candidates: found.candidates,
     };
+  }
+
+  // ── #1874: the incremental importer merge (analysis/incrementalMerge.ts) ──
+
+  /** The case metadata and every array but the forensic timeline and the IOCs. */
+  async loadMergeOverview(caseId: string): Promise<InvestigationState> {
+    return this.loadState(caseId, ["forensicTimeline", "iocs"]);
+  }
+
+  async mergeSnapshot(caseId: string): Promise<MergeSnapshot | null> {
+    if (!(await this.ensureMigrated(caseId))) return null;
+    return caseSqliteWorker.request<MergeSnapshot | null>({
+      op: "mergeSnapshot",
+      dbPath: this.databasePath(caseId),
+    });
+  }
+
+  async mergeRows(caseId: string, select: MergeRowSelect): Promise<MergeStoredRow[]> {
+    return caseSqliteWorker.request<MergeStoredRow[]>({
+      op: "mergeRows",
+      dbPath: this.databasePath(caseId),
+      select,
+    });
+  }
+
+  async mergeIdCounts(caseId: string, ids: readonly string[]): Promise<Record<string, number>> {
+    if (!ids.length) return {};
+    return caseSqliteWorker.request({
+      op: "mergeIdCounts",
+      dbPath: this.databasePath(caseId),
+      ids: [...ids],
+    });
+  }
+
+  async mergeIocCandidates(
+    caseId: string,
+    lowered: readonly string[],
+    aliasIds: readonly string[],
+  ): Promise<{ rows: MergeStoredRow[]; nextSeq: number }> {
+    return caseSqliteWorker.request({
+      op: "mergeIocCandidates",
+      dbPath: this.databasePath(caseId),
+      lowered: [...lowered],
+      aliasIds: [...aliasIds],
+    });
+  }
+
+  async mergeIocsCiting(caseId: string, eventIds: readonly string[]): Promise<MergeStoredRow[]> {
+    if (!eventIds.length) return [];
+    return caseSqliteWorker.request({
+      op: "mergeIocsCiting",
+      dbPath: this.databasePath(caseId),
+      eventIds: [...eventIds],
+    });
+  }
+
+  async mergeApply(
+    caseId: string,
+    plan: MergeApplyPlan,
+  ): Promise<{ inserted: number; deleted: number; moved: number }> {
+    const startedAt = performance.now();
+    const out = await caseSqliteWorker.request<{ inserted: number; deleted: number; moved: number }>({
+      op: "mergeApply",
+      dbPath: this.databasePath(caseId),
+      plan,
+    });
+    this.recordQuery("state_save", "entity", startedAt, plan.forensic.placed.length);
+    return out;
+  }
+
+  async mergeStalePositions(
+    caseId: string,
+    stamp: string,
+  ): Promise<{ generation: number; rowCount: number; positions: number[] } | null> {
+    return caseSqliteWorker.request({ op: "mergeStalePositions", dbPath: this.databasePath(caseId), stamp });
+  }
+
+  async mergeIndexWrite(
+    caseId: string,
+    generation: number,
+    entries: { position: number; index: MergeIndexRecord & { clean: boolean } }[],
+    meta: { stamp: string; stable: boolean },
+  ): Promise<number> {
+    return caseSqliteWorker.request({
+      op: "mergeIndexWrite",
+      dbPath: this.databasePath(caseId),
+      generation,
+      entries,
+      meta,
+    });
   }
 
   async integrityCheck(caseId: string): Promise<{ ok: boolean; message: string }> {

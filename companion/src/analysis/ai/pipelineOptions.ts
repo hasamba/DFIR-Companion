@@ -128,6 +128,13 @@ export interface PipelineOptions {
   retries?: number;
   backoffMs?: number;
   onState?: (state: InvestigationState) => void;
+  // #1874: importers merge incrementally (analysis/caseMerge.ts) — reading and writing only the rows
+  // a delta needs when the result is provably the full merge's. Set by the server; scripts and most
+  // tests leave it off and keep the whole-case merge, whose returned state is the whole case.
+  incrementalMerge?: boolean;
+  // "This case changed" for the dashboards, when an incremental merge holds only part of the case:
+  // the app loads and pushes the state only if a dashboard is watching (composition/stateBroadcast.ts).
+  onStateChanged?: (caseId: string) => void;
   // Optional: fired after a REAL synthesis run (not a skip) with the findings diff + the new state,
   // so the server can dispatch notifications (issue #58 — new/escalated findings). Best-effort; the
   // pipeline never awaits it. Absent → no notifications (used by CLI scripts/tests).

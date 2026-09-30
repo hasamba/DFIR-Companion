@@ -5,6 +5,7 @@ import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
 import { SAVE_STATE_WORKER_SOURCE } from "./caseSqliteWorkerSaveState.js";
 import { ROWS_WORKER_SOURCE } from "./caseSqliteWorkerRows.js";
+import { MERGE_WORKER_SOURCE } from "./caseSqliteWorkerMerge.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -186,8 +187,12 @@ function createEntityWriter(db) {
 }
 
 function writeState(db, state, excludedKinds) {
-  return withTransaction(db, () => {
-    const writer = createEntityWriter(db);
+  return withTransaction(db, () => writeStateBody(db, createEntityWriter(db), state, excludedKinds));
+}
+
+// The body of a state save, inside the caller's transaction (#1874: the merge's apply shares it).
+function writeStateBody(db, writer, state, excludedKinds) {
+  {
     const meta = {};
     for (const [key, value] of Object.entries(state || {})) {
       if (!ARRAY_KINDS.includes(key)) meta[key] = value;
@@ -209,7 +214,7 @@ function writeState(db, state, excludedKinds) {
       "INSERT INTO storage_meta(key, value) VALUES('schema_version', ?) " +
       "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
     ).run(String(SCHEMA_VERSION));
-  });
+  }
 }
 
 function readState(db, excludedKinds) {
@@ -569,6 +574,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   TERMS_WORKER_SOURCE +
   SAVE_STATE_WORKER_SOURCE +
   ROWS_WORKER_SOURCE +
+  MERGE_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -696,7 +702,7 @@ async function dispatch(message) {
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);
-    default: return dispatchRows(message); // #1874: caseSqliteWorkerRows.ts, which throws on an unknown op
+    default: return dispatchMerge(message); // #1874: caseSqliteWorkerMerge.ts, then caseSqliteWorkerRows.ts
   }
 }
 

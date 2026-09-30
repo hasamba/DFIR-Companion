@@ -203,7 +203,7 @@ interface Indexed<T> {
   proportionalSeverity: boolean;
 }
 
-const isMark = (e: TimelineEventShape): boolean =>
+export const isMark = (e: TimelineEventShape): boolean =>
   !!e.path && MARK_WORDS.test(splitDerivedNotes(e.description).base);
 
 const isProcessStart = (e: TimelineEventShape): boolean =>
@@ -512,7 +512,7 @@ export function streamReferences(commandLine: string): StreamReference[] {
   return out;
 }
 
-const isHiddenStream = (e: TimelineEventShape): boolean => {
+export const isHiddenStream = (e: TimelineEventShape): boolean => {
   if (!e.path || isMark(e)) return false;
   const { stream } = splitStream(e.path);
   return !!stream && RANK[e.severity ?? "Info"] >= RANK.Medium;

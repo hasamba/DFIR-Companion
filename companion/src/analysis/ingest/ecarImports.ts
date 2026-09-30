@@ -5,7 +5,7 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import { recordFloor } from "../parseDebugTally.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
+import { noteEmptyImport, crossUploadSprayRows, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -79,14 +79,11 @@ export async function importEcar(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });

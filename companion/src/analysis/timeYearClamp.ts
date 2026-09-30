@@ -45,7 +45,7 @@ export interface YearClampOptions {
 // this clamp reads the WHOLE stored timeline, so a case imported before that fix can still hold one —
 // and reading it in the server's zone made this function answer 2025 for "2026-01-01T00:30:00" on a
 // UTC+2 host, which then had setYear move the event ~364 days instead of leaving it alone.
-function yearOf(ts: string | undefined): number | null {
+export function yearOf(ts: string | undefined): number | null {
   if (!ts) return null;
   const ms = Date.parse(tagNaiveAsUtc(ts));
   return Number.isNaN(ms) ? null : new Date(ms).getUTCFullYear();
@@ -112,8 +112,38 @@ export function clampOutlierYears(
   const m = modalYear(events);
   if (!m || m.dated < minEvents) return [...events];
   if (m.count / m.dated < dominantFraction) return [...events]; // no clear anchor → leave untouched
-  const dominantYear = m.year;
+  return clampToYear(events, m.year);
+}
 
+/**
+ * The dominant year clampOutlierYears would anchor on, from a year histogram of the WHOLE dated
+ * timeline, or null when none dominates (#1874: the incremental merge keeps that histogram in the
+ * case database instead of reading every event). At the default fraction only one year can reach
+ * it, so the modal tie-break never matters here.
+ */
+export function dominantYear(
+  counts: ReadonlyMap<number, number>,
+  opts: YearClampOptions = {},
+): number | null {
+  const dominantFraction = opts.dominantFraction ?? DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION;
+  const minEvents = opts.minEvents ?? YEAR_CLAMP_MIN_EVENTS;
+  let dated = 0;
+  let year: number | null = null;
+  let count = -1;
+  for (const [y, c] of counts) {
+    dated += c;
+    if (c > count) {
+      year = y;
+      count = c;
+    }
+  }
+  if (year === null || dated < minEvents || count / dated < dominantFraction) return null;
+  return year;
+}
+
+/** clampOutlierYears' rewrite, onto a dominant year already chosen (null: nothing moves). */
+export function clampToYear(events: readonly ForensicEvent[], dominantYear: number | null): ForensicEvent[] {
+  if (dominantYear === null) return [...events];
   return events.map((e) => {
     if (e.yearInferred !== true) return e; // recorded year → evidence, never rewritten (#739)
     const y = yearOf(e.timestamp);

@@ -491,7 +491,7 @@ const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Cr
 // `docker run --privileged` cut the row's `; report <fp>` tag and `[undated:` clause (#1340).
 const DESCRIPTION_MAX = 1600;
 
-function commandOf(e: ForensicEvent): string {
+export function commandOf(e: ForensicEvent): string {
   // Each half is bounded BEFORE they are joined. Concatenating two unbounded imported fields and
   // slicing afterwards still allocated the whole thing first.
   return `${(e.commandLine ?? "").slice(0, MAX_COMMAND)} ${(e.description ?? "").slice(0, MAX_COMMAND)}`;

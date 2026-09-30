@@ -34,6 +34,7 @@ import { startMaintenanceTasks, startPostListenTasks } from "./composition/maint
 import { buildAiRuntime } from "./composition/aiRuntime.js";
 import { buildBulkImportSink } from "./composition/bulkImportSink.js";
 import { buildAppOptions } from "./composition/appWiring.js";
+import { createStateBroadcaster } from "./composition/stateBroadcast.js";
 import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
 import { createCaseAppliers } from "./composition/caseAppliers.js";
 import { createEnrichmentEngine } from "./composition/enrichment.js";
@@ -514,6 +515,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     notifier,
     dashboardBaseUrl,
     onState: (s) => hub.broadcast(s),
+    onStateChanged: createStateBroadcaster({
+      load: (caseId) => stateStore.load(caseId),
+      broadcast: (s) => hub.broadcast(s),
+      hasSubscribers: (caseId) => hub.hasSubscribers(caseId),
+    }),
   });
 
   // Pre-flight (#179): createApp calls onPreflightReady with runPreflightChecks; we store it

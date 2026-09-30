@@ -154,7 +154,7 @@ const baseName = (p: string): string => {
 };
 
 /** The text an event offers for URL matching: its description, command line and destination. */
-function searchText(e: ForensicEvent): string {
+export function searchText(e: ForensicEvent): string {
   return [e.description ?? "", e.commandLine ?? "", e.path ?? "", e.dstIp ?? ""].join(" ");
 }
 
@@ -455,7 +455,7 @@ export function explainVisibility(hasHostTelemetry: boolean, hasCloudAudit: bool
 /** The id of the coverage event, so a re-merge replaces it instead of adding another. */
 export const COVERAGE_EVENT_ID = "cloud-metadata-coverage";
 
-const CLOUD_AUDIT_RE = /^(?:AWS|GCP|Azure|M365|Google Workspace|Okta)\b/;
+export const CLOUD_AUDIT_RE = /^(?:AWS|GCP|Azure|M365|Google Workspace|Okta)\b/;
 
 /**
  * One event saying the question could not be answered, when that is the case.

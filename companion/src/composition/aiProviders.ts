@@ -282,6 +282,8 @@ export interface RuntimePipelineParams {
   bulkImportSink?: BulkImportSink;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
   onState?: (state: InvestigationState) => void;
+  incrementalMerge?: boolean; // #1874
+  onStateChanged?: (caseId: string) => void;
   // Fired after a real synthesis run with the findings diff + new state (issue #58 notifications).
   onSynth?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["onSynth"];
   // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
@@ -348,6 +350,8 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     evidenceAttestationStore: params.evidenceAttestationStore ?? new EvidenceAttestationStore(params.store),
     imageLoader: params.imageLoader ?? makeImageLoader(params.store),
     onState: params.onState,
+    incrementalMerge: params.incrementalMerge,
+    onStateChanged: params.onStateChanged,
     onSynth: params.onSynth,
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),

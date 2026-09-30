@@ -14,6 +14,7 @@ import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "..
 import { isCollectorEvidenceRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
+import { mergeAndSaveDelta } from "./importState.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
@@ -610,13 +611,11 @@ export async function importVelociraptorBulk(
     // The run's commit point (#1480): the appended rows are only kept once this merge has saved.
     let state: InvestigationState;
     try {
-      state = await ctx.opts.stateStore.load(caseId);
-      state = await ctx.mergeWithAliases(state, delta, {
+      state = await mergeAndSaveDelta(ctx, caseId, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
       });
-      await ctx.opts.stateStore.save(state);
     } catch (err) {
       await rollbackBulkRun(
         sink,
@@ -628,7 +627,6 @@ export async function importVelociraptorBulk(
       );
       throw err;
     }
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });

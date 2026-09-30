@@ -14,10 +14,17 @@ import type {
   ForensicEvent,
   CollectDirective,
 } from "./stateTypes.js";
-import { byEventTime } from "./forensicSort.js";
 import { isAnalystWorkLog } from "./workLogFilter.js";
-import { correlateEventsTracked } from "./correlate.js";
 import { remapAbsorbedEventIds } from "./absorbedCitations.js";
+import { toUtcIso } from "./timeUtc.js";
+import { matchIocToExclude } from "./iocExclude.js";
+import { repairIocValue } from "./iocValue.js";
+import { sanitizeUncertainties } from "./uncertainty.js";
+import { mergeCanonicalEvents } from "./canonicalMerge.js";
+import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
+import { mergeHostRenameRecords } from "./hostRenameRecord.js";
+import { byEventTime } from "./forensicSort.js";
+import { correlateEventsTracked } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
@@ -46,13 +53,6 @@ import { correlateAwsFlowIdentityExecution } from "./awsFlowIdentityExecutionJoi
 import { correlateAwsFlowSensitiveData } from "./awsFlowSensitiveDataJoin.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
-import { toUtcIso } from "./timeUtc.js";
-import { matchIocToExclude } from "./iocExclude.js";
-import { repairIocValue } from "./iocValue.js";
-import { sanitizeUncertainties } from "./uncertainty.js";
-import { mergeCanonicalEvents } from "./canonicalMerge.js";
-import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
-import { mergeHostRenameRecords } from "./hostRenameRecord.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -70,6 +70,12 @@ function cleanCollect(raw: CollectDirective | undefined): CollectDirective | und
   return Object.keys(out).length ? out : undefined;
 }
 
+function uniq(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+// The per-merge context every mergeDelta stage reads (#1874: split out of stateMerge.ts so the stage
+// modules and the incremental merge can share it without an import cycle).
 export interface WindowContext {
   windowSequence: number;
   timestamp: string;
@@ -91,9 +97,8 @@ export interface WindowContext {
   knownEventIds?: ReadonlySet<string>;
 }
 
-function uniq(values: string[]): string[] {
-  return Array.from(new Set(values));
-}
+// The IOC stage of mergeDelta (#1874: its own module so the incremental merge runs the SAME code over
+// the IOCs it fetched, instead of a copy that could drift).
 
 function padIocId(n: number): string {
   return `i${String(n).padStart(3, "0")}`;
@@ -101,7 +106,7 @@ function padIocId(n: number): string {
 
 // Highest existing IOC sequence in the canonical i### form; ids in other formats
 // (legacy "i1", model-supplied junk) are ignored so we never collide with them.
-function nextIocSeq(iocs: IOC[]): number {
+export function nextIocSeq(iocs: readonly Pick<IOC, "id">[]): number {
   let max = 0;
   for (const i of iocs) {
     const m = /^i(\d+)$/.exec(i.id);
@@ -110,36 +115,72 @@ function nextIocSeq(iocs: IOC[]): number {
   return max + 1;
 }
 
-export function mergeDelta(
-  state: InvestigationState,
-  incoming: AnalysisDelta,
-  ctx: WindowContext,
-): InvestigationState {
-  // A model may update a deterministic finding by id, but it may not MINT one (#787).
-  const renamed = renameForgedFindingIds(
-    incoming,
-    ctx.knownFindingIds ?? new Set(state.findings.map((f) => f.id)),
-  );
-  // A decorated event citation (`e_cld-e1`) resolves to the event it names (#1693) — the import and
-  // MCP-agent paths meet here. Known = what this merge will hold: the case's events plus the incoming
-  // ones that pass the same work-log guard as below. Skipped when nothing cites an event, which is
-  // every deterministic importer.
-  const delta = citesEvents(renamed)
-    ? resolveCitedEventIds(
-        renamed,
-        ctx.knownEventIds ??
-          new Set([
-            ...state.forensicTimeline.map((e) => e.id),
-            ...(renamed.forensicEvents ?? []).filter((e) => !isAnalystWorkLog(e)).map((e) => e.id),
-          ]),
-      )
-    : renamed;
-  // IOCs first — we need the id remap before processing findings so their
-  // relatedIocs cross-references (e.g. the model's "i1") can be rewritten to
-  // our canonical ids ("i001", "i002", ...).
-  const iocs: IOC[] = state.iocs.map((i) => ({ ...i }));
+/**
+ * `iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias))`,
+ * answered from first-index maps built on first use and caught up with every IOC appended since
+ * (the next lookup indexes them). A stored
+ * IOC whose value is not a string (corrupt data) switches to the linear scan, so even that case
+ * behaves exactly as the scan did.
+ */
+function firstMatchIndex(iocs: IOC[]): {
+  find(lower: string, alias: string | undefined): IOC | undefined;
+} {
+  let byValue: Map<string, number> | null = null;
+  let byId: Map<string, number> | null = null;
+  let indexed = 0;
+  let linear = false;
+  const extend = (): void => {
+    for (; indexed < iocs.length; indexed++) {
+      const { value, id } = iocs[indexed];
+      if (typeof value !== "string") {
+        linear = true;
+        return;
+      }
+      const lower = value.toLowerCase();
+      if (!byValue!.has(lower)) byValue!.set(lower, indexed);
+      if (!byId!.has(id)) byId!.set(id, indexed);
+    }
+  };
+  return {
+    find(lower, alias) {
+      if (!byValue) {
+        byValue = new Map();
+        byId = new Map();
+      }
+      if (!linear) extend();
+      if (linear)
+        return iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias));
+      const v = byValue.get(lower);
+      const a = alias !== undefined ? byId!.get(alias) : undefined;
+      const at = v === undefined ? a : a === undefined ? v : Math.min(v, a);
+      return at === undefined ? undefined : iocs[at];
+    },
+  };
+}
+
+export interface IocMergeResult {
+  iocs: IOC[];
+  /** A finding's relatedIocs, rewritten to the canonical ids this merge assigned. */
+  remapIocRefs: (ids: string[]) => string[];
+}
+
+/**
+ * Merge a delta's IOCs into `existing` (copied, never mutated). `startSeq`: the next canonical
+ * sequence when `existing` is not every IOC of the case (the incremental merge passes it). The
+ * duplicate lookup answers `iocs.find(...)` from first-index maps: a scan per incoming IOC made a
+ * large import into a large case quadratic (#1874).
+ */
+export function mergeIocs(
+  existing: readonly IOC[],
+  delta: Pick<AnalysisDelta, "iocs">,
+  ctx: Pick<WindowContext, "timestamp" | "iocAliases">,
+  excludeRules: InvestigationState["iocExcludeRules"],
+  startSeq?: number,
+): IocMergeResult {
+  const iocs: IOC[] = existing.map((i) => ({ ...i }));
+  const lookup = firstMatchIndex(iocs);
   const iocIdRemap = new Map<string, string>();
-  let nextSeq = nextIocSeq(iocs);
+  let nextSeq = startSeq ?? nextIocSeq(iocs);
   for (const rawIncoming of delta.iocs) {
     // Split any human annotation out of the value BEFORE anything keys on it (#177): the AI
     // extraction path routinely emits "10.10.20.15 (DC01)", which is not an IP — strict consumers
@@ -154,7 +195,7 @@ export function mergeDelta(
     // never create it, so it can never be enriched either (enrichIocs only ever sees state.iocs).
     // The id is deliberately never added to iocIdRemap; a finding's relatedIocs reference falls
     // back to the raw id via remapIocRefs's `?? id`, a harmless dangling reference.
-    if (matchIocToExclude({ type: incoming.type, value: incoming.value }, state.iocExcludeRules)) continue;
+    if (matchIocToExclude({ type: incoming.type, value: incoming.value }, excludeRules)) continue;
     // Case-insensitive: the same indicator (a hostname/domain especially) routinely arrives with
     // different casing across importers/rows (e.g. "DESKTOP-X" vs "desktop-x"), and an exact-match
     // comparison let those through as separate rows instead of collapsing into one (matches
@@ -164,9 +205,7 @@ export function mergeDelta(
     // exact-match anything currently in state.iocs (the merge already dropped the duplicate row)
     // still routes onto the canonical IOC it was merged into, rather than recreating it.
     const aliasTarget = ctx.iocAliases?.[incomingLower];
-    const dup = iocs.find(
-      (i) => i.value.toLowerCase() === incomingLower || (aliasTarget !== undefined && i.id === aliasTarget),
-    );
+    const dup = lookup.find(incomingLower, aliasTarget);
     const canonical = dup ? dup.id : (aliasTarget ?? padIocId(nextSeq++));
     // The annotation the value carried, or — with none — what a published vendor range says about
     // the address (#1530). An analyst reading the IOC list then sees "vendor: Microsoft" beside a
@@ -212,98 +251,30 @@ export function mergeDelta(
     if (!iocIdRemap.has(incoming.id)) iocIdRemap.set(incoming.id, canonical);
   }
   const remapIocRefs = (ids: string[]): string[] => uniq(ids.map((id) => iocIdRemap.get(id) ?? id));
+  return { iocs, remapIocRefs };
+}
 
-  const findings: Finding[] = state.findings.map((f) => ({ ...f }));
-
-  for (const incoming of delta.findings) {
-    const existing = findings.find((f) => f.id === incoming.id);
-    if (existing) {
-      existing.severity = incoming.severity;
-      if (incoming.confidence !== undefined) existing.confidence = Math.round(incoming.confidence);
-      if (incoming.confidenceReason !== undefined) existing.confidenceReason = incoming.confidenceReason;
-      existing.title = incoming.title;
-      existing.description = incoming.description;
-      existing.status = incoming.status;
-      existing.relatedIocs = uniq([...existing.relatedIocs, ...remapIocRefs(incoming.relatedIocs)]);
-      existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
-      if (incoming.relatedEventIds !== undefined) {
-        existing.relatedEventIds = uniq([...(existing.relatedEventIds ?? []), ...incoming.relatedEventIds]);
-      }
-      existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
-      existing.lastUpdated = ctx.timestamp;
-    } else {
-      findings.push({
-        id: incoming.id,
-        severity: incoming.severity,
-        ...(incoming.confidence !== undefined ? { confidence: Math.round(incoming.confidence) } : {}),
-        ...(incoming.confidenceReason !== undefined ? { confidenceReason: incoming.confidenceReason } : {}),
-        title: incoming.title,
-        description: incoming.description,
-        relatedIocs: remapIocRefs(incoming.relatedIocs),
-        mitreTechniques: uniq(incoming.mitreTechniques),
-        ...(incoming.relatedEventIds !== undefined
-          ? { relatedEventIds: uniq(incoming.relatedEventIds) }
-          : {}),
-        sourceScreenshots: uniq(ctx.sourceScreenshots),
-        firstSeen: ctx.timestamp,
-        lastUpdated: ctx.timestamp,
-        status: incoming.status,
-      });
-    }
-  }
-
-  const mitreTechniques: Technique[] = state.mitreTechniques.map((t) => ({
-    ...t,
-    findingIds: [...t.findingIds],
-  }));
-  for (const incoming of delta.mitreTechniques) {
-    const existing = mitreTechniques.find((t) => t.id === incoming.id);
-    const findingIds = delta.findings.filter((f) => f.mitreTechniques.includes(incoming.id)).map((f) => f.id);
-    if (existing) {
-      existing.findingIds = uniq([...existing.findingIds, ...findingIds]);
-    } else {
-      mitreTechniques.push({ id: incoming.id, name: incoming.name, findingIds: uniq(findingIds) });
-    }
-  }
-
-  const openThreads = state.openThreads.map((t) => ({ ...t }));
-  for (const t of delta.threadsOpened) {
-    if (!openThreads.some((x) => x.id === t.id)) {
-      openThreads.push({
-        id: t.id,
-        description: t.description,
-        status: "open",
-        openedAt: ctx.timestamp,
-        closedAt: null,
-      });
-    }
-  }
-  for (const closedId of delta.threadsClosed) {
-    const t = openThreads.find((x) => x.id === closedId);
-    if (t && t.status === "open") {
-      t.status = "closed";
-      t.closedAt = ctx.timestamp;
-    }
-  }
-
-  const timeline = [...state.timeline];
-  if (delta.timelineNote.trim().length > 0) {
-    timeline.push({
-      timestamp: ctx.timestamp,
-      windowSequence: ctx.windowSequence,
-      description: delta.timelineNote,
-      sourceScreenshots: uniq(ctx.sourceScreenshots),
-    });
-  }
-
-  // Forensic timeline: dedupe by id, accumulate evidence, keep sorted by real time.
-  const forensicTimeline: ForensicEvent[] = state.forensicTimeline.map((e) => ({
+/** The copy mergeDelta works on: each event and its three arrays copied, so the input is never mutated. */
+export function copyTimeline(events: readonly ForensicEvent[]): ForensicEvent[] {
+  return events.map((e) => ({
     ...e,
     mitreTechniques: [...e.mitreTechniques],
     relatedFindingIds: [...e.relatedFindingIds],
     sourceScreenshots: [...e.sourceScreenshots],
     ...(e.canonical ? { canonical: e.canonical } : {}),
   }));
+}
+
+/**
+ * Forensic timeline: dedupe by id, accumulate evidence. Mutates `forensicTimeline` (a copyTimeline
+ * copy): a known id updates that event in place, a new one is appended. On a duplicate stored id the
+ * LAST one is updated (the map below keeps the last).
+ */
+export function upsertForensicEvents(
+  forensicTimeline: ForensicEvent[],
+  delta: Pick<AnalysisDelta, "forensicEvents">,
+  ctx: Pick<WindowContext, "sourceScreenshots">,
+): void {
   // Index by id for O(1) dedup lookup. A linear `forensicTimeline.find(...)` per incoming event is
   // O(n²) and melts down on large deterministic imports (e.g. a full MFT/USN with DFIR_MAX_EVENTS
   // raised to hundreds of thousands → ~10¹¹ comparisons, minutes-to-hours of blocked CPU). The map is
@@ -404,12 +375,28 @@ export function mergeDelta(
       byId.set(incoming.id, created);
     }
   }
+}
+
+/**
+ * The deterministic correlation chain, in order, over the whole timeline: the year clamp, then every
+ * cross-import linker. `clamp` defaults to clampOutlierYears; the incremental merge passes the same
+ * clamp with the case-wide dominant year, since its input is not the whole timeline.
+ */
+export function runTimelineChain(
+  forensicTimeline: readonly ForensicEvent[],
+  iocs: readonly IOC[],
+  at: string,
+  clamp: (events: readonly ForensicEvent[]) => ForensicEvent[] = clampOutlierYears,
+  // The coverage row is judged over the whole timeline; a caller holding only part of it (the
+  // incremental merge, which has checked the case-wide condition itself) turns it off.
+  metadataCoverage = true,
+): ForensicEvent[] {
   // Re-anchor mis-dated stray events (a year-less syslog/CSV line the AI import guessed into the wrong
   // year) onto the timeline's dominant year BEFORE correlation, so they sort/correlate in the right
   // place instead of corrupting the chronology. Conservative + idempotent (no-op unless one year clearly
   // dominates), and it only ever moves an event whose importer marked the year as a GUESS — a recorded
   // year is evidence (#739). See timeYearClamp.ts.
-  const dated = clampOutlierYears(forensicTimeline);
+  const dated = clamp(forensicTimeline);
   // Stitch a phishing email to the host activity it caused: when a host later contacts a domain a
   // phishing email linked to, tag the contact as initial access (T1566.002 → T1204.002). Runs
   // before correlation so the tagged event still dedups normally. Conservative + idempotent (#201).
@@ -458,7 +445,7 @@ export function mergeDelta(
   // A mobile extraction's infection window (#932 item 18): rows of a subject device before or
   // after its earliest malicious app-inventory sign. Here because the verdict that makes a sign
   // arrives with enrichment, after the import; recomputed on every merge, notes only.
-  const withWindow = markInfectionWindow(withDefender, iocs, ctx.timestamp);
+  const withWindow = markInfectionWindow(withDefender, iocs, at);
   // An iOS app named by two or more independent artifacts — usage, power, permission, network,
   // notification (#932 item 16). Here for the same reason as the infection window: rows arrive from
   // separate LEAPP imports. Presence only, never a magnitude; recomputed on every merge, notes only.
@@ -485,7 +472,7 @@ export function mergeDelta(
   // The metadata service leaves no audit-log record at all, so a case with only cloud logs can say
   // nothing about it either way. That gap is put ON the timeline rather than left as silence —
   // "nothing found" is the wrong answer when nothing could have been found. Replaced, not appended.
-  const coverage = metadataCoverageEvent(explained);
+  const coverage = metadataCoverage ? metadataCoverageEvent(explained) : null;
   const withMetadata = coverage ? [...explained.filter((e) => e.id !== coverage.id), coverage] : explained;
   // One bounded summary per bulk object-read session (#908 item 8). It ADDS a summary event and
   // touches none of the reads themselves: promoting forty thousand GetObject rows would destroy the
@@ -530,8 +517,174 @@ export function mergeDelta(
   // because a container-originated change to host persistence only reads as one event when both
   // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
   const withEscape = markContainerEscape(withServiceBrowsing);
-  const { events: folded, absorbedInto } = correlateEventsTracked(withEscape);
-  const correlatedOnly = folded.sort(byEventTime);
+  return withEscape;
+}
+
+/** Fold correlated events and sort by event time; every folded-away id maps to its survivor. */
+export function correlateAndSort(events: readonly ForensicEvent[]): {
+  events: ForensicEvent[];
+  absorbedInto: Map<string, string>;
+} {
+  const { events: folded, absorbedInto } = correlateEventsTracked(events);
+  return { events: folded.sort(byEventTime), absorbedInto };
+}
+
+/**
+ * A model may update a deterministic finding by id, but it may not MINT one (#787); and a decorated
+ * event citation resolves to the event it names (#1693). The first step of every merge.
+ */
+export function prepareIncoming(
+  state: Pick<InvestigationState, "findings" | "forensicTimeline">,
+  incoming: AnalysisDelta,
+  ctx: WindowContext,
+): AnalysisDelta {
+  // A model may update a deterministic finding by id, but it may not MINT one (#787).
+  const renamed = renameForgedFindingIds(
+    incoming,
+    ctx.knownFindingIds ?? new Set(state.findings.map((f) => f.id)),
+  );
+  // A decorated event citation (`e_cld-e1`) resolves to the event it names (#1693) — the import and
+  // MCP-agent paths meet here. Known = what this merge will hold: the case's events plus the incoming
+  // ones that pass the same work-log guard as below. Skipped when nothing cites an event, which is
+  // every deterministic importer.
+  return citesEvents(renamed)
+    ? resolveCitedEventIds(
+        renamed,
+        ctx.knownEventIds ??
+          new Set([
+            ...state.forensicTimeline.map((e) => e.id),
+            ...(renamed.forensicEvents ?? []).filter((e) => !isAnalystWorkLog(e)).map((e) => e.id),
+          ]),
+      )
+    : renamed;
+}
+
+export function mergeDelta(
+  state: InvestigationState,
+  incoming: AnalysisDelta,
+  ctx: WindowContext,
+): InvestigationState {
+  const delta = prepareIncoming(state, incoming, ctx);
+  // IOCs first — we need the id remap before processing findings so their
+  // relatedIocs cross-references (e.g. the model's "i1") can be rewritten to
+  // our canonical ids ("i001", "i002", ...).
+  const { iocs, remapIocRefs } = mergeIocs(state.iocs, delta, ctx, state.iocExcludeRules);
+  // Forensic timeline: dedupe by id, accumulate evidence, run the deterministic correlation chain,
+  // fold correlated events and keep sorted by real time (stateMergeEvents.ts).
+  const forensicTimeline = copyTimeline(state.forensicTimeline);
+  upsertForensicEvents(forensicTimeline, delta, ctx);
+  const { events, absorbedInto } = correlateAndSort(runTimelineChain(forensicTimeline, iocs, ctx.timestamp));
+  return assembleMerge(state, delta, ctx, { iocs, remapIocRefs, forensicTimeline: events, absorbedInto });
+}
+
+/** The lowercased value mergeIocs matches an incoming IOC on; null when it drops the IOC (#1874). */
+export const iocMatchKey = (ioc: AnalysisDelta["iocs"][number]): string | null =>
+  repairIocValue(ioc)?.value.toLowerCase() ?? null;
+
+/** What the IOC and forensic stages produced, for assembleMerge (the forensic rows sorted). */
+export interface MergedParts {
+  iocs: IOC[];
+  remapIocRefs: (ids: string[]) => string[];
+  forensicTimeline: ForensicEvent[];
+  absorbedInto: ReadonlyMap<string, string>;
+}
+
+/**
+ * Everything after the IOC and forensic stages: findings, techniques, threads, the analysis-timeline
+ * note, the lab-intel registry and its annotations, the host ledger, the holistic fields, and the
+ * absorbed-id remap. Exported for the incremental merge (#1874), which assembles the same state
+ * around the rows it fetched.
+ */
+export function assembleMerge(
+  state: InvestigationState,
+  delta: AnalysisDelta,
+  ctx: WindowContext,
+  parts: MergedParts,
+): InvestigationState {
+  const { iocs, remapIocRefs, absorbedInto } = parts;
+  const correlatedOnly = parts.forensicTimeline;
+  const findings: Finding[] = state.findings.map((f) => ({ ...f }));
+
+  for (const incoming of delta.findings) {
+    const existing = findings.find((f) => f.id === incoming.id);
+    if (existing) {
+      existing.severity = incoming.severity;
+      if (incoming.confidence !== undefined) existing.confidence = Math.round(incoming.confidence);
+      if (incoming.confidenceReason !== undefined) existing.confidenceReason = incoming.confidenceReason;
+      existing.title = incoming.title;
+      existing.description = incoming.description;
+      existing.status = incoming.status;
+      existing.relatedIocs = uniq([...existing.relatedIocs, ...remapIocRefs(incoming.relatedIocs)]);
+      existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
+      if (incoming.relatedEventIds !== undefined) {
+        existing.relatedEventIds = uniq([...(existing.relatedEventIds ?? []), ...incoming.relatedEventIds]);
+      }
+      existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
+      existing.lastUpdated = ctx.timestamp;
+    } else {
+      findings.push({
+        id: incoming.id,
+        severity: incoming.severity,
+        ...(incoming.confidence !== undefined ? { confidence: Math.round(incoming.confidence) } : {}),
+        ...(incoming.confidenceReason !== undefined ? { confidenceReason: incoming.confidenceReason } : {}),
+        title: incoming.title,
+        description: incoming.description,
+        relatedIocs: remapIocRefs(incoming.relatedIocs),
+        mitreTechniques: uniq(incoming.mitreTechniques),
+        ...(incoming.relatedEventIds !== undefined
+          ? { relatedEventIds: uniq(incoming.relatedEventIds) }
+          : {}),
+        sourceScreenshots: uniq(ctx.sourceScreenshots),
+        firstSeen: ctx.timestamp,
+        lastUpdated: ctx.timestamp,
+        status: incoming.status,
+      });
+    }
+  }
+
+  const mitreTechniques: Technique[] = state.mitreTechniques.map((t) => ({
+    ...t,
+    findingIds: [...t.findingIds],
+  }));
+  for (const incoming of delta.mitreTechniques) {
+    const existing = mitreTechniques.find((t) => t.id === incoming.id);
+    const findingIds = delta.findings.filter((f) => f.mitreTechniques.includes(incoming.id)).map((f) => f.id);
+    if (existing) {
+      existing.findingIds = uniq([...existing.findingIds, ...findingIds]);
+    } else {
+      mitreTechniques.push({ id: incoming.id, name: incoming.name, findingIds: uniq(findingIds) });
+    }
+  }
+
+  const openThreads = state.openThreads.map((t) => ({ ...t }));
+  for (const t of delta.threadsOpened) {
+    if (!openThreads.some((x) => x.id === t.id)) {
+      openThreads.push({
+        id: t.id,
+        description: t.description,
+        status: "open",
+        openedAt: ctx.timestamp,
+        closedAt: null,
+      });
+    }
+  }
+  for (const closedId of delta.threadsClosed) {
+    const t = openThreads.find((x) => x.id === closedId);
+    if (t && t.status === "open") {
+      t.status = "closed";
+      t.closedAt = ctx.timestamp;
+    }
+  }
+
+  const timeline = [...state.timeline];
+  if (delta.timelineNote.trim().length > 0) {
+    timeline.push({
+      timestamp: ctx.timestamp,
+      windowSequence: ctx.windowSequence,
+      description: delta.timelineNote,
+      sourceScreenshots: uniq(ctx.sourceScreenshots),
+    });
+  }
   // Attach each sample's sandbox detonations to the incident events that carry its hash (#932
   // item 5). AFTER correlation, on the registry this merge will persist, so a sighting arriving in
   // this delta and a report imported last week annotate the same way regardless of order. Derived
