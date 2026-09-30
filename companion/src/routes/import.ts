@@ -60,6 +60,7 @@ import { siemFallbackWarning } from "./importNotes.js";
 import { copyHandleExclusive, openImportFile } from "./importFileSource.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
 
 /**
@@ -78,7 +79,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     pushImportCheckpoint,
     moveDropFile,
     dispatchImport,
-    demoteForensicForCase,
+    demoteForensic,
     resynthesizeInBackground,
     applyWhitelistToCase,
     applyNsrlToCase,
@@ -101,7 +102,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         analysisRunStore: options.analysisRunStore,
         operationalMetrics: options.operationalMetrics,
         onTags: options.onTags,
-        onState: options.onState,
+        runStateExclusive: ctx.runStateExclusive,
         logLine: (m) => ctx.serverLogger.info(m),
       },
       caseId,
@@ -110,11 +111,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const settleDeps: SettleDeps | null = options.stateStore
     ? {
         stateStore: options.stateStore,
+        runStateExclusive: ctx.runStateExclusive,
         superTimelineStore: options.superTimelineStore,
         onSuperTimeline: options.onSuperTimeline,
+        onStateChanged: options.onStateChanged,
         onState: options.onState,
         autoTagImported,
-        demoteForensicForCase,
+        demoteForensic,
       }
     : null;
 
@@ -364,12 +367,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Both assigned by run(), once this import owns the case. The section stays held through the
       // diff below (the `.finally` releases it), so the numbers this import reports and the
       // checkpoint it pushes describe only its own work — see routes/importSection.ts.
-      let stateBefore: InvestigationState | null = null;
+      let baseline: ImportBaseline | null = null;
       let section: ImportSection | null = null;
       const run = async (): Promise<unknown> => {
         await tracking.start();
         section = await beginImportSection(importLock, caseId, options.stateStore, text.length);
-        stateBefore = section.stateBefore;
+        baseline = section.baseline;
         return dispatchImport(kind, caseId, text, base);
       };
 
@@ -378,24 +381,21 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
-          if (settleDeps && stateBefore) {
+          if (settleDeps && baseline) {
             try {
               // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
               // diffs from the POST-demote state so "+N events" counts only graded signal.
-              const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
-              const { state: s, superTimelineAddedCount, superTimelineEvicted } = settled;
+              const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
+              const { superTimelineAddedCount, superTimelineEvicted } = settled;
               const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
               let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
               try {
-                const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
-                const newEvents = s.forensicTimeline.filter((e) => !beforeIds.has(e.id));
-                if (newEvents.length) {
-                  const markers = await new FalsePositiveStore(store).load(caseId);
-                  fpPropagation = matchFpPropagation(newEvents, markers);
-                }
+                // #1874: this import's rows are read only when there is a marker to match them against.
+                const markers = await new FalsePositiveStore(store).load(caseId);
+                if (markers.length) fpPropagation = matchFpPropagation(await settled.addedEvents(), markers);
               } catch {
                 /* non-fatal — propagation is a suggestion, never blocks the import */
               }
@@ -425,7 +425,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`, s);
+                await pushImportCheckpoint(caseId, baseline, `${kind} (${storedName})`);
               }
             } catch {
               /* non-fatal */
@@ -436,7 +436,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             kind,
             storedName,
             startedAt: importedAt,
-            stateBefore,
+            baseline,
             minSeverity,
             assetHost: base.assetHost,
             path: aiDependent ? "ai" : "deterministic",
@@ -638,13 +638,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       });
 
       // Held through the diff below; released in the `.finally`. See routes/importSection.ts.
-      let stateBefore: InvestigationState | null = null;
+      let baseline: ImportBaseline | null = null;
       let section: ImportSection | null = null;
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
         section = await beginImportSection(importLock, caseId, options.stateStore, size);
-        stateBefore = section.stateBefore;
+        baseline = section.baseline;
         return streaming
           ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)
           : dispatchImport(kind, caseId, text, base);
@@ -653,24 +653,21 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       run()
         .then(async () => {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          if (settleDeps && stateBefore) {
+          if (settleDeps && baseline) {
             try {
               // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
               // diffs from the POST-demote state so "+N events" counts only graded signal.
-              const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
-              const { state: s, superTimelineAddedCount, superTimelineEvicted } = settled;
+              const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
+              const { superTimelineAddedCount, superTimelineEvicted } = settled;
               const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
               let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
               try {
-                const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
-                const newEvents = s.forensicTimeline.filter((e) => !beforeIds.has(e.id));
-                if (newEvents.length) {
-                  const markers = await new FalsePositiveStore(store).load(caseId);
-                  fpPropagation = matchFpPropagation(newEvents, markers);
-                }
+                // #1874: this import's rows are read only when there is a marker to match them against.
+                const markers = await new FalsePositiveStore(store).load(caseId);
+                if (markers.length) fpPropagation = matchFpPropagation(await settled.addedEvents(), markers);
               } catch {
                 /* non-fatal — propagation is a suggestion, never blocks the import */
               }
@@ -693,7 +690,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-                await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`, s);
+                await pushImportCheckpoint(caseId, baseline, `${kind} (${storedName})`);
               }
             } catch {
               /* non-fatal */
@@ -704,7 +701,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             kind,
             storedName,
             startedAt: importedAt,
-            stateBefore,
+            baseline,
             minSeverity,
             assetHost: base.assetHost,
             path: aiDependent ? "ai" : "deterministic",

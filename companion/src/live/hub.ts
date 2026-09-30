@@ -50,6 +50,11 @@ export class LiveHub {
     this.subs.set(caseId, set);
   }
 
+  /** True when at least one socket is subscribed to the case (composition/stateBroadcast.ts). */
+  hasSubscribers(caseId: string): boolean {
+    return (this.subs.get(caseId)?.size ?? 0) > 0;
+  }
+
   unsubscribe(caseId: string, socket: SocketLike): void {
     this.subs.get(caseId)?.delete(socket);
     if (this.subs.get(caseId)?.size === 0) this.subs.delete(caseId);

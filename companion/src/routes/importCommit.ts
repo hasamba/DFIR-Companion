@@ -1,8 +1,9 @@
 import type { RouteContext } from "./context.js";
 import type { CaseStore } from "../storage/caseStore.js";
-import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
+import type { Severity } from "../analysis/stateTypes.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
@@ -117,13 +118,13 @@ export function commitDedicatedImport(
 
   // Both assigned by run(), once this import owns the case. The section is taken INSIDE the
   // background task so the 202 never waited on another import, and released in the `finally`.
-  let stateBefore: InvestigationState | null = null;
+  let baseline: ImportBaseline | null = null;
   let section: ImportSection | null = null;
   const run = async (): Promise<void> => {
     section = await beginImportSection(importLock, caseId, options.stateStore, {
       incomingEvents: commit.linesIn,
     });
-    stateBefore = section.stateBefore;
+    baseline = section.baseline;
     // #1438: the start line is the last thing in the log before a crash mid-parse; the merged line
     // carries the wall time. The FAILED line is recordImportFailure's (the `.catch` below), once.
     ctx.serverLogger.info(formatImportStart({ caseId, label: storedName, kind, lines: commit.linesIn }), {
@@ -132,7 +133,7 @@ export function commitDedicatedImport(
     // #1735: counts and kinds only, never file or row content — the always-on debug log keeps it.
     ctx.serverLogger.debug(
       `[import-debug] ${caseId}: commit kind=${safeKind(kind)} path=${commit.path} linesIn=${commit.linesIn} ` +
-        `forensicBefore=${section.stateBefore?.forensicTimeline.length ?? "unknown"} minSeverity=${commit.minSeverity ?? "none"}`,
+        `forensicBefore=${section.baseline?.outline.ids.length ?? "unknown"} minSeverity=${commit.minSeverity ?? "none"}`,
       { caseId },
     );
     const startedAt = Date.now();
@@ -142,15 +143,15 @@ export function commitDedicatedImport(
 
   void run()
     .then(async () => {
-      if (settleDeps && stateBefore) {
+      if (settleDeps && baseline) {
         // The seam is REQUIRED processing, not bookkeeping: a failure here leaves Info rows in the
         // forensic timeline and none in the super-timeline — the defect these routes existed with.
         // So it is not caught; it reaches the failure handler below. Only the record, the activity
         // line and the checkpoint after it are best-effort.
-        const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
+        const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
         ctx.serverLogger.debug(
-          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.state.forensicTimeline.length} ` +
+          `[import-debug] ${caseId}: commit kind=${safeKind(kind)} settled forensicNow=${settled.forensicCount} ` +
             `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
           { caseId },
         );
@@ -161,12 +162,9 @@ export function commitDedicatedImport(
           // one-click bulk-mark suggestion on the import banner; never auto-mark.
           let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
           try {
-            const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
-            const newEvents = settled.state.forensicTimeline.filter((e) => !beforeIds.has(e.id));
-            if (newEvents.length) {
-              const markers = await new FalsePositiveStore(store).load(caseId);
-              fpPropagation = matchFpPropagation(newEvents, markers);
-            }
+            // #1874: this import's rows are read only when there is a marker to match them against.
+            const markers = await new FalsePositiveStore(store).load(caseId);
+            if (markers.length) fpPropagation = matchFpPropagation(await settled.addedEvents(), markers);
           } catch {
             /* non-fatal — propagation is a suggestion, never blocks the import */
           }
@@ -199,7 +197,7 @@ export function commitDedicatedImport(
           // #76: snapshot the pre-import state for undo — only when the import changed something,
           // so a no-op re-import does not pile up dead levels.
           if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-            await pushImportCheckpoint(caseId, stateBefore, label, settled.state);
+            await pushImportCheckpoint(caseId, baseline, label);
           }
         } catch {
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
@@ -218,7 +216,7 @@ export function commitDedicatedImport(
         kind,
         storedName,
         startedAt: commit.importedAt,
-        stateBefore,
+        baseline,
         minSeverity: commit.minSeverity,
         path: commit.path,
         parameters: commit.parameters,

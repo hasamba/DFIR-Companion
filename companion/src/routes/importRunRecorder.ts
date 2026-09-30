@@ -1,5 +1,7 @@
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
-import { importedArtifact, investigationOutput } from "../analysis/analysisRunSnapshot.js";
+import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
+import { importedArtifact, investigationOutputStreamed } from "../analysis/analysisRunSnapshot.js";
+import { baselineEntityIds, toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
@@ -10,7 +12,8 @@ export interface ImportRunRecord {
   kind: string;
   storedName: string;
   startedAt: string;
-  stateBefore: InvestigationState | null;
+  /** What the import was diffed against: the section's baseline, or a full state (job resume). */
+  baseline: ImportBaseline | InvestigationState | null;
   minSeverity: Severity | undefined;
   assetHost?: string; // the analyst-declared host for this import (#1496) — part of what shaped the run
   path: "ai" | "deterministic";
@@ -25,7 +28,7 @@ export interface ImportRunRecord {
 export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord): Promise<void> {
   const { options, store } = ctx;
   if (!options.analysisRunStore || !options.stateStore) return;
-  const state = await options.stateStore.load(input.caseId);
+  const stateStore = options.stateStore;
   const textProvider = input.path === "ai" ? options.pipeline?.analysisTextProviderModel() : null;
   const prompt = input.kind === "csv" ? getCsvPrompt() : input.kind === "log" ? getLogPrompt() : null;
   const rules = options.taggerStore
@@ -43,12 +46,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
     input: {
       artifacts: [await importedArtifact(store, input.caseId, input.storedName)],
       eventIds: [],
-      entityIds: input.stateBefore
-        ? [
-            ...input.stateBefore.forensicTimeline.map((event) => event.id),
-            ...input.stateBefore.iocs.map((ioc) => ioc.id),
-          ]
-        : [],
+      entityIds: input.baseline ? baselineEntityIds(toImportBaseline(input.baseline)) : [],
     },
     configuration: {
       ...(textProvider ?? {}),
@@ -63,6 +61,13 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
         forensicMinimumSeverity: input.minSeverity ?? "case-default",
       },
     },
-    output: investigationOutput(state),
+    // Streamed (#1874): the output hash covers the whole case, read a page at a time.
+    // Inside the state lock, so no writer lands between the overview and the pages it hashes.
+    output: await ctx.runStateExclusive(input.caseId, async () =>
+      investigationOutputStreamed(
+        await stateStore.loadOverview(input.caseId),
+        stateStore.forensicTimelineBatches(input.caseId, { limit: SCAN_PAGE_ROWS }),
+      ),
+    ),
   });
 }

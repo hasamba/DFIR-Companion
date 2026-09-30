@@ -14,6 +14,7 @@
  * dashboard viewing a DIFFERENT case can warn that evidence is arriving for another one (the
  * capture extension pointed at a case the analyst is not looking at).
  */
+import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
@@ -319,6 +320,11 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
     onImport: (caseId) => hub.broadcastAll({ type: "import_ingest", caseId }),
     onState: (s) => hub.broadcast(s),
+    onStateChanged: createStateBroadcaster({
+      load: (caseId) => stateStore.load(caseId),
+      broadcast: (s) => hub.broadcast(s),
+      hasSubscribers: (caseId) => hub.hasSubscribers(caseId),
+    }),
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichProviderDelayMs: buildEnrichProviderDelayMap(),

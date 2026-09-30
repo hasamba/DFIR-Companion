@@ -358,39 +358,42 @@ export function capBuildTimeRows(state: InvestigationState): {
   const windows = buildTimeWindows(state.forensicTimeline, state.hostRenames ?? []);
   let changed = 0;
   const forensicTimeline = state.forensicTimeline.map((e) => {
-    const found = windowFor(windows, e);
-    const w = found && !protectedFromCap(e) ? found : undefined;
-    // One rule whatever path produced the row (#1698): inside a window, one note and nothing above
-    // Low; outside every window, no note. A merge can bring a note without its record, or a record
-    // with a grade it raised, and every branch below exists because one of those reached a case.
-    if (w && !e.buildTime) {
-      changed++;
-      return withNote(HAS_BUILD_TIME_NOTE.test(e.description) ? stripNote(e) : e, w);
-    }
-    // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
-    // so the note and the recorded pre-cap severity describe the window that exists now.
-    if (w && e.buildTime && e.buildTime.window !== `${w.start}/${w.end}`) {
-      changed++;
-      return withNote(withoutNote(e), w);
-    }
-    // A merge raised a capped row inside its own window. Re-cap it and keep the WORSE of the two
-    // original grades, so a later un-cap restores the grade the evidence actually carries.
-    if (w && e.buildTime && capped(e.severity) !== e.severity) {
-      changed++;
-      const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
-      return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
-    }
-    if (!w && e.buildTime) {
-      changed++;
-      return withoutNote(e);
-    }
-    if (!w && HAS_BUILD_TIME_NOTE.test(e.description)) {
-      changed++;
-      return stripNote(e);
-    }
-    return e;
+    const next = capBuildTimeRow(e, windows);
+    if (next !== e) changed++;
+    return next;
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
+ * True when a row carries any trace of an earlier cap (#1874): outside every window such a row is
+ * the only kind the cap changes, so an incremental caller reads just these plus the rows inside a
+ * window (routes/importSettleCap.ts).
+ */
+export function hasBuildTimeMark(e: ForensicEvent): boolean {
+  return !!e.buildTime || HAS_BUILD_TIME_NOTE.test(e.description);
+}
+
+/** capBuildTimeRows for one row: the same object back when nothing changes. */
+export function capBuildTimeRow(e: ForensicEvent, windows: readonly BuildTimeWindow[]): ForensicEvent {
+  const found = windowFor(windows, e);
+  const w = found && !protectedFromCap(e) ? found : undefined;
+  // One rule whatever path produced the row (#1698): inside a window, one note and nothing above
+  // Low; outside every window, no note. A merge can bring a note without its record, or a record
+  // with a grade it raised, and every branch below exists because one of those reached a case.
+  if (w && !e.buildTime) return withNote(HAS_BUILD_TIME_NOTE.test(e.description) ? stripNote(e) : e, w);
+  // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
+  // so the note and the recorded pre-cap severity describe the window that exists now.
+  if (w && e.buildTime && e.buildTime.window !== `${w.start}/${w.end}`) return withNote(withoutNote(e), w);
+  // A merge raised a capped row inside its own window. Re-cap it and keep the WORSE of the two
+  // original grades, so a later un-cap restores the grade the evidence actually carries.
+  if (w && e.buildTime && capped(e.severity) !== e.severity) {
+    const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+    return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
+  }
+  if (!w && e.buildTime) return withoutNote(e);
+  if (!w && HAS_BUILD_TIME_NOTE.test(e.description)) return stripNote(e);
+  return e;
 }
 
 /**

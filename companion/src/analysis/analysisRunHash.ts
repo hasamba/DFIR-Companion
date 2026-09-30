@@ -33,7 +33,7 @@ export function sanitizeManifestValue(value: ManifestValue, key = ""): ManifestV
   return value;
 }
 
-function canonicalize(value: unknown): unknown {
+export function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;

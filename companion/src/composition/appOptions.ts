@@ -422,6 +422,10 @@ export interface AppOptions {
   // Broadcast a fresh investigation state to dashboard clients (for routes that change
   // state outside the AI pipeline, e.g. enrichment).
   onState?: (state: InvestigationState) => void;
+  // #1874: "this case's state changed" by id. The app loads and broadcasts the state only when a
+  // dashboard is subscribed to the case (composition/stateBroadcast.ts), so a writer that changed a
+  // few rows does not have to hold, or load, the whole case just to announce it.
+  onStateChanged?: (caseId: string) => void;
   // DFIR-IRIS push: a configured client (when DFIR_IRIS_URL/KEY are set) + mapping options
   // (customer/classification ids, base URL for the case link).
   irisClient?: IrisClient;

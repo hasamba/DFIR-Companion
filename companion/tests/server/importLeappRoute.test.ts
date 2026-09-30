@@ -220,14 +220,10 @@ describe("POST /cases/:id/import-leapp", () => {
 
   it("reports a failed seam as a failed import instead of leaving Info rows in the forensic timeline", async () => {
     const { app, stateStore } = await makeApp();
-    // Let the importer merge, then make the seam's first step fail: the reload of the merged state.
-    const realLoad = stateStore.load.bind(stateStore);
-    let loads = 0;
-    // The snapshot (1st) and the importer's own load (2nd) succeed; the seam's reload (3rd) fails.
-    stateStore.load = async (caseId: string) => {
-      loads++;
-      if (loads === 3) throw new Error("state store offline");
-      return realLoad(caseId);
+    // Let the importer merge, then make the seam's first step fail: its read of the merged
+    // timeline's ids (#1874: the seam reads rows, not the whole state).
+    stateStore.forensicOutline = async () => {
+      throw new Error("state store offline");
     };
     const res = await request(app)
       .post("/cases/c1/import-leapp")

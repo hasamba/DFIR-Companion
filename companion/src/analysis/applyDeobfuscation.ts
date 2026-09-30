@@ -52,6 +52,35 @@ export interface DeobfuscationApplyOptions {
   // Apply the behaviour rules to the DECODED text (#909 item 2). Omitted, the decode still happens
   // and the payload is still shown — it simply is not re-graded.
   gradeDerived?: DerivedTextGrader;
+  // #1874: the ids of indicators that events NOT passed in `state.forensicTimeline` point at. A
+  // caller that hands over only the events that decode (composition/deobfuscationRows.ts) keeps the
+  // rest of the timeline as it is, so their indicators are both prior results and still referenced —
+  // exactly what they were when the whole timeline was passed.
+  outsideIocIds?: Iterable<string>;
+}
+
+// The decoders, layered first; the single-layer one remains the fallback so a payload shape it
+// still handles alone keeps working. Null when the description holds nothing to decode.
+function decodeEvent(event: ForensicEvent) {
+  const layered = decodeLayers(event.description);
+  return layered
+    ? {
+        decoded: layered.decoded,
+        method: layered.steps[0]?.method ?? "base64",
+        rawIocs: extractIocsFromText(layered.decoded),
+        steps: layered.steps,
+        partial: layered.partial,
+        version: layered.version,
+      }
+    : deobfuscateText(event.description);
+}
+
+/** True when this pass would decode the event: not yet processed (or stale, when asked) and decodable. */
+export function wouldDeobfuscate(event: ForensicEvent, options: DeobfuscationApplyOptions = {}): boolean {
+  const prior = event.deobfuscated;
+  const stale = (prior?.version ?? 0) < DECODER_VERSION;
+  if (prior && !(options.reanalyzeStale && stale)) return false;
+  return decodeEvent(event) !== null;
 }
 
 // Apply deobfuscation to every unprocessed event in the case's forensic timeline.
@@ -69,7 +98,8 @@ export function applyDeobfuscation(
 
   // Ids a PRIOR deobfuscation result pointed at, and the ids that existed before any decoding —
   // together they say which indicators this run is allowed to retire. See the prune below.
-  const priorIocIds = new Set<string>();
+  const outside = [...(options.outsideIocIds ?? [])];
+  const priorIocIds = new Set<string>(outside);
   for (const e of state.forensicTimeline) for (const id of e.deobfuscated?.iocs ?? []) priorIocIds.add(id);
   const preexistingIocIds = new Set(state.iocs.map((i) => i.id).filter((id) => !priorIocIds.has(id)));
 
@@ -78,19 +108,7 @@ export function applyDeobfuscation(
     const stale = (prior?.version ?? 0) < DECODER_VERSION;
     if (prior && !(options.reanalyzeStale && stale)) return { ...event }; // already processed
 
-    // The layered decoder first; the single-layer one remains the fallback so a payload shape it
-    // still handles alone keeps working.
-    const layered = decodeLayers(event.description);
-    const result = layered
-      ? {
-          decoded: layered.decoded,
-          method: layered.steps[0]?.method ?? "base64",
-          rawIocs: extractIocsFromText(layered.decoded),
-          steps: layered.steps,
-          partial: layered.partial,
-          version: layered.version,
-        }
-      : deobfuscateText(event.description);
+    const result = decodeEvent(event);
     if (!result) return { ...event };
 
     if (prior) reanalyzed++;
@@ -147,7 +165,7 @@ export function applyDeobfuscation(
   // decoder — possibly from a payload the new one reads differently — stays in the case, visible
   // and scored, referenced by nothing. Only ids this run orphaned are dropped: an indicator that
   // predates the deobfuscation pass, or that any surviving event still points at, is left alone.
-  const referenced = new Set<string>();
+  const referenced = new Set<string>(outside);
   for (const e of forensicTimeline) for (const id of e.deobfuscated?.iocs ?? []) referenced.add(id);
   const orphaned = new Set(
     [...priorIocIds].filter((id) => !referenced.has(id) && !preexistingIocIds.has(id)),
