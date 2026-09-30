@@ -13,7 +13,15 @@ import {
   pendingNearDuplicates,
   pendingNetworkIdentityDuplicates,
 } from "./hostDuplicateGate.js";
-import { aggregateHostEvidence, overlayFindingLinks } from "./hostScopeAggregate.js";
+import {
+  aggregateHostEvidence,
+  collectRawHostEvidence,
+  emptyRawHostEvidence,
+  foldRawHostEvidence,
+  overlayFindingLinks,
+  type HostEvidenceMap,
+  type RawHostEvidence,
+} from "./hostScopeAggregate.js";
 import { buildHostScopeLedger, type HostScopeLedger } from "./hostScope.js";
 import type { HostScopeStore } from "./hostScopeStore.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
@@ -27,11 +35,56 @@ import type { VeloClientInventory } from "./velociraptorClientStore.js";
 
 export interface HostScopeSources {
   state: { load(caseId: string): Promise<InvestigationState> };
-  superTimeline: { eventBatches(caseId: string): AsyncGenerator<ForensicEvent[]> };
+  superTimeline: HostEvidenceSource;
   decisions: Pick<HostScopeStore, "load">;
   scope?: { load(caseId: string): Promise<ScopeWindow> };
   assetOverrides?: { load(caseId: string): Promise<AssetOverrides> };
   fleet?: { load(): Promise<VeloClientInventory> };
+}
+
+export interface HostEvidenceSource {
+  eventBatches(caseId: string): AsyncGenerator<ForensicEvent[]>;
+  // SuperTimelineStore's scan cache (#1881); a source without it scans on every call.
+  memoizeScan?<T>(
+    caseId: string,
+    name: string,
+    reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
+    opts?: { cacheable?: (value: T) => boolean },
+  ): Promise<T>;
+}
+
+const HOST_EVIDENCE_SCAN = "host-scope-evidence";
+
+// A real case has hundreds to a few thousand host spellings. Telemetry with a new spelling or peer
+// name on nearly every row would make the cached collection grow with the row count, so past this
+// many spellings plus reference edges it is used once and not kept (#1881).
+export const MAX_CACHED_HOST_EVIDENCE_ENTRIES = 20_000;
+
+function smallEnoughToCache(raw: RawHostEvidence): boolean {
+  let size = raw.assets.size;
+  for (const names of raw.references.values()) size += names.size;
+  return size <= MAX_CACHED_HOST_EVIDENCE_ENTRIES;
+}
+
+async function collectRaw(batches: AsyncIterable<ForensicEvent[]>): Promise<RawHostEvidence> {
+  const raw = emptyRawHostEvidence();
+  for await (const batch of batches) collectRawHostEvidence(batch, raw);
+  return raw;
+}
+
+// Per-host evidence from the super-timeline. The raw per-spelling totals are cached until the rows
+// change (#1881), and the alias index is applied afterwards, so a fleet refresh or an analyst merge
+// never forces a rescan. The fold returns fresh sets, so the caller may mutate the result.
+export async function loadHostEvidence(
+  source: HostEvidenceSource,
+  caseId: string,
+  index: HostAliasIndex,
+): Promise<HostEvidenceMap> {
+  if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
+  const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
+    cacheable: smallEnoughToCache,
+  });
+  return foldRawHostEvidence(raw, index);
 }
 
 // The tactics this case has actually confirmed, from its findings' techniques. Clearance asks
@@ -119,7 +172,7 @@ export async function loadHostScopeLedger(
 
   // overrides.merges is keyed by asset id, not host name — see hostMergesFromAssetIds.
   const index = buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
-  const evidence = await aggregateHostEvidence(sources.superTimeline, caseId, index);
+  const evidence = await loadHostEvidence(sources.superTimeline, caseId, index);
   // The super-timeline is never synthesized, so it carries no finding links. Without this overlay a
   // host with a Critical finding against it still derives as `unknown` — see overlayFindingLinks.
   overlayFindingLinks(state.forensicTimeline, index, evidence);
