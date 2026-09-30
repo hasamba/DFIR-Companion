@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Faster imports into large cases** — an import merges, settles, tags and checks only the rows it changed; the 10th of ten imports into one case takes about 1.6× the first instead of about 5×, and peak memory fell from about 3.2 GB to 1.4 GB (closes #1874)
+- **Cheaper import merge in large cases** — the importer merge reads each row's order and version from an index instead of the stored row; about 0.27 s less per import at 20,000 rows (part of #1887)
 - **Delta undo** — an import's undo level stores only what it changed (about 34 KB instead of 58 MB for 2,000 rows) and keeps later edits to rows it did not touch (part of #1874)
 - **Smaller stored events** — shared field provenance is stored once per event, about 42% less per event; canonical schema 1.1.0 (part of #1874)
 - **Tags in the case database** — tags move from `tags.json` into the case database; old files migrate once and are kept (part of #1874)
