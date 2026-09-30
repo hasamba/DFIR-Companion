@@ -197,29 +197,37 @@ async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promis
   const startedAt = new Date().toISOString();
   const scope = taggerScope(run);
   const ruleset = await options.taggerStore.load();
-  const state = await options.stateStore.load(run.caseId);
-  // Streamed like the "Run tagger" route (#1444): the super side arrives one batch at a time.
-  const acc = createTaggerAccumulator(ruleset);
-  await feedTaggerScope(
-    acc,
-    scope,
-    state.forensicTimeline,
-    options.superTimelineStore ? options.superTimelineStore.eventBatches(run.caseId) : null,
-  );
-  const applied = await runAndApplyTagger({
-    caseId: run.caseId,
-    result: acc.finish(),
-    ruleset,
-    forensicTimeline: state.forensicTimeline,
-    tagsStore: options.tagsStore,
-    mutateForensic: scope !== "super",
+  const { tagsStore, stateStore } = options;
+  // Read, tag and save inside ONE state-lock section, like the manual "Run tagger" route (#1892):
+  // a write that landed between an unlocked read and the save used to be overwritten. The section
+  // spans the super-timeline stream — the same latency trade the manual route makes.
+  const next = await ctx.runStateExclusive(run.caseId, async () => {
+    const state = await stateStore.load(run.caseId);
+    // Streamed like the "Run tagger" route (#1444): the super side arrives one batch at a time.
+    const acc = createTaggerAccumulator(ruleset);
+    await feedTaggerScope(
+      acc,
+      scope,
+      state.forensicTimeline,
+      options.superTimelineStore ? options.superTimelineStore.eventBatches(run.caseId) : null,
+    );
+    const applied = await runAndApplyTagger({
+      caseId: run.caseId,
+      result: acc.finish(),
+      ruleset,
+      forensicTimeline: state.forensicTimeline,
+      tagsStore,
+      mutateForensic: scope !== "super",
+    });
+    const tagged = {
+      ...state,
+      forensicTimeline: applied.forensicTimeline,
+      updatedAt: new Date().toISOString(),
+    };
+    if (applied.mutatedCount) await stateStore.save(tagged);
+    // The child run below describes exactly this snapshot, the one the section saved.
+    return tagged;
   });
-  const next = {
-    ...state,
-    forensicTimeline: applied.forensicTimeline,
-    updatedAt: new Date().toISOString(),
-  };
-  if (applied.mutatedCount) await options.stateStore.save(next);
   await options.analysisRunStore.record(run.caseId, {
     kind: "deterministic",
     parentRunId: run.id,
