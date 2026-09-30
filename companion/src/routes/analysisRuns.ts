@@ -9,16 +9,15 @@ import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { IMPORT_KINDS } from "../analysis/importerSpec.js";
-import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
 import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
-import { importReceipt } from "../analysis/runEntityDelta.js";
-import type { InvestigationState } from "../analysis/stateTypes.js";
-import { diffTimeline } from "../analysis/timelineDiff.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
 import type { RouteContext } from "./context.js";
-import { logImportSettled } from "./importSettle.js";
+import { activeRulesHash, importReceiptOfCase } from "./importRunRecorder.js";
+import { beginImportSection, type ImportSection } from "./importSection.js";
+import { settleForensicImport } from "./importSettle.js";
+import { routeSettleDeps } from "./routeSettleDeps.js";
 
 // The replay-preflight inventory of every builtin importer's own pinned version. Derived from
 // `IMPORT_KINDS` — the SAME single source of truth `importDetect.ts`'s own `ImportKind` union and
@@ -125,11 +124,6 @@ async function replayEnvironment(
   };
 }
 
-/** A case's entities for an import receipt: forensic event ids then IOC ids, one per row. */
-function replayEntities(state: InvestigationState): unknown[] {
-  return [...state.forensicTimeline.map((event) => event.id), ...state.iocs.map((ioc) => ioc.id)];
-}
-
 async function replayImport(
   ctx: RouteContext,
   run: AnalysisRunManifest,
@@ -142,20 +136,27 @@ async function replayImport(
   const kind = run.versions.importer?.split("/")[0];
   if (!kind) throw new Error("importer version is missing");
   const path = resolve(store.caseDir(run.caseId), artifact.path);
-  // #1890: a replay imports into the case, so it holds the case's import section from its snapshot
+  // #1890: a replay imports into the case, so it holds the case's import section from its baseline
   // through its child run record, like every other import path (analysis/importLock.ts). Otherwise
   // an import running at the same time counts the replay's rows as its own (and sweeps them into its
   // undo checkpoint), and this receipt claims the other import's rows. Sized from the file on disk,
   // read inside the section: the source is already stored, so a memory-guard refusal loses nothing.
-  const hint = { incomingBytes: (await stat(path)).size, wording: REPLAY_REFUSAL_WORDING };
-  const source: ReplaySource = {
-    path,
-    artifact,
-    kind,
-    stateStore: options.stateStore,
-    runStore: options.analysisRunStore,
-  };
-  await ctx.importLock.runSized(run.caseId, hint, () => replayImportSection(ctx, run, source, debug));
+  const section = await beginImportSection(ctx.importLock, run.caseId, options.stateStore, {
+    incomingBytes: (await stat(path)).size,
+    wording: REPLAY_REFUSAL_WORDING,
+  });
+  try {
+    const source: ReplaySource = {
+      path,
+      artifact,
+      kind,
+      stateStore: options.stateStore,
+      runStore: options.analysisRunStore,
+    };
+    await replayImportSection(ctx, run, source, section, debug);
+  } finally {
+    section.release();
+  }
   ctx.resynthesizeInBackground(run.caseId);
 }
 
@@ -172,54 +173,52 @@ interface ReplaySource {
   runStore: NonNullable<RouteContext["options"]["analysisRunStore"]>;
 }
 
-/** The replay itself, inside the case's import section: snapshot, import, demote, child run record. */
+/**
+ * The replay itself, inside the case's import section: import, settle, child run record. #1891: it
+ * settles through the same seam as a live import (routes/importSettle.ts) — super-timeline write,
+ * content tagger, then demote — so a rule-promoted Info row is kept and kept rows reach the
+ * super-timeline. That is settle parity with a live import run NOW (current rules and tagger
+ * settings), not a full reproduction: the parent's severity floor and importer options are not
+ * restored.
+ */
 async function replayImportSection(
   ctx: RouteContext,
   run: AnalysisRunManifest,
   { path, artifact, kind, stateStore, runStore }: ReplaySource,
+  { baseline }: ImportSection,
   debug?: ImportDebugRecorder,
 ): Promise<void> {
+  const settleDeps = routeSettleDeps(ctx);
+  // Without a baseline there is nothing to settle or diff against: refuse before the case changes.
+  if (!baseline || !settleDeps) throw new Error("the case could not be snapshotted for the replay");
+  // Preflight checked the rules before the replay queued for the case; they may have changed while it
+  // waited. Check again inside the section, and record the hash checked here (#1891 review).
+  const rules = await activeRulesHash(ctx);
+  if (run.versions.rules && rules !== run.versions.rules) {
+    throw new Error("the tagger rules changed while the replay waited for the case");
+  }
   const text = await readFile(path, "utf8");
   const startedAt = new Date().toISOString();
-  const before = await stateStore.load(run.caseId);
+  const label = `replay-${run.id}`;
   // The kind is the recorded run's, so nothing was sniffed (#1736).
   debug?.detected(kind, { confident: true, decision: "replay" });
   await ctx.dispatchImport(kind, run.caseId, text, {
-    label: `replay-${run.id}`,
+    label,
     ...(debug ? { debug } : {}),
     idPrefix: `replay-${Date.now()}`,
     importedAt: startedAt,
   });
-  // The replay settles inline: demote is its only super-timeline append, so the rows the demote
-  // moved are what "super +N" reports; the done line is the seam's (#1438).
-  const merged = await stateStore.load(run.caseId);
-  const after = await ctx.demoteForensicForCase(run.caseId);
-  const replayDiff = diffTimeline(before.forensicTimeline, after.forensicTimeline);
-  const replayIocs = diffIocs(before.iocs, after.iocs);
-  logImportSettled(run.caseId, `replay-${run.id}`, {
-    forensicAdded: replayDiff.added.length,
-    forensicRemoved: replayDiff.removed.length,
-    superAdded: diffTimeline(after.forensicTimeline, merged.forensicTimeline).added.length,
-    iocsAdded: replayIocs.added.length,
-    iocsRemoved: replayIocs.removed.length,
-  });
+  // The settle writes the "[import] … done" line itself (#1438).
+  await settleForensicImport(settleDeps, run.caseId, baseline, label);
   // #1887: the same changed-only receipt a live import records (routes/importRunRecorder.ts).
-  const receipt = importReceipt(
-    replayEntities(before),
-    replayEntities(after),
-    investigationOutput(after).hashes,
-    after.findings,
-  );
+  const receipt = await importReceiptOfCase(ctx, stateStore, run.caseId, baseline);
   await runStore.record(run.caseId, {
     kind: "import",
     parentRunId: run.id,
     startedAt,
     finishedAt: new Date().toISOString(),
-    versions: {
-      importer: run.versions.importer,
-      schema: run.versions.schema,
-      rules: run.versions.rules,
-    },
+    // The rules checked in the section — the active ones, as a live import records them.
+    versions: { importer: run.versions.importer, schema: run.versions.schema, ...(rules ? { rules } : {}) },
     input: { artifacts: [artifact], ...receipt.input },
     configuration: run.configuration,
     output: receipt.output,

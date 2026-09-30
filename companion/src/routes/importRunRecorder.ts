@@ -35,23 +35,8 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
   const stateStore = options.stateStore;
   const textProvider = input.path === "ai" ? options.pipeline?.analysisTextProviderModel() : null;
   const prompt = input.kind === "csv" ? getCsvPrompt() : input.kind === "log" ? getLogPrompt() : null;
-  const rules = options.taggerStore
-    ? hashManifestValue((await options.taggerStore.readActive()).text)
-    : undefined;
-  // #1887: the receipt lists what the import added and removed (events + IOCs) and the counts before
-  // and after, not every id the case holds; the fingerprint still covers the whole case.
-  const before = input.baseline ? baselineEntities(toImportBaseline(input.baseline)) : [];
-  // The hash, the findings and the ids after come from ONE database transaction, inside the state
-  // lock, so the counts and change lists describe the snapshot the hash covers.
-  const after = await ctx.runStateExclusive(input.caseId, () =>
-    investigationFingerprintOfCase(stateStore, input.caseId),
-  );
-  const receipt = importReceipt(
-    before,
-    after.entityIds,
-    [{ id: STATE_HASH_ID, sha256: after.sha256 }],
-    after.findings,
-  );
+  const rules = await activeRulesHash(ctx);
+  const receipt = await importReceiptOfCase(ctx, stateStore, input.caseId, input.baseline);
   await options.analysisRunStore.record(input.caseId, {
     kind: "import",
     startedAt: input.startedAt,
@@ -77,4 +62,33 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
     },
     output: receipt.output,
   });
+}
+
+/** The hash of the tagger rules active now — what a settle that runs now applies. */
+export async function activeRulesHash(ctx: RouteContext): Promise<string | undefined> {
+  const { taggerStore } = ctx.options;
+  return taggerStore ? hashManifestValue((await taggerStore.readActive()).text) : undefined;
+}
+
+/**
+ * An import's receipt (#1887): what it added and removed (events + IOCs) and the counts before and
+ * after, not every id the case holds; the fingerprint still covers the whole case. The hash, the
+ * findings and the ids after come from ONE database transaction, inside the state lock, so the
+ * counts and change lists describe the snapshot the hash covers. The live import and the import
+ * replay (#1891) both record this shape.
+ */
+export async function importReceiptOfCase(
+  ctx: RouteContext,
+  stateStore: Parameters<typeof investigationFingerprintOfCase>[0],
+  caseId: string,
+  baseline: ImportBaseline | InvestigationState | null,
+): Promise<ReturnType<typeof importReceipt>> {
+  const before = baseline ? baselineEntities(toImportBaseline(baseline)) : [];
+  const after = await ctx.runStateExclusive(caseId, () => investigationFingerprintOfCase(stateStore, caseId));
+  return importReceipt(
+    before,
+    after.entityIds,
+    [{ id: STATE_HASH_ID, sha256: after.sha256 }],
+    after.findings,
+  );
 }

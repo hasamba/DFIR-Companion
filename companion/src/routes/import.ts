@@ -32,11 +32,10 @@ import { registerWazuhImportRoute } from "./importWazuh.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { buildImportBase, importJobParameters } from "./importBase.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
-import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import { settleForensicImport } from "./importSettle.js";
+import { routeSettleDeps } from "./routeSettleDeps.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
-import { autoTagNewEvents } from "../analysis/taggerAuto.js";
-import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -79,7 +78,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     pushImportCheckpoint,
     moveDropFile,
     dispatchImport,
-    demoteForensic,
     resynthesizeInBackground,
     applyWhitelistToCase,
     applyNsrlToCase,
@@ -92,34 +90,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
   registerImportAssetHostGuard(app); // 400 a malformed "asset for this import" before either generic route runs (#1496)
 
-  // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
-  const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
-    autoTagNewEvents(
-      {
-        taggerStore: options.taggerStore,
-        tagsStore: options.tagsStore,
-        stateStore: options.stateStore,
-        analysisRunStore: options.analysisRunStore,
-        operationalMetrics: options.operationalMetrics,
-        onTags: options.onTags,
-        runStateExclusive: ctx.runStateExclusive,
-        logLine: (m) => ctx.serverLogger.info(m),
-      },
-      caseId,
-      added,
-    );
-  const settleDeps: SettleDeps | null = options.stateStore
-    ? {
-        stateStore: options.stateStore,
-        runStateExclusive: ctx.runStateExclusive,
-        superTimelineStore: options.superTimelineStore,
-        onSuperTimeline: options.onSuperTimeline,
-        onStateChanged: options.onStateChanged,
-        onState: options.onState,
-        autoTagImported,
-        demoteForensic,
-      }
-    : null;
+  const settleDeps = routeSettleDeps(ctx); // the settle wiring the import replay shares (#1891)
 
   // Poll interval reported by GET /drop-status. Reconstructed from the same env expression createApp
   // uses (DFIR_DROP_POLL_S, clamped 2..600s) — deterministic, so it matches the watcher's value.
