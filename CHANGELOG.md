@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Import memory guard** — an import that would exhaust the server's memory on a very large case is refused with a message naming the case size and memory needed; the file stays saved (`DFIR_IMPORT_MEMORY_GUARD`, part of #1874)
 
 ### Changed
+- **Enrichment no longer reloads the whole case** — the background IOC enrichment after each import reads and writes only the case overview unless process-chain validation is enabled, so the next import no longer waits seconds behind it on a large case (part of #1887)
 - **Faster imports into large cases** — an import merges, settles, tags and checks only the rows it changed; the 10th of ten imports into one case takes about 1.6× the first instead of about 5×, and peak memory fell from about 3.2 GB to 1.4 GB (closes #1874)
 - **Cheaper import merge in large cases** — the importer merge reads each row's order and version from an index instead of the stored row; about 0.27 s less per import at 20,000 rows (part of #1887)
 - **Small import receipts, fingerprint v3** — an import's run record lists only the events and IOCs it added or removed, with counts (about 67 KB instead of 3 MB at 60,000 events); the case fingerprint is now `investigation-state/v3` (LtHash), which no longer covers stored row order; the undo checkpoint reads its id lists faster (part of #1887)

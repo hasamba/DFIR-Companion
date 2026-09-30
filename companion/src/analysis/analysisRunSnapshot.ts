@@ -98,39 +98,13 @@ export function investigationOutput(state: InvestigationState): AnalysisRunOutpu
   );
 }
 
-/** Ids and digests of a facts listing, the unknown rows digested from their payloads. */
+/** Digests of a facts listing, the unknown rows digested from their payloads. */
 function digestsOf(fp: FactsFingerprint) {
   const payloads = new Map(fp.payloads);
-  const fill = (list: FactsListing, facts: (payload: unknown) => { id: string | null; digest: string }) => {
-    const ids = [...list.ids];
-    const digests = list.digests.map((digest, i) => {
-      if (digest !== null) return digest;
-      const computed = facts(payloads.get(list.rowIds[i]));
-      ids[i] = computed.id;
-      return computed.digest;
-    });
-    return { ids, digests };
-  };
+  const fill = (list: FactsListing, facts: (payload: unknown) => { digest: string }) => ({
+    digests: list.digests.map((digest, i) => digest ?? facts(payloads.get(list.rowIds[i])).digest),
+  });
   return { events: fill(fp.forensic, forensicFacts), iocs: fill(fp.iocs, iocFacts) };
-}
-
-/**
- * investigationOutput of the case as stored, without reading every row (#1874): the per-row digests
- * come from the case database's row facts (analysis/rowFacts.ts), refreshed first; a row whose facts
- * are unknown is digested from its payload, read in the same transaction. Call it inside the case's
- * state lock, as the import run recorder does.
- */
-export async function investigationOutputOfCase(
-  store: InvestigationStateStorage | FactsStore,
-  caseId: string,
-): Promise<AnalysisRunOutput> {
-  if (!hasRowFacts(store)) return investigationOutput(await store.load(caseId));
-  await refreshRowFacts(store, caseId);
-  const fp = await store.factsFingerprint(caseId, rowFactsStamp());
-  if (!fp) return investigationOutput(emptyState(caseId));
-  const { events, iocs } = digestsOf(fp);
-  const findings = fp.findings as InvestigationState["findings"];
-  return outputOf(findings, iocs.ids, events.ids, stateHash(findings, events.digests, iocs.digests));
 }
 
 export interface InvestigationFingerprint {
@@ -140,25 +114,32 @@ export interface InvestigationFingerprint {
   entityIds: unknown[];
 }
 
-function fingerprintOfState(state: InvestigationState): InvestigationFingerprint {
+/** The fingerprint with its forensic and IOC ids kept apart. */
+interface CaseFingerprint {
+  sha256: string;
+  findings: InvestigationState["findings"];
+  forensicIds: unknown[];
+  iocIds: unknown[];
+}
+
+function fingerprintOfState(state: InvestigationState): CaseFingerprint {
   return {
     sha256: stateHash(state.findings, state.forensicTimeline.map(itemDigest), state.iocs.map(itemDigest)),
     findings: state.findings,
-    entityIds: [...state.forensicTimeline.map((e) => e.id), ...state.iocs.map((i) => i.id)],
+    forensicIds: state.forensicTimeline.map((e) => e.id),
+    iocIds: state.iocs.map((i) => i.id),
   };
 }
 
 /**
- * The case's `investigation-state/v3` hash as stored, its findings, and its forensic then IOC ids
- * (#1887). Reads only the rows written since the last call: the case database folds those into the
- * kept sums (factsFingerprintV3, caseSqliteWorkerFacts.ts). When a row's facts are unknown after
- * the refresh (a writer raced it) or the facts are another build's, it hashes the full per-row
- * listing instead. Call it inside the case's state lock, as the import run recorder does.
+ * Reads only the rows written since the last call: the case database folds those into the kept sums
+ * (factsFingerprintV3, caseSqliteWorkerFacts.ts). When a row's facts are unknown after the refresh
+ * (a writer raced it) or the facts are another build's, it hashes the full per-row listing instead.
  */
-export async function investigationFingerprintOfCase(
+async function caseFingerprint(
   store: InvestigationStateStorage | FactsStore,
   caseId: string,
-): Promise<InvestigationFingerprint> {
+): Promise<CaseFingerprint> {
   if (!hasRowFacts(store)) return fingerprintOfState(await store.load(caseId));
   const stamp = rowFactsStamp();
   await refreshRowFacts(store, caseId);
@@ -166,15 +147,44 @@ export async function investigationFingerprintOfCase(
   if (!kept) return fingerprintOfState(emptyState(caseId));
   if (!kept.needsFull) {
     const findings = kept.findings as InvestigationState["findings"];
-    return {
-      sha256: stateHashOfSums(findings, kept.forensic, kept.iocs),
-      findings,
-      entityIds: kept.entities,
-    };
+    const { forensicIds, iocIds } = kept;
+    return { sha256: stateHashOfSums(findings, kept.forensic, kept.iocs), findings, forensicIds, iocIds };
   }
   const fp = await store.factsFingerprint(caseId, stamp);
   if (!fp) return fingerprintOfState(emptyState(caseId));
   const { events, iocs } = digestsOf(fp);
   const findings = fp.findings as InvestigationState["findings"];
-  return { sha256: stateHash(findings, events.digests, iocs.digests), findings, entityIds: fp.entities };
+  const { forensicIds, iocIds } = fp;
+  return { sha256: stateHash(findings, events.digests, iocs.digests), findings, forensicIds, iocIds };
+}
+
+/**
+ * The case's `investigation-state/v3` hash as stored, its findings, and its forensic then IOC ids
+ * (#1887), from the kept sums (caseFingerprint). Call it inside the case's state lock, as the
+ * import run recorder does.
+ */
+export async function investigationFingerprintOfCase(
+  store: InvestigationStateStorage | FactsStore,
+  caseId: string,
+): Promise<InvestigationFingerprint> {
+  const fp = await caseFingerprint(store, caseId);
+  return { sha256: fp.sha256, findings: fp.findings, entityIds: [...fp.forensicIds, ...fp.iocIds] };
+}
+
+/**
+ * investigationOutput of the case as stored, without reading every row (#1874, #1887): the same
+ * hash, findings, claims and ids (findings, IOCs, events), from the kept sums (caseFingerprint).
+ * Call it inside the case's state lock, right after the write it describes.
+ */
+export async function investigationOutputOfCase(
+  store: InvestigationStateStorage | FactsStore,
+  caseId: string,
+): Promise<AnalysisRunOutput> {
+  const fp = await caseFingerprint(store, caseId);
+  return outputOf(
+    fp.findings,
+    fp.iocIds as (string | null)[],
+    fp.forensicIds as (string | null)[],
+    fp.sha256,
+  );
 }

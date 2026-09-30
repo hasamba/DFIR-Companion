@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,6 +11,7 @@ import { canonicalize } from "../../src/analysis/analysisRunHash.js";
 import {
   investigationFingerprintOfCase,
   investigationOutput,
+  investigationOutputOfCase,
   stateHash,
   stateHashOfSums,
   STATE_HASH_ID,
@@ -342,6 +343,37 @@ describe("investigation-state/v3 (#1887)", () => {
     await store.updateForensicRows("c1", [{ ...row, event: { ...row.event, severity: "Low" } }]);
     expect(await store.factsFingerprintV3("c1", rowFactsStamp())).toEqual({ needsFull: true });
     expect(await expectFresh()).not.toBe(before);
+  });
+});
+
+describe("investigationOutputOfCase (#1887)", () => {
+  it("gives the whole-case output from the kept sums, without the full per-row listing", async () => {
+    await store.save(seeded());
+    await investigationFingerprintOfCase(store, "c1"); // seed the kept sums
+    const listing = vi.spyOn(store, "factsFingerprint");
+    const out = await investigationOutputOfCase(store, "c1");
+    expect(listing).not.toHaveBeenCalled();
+    expect(out).toEqual(investigationOutput(await store.load("c1")));
+  });
+
+  it("gives the same output from the full listing when the kept sums cannot answer", async () => {
+    await store.save(seeded());
+    const listingOnly = Object.assign(Object.create(store) as StateStore, {
+      factsFingerprintV3: async () => ({ needsFull: true as const }),
+    });
+    expect(await investigationOutputOfCase(listingOnly, "c1")).toEqual(
+      investigationOutput(await store.load("c1")),
+    );
+  });
+
+  it("loads the case on a store without row facts", async () => {
+    const state = seeded();
+    const plain = { load: async () => state } as never;
+    expect(await investigationOutputOfCase(plain, "c1")).toEqual(investigationOutput(state));
+  });
+
+  it("gives the empty case's output for a case with no state", async () => {
+    expect(await investigationOutputOfCase(store, "c1")).toEqual(investigationOutput(emptyState("c1")));
   });
 });
 

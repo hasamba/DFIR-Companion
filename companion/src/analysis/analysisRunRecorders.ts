@@ -2,8 +2,8 @@ import type { EnrichSummary } from "../enrichment/enrichService.js";
 import type { AIProvider } from "../providers/provider.js";
 import type { AnonPolicy } from "./anonymize.js";
 import { claimSnapshot, hashManifestValue } from "./analysisRunHash.js";
-import { investigationOutput } from "./analysisRunSnapshot.js";
 import type { AnalysisRunStore } from "./analysisRunStore.js";
+import type { AnalysisRunOutput } from "./analysisRunTypes.js";
 import type { ScopeWindow } from "./scope.js";
 import type { InvestigationState, Severity } from "./stateTypes.js";
 import type { SynthesisCoverage } from "./synthMeta.js";
@@ -227,8 +227,15 @@ interface EnrichmentRecord {
   force: boolean;
   maxIocs: number;
   delayMs: number;
-  inputState: InvestigationState;
-  outputState: InvestigationState;
+  /**
+   * The process events the chain validation looked at (every event with processName and
+   * parentName), or none when no chain-capable provider ran: the run then read no events (#1887).
+   */
+  eventIds: string[];
+  /** The IOCs the run considered. */
+  iocIds: string[];
+  /** The case as saved, from investigationOutput or investigationOutputOfCase. */
+  output: AnalysisRunOutput;
   summary: EnrichSummary;
 }
 
@@ -249,10 +256,8 @@ export async function recordEnrichmentRun(
     },
     input: {
       artifacts: [],
-      eventIds: input.inputState.forensicTimeline
-        .filter((event) => event.processName && event.parentName)
-        .map((event) => event.id),
-      entityIds: input.inputState.iocs.map((ioc) => ioc.id),
+      eventIds: input.eventIds,
+      entityIds: input.iocIds,
     },
     configuration: {
       provider: input.providerNames.join(","),
@@ -278,6 +283,6 @@ export async function recordEnrichmentRun(
         ...(input.summary.capped ? [`${input.summary.capped} IOC(s) deferred by maxIocs`] : []),
       ],
     },
-    output: investigationOutput(input.outputState),
+    output: input.output,
   });
 }

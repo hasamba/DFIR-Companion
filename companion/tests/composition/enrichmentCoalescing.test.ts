@@ -64,15 +64,15 @@ async function harness(opts: { blockLookups?: boolean } = {}) {
   // the test cannot tell "queried once" from "queried twice against a frozen snapshot".
   let current: InvestigationState = { ...emptyState(CASE_ID), iocs: [ioc("ioc-1", "evilcorp.com")] };
   let loads = 0;
-  const stateStore = {
-    load: async () => {
-      loads++;
-      return { ...current, iocs: [...current.iocs] };
-    },
-    save: async (next: InvestigationState) => {
-      current = next;
-    },
+  const load = async () => {
+    loads++;
+    return { ...current, iocs: [...current.iocs] };
   };
+  const save = async (next: InvestigationState) => {
+    current = next;
+  };
+  // Without a chain provider enrichment reads and writes only the overview (#1887).
+  const stateStore = { load, save, loadOverview: load, saveOverview: save };
   const addIoc = (id: string, value: string): void => {
     current = { ...current, iocs: [...current.iocs, ioc(id, value)] };
   };
