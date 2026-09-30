@@ -7,6 +7,7 @@ import { type ForensicEvent, type InvestigationState, emptyState } from "./state
 import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
 import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
+import { IocJournalReader, type IocOutline } from "./iocJournal.js";
 import {
   EMPTY_OUTLINE,
   type ForensicOutline,
@@ -197,9 +198,13 @@ export interface CapturedBaseline {
   unfresh?: number[] | null;
   /** With a facts stamp: the highest row id at capture (readImportJournal's fence). */
   fence?: number;
+  /** With a facts stamp: the IOCs as ids in order; the overview's IOC list is then empty (#1874). */
+  iocOutline?: IocOutline;
 }
 
 export class StateStore implements InvestigationStateStorage, ForensicRowStore {
+  /** #1874: the import journal's IOC side (analysis/iocJournal.ts). */
+  readonly iocJournal = new IocJournalReader((caseId) => this.databasePath(caseId));
   private readonly readLegacyFile: (path: string) => Promise<string>;
   private readonly hasInjectedReader: boolean;
   private readonly operationalMetrics?: OperationalMetricsStore;
@@ -501,12 +506,19 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
       outline: ForensicOutline;
       unfresh?: number[] | null;
       fence?: number;
+      iocOutline?: IocOutline;
     } | null>({ op: "captureImportBaseline", dbPath: this.databasePath(caseId), token, factsStamp });
     if (!got) return null;
     const overview = { ...emptyState(caseId), ...(got.overview ?? {}), caseId };
     return got.unfresh === undefined
       ? { overview, outline: got.outline }
-      : { overview, outline: got.outline, unfresh: got.unfresh, fence: got.fence };
+      : {
+          overview,
+          outline: got.outline,
+          unfresh: got.unfresh,
+          fence: got.fence,
+          iocOutline: got.iocOutline,
+        };
   }
 
   // ── #1874: per-row facts (analysis/caseSqliteWorkerFacts.ts; computed by analysis/rowFacts.ts) ──

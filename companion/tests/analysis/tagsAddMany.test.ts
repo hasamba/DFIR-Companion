@@ -1,4 +1,4 @@
-// TagsStore.addMany (#1874): the automatic tagger writes an import's tags in ONE load and ONE save.
+// TagsStore.addMany (#1874): the automatic tagger writes an import's tags in ONE lookup and ONE insert.
 // Adding them one at a time re-read, re-validated and rewrote the whole tags file per tag, so a
 // rule that matched 20,000 rows of one import spent minutes in the tag loop and the cost grew with
 // the square of the tag count. The batch keeps add()'s rules exactly: normalized labels, one tag
@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { TagsStore, type EventProtectionSink } from "../../src/analysis/tags.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 
 describe("TagsStore.addMany", () => {
   let cases: CaseStore;
@@ -41,18 +42,20 @@ describe("TagsStore.addMany", () => {
     expect(new Set(all.map((t) => t.id)).size).toBe(3);
   });
 
-  it("writes the file once for the whole batch", async () => {
+  it("writes the whole batch in one insert, and nothing when nothing is new", async () => {
     const inputs = Array.from({ length: 500 }, (_, i) => ({
       targetType: "event",
       targetId: `e${i}`,
       author: "tagger:r1",
       label: "x",
     }));
-    const save = vi.spyOn(store as unknown as { save: (...a: unknown[]) => Promise<void> }, "save");
+    const request = vi.spyOn(caseSqliteWorker, "request");
+    const inserts = () => request.mock.calls.filter(([m]) => m.op === "tagsInsert").length;
     expect(await store.addMany("c1", inputs)).toHaveLength(500);
-    expect(save).toHaveBeenCalledTimes(1);
+    expect(inserts()).toBe(1);
     expect(await store.addMany("c1", inputs)).toEqual([]);
-    expect(save).toHaveBeenCalledTimes(1); // nothing new → no write
+    expect(inserts()).toBe(1); // nothing new → no write
+    request.mockRestore();
   });
 
   it("protects analyst event tags, never tagger tags, before the save", async () => {

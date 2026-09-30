@@ -12,6 +12,64 @@ const FACTS_REQUEUE =
   "UPDATE row_facts_seq SET n = n + 1 WHERE id = 1; DELETE FROM row_facts WHERE row_id = new.row_id; " +
   "INSERT OR REPLACE INTO row_facts_pending(row_id, seq) VALUES (new.row_id, (SELECT n FROM row_facts_seq WHERE id = 1));";
 
+// #1874: the IOC side of the import journal, and the indexes that let an import find IOC rows without
+// reading every IOC payload. The journal copies the stored image of an IOC row the first time it is
+// written or deleted while an import section holds the journal armed (import_journal_arm), exactly
+// like the forensic journal above; the settle's IOC diff and the undo checkpoint read only those rows
+// (analysis/iocJournal.ts). The indexes are partial (kind='iocs') and every query that relies on one
+// names it with INDEXED BY: without ANALYZE statistics SQLite's planner prefers (kind, entity_id).
+//  - value: lower() of the stored value, for value lookups (merge candidates, diff holders);
+//  - odd: IOCs whose value is not text or not printable ASCII (lower() folds ASCII only);
+//  - bad id: IOCs whose id is not a non-empty string (their entity_id is not their id);
+//  - seq: ids shaped i<digits>, by number, so the next IOC sequence is one index probe.
+export const IOC_ODD_VALUE_WHERE =
+  "kind='iocs' AND (json_type(payload, '$.value') IS NOT 'text' OR json_extract(payload, '$.value') GLOB '*[^ -~]*')";
+export const IOC_BAD_ID_WHERE =
+  "kind='iocs' AND (json_type(payload, '$.id') IS NOT 'text' OR json_extract(payload, '$.id') = '')";
+export const IOC_SEQ_WHERE =
+  "kind='iocs' AND entity_id GLOB 'i[0-9]*' AND NOT substr(entity_id, 2) GLOB '*[^0-9]*'";
+const IOC_JOURNAL_SQL =
+  "CREATE TABLE IF NOT EXISTS import_journal_ioc (row_id INTEGER PRIMARY KEY, entity_id TEXT, payload TEXT NOT NULL);" +
+  "CREATE TRIGGER IF NOT EXISTS entities_journal_ioc_update BEFORE UPDATE OF payload ON entities " +
+  "WHEN old.kind = 'iocs' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
+  "INSERT OR IGNORE INTO import_journal_ioc(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_journal_ioc_delete BEFORE DELETE ON entities " +
+  "WHEN old.kind = 'iocs' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
+  "INSERT OR IGNORE INTO import_journal_ioc(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +
+  "CREATE INDEX IF NOT EXISTS entities_ioc_value_idx ON entities(lower(json_extract(payload, '$.value'))) WHERE kind='iocs';" +
+  `CREATE INDEX IF NOT EXISTS entities_ioc_odd_idx ON entities(ordinal) WHERE ${IOC_ODD_VALUE_WHERE};` +
+  `CREATE INDEX IF NOT EXISTS entities_ioc_badid_idx ON entities(ordinal) WHERE ${IOC_BAD_ID_WHERE};` +
+  `CREATE INDEX IF NOT EXISTS entities_ioc_seq_idx ON entities(CAST(substr(entity_id, 2) AS INTEGER)) WHERE ${IOC_SEQ_WHERE};`;
+
+// #1874: analyst and tagger tags (analysis/tags.ts; worker ops in caseSqliteWorkerTags.ts), moved here
+// from state/tags.json so a tagger batch writes only its new rows. `seq` is the list order the file
+// had. No UNIQUE constraint: a legacy file can hold duplicate rows, and load() has always returned
+// them; TagsStore's own lookup keeps new ones unique per (target, label). tags_protect_gen moves
+// whenever an ANALYST event tag is added or removed (tagger tags never protect a raw row): the
+// super-timeline store re-derives its protection when it differs from the value it last synced.
+// 'tagger:' is TAGGER_AUTHOR_PREFIX (analysis/superTimeline.ts); a test pins the two together.
+export const TAGGER_PREFIX_SQL = "tagger:";
+const ANALYST_EVENT = (row: string): string =>
+  `${row}.target_type = 'event' AND substr(${row}.author, 1, ${TAGGER_PREFIX_SQL.length}) <> '${TAGGER_PREFIX_SQL}'`;
+const TAGS_SQL =
+  "CREATE TABLE IF NOT EXISTS tags (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL, target_type TEXT NOT NULL, " +
+  "target_id TEXT NOT NULL, label TEXT NOT NULL, author TEXT NOT NULL, created_at TEXT NOT NULL);" +
+  "CREATE INDEX IF NOT EXISTS tags_target_idx ON tags(target_type, target_id, label);" +
+  "CREATE INDEX IF NOT EXISTS tags_id_idx ON tags(id);" +
+  "CREATE TABLE IF NOT EXISTS tags_protect_gen (id INTEGER PRIMARY KEY CHECK (id = 1), n INTEGER NOT NULL);" +
+  "INSERT OR IGNORE INTO tags_protect_gen(id, n) VALUES (1, 0);" +
+  `CREATE TRIGGER IF NOT EXISTS tags_protect_insert AFTER INSERT ON tags WHEN ${ANALYST_EVENT("new")} BEGIN ` +
+  "UPDATE tags_protect_gen SET n = n + 1 WHERE id = 1; END;" +
+  `CREATE TRIGGER IF NOT EXISTS tags_protect_delete AFTER DELETE ON tags WHEN ${ANALYST_EVENT("old")} BEGIN ` +
+  "UPDATE tags_protect_gen SET n = n + 1 WHERE id = 1; END;" +
+  // An analyst event tag between its protect call and its insert: the targets TagsStore planned to
+  // add, stamped with the writer thread that planned them. The super-timeline re-derive keeps these
+  // protected while that writer lives (a concurrent re-derive must not release a row whose tag is
+  // one step from landing) and drops them as stale under any other writer (the process died between
+  // the two steps, so the protection names a tag that never got written).
+  "CREATE TABLE IF NOT EXISTS tags_protect_pending (target_id TEXT NOT NULL, boot TEXT NOT NULL, " +
+  "PRIMARY KEY(target_id, boot)) WITHOUT ROWID;";
+
 export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE TABLE IF NOT EXISTS storage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);CREATE TABLE IF NOT EXISTS entities (row_id INTEGER PRIMARY KEY,kind TEXT NOT NULL,entity_id TEXT,ordinal INTEGER NOT NULL,version INTEGER NOT NULL DEFAULT 1,timestamp TEXT,timestamp_ms INTEGER,host TEXT,source TEXT,severity TEXT,content_key TEXT,payload TEXT NOT NULL,UNIQUE(kind, ordinal));CREATE INDEX IF NOT EXISTS entities_time_idx ON entities(kind, timestamp_ms, row_id);CREATE INDEX IF NOT EXISTS entities_host_idx ON entities(kind, host);CREATE INDEX IF NOT EXISTS entities_source_idx ON entities(kind, source);CREATE INDEX IF NOT EXISTS entities_severity_idx ON entities(kind, severity);CREATE INDEX IF NOT EXISTS entities_id_idx ON entities(kind, entity_id);CREATE INDEX IF NOT EXISTS entities_content_idx ON entities(kind, content_key);CREATE TABLE IF NOT EXISTS entity_counts (kind TEXT PRIMARY KEY,count INTEGER NOT NULL);CREATE TABLE IF NOT EXISTS entity_values (row_id INTEGER NOT NULL REFERENCES entities(row_id) ON DELETE CASCADE,name TEXT NOT NULL,value TEXT NOT NULL,kind TEXT NOT NULL,host TEXT,ordinal INTEGER NOT NULL,PRIMARY KEY(row_id, name, value));CREATE INDEX IF NOT EXISTS entity_values_lookup_idx ON entity_values(name, value, kind, ordinal, row_id);CREATE INDEX IF NOT EXISTS entity_values_host_lookup_idx ON entity_values(name, value, kind, host, ordinal, row_id);CREATE TABLE IF NOT EXISTS super_labels (event_id TEXT NOT NULL,label TEXT NOT NULL,PRIMARY KEY(event_id, label));CREATE TABLE IF NOT EXISTS super_protected (event_id TEXT PRIMARY KEY);CREATE TABLE IF NOT EXISTS super_set_aside (event_id TEXT PRIMARY KEY);" +
   // #1535: the rows a NAMED rule deliberately graded Info. Not protection — the cap still
@@ -94,4 +152,6 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE TRIGGER IF NOT EXISTS entities_facts_update AFTER UPDATE OF payload ON entities " +
   "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
   FACTS_REQUEUE +
-  " END;";
+  " END;" +
+  IOC_JOURNAL_SQL +
+  TAGS_SQL;

@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import type { TimelineDiff } from "../analysis/timelineDiff.js";
-import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
+import type { IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
-import { settleTimelineDiff } from "./importSettleDiff.js";
+import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { capBuildTimeScoped } from "./importSettleCap.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
@@ -219,7 +219,7 @@ export async function settleForensicImport(
     `demote buildTimeCapped=${capped} forensicBeforeDemote=${forensicCount + demoted.removed} ` +
       `forensicAfterDemote=${forensicCount}`,
   );
-  const iocsDiff = diffIocs(baseline.overview.iocs, (await store.loadOverview(caseId)).iocs);
+  const iocsDiff = await settleIocsDiff(store, caseId, baseline);
   const addedIds = [...new Set(added.map((e) => e.id))];
   const addedEvents = async (): Promise<ForensicEvent[]> =>
     addedIds.length ? (await store.forensicRowsById(caseId, addedIds)).map((r) => r.event) : [];

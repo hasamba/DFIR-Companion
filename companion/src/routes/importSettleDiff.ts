@@ -1,5 +1,7 @@
 import { outlineEvents, type ForensicRowStore, type JournalEntry } from "../analysis/forensicRows.js";
-import type { ImportBaseline } from "../analysis/importBaseline.js";
+import { iocJournalRef, type ImportBaseline } from "../analysis/importBaseline.js";
+import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
+import { iocsDiffFromJournal } from "../analysis/iocJournalDiff.js";
 import { diffTimeline, type DiffEvent, type TimelineDiff } from "../analysis/timelineDiff.js";
 import {
   diffKeyDigest,
@@ -48,6 +50,23 @@ export async function settleTimelineDiff(
   if (!journal) throw new ImportJournalLostError(caseId);
   const timelineDiff = await diffFromRows(store, caseId, baseline, after.rowIds, journal);
   return { timelineDiff, forensicCount: after.ids.length };
+}
+
+/**
+ * The settle's IOC diff against the import's baseline (#1874): diffIocs over the whole IOC list before
+ * and after, computed from the IOC journal when the baseline holds the IOCs as an outline
+ * (analysis/iocJournal.ts). A legacy baseline that holds the list itself keeps the full diff.
+ */
+export async function settleIocsDiff(
+  store: ForensicRowStore,
+  caseId: string,
+  baseline: ImportBaseline,
+): Promise<IocsDiff> {
+  const ref = iocJournalRef(baseline);
+  if (!ref) return diffIocs(baseline.overview.iocs, (await store.loadOverview(caseId)).iocs);
+  const diff = store.iocJournal ? await iocsDiffFromJournal(store.iocJournal, ref) : null;
+  if (!diff) throw new ImportJournalLostError(caseId);
+  return diff;
 }
 
 type Row = { timestamp: unknown; description: unknown; severity: unknown };

@@ -7,6 +7,8 @@ import { SAVE_STATE_WORKER_SOURCE } from "./caseSqliteWorkerSaveState.js";
 import { ROWS_WORKER_SOURCE } from "./caseSqliteWorkerRows.js";
 import { MERGE_WORKER_SOURCE } from "./caseSqliteWorkerMerge.js";
 import { FACTS_WORKER_SOURCE } from "./caseSqliteWorkerFacts.js";
+import { IOC_WORKER_SOURCE } from "./caseSqliteWorkerIoc.js";
+import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -593,6 +595,8 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   ROWS_WORKER_SOURCE +
   MERGE_WORKER_SOURCE +
   FACTS_WORKER_SOURCE +
+  IOC_WORKER_SOURCE +
+  TAGS_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -726,7 +730,7 @@ async function dispatch(message) {
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);
-    default: return dispatchMerge(message); // #1874: caseSqliteWorkerMerge.ts, caseSqliteWorkerRows.ts, caseSqliteWorkerFacts.ts
+    default: return dispatchMerge(message); // #1874: caseSqliteWorkerMerge.ts, caseSqliteWorkerRows.ts, caseSqliteWorkerFacts.ts, …Ioc.ts, …Tags.ts
   }
 }
 

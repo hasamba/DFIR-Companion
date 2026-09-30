@@ -1,18 +1,19 @@
-import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
-import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import { TAGGER_AUTHOR_PREFIX } from "./superTimeline.js";
+import { caseSqliteWorker } from "./caseSqliteWorker.js";
+import { tagPaths } from "./tagsDatabase.js";
 
 // Analyst tags (triage labels) attached to any case entity (a forensic event, finding, IOC,
 // key question, asset…), so investigators can hand-label evidence — "confirmed-malicious",
 // "false-positive", "needs-review", "key-evidence", "pivot-point", … — independently of the
-// AI-assigned severity/MITRE. Kept in a per-case side file (`state/tags.json`) — NOT in
-// InvestigationState, so synthesis never wipes them. A tag targets `(targetType, targetId)`;
-// the dashboard matches them to rendered entities and shows them as inline chips.
+// AI-assigned severity/MITRE. Kept apart from InvestigationState, so synthesis never wipes them:
+// since #1874 in the case database's own `tags` table (worker ops in caseSqliteWorkerTags.ts),
+// migrated once from the old per-case side file `state/tags.json`, which is left in place. A tag
+// targets `(targetType, targetId)`; the dashboard matches them to rendered entities and shows them
+// as inline chips.
 
 export const tagSchema = z.object({
   id: z.string(),
@@ -24,7 +25,6 @@ export const tagSchema = z.object({
 });
 
 export type Tag = z.infer<typeof tagSchema>;
-const tagsSchema = z.array(tagSchema).catch([]);
 
 export interface NewTag {
   targetType: string;
@@ -71,11 +71,20 @@ function protectsEvent(tag: Pick<Tag, "targetType" | "author">): boolean {
   return tag.targetType === "event" && !tag.author.startsWith(TAGGER_AUTHOR_PREFIX);
 }
 
+interface TagPlan {
+  fresh: number[]; // input indexes that are new, in input order
+  first: Tag | null; // the stored tag for input 0 when it is not new
+}
+
+interface TagRemoval {
+  removed: Tag | null;
+  release: string[]; // analyst event targets no remaining analyst event tag names
+}
+
 export class TagsStore {
-  // Serializes this case's load->modify->save section (#216). Guards tags.json only — a PRIVATE
-  // lock, like HypothesisStore's, so it can never contend with the investigation-state lock.
-  // It also makes add()'s duplicate check meaningful: without it, two identical tags arriving
-  // together both saw "no duplicate" and both were written.
+  // Serializes this case's plan->protect->insert section (#216), so add()'s duplicate check holds:
+  // without it, two identical tags arriving together both saw "no duplicate" and both were written.
+  // A PRIVATE lock, like HypothesisStore's, so it can never contend with the investigation-state lock.
   private readonly lock = new StateLock();
 
   constructor(
@@ -83,32 +92,48 @@ export class TagsStore {
     private readonly protection?: EventProtectionSink,
   ) {}
 
-  // Drop protection for each target that no analyst event tag names any more. Runs after the
-  // tags file is saved, so a reader never sees a protected row whose tag is already gone.
-  private async releaseUnreferenced(caseId: string, removed: Tag[], remaining: Tag[]): Promise<void> {
+  private request<T>(caseId: string, message: Record<string, unknown>): Promise<T> {
+    return caseSqliteWorker.request<T>({ ...message, ...tagPaths(this.cases.stateDir(caseId)) });
+  }
+
+  // Drop protection for each released target. Runs after the tags are deleted, so a reader never sees
+  // a protected row whose tag is already gone.
+  private async release(caseId: string, targetIds: readonly string[]): Promise<void> {
     if (!this.protection) return;
-    const stillHeld = new Set(remaining.filter(protectsEvent).map((t) => t.targetId));
-    const released = new Set(removed.filter(protectsEvent).map((t) => t.targetId));
-    for (const targetId of released) {
-      if (!stillHeld.has(targetId)) await this.protection.unprotect(caseId, targetId);
-    }
+    for (const targetId of targetIds) await this.protection.unprotect(caseId, targetId);
   }
 
-  private path(caseId: string): string {
-    return join(this.cases.stateDir(caseId), "tags.json");
-  }
-
+  // One read op; the writer is asked to migrate tags.json first only when the database has not yet.
   async load(caseId: string): Promise<Tag[]> {
+    const listed = await this.request<Tag[] | { migrate: true }>(caseId, { op: "tagsList" });
+    if (Array.isArray(listed)) return listed;
+    await this.request<void>(caseId, { op: "tagsEnsure" });
+    const again = await this.request<Tag[] | { migrate: true }>(caseId, { op: "tagsList" });
+    return Array.isArray(again) ? again : [];
+  }
+
+  // Protect BEFORE the tags are inserted: a row that was already evicted reports false and the tag is
+  // still kept — most event tags name forensic-timeline events, which are never raw rows. The plan op
+  // recorded the analyst event targets as in flight, so a failure here clears that record. Returns the
+  // insert's skips: a (target, label) another TagsStore wrote since the plan.
+  private async commit(caseId: string, created: Tag[]): Promise<{ index: number; tag: Tag }[]> {
+    const guarded = this.protection ? created.filter(protectsEvent) : [];
     try {
-      return tagsSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
+      for (const tag of guarded) await this.protection?.protect(caseId, tag.targetId);
+      const { skipped } = await this.request<{ skipped: { index: number; tag: Tag }[] }>(caseId, {
+        op: "tagsInsert",
+        tags: created,
+      });
+      return skipped;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (guarded.length) {
+        await this.request<void>(caseId, {
+          op: "tagsPendingClear",
+          targetIds: guarded.map((t) => t.targetId),
+        }).catch(() => undefined);
+      }
       throw err;
     }
-  }
-
-  private async save(caseId: string, tags: Tag[]): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify(tags, null, 2));
   }
 
   // Attach a tag (server-assigned id + createdAt). The label is normalized; author falls back
@@ -119,74 +144,62 @@ export class TagsStore {
     if (!label) throw new Error("label is required");
     const targetType = String(input.targetType).trim();
     const targetId = String(input.targetId).trim();
+    const author = (input.author || "").trim() || "anonymous";
     return this.lock.runExclusive(caseId, async () => {
-      const existingTags = await this.load(caseId);
-      const dup = existingTags.find(
-        (t) => t.targetType === targetType && t.targetId === targetId && t.label === label,
-      );
-      if (dup) return dup;
+      const plan = await this.request<TagPlan>(caseId, {
+        op: "tagsPlan",
+        inputs: [{ targetType, targetId, label, author }],
+        protecting: !!this.protection,
+      });
+      if (!plan.fresh.length && plan.first) return plan.first;
       const tag: Tag = {
         id: randomUUID(),
         targetType,
         targetId,
         label,
-        author: (input.author || "").trim() || "anonymous",
+        author,
         createdAt: new Date().toISOString(),
       };
-      // Protect BEFORE the tag is saved: a row that was already evicted reports false and the tag
-      // is still kept — most event tags name forensic-timeline events, which are never raw rows.
-      if (this.protection && protectsEvent(tag)) await this.protection.protect(caseId, targetId);
-      await this.save(caseId, [...existingTags, tag]);
-      return tag;
+      const skipped = await this.commit(caseId, [tag]);
+      return skipped.length ? skipped[0].tag : tag;
     });
   }
 
-  // add() for a batch, in ONE load and ONE save (#1874) — the automatic tagger's path. Calling add()
-  // per tag re-read, re-validated and rewrote the whole file each time, so one import that tagged
-  // 20,000 rows spent minutes here. Same rules as add(): normalized labels, one tag per
-  // (target, label) with the first author winning, protection for analyst event tags. Every label
-  // is checked before anything is written. Returns the tags created, in input order; they share
-  // one createdAt, the instant of the batch.
+  // add() for a batch, in ONE lookup op and ONE insert op (#1874) — the automatic tagger's path. Its
+  // cost follows the batch, never the number of tags the case already holds. Same rules as add():
+  // normalized labels, one tag per (target, label) with the first author winning, protection for
+  // analyst event tags. Every label is checked before anything is written. Returns the tags created,
+  // in input order; they share one createdAt, the instant of the batch.
   async addMany(caseId: string, inputs: readonly NewTag[]): Promise<Tag[]> {
     if (inputs.some((input) => !normalizeLabel(input.label))) throw new Error("label is required");
     if (!inputs.length) return [];
-    // A tuple key, not a joined string: target ids are arbitrary text, so a separator can collide.
-    const key = (targetType: string, targetId: string, label: string) =>
-      JSON.stringify([targetType, targetId, label]);
+    const normalized = inputs.map((input) => ({
+      targetType: String(input.targetType).trim(),
+      targetId: String(input.targetId).trim(),
+      label: normalizeLabel(input.label),
+      author: (input.author || "").trim() || "anonymous",
+    }));
     return this.lock.runExclusive(caseId, async () => {
-      const existingTags = await this.load(caseId);
-      const seen = new Set(existingTags.map((t) => key(t.targetType, t.targetId, t.label)));
+      const plan = await this.request<TagPlan>(caseId, {
+        op: "tagsPlan",
+        inputs: normalized,
+        protecting: !!this.protection,
+      });
+      if (!plan.fresh.length) return [];
       const createdAt = new Date().toISOString();
-      const created: Tag[] = [];
-      for (const input of inputs) {
-        const targetType = String(input.targetType).trim();
-        const targetId = String(input.targetId).trim();
-        const label = normalizeLabel(input.label);
-        const k = key(targetType, targetId, label);
-        if (seen.has(k)) continue;
-        seen.add(k);
-        const author = (input.author || "").trim() || "anonymous";
-        created.push({ id: randomUUID(), targetType, targetId, label, author, createdAt });
-      }
-      if (!created.length) return [];
-      for (const tag of created) {
-        if (this.protection && protectsEvent(tag)) await this.protection.protect(caseId, tag.targetId);
-      }
-      await this.save(caseId, [...existingTags, ...created]);
-      return created;
+      const created: Tag[] = plan.fresh.map((i) => ({ id: randomUUID(), ...normalized[i], createdAt }));
+      const skipped = new Set((await this.commit(caseId, created)).map((s) => s.index));
+      return created.filter((_, i) => !skipped.has(i));
     });
   }
 
   // Remove one tag by id; returns the removed tag (so callers can inspect its label), or null if
-  // no tag with that id existed.
+  // no tag with that id existed. Every tag carrying that id goes.
   async remove(caseId: string, tagId: string): Promise<Tag | null> {
     return this.lock.runExclusive(caseId, async () => {
-      const tags = await this.load(caseId);
-      const removed = tags.find((t) => t.id === tagId) ?? null;
+      const { removed, release } = await this.request<TagRemoval>(caseId, { op: "tagsRemove", tagId });
       if (!removed) return null;
-      const remaining = tags.filter((t) => t.id !== tagId);
-      await this.save(caseId, remaining);
-      await this.releaseUnreferenced(caseId, [removed], remaining);
+      await this.release(caseId, release);
       return removed;
     });
   }
@@ -194,38 +207,28 @@ export class TagsStore {
   // Remove the automatic tagger's tags on `targetIds` — the tags a failed bulk import wrote for the
   // rows it then rolled back (#1480). Analyst-authored tags on the same ids are never touched. The
   // caller passes only ids of rows that run inserted, so a stable-id row an earlier run owns keeps
-  // its tags. Returns how many were removed; no-op write when nothing matches.
+  // its tags. Returns how many were removed.
   async removeTaggerTagsFor(caseId: string, targetIds: readonly string[]): Promise<number> {
     const targets = new Set(targetIds);
     if (!targets.size) return 0;
-    return this.lock.runExclusive(caseId, async () => {
-      const tags = await this.load(caseId);
-      const gone = (t: Tag) =>
-        t.targetType === "event" && t.author.startsWith(TAGGER_AUTHOR_PREFIX) && targets.has(t.targetId);
-      const next = tags.filter((t) => !gone(t));
-      const removed = tags.length - next.length;
-      if (removed) await this.save(caseId, next);
-      return removed;
-    });
+    // A tag's targetId is a string, so any other value never matched one.
+    const ids = [...targets].filter((id): id is string => typeof id === "string");
+    return this.lock.runExclusive(caseId, () =>
+      this.request<number>(caseId, { op: "tagsRemoveTaggerFor", targetIds: ids }),
+    );
   }
 
-  // Remove every tag whose author starts with `prefix` in a single load+save; returns how many were
-  // removed. Backs the tagger's "Clear tagger tags" (prefix "tagger:") so a noisy ruleset is fully
-  // reversible WITHOUT touching analyst-authored tags. No-op write when nothing matches.
+  // Remove every tag whose author starts with `prefix`; returns how many were removed. Backs the
+  // tagger's "Clear tagger tags" (prefix "tagger:") so a noisy ruleset is fully reversible WITHOUT
+  // touching analyst-authored tags.
   async removeByAuthorPrefix(caseId: string, prefix: string): Promise<number> {
     return this.lock.runExclusive(caseId, async () => {
-      const tags = await this.load(caseId);
-      const next = tags.filter((t) => !t.author.startsWith(prefix));
-      const removed = tags.length - next.length;
-      if (removed) {
-        await this.save(caseId, next);
-        await this.releaseUnreferenced(
-          caseId,
-          tags.filter((t) => t.author.startsWith(prefix)),
-          next,
-        );
-      }
-      return removed;
+      const { count, release } = await this.request<{ count: number; release: string[] }>(caseId, {
+        op: "tagsRemoveByPrefix",
+        prefix: String(prefix),
+      });
+      if (count) await this.release(caseId, release);
+      return count;
     });
   }
 }

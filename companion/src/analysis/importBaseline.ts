@@ -3,6 +3,7 @@ import { emptyState, type InvestigationState } from "./stateTypes.js";
 import { EMPTY_OUTLINE, type ForensicOutline } from "./forensicRows.js";
 import type { StateStore } from "./stateStore.js";
 import { rowFactsStamp } from "./rowFacts.js";
+import type { IocJournalRef, IocOutline } from "./iocJournal.js";
 
 /**
  * What an import compares itself against (#1874), in place of a full copy of the case held from the
@@ -36,6 +37,11 @@ export interface ImportBaseline {
   unfresh?: number[] | null;
   /** The highest row id at capture: a journaled row above it was inserted by the import (#1874). */
   journalFence?: number;
+  /**
+   * The IOCs at capture as ids in order (#1874). When set, `overview.iocs` is empty: the IOC diff and
+   * the undo checkpoint read the IOC journal instead (analysis/iocJournal.ts).
+   */
+  iocOutline?: IocOutline;
   /** The full pre-import state, only when a legacy caller supplied one. */
   full?: InvestigationState;
 }
@@ -57,6 +63,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
       journalToken: null,
       empty: true,
       unfresh: [],
+      iocOutline: { rowIds: [], ids: [], objects: 0 },
     };
   }
   return {
@@ -68,6 +75,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
     empty: false,
     unfresh: captured.unfresh ?? null,
     ...(captured.fence === undefined ? {} : { journalFence: captured.fence }),
+    ...(captured.iocOutline ? { iocOutline: captured.iocOutline } : {}),
   };
 }
 
@@ -112,6 +120,19 @@ export function toImportBaseline(before: InvestigationState | ImportBaseline): I
 export function baselineEntityIds(baseline: ImportBaseline): string[] {
   return [
     ...baseline.outline.ids.filter((id): id is string => typeof id === "string"),
-    ...baseline.overview.iocs.map((ioc) => ioc.id),
+    ...(baseline.iocOutline
+      ? (baseline.iocOutline.ids as string[])
+      : baseline.overview.iocs.map((ioc) => ioc.id)),
   ];
+}
+
+/** Where a baseline's IOC journal is, when it carries an IOC outline (#1874). */
+export function iocJournalRef(baseline: ImportBaseline): IocJournalRef | null {
+  if (!baseline.iocOutline) return null;
+  return {
+    caseId: baseline.caseId,
+    token: baseline.empty ? null : baseline.journalToken,
+    ...(baseline.journalFence === undefined ? {} : { fence: baseline.journalFence }),
+    before: baseline.iocOutline,
+  };
 }

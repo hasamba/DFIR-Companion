@@ -230,7 +230,7 @@ function dispatchFacts(message) {
     case "factsCandidates": return factsCandidates(message.dbPath, message.stamp, message.mode);
     case "forensicKeyFields": return forensicKeyFields(message.dbPath, message.rowIds);
     case "factsKeyHolders": return factsKeyHolders(message.dbPath, message.stamp, message.keys, message.exclude);
-    default: throw new Error("unknown SQLite worker operation: " + message.op);
+    default: return dispatchIoc(message); // caseSqliteWorkerIoc.ts
   }
 }
 `;

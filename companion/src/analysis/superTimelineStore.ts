@@ -193,7 +193,8 @@ export class SuperTimelineStore {
     return join(this.cases.stateDir(caseId), "super-timeline-labels.json");
   }
 
-  // TagsStore's side file; read by the worker only to seed protection at migration time.
+  // TagsStore's old side file: the worker migrates it into the case's tag table (#1874) before it
+  // reads that table for protection.
   private tagsPath(caseId: string): string {
     return join(this.cases.stateDir(caseId), "tags.json");
   }

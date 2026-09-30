@@ -160,30 +160,56 @@ function mergeIdCounts(dbPath, ids) {
 // The IOCs a delta's values could match (case-insensitively, or by alias-target id), in list order,
 // plus the next canonical i### sequence over EVERY IOC. SQLite's lower() folds ASCII only, so every
 // stored value with a character outside printable ASCII (or not a string at all) is returned too; the
-// merge applies the exact test.
+// merge applies the exact test. Each branch reads one index (#1874; IOC indexes in caseSqliteSchema.ts,
+// named because the planner would scan every IOC without ANALYZE statistics): an IOC whose id is a
+// non-empty string has it as entity_id, and every other IOC is in the bad-id index.
 function mergeIocCandidates(dbPath, lowered, aliasIds) {
   if (!existsSync(dbPath)) return { rows: [], nextSeq: 1 };
   const db = openDatabase(dbPath);
   try {
+    const columns = "SELECT row_id, ordinal, version, payload FROM entities ";
+    const byId = "json_extract(payload, '$.id') IN (SELECT value FROM json_each(?1))";
     const rows = db.prepare(
-      "SELECT row_id, ordinal, version, payload FROM entities WHERE kind='iocs' AND (" +
-      "json_extract(payload, '$.id') IN (SELECT value FROM json_each(?)) OR " +
-      "lower(json_extract(payload, '$.value')) IN (SELECT value FROM json_each(?)) OR " +
-      "json_type(payload, '$.value') IS NOT 'text' OR json_extract(payload, '$.value') GLOB '*[^ -~]*'" +
-      ") ORDER BY ordinal"
+      columns + "INDEXED BY entities_id_idx WHERE kind='iocs' AND entity_id IN (SELECT value FROM json_each(?1)) AND " + byId +
+      " UNION " + columns + "INDEXED BY entities_ioc_badid_idx WHERE " + IOC_BAD_ID_WHERE + " AND " + byId +
+      " UNION " + columns + "INDEXED BY entities_ioc_value_idx WHERE kind='iocs' AND " +
+      "lower(json_extract(payload, '$.value')) IN (SELECT value FROM json_each(?2))" +
+      " UNION " + columns + "INDEXED BY entities_ioc_odd_idx WHERE " + IOC_ODD_VALUE_WHERE +
+      " ORDER BY ordinal"
     ).all(JSON.stringify(aliasIds || []), JSON.stringify(lowered || []));
-    let max = 0;
-    for (const row of db.prepare("SELECT json_extract(payload, '$.id') AS id FROM entities WHERE kind='iocs'").iterate()) {
-      const m = /^i(\d+)$/.exec(row.id);
-      if (m) max = Math.max(max, parseInt(m[1], 10));
-    }
     return {
       rows: rows.map((r) => ({ rowId: Number(r.row_id), ordinal: Number(r.ordinal), version: Number(r.version), payload: r.payload })),
-      nextSeq: max + 1,
+      nextSeq: nextIocSeq(db) + 1,
     };
   } finally {
     db.close();
   }
+}
+
+// The highest i<digits> IOC id, as a scan of every id with /^i(\d+)$/ and parseInt finds it. The seq
+// index holds every IOC whose entity_id has that shape, highest number first; the first whose payload
+// id is that entity_id (not a value standing in for a missing id) is the answer. A number past 2^53
+// sorts first (SQLite's CAST saturates at 2^63) and sends it to the scan, where parseInt decides.
+function nextIocSeq(db) {
+  for (const row of db.prepare(
+    "SELECT entity_id, json_extract(payload, '$.id') AS id " +
+    "FROM entities INDEXED BY entities_ioc_seq_idx WHERE " + IOC_SEQ_WHERE + " ORDER BY CAST(substr(entity_id, 2) AS INTEGER) DESC"
+  ).iterate()) {
+    if (row.id !== row.entity_id) continue;
+    const n = parseInt(row.id.slice(1), 10);
+    if (Number.isSafeInteger(n)) return n;
+    return fullIocSeqScan(db);
+  }
+  return 0;
+}
+
+function fullIocSeqScan(db) {
+  let max = 0;
+  for (const row of db.prepare("SELECT json_extract(payload, '$.id') AS id FROM entities WHERE kind='iocs'").iterate()) {
+    const m = /^i(\d+)$/.exec(row.id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
 }
 
 // IOCs whose extractedFrom cites one of these event ids, in list order.

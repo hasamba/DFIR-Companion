@@ -6,6 +6,12 @@ import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "../analysis/stateStore.js";
 import type { CaseStore } from "./caseStore.js";
 import { beginCaseWrite, withCaseWrite } from "./caseIncarnation.js";
+import {
+  TAGS_FILENAME,
+  restoreTagsAfterBackup,
+  tagsForBackup,
+  tagsToCarry,
+} from "../analysis/tagsDatabase.js";
 
 export type BackupTrigger = "pre-synthesis" | "pre-import" | "scheduled" | "shutdown";
 
@@ -231,6 +237,12 @@ export class BackupManager {
       // into every backup. It can be near V8's string ceiling; the consistent database snapshot
       // above is the complete current state. Pre-migration cases still back up the legacy JSON.
       if (name === "investigation.json" && binaryFiles[INVESTIGATION_DB_FILENAME]) continue;
+      // The tags live in the case database once migrated (#1874); the entry keeps its old name.
+      if (name === TAGS_FILENAME) {
+        const tags = await tagsForBackup(stateDir, (path) => this.deps.readFile(path, "utf8"));
+        if (tags.present) files[name] = tags.value;
+        continue;
+      }
       try {
         const content = await this.deps.readFile(join(stateDir, name), "utf8");
         files[name] = JSON.parse(content) as unknown;
@@ -347,6 +359,11 @@ export class BackupManager {
         throw err;
       }
     }
+    // A bundle without tags.json leaves the case's tags as they are (#1874): they live in the database
+    // the restore is about to replace, so they are read now and put back after.
+    const bundleHadTags = Object.prototype.hasOwnProperty.call(bundle.files ?? {}, TAGS_FILENAME);
+    const replacesDatabase = binaryRestores.some(({ name }) => name === INVESTIGATION_DB_FILENAME);
+    const carriedTags = !bundleHadTags && replacesDatabase ? await tagsToCarry(stateDir) : null;
     for (const { name, sidecarPath } of binaryRestores) {
       if (name === INVESTIGATION_DB_FILENAME) {
         await caseSqliteWorker.request<boolean>({
@@ -359,9 +376,8 @@ export class BackupManager {
       }
       restored.push(name);
     }
-    const restoredDatabase = binaryRestores.some(({ name }) => name === INVESTIGATION_DB_FILENAME);
     for (const [name, content] of Object.entries(bundle.files ?? {})) {
-      if (name === "investigation.json" && !restoredDatabase) {
+      if (name === "investigation.json" && !replacesDatabase) {
         if (!content || typeof content !== "object" || Array.isArray(content)) {
           throw new Error("legacy investigation backup is not a JSON object");
         }
@@ -378,6 +394,7 @@ export class BackupManager {
       await this.deps.atomicWrite(join(stateDir, name), JSON.stringify(content));
       restored.push(name);
     }
+    await restoreTagsAfterBackup(stateDir, bundleHadTags, carriedTags);
     return { restored };
   }
 

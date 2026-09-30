@@ -140,9 +140,9 @@ export async function knownHostIdentity(
   caseId: string,
 ): Promise<{ knownRenames: HostRenameRecord[]; collectorHostnames: string[] }> {
   try {
-    // The overview load skips the forensic timeline, the one array that grows with the evidence
-    // (#1874): the ledger is case metadata, so there is no need to read and hold every event.
-    const state = await ctx.opts.stateStore.loadOverview(caseId);
+    // The overview load skips the forensic timeline and the IOC list, the arrays that grow with the
+    // evidence (#1874): the ledger is case metadata, so there is no need to read and hold either.
+    const state = await ctx.opts.stateStore.loadOverviewWithoutIocs(caseId);
     return { knownRenames: state.hostRenames ?? [], collectorHostnames: state.collectorHostnames ?? [] };
   } catch {
     return { knownRenames: [], collectorHostnames: [] };
