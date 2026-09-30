@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
-import { loadHostEvidence } from "../../src/analysis/hostScopeLoad.js";
+import { loadHostEvidence, MAX_CACHED_HOST_EVIDENCE_ENTRIES } from "../../src/analysis/hostScopeLoad.js";
 import { aggregateHostEvidence, type HostEvidenceMap } from "../../src/analysis/hostScopeAggregate.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -87,6 +87,17 @@ describe("loadHostEvidence (#1881)", () => {
     await store.append("c1", [ev("e4", "WS-4")]);
     const result = await loadHostEvidence(source, "c1", index);
     expect(result.get("ws-4")?.eventCount).toBe(1); // canonical names are lower-case
+    expect(scans).toBe(2);
+  });
+
+  it("does not keep a collection with more spellings than a real case has", async () => {
+    const many = Array.from({ length: MAX_CACHED_HOST_EVIDENCE_ENTRIES + 1 }, (_, i) =>
+      ev(`x${i}`, `H-${i}`),
+    );
+    for (let i = 0; i < many.length; i += 5000) await store.append("c1", many.slice(i, i + 5000));
+    const index = buildHostAliasIndex([], {});
+    await loadHostEvidence(source, "c1", index);
+    await loadHostEvidence(source, "c1", index);
     expect(scans).toBe(2);
   });
 

@@ -417,18 +417,21 @@ export class SuperTimelineStore {
 
   /**
    * `reduce` over every row, reused until the rows change (#1881, superTimelineMemo.ts). `name`
-   * tells results apart; the value is shared, so callers must not mutate it.
+   * tells results apart; the value is shared, so callers must not mutate it. `cacheable` refuses to
+   * hold a result too large to keep (it is still returned).
    */
   async memoizeScan<T>(
     caseId: string,
     name: string,
     reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
+    opts: { cacheable?: (value: T) => boolean } = {},
   ): Promise<T> {
     return this.scanMemo.get(
       caseId,
       name,
       async () => (await this.meta(caseId)).version,
       () => reduce(this.eventBatches(caseId)),
+      opts.cacheable,
     );
   }
 

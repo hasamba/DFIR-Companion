@@ -49,10 +49,22 @@ export interface HostEvidenceSource {
     caseId: string,
     name: string,
     reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
+    opts?: { cacheable?: (value: T) => boolean },
   ): Promise<T>;
 }
 
 const HOST_EVIDENCE_SCAN = "host-scope-evidence";
+
+// A real case has hundreds to a few thousand host spellings. Telemetry with a new spelling or peer
+// name on nearly every row would make the cached collection grow with the row count, so past this
+// many spellings plus reference edges it is used once and not kept (#1881).
+export const MAX_CACHED_HOST_EVIDENCE_ENTRIES = 20_000;
+
+function smallEnoughToCache(raw: RawHostEvidence): boolean {
+  let size = raw.assets.size;
+  for (const names of raw.references.values()) size += names.size;
+  return size <= MAX_CACHED_HOST_EVIDENCE_ENTRIES;
+}
 
 async function collectRaw(batches: AsyncIterable<ForensicEvent[]>): Promise<RawHostEvidence> {
   const raw = emptyRawHostEvidence();
@@ -69,7 +81,9 @@ export async function loadHostEvidence(
   index: HostAliasIndex,
 ): Promise<HostEvidenceMap> {
   if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
-  const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw);
+  const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
+    cacheable: smallEnoughToCache,
+  });
   return foldRawHostEvidence(raw, index);
 }
 

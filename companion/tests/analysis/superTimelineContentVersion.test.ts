@@ -185,6 +185,44 @@ describe("SuperTimelineStore.memoizeScan (#1881)", () => {
     expect(await store.memoizeScan("c1", "count", reduce)).toBe(4);
   });
 
+  it("does not cache a scan that a write and a restore to its starting state both raced", async () => {
+    await store.append("c1", [ev("e1")]);
+    const backup = join(root, "aba.sqlite");
+    await caseSqliteWorker.request({ op: "backupDatabase", dbPath: dbPath(), targetPath: backup });
+    let first = true;
+    const racing = async (batches: AsyncIterable<ForensicEvent[]>) => {
+      const n = await reduce(batches);
+      if (first) {
+        first = false;
+        await store.append("c1", [ev("e2", "WS-2")]);
+        await caseSqliteWorker.request({ op: "restoreDatabase", sourcePath: backup, targetPath: dbPath() });
+      }
+      return n;
+    };
+    await store.memoizeScan("c1", "count", racing);
+    await store.memoizeScan("c1", "count", racing);
+    expect(calls).toBe(2);
+  });
+
+  it("gives a restored database a new version", async () => {
+    await store.append("c1", [ev("e1")]);
+    const v1 = (await store.meta("c1")).version;
+    const backup = join(root, "same.sqlite");
+    await caseSqliteWorker.request({ op: "backupDatabase", dbPath: dbPath(), targetPath: backup });
+    await caseSqliteWorker.request({ op: "restoreDatabase", sourcePath: backup, targetPath: dbPath() });
+    const after = await store.meta("c1");
+    expect(after.rows).toBe(1);
+    expect(after.version).not.toBe(v1);
+  });
+
+  it("returns but does not keep a result the caller marks too large to hold", async () => {
+    await store.append("c1", [ev("e1")]);
+    const never = () => false;
+    expect(await store.memoizeScan("c1", "count", reduce, { cacheable: never })).toBe(1);
+    expect(await store.memoizeScan("c1", "count", reduce, { cacheable: never })).toBe(1);
+    expect(calls).toBe(2);
+  });
+
   it("does not cache a scan that raced an append", async () => {
     await store.append("c1", [ev("e1")]);
     let first = true;

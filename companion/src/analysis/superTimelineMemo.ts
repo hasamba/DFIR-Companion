@@ -11,7 +11,11 @@ import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 // Entries are keyed by case incarnation (CaseKeyedMap), so a deleted case's result never reaches a
 // new case with the same id, and a case delete drops them. The version is read before AND after the
 // scan: a scan that raced a write is returned to its caller but never stored, because it may hold
-// rows the version it started under does not name.
+// rows the version it started under does not name. A restore writes a fresh version too, so a scan
+// that a write and a restore back to its starting state both raced is not stored either.
+//
+// The entry count bounds how many results are held, not how large one is; a caller whose result
+// grows with the data passes `cacheable` to refuse storing an oversized one.
 
 /** At most this many (case, name) results are held; the oldest case is dropped first. */
 export const MAX_SCAN_MEMO_ENTRIES = 8;
@@ -33,6 +37,7 @@ export class SuperScanMemo {
     name: string,
     version: () => Promise<string>,
     compute: () => Promise<T>,
+    cacheable: (value: T) => boolean = () => true,
   ): Promise<T> {
     const before = await version();
     // No stamp (a store that cannot report one): compute every time, as before #1881.
@@ -40,7 +45,8 @@ export class SuperScanMemo {
     const hit = this.entries.get(caseId, name);
     if (hit && hit.version === before) return hit.value as T;
     const value = await compute();
-    if ((await version()) === before) this.remember(caseId, name, { version: before, value });
+    if (cacheable(value) && (await version()) === before)
+      this.remember(caseId, name, { version: before, value });
     return value;
   }
 

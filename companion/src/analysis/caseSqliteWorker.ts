@@ -659,6 +659,12 @@ function restoreDatabase(sourcePath, targetPath) {
     if (!copyCheck.ok) {
       throw new Error("restored database copy failed integrity_check: " + copyCheck.message);
     }
+    // A restore brings back an older content stamp, and a scan that started under that stamp may
+    // have read the rows a later write added before the restore removed them (#1881). A fresh
+    // stamp on the copy, before it goes live, means no cached scan survives a restore. A failure
+    // here aborts the restore with the current file untouched.
+    const stampDb = openDatabase(temporary);
+    try { stampSuperContent(stampDb); } finally { stampDb.close(); }
     // The pool runs this op exclusively (no reader holds the file), so renaming the checked copy
     // over the destination makes the authoritative file switch atomic without loading it into V8
     // memory. Any WAL beside the destination belongs to the OLD file and is folded in first.
