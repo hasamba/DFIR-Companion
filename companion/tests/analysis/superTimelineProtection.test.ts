@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -7,6 +7,9 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { TagsStore, type EventProtectionSink } from "../../src/analysis/tags.js";
+import { BackupManager } from "../../src/storage/backupManager.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 
 // #958 — the cap bounds UNPROTECTED rows. A row the analyst starred or tagged is protected and is
 // never evicted; the protection relation lives in the case database beside the rows it guards, so
@@ -76,34 +79,112 @@ describe("SuperTimelineStore protection (#958)", () => {
     expect(r.events.map((e) => e.id)).toEqual(["r1"]); // row0 is the oldest unprotected row, so it goes
   });
 
-  it("a tags file changed outside TagsStore (a restore) is reconciled on the next store call", async () => {
-    // tags.json and the case database are snapshotted separately, so a restore can put a star in
-    // one and not the other. The tags file is the authority: protection is re-derived from it
-    // whenever it changed since the last sync — and a dropped star releases the row to the cap.
+  it("tags put back by a restore are reconciled on the next store call", async () => {
+    // A restore can put a star in the tag table without the protection relation that goes with it
+    // (a legacy investigation.json restore never touches the super rows). The tag table is the
+    // authority: protection is re-derived from it whenever an analyst event tag came or went since
+    // the last sync — and a dropped star releases the row to the cap.
     const small = new SuperTimelineStore(cases, 1);
+    const tags = new TagsStore(cases, small);
+    const backups = new BackupManager(cases, { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes: 0 });
+    await tags.add("c1", { targetType: "ioc", targetId: "i1", author: "analyst", label: "x" });
     await small.append("c1", [dated("row0", 1)]);
-    const tagsPath = join(cases.stateDir("c1"), "tags.json");
-    await writeFile(
-      tagsPath,
-      JSON.stringify([
-        {
-          id: "t1",
-          targetType: "event",
-          targetId: "row0",
-          label: "starred",
-          author: "analyst",
-          createdAt: "2026-06-04T00:00:00Z",
-        },
-      ]),
-    );
+    const restore = async (filename: string, tagList: unknown[]) => {
+      await writeFile(
+        join(backups.backupDir("c1"), filename),
+        JSON.stringify({ files: { "investigation.json": { caseId: "c1" }, "tags.json": tagList } }),
+      );
+      await backups.restoreBackup("c1", filename);
+    };
+    await mkdir(backups.backupDir("c1"), { recursive: true });
+    await restore("2026-06-05T00-00-00-000Z_scheduled.json", [
+      {
+        id: "t1",
+        targetType: "event",
+        targetId: "row0",
+        label: "starred",
+        author: "analyst",
+        createdAt: "2026-06-04T00:00:00Z",
+      },
+    ]);
     await small.append("c1", [dated("r1", 2)]);
     expect(await small.protectedIds("c1")).toEqual(["row0"]);
     expect((await small.get("c1", "row0"))?.id).toBe("row0");
 
-    await writeFile(tagsPath, "[]");
+    await restore("2026-06-06T00-00-00-000Z_scheduled.json", []);
     expect(await small.protectedIds("c1")).toEqual([]);
     expect((await small.query("c1", {})).total).toBe(1); // back within the cap
     expect(await small.get("c1", "row0")).toBeNull();
+  });
+
+  it("a tagger batch does not re-derive protection; an analyst event tag does", async () => {
+    const small = new SuperTimelineStore(cases, 10);
+    const tags = new TagsStore(cases, small);
+    await small.append("c1", [dated("a", 1), dated("b", 2), dated("stray", 3)]);
+    await tags.add("c1", { targetType: "event", targetId: "a", author: "analyst", label: "starred" });
+    expect(await small.protectedIds("c1")).toEqual(["a"]);
+    // A protected row no tag names: only a re-derive would release it, so it shows whether one ran.
+    const db = new (loadDatabaseSync())(join(cases.stateDir("c1"), INVESTIGATION_DB_FILENAME));
+    db.exec("INSERT INTO super_protected(event_id) VALUES('stray')");
+    db.close();
+    await tags.addMany("c1", [
+      { targetType: "event", targetId: "b", author: "tagger:r1", label: "x" },
+      { targetType: "event", targetId: "stray", author: "tagger:r1", label: "x" },
+    ]);
+    await tags.removeTaggerTagsFor("c1", ["b"]);
+    await small.append("c1", [dated("c", 4)]);
+    expect(await small.protectedIds("c1")).toEqual(["a", "stray"]);
+    await tags.add("c1", { targetType: "event", targetId: "b", author: "analyst", label: "key-evidence" });
+    await small.append("c1", [dated("d", 5)]);
+    expect(await small.protectedIds("c1")).toEqual(["a", "b"]);
+  });
+
+  it("a crash after protect but before the tag row was written is released on the next store call", async () => {
+    const small = new SuperTimelineStore(cases, 1);
+    await small.append("c1", [dated("row0", 1)]);
+    const dbPath = join(cases.stateDir("c1"), INVESTIGATION_DB_FILENAME);
+    // The first half of TagsStore.add for an analyst event tag: the plan, then the protect call...
+    const plan = await caseSqliteWorker.request<{ fresh: number[] }>({
+      op: "tagsPlan",
+      dbPath,
+      tagsPath: join(cases.stateDir("c1"), "tags.json"),
+      inputs: [{ targetType: "event", targetId: "row0", label: "starred", author: "analyst" }],
+      protecting: true,
+    });
+    expect(plan.fresh).toEqual([0]);
+    expect(await small.protect("c1", "row0")).toBe(true);
+    // ...then the process died before the tag row was inserted. A new process has a new writer.
+    const db = new (loadDatabaseSync())(dbPath);
+    db.exec("UPDATE tags_protect_pending SET boot='a-process-that-died'");
+    db.close();
+    await small.append("c1", [dated("r1", 2)]);
+    expect(await small.protectedIds("c1")).toEqual([]);
+    expect(await small.get("c1", "row0")).toBeNull();
+  });
+
+  it("an in-flight analyst tag keeps its row protected while a concurrent store call reconciles", async () => {
+    const small = new SuperTimelineStore(cases, 1);
+    await small.append("c1", [dated("row0", 1)]);
+    let appended = false;
+    // The protect call returns, and before the tag row lands another store call runs a re-derive.
+    const racing: EventProtectionSink = {
+      protect: async (caseId, eventId) => {
+        const ok = await small.protect(caseId, eventId);
+        await small.append("c1", [dated("r1", 2)]);
+        appended = true;
+        return ok;
+      },
+      unprotect: (caseId, eventId) => small.unprotect(caseId, eventId),
+    };
+    await new TagsStore(cases, racing).add("c1", {
+      targetType: "event",
+      targetId: "row0",
+      author: "analyst",
+      label: "starred",
+    });
+    expect(appended).toBe(true);
+    expect((await small.get("c1", "row0"))?.id).toBe("row0");
+    expect(await small.protectedIds("c1")).toEqual(["row0"]);
   });
 
   it("setLabels reports false for an id that is not in the store", async () => {

@@ -42,6 +42,8 @@ const READ_OPS = new Set([
   "forensicRowsOutsideSeverities",
   "distinctHosts",
   "forensicHostsInOrder",
+  // #1874: the tag list (caseSqliteWorkerTags.ts); it asks the writer to migrate tags.json first when needed
+  "tagsList",
 ]);
 // Ops that replace the database file underneath any open connection.
 const EXCLUSIVE_OPS = new Set(["restoreDatabase"]);

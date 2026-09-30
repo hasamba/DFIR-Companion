@@ -1,5 +1,6 @@
 import type { EntityQuery } from "./stateStore.js";
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
+import type { IocJournalReader } from "./iocJournal.js";
 
 /**
  * The narrow, row-level view of a case's forensic timeline that an import's settle phase works
@@ -61,6 +62,8 @@ export interface ForensicRowStore {
    * baseline's highest row id) leaves out the rows the import itself inserted.
    */
   readImportJournal?(caseId: string, token: string, fence?: number): Promise<JournalEntry[] | null>;
+  /** The journal's IOC side (#1874); a store without it keeps full IOC reads. */
+  readonly iocJournal?: IocJournalReader;
 }
 
 /**

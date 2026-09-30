@@ -174,7 +174,7 @@ function superSetAsideFloor(db, cap) {
 
 // The case's durable record of what the cap dropped (#1535). Written HERE, not at the append site,
 // because the cap also runs when an analyst unstars a row or when protection is reconciled from the
-// tags file — an eviction the import summary never sees. A caller that reports per-import numbers
+// tag table — an eviction the import summary never sees. A caller that reports per-import numbers
 // reads the atomic result of its own append; this is the complete total.
 function recordSuperEviction(db, evicted) {
   if (!evicted || !evicted.count) return;
@@ -304,63 +304,66 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
   });
 }
 
-// Analyst-authored event tags in the tags side file (#958). Automatic tagger tags are excluded:
-// they can cover most rows, and a protected majority would leave the cap nothing to bound.
-function readProtectedTagIds(tagsPath, excludeAuthorPrefix) {
-  let tags = [];
-  try {
-    const parsed = JSON.parse(readFileSync(tagsPath, "utf8"));
-    if (Array.isArray(parsed)) tags = parsed;
-  } catch {}
-  const ids = new Set();
-  for (const tag of tags) {
-    if (!tag || tag.targetType !== "event" || typeof tag.targetId !== "string" || !tag.targetId) continue;
-    if (excludeAuthorPrefix && typeof tag.author === "string" && tag.author.startsWith(excludeAuthorPrefix)) continue;
-    ids.add(tag.targetId);
+// Analyst-authored event tags (#958), read from the case's tag table (#1874; migrated from
+// state/tags.json by ensureTagsMigrated, caseSqliteWorkerTags.ts). Automatic tagger tags are excluded:
+// they can cover most rows, and a protected majority would leave the cap nothing to bound. The targets
+// of analyst event tags still in flight under THIS writer (planned and protected, row not written yet)
+// count too, so a re-derive that runs between the two steps never releases them.
+function readProtectedTagIds(db, excludeAuthorPrefix) {
+  const prefix = typeof excludeAuthorPrefix === "string" ? excludeAuthorPrefix : "";
+  const ids = new Set(db.prepare(
+    "SELECT target_id FROM tags WHERE target_type='event' AND target_id <> '' " +
+    "AND (?1 = '' OR substr(author, 1, length(?1)) <> ?1)"
+  ).all(prefix).map((row) => row.target_id));
+  for (const row of db.prepare("SELECT target_id FROM tags_protect_pending WHERE boot=? AND target_id <> ''").all(TAGS_WORKER_BOOT)) {
+    ids.add(row.target_id);
   }
   return [...ids];
 }
 
-// The tags file as the worker last saw it. Size and mtime, not content: a stat per store call is
-// cheap, a read is not, and TagsStore's own protect/unprotect calls cover a same-size rewrite
-// inside one mtime tick.
-function tagsFingerprint(tagsPath) {
-  try {
-    const stat = statSync(tagsPath);
-    return stat.size + ":" + stat.mtimeMs;
-  } catch {
-    return "absent";
-  }
+// The protect generation (tags_protect_gen): it moves only when an analyst event tag is added (or
+// planned) or removed, so a tagger batch never triggers a re-derive, while an analyst change, a
+// migration, a restore or a crash between a tag write and its protect/unprotect call does.
+function tagsFingerprint(db) {
+  const row = db.prepare("SELECT n FROM tags_protect_gen WHERE id=1").get();
+  return "tags:" + (row ? Number(row.n) : 0);
 }
 
-// The tags file is the authority for protection, and it is written and snapshotted apart from the
-// case database: a restore, an export, or a crash between the two writes can leave a star in one
-// file and not the other. So the relation is re-derived from the file whenever the file changed
-// since the last sync (or was never synced — a case indexed before #958): the exact analyst set
-// is protected, everything else released, and the cap enforced over what was released.
-function reconcileSuperProtection(db, tagsPath, excludeAuthorPrefix, max) {
-  const fingerprint = tagsFingerprint(tagsPath);
+// The tag table is the authority for protection, and protection is changed apart from it (TagsStore
+// protects before it inserts and unprotects after it deletes): a restore, or a crash between the two
+// steps, can leave a star in one and not the other. So the relation is re-derived from the table
+// whenever the protect generation moved since the last sync (or was never synced — a case indexed
+// before #958, or one whose sync still holds the old tags-file fingerprint), and whenever an
+// in-flight record belongs to a writer that no longer exists (the step after it never ran): the
+// exact analyst set is protected, everything else released, and the cap enforced over what was
+// released.
+function reconcileSuperProtection(db, excludeAuthorPrefix, max) {
   const synced = db.prepare("SELECT value FROM storage_meta WHERE key='super_protected_sync'").get();
-  if (synced && synced.value === fingerprint) return;
+  const stale = db.prepare("SELECT 1 AS x FROM tags_protect_pending WHERE boot<>? LIMIT 1").get(TAGS_WORKER_BOOT);
+  if (!stale && synced && synced.value === tagsFingerprint(db)) return;
   withTransaction(db, () => {
-    const ids = readProtectedTagIds(tagsPath, excludeAuthorPrefix);
+    db.prepare("DELETE FROM tags_protect_pending WHERE boot<>?").run(TAGS_WORKER_BOOT);
+    const ids = readProtectedTagIds(db, excludeAuthorPrefix);
     db.prepare("DELETE FROM super_protected WHERE event_id NOT IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids));
     protectSuperRows(db, ids, null);
     enforceSuperCap(db, max);
     db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?) " +
-      "ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(fingerprint);
+      "ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(tagsFingerprint(db));
   });
 }
 
 function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPrefix, max, setAsideMarkers, setAsideVersion) {
   const db = openDatabase(dbPath);
   try {
+    // The tags first (#1874): protection below — the reconcile and the legacy migration's cap — reads
+    // the tag table, so a case upgraded with a tags.json is protected before anything is evicted.
+    ensureTagsMigrated(db, tagsPath);
     if (db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='super_migrated'").get()) {
       // Set-aside FIRST. Protection reconciliation enforces the cap as soon as it releases a row,
       // and on the open that upgrades a case the relation is still empty — the legacy rows the
       // backfill is about to claim would be evicted as ordinary telemetry before it ever ran.
       reconcileSetAside(db, setAsideMarkers, setAsideVersion);
-      reconcileSuperProtection(db, tagsPath, excludeAuthorPrefix, max);
+      reconcileSuperProtection(db, excludeAuthorPrefix, max);
       ensureSuperContentStamp(db);
       return;
     }
@@ -376,7 +379,7 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
     } catch {}
     const legacyMs = (e) => { const t = Date.parse(e && e.timestamp); return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t; }; // row_id is retention age; a legacy array has none
     writeSuperEvents(db, events.map((e, i) => [legacyMs(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]), max,
-      readProtectedTagIds(tagsPath, excludeAuthorPrefix), setAsideMarkers); // protected BEFORE the cap is enforced
+      readProtectedTagIds(db, excludeAuthorPrefix), setAsideMarkers); // protected BEFORE the cap is enforced
     withTransaction(db, () => {
       const labelStatement = db.prepare("INSERT OR IGNORE INTO super_labels(event_id, label) VALUES(?, ?)");
       for (const [id, values] of Object.entries(labels)) {
@@ -386,7 +389,7 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
       }
       db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_migrated','1')").run();
       ensureSuperContentStamp(db);
-      db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?)").run(tagsFingerprint(tagsPath));
+      db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?)").run(tagsFingerprint(db));
       if (typeof setAsideVersion === "string" && setAsideVersion) {
         db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_set_aside_sync',?) " +
           "ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(setAsideVersion);

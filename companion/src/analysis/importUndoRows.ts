@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
-import type { ImportBaseline } from "./importBaseline.js";
+import { iocJournalRef, type ImportBaseline } from "./importBaseline.js";
+import type { IocJournalRef } from "./iocJournal.js";
+import { iocUndoFromJournal } from "./iocJournalDiff.js";
 import type { JournalEntry } from "./forensicRows.js";
 import type { StateStore } from "./stateStore.js";
 import {
@@ -42,10 +44,14 @@ export async function baselineCheckpoint(
   if (!journal) return null;
   const before = baseline.outline;
   const after = await store.forensicOutline(caseId, false);
-  const afterOverview = await store.loadOverview(caseId);
+  // #1874: with an IOC outline the IOCs come from the IOC journal, not from two full lists.
+  const iocRef = iocJournalRef(baseline);
+  const afterOverview = iocRef
+    ? await store.loadOverviewWithoutIocs(caseId)
+    : await store.loadOverview(caseId);
   const counts = {
     events: before.ids.length,
-    iocs: baseline.overview.iocs?.length ?? 0,
+    iocs: iocRef ? iocRef.before.ids.length : (baseline.overview.iocs?.length ?? 0),
     findings: baseline.overview.findings?.length ?? 0,
   };
   const baseRows = new Set(before.rowIds);
@@ -53,6 +59,11 @@ export async function baselineCheckpoint(
   if (!uniqueIds(before.ids) || !uniqueIds(after.ids)) {
     const target = await rebuildBefore(store, baseline, images);
     if (!target) return null;
+    if (iocRef) {
+      const lists = await store.iocJournal.fullLists(iocRef, "forensic ids are not unique");
+      if (!lists) return null;
+      target.iocs = lists.before;
+    }
     const delta = computeUndoDelta(target, await store.load(caseId));
     return { label, at, delta, counts };
   }
@@ -70,7 +81,31 @@ export async function baselineCheckpoint(
     { ...afterOverview, forensicTimeline: [] },
   );
   delta.keyed.forensicTimeline = keyed;
+  if (iocRef && !(await putIocDelta(store, iocRef, delta))) return null;
   return { label, at, delta, counts };
+}
+
+// The IOC part of the delta, from the IOC journal (analysis/iocJournal.ts). When the IOC ids are not
+// unique strings, computeUndoDelta over the two whole lists decides, as it did before. False when the
+// journal cannot account for the import.
+async function putIocDelta(store: StateStore, ref: IocJournalRef, delta: StateDelta): Promise<boolean> {
+  const keyed = await iocUndoFromJournal(store.iocJournal, ref);
+  if (!keyed) return false;
+  if (keyed !== "whole") {
+    delta.keyed.iocs = keyed;
+    return true;
+  }
+  const lists = await store.iocJournal.fullLists(ref, "IOC ids are not unique");
+  if (!lists) return false;
+  const part = computeUndoDelta(
+    { iocs: lists.before } as unknown as InvestigationState,
+    { iocs: lists.after } as unknown as InvestigationState,
+  );
+  delete delta.keyed.iocs;
+  delete delta.fields.iocs;
+  if (part.keyed.iocs) delta.keyed.iocs = part.keyed.iocs;
+  if (Object.hasOwn(part.fields, "iocs")) delta.fields.iocs = part.fields.iocs;
+  return true;
 }
 
 const uniqueIds = (ids: readonly (string | null)[]): boolean =>

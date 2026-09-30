@@ -57,15 +57,19 @@ function captureImportBaseline(dbPath, token, factsStamp) {
   try {
     return withTransaction(db, () => {
       if (typeof token === "string" && token) {
-        db.exec("DELETE FROM import_journal; DELETE FROM import_journal_arm;");
+        db.exec("DELETE FROM import_journal; DELETE FROM import_journal_ioc; DELETE FROM import_journal_arm;");
         db.prepare("INSERT INTO import_journal_arm(token) VALUES (?)").run(token);
       }
-      const overview = readState(db, ["forensicTimeline"]);
-      if (typeof factsStamp !== "string") return { overview, outline: outlineRows(db, true) };
+      if (typeof factsStamp !== "string") {
+        return { overview: readState(db, ["forensicTimeline"]), outline: outlineRows(db, true) };
+      }
       // Every row the case holds now has a row id at most this; a journaled row above it is one the
       // import inserted, which no reader of the journal wants (a pre-import row is what they compare).
       const fence = Number(db.prepare("SELECT COALESCE(MAX(row_id), 0) AS m FROM entities").get().m);
-      return { overview, outline: outlineRows(db, false), unfresh: factsUnfresh(db, factsStamp), fence };
+      // The IOCs as ids in order, not the list (#1874): the IOC journal holds what the import changes.
+      const overview = readState(db, ["forensicTimeline", "iocs"]);
+      const outline = outlineRows(db, false);
+      return { overview, outline, unfresh: factsUnfresh(db, factsStamp), fence, iocOutline: iocOutlineRows(db) };
     });
   } finally {
     db.close();
@@ -96,7 +100,7 @@ function disarmImportJournal(dbPath, token) {
   try {
     return withTransaction(db, () => {
       if (armedToken(db) !== token) return false;
-      db.exec("DELETE FROM import_journal_arm; DELETE FROM import_journal;");
+      db.exec("DELETE FROM import_journal_arm; DELETE FROM import_journal; DELETE FROM import_journal_ioc;");
       return true;
     });
   } finally {
