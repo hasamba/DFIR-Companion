@@ -5,9 +5,19 @@ import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
-import { carryHostRenames } from "../analysis/hostRenameCarry.js";
-import { capBuildTimeRows } from "../analysis/buildTimeWindow.js";
+import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
+import { outlineEvents, SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
+import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import { capBuildTimeScoped } from "./importSettleCap.js";
+import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
+import {
+  rewriteRows,
+  runUnlocked,
+  settleScope,
+  type RunExclusive,
+  type SettleScope,
+} from "./importSettleRows.js";
 import {
   rehomeSuperTimeline,
   renameLedgerChanged,
@@ -31,8 +41,10 @@ import {
  * and reached the model, and never entered the super-timeline at all (#932 item 12 found it on
  * `/import-leapp`; #956 tracks the rest). One function, so a route cannot half-run the seam.
  *
- * `stateBefore` is the state captured under the import lock BEFORE the importer ran
- * (routes/importSection.ts) — the diff is only honest against that snapshot.
+ * The baseline is what the section captured under the import lock BEFORE the importer ran
+ * (routes/importSection.ts) — the diff is only honest against that snapshot. Since #1874 it is not
+ * a full copy of the case, and no step here loads or saves the whole case: each reads and writes
+ * only the rows it changes (see the functions below).
  *
  * A hostname rename the import taught the case re-homes the rows the case already held (#1495),
  * and the super-timeline's own copies of them — dual-written earlier, or Info rows that live only
@@ -47,10 +59,14 @@ import {
  * poll must not fill the session log.
  */
 export interface SettleDeps {
-  stateStore: {
-    load(caseId: string): Promise<InvestigationState>;
-    save(state: InvestigationState): Promise<void>;
-  };
+  /** Row-level access to the case (StateStore); `load` only for a legacy `onState`-only caller. */
+  stateStore: ForensicRowStore & { load?(caseId: string): Promise<InvestigationState> };
+  /**
+   * The case's state lock (createApp's runStateExclusive). Each settle step reads, changes and
+   * writes its rows inside it, so an analyst edit, an enrichment or a synthesis — all of which save
+   * through the same lock — can never interleave with a step and have its change overwritten.
+   */
+  runStateExclusive?: RunExclusive;
   superTimelineStore?: {
     append(caseId: string, events: ForensicEvent[]): Promise<number>;
     /** #1535 — the retained count AND what the cap dropped, from one atomic write. Optional so a
@@ -61,18 +77,23 @@ export interface SettleDeps {
     ): Promise<{ retained: number; evicted: SuperEviction }>;
   } & Partial<SuperRehomeStore>;
   onSuperTimeline?: (caseId: string) => void;
-  // Fired right after the importedAt/importBatchId stamp save below (#1174) — without it, dashboard
-  // subscribers only learn about the new stamps whenever a LATER broadcast happens to fire (the
-  // tagger, demote, or the resynthesis every caller triggers after settle returns), not at the
-  // instant the stamps were actually persisted.
+  /**
+   * Fired once when the settle changed the forensic timeline (#1174: the dashboard learns the new
+   * importedAt/importBatchId stamps from this settle, not from whatever broadcast happens next). It
+   * takes the case id, not a state: the app loads and pushes the state only when a dashboard is
+   * watching the case (#1874).
+   */
+  onStateChanged?: (caseId: string) => void;
+  /** Legacy callers that only wire a state broadcaster: the settle loads the case once for it. */
   onState?: (state: InvestigationState) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
+  /** The forensic gate's demote; returns the rows it removed (composition/importDemote.ts). */
+  demoteForensic?: (caseId: string) => Promise<ForensicEvent[]>;
+  /** The same demote returning the whole case afterwards — legacy callers only. */
+  demoteForensicForCase?: (caseId: string) => Promise<InvestigationState>;
 }
 
 export interface SettledImport {
-  /** The case state after demote — what the forensic timeline holds now. */
-  state: InvestigationState;
   /** Rows the super-timeline RETAINED from this import (0 when no store is wired). */
   superTimelineAddedCount: number;
   /**
@@ -82,110 +103,93 @@ export interface SettledImport {
    * which also covers evictions no import caused (unstarring a row releases protection).
    */
   superTimelineEvicted?: SuperEviction;
-  /** Forensic-timeline diff against `stateBefore`, computed post-demote. */
+  /** Forensic-timeline diff against the baseline, computed post-demote. */
   timelineDiff: TimelineDiff;
   iocsDiff: IocsDiff;
+  /**
+   * The rows this import added that are still in the forensic timeline, read as they are now. A
+   * function, so a caller that does not need them (no false-positive markers to match) reads
+   * nothing; call it while the import section is still held.
+   */
+  addedEvents(): Promise<ForensicEvent[]>;
+  /** How many rows the forensic timeline holds after the settle. */
+  forensicCount: number;
+  /** The case after demote — only when a legacy `demoteForensicForCase` produced it. */
+  state?: InvestigationState;
 }
 
+/**
+ * `before` is what the import is diffed against: the ImportBaseline its section captured
+ * (analysis/importBaseline.ts), or — from a legacy caller — the full state it loaded then.
+ */
 export async function settleForensicImport(
   deps: SettleDeps,
   caseId: string,
-  stateBefore: InvestigationState,
+  before: InvestigationState | ImportBaseline,
   label?: string,
 ): Promise<SettledImport> {
-  let imported = await deps.stateStore.load(caseId);
-  // Rows the case already held under a name this (or any earlier) import taught it was a former
-  // one are re-homed here, before they are stamped, dual-written and tagged (#1495). A pure
-  // recomputation from each row's own record name against the whole ledger, so it is safe to run
-  // on every settle; it returns the same object when nothing differs.
-  const carried = carryHostRenames(imported);
-  imported = carried.state;
-  // Select the added rows BY ID — exact. The time+description diff below is case-folded, so two
-  // rows that differ only by case (two paths on a case-sensitive filesystem) counted as one there,
-  // and the second was neither dual-written nor offered to the tagger. Ids are exact: a re-import
-  // of the same evidence is absorbed by correlation's exact-duplicate pass into the existing row's
-  // id before this runs, so a new id is a genuinely new row.
-  const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
-  let added = imported.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+  const baseline = toImportBaseline(before);
+  const store = deps.stateStore;
+  const lock = deps.runStateExclusive ?? runUnlocked;
+  const scope = await settleScope(store, caseId, baseline);
+  const ledger = await store.loadOverview(caseId);
+  // A rename the import taught the case (or a changed collector identity) can re-home ANY old row;
+  // otherwise only the rows the import added or touched can need it.
+  const ledgerChanged = renameLedgerChanged(baseline.overview, ledger);
+  const scanAll = ledgerChanged || !scope.touchedKnown;
+  let added: ForensicEvent[] = [];
   // #1735: the always-on debug log keeps these at any live level. Counts only, never row content.
   // Silent when the import added nothing and carried no rename: a Velociraptor monitor settles on
   // every poll, and empty polls must not push real history out of the capped debug log.
-  const traced = added.length > 0 || carried.changed;
+  let traced = scope.addedIds.length > 0 || ledgerChanged;
   const debug = (step: string): void => {
     if (traced) getServerLogger().debug(`[import-debug] ${caseId}: settle ${step}`, { caseId });
   };
-  debug(
-    `start forensicBefore=${stateBefore.forensicTimeline.length} merged=${imported.forensicTimeline.length} ` +
-      `added=${added.length} renameCarry=${carried.changed}`,
-  );
 
-  // #1157: stamp rows genuinely new to this case with WHEN the case received them and WHICH import
-  // action did it — distinct from `timestamp`, the artifact's own recorded time. One instant, one
-  // batch id, shared by every row this import added. Persisted BEFORE dual-write/tag/demote below:
-  // both `autoTagImported` and `demoteForensicForCase` independently reload state from the store,
-  // so an in-memory-only stamp would be silently discarded by their own reload/save cycles.
-  //
-  // #1530: the first-party-egress downgrade rides in the same pass, and where it sits is the whole
-  // argument. BEFORE the dual-write, so the super-timeline keeps the Info copy the forensic record
-  // is about to lose; BEFORE the tagger, so a tagger rule that matches the row raises it straight
-  // back out of Info — lower, then one chance to raise, then demote, the order ARCHITECTURE.md
-  // documents. Gated on the super-timeline store for the same reason the dual-write is: demote
-  // removes a sub-threshold row from the forensic timeline whether or not a capture store exists
-  // (composition/importIngest.ts), so lowering a grade with no store wired would delete evidence.
-  if (added.length) {
-    const importedAt = new Date().toISOString();
-    const importBatchId = randomUUID();
-    const addedIds = new Set(added.map((e) => e.id));
-    const lowered = deps.superTimelineStore
-      ? downgradeFirstPartyEgress(added)
-      : { events: [] as ForensicEvent[], downgraded: [] as string[] };
-    const loweredById = new Map(lowered.events.map((e) => [e.id, e]));
-    imported = {
-      ...imported,
-      forensicTimeline: imported.forensicTimeline.map((e) =>
-        addedIds.has(e.id) ? { ...(loweredById.get(e.id) ?? e), importedAt, importBatchId } : e,
-      ),
-    };
-    added = imported.forensicTimeline.filter((e) => addedIds.has(e.id));
-    if (lowered.downgraded.length)
-      getServerLogger().info(
-        `[import] ${caseId}: ${lowered.downgraded.length} first-party update connection(s) graded Info`,
-        { caseId },
-      );
-  }
-  // Saved when anything above changed the state: new rows stamped, or older rows re-homed by a
-  // rename this import taught the case (a carry-only settle still has to persist and broadcast).
-  if (added.length || carried.changed) {
-    await deps.stateStore.save(imported);
-    deps.onState?.(imported);
-  }
+  // Rows the case already held under a name this (or any earlier) import taught it was a former one
+  // are re-homed (#1495), then the rows new to this case are stamped with WHEN the case received
+  // them and WHICH import action did it (#1157) — one instant, one batch id — and the first-party
+  // egress downgrade (#1530) rides in the same pass. Its position is the whole argument: BEFORE the
+  // dual-write, so the super-timeline keeps the Info copy the forensic record is about to lose;
+  // BEFORE the tagger, so a tagger rule that matches the row raises it straight back out of Info.
+  // Gated on the super-timeline store like the dual-write: demote removes a sub-threshold row from
+  // the forensic timeline whether or not a capture store exists, so lowering a grade with no store
+  // wired would delete evidence. Only the rows that change are written, under the state lock.
+  const stamped = await lock(caseId, () => carryAndStamp(deps, caseId, ledger, scope, scanAll));
+  added = stamped.added;
+  traced ||= stamped.carried > 0;
+  debug(
+    `start forensicBefore=${baseline.outline.ids.length} merged=${scope.mergedCount} ` +
+      `added=${added.length} renameCarry=${stamped.carried}`,
+  );
+  let changed = added.length > 0 || stamped.carried > 0;
 
   // The super-timeline's own copies follow the ledger (#1508). Either signal triggers it: a rename
   // whose old-name rows were all Info changes the ledger but moves no forensic row, and a forensic
   // row the carry moved has a copy in the store that must move with it.
-  if (deps.superTimelineStore && (carried.changed || renameLedgerChanged(stateBefore, imported))) {
-    await rehomeSuperCopies(deps, caseId, imported);
+  if (deps.superTimelineStore && (stamped.carried > 0 || ledgerChanged)) {
+    await rehomeSuperCopies(deps, caseId, ledger);
   }
 
-  // Dual-write FIRST, from the pre-demote (now stamped) state.
+  // Dual-write FIRST, from the pre-demote (now stamped) rows.
   let superTimelineAddedCount = 0;
   let superTimelineEvicted: SuperEviction | undefined;
   if (deps.superTimelineStore && added.length) {
     try {
-      const store = deps.superTimelineStore;
-      if (store.appendReporting) {
-        const result = await store.appendReporting(caseId, added);
+      const superStore = deps.superTimelineStore;
+      if (superStore.appendReporting) {
+        const result = await superStore.appendReporting(caseId, added);
         superTimelineAddedCount = result.retained;
         superTimelineEvicted = result.evicted;
       } else {
-        superTimelineAddedCount = await store.append(caseId, added);
+        superTimelineAddedCount = await superStore.append(caseId, added);
       }
       deps.onSuperTimeline?.(caseId);
     } catch {
       // Non-fatal by design: demote captures every row it removes into the super-timeline in
       // its own critical section and KEEPS the row in the forensic timeline when that capture
-      // fails (composition/importIngest.ts demoteForensicForCase) — a row is never in neither
-      // record. What this failure costs is the count above, which stays 0.
+      // fails (composition/importDemote.ts) — a row is never in neither record. What this
+      // failure costs is the count above, which stays 0.
     }
     await deps.autoTagImported(caseId, added);
     debug(
@@ -197,21 +201,25 @@ export async function settleForensicImport(
   }
   // Merge-all → tagger → CAP → demote (#1529). The tagger has had its one promotion window above;
   // now the rows inside a corroborated provisioning window are capped at Low with a stated reason,
-  // before demote decides what leaves the forensic timeline. Reloaded from the store because the
-  // tagger saves its own state, and saved here because demote reloads again.
-  const tagged = await deps.stateStore.load(caseId);
-  const capped = capBuildTimeRows(tagged);
-  if (capped.changed) {
-    await deps.stateStore.save(capped.state);
-    deps.onState?.(capped.state);
-  }
-  const state = await deps.demoteForensicForCase(caseId);
+  // before demote decides what leaves the forensic timeline.
+  // Off every rename chain, the cap can only change a row that already carries a cap mark (the
+  // tagger never writes one), so only such rows of this import's own are handed on.
+  const extraIds = [...added, ...stamped.touched].filter(hasBuildTimeMark).map((e) => e.id);
+  const capped = await lock(caseId, () => capBuildTimeScoped(store, caseId, ledger, { scanAll, extraIds }));
+  changed ||= capped > 0;
+  const demoted = await demote(deps, caseId);
+  changed ||= demoted.removed > 0;
+  const outline = await store.forensicOutline(caseId);
   debug(
-    `demote buildTimeCapped=${capped.changed} forensicBeforeDemote=${capped.state.forensicTimeline.length} ` +
-      `forensicAfterDemote=${state.forensicTimeline.length}`,
+    `demote buildTimeCapped=${capped} forensicBeforeDemote=${outline.ids.length + demoted.removed} ` +
+      `forensicAfterDemote=${outline.ids.length}`,
   );
-  const timelineDiff = diffTimeline(stateBefore.forensicTimeline, state.forensicTimeline);
-  const iocsDiff = diffIocs(stateBefore.iocs, state.iocs);
+  const timelineDiff = diffTimeline(outlineEvents(baseline.outline), outlineEvents(outline));
+  const iocsDiff = diffIocs(baseline.overview.iocs, (await store.loadOverview(caseId)).iocs);
+  const addedIds = [...new Set(added.map((e) => e.id))];
+  const addedEvents = async (): Promise<ForensicEvent[]> =>
+    addedIds.length ? (await store.forensicRowsById(caseId, addedIds)).map((r) => r.event) : [];
+  if (changed) await announceState(deps, caseId, demoted.state);
   logImportSettled(caseId, label, {
     forensicAdded: timelineDiff.added.length,
     forensicRemoved: timelineDiff.removed.length,
@@ -220,17 +228,90 @@ export async function settleForensicImport(
     iocsAdded: iocsDiff.added.length,
     iocsRemoved: iocsDiff.removed.length,
   });
-  return { state, superTimelineAddedCount, superTimelineEvicted, timelineDiff, iocsDiff };
+  return {
+    superTimelineAddedCount,
+    superTimelineEvicted,
+    timelineDiff,
+    iocsDiff,
+    addedEvents,
+    forensicCount: outline.ids.length,
+    ...(demoted.state ? { state: demoted.state } : {}),
+  };
+}
+
+// Carry + stamp + downgrade in one read-transform-write of just the rows that can change.
+async function carryAndStamp(
+  deps: SettleDeps,
+  caseId: string,
+  ledger: InvestigationState,
+  scope: SettleScope,
+  scanAll: boolean,
+): Promise<{ added: ForensicEvent[]; carried: number; touched: ForensicEvent[] }> {
+  const store = deps.stateStore;
+  const addedIds = new Set(scope.addedIds);
+  const touched = await store.forensicRowsByRowId(caseId, scope.touchedRowIds);
+  const touchedIds = touched.map((r) => r.event.id);
+  // With a ledger change (or no journal) any old row may need re-homing: find them page by page.
+  const carryIds = new Set<string>();
+  if (scanAll && ledger.hostRenames?.length) {
+    for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
+      for (const e of rehomeEvents(batch, ledger)) carryIds.add(e.id);
+    }
+  }
+  const ids = [...new Set([...scope.addedIds, ...touchedIds, ...carryIds])];
+  const rows = ids.length ? await store.forensicRowsById(caseId, ids) : [];
+  const importedAt = new Date().toISOString();
+  const importBatchId = randomUUID();
+  let carried = 0;
+  let downgraded = 0;
+  const carry = hostRenameCarrier(ledger);
+  for (const r of rows) if (carry(r.event) !== r.event) carried++;
+  const transform = (e: ForensicEvent): ForensicEvent => {
+    const moved = carry(e);
+    if (!addedIds.has(e.id)) return moved;
+    const lowered = deps.superTimelineStore ? downgradeFirstPartyEgress([moved]).events[0] : moved;
+    if (lowered.severity !== moved.severity) downgraded++;
+    return { ...lowered, importedAt, importBatchId };
+  };
+  const written = await rewriteRows(store, caseId, rows, transform);
+  if (downgraded)
+    getServerLogger().info(`[import] ${caseId}: ${downgraded} first-party update connection(s) graded Info`, {
+      caseId,
+    });
+  const writtenById = new Map(written.map((r) => [r.rowId, r.event]));
+  const added = rows.filter((r) => addedIds.has(r.event.id)).map((r) => writtenById.get(r.rowId) ?? r.event);
+  const others = rows
+    .filter((r) => !addedIds.has(r.event.id))
+    .map((r) => writtenById.get(r.rowId) ?? r.event);
+  return { added, carried, touched: others };
+}
+
+async function demote(
+  deps: SettleDeps,
+  caseId: string,
+): Promise<{ removed: number; state?: InvestigationState }> {
+  if (deps.demoteForensic) return { removed: (await deps.demoteForensic(caseId)).length };
+  if (!deps.demoteForensicForCase) return { removed: 0 };
+  // A legacy demote reports the state, not what it removed; the diff above still counts removals.
+  return { removed: 0, state: await deps.demoteForensicForCase(caseId) };
+}
+
+// One broadcast per settle. A legacy caller with only a state broadcaster gets one load for it.
+async function announceState(deps: SettleDeps, caseId: string, state?: InvestigationState): Promise<void> {
+  if (deps.onStateChanged) return deps.onStateChanged(caseId);
+  if (!deps.onState) return;
+  const current = state ?? (await deps.stateStore.load?.(caseId));
+  if (current) deps.onState(current);
 }
 
 // Non-fatal by design, like the dual-write above: the forensic re-home is already saved, and a
 // row the pass could not rewrite is still in the record under its former name — the next settle
 // that changes the ledger tries again. A store without the method (a test fake) is skipped.
 async function rehomeSuperCopies(deps: SettleDeps, caseId: string, state: InvestigationState): Promise<void> {
-  const store = deps.superTimelineStore;
-  if (!store?.rehome || !store.eventBatches) return;
+  const superStore = deps.superTimelineStore;
+  if (!superStore?.rehome || !superStore.eventBatches) return;
   try {
-    const rewritten = await rehomeSuperTimeline(store as SuperRehomeStore, caseId, state);
+    const rewritten = await rehomeSuperTimeline(superStore as SuperRehomeStore, caseId, state);
     if (rewritten) deps.onSuperTimeline?.(caseId);
   } catch (error) {
     getServerLogger().warn(

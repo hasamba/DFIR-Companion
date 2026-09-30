@@ -39,9 +39,14 @@ import {
 import { isBinaryPlist } from "../analysis/macosPersistence.js";
 import { looksLikeBinaryText } from "../analysis/binaryText.js";
 import { observeImport } from "../analysis/operationalImport.js";
-import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
-import { settleForensicImport } from "../routes/importSettle.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
+import {
+  captureImportBaseline,
+  releaseImportBaseline,
+  type ImportBaseline,
+} from "../analysis/importBaseline.js";
+import { createImportDemote } from "./importDemote.js";
+import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSettle.js";
 import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
@@ -102,6 +107,8 @@ export interface ImportIngest {
   ): Promise<{ storedName: string; importedAt: string; seq: number }>;
   /** Move sub-threshold events out of the forensic timeline (they live on in the super-timeline). */
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  /** The same demote, returning only the rows it removed — no load of the case (#1874). */
+  demoteForensic(caseId: string): Promise<ForensicEvent[]>;
   ingestStreamed(
     caseId: string,
     kind: string,
@@ -461,43 +468,14 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     return { storedName, importedAt, seq };
   }
 
-  // Route sub-threshold (Info by default) telemetry to the super-timeline only. The super-timeline
-  // already captured these events (dual-write at each import seam); here we drop them from the
-  // forensic timeline so the AI only synthesizes graded signal. Promotion re-adds them if the analyst
-  // wants (it goes through pipeline.promoteSuperTimeline, NOT this gate). Threshold: per-case
-  // forensic-gate ?? DFIR_FORENSIC_MIN_SEVERITY ?? "Low". Returns the (possibly unchanged) state.
-  //
-  // The demote is CASE-WIDE, so with concurrent imports it can fire between another import's
-  // pre-import snapshot and that import's dual-write, stripping rows the owning import had not yet
-  // copied to super — they would then exist in neither timeline. The capture below closes that:
-  // an event may only leave the forensic timeline after it is written to the super-timeline in this
-  // same critical section. append() dedups by id, so re-capturing a row the seam already wrote is free.
-  async function demoteForensicForCase(caseId: string): Promise<InvestigationState> {
-    return runStateExclusive(caseId, async () => {
-      const state = await options.stateStore!.load(caseId);
-      if (!options.forensicGateControlStore) return state;
-      const min = resolveForensicMinSeverity(
-        (await options.forensicGateControlStore.load(caseId)).minSeverity,
-        process.env.DFIR_FORENSIC_MIN_SEVERITY,
-      );
-      const { kept, demoted } = demoteBelowSeverity(state.forensicTimeline, min);
-      if (!demoted.length) return state;
-      if (options.superTimelineStore) {
-        try {
-          await options.superTimelineStore.append(caseId, demoted);
-          options.onSuperTimeline?.(caseId);
-        } catch {
-          // Capture failed — keep the rows in the forensic timeline rather than dropping them
-          // on the floor; the next import/demote will retry.
-          return state;
-        }
-      }
-      const next = { ...state, forensicTimeline: kept };
-      await options.stateStore!.save(next);
-      options.onState?.(next);
-      return next;
-    });
-  }
+  // The forensic gate's demote, and the settle tail both streamed entry points share (#1874).
+  const demote = createImportDemote({ options, runStateExclusive });
+  const settleDeps: StreamedSettleDeps = { options, runStateExclusive, autoTagImported, demote };
+  // The section's snapshot (analysis/importBaseline.ts). Best-effort: null means no diff, never a failed import.
+  const baselineOf = async (caseId: string): Promise<ImportBaseline | null> =>
+    options.stateStore ? captureImportBaseline(options.stateStore, caseId).catch(() => null) : null;
+  const releaseBaseline = (baseline: ImportBaseline | null): Promise<void> =>
+    options.stateStore ? releaseImportBaseline(options.stateStore, baseline) : Promise.resolve();
 
   async function ingestStreamed(
     caseId: string,
@@ -556,15 +534,16 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     // and any of them writing inside another import's section would be counted as that import's own
     // work (and swept into its undo checkpoint). See analysis/importLock.ts.
     const counts = await importLock.runSized(caseId, { incomingBytes: text.length }, async () => {
-      let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try {
-          stateBefore = await options.stateStore.load(caseId);
-        } catch {
-          /* keep null */
-        }
+      const baseline = await baselineOf(caseId);
+      try {
+        return await dispatchAndSettle(baseline);
+      } finally {
+        await releaseBaseline(baseline);
       }
-
+    });
+    async function dispatchAndSettle(
+      baseline: ImportBaseline | null,
+    ): Promise<{ addedEvents: number; addedIocs: number }> {
       await dispatchImport(kind, caseId, text, {
         label: storedName,
         idPrefix: `${seq}`,
@@ -576,48 +555,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         ...(signal ? { signal } : {}),
       });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-
-      let addedEvents = 0,
-        addedIocs = 0;
-      if (options.stateStore && stateBefore) {
-        try {
-          // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
-          const settled = await settleForensicImport(
-            {
-              stateStore: options.stateStore,
-              superTimelineStore: options.superTimelineStore,
-              onSuperTimeline: options.onSuperTimeline,
-              onState: options.onState,
-              autoTagImported,
-              demoteForensicForCase,
-            },
-            caseId,
-            stateBefore,
-            storedName,
-          );
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
-          addedEvents = tDiff.added.length;
-          addedIocs = iDiff.added.length;
-          if (
-            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
-            options.importMetaStore
-          ) {
-            await options.importMetaStore.record(caseId, {
-              kind,
-              file: storedName,
-              diff: tDiff,
-              superTimelineAddedCount: settled.superTimelineAddedCount,
-              superTimelineEvicted: settled.superTimelineEvicted,
-              iocsDiff: iDiff,
-            });
-            options.onImportMeta?.(caseId);
-          }
-        } catch {
-          /* non-fatal */
-        }
-      }
-      return { addedEvents, addedIocs };
-    });
+      // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
+      return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline });
+    }
     const { addedEvents, addedIocs } = counts;
     // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
     try {
@@ -670,6 +610,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
+    const macPipeline = pipeline;
     options.onImport?.(caseId);
     // Only a login-item container reaches this path, so the kind is fixed, not sniffed.
     debug.detected("macloginitem", { confident: true, decision: "explicit_route" });
@@ -702,15 +643,16 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     });
 
     const { addedEvents, addedIocs } = await importLock.runExclusive(caseId, async () => {
-      let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try {
-          stateBefore = await options.stateStore.load(caseId);
-        } catch {
-          /* keep null */
-        }
+      const baseline = await baselineOf(caseId);
+      try {
+        return await importAndSettle(baseline);
+      } finally {
+        await releaseBaseline(baseline);
       }
-
+    });
+    async function importAndSettle(
+      baseline: ImportBaseline | null,
+    ): Promise<{ addedEvents: number; addedIocs: number }> {
       // Same call routes/importMacLoginItem.ts makes; it applies its own state (mergeWithAliases +
       // save) internally rather than returning a delta this caller would apply. Bypasses
       // dispatchImport, so it writes its own start/merged lines (#1438).
@@ -722,7 +664,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         caseId,
         storedName,
         Date.now(),
-        pipeline.importMacLoginItem(caseId, bytes, {
+        macPipeline.importMacLoginItem(caseId, bytes, {
           label: storedName,
           idPrefix: `bt${seq}`,
           importedAt,
@@ -731,47 +673,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         debug,
       );
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-
-      let addedEvents = 0,
-        addedIocs = 0;
-      if (options.stateStore && stateBefore) {
-        try {
-          const settled = await settleForensicImport(
-            {
-              stateStore: options.stateStore,
-              superTimelineStore: options.superTimelineStore,
-              onSuperTimeline: options.onSuperTimeline,
-              onState: options.onState,
-              autoTagImported,
-              demoteForensicForCase,
-            },
-            caseId,
-            stateBefore,
-            storedName,
-          );
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
-          addedEvents = tDiff.added.length;
-          addedIocs = iDiff.added.length;
-          if (
-            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
-            options.importMetaStore
-          ) {
-            await options.importMetaStore.record(caseId, {
-              kind: "macloginitem",
-              file: storedName,
-              diff: tDiff,
-              superTimelineAddedCount: settled.superTimelineAddedCount,
-              superTimelineEvicted: settled.superTimelineEvicted,
-              iocsDiff: iDiff,
-            });
-            options.onImportMeta?.(caseId);
-          }
-        } catch {
-          /* non-fatal */
-        }
-      }
-      return { addedEvents, addedIocs };
-    });
+      return settleStreamedImport(settleDeps, { caseId, kind: "macloginitem", storedName, baseline });
+    }
     resynthesizeInBackground(caseId);
     return { storedName, addedEvents, addedIocs, analyzed: true };
   }
@@ -787,7 +690,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     dispatchImport,
     persistEvidence,
     persistRawEvidence,
-    demoteForensicForCase,
+    demoteForensicForCase: demote.demoteForensicForCase,
+    demoteForensic: demote.demoteForensic,
     ingestStreamed,
     ingestMacLoginItemStreamed,
   };

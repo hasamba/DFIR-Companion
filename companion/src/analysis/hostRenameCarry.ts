@@ -71,6 +71,18 @@ export function rehomeEvents(
 }
 
 // The row as the ledger says it should read, or the row itself when nothing differs.
+/**
+ * carryHostRenames for one row at a time (#1874): the returned function gives the row re-homed, or
+ * the same object when the ledger leaves it where it is. Identity when the case has no ledger.
+ */
+export function hostRenameCarrier(
+  state: Pick<InvestigationState, "hostRenames" | "collectorHostnames">,
+): (e: ForensicEvent) => ForensicEvent {
+  if (!state.hostRenames?.length) return (e) => e;
+  const map = HostRenameMap.from(state.hostRenames, state.collectorHostnames);
+  return (e) => rehome(e, map);
+}
+
 function rehome(e: ForensicEvent, map: HostRenameMap): ForensicEvent {
   if (!e.assetRecord || !e.asset) return e;
   const current = map.currentNameOf(e.assetRecord, e.timestamp);

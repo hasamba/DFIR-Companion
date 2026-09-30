@@ -1,7 +1,11 @@
 import type { ImportLock } from "../analysis/importLock.js";
 import type { StateStore } from "../analysis/stateStore.js";
-import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ImportAdmissionHint } from "../analysis/importMemoryGuard.js";
+import {
+  captureImportBaseline,
+  releaseImportBaseline,
+  type ImportBaseline,
+} from "../analysis/importBaseline.js";
 
 /**
  * The critical section an import route runs inside: the case's import lock, held, plus the state
@@ -19,8 +23,11 @@ import type { ImportAdmissionHint } from "../analysis/importMemoryGuard.js";
  * admission stops meaning exclusivity. See analysis/importLock.ts.
  */
 export interface ImportSection {
-  /** State as of the moment this import took the case. Null when no state store is wired. */
-  stateBefore: InvestigationState | null;
+  /**
+   * The case as of the moment this import took the case — an outline plus the armed import journal,
+   * not a full copy (analysis/importBaseline.ts, #1874). Null when no state store is wired.
+   */
+  baseline: ImportBaseline | null;
   /** Release the section. Call it from a `finally` — forgetting it wedges the case's imports. */
   release(): void;
 }
@@ -36,12 +43,17 @@ export async function beginImportSection(
   stateStore?: StateStore,
   size?: number | ImportAdmissionHint,
 ): Promise<ImportSection> {
-  const release = await importLock.acquire(caseId, typeof size === "number" ? { incomingBytes: size } : size);
-  let stateBefore: InvestigationState | null = null;
+  const unlock = await importLock.acquire(caseId, typeof size === "number" ? { incomingBytes: size } : size);
+  let baseline: ImportBaseline | null = null;
   try {
-    stateBefore = (await stateStore?.load(caseId)) ?? null;
+    baseline = stateStore ? await captureImportBaseline(stateStore, caseId) : null;
   } catch {
     // Best-effort: no snapshot means no diff and no checkpoint, never a failed import.
   }
-  return { stateBefore, release };
+  // The journal is disarmed BEFORE the lock goes, so the next section's arm is never undone by it.
+  const release = (): void => {
+    if (!stateStore || !baseline?.journalToken) return unlock();
+    void releaseImportBaseline(stateStore, baseline).finally(unlock);
+  };
+  return { baseline, release };
 }

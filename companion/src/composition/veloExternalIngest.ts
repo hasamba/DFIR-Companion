@@ -55,6 +55,8 @@ export interface VeloExternalIngestDeps {
   options: AppOptions;
   /** One import writer per case, across every import path (see analysis/importLock.ts). */
   importLock: ImportLock;
+  /** The case's state lock (createApp's runStateExclusive): the settle's row writes run inside it (#1874). */
+  runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   persistEvidence: (
     caseId: string,
     originalName: string,
@@ -114,6 +116,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     resolveImportKind,
     autoTagImported,
     demoteForensicForCase,
+    runStateExclusive,
     getControl,
     applyWhitelistToCase,
     applyNsrlToCase,
@@ -127,6 +130,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     onState: options.onState,
     autoTagImported,
     demoteForensicForCase,
+    runStateExclusive,
   };
 
   // Ingest ONE Velociraptor artifact-map JSON into a case — the shared core used by the external

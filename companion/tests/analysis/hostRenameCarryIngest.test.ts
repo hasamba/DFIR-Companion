@@ -127,7 +127,7 @@ describe("importVelociraptor — a rename learned by one file reaches the case a
       idPrefix: "a",
       importedAt: IMPORTED_AT,
     });
-    const { state } = await settleForensicImport(
+    await settleForensicImport(
       {
         stateStore,
         autoTagImported: async () => {},
@@ -136,7 +136,7 @@ describe("importVelociraptor — a rename learned by one file reaches the case a
       "c1",
       before,
     );
-    const [row] = bareRows(state);
+    const [row] = bareRows(await stateStore.load("c1"));
     expect(row.asset).toBe(NEW);
     expect(row.description).toContain(`[logged under former hostname ${OLD}]`);
   });

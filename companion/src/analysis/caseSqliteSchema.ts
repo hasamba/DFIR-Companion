@@ -21,4 +21,17 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE VIRTUAL TABLE IF NOT EXISTS event_terms USING fts5(terms, content='', contentless_delete=1, " +
   "tokenize=\"unicode61 tokenchars '.@:/\\-_'\");" +
   "CREATE TRIGGER IF NOT EXISTS entities_terms_delete AFTER DELETE ON entities " +
-  "BEGIN DELETE FROM event_terms WHERE rowid = old.row_id; END;";
+  "BEGIN DELETE FROM event_terms WHERE rowid = old.row_id; END;" +
+  // #1874: the import journal. While an import section holds it armed (one token row), the first
+  // UPDATE or DELETE of a forensic row copies the row's stored image here, keyed by row_id so a
+  // duplicate event id keeps its own image. The undo checkpoint and "which old rows did this import
+  // touch" are read from it (caseSqliteWorkerRows.ts), so no full copy of the case is held for the
+  // import. Unarmed, each trigger costs one lookup in an empty table.
+  "CREATE TABLE IF NOT EXISTS import_journal (row_id INTEGER PRIMARY KEY, entity_id TEXT, payload TEXT NOT NULL);" +
+  "CREATE TABLE IF NOT EXISTS import_journal_arm (token TEXT PRIMARY KEY);" +
+  "CREATE TRIGGER IF NOT EXISTS entities_journal_update BEFORE UPDATE OF payload ON entities " +
+  "WHEN old.kind = 'forensicTimeline' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
+  "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_journal_delete BEFORE DELETE ON entities " +
+  "WHEN old.kind = 'forensicTimeline' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
+  "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;";

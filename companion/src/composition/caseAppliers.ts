@@ -12,6 +12,7 @@
  * reversible, visible in the "False Positives" panel, and attributed — which "the importer dropped
  * it" never would be. Both are opt-in: an empty whitelist / absent NSRL set makes them no-ops.
  */
+import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "../analysis/falsePositive.js";
@@ -19,8 +20,10 @@ import { whitelistMatches } from "../analysis/iocWhitelist.js";
 import { nsrlMatchIocs, nsrlMatchEvents } from "../analysis/nsrl.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
-import { applyDeobfuscation } from "../analysis/applyDeobfuscation.js";
+import { deobfuscateRows } from "./deobfuscationRows.js";
 import { deltaCheckpoint, pushCheckpoint, type ImportCheckpoint } from "../analysis/importUndo.js";
+import { isImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
+import { baselineCheckpoint } from "../analysis/importUndoRows.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -43,12 +46,15 @@ export interface CaseAppliers {
   /** The shared FalsePositiveStore the whitelist/NSRL sweeps write through. */
   readonly falsePositives: FalsePositiveStore;
   /**
-   * `afterState` is the state the import left. Pass it when the caller holds it (the settled state);
-   * otherwise the current state is loaded.
+   * `beforeState` is the import section's baseline (#1874) or, from a caller that still snapshots,
+   * the full pre-import state. `afterState` is the state the import left; a full-state caller that
+   * holds it passes it, otherwise the current state is loaded. A baseline needs neither: its
+   * checkpoint is built from the rows the import changed, and must be pushed while the section is
+   * still held (the journal it reads goes with the section).
    */
   pushImportCheckpoint(
     caseId: string,
-    beforeState: InvestigationState,
+    beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
   ): Promise<void>;
@@ -80,7 +86,7 @@ export function createCaseAppliers({
   // the import actually changed anything (no checkpoint for a no-op re-import).
   async function pushImportCheckpoint(
     caseId: string,
-    beforeState: InvestigationState,
+    beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
   ): Promise<void> {
@@ -88,11 +94,7 @@ export function createCaseAppliers({
     if (!undoStore) return;
     try {
       const at = new Date().toISOString();
-      const after = afterState ?? (await options.stateStore?.load(caseId));
-      // No state store (tests only — undo itself needs one): keep the full copy.
-      const checkpoint: ImportCheckpoint = after
-        ? deltaCheckpoint(label, at, beforeState, after)
-        : { label, at, state: beforeState };
+      const checkpoint = await checkpointFor(caseId, beforeState, label, at, afterState);
       // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
       // import firing requests seconds apart while the previous one's async work is still in
       // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge
@@ -111,6 +113,32 @@ export function createCaseAppliers({
         { caseId },
       );
     }
+  }
+
+  async function checkpointFor(
+    caseId: string,
+    beforeState: InvestigationState | ImportBaseline,
+    label: string,
+    at: string,
+    afterState?: InvestigationState,
+  ): Promise<ImportCheckpoint> {
+    if (isImportBaseline(beforeState) && !beforeState.full) {
+      const built =
+        options.stateStore && (await baselineCheckpoint(options.stateStore, beforeState, label, at));
+      if (!built) throw new Error("the import's journal is no longer available");
+      return built;
+    }
+    const before = isImportBaseline(beforeState) ? beforeState.full! : beforeState;
+    const after = afterState ?? (await options.stateStore?.load(caseId));
+    // No state store (tests only — undo itself needs one): keep the full copy.
+    return after ? deltaCheckpoint(label, at, before, after) : { label, at, state: before };
+  }
+
+  // A state push for the dashboards watching the case; the app loads the case only if one is (#1874).
+  function announceState(caseId: string): void {
+    if (options.onStateChanged) return options.onStateChanged(caseId);
+    if (options.onState && options.stateStore)
+      void options.stateStore.load(caseId).then(options.onState, () => undefined);
   }
 
   // ── IOC whitelist (Phase 2 of #35) ─────────────────────────────────────────────────────────
@@ -163,22 +191,15 @@ export function createCaseAppliers({
     opts: { reanalyzeStale?: boolean } = {},
   ): Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }> {
     if (!options.stateStore) return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
-    return runStateExclusive(caseId, async () => {
-      const state = await options.stateStore!.load(caseId);
-      const result = applyDeobfuscation(state, {
+    // #1874: streamed, and only the decoded rows and the IOC list are written (deobfuscationRows.ts).
+    const outcome = await runStateExclusive(caseId, () =>
+      deobfuscateRows(options.stateStore!, caseId, {
         reanalyzeStale: opts.reanalyzeStale,
         gradeDerived: scriptBlockSignal,
-      });
-      if (result.deobfuscated === 0 && result.newIocs === 0)
-        return { deobfuscated: 0, newIocs: 0, reanalyzed: 0 };
-      await options.stateStore!.save(result.state);
-      options.onState?.(result.state);
-      return {
-        deobfuscated: result.deobfuscated,
-        newIocs: result.newIocs,
-        reanalyzed: result.reanalyzed,
-      };
-    });
+      }),
+    );
+    if (outcome.changed) announceState(caseId);
+    return { deobfuscated: outcome.deobfuscated, newIocs: outcome.newIocs, reanalyzed: outcome.reanalyzed };
   }
 
   // ── NSRL known-good hashes (#63) ───────────────────────────────────────────────────────────────
@@ -200,9 +221,12 @@ export function createCaseAppliers({
     const db = nsrlDb();
     if (!haveFlat && !db) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
     const lookup = (h: string): boolean => (flat?.has(h) ?? false) || (db?.has(h) ?? false);
-    const state = await options.stateStore.load(caseId);
-    const iocMatches = nsrlMatchIocs(state.iocs, lookup);
-    const eventMatches = nsrlMatchEvents(state.forensicTimeline, lookup);
+    // #1874: the IOCs from the overview, the events a page at a time — never the whole case at once.
+    const iocMatches = nsrlMatchIocs((await options.stateStore.loadOverview(caseId)).iocs, lookup);
+    const eventMatches: ReturnType<typeof nsrlMatchEvents> = [];
+    for await (const batch of options.stateStore.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
+      eventMatches.push(...nsrlMatchEvents(batch, lookup));
+    }
     if (iocMatches.length === 0 && eventMatches.length === 0)
       return { matchedIocs: 0, matchedEvents: 0, added: 0 };
     const markers = await falsePositives.load(caseId);
