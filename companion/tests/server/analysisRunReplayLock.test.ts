@@ -40,6 +40,17 @@ class WatchedLock extends ImportLock {
       hint,
     );
   }
+  // #1891: the replay takes its section through beginImportSection, which acquires the lock.
+  override async acquire(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
+    const release = await super.acquire(caseId, hint);
+    this.held++;
+    let released = false;
+    return () => {
+      if (!released) this.held--;
+      released = true;
+      release();
+    };
+  }
 }
 
 /** A run store that notes, for each child run, whether the case's import section was held. */
@@ -93,12 +104,13 @@ describe("import replay takes the case's import section (#1890)", () => {
     const { app, stateStore, runStore, run } = await setup(lock);
     const before = await timelineIds(stateStore);
 
-    // The replay's pre-import snapshot must be taken inside the section.
+    // The replay's pre-import snapshot (its import baseline, #1891) must be taken inside the section.
     const readsUnderLock: boolean[] = [];
     const load = stateStore.load.bind(stateStore);
-    stateStore.load = async (caseId: string) => {
+    const capture = stateStore.captureImportBaseline.bind(stateStore);
+    stateStore.captureImportBaseline = async (...args: Parameters<typeof capture>) => {
       readsUnderLock.push(lock.held > 0);
-      return load(caseId);
+      return capture(...args);
     };
     const release = await lock.acquire("c1");
     const replay = request(app)
@@ -116,9 +128,8 @@ describe("import replay takes the case's import section (#1890)", () => {
     const child = (await runStore.list("c1")).find((r) => r.parentRunId === run.id);
     expect(child).toBeDefined();
     expect(runStore.childRecordedUnderLock).toEqual([true]);
-    stateStore.load = load;
-    // Its first read is the pre-import snapshot (later reads may be background synthesis).
-    expect(readsUnderLock[0]).toBe(true);
+    stateStore.captureImportBaseline = capture;
+    expect(readsUnderLock).toEqual([true]);
     // Its receipt names only the replay's own rows.
     const after = await timelineIds(stateStore);
     const added = after.filter((id) => !before.includes(id));
@@ -136,7 +147,8 @@ describe("import replay takes the case's import section (#1890)", () => {
     expect(failing).toBe(runStore);
     const replay = await request(app).post(`/cases/c1/analysis-runs/${run.id}/replay`);
     expect(replay.status).toBe(500);
-    expect(lock.held).toBe(0);
+    // The section is free again: the next import is granted (release disarms the journal first, so
+    // it is proven by acquiring, not by reading a counter at once).
     const next = await Promise.race([
       lock.runExclusive("c1", async () => "granted"),
       new Promise((resolve) => setTimeout(() => resolve("wedged"), 2000)),
