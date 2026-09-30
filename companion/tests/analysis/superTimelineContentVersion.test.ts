@@ -107,6 +107,21 @@ describe("super-timeline content version (#1881)", () => {
     ).rejects.toThrow(/superTimeline/);
   });
 
+  it("refuses super-timeline rows through the generic row update and delete", async () => {
+    await store.append("c1", [ev("e1")]);
+    await expect(
+      caseSqliteWorker.request({ op: "updateEntityRows", dbPath: dbPath(), kind: "superTimeline", rows: [] }),
+    ).rejects.toThrow(/superTimeline/);
+    await expect(
+      caseSqliteWorker.request({
+        op: "deleteEntityRows",
+        dbPath: dbPath(),
+        kind: "superTimeline",
+        rowIds: [1],
+      }),
+    ).rejects.toThrow(/superTimeline/);
+  });
+
   it("rotates when the generic prune deletes super rows, not when it deletes none", async () => {
     await store.append("c1", [
       ev("old", "WS-1", "2020-01-01T00:00:00Z"),
