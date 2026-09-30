@@ -103,7 +103,9 @@ describe("saveState reconciles rows by entity id (#1874)", () => {
     const after = rows(dbPath, "forensicTimeline");
 
     expect(after.map((r) => r.entity_id)).toEqual(["x", "y", "a", "b", "c"]);
-    expect(after.map((r) => r.ordinal)).toEqual([0, 1, 2, 3, 4]);
+    // Ordinals are an order, not positions: with no room below "a", the save respaces the rows.
+    const ords = after.map((r) => r.ordinal);
+    expect(ords.every((o, i) => i === 0 || o > ords[i - 1])).toBe(true);
     for (const id of ["a", "b", "c"]) {
       const was = before.find((r) => r.entity_id === id)!;
       const now = after.find((r) => r.entity_id === id)!;
@@ -131,9 +133,10 @@ describe("saveState reconciles rows by entity id (#1874)", () => {
     await save(dbPath, state([event("x", 1), event("a", 10, { description: "row a C:\\Other\\moved.exe" })]));
     expect(termRows(dbPath, "c:\\temp\\a.exe")).toEqual([rowA]); // still the path value
     expect(termRows(dbPath, "c:\\other\\moved.exe")).toEqual([rowA]);
-    const a = rows(dbPath, "forensicTimeline").find((r) => r.entity_id === "a")!;
-    expect(a.ordinal).toBe(1);
-    expect(valueOrdinals(dbPath, rowA).every((o) => o === 1)).toBe(true);
+    const stored = rows(dbPath, "forensicTimeline");
+    const a = stored.find((r) => r.entity_id === "a")!;
+    expect(stored.map((r) => r.entity_id)).toEqual(["x", "a"]);
+    expect(valueOrdinals(dbPath, rowA).every((o) => o === a.ordinal)).toBe(true);
   });
 
   it("keeps each unchanged duplicate on its own row when another duplicate is inserted before it", async () => {

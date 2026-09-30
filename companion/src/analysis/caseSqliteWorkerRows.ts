@@ -184,6 +184,7 @@ function updateEntityRows(dbPath, kind, rows) {
         } else {
           writer.update(row.rowId, projection, row.entity);
         }
+        if (kind === "forensicTimeline") carryMergeIndex(db, row.rowId, Number(stored.version), stored.payload, prior, row.entity);
         out.updated++;
       }
       return out;

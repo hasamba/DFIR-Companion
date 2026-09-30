@@ -61,7 +61,7 @@ const MD5_RE = /\b[a-f0-9]{32}\b/i;
 // shared a vendor URL in their text. (#102)
 const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
 
-function eventHashes(e: ForensicEvent): string[] {
+export function eventHashes(e: ForensicEvent): string[] {
   const out = new Set<string>();
   if (e.sha256) out.add(e.sha256.toLowerCase());
   if (e.md5) out.add(e.md5.toLowerCase());
@@ -81,7 +81,7 @@ function eventHashes(e: ForensicEvent): string[] {
 // or was scraped from the description. Free-text paths are weak — a process executable (e.g.
 // powershell.exe) or a vendor URL recurs across unrelated detections — so they correlate ONLY
 // against a structured path, never another free-text one (see the structured gate in step 2). (#102)
-function eventPath(e: ForensicEvent): { path: string; structured: boolean } | undefined {
+export function eventPath(e: ForensicEvent): { path: string; structured: boolean } | undefined {
   if (e.path && e.path.trim()) return { path: e.path.trim().toLowerCase(), structured: true };
   const m = PATH_RE.exec(scannedText(e.description))?.[0];
   return m ? { path: m.trim().toLowerCase(), structured: false } : undefined;
@@ -260,9 +260,9 @@ const NOTE_NAMES_RE = DERIVED_NOTE_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\
 const DERIVED_NOTE = new RegExp(`\\[(?:${NOTE_NAMES_RE}):[\\s\\S]{0,1200}?\\]`, "u");
 const DERIVED_NOTE_ALL = new RegExp(DERIVED_NOTE.source, "gu");
 /** A LEAPP row: the importer's label opens the description. */
-const LEAPP_ROW = /^(?:i|A)?LEAPP\b/;
+export const LEAPP_ROW = /^(?:i|A)?LEAPP\b/;
 /** The origin tag a LEAPP row carries (#988) — part of the row's identity, stripped only for the legacy match above. */
-const MOBILE_ORIGIN_TAG = /\s*\[origin: [^\]]{0,260}\]/u;
+export const MOBILE_ORIGIN_TAG = /\s*\[origin: [^\]]{0,260}\]/u;
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -433,7 +433,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
 // Stamp a chainSignature onto a process-creation event (#68) when it lacks one, so the field is
 // populated even for importers that don't set it and old state self-heals. Idempotent: an event that
 // already carries a signature (or isn't a process creation) is returned unchanged.
-function withSignature(e: ForensicEvent): ForensicEvent {
+export function withSignature(e: ForensicEvent): ForensicEvent {
   if (e.pid === undefined || e.chainSignature) return e;
   const sig = computeChainSignature(e);
   return sig ? { ...e, chainSignature: sig } : e;

@@ -16,6 +16,9 @@
 // row; only then the next in stored order. The ordinal is UNIQUE per kind, so every row that moves
 // is first parked on a negative ordinal (-row_id, unique), then placed.
 //
+// A row keeps its ordinal whenever the order allows (keepOrdinals below): ordinals are an order, not
+// a position, so an import of earlier evidence moves no stored row unless the gap it lands in is full.
+//
 // Every other kind is small, and several have no id at all, so it keeps the positional rewrite it
 // always had.
 export const SAVE_STATE_WORKER_SOURCE = String.raw`
@@ -31,6 +34,77 @@ function writeStateKind(db, writer, kind, values) {
     else if (prior.payload !== projection.payload) writer.update(prior.row_id, projection, values[ordinal]);
   }
   db.prepare("DELETE FROM entities WHERE kind=? AND ordinal>=?").run(kind, values.length);
+}
+
+// The spacing a respaced timeline gets, and the widest step between rows placed into one gap: a run of
+// later imports appending after the same row then finds room many times before the gap is used up.
+const ORDINAL_GAP = 1024;
+const ORDINAL_STEP_MAX = 64;
+// Ordinals stay far below 2^53 (exact in a JS number); a respace resets them to (i + 1) * ORDINAL_GAP.
+const ORDINAL_MAX = 2 ** 50;
+
+// New ordinals for a list whose i-th entry currently sits at own[i] (undefined: a new row), in list
+// order (#1874). Ordinals are only an order — every reader sorts or pages by them — so the longest run
+// of rows already in order keeps its ordinals and every other row takes a free one in the gap where it
+// now belongs. Only when a gap is too small is the whole list respaced, with room left between every
+// two rows, so the next save (or the importer merge) finds room instead of renumbering the case.
+function keepOrdinals(own) {
+  const n = own.length;
+  // Longest strictly increasing subsequence of the known ordinals (patience sorting, O(n log n)).
+  const tails = [];
+  const tailAt = [];
+  const back = new Array(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    const o = own[i];
+    if (o === undefined) continue;
+    let lo = 0, hi = tails.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < o) lo = mid + 1; else hi = mid; }
+    tails[lo] = o;
+    tailAt[lo] = i;
+    back[i] = lo > 0 ? tailAt[lo - 1] : -1;
+  }
+  const assigned = new Array(n);
+  const anchor = new Array(n).fill(false);
+  for (let i = tails.length ? tailAt[tails.length - 1] : -1; i >= 0; i = back[i]) {
+    anchor[i] = true;
+    assigned[i] = own[i];
+  }
+  if (!fillOrdinalGaps(assigned, anchor)) respaceOrdinals(assigned);
+  return assigned;
+}
+
+// Every row ORDINAL_GAP apart, from ORDINAL_GAP.
+function respaceOrdinals(assigned) {
+  for (let k = 0; k < assigned.length; k++) assigned[k] = (k + 1) * ORDINAL_GAP;
+}
+
+// The rows between two anchors (rows keeping their ordinal) take free ordinals in the gap between
+// them, at most ORDINAL_STEP_MAX apart; past the last anchor, ORDINAL_GAP apart. False (assigned then
+// incomplete) when some gap is too small or an ordinal would pass ORDINAL_MAX.
+function fillOrdinalGaps(assigned, anchor) {
+  const n = assigned.length;
+  // Nothing stored to keep (a first save): 0..n-1, as a save always wrote them.
+  if (!anchor.some(Boolean)) {
+    for (let k = 0; k < n; k++) assigned[k] = k;
+    return true;
+  }
+  for (let i = 0, prev = -1; i < n; ) {
+    if (anchor[i]) { prev = assigned[i]; i++; continue; }
+    let j = i;
+    while (j < n && !anchor[j]) j++;
+    const count = j - i;
+    if (j === n) {
+      if (prev + ORDINAL_GAP * count > ORDINAL_MAX) return false;
+      for (let k = 0; k < count; k++) assigned[i + k] = prev + ORDINAL_GAP * (k + 1);
+    } else if (assigned[j] - prev - 1 >= count) {
+      const step = Math.min((assigned[j] - prev) / (count + 1), ORDINAL_STEP_MAX);
+      for (let k = 0; k < count; k++) assigned[i + k] = prev + Math.floor(step * (k + 1));
+    } else {
+      return false;
+    }
+    i = j;
+  }
+  return true;
 }
 
 function writeStateKindById(db, writer, kind, values) {
@@ -88,20 +162,21 @@ function writeStateKindById(db, writer, kind, values) {
   for (const row of stored) if (!kept.has(row.row_id)) deleteRow.run(row.row_id);
   const setOrdinal = db.prepare("UPDATE entities SET ordinal=? WHERE row_id=?");
   const setValueOrdinal = db.prepare("UPDATE entity_values SET ordinal=? WHERE row_id=?");
-  for (let ordinal = 0; ordinal < values.length; ordinal++) {
-    const prior = priors[ordinal];
-    if (prior && prior.ordinal !== ordinal) setOrdinal.run(-prior.row_id, prior.row_id);
+  const assigned = keepOrdinals(priors.map((prior) => (prior ? prior.ordinal : undefined)));
+  for (let i = 0; i < values.length; i++) {
+    const prior = priors[i];
+    if (prior && prior.ordinal !== assigned[i]) setOrdinal.run(-prior.row_id, prior.row_id);
   }
-  for (let ordinal = 0; ordinal < values.length; ordinal++) {
-    const projection = entityProjection(kind, values[ordinal], ordinal);
-    const prior = priors[ordinal];
-    if (!prior) { writer.insert(projection, values[ordinal]); continue; }
-    if (prior.ordinal !== ordinal) {
-      setOrdinal.run(ordinal, prior.row_id);
-      setValueOrdinal.run(ordinal, prior.row_id);
+  for (let i = 0; i < values.length; i++) {
+    const projection = entityProjection(kind, values[i], assigned[i]);
+    const prior = priors[i];
+    if (!prior) { writer.insert(projection, values[i]); continue; }
+    if (prior.ordinal !== assigned[i]) {
+      setOrdinal.run(assigned[i], prior.row_id);
+      setValueOrdinal.run(assigned[i], prior.row_id);
     }
     if (readPayload.get(prior.row_id).payload !== projection.payload) {
-      writer.update(prior.row_id, projection, values[ordinal]);
+      writer.update(prior.row_id, projection, values[i]);
     }
   }
 }

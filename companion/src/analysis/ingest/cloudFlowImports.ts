@@ -11,7 +11,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport } from "./importState.js";
+import { noteEmptyImport, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordCounts, recordParsedImport } from "./parsedDebug.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
@@ -82,14 +82,11 @@ export async function importAwsFlowLog(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -170,14 +167,11 @@ export async function importAzureFlowLog(
   };
   const delta = deltaSchema.parse(raw);
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -247,14 +241,11 @@ export async function importGcpFlowLog(
   };
   const delta = deltaSchema.parse(raw);
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });

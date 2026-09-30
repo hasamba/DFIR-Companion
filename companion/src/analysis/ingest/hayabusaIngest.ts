@@ -22,7 +22,13 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import type { VelociraptorImportOptions } from "../velociraptorImport.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import { describeFloor } from "./floorNote.js";
-import { deltaIocs, hostIdentityDelta, knownHostIdentity, noteEmptyImport } from "./importState.js";
+import {
+  deltaIocs,
+  hostIdentityDelta,
+  knownHostIdentity,
+  noteEmptyImport,
+  mergeAndSaveDelta,
+} from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
 import { importVelociraptor } from "./endpointImports.js";
@@ -82,14 +88,11 @@ export async function importHayabusa(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });

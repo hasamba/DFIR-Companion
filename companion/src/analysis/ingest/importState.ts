@@ -18,6 +18,7 @@ import {
 import type { StoredAuthObservation } from "../authObservationStore.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
+import type { WindowContext } from "../stateMerge.js";
 
 /**
  * The two shared tails every deterministic importer ends in (#418).
@@ -64,18 +65,37 @@ export async function commitDelta(
         name: "AbortError",
       });
     }
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     const progress = opts.onProgress?.(1, 1);
     if (opts.awaitProgress) await progress;
     return state;
   });
+}
+
+/**
+ * Merge a delta into the case, save it and announce the new state — the step every importer ends in.
+ * Call it inside `ctx.withStateLock`.
+ *
+ * With the pipeline's merge (#1874) the merge reads and writes only the rows the delta needs when it
+ * can show the result is the full merge's, and the returned state then holds the case metadata, the
+ * IOCs it touched and the forensic rows it wrote — not the whole timeline. Without it (minimal and
+ * test wirings) this is the full load → merge → save it always was, and returns the whole case.
+ */
+export async function mergeAndSaveDelta(
+  ctx: ImportContext,
+  caseId: string,
+  delta: ReturnType<typeof deltaSchema.parse>,
+  windowCtx: WindowContext,
+): Promise<InvestigationState> {
+  if (ctx.mergeIntoCase) return (await ctx.mergeIntoCase(caseId, delta, windowCtx)).state;
+  const state = await ctx.mergeWithAliases(await ctx.opts.stateStore.load(caseId), delta, windowCtx);
+  await ctx.opts.stateStore.save(state);
+  ctx.opts.onState?.(state);
+  return state;
 }
 
 /**

@@ -5,6 +5,7 @@ import type { CaptureMetadata } from "../types.js";
 import type { InvestigationState } from "./stateTypes.js";
 import { type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { mergeDelta, type WindowContext } from "./stateMerge.js";
+import { mergeIntoCase, type CaseMergeResult } from "./caseMerge.js";
 
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
 import { type SuggestOutcome } from "./taggerRuleSuggest.js";
@@ -90,6 +91,9 @@ export class AnalysisPipeline {
       opts: buildImportOpts(opts),
       withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),
       mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),
+      ...(opts.incrementalMerge
+        ? { mergeIntoCase: (caseId, delta, ctx) => this.mergeIntoCase(caseId, delta, ctx) }
+        : {}),
     };
     this.aiCtx = {
       opts: buildAiCallOpts(opts),
@@ -122,6 +126,27 @@ export class AnalysisPipeline {
     if (!this.opts.iocAliasStore) return mergeDelta(state, delta, ctx);
     const { aliases } = await this.opts.iocAliasStore.load(state.caseId);
     return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
+  }
+
+  // An importer's merge + save + announce (#1874, analysis/caseMerge.ts), with the same IOC aliases as
+  // mergeWithAliases. An incremental merge returns part of the case, so the dashboards are told the
+  // case changed and load it themselves (only when one is watching) instead of being handed the part.
+  private async mergeIntoCase(
+    caseId: string,
+    delta: Parameters<typeof mergeDelta>[1],
+    ctx: WindowContext,
+  ): Promise<CaseMergeResult> {
+    const aliases = this.opts.iocAliasStore
+      ? (await this.opts.iocAliasStore.load(caseId)).aliases
+      : undefined;
+    const withAliases = aliases ? { ...ctx, iocAliases: aliases } : ctx;
+    const out = await mergeIntoCase(this.opts.stateStore, caseId, delta, withAliases, (state) =>
+      mergeDelta(state, delta, withAliases),
+    );
+    if (out.complete) this.opts.onState?.(out.state);
+    else if (this.opts.onStateChanged) this.opts.onStateChanged(caseId);
+    else if (this.opts.onState) this.opts.onState(await this.opts.stateStore.load(caseId));
+    return out;
   }
 
   // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites). CAUTION: never call this from inside another withStateLock/runExclusive callback for the SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.

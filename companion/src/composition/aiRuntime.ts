@@ -68,6 +68,8 @@ export interface AiRuntimeDeps {
   dashboardBaseUrl: string;
   /** Broadcast a fresh state to live dashboards (the LiveHub's broadcast). */
   onState: (state: InvestigationState) => void;
+  /** "This case changed": the app loads and pushes it if a dashboard is watching (#1874). */
+  onStateChanged?: (caseId: string) => void;
 }
 
 export function buildAiRuntime(deps: AiRuntimeDeps) {
@@ -152,6 +154,9 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     store,
     stateLock,
     onState,
+    // #1874: importers merge only the rows a delta needs; the dashboards hear "changed", not a part.
+    incrementalMerge: true,
+    onStateChanged: deps.onStateChanged,
     ocrRunner,
     logger,
     kevStore,

@@ -1,4 +1,5 @@
 import type { WindowContext, mergeDelta } from "../stateMerge.js";
+import type { CaseMergeResult } from "../caseMerge.js";
 import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
@@ -69,6 +70,17 @@ export interface ImportContext {
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
   ): Promise<InvestigationState>;
+
+  /**
+   * Merge a delta into the case, save it and announce it (#1874): incrementally when the merge can
+   * show the result is the full merge's, fully otherwise (analysis/caseMerge.ts). Call inside
+   * withStateLock. Absent in minimal wirings, where mergeAndSaveDelta loads, merges and saves.
+   */
+  mergeIntoCase?(
+    caseId: string,
+    delta: Parameters<typeof mergeDelta>[1],
+    ctx: WindowContext,
+  ): Promise<CaseMergeResult>;
 }
 
 /**

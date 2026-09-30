@@ -17,7 +17,7 @@ import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
 import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, noteParsed } from "./importState.js";
+import { noteEmptyImport, noteParsed, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 
@@ -73,14 +73,11 @@ export async function importBashHistory(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -137,14 +134,11 @@ export async function importCombinedLog(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -206,14 +200,11 @@ export async function importCiscoAsa(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -280,14 +271,11 @@ export async function importSyslog(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -339,14 +327,11 @@ export async function importAuditd(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -398,14 +383,11 @@ export async function importJournald(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -458,14 +440,11 @@ export async function importSysdig(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });
@@ -514,14 +493,11 @@ export async function importDiskImageLog(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;
   });

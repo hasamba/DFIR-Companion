@@ -34,4 +34,31 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +
   "CREATE TRIGGER IF NOT EXISTS entities_journal_delete BEFORE DELETE ON entities " +
   "WHEN old.kind = 'forensicTimeline' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
-  "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;";
+  "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +
+  // #1874: the importer merge's index (analysis/caseSqliteWorkerMerge.ts). One row per forensic row the
+  // merge wrote — its version, time, year, correlation bucket keys and activity flags — so the next
+  // merge reads only the rows a delta needs. A row whose index version is not its stored version was
+  // written since by someone else and is read in full. Deleting a forensic row leaves its bucket keys
+  // in merge_dirty_keys (the rest of those buckets may group differently now), and every write to a
+  // forensic row, an IOC or the case metadata moves merge_generation, which the merge's write checks.
+  "CREATE TABLE IF NOT EXISTS merge_rows (row_id INTEGER PRIMARY KEY REFERENCES entities(row_id) ON DELETE CASCADE, " +
+  "version INTEGER NOT NULL, time_ms INTEGER, year INTEGER, year_inferred INTEGER NOT NULL DEFAULT 0, flags INTEGER NOT NULL DEFAULT 0);" +
+  "CREATE TABLE IF NOT EXISTS merge_keys (key TEXT NOT NULL, row_id INTEGER NOT NULL REFERENCES entities(row_id) ON DELETE CASCADE, " +
+  "PRIMARY KEY(key, row_id)) WITHOUT ROWID;" +
+  "CREATE INDEX IF NOT EXISTS merge_keys_row_idx ON merge_keys(row_id);" +
+  "CREATE TABLE IF NOT EXISTS merge_dirty_keys (key TEXT PRIMARY KEY) WITHOUT ROWID;" +
+  "CREATE TABLE IF NOT EXISTS merge_generation (id INTEGER PRIMARY KEY CHECK (id = 1), n INTEGER NOT NULL);" +
+  "INSERT OR IGNORE INTO merge_generation(id, n) VALUES (1, 0);" +
+  "CREATE TRIGGER IF NOT EXISTS entities_merge_dirty BEFORE DELETE ON entities WHEN old.kind = 'forensicTimeline' BEGIN " +
+  "INSERT OR IGNORE INTO merge_dirty_keys(key) SELECT key FROM merge_keys WHERE row_id = old.row_id; END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_merge_gen_insert AFTER INSERT ON entities " +
+  "WHEN new.kind IN ('forensicTimeline', 'iocs') BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_merge_gen_update AFTER UPDATE ON entities " +
+  "WHEN old.kind IN ('forensicTimeline', 'iocs') OR new.kind IN ('forensicTimeline', 'iocs') BEGIN " +
+  "UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
+  "CREATE TRIGGER IF NOT EXISTS entities_merge_gen_delete AFTER DELETE ON entities " +
+  "WHEN old.kind IN ('forensicTimeline', 'iocs') BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
+  "CREATE TRIGGER IF NOT EXISTS meta_merge_gen_insert AFTER INSERT ON storage_meta " +
+  "WHEN new.key = 'investigation' BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;" +
+  "CREATE TRIGGER IF NOT EXISTS meta_merge_gen_update AFTER UPDATE ON storage_meta " +
+  "WHEN new.key = 'investigation' BEGIN UPDATE merge_generation SET n = n + 1 WHERE id = 1; END;";
