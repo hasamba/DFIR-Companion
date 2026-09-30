@@ -1,7 +1,8 @@
 // The incremental merge's worker ops (#1874). Spliced into caseSqliteWorker.ts's WORKER_SOURCE as
 // plain text, so everything here runs inside the worker thread with that file's helpers in scope
 // (openDatabase, withTransaction, writeStateBody, entityProjection, createEntityWriter, existsSync).
-// Keep it backtick-free and free of dollar-brace: the fragment is a String.raw template.
+// Keep it backtick-free and free of dollar-brace: the fragment is a String.raw template (the TS
+// constants it needs are prepended as JSON, see MERGE_SCAN_SQL).
 //
 // The merge index (tables in caseSqliteSchema.ts) is one row per forensic row the importer merge
 // wrote: its version, its time and year, its correlation bucket keys and its activity flags. A row is
@@ -13,7 +14,46 @@
 // metadata. The apply op refuses to write when it moved since the merge's first read, so a writer
 // that does not share the state lock can never have its change overwritten by a merge that did not
 // see it.
-export const MERGE_WORKER_SOURCE = String.raw`
+//
+// #1887: the merge walks every forensic row on each import (MERGE_SCAN_SQL). Each walk reads only
+// entities_merge_order_idx (kind, ordinal, version; row_id rides along) and merge_rows' key, never
+// the table row: reading version from the table touched the page holding the row's full payload, so
+// each walk read the whole case. tests/analysis/mergeScanPlan.test.ts holds every walk to that.
+const SCAN_CLEAN_JOIN = "JOIN merge_rows m ON m.row_id=e.row_id AND m.version=e.version";
+export const MERGE_SCAN_SQL = {
+  cleanCounts:
+    "SELECT count(*) AS n, total((m.flags & 1) <> 0) AS t, total((m.flags & 2) <> 0) AS p, " +
+    "total((m.flags & 4) <> 0) AS c, total((m.flags & 8) <> 0) AS l FROM entities e " +
+    SCAN_CLEAN_JOIN +
+    " WHERE e.kind='forensicTimeline'",
+  stale:
+    "SELECT e.row_id FROM entities e LEFT JOIN merge_rows m ON m.row_id=e.row_id " +
+    "WHERE e.kind='forensicTimeline' AND (m.row_id IS NULL OR m.version<>e.version) ORDER BY e.ordinal",
+  years:
+    "SELECT m.year AS year, count(*) AS n FROM entities e " +
+    SCAN_CLEAN_JOIN +
+    " WHERE e.kind='forensicTimeline' AND m.year IS NOT NULL GROUP BY m.year",
+  // One page of the timeline after an ordinal, as arrays: [row_id, ordinal, version, mv, time_ms].
+  placePage:
+    "SELECT e.row_id, e.ordinal, e.version, m.version AS mv, m.time_ms FROM entities e " +
+    "LEFT JOIN merge_rows m ON m.row_id=e.row_id WHERE e.kind='forensicTimeline' AND e.ordinal > ? " +
+    "ORDER BY e.ordinal LIMIT ?",
+  stalePositions:
+    "SELECT e.version, m.version AS mv FROM entities e LEFT JOIN merge_rows m ON m.row_id=e.row_id " +
+    "WHERE e.kind='forensicTimeline' ORDER BY e.ordinal",
+} as const;
+
+/** Rows per page of the placement scan: bounds what one read allocates, whatever the case size. */
+export const MERGE_SCAN_PAGE = 1024;
+
+export const MERGE_WORKER_SOURCE =
+  "const MERGE_SCAN_SQL = " +
+  JSON.stringify(MERGE_SCAN_SQL) +
+  ";\n" +
+  "const MERGE_SCAN_PAGE = " +
+  MERGE_SCAN_PAGE +
+  ";\n" +
+  String.raw`
 function mergeGeneration(db) {
   const row = db.prepare("SELECT n FROM merge_generation WHERE id=1").get();
   return row ? Number(row.n) : 0;
@@ -42,29 +82,19 @@ function mergeSnapshot(dbPath) {
     db.exec("BEGIN");
     try {
       if (!db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='investigation'").get()) return null;
-      const counts = db.prepare(
-        "SELECT count(*) AS n, total((m.flags & 1) <> 0) AS t, total((m.flags & 2) <> 0) AS p, " +
-        "total((m.flags & 4) <> 0) AS c, total((m.flags & 8) <> 0) AS l FROM entities e " + CLEAN_JOIN +
-        " WHERE e.kind='forensicTimeline'"
-      ).get();
+      const counts = db.prepare(MERGE_SCAN_SQL.cleanCounts).get();
       return {
         generation: mergeGeneration(db),
         meta: readMergeMeta(db),
         rowCount: Number(db.prepare(
           "SELECT count(*) AS n FROM entities WHERE kind='forensicTimeline'"
         ).get().n),
-        stale: db.prepare(
-          "SELECT e.row_id FROM entities e LEFT JOIN merge_rows m ON m.row_id=e.row_id " +
-          "WHERE e.kind='forensicTimeline' AND (m.row_id IS NULL OR m.version<>e.version) ORDER BY e.ordinal"
-        ).all().map((r) => Number(r.row_id)),
+        stale: db.prepare(MERGE_SCAN_SQL.stale).all().map((r) => Number(r.row_id)),
         clean: {
           rows: Number(counts.n), trigger: Number(counts.t), process: Number(counts.p),
           cloud: Number(counts.c), load: Number(counts.l),
         },
-        years: db.prepare(
-          "SELECT m.year AS year, count(*) AS n FROM entities e " + CLEAN_JOIN +
-          " WHERE e.kind='forensicTimeline' AND m.year IS NOT NULL GROUP BY m.year"
-        ).all().map((r) => [Number(r.year), Number(r.n)]),
+        years: db.prepare(MERGE_SCAN_SQL.years).all().map((r) => [Number(r.year), Number(r.n)]),
         dirtyKeys: db.prepare("SELECT key FROM merge_dirty_keys").all().map((r) => r.key),
       };
     } finally {
@@ -310,21 +340,27 @@ function mergePlace(db, placed, deletedRowIds) {
   for (const p of placed) if (p.rowId !== undefined) placedIds.add(p.rowId);
   const untouched = [];
   let prev = undefined;
-  for (const row of db.prepare(
-    "SELECT e.row_id, e.ordinal, e.version, m.version AS mv, m.time_ms FROM entities e " +
-    "LEFT JOIN merge_rows m ON m.row_id=e.row_id WHERE e.kind='forensicTimeline' ORDER BY e.ordinal"
-  ).iterate()) {
-    const rowId = Number(row.row_id);
-    if (placedIds.has(rowId) || deletedRowIds.has(rowId)) continue;
-    if (row.mv === null || Number(row.mv) !== Number(row.version)) {
-      throw mergeFail("DFIR_MERGE_CONFLICT", "an untouched forensic row is not indexed");
+  // Paged by ordinal (unique per kind), array rows: [row_id, ordinal, version, mv, time_ms]. The
+  // cursor is the last row READ, never the last row kept.
+  const page = db.prepare(MERGE_SCAN_SQL.placePage);
+  page.setReturnArrays(true);
+  for (let after = -Infinity; ;) {
+    const rows = page.all(after, MERGE_SCAN_PAGE);
+    if (!rows.length) break;
+    after = rows[rows.length - 1][1];
+    for (const [rowIdRaw, ordinal, version, mv, time] of rows) {
+      const rowId = Number(rowIdRaw);
+      if (placedIds.has(rowId) || deletedRowIds.has(rowId)) continue;
+      if (mv === null || Number(mv) !== Number(version)) {
+        throw mergeFail("DFIR_MERGE_CONFLICT", "an untouched forensic row is not indexed");
+      }
+      const timeMs = time === null ? null : Number(time);
+      if (prev !== undefined && mergeTimeCompare(prev, timeMs) > 0) {
+        throw mergeFail("DFIR_MERGE_UNSORTED", "the stored forensic timeline is not in time order");
+      }
+      prev = timeMs;
+      untouched.push({ rowId, ordinal: Number(ordinal), timeMs });
     }
-    const timeMs = row.time_ms === null ? null : Number(row.time_ms);
-    if (prev !== undefined && mergeTimeCompare(prev, timeMs) > 0) {
-      throw mergeFail("DFIR_MERGE_UNSORTED", "the stored forensic timeline is not in time order");
-    }
-    prev = timeMs;
-    untouched.push({ rowId, ordinal: Number(row.ordinal), timeMs });
   }
   const sequence = [];
   let u = 0;
@@ -433,7 +469,10 @@ function mergeApply(dbPath, plan) {
       for (let i = 0; i < sequence.length; i++) {
         const item = sequence[i];
         if (item.rowId === undefined) continue;
-        const now = Number(ordinalOf.get(item.rowId).ordinal);
+        // An untouched row carries its current ordinal (mergePlace keeps it current through a
+        // respace); only a placed stored row is read back. A lookup per untouched row read a table
+        // page per row of the case (#1887).
+        const now = item.pre === undefined ? item.ordinal : Number(ordinalOf.get(item.rowId).ordinal);
         if (now !== assigned[i]) moves.push([item.rowId, assigned[i]]);
       }
       for (const [rowId] of moves) setOrdinal.run(-rowId, rowId);
@@ -485,10 +524,7 @@ function mergeStalePositions(dbPath, stamp) {
     const all = !meta || meta.stamp !== stamp;
     const positions = [];
     let at = 0;
-    for (const row of db.prepare(
-      "SELECT e.version, m.version AS mv FROM entities e LEFT JOIN merge_rows m ON m.row_id=e.row_id " +
-      "WHERE e.kind='forensicTimeline' ORDER BY e.ordinal"
-    ).iterate()) {
+    for (const row of db.prepare(MERGE_SCAN_SQL.stalePositions).iterate()) {
       if (all || row.mv === null || Number(row.mv) !== Number(row.version)) positions.push(at);
       at++;
     }

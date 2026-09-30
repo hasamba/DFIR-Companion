@@ -128,6 +128,9 @@ export const CASE_SQLITE_SCHEMA_SQL =
   // #1874: the timeline's ids in order, read from the index alone (the settle and the run record
   // read them on every import; reading the rows themselves touched every page of the case).
   "CREATE INDEX IF NOT EXISTS entities_order_idx ON entities(kind, ordinal, entity_id);" +
+  // #1887: the importer merge's walks over every forensic row (MERGE_SCAN_SQL in
+  // caseSqliteWorkerMerge.ts) read each row's version; from this index, not from the payload's page.
+  "CREATE INDEX IF NOT EXISTS entities_merge_order_idx ON entities(kind, ordinal, version);" +
   // #1874: each host's first row, for the host-duplicate check every import runs (hostScopeLoad.ts).
   "CREATE INDEX IF NOT EXISTS entities_host_order_idx ON entities(kind, host, ordinal);" +
   // #1874: per-row facts (analysis/rowFacts.ts computes them; caseSqliteWorkerFacts.ts stores them)

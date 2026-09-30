@@ -8,6 +8,7 @@ import { deltaSchema, type AnalysisDelta } from "../../src/analysis/responseSche
 import { mergeDelta, type WindowContext } from "../../src/analysis/stateMerge.js";
 import { mergeIntoCase, mergeIndexStamp } from "../../src/analysis/caseMerge.js";
 import { mergeIncrementally } from "../../src/analysis/incrementalMerge.js";
+import { MERGE_SCAN_PAGE } from "../../src/analysis/caseSqliteWorkerMerge.js";
 import { captureImportBaseline } from "../../src/analysis/importBaseline.js";
 import { baselineCheckpoint } from "../../src/analysis/importUndoRows.js";
 import { applyUndoDelta } from "../../src/analysis/importUndoDelta.js";
@@ -431,6 +432,41 @@ describe("incremental importer merge — refusals", () => {
     expect(await importBoth(delta(batch("c", 10)))).toBe(false);
     await expectSame();
   });
+});
+
+describe("incremental importer merge — a timeline longer than one scan page (#1887)", () => {
+  // The placement scan reads the timeline MERGE_SCAN_PAGE rows at a time; the order check and the
+  // placement must see one continuous timeline across the page edges.
+  const big = 2 * MERGE_SCAN_PAGE + 5;
+
+  it("places new rows across page edges exactly as the full merge does", async () => {
+    await importBoth(delta(batch("a", big)));
+    for (const k of ["b", "c"]) {
+      expect(
+        await importBoth(
+          delta(batch(k, 90, (i) => ({ timestamp: day(1 + (i % 28), 9 + (i % 5), i % 60, 30) }))),
+        ),
+      ).toBe(true);
+      await expectSame();
+    }
+  }, 60_000);
+
+  it("refuses a timeline that is out of order exactly at a page edge", async () => {
+    await importBoth(delta(batch("a", big)));
+    await importBoth(delta(batch("b", 10)));
+    await both(async (caseId) => {
+      const s = await store.load(caseId);
+      const t = [...s.forensicTimeline];
+      // The last row of the first page takes the latest time, so the order breaks between the
+      // last row of page one and the first row of page two.
+      const edge = MERGE_SCAN_PAGE - 1;
+      [t[edge], t[t.length - 1]] = [t[t.length - 1], t[edge]];
+      expect(Date.parse(t[edge].timestamp)).toBeGreaterThan(Date.parse(t[edge + 1].timestamp));
+      await store.save({ ...s, forensicTimeline: t });
+    });
+    expect(await importBoth(delta(batch("c", 10)))).toBe(false);
+    await expectSame();
+  }, 60_000);
 });
 
 describe("incremental importer merge — undo and import counts", () => {
