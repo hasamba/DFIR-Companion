@@ -4,6 +4,7 @@ import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
 import { SAVE_STATE_WORKER_SOURCE } from "./caseSqliteWorkerSaveState.js";
+import { ROWS_WORKER_SOURCE } from "./caseSqliteWorkerRows.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -184,7 +185,7 @@ function createEntityWriter(db) {
   };
 }
 
-function writeState(db, state) {
+function writeState(db, state, excludedKinds) {
   return withTransaction(db, () => {
     const writer = createEntityWriter(db);
     const meta = {};
@@ -196,6 +197,7 @@ function writeState(db, state) {
       "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
     ).run(JSON.stringify(meta));
     for (const kind of ARRAY_KINDS) {
+      if ((excludedKinds || []).includes(kind)) continue; // #1874: an overview save leaves them be
       const values = Array.isArray(state && state[kind]) ? state[kind] : [];
       writeStateKind(db, writer, kind, values); // #1874: by entity id — caseSqliteWorkerSaveState.ts
       db.prepare(
@@ -276,9 +278,9 @@ function loadState(dbPath, excludedKinds) {
   try { return readState(db, excludedKinds); } finally { db.close(); }
 }
 
-function saveState(dbPath, state) {
+function saveState(dbPath, state, excludedKinds) {
   const db = openDatabase(dbPath);
-  try { writeState(db, state); } finally { db.close(); }
+  try { writeState(db, state, excludedKinds); } finally { db.close(); }
 }
 
 function setStateCaseId(dbPath, caseId) {
@@ -566,6 +568,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   SUPER_QUERY_WORKER_SOURCE +
   TERMS_WORKER_SOURCE +
   SAVE_STATE_WORKER_SOURCE +
+  ROWS_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -668,7 +671,7 @@ async function dispatch(message) {
     case "stateExists": return stateExists(message.dbPath);
     case "migrateState": return migrateState(message.dbPath, message.jsonPath);
     case "loadState": return loadState(message.dbPath, message.excludedKinds);
-    case "saveState": return saveState(message.dbPath, message.state);
+    case "saveState": return saveState(message.dbPath, message.state, message.excludedKinds);
     case "setStateCaseId": return setStateCaseId(message.dbPath, message.caseId);
     case "queryEntities": return queryEntities(message.dbPath, message.kind, message.query || {});
     case "hasEntityIds": return hasEntityIds(message.dbPath, message.kind, message.ids);
@@ -693,7 +696,7 @@ async function dispatch(message) {
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);
-    default: throw new Error("unknown SQLite worker operation: " + message.op);
+    default: return dispatchRows(message); // #1874: caseSqliteWorkerRows.ts, which throws on an unknown op
   }
 }
 

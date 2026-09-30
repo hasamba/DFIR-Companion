@@ -15,7 +15,8 @@ import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diagnostics.js";
-import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
+import type { Severity, InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
+import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
@@ -219,12 +220,14 @@ export interface RouteContext {
   //   moveDropFile              — move a processed drop file to _processed/_failed (shared w/ poller).
   dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown>;
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  /** The same demote, returning only the rows it removed — no load of the case (#1874). */
+  demoteForensic(caseId: string): Promise<ForensicEvent[]>;
   /** `analyst`: a person asked for this run now, so it supersedes a running one (#1608). */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;
   pushImportCheckpoint(
     caseId: string,
-    beforeState: InvestigationState,
+    beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
   ): Promise<void>;

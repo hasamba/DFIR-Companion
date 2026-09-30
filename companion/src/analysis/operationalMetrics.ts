@@ -54,6 +54,8 @@ export const QUERY_OPERATIONS = [
   "state_save",
   "event_append",
   "event_rollback", // #1480 a failed bulk import removing its own rows
+  "event_update", // #1874 an import's settle rewriting the rows it changed
+  "event_delete", // #1874 demote removing the rows it captured to the super-timeline
   "auth_observation", // #1104 cross-upload password-spray observation store
 ] as const;
 export type QueryOperation = (typeof QUERY_OPERATIONS)[number];

@@ -7,6 +7,14 @@ import { type ForensicEvent, type InvestigationState, emptyState } from "./state
 import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
 import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
+import {
+  EMPTY_OUTLINE,
+  type ForensicOutline,
+  type ForensicRow,
+  type ForensicRowStore,
+  type JournalEntry,
+  type RowWriteResult,
+} from "./forensicRows.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
 const LEGACY_STATE_FILENAME = "investigation.json";
@@ -149,7 +157,22 @@ function isTooLargeToDecode(err: unknown): boolean {
   return /Invalid string length/i.test(message) || /string longer than/i.test(message);
 }
 
-export class StateStore implements InvestigationStateStorage {
+type WorkerRow = { rowId: number; version: number; entity: ForensicEvent };
+const toForensicRow = (row: WorkerRow): ForensicRow => ({
+  rowId: row.rowId,
+  version: row.version,
+  event: upgradeForensicEvent(row.entity),
+});
+// What save() writes for a forensic row, so a targeted write stores exactly what a full save would.
+const storedForm = (e: ForensicEvent): ForensicEvent => compactEventProvenance(upgradeForensicEvent(e));
+
+/** What captureImportBaseline reads in one transaction (analysis/importBaseline.ts). */
+export interface CapturedBaseline {
+  overview: InvestigationState;
+  outline: ForensicOutline;
+}
+
+export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   private readonly readLegacyFile: (path: string) => Promise<string>;
   private readonly hasInjectedReader: boolean;
   private readonly operationalMetrics?: OperationalMetricsStore;
@@ -387,6 +410,136 @@ export class StateStore implements InvestigationStateStorage {
       if (page.entities.length) yield page.entities;
       cursor = page.nextCursor;
     } while (cursor !== null);
+  }
+
+  // ── #1874: targeted row access for an import's settle phase (analysis/caseSqliteWorkerRows.ts) ──
+
+  /** Save every field but the forensic timeline, which is left exactly as stored. */
+  async saveOverview(state: InvestigationState): Promise<void> {
+    await caseSqliteWorker.request<void>({
+      op: "saveState",
+      dbPath: this.databasePath(state.caseId),
+      state: { ...state, forensicTimeline: [] },
+      excludedKinds: ["forensicTimeline"],
+    });
+  }
+
+  /** The forensic timeline's ids and row ids in order, plus (unless `withKeys` is false) its diff keys. */
+  async forensicOutline(caseId: string, withKeys = true): Promise<ForensicOutline> {
+    if (!(await this.ensureMigrated(caseId))) return { ...EMPTY_OUTLINE };
+    const outline = await caseSqliteWorker.request<ForensicOutline | null>({
+      op: "forensicOutline",
+      dbPath: this.databasePath(caseId),
+      withKeys,
+    });
+    return outline ?? { ...EMPTY_OUTLINE };
+  }
+
+  /**
+   * The import section's snapshot: overview + outline, read in the same transaction that arms the
+   * import journal under `token`. Null when the case has no state yet.
+   */
+  async captureImportBaseline(caseId: string, token: string): Promise<CapturedBaseline | null> {
+    if (!(await this.ensureMigrated(caseId))) return null;
+    const got = await caseSqliteWorker.request<{
+      overview: Partial<InvestigationState> | null;
+      outline: ForensicOutline;
+    } | null>({ op: "captureImportBaseline", dbPath: this.databasePath(caseId), token });
+    if (!got) return null;
+    return { overview: { ...emptyState(caseId), ...(got.overview ?? {}), caseId }, outline: got.outline };
+  }
+
+  /** The journaled pre-images, or null when `token` no longer holds the journal. */
+  async readImportJournal(caseId: string, token: string): Promise<JournalEntry[] | null> {
+    const rows = await caseSqliteWorker.request<
+      { rowId: number; entityId: string | null; payload: ForensicEvent }[] | null
+    >({ op: "readImportJournal", dbPath: this.databasePath(caseId), token });
+    return rows
+      ? rows.map((r) => ({ rowId: r.rowId, entityId: r.entityId, event: upgradeForensicEvent(r.payload) }))
+      : null;
+  }
+
+  async disarmImportJournal(caseId: string, token: string): Promise<void> {
+    await caseSqliteWorker.request<boolean>({
+      op: "disarmImportJournal",
+      dbPath: this.databasePath(caseId),
+      token,
+    });
+  }
+
+  async forensicRowsById(caseId: string, ids: readonly string[]): Promise<ForensicRow[]> {
+    if (!ids.length || !(await this.ensureMigrated(caseId))) return [];
+    const rows = await caseSqliteWorker.request<WorkerRow[]>({
+      op: "entityRows",
+      dbPath: this.databasePath(caseId),
+      kind: "forensicTimeline",
+      ids: [...ids],
+    });
+    return rows.map(toForensicRow);
+  }
+
+  async forensicRowsByRowId(caseId: string, rowIds: readonly number[]): Promise<ForensicRow[]> {
+    if (!rowIds.length || !(await this.ensureMigrated(caseId))) return [];
+    const rows = await caseSqliteWorker.request<WorkerRow[]>({
+      op: "entityRows",
+      dbPath: this.databasePath(caseId),
+      kind: "forensicTimeline",
+      rowIds: [...rowIds],
+    });
+    return rows.map(toForensicRow);
+  }
+
+  async forensicRowsOutsideSeverities(caseId: string, keep: readonly string[]): Promise<ForensicRow[]> {
+    if (!(await this.ensureMigrated(caseId))) return [];
+    const rows = await caseSqliteWorker.request<WorkerRow[]>({
+      op: "forensicRowsOutsideSeverities",
+      dbPath: this.databasePath(caseId),
+      keep: [...keep],
+    });
+    return rows.map(toForensicRow);
+  }
+
+  async forensicHosts(caseId: string): Promise<string[]> {
+    if (!(await this.ensureMigrated(caseId))) return [];
+    return caseSqliteWorker.request<string[]>({
+      op: "distinctHosts",
+      dbPath: this.databasePath(caseId),
+      kind: "forensicTimeline",
+    });
+  }
+
+  async updateForensicRows(caseId: string, rows: readonly ForensicRow[]): Promise<RowWriteResult> {
+    if (!rows.length) return { updated: 0, missing: [], conflicts: [] };
+    const startedAt = performance.now();
+    const result = await caseSqliteWorker.request<RowWriteResult>({
+      op: "updateEntityRows",
+      dbPath: this.databasePath(caseId),
+      kind: "forensicTimeline",
+      rows: rows.map((r) => ({ rowId: r.rowId, version: r.version, entity: storedForm(r.event) })),
+    });
+    this.recordQuery("event_update", "entity", startedAt, result.updated);
+    return result;
+  }
+
+  async deleteForensicRows(caseId: string, rowIds: readonly number[]): Promise<number> {
+    if (!rowIds.length) return 0;
+    const startedAt = performance.now();
+    const deleted = await caseSqliteWorker.request<number>({
+      op: "deleteEntityRows",
+      dbPath: this.databasePath(caseId),
+      kind: "forensicTimeline",
+      rowIds: [...rowIds],
+    });
+    this.recordQuery("event_delete", "entity", startedAt, deleted);
+    return deleted;
+  }
+
+  async patchStateMeta(caseId: string, patch: Record<string, unknown>): Promise<void> {
+    await caseSqliteWorker.request<boolean>({
+      op: "patchStateMeta",
+      dbPath: this.databasePath(caseId),
+      patch,
+    });
   }
 
   // `keys` are already trimmed + lowercased and at least 3 characters long — the caller filters.

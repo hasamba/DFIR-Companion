@@ -36,6 +36,11 @@ const READ_OPS = new Set([
   "getSuper",
   "listSuperProtected",
   "superMeta",
+  // #1874: the targeted row reads (caseSqliteWorkerRows.ts)
+  "forensicOutline",
+  "entityRows",
+  "forensicRowsOutsideSeverities",
+  "distinctHosts",
 ]);
 // Ops that replace the database file underneath any open connection.
 const EXCLUSIVE_OPS = new Set(["restoreDatabase"]);

@@ -14,6 +14,8 @@ import type { TagsStore } from "./tags.js";
 import type { TaggerStore } from "./taggerStore.js";
 import type { StateStore } from "./stateStore.js";
 import { runAndApplyTagger, readTaggerSettings } from "./taggerRun.js";
+import { applyToForensicEvent } from "./tagger.js";
+import { rewriteRows } from "./forensicRowRewrite.js";
 import type { AnalysisRunStore } from "./analysisRunStore.js";
 import { hashManifestValue } from "./analysisRunHash.js";
 import type { OperationalMetricsStore } from "./operationalMetrics.js";
@@ -26,6 +28,8 @@ export interface AutoTagDeps {
   operationalMetrics?: OperationalMetricsStore;
   onTags?: (caseId: string) => void;
   onState?: (state: InvestigationState) => void;
+  /** The case's state lock: the read → apply → write of the tagged rows runs inside it (#1874). */
+  runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   logLine?: (msg: string) => void;
 }
 
@@ -49,35 +53,44 @@ export async function autoTagNewEvents(
     if (!ruleset.rules.length) return;
 
     const mutateForensic = settings.scope !== "super" && !!stateStore;
-    const state = mutateForensic ? await stateStore.load(caseId) : null;
-
+    // Tags first, from the rows handed in; the forensic grade/MITRE change after, below.
     const applied = await runAndApplyTagger({
       caseId,
       events: added,
       ruleset,
-      forensicTimeline: state?.forensicTimeline ?? [],
+      forensicTimeline: [],
       tagsStore,
-      mutateForensic,
+      mutateForensic: false,
     });
-    const byId = new Map(applied.forensicTimeline.map((event) => [event.id, event]));
+    // #1874: only the rows a rule matched can change, so only they are read and written — by row id
+    // and version, inside the state lock — never the whole case.
+    const matched = new Map(applied.result.perEvent.map((r) => [r.eventId, r]));
+    const lock = deps.runStateExclusive ?? (<T>(_: string, fn: () => Promise<T>) => fn());
+    const written =
+      mutateForensic && matched.size
+        ? await lock(caseId, async () => {
+            const rows = await stateStore.forensicRowsById(caseId, [...matched.keys()]);
+            const out = await rewriteRows(stateStore, caseId, rows, (e) => {
+              const r = matched.get(e.id);
+              return r ? applyToForensicEvent(e, r) : e;
+            });
+            if (out.length) await stateStore.patchStateMeta(caseId, { updatedAt: new Date().toISOString() });
+            return out;
+          })
+        : [];
+    const byId = new Map(written.map((r) => [r.event.id, r.event]));
     const promoted = added.filter(
-      (event) => event.severity === "Info" && byId.get(event.id)?.severity !== "Info",
+      (event) => event.severity === "Info" && (byId.get(event.id)?.severity ?? "Info") !== "Info",
     ).length;
     if (promoted > 0) await deps.operationalMetrics?.record({ type: "import_promotion", promoted });
-
-    if (state && applied.mutatedCount > 0) {
-      const next: InvestigationState = {
-        ...state,
-        forensicTimeline: applied.forensicTimeline,
-        updatedAt: new Date().toISOString(),
-      };
-      await stateStore!.save(next);
-      deps.onState?.(next);
+    if (written.length && deps.onState) {
+      deps.onState(await stateStore!.load(caseId)); // a caller that asked for a state broadcast
     }
+    const mutatedCount = written.length;
     if (applied.tagsWritten > 0) deps.onTags?.(caseId);
     if (applied.result.totalMatched > 0) {
       deps.logLine?.(
-        `[tagger] ${caseId} auto-tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${applied.mutatedCount} severity/MITRE update(s)`,
+        `[tagger] ${caseId} auto-tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${mutatedCount} severity/MITRE update(s)`,
       );
     }
     await deps.analysisRunStore?.record(caseId, {

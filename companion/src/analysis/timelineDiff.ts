@@ -26,8 +26,12 @@ const norm = (s: string): string =>
 const keyOf = (e: { timestamp: string; description: string }): string =>
   `${norm(e.timestamp)}|${norm(e.description)}`;
 
+// Only these three fields are read, so an outline of the timeline (analysis/forensicRows.ts) diffs
+// exactly like the full rows (#1874).
+type DiffRow = Pick<ForensicEvent, "timestamp" | "description" | "severity">;
+
 // First occurrence of each normalized key wins (keeps its displayed time/description/severity).
-function byKey(events: readonly ForensicEvent[]): Map<string, DiffEvent> {
+function byKey(events: readonly DiffRow[]): Map<string, DiffEvent> {
   const map = new Map<string, DiffEvent>();
   for (const e of events) {
     const key = keyOf(e);
@@ -38,10 +42,7 @@ function byKey(events: readonly ForensicEvent[]): Map<string, DiffEvent> {
 }
 
 // Compute added / removed timeline events from `before` -> `after`.
-export function diffTimeline(
-  before: readonly ForensicEvent[],
-  after: readonly ForensicEvent[],
-): TimelineDiff {
+export function diffTimeline(before: readonly DiffRow[], after: readonly DiffRow[]): TimelineDiff {
   const a = byKey(before);
   const b = byKey(after);
   const added: DiffEvent[] = [];
