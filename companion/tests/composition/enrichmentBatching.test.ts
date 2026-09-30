@@ -71,12 +71,12 @@ async function harness(opts: {
       opts.preEnriched ? { ...ioc(i + 1), enrichedBy: ["MISP"], enrichments: [] } : ioc(i + 1),
     ),
   };
-  const stateStore = {
-    load: async () => ({ ...current, iocs: [...current.iocs] }),
-    save: async (next: InvestigationState) => {
-      current = next;
-    },
+  const load = async () => ({ ...current, iocs: [...current.iocs] });
+  const save = async (next: InvestigationState) => {
+    current = next;
   };
+  // Without a chain provider enrichment reads and writes only the overview (#1887).
+  const stateStore = { load, save, loadOverview: load, saveOverview: save };
 
   const statuses: { status: string; detail?: string }[] = [];
   const options = {

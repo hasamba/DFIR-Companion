@@ -12,7 +12,13 @@ import {
 } from "./provider.js";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
-import { assertionIdFor, foldCheck, statusAtCheck, type ProviderCheck } from "../analysis/intelHistory.js";
+import {
+  assertionIdFor,
+  foldCheck,
+  mergeIntelState,
+  statusAtCheck,
+  type ProviderCheck,
+} from "../analysis/intelHistory.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
 // API was hit, for which indicator, and how it resolved (hit / miss / error). Lets the
@@ -333,4 +339,61 @@ export async function enrichIocs(
     return u ? { ...ioc, ...u } : ioc;
   });
   return { iocs: out, summary };
+}
+
+/** The IOC fields enrichIocs writes; nothing else on an IOC is enrichment's to change. */
+type EnrichmentFields = Pick<IOC, "enrichments" | "intelHistory" | "intelChecks" | "enrichedBy">;
+const ENRICHMENT_FIELDS = ["enrichments", "intelHistory", "intelChecks", "enrichedBy"] as const;
+
+/** One IOC an enrichIocs run changed: as the run read it, and as the run left it. */
+export interface EnrichmentUpdate {
+  before: IOC;
+  after: IOC;
+}
+
+/**
+ * Each IOC an enrichIocs run changed, by value. enrichIocs returns the input object for an IOC it
+ * left alone, so identity tells the two apart.
+ */
+export function enrichmentUpdates(
+  before: readonly IOC[],
+  after: readonly IOC[],
+): Map<string, EnrichmentUpdate> {
+  const updates = new Map<string, EnrichmentUpdate>();
+  after.forEach((ioc, idx) => {
+    if (ioc !== before[idx]) updates.set(ioc.value, { before: before[idx], after: ioc });
+  });
+  return updates;
+}
+
+const intelFields = (ioc: IOC): string => JSON.stringify(ENRICHMENT_FIELDS.map((key) => ioc[key] ?? null));
+
+function pickIntel(ioc: IOC): EnrichmentFields {
+  const fields: EnrichmentFields = {};
+  for (const key of ENRICHMENT_FIELDS) if (ioc[key] !== undefined) Object.assign(fields, { [key]: ioc[key] });
+  return fields;
+}
+
+/**
+ * Put a run's intel onto the case's LATEST IOCs, by value (#1887). Every other field of the latest
+ * IOC (provenance, note, aliases) is kept, so a write that landed while the run was querying
+ * providers survives it. When the latest IOC's intel is still what the run read, the run's intel
+ * replaces it, as before; when another check (the bulk-enrich route) changed it meanwhile, the two
+ * merge as mergeIntelState does for a stale completion, and the checked-provider lists union.
+ */
+export function applyEnrichmentUpdates(
+  latest: readonly IOC[],
+  updates: ReadonlyMap<string, EnrichmentUpdate>,
+): IOC[] {
+  return latest.map((ioc) => {
+    const update = updates.get(ioc.value);
+    if (!update) return ioc;
+    const { before, after } = update;
+    if (intelFields(ioc) === intelFields(before)) return { ...ioc, ...pickIntel(after) };
+    return {
+      ...ioc,
+      ...mergeIntelState(ioc, after),
+      enrichedBy: [...new Set([...(ioc.enrichedBy ?? []), ...(after.enrichedBy ?? [])])],
+    };
+  });
 }

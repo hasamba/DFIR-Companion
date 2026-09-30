@@ -149,7 +149,7 @@ function factsFingerprint(dbPath, stamp) {
         list.digests.forEach((digest, i) => { if (digest === null) unknown.push(list.rowIds[i]); });
       }
       const payloads = payloadsByRowId(db, unknown);
-      return { findings, forensic, iocs, payloads: [...payloads], entities: caseEntityIds(db) };
+      return { findings, forensic, iocs, payloads: [...payloads], ...caseEntityIds(db) };
     });
   } finally {
     db.close();
@@ -222,10 +222,11 @@ function fpFold(db, sums) {
 // The case's findings and both sums (hex). Null for a case with no state; { needsFull: true } when
 // the facts are another build's or a forensic or IOC row's facts are unknown (queued, or missing):
 // the caller then hashes the full listing.
-// The forensic then IOC ids, in order, as the outlines read them (#1887): read in the fingerprint's
-// own transaction, so a receipt's counts and change lists describe the snapshot its hash covers.
+// The forensic and the IOC ids, each in order, as the outlines read them (#1887): read in the
+// fingerprint's own transaction, so a receipt's counts and change lists describe the snapshot its
+// hash covers.
 function caseEntityIds(db) {
-  return outlineRows(db, false).ids.concat(iocOutlineRows(db).ids);
+  return { forensicIds: outlineRows(db, false).ids, iocIds: iocOutlineRows(db).ids };
 }
 
 function factsFingerprintV3(dbPath, stamp) {
@@ -249,7 +250,7 @@ function factsFingerprintV3(dbPath, stamp) {
       return {
         needsFull: false, findings,
         forensic: ltWorkerEncode(sums.forensicTimeline, "hex"), iocs: ltWorkerEncode(sums.iocs, "hex"),
-        entities: caseEntityIds(db),
+        ...caseEntityIds(db),
       };
     });
   } finally {
@@ -373,8 +374,10 @@ export interface FactsFingerprint {
   forensic: FactsListing;
   iocs: FactsListing;
   payloads: [number, unknown][];
-  /** The forensic then IOC ids, in order, from the same transaction. */
-  entities: unknown[];
+  /** The forensic ids, in order, from the same transaction. */
+  forensicIds: unknown[];
+  /** The IOC ids, in order, from the same transaction. */
+  iocIds: unknown[];
 }
 
 /** The kept v3 LtHash sums (hex, analysis/ltHash.ts), or a request to hash the full listing. */
@@ -385,8 +388,10 @@ export type FactsFingerprintV3 =
       findings: unknown[];
       forensic: string;
       iocs: string;
-      /** The forensic then IOC ids, in order, from the same transaction. */
-      entities: unknown[];
+      /** The forensic ids, in order, from the same transaction. */
+      forensicIds: unknown[];
+      /** The IOC ids, in order, from the same transaction. */
+      iocIds: unknown[];
     };
 
 export interface FactCandidate {

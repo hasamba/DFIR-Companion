@@ -18,17 +18,49 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
-import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "../enrichment/enrichService.js";
+import {
+  applyEnrichmentUpdates,
+  enrichIocs,
+  enrichmentUpdates,
+  hasEnrichableWork,
+  type EnrichLookupEvent,
+  type EnrichmentUpdate,
+} from "../enrichment/enrichService.js";
 import { EnrichControlStore, resolveEnabledProviders } from "../enrichment/enrichControl.js";
 import { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ParentChildResult } from "../enrichment/rockyraccoon.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "../enrichment/chainValidate.js";
 import { recordEnrichmentRun } from "../analysis/analysisRunRecorders.js";
+import { investigationOutput, investigationOutputOfCase } from "../analysis/analysisRunSnapshot.js";
+import type { AnalysisRunOutput } from "../analysis/analysisRunTypes.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
 import { runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseSet } from "../storage/caseKeyedState.js";
+
+type ChainProvider = EnrichmentProvider & {
+  checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null>;
+};
+
+/** A RockyRaccoon provider: the one kind that validates parent→child chains, so reads events. */
+function chainProviderOf(providers: readonly EnrichmentProvider[]): ChainProvider | undefined {
+  return providers.find(
+    (p): p is ChainProvider => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function",
+  );
+}
+
+/** What the locked save of a run hands back for the announce and the run record. */
+interface SavedEnrichment {
+  chainSummary?: ChainSummary;
+  /** The whole case as saved, on the chain path only (it loaded it anyway). */
+  full?: InvestigationState;
+  /** The process events the chain validation looked at; none without a chain provider. */
+  eventIds: string[];
+  /** The case as saved, when a run store records it. */
+  output?: AnalysisRunOutput;
+}
 
 /** Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry. */
 function shortValue(value: string): string {
@@ -138,15 +170,18 @@ export function createEnrichmentEngine({
       } // nothing enabled — drop any stale pending mark so the poller can idle
       const batch = chain?.batch ?? 1;
       const maxBatches = Math.max(1, options.enrichMaxBatches ?? 20);
-      const state = await options.stateStore!.load(caseId);
+      // #1887: only chain validation reads events. Without a chain provider the overview (every
+      // field but the forensic timeline) is all a run needs — never the whole case.
+      const rocky = chainProviderOf(providers);
+      const state = rocky
+        ? await options.stateStore!.load(caseId)
+        : await options.stateStore!.loadOverview(caseId);
       // Skip the job/status/save when every enabled provider already checked every IOC and process
       // chain. This avoids spurious enrichment after unrelated re-synthesis; force bypasses it.
       if (!force) {
-        const chainCapable = providers.some(
-          (p) => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function",
-        );
         const work =
-          hasEnrichableWork(state.iocs, providers) || (chainCapable && hasChainWork(state.forensicTimeline));
+          hasEnrichableWork(state.iocs, providers) ||
+          (rocky !== undefined && hasChainWork(state.forensicTimeline));
         if (!work) {
           pending.delete(caseId);
           return;
@@ -219,53 +254,23 @@ export function createEnrichmentEngine({
       // Queue incomplete cases for recovery; clear stale pending state when all providers answered.
       if (summary.unavailable.length) pending.add(caseId);
       else pending.delete(caseId);
-      const { chainSummary, merged: finalState } = await runStateExclusive(caseId, async () => {
-        // Re-load + write only the IOCs so a concurrent state change survives.
-        const latest = await options.stateStore!.load(caseId);
-        const byValue = new Map(iocs.map((i) => [i.value, i]));
-        let merged = {
-          ...latest,
-          iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i),
-          updatedAt: new Date().toISOString(),
-        };
-
-        // A RockyRaccoon provider validates parent→child chains with the IOC throttle and cap.
-        const rocky = providers.find(
-          (
-            p,
-          ): p is EnrichmentProvider & {
-            checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null>;
-          } => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function",
-        );
-        let chainSummary: ChainSummary | undefined;
-        if (rocky) {
-          const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
-            check: (p, c) => rocky.checkParentChild(p, c),
-            delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
-            jitterMs: options.enrichJitterMs,
-            retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
-            maxChecks: options.enrichMaxIocs,
-            force,
-          });
-          merged = { ...merged, forensicTimeline: events };
-          chainSummary = cs;
-        }
-
-        await options.stateStore!.save(merged);
-        options.onState?.(merged);
-        return { chainSummary, merged };
-      });
-      await recordEnrichmentRun(options.analysisRunStore, caseId, {
-        parentRunId,
-        startedAt,
-        providerNames: providers.map((provider) => provider.name),
-        force,
-        maxIocs: options.enrichMaxIocs ?? 100,
-        delayMs: options.enrichDelayMs ?? 0,
-        inputState: state,
-        outputState: finalState,
-        summary,
-      });
+      const updates = enrichmentUpdates(state.iocs, iocs);
+      const saved = await runStateExclusive(caseId, () => saveEnrichment(caseId, updates, rocky, force));
+      announce(caseId, saved.full);
+      const { chainSummary } = saved;
+      if (saved.output)
+        await recordEnrichmentRun(options.analysisRunStore, caseId, {
+          parentRunId,
+          startedAt,
+          providerNames: providers.map((provider) => provider.name),
+          force,
+          maxIocs: options.enrichMaxIocs ?? 100,
+          delayMs: options.enrichDelayMs ?? 0,
+          eventIds: saved.eventIds,
+          iocIds: state.iocs.map((ioc) => ioc.id),
+          output: saved.output,
+          summary,
+        });
       const chainNote = chainSummary
         ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}`
         : "";
@@ -335,6 +340,62 @@ export function createEnrichmentEngine({
           : { status: "error", at: new Date().toISOString(), detail: (err as Error).message },
       );
     });
+  }
+
+  /**
+   * Merge a run's enrichment fields onto the latest IOCs and save, inside the case's state lock.
+   * Without a chain provider it re-reads and writes only the overview: saveOverview leaves the
+   * forensic rows exactly as stored and rewrites the other kinds from the overview reloaded here,
+   * so a row an import appended mid-run survives. A chain provider needs the events, so it keeps
+   * the whole-case load and save. The run output is read after the save, in the same lock.
+   */
+  async function saveEnrichment(
+    caseId: string,
+    updates: ReadonlyMap<string, EnrichmentUpdate>,
+    rocky: ChainProvider | undefined,
+    force: boolean,
+  ): Promise<SavedEnrichment> {
+    const stateStore = options.stateStore!;
+    const record = options.analysisRunStore !== undefined;
+    if (!rocky) {
+      const latest = await stateStore.loadOverview(caseId);
+      const iocs = applyEnrichmentUpdates(latest.iocs, updates);
+      await stateStore.saveOverview({ ...latest, iocs, updatedAt: new Date().toISOString() });
+      // No events were read, so the record lists none (#1887).
+      return {
+        eventIds: [],
+        output: record ? await investigationOutputOfCase(stateStore, caseId) : undefined,
+      };
+    }
+    const latest = await stateStore.load(caseId);
+    // A RockyRaccoon provider validates parent→child chains with the IOC throttle and cap.
+    const { events, summary: chainSummary } = await validateProcessChains(latest.forensicTimeline, {
+      check: (p, c) => rocky.checkParentChild(p, c),
+      delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
+      jitterMs: options.enrichJitterMs,
+      retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
+      maxChecks: options.enrichMaxIocs,
+      force,
+    });
+    const full: InvestigationState = {
+      ...latest,
+      iocs: applyEnrichmentUpdates(latest.iocs, updates),
+      forensicTimeline: events,
+      updatedAt: new Date().toISOString(),
+    };
+    await stateStore.save(full);
+    // The process events the chain validation looked at, from the snapshot it validated.
+    const eventIds = latest.forensicTimeline.filter((e) => e.processName && e.parentName).map((e) => e.id);
+    return { chainSummary, full, eventIds, output: record ? investigationOutput(full) : undefined };
+  }
+
+  // A state push for the dashboards watching the case, after the lock is released; the app loads
+  // the case only if one is (#1874, as caseAppliers.announceState does).
+  function announce(caseId: string, full: InvestigationState | undefined): void {
+    if (options.onStateChanged) return options.onStateChanged(caseId);
+    if (!options.onState) return;
+    if (full) return options.onState(full);
+    void options.stateStore!.load(caseId).then(options.onState, () => undefined);
   }
 
   function autoEnrichIfEnabled(caseId: string): void {
