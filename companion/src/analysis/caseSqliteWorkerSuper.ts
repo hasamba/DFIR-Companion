@@ -132,6 +132,7 @@ function enforceSuperCap(db, max) {
       to: summary.t1 ? String(summary.t1) : "",
     };
     recordSuperEviction(db, evicted);
+    if (deleted > 0) stampSuperContent(db);
   }
   db.prepare(
     "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
@@ -191,6 +192,24 @@ function recordSuperEviction(db, evicted) {
 // each of them runs the cap above — and on a bulk-import rollback (#1480), which deletes rows the
 // cap never saw. A row count and a latest timestamp cannot tell an append-with-eviction at the cap
 // from no change; a reader that captured the generation can.
+// The store's CONTENT version (#1881): a random stamp rewritten only when a super row is really
+// inserted, rewritten or deleted. Unlike the generation it does not move on a dedup-only append or
+// a cap pass that evicts nothing, so a result computed from a full scan (the host-scope ledger's
+// per-host totals) stays reusable until the rows change. Random, not a counter: a restored backup
+// carries the stamp of the state it captured, and the next change after the restore writes a
+// fresh one, so two different row sets never share a stamp.
+function stampSuperContent(db) {
+  db.prepare(
+    "INSERT INTO storage_meta(key, value) VALUES('super_version', ?) " +
+    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+  ).run(randomUUID());
+}
+
+// A database written before #1881, or restored from a backup made before it, has no stamp yet.
+function ensureSuperContentStamp(db) {
+  db.prepare("INSERT OR IGNORE INTO storage_meta(key, value) VALUES('super_version', ?)").run(randomUUID());
+}
+
 function bumpSuperGeneration(db) {
   db.prepare(
     "INSERT INTO storage_meta(key, value) VALUES('super_generation', '1') " +
@@ -201,12 +220,13 @@ function bumpSuperGeneration(db) {
 // The store's row count and mutation generation, and its distinct host spellings as stored —
 // index-only reads (entities_host_idx), never a scan of the payloads (#969).
 function superMeta(dbPath, hostLimit) {
-  if (!existsSync(dbPath)) return { rows: 0, generation: 0, hosts: [], hostsTruncated: false, evictedTotal: 0, lastEviction: null };
+  if (!existsSync(dbPath)) return { rows: 0, generation: 0, version: "", hosts: [], hostsTruncated: false, evictedTotal: 0, lastEviction: null };
   const db = openDatabase(dbPath);
   try {
     const countRow = db.prepare("SELECT count AS n FROM entity_counts WHERE kind='superTimeline'").get();
     const rows = countRow ? Number(countRow.n) : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
     const genRow = db.prepare("SELECT value FROM storage_meta WHERE key='super_generation'").get();
+    const versionRow = db.prepare("SELECT value FROM storage_meta WHERE key='super_version'").get();
     // Hosts only when asked, and bounded: one more than the limit is read so the caller can tell
     // "exactly the limit" from "more than it".
     const limit = Number.isFinite(hostLimit) ? Math.max(0, Math.floor(hostLimit)) : 0;
@@ -220,7 +240,8 @@ function superMeta(dbPath, hostLimit) {
     let lastEviction = null;
     try { lastEviction = lastRow ? JSON.parse(lastRow.value) : null; } catch { lastEviction = null; }
     return {
-      rows, generation: genRow ? Number(genRow.value) : 0, hosts: hosts.slice(0, limit),
+      rows, generation: genRow ? Number(genRow.value) : 0, version: versionRow ? String(versionRow.value) : "",
+      hosts: hosts.slice(0, limit),
       hostsTruncated: hosts.length > limit,
       evictedTotal: totalRow ? Number(totalRow.value) || 0 : 0,
       lastEviction,
@@ -275,6 +296,7 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
     // nothing: the content key is timestamp + description + host, so the retained row carries the
     // same stated reason and was claimed on its own append.
     if (firstRowId !== null) markSetAsideRows(db, setAsideMarkers, { fromRowId: firstRowId });
+    if (added > 0) stampSuperContent(db);
     const evicted = enforceSuperCap(db, max);
     // retained, not inserted: a batch past the cap loses its own head
     const retained = firstRowId === null ? 0 : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
@@ -339,6 +361,7 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
       // backfill is about to claim would be evicted as ordinary telemetry before it ever ran.
       reconcileSetAside(db, setAsideMarkers, setAsideVersion);
       reconcileSuperProtection(db, tagsPath, excludeAuthorPrefix, max);
+      ensureSuperContentStamp(db);
       return;
     }
     let events = [];
@@ -362,6 +385,7 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
         }
       }
       db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_migrated','1')").run();
+      ensureSuperContentStamp(db);
       db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?)").run(tagsFingerprint(tagsPath));
       if (typeof setAsideVersion === "string" && setAsideVersion) {
         db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_set_aside_sync',?) " +
@@ -413,7 +437,10 @@ function rehomeSuper(dbPath, events, setAsideMarkers) {
           .run(JSON.stringify(rewritten));
         markSetAsideRows(db, setAsideMarkers, { ids: rewritten });
       }
-      if (updated) bumpSuperGeneration(db);
+      if (updated) {
+        bumpSuperGeneration(db);
+        stampSuperContent(db);
+      }
       return updated;
     });
   } finally {

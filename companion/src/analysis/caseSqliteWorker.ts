@@ -436,6 +436,9 @@ function entityCounts(dbPath, kinds) {
 }
 
 function appendEntities(dbPath, kind, entities) {
+  // Super-timeline rows are added through appendSuper only (caseSqliteWorkerSuper.ts): it runs the
+  // dedup, the cap and the content stamp a cached full-scan result depends on (#1881).
+  if (kind === "superTimeline") throw new Error("appendEntities does not write superTimeline rows; use appendSuper");
   const db = openDatabase(dbPath);
   try {
     return withTransaction(db, () => {
@@ -499,6 +502,11 @@ function pruneEntitiesBefore(dbPath, kind, beforeMs) {
       const deleted = Number(result.changes || 0);
       if (deleted > 0) {
         db.prepare("UPDATE entity_counts SET count=max(count-?, 0) WHERE kind=?").run(deleted, kind);
+        // A super row removed here must move the store's version like any other super delete (#1881).
+        if (kind === "superTimeline") {
+          bumpSuperGeneration(db);
+          stampSuperContent(db);
+        }
       }
       return deleted;
     });
@@ -548,6 +556,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
         const deleted = Number(remove.run(kind, JSON.stringify(rows.map((row) => row.row_id))).changes || 0);
         recount.run(deleted, kind);
         if (kind === "superTimeline") {
+          stampSuperContent(db);
           const idsJson = JSON.stringify(ids);
           db.prepare("DELETE FROM super_labels WHERE event_id IN (SELECT value FROM json_each(?))").run(idsJson);
           db.prepare("DELETE FROM super_protected WHERE event_id IN (SELECT value FROM json_each(?))").run(idsJson);

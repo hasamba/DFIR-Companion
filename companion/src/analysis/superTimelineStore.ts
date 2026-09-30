@@ -5,6 +5,7 @@ import type { EntityPage, EntityQuery } from "./stateStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+import { SuperScanMemo } from "./superTimelineMemo.js";
 import {
   NO_HOST_FACET,
   STARRED_LABEL,
@@ -120,6 +121,11 @@ export interface SuperEviction {
 export interface SuperTimelineMeta {
   rows: number;
   generation: number;
+  /**
+   * The rows' content version (#1881): changes only when a row is inserted, rewritten or deleted.
+   * "" only from a store that has none yet.
+   */
+  version: string;
   /** Distinct host spellings as stored, up to the limit asked for (none when `hosts: 0`). */
   hosts: string[];
   hostsTruncated: boolean;
@@ -155,11 +161,15 @@ export function mergeEvictions(a: SuperEviction | undefined, b: SuperEviction | 
 }
 
 export class SuperTimelineStore {
+  private readonly scanMemo: SuperScanMemo;
+
   constructor(
     private readonly cases: CaseStore,
     private readonly max: number = DEFAULT_SUPER_MAX,
     private readonly operationalMetrics?: OperationalMetricsStore,
-  ) {}
+  ) {
+    this.scanMemo = new SuperScanMemo(() => this.cases.casesRoot);
+  }
 
   private recordQuery(index: QueryIndex, startedAt: number, rows: number): void {
     void this.operationalMetrics?.record({
@@ -403,6 +413,23 @@ export class SuperTimelineStore {
       }
     }
     return out;
+  }
+
+  /**
+   * `reduce` over every row, reused until the rows change (#1881, superTimelineMemo.ts). `name`
+   * tells results apart; the value is shared, so callers must not mutate it.
+   */
+  async memoizeScan<T>(
+    caseId: string,
+    name: string,
+    reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
+  ): Promise<T> {
+    return this.scanMemo.get(
+      caseId,
+      name,
+      async () => (await this.meta(caseId)).version,
+      () => reduce(this.eventBatches(caseId)),
+    );
   }
 
   async *eventBatches(caseId: string, batchSize = SCAN_BATCH_SIZE): AsyncGenerator<ForensicEvent[]> {
