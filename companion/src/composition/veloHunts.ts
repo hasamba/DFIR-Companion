@@ -72,6 +72,8 @@ export interface VeloHuntsDeps {
   options: AppOptions;
   /** One import writer per case, across every import path (see analysis/importLock.ts). */
   importLock: ImportLock;
+  /** The case's state lock (createApp's runStateExclusive): the settle's row writes run inside it (#1874). */
+  runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   persistEvidence: (
     caseId: string,
     originalName: string,
@@ -124,6 +126,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     resolveImportKind,
     autoTagImported,
     demoteForensicForCase,
+    runStateExclusive,
     getControl,
     pushImportCheckpoint,
     resynthesizeInBackground,
@@ -574,6 +577,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               onState: options.onState,
               autoTagImported,
               demoteForensicForCase,
+              runStateExclusive,
             },
             caseId,
             stateBefore,

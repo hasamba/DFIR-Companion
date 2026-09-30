@@ -62,9 +62,12 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       },
     },
     // Streamed (#1874): the output hash covers the whole case, read a page at a time.
-    output: await investigationOutputStreamed(
-      await stateStore.loadOverview(input.caseId),
-      stateStore.forensicTimelineBatches(input.caseId, { limit: SCAN_PAGE_ROWS }),
+    // Inside the state lock, so no writer lands between the overview and the pages it hashes.
+    output: await ctx.runStateExclusive(input.caseId, async () =>
+      investigationOutputStreamed(
+        await stateStore.loadOverview(input.caseId),
+        stateStore.forensicTimelineBatches(input.caseId, { limit: SCAN_PAGE_ROWS }),
+      ),
     ),
   });
 }

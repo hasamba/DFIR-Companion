@@ -250,6 +250,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     store,
     options,
     importLock,
+    runStateExclusive,
     persistEvidence: imports.persistEvidence,
     dispatchImport: imports.dispatchImport,
     resolveImportKind: imports.resolveImportKind,
@@ -266,6 +267,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const externalIngest = createVeloExternalIngest({
     options,
     importLock,
+    runStateExclusive,
     persistEvidence: imports.persistEvidence,
     dispatchImport: imports.dispatchImport,
     resolveImportKind: imports.resolveImportKind,

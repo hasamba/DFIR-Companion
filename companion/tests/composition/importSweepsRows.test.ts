@@ -85,6 +85,29 @@ describe("deobfuscateRows (#1874)", () => {
   });
 });
 
+describe("deobfuscateRows — duplicate event ids (#1874)", () => {
+  it("gives each of two rows sharing an id its own result, as the whole-case pass does", async () => {
+    const t = "2026-01-02T00:00:00Z";
+    await store.save({
+      ...emptyState("c1"),
+      forensicTimeline: [
+        ev("dup", psEnc("Invoke-WebRequest http://one.example.com/a"), { timestamp: t }),
+        ev("dup", psEnc("Invoke-WebRequest http://two.example.com/b"), { timestamp: t }),
+      ],
+    });
+    const reference = applyDeobfuscation(await store.load("c1"));
+    await deobfuscateRows(store, "c1", {});
+    const after = await store.load("c1");
+    expect(after.forensicTimeline.map((e) => e.description)).toEqual(
+      reference.state.forensicTimeline.map((e) => e.description),
+    );
+    expect(after.forensicTimeline.map((e) => e.deobfuscated)).toEqual(
+      reference.state.forensicTimeline.map((e) => e.deobfuscated),
+    );
+    expect(after.iocs).toEqual(reference.state.iocs);
+  });
+});
+
 describe("investigationOutputStreamed (#1874)", () => {
   it("hashes the same bytes as investigationOutput over the whole case", async () => {
     const state: InvestigationState = {

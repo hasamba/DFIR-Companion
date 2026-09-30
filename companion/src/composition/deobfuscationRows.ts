@@ -44,9 +44,11 @@ export async function deobfuscateRows(
     { ...options, outsideIocIds },
   );
   if (result.deobfuscated === 0 && result.newIocs === 0) return none;
-  const next = new Map(result.state.forensicTimeline.map((e) => [e.id, e]));
-  const rows = await stateStore.forensicRowsById(caseId, [...next.keys()]);
-  await rewriteRows(stateStore, caseId, rows, (e) => next.get(e.id) ?? e);
+  // Keyed by the row's own content, not its id: event ids are not unique in storage, and two rows
+  // sharing one must each get their own result. The pass maps its input rows in order.
+  const next = new Map(decoding.map((e, i) => [JSON.stringify(e), result.state.forensicTimeline[i]]));
+  const rows = await stateStore.forensicRowsById(caseId, [...new Set(decoding.map((e) => e.id))]);
+  await rewriteRows(stateStore, caseId, rows, (e) => next.get(JSON.stringify(e)) ?? e);
   await stateStore.saveOverview({ ...result.state, forensicTimeline: [] });
   return {
     deobfuscated: result.deobfuscated,
