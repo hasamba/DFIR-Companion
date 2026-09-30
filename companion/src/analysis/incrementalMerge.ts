@@ -118,7 +118,7 @@ export async function mergeIncrementally(
 
   const writes = await describeWrites(store, caseId, corr, held, limit, ctx.timestamp);
   if (typeof writes === "string") return fallback(writes);
-  await store.mergeApply(caseId, {
+  const applied = await applyOrExplain(store, caseId, {
     generation: snap.generation,
     overview: { ...merged, forensicTimeline: [], iocs: [] },
     iocs: {
@@ -131,7 +131,35 @@ export async function mergeIncrementally(
     },
     meta: { stamp, stable: !writes.folds },
   });
+  if (applied) return fallback(applied);
   return { ok: true, state: merged, read: corr.input.length, written: writes.placed.length };
+}
+
+/** An apply that failed in a way that does not say whether it committed (analysis/caseMerge.ts). */
+export class MergeCommitUnknown extends Error {
+  constructor(readonly cause: unknown) {
+    super("the incremental merge's write may or may not have committed");
+  }
+}
+
+// The apply refuses inside its transaction — nothing written — when the case changed or its stored
+// order is not the time order: the caller takes the full path. Any other failure may have come after
+// the commit, so it is surfaced as MergeCommitUnknown and never retried by a second merge.
+const REFUSALS = new Set(["DFIR_MERGE_CONFLICT", "DFIR_MERGE_UNSORTED"]);
+
+async function applyOrExplain(
+  store: StateStore,
+  caseId: string,
+  plan: Parameters<StateStore["mergeApply"]>[1],
+): Promise<string | null> {
+  try {
+    await store.mergeApply(caseId, plan);
+    return null;
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && REFUSALS.has(code)) return (err as Error).message;
+    throw new MergeCommitUnknown(err);
+  }
 }
 
 /** The stored rows the delta names, every stale row, and every row a subset-safe pass reads. */

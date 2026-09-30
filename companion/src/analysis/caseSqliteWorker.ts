@@ -186,8 +186,15 @@ function createEntityWriter(db) {
   };
 }
 
-function writeState(db, state, excludedKinds) {
-  return withTransaction(db, () => writeStateBody(db, createEntityWriter(db), state, excludedKinds));
+// Returns the merge generation as the save left it (#1874: the index written after a full merge
+// checks nothing was written since). unsettleMerge: the importer merge's own full save, whose
+// result may fold again on the next merge until its index is written.
+function writeState(db, state, excludedKinds, unsettleMerge) {
+  return withTransaction(db, () => {
+    writeStateBody(db, createEntityWriter(db), state, excludedKinds);
+    if (unsettleMerge) unsettleMergeIndex(db);
+    return mergeGeneration(db);
+  });
 }
 
 // The body of a state save, inside the caller's transaction (#1874: the merge's apply shares it).
@@ -283,9 +290,9 @@ function loadState(dbPath, excludedKinds) {
   try { return readState(db, excludedKinds); } finally { db.close(); }
 }
 
-function saveState(dbPath, state, excludedKinds) {
+function saveState(dbPath, state, excludedKinds, unsettleMerge) {
   const db = openDatabase(dbPath);
-  try { writeState(db, state, excludedKinds); } finally { db.close(); }
+  try { return writeState(db, state, excludedKinds, unsettleMerge); } finally { db.close(); }
 }
 
 function setStateCaseId(dbPath, caseId) {
@@ -677,7 +684,7 @@ async function dispatch(message) {
     case "stateExists": return stateExists(message.dbPath);
     case "migrateState": return migrateState(message.dbPath, message.jsonPath);
     case "loadState": return loadState(message.dbPath, message.excludedKinds);
-    case "saveState": return saveState(message.dbPath, message.state, message.excludedKinds);
+    case "saveState": return saveState(message.dbPath, message.state, message.excludedKinds, message.unsettleMerge);
     case "setStateCaseId": return setStateCaseId(message.dbPath, message.caseId);
     case "queryEntities": return queryEntities(message.dbPath, message.kind, message.query || {});
     case "hasEntityIds": return hasEntityIds(message.dbPath, message.kind, message.ids);

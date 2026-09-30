@@ -5,7 +5,7 @@ import type { WindowContext } from "./stateMerge.js";
 import { correlationGroups } from "./correlate.js";
 import { getAppVersion } from "../version.js";
 import { getServerLogger } from "../logging/serverLogger.js";
-import { MERGE_INDEX_VERSION, mergeIncrementally } from "./incrementalMerge.js";
+import { MERGE_INDEX_VERSION, MergeCommitUnknown, mergeIncrementally } from "./incrementalMerge.js";
 import { fixedPoints, readBack } from "./incrementalMergeRows.js";
 import { mergeIndexEntry } from "./mergeIndex.js";
 
@@ -50,21 +50,27 @@ export async function mergeIntoCase(
       }
       log.info(`[merge] full-state merge: ${result.reason}`, { caseId });
     } catch (err) {
-      // Nothing was written: the apply is one transaction, and every earlier step only reads.
+      // An apply whose outcome is unknown (it may have committed) is never followed by a second
+      // merge of the same delta: the import fails, as a failed save always made it.
+      if (err instanceof MergeCommitUnknown) throw err.cause;
+      // Anything else was thrown before the apply, by a step that only reads: nothing was written.
       const reason = err instanceof Error ? err.message : String(err);
       log.warn(`[merge] incremental merge stopped (${reason}); taking the full-state merge`, { caseId });
     }
   }
   const merged = await fullMerge(await store.load(caseId));
-  await store.save(merged);
-  if (incremental) {
-    try {
-      await indexAfterFullSave(store, caseId, merged, stamp, ctx.timestamp);
-    } catch (err) {
-      // The index stays as it was; its stamp or stability decides that the next merge is full too.
-      const reason = err instanceof Error ? err.message : String(err);
-      log.warn(`[merge] could not index the case after a full merge (${reason})`, { caseId });
-    }
+  if (!incremental) {
+    await store.save(merged);
+    return { state: merged, complete: true };
+  }
+  // Saved with the index marked unsettled: until indexAfterFullSave says otherwise, the next merge
+  // is a full one too.
+  const saved = await store.saveFull(merged, true);
+  try {
+    await indexAfterFullSave(store, caseId, merged, saved, stamp, ctx.timestamp);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log.warn(`[merge] could not index the case after a full merge (${reason})`, { caseId });
   }
   return { state: merged, complete: true };
 }
@@ -78,19 +84,22 @@ async function indexAfterFullSave(
   store: StateStore,
   caseId: string,
   merged: InvestigationState,
+  saved: number,
   stamp: string,
   at: string,
 ): Promise<void> {
   const stale = await store.mergeStalePositions(caseId, stamp);
   const rows = merged.forensicTimeline;
-  if (!stale || stale.rowCount !== rows.length) return;
+  // The entries come from `merged`: only while nothing was written since the save do the stored rows
+  // read as `merged` does. Otherwise the index stays as it was (the next merge re-reads those rows).
+  if (!stale || stale.generation !== saved || stale.rowCount !== rows.length) return;
   const values = rows.map(readBack);
   const staleValues = stale.positions.map((p) => values[p]);
   const clean = fixedPoints(staleValues, at);
   const stable = !correlationGroups(values).some((group) => group.length > 1);
   await store.mergeIndexWrite(
     caseId,
-    stale.generation,
+    saved,
     stale.positions.map((position, i) => ({
       position,
       index: { ...mergeIndexEntry(staleValues[i]), clean: clean[i] },

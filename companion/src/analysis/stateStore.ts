@@ -302,6 +302,14 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async save(state: InvestigationState): Promise<void> {
+    await this.saveFull(state);
+  }
+
+  /**
+   * save() for the importer merge's full path (analysis/caseMerge.ts): it also marks the merge index
+   * unsettled in the same transaction, and returns the merge generation as the save left it.
+   */
+  async saveFull(state: InvestigationState, unsettleMerge = false): Promise<number> {
     const startedAt = performance.now();
     // #1874: a verbose (pre-1.1.0) envelope is written back compact — lossless, and only once.
     const canonicalState = state.forensicTimeline.length
@@ -312,13 +320,15 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
           ),
         }
       : state;
-    await caseSqliteWorker.request<void>({
+    const generation = await caseSqliteWorker.request<number>({
       op: "saveState",
       dbPath: this.databasePath(canonicalState.caseId),
       state: canonicalState,
+      unsettleMerge,
     });
     this.recordQuery("state_save", "entity", startedAt, canonicalState.forensicTimeline.length);
     void this.onRetry;
+    return generation;
   }
 
   async queryForensicTimeline(caseId: string, query: EntityQuery = {}): Promise<EntityPage<ForensicEvent>> {

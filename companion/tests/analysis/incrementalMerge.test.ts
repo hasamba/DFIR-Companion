@@ -377,6 +377,48 @@ describe("incremental importer merge — refusals", () => {
     await expectSame();
   });
 
+  it("never indexes a row from the merge's copy when another write landed after its full save", async () => {
+    const d = delta(batch("a", 10));
+    const c = windowCtx();
+    // The outside write turns an ordinary row into an email delivery (a pass anchor).
+    const write = async (caseId: string) => {
+      const [r] = await store.forensicRowsById(caseId, ["ae1"]);
+      await store.updateForensicRows(caseId, [
+        { ...r, event: { ...r.event, sources: ["Email"], description: "Phish linking evil.example.com" } },
+      ]);
+    };
+    await store.save(mergeDelta(await store.load("full"), d, c));
+    await write("full");
+    const original = store.mergeStalePositions.bind(store);
+    store.mergeStalePositions = async (caseId: string, stamp: string) => {
+      await write(caseId);
+      return original(caseId, stamp);
+    };
+    await mergeIntoCase(store, "inc", d, c, (s) => mergeDelta(s, d, c));
+    store.mergeStalePositions = original;
+    await expectSame();
+    const next = delta([{ id: "contact", timestamp: day(20), description: "connected to evil.example.com" }]);
+    expect(await importBoth(next)).toBe(false);
+    await expectSame();
+  });
+
+  it("fails the import, and merges nothing twice, when an apply fails after it may have committed", async () => {
+    await importBoth(delta(batch("a", 10)));
+    const d = delta(batch("b", 10));
+    const c = windowCtx();
+    await store.save(mergeDelta(await store.load("full"), d, c));
+    const original = store.mergeApply.bind(store);
+    store.mergeApply = async (caseId, plan) => {
+      await original(caseId, plan);
+      throw new Error("the worker's reply was lost");
+    };
+    await expect(mergeIntoCase(store, "inc", d, c, (s) => mergeDelta(s, d, c))).rejects.toThrow(
+      "the worker's reply was lost",
+    );
+    store.mergeApply = original;
+    await expectSame();
+  });
+
   it("falls back when another writer stored the timeline out of time order", async () => {
     await importBoth(delta(batch("a", 10)));
     await importBoth(delta(batch("b", 10)));

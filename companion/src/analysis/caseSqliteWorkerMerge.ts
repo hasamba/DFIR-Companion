@@ -240,11 +240,21 @@ function withoutUnreadFields(entity) {
 
 // A targeted row write (settle, caseSqliteWorkerRows.ts) that changed only fields the merge never
 // reads keeps the row's merge index current, so the next merge need not read the row again.
-function carryMergeIndex(db, rowId, priorVersion, prior, next) {
+function carryMergeIndex(db, rowId, priorVersion, priorPayload, prior, next) {
   const index = db.prepare("SELECT version FROM merge_rows WHERE row_id=?").get(rowId);
   if (!index || Number(index.version) !== priorVersion) return;
-  if (withoutUnreadFields(prior) !== withoutUnreadFields(next)) return;
+  // A stored payload is JSON.stringify output, so without the fields it is already its own text.
+  const unread = MERGE_UNREAD_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(prior, field));
+  if ((unread ? withoutUnreadFields(prior) : priorPayload) !== withoutUnreadFields(next)) return;
   db.prepare("UPDATE merge_rows SET version=(SELECT version FROM entities WHERE row_id=?) WHERE row_id=?").run(rowId, rowId);
+}
+
+// The stored rows may fold again on the next merge: that merge takes the full path, which writes
+// the flag again. The stamp is kept, so an index from another build is still rebuilt whole.
+function unsettleMergeIndex(db) {
+  db.prepare(
+    "UPDATE storage_meta SET value=json_set(value, '$.stable', json('false')) WHERE key='merge_index'"
+  ).run();
 }
 
 function writeMergeMeta(db, meta) {
