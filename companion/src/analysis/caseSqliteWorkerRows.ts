@@ -146,6 +146,7 @@ function distinctHosts(dbPath, kind) {
 }
 
 function updateEntityRows(dbPath, kind, rows) {
+  refuseSuperRows("updateEntityRows", kind);
   const out = { updated: 0, missing: [], conflicts: [] };
   if (!existsSync(dbPath)) {
     for (const row of rows || []) out.missing.push(row.rowId);
@@ -192,7 +193,14 @@ function updateEntityRows(dbPath, kind, rows) {
   }
 }
 
+// Super-timeline rows change only through the super ops (caseSqliteWorkerSuper.ts), which write the
+// content stamp a cached full-scan result depends on (#1881).
+function refuseSuperRows(op, kind) {
+  if (kind === "superTimeline") throw new Error(op + " does not write superTimeline rows; use the super-timeline ops");
+}
+
 function deleteEntityRows(dbPath, kind, rowIds) {
+  refuseSuperRows("deleteEntityRows", kind);
   if (!existsSync(dbPath) || !Array.isArray(rowIds) || !rowIds.length) return 0;
   const db = openDatabase(dbPath);
   try {

@@ -118,6 +118,7 @@ describe("caseSqliteWorker — reads beside writes (#1454)", () => {
     expect(await caseSqliteWorker.request({ op: "superMeta", dbPath, hosts: 0 })).toEqual({
       rows: 0,
       generation: 0,
+      version: "",
       hosts: [],
       hostsTruncated: false,
       // A case with no store has lost nothing to the cap — the same empty answer the

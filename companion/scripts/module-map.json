@@ -763,6 +763,7 @@
     "stateTypes.ts": "shared",
     "summary.ts": "analysis/workflow",
     "superTimeline.ts": "analysis/timeline",
+    "superTimelineMemo.ts": "analysis/timeline",
     "superTimelineStore.ts": "analysis/timeline",
     "supportBundle.ts": "analysis/case",
     "swimlane.ts": "analysis/detect",

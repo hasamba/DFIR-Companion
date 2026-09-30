@@ -14,6 +14,12 @@ import { isIdentifyingClientName } from "./hostBinding.js";
 // The self-reference guard matters: canonicalEvent.legacyCanonical() sets `target` to the event's own
 // asset when upgrading pre-schema events, so a target equal to `asset` says nothing about a second
 // machine and must not manufacture a phantom host. Pure — no I/O.
+//
+// The scan is split in two (#1881). collectRawHostEvidence folds events keyed by the RAW spellings
+// as stored — no alias resolution — and foldRawHostEvidence then applies the alias index. The raw
+// result depends only on the super-timeline's content, so it can be cached per content version and
+// re-folded whenever the aliases change (a fleet refresh, an analyst merge) without a rescan. The
+// fold never mutates the raw collection and returns fresh sets, because callers mutate its output.
 
 export interface HostEvidence {
   collected: boolean;
@@ -62,6 +68,111 @@ function referencedHosts(event: ForensicEvent): string[] {
     c.network?.destination?.hostname,
   ];
   return names.filter((n): n is string => typeof n === "string" && n.trim() !== "");
+}
+
+// Evidence from events whose `asset` is spelled exactly this way.
+export interface RawAssetEvidence {
+  eventCount: number;
+  sources: Set<string>;
+  findingIds: Set<string>;
+  maxSeverity: Severity;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface RawHostEvidence {
+  assets: Map<string, RawAssetEvidence>; // raw event.asset → its evidence
+  references: Map<string, Set<string>>; // raw owner ("" when the event has no asset) → raw names
+}
+
+export function emptyRawHostEvidence(): RawHostEvidence {
+  return { assets: new Map(), references: new Map() };
+}
+
+// SEVERITY_RANK is lower-is-worse (Critical: 0), so a smaller rank wins.
+function worse(a: Severity, b: Severity): Severity {
+  return SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a;
+}
+
+// "" means "no timestamp yet" and never wins against a real one.
+function earlier(a: string, b: string): string {
+  return b && (!a || b < a) ? b : a;
+}
+
+function later(a: string, b: string): string {
+  return b && (!a || b > a) ? b : a;
+}
+
+function rawAsset(raw: RawHostEvidence, asset: string): RawAssetEvidence {
+  const existing = raw.assets.get(asset);
+  if (existing) return existing;
+  const fresh: RawAssetEvidence = {
+    eventCount: 0,
+    sources: new Set(),
+    findingIds: new Set(),
+    maxSeverity: "Info",
+    firstSeen: "",
+    lastSeen: "",
+  };
+  raw.assets.set(asset, fresh);
+  return fresh;
+}
+
+// Fold a batch into `raw` (a new accumulator when absent). Call once per batch; the result is the
+// same however the events are split.
+export function collectRawHostEvidence(
+  events: readonly ForensicEvent[],
+  raw: RawHostEvidence = emptyRawHostEvidence(),
+): RawHostEvidence {
+  for (const event of events) {
+    const owner = event.asset ?? "";
+    if (owner) {
+      const asset = rawAsset(raw, owner);
+      asset.eventCount += 1;
+      for (const source of event.sources ?? []) asset.sources.add(source);
+      for (const findingId of event.relatedFindingIds) asset.findingIds.add(findingId);
+      asset.maxSeverity = worse(asset.maxSeverity, event.severity);
+      asset.firstSeen = earlier(asset.firstSeen, event.timestamp);
+      asset.lastSeen = later(asset.lastSeen, event.timestamp);
+    }
+
+    const names = referencedHosts(event);
+    if (names.length === 0) continue;
+    const edges = raw.references.get(owner) ?? new Set<string>();
+    for (const name of names) edges.add(name);
+    raw.references.set(owner, edges);
+  }
+  return raw;
+}
+
+// Resolve the raw collection under `index`. Same result as accumulate() over every event, but the
+// cost is bounded by distinct spellings and edges, not by event count.
+export function foldRawHostEvidence(raw: RawHostEvidence, index: HostAliasIndex): HostEvidenceMap {
+  const acc: HostEvidenceMap = new Map();
+
+  for (const [asset, evidence] of raw.assets) {
+    const owner = resolveHost(index, asset);
+    if (!owner) continue;
+    const host = entry(acc, owner);
+    host.collected = true;
+    host.eventCount += evidence.eventCount;
+    for (const source of evidence.sources) host.sources.add(source);
+    for (const findingId of evidence.findingIds) host.findingIds.add(findingId);
+    host.maxSeverity = worse(host.maxSeverity, evidence.maxSeverity);
+    host.firstSeen = earlier(host.firstSeen, evidence.firstSeen);
+    host.lastSeen = later(host.lastSeen, evidence.lastSeen);
+  }
+
+  for (const [rawOwner, names] of raw.references) {
+    const owner = rawOwner ? resolveHost(index, rawOwner) : "";
+    for (const name of names) {
+      const other = resolveHost(index, name);
+      if (!other || other === owner) continue; // self-target says nothing about a second machine
+      const host = entry(acc, other);
+      if (owner) host.referencedBy.add(owner);
+    }
+  }
+  return acc;
 }
 
 export function accumulate(
@@ -138,7 +249,7 @@ export async function aggregateHostEvidence(
   caseId: string,
   index: HostAliasIndex,
 ): Promise<HostEvidenceMap> {
-  const acc: HostEvidenceMap = new Map();
-  for await (const batch of store.eventBatches(caseId)) accumulate(batch, index, acc);
-  return acc;
+  const raw = emptyRawHostEvidence();
+  for await (const batch of store.eventBatches(caseId)) collectRawHostEvidence(batch, raw);
+  return foldRawHostEvidence(raw, index);
 }
