@@ -47,8 +47,11 @@ function forensicOutline(dbPath, withKeys) {
 }
 
 // One transaction: arm the journal (when a token is given), then read the overview and the
-// outline, so no write can land between the snapshot and the start of journaling.
-function captureImportBaseline(dbPath, token) {
+// outline, so no write can land between the snapshot and the start of journaling. With a facts
+// stamp (#1874) the outline is ids only and the forensic rows whose facts are unknown come with it
+// (null: every row) — the settle's timeline diff reads keys for only those and the rows the import
+// changed (routes/importSettleDiff.ts).
+function captureImportBaseline(dbPath, token, factsStamp) {
   if (!existsSync(dbPath)) return null;
   const db = openDatabase(dbPath);
   try {
@@ -58,7 +61,11 @@ function captureImportBaseline(dbPath, token) {
         db.prepare("INSERT INTO import_journal_arm(token) VALUES (?)").run(token);
       }
       const overview = readState(db, ["forensicTimeline"]);
-      return { overview, outline: outlineRows(db, true) };
+      if (typeof factsStamp !== "string") return { overview, outline: outlineRows(db, true) };
+      // Every row the case holds now has a row id at most this; a journaled row above it is one the
+      // import inserted, which no reader of the journal wants (a pre-import row is what they compare).
+      const fence = Number(db.prepare("SELECT COALESCE(MAX(row_id), 0) AS m FROM entities").get().m);
+      return { overview, outline: outlineRows(db, false), unfresh: factsUnfresh(db, factsStamp), fence };
     });
   } finally {
     db.close();
@@ -70,12 +77,13 @@ function armedToken(db) {
   return row ? row.token : null;
 }
 
-function readImportJournal(dbPath, token) {
+function readImportJournal(dbPath, token, fence) {
   if (!existsSync(dbPath)) return null;
   const db = openDatabase(dbPath);
   try {
     if (armedToken(db) !== token) return null;
-    return db.prepare("SELECT row_id, entity_id, payload FROM import_journal ORDER BY row_id").all()
+    const upTo = typeof fence === "number" ? fence : Number.MAX_SAFE_INTEGER;
+    return db.prepare("SELECT row_id, entity_id, payload FROM import_journal WHERE row_id <= ? ORDER BY row_id").all(upTo)
       .map((row) => ({ rowId: Number(row.row_id), entityId: row.entity_id, payload: JSON.parse(row.payload) }));
   } finally {
     db.close();
@@ -140,6 +148,21 @@ function distinctHosts(dbPath, kind) {
   try {
     return db.prepare("SELECT DISTINCT host FROM entities WHERE kind=? AND host IS NOT NULL")
       .all(kind).map((row) => row.host);
+  } finally {
+    db.close();
+  }
+}
+
+// Each distinct forensic host with the ordinal of its first row, in that order (#1874): what the
+// host-duplicate check needs, from the (kind, host, ordinal) index instead of every row.
+function forensicHostsInOrder(dbPath) {
+  if (!existsSync(dbPath)) return [];
+  const db = openDatabase(dbPath);
+  try {
+    return db.prepare(
+      "SELECT host, MIN(ordinal) AS first FROM entities WHERE kind='forensicTimeline' AND host IS NOT NULL " +
+      "GROUP BY host ORDER BY first"
+    ).all().map((row) => row.host);
   } finally {
     db.close();
   }
@@ -242,16 +265,17 @@ function patchStateMeta(dbPath, patch) {
 function dispatchRows(message) {
   switch (message.op) {
     case "forensicOutline": return forensicOutline(message.dbPath, message.withKeys);
-    case "captureImportBaseline": return captureImportBaseline(message.dbPath, message.token);
-    case "readImportJournal": return readImportJournal(message.dbPath, message.token);
+    case "captureImportBaseline": return captureImportBaseline(message.dbPath, message.token, message.factsStamp);
+    case "readImportJournal": return readImportJournal(message.dbPath, message.token, message.fence);
     case "disarmImportJournal": return disarmImportJournal(message.dbPath, message.token);
     case "entityRows": return entityRows(message.dbPath, message.kind, message.ids, message.rowIds);
     case "forensicRowsOutsideSeverities": return forensicRowsOutsideSeverities(message.dbPath, message.keep);
     case "distinctHosts": return distinctHosts(message.dbPath, message.kind);
+    case "forensicHostsInOrder": return forensicHostsInOrder(message.dbPath);
     case "updateEntityRows": return updateEntityRows(message.dbPath, message.kind, message.rows);
     case "deleteEntityRows": return deleteEntityRows(message.dbPath, message.kind, message.rowIds);
     case "patchStateMeta": return patchStateMeta(message.dbPath, message.patch);
-    default: throw new Error("unknown SQLite worker operation: " + message.op);
+    default: return dispatchFacts(message); // caseSqliteWorkerFacts.ts
   }
 }
 `;

@@ -865,6 +865,13 @@ rules version, prompt or report-template hash, provider/model, filters, anonymiz
 warnings, and output hashes. **View manifest** exposes the exact evidence IDs and links them back to
 the forensic timeline.
 
+A run's output hash `investigation-state/v2` fingerprints the case as the run left it: the findings,
+the IOC list and the forensic timeline, in order. It is the SHA-256 of the canonical JSON (keys sorted)
+of `{findings, forensicTimeline, iocs}`, where each event and each IOC is replaced by the SHA-256 of
+its own canonical JSON. A change to any finding, IOC or event, or to the timeline's order, changes it.
+Manifests written by earlier versions carry `investigation-state`, the same JSON with every item
+inline. The two are different constructions, so compare output hashes only under the same id.
+
 The integrity banner verifies both every manifest hash and the case's append-only hash chain.
 Changing or deleting a historical manifest makes that check fail. The ledger is included in the
 generated report folder and whole-case archives, whose own integrity manifest covers it as well.

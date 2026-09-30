@@ -37,7 +37,7 @@ export async function baselineCheckpoint(
   const journal: JournalEntry[] | null = baseline.empty
     ? []
     : baseline.journalToken
-      ? await store.readImportJournal(caseId, baseline.journalToken)
+      ? await store.readImportJournal(caseId, baseline.journalToken, baseline.journalFence)
       : null;
   if (!journal) return null;
   const before = baseline.outline;

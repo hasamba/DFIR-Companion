@@ -9,6 +9,7 @@ import {
 import { buildHostBindingIndex } from "./hostBinding.js";
 import type { HostDuplicateDismissal } from "./hostDuplicateDismissals.js";
 import {
+  hostNamesFromAssets,
   hostNamesFromState,
   pendingNearDuplicates,
   pendingNetworkIdentityDuplicates,
@@ -34,7 +35,11 @@ import type { VeloClientInventory } from "./velociraptorClientStore.js";
 // their own subtly different versions of the same derivation.
 
 export interface HostScopeSources {
-  state: { load(caseId: string): Promise<InvestigationState> };
+  state: {
+    load(caseId: string): Promise<InvestigationState>;
+    /** Each distinct forensic host in the order of its first row — without reading the rows (#1874). */
+    forensicHostsInOrder?(caseId: string): Promise<string[]>;
+  };
   superTimeline: HostEvidenceSource;
   decisions: Pick<HostScopeStore, "load">;
   scope?: { load(caseId: string): Promise<ScopeWindow> };
@@ -128,12 +133,16 @@ export async function loadPendingHostDuplicates(
   },
   caseId: string,
 ): Promise<NearDuplicate[]> {
-  const [state, index, dismissals] = await Promise.all([
-    sources.state.load(caseId),
+  // #1874: every import asks this in the background; it needs the hosts, not every row of the case.
+  const hostNames = sources.state.forensicHostsInOrder
+    ? sources.state.forensicHostsInOrder(caseId).then(hostNamesFromAssets)
+    : sources.state.load(caseId).then(hostNamesFromState);
+  const [hosts, index, dismissals] = await Promise.all([
+    hostNames,
     loadHostAliasIndex(sources, caseId),
     sources.dismissals.load(caseId),
   ]);
-  return pendingNearDuplicates(hostNamesFromState(state), index, dismissals);
+  return pendingNearDuplicates(hosts, index, dismissals);
 }
 
 /**

@@ -12,12 +12,12 @@
  * reversible, visible in the "False Positives" panel, and attributed — which "the importer dropped
  * it" never would be. Both are opt-in: an empty whitelist / absent NSRL set makes them no-ops.
  */
-import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "../analysis/falsePositive.js";
 import { whitelistMatches } from "../analysis/iocWhitelist.js";
-import { nsrlMatchIocs, nsrlMatchEvents } from "../analysis/nsrl.js";
+import { nsrlMatchIocs } from "../analysis/nsrl.js";
+import { nsrlEventMatches } from "./nsrlRows.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
 import { deobfuscateRows } from "./deobfuscationRows.js";
@@ -223,10 +223,7 @@ export function createCaseAppliers({
     const lookup = (h: string): boolean => (flat?.has(h) ?? false) || (db?.has(h) ?? false);
     // #1874: the IOCs from the overview, the events a page at a time — never the whole case at once.
     const iocMatches = nsrlMatchIocs((await options.stateStore.loadOverview(caseId)).iocs, lookup);
-    const eventMatches: ReturnType<typeof nsrlMatchEvents> = [];
-    for await (const batch of options.stateStore.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
-      eventMatches.push(...nsrlMatchEvents(batch, lookup));
-    }
+    const eventMatches = await nsrlEventMatches(options.stateStore, caseId, lookup);
     if (iocMatches.length === 0 && eventMatches.length === 0)
       return { matchedIocs: 0, matchedEvents: 0, added: 0 };
     const markers = await falsePositives.load(caseId);

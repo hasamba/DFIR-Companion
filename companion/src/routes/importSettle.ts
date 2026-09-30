@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
-import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
+import type { TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
-import { outlineEvents, SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
+import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
+import { settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { capBuildTimeScoped } from "./importSettleCap.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
@@ -132,7 +133,10 @@ export async function settleForensicImport(
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
   const scope = await settleScope(store, caseId, baseline);
-  const ledger = await store.loadOverview(caseId);
+  // Its rename ledger and collector identities only (#1874): not the IOC list, as long as the timeline.
+  const ledger = store.loadOverviewWithoutIocs
+    ? await store.loadOverviewWithoutIocs(caseId)
+    : await store.loadOverview(caseId);
   // A rename the import taught the case (or a changed collector identity) can re-home ANY old row;
   // otherwise only the rows the import added or touched can need it.
   const ledgerChanged = renameLedgerChanged(baseline.overview, ledger);
@@ -209,12 +213,12 @@ export async function settleForensicImport(
   changed ||= capped > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
-  const outline = await store.forensicOutline(caseId);
+  // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).
+  const { timelineDiff, forensicCount } = await settleTimelineDiff(store, caseId, baseline);
   debug(
-    `demote buildTimeCapped=${capped} forensicBeforeDemote=${outline.ids.length + demoted.removed} ` +
-      `forensicAfterDemote=${outline.ids.length}`,
+    `demote buildTimeCapped=${capped} forensicBeforeDemote=${forensicCount + demoted.removed} ` +
+      `forensicAfterDemote=${forensicCount}`,
   );
-  const timelineDiff = diffTimeline(outlineEvents(baseline.outline), outlineEvents(outline));
   const iocsDiff = diffIocs(baseline.overview.iocs, (await store.loadOverview(caseId)).iocs);
   const addedIds = [...new Set(added.map((e) => e.id))];
   const addedEvents = async (): Promise<ForensicEvent[]> =>
@@ -234,7 +238,7 @@ export async function settleForensicImport(
     timelineDiff,
     iocsDiff,
     addedEvents,
-    forensicCount: outline.ids.length,
+    forensicCount,
     ...(demoted.state ? { state: demoted.state } : {}),
   };
 }

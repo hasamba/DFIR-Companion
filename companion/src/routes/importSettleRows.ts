@@ -42,7 +42,7 @@ export async function settleScope(
   if (baseline.empty) return { addedIds, touchedRowIds: [], touchedKnown: true, mergedCount: now.ids.length };
   const journal =
     baseline.journalToken && store.readImportJournal
-      ? await store.readImportJournal(caseId, baseline.journalToken)
+      ? await store.readImportJournal(caseId, baseline.journalToken, baseline.journalFence)
       : null;
   if (!journal) return { addedIds, touchedRowIds: [], touchedKnown: false, mergedCount: now.ids.length };
   // Only rows that existed at the snapshot count as touched; a row the import inserted and then
