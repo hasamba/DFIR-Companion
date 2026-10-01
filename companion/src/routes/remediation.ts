@@ -219,6 +219,7 @@ export function registerRemediationRoutes(app: Express, ctx: RouteContext): void
           intent: "remediation-check",
           note: `attached as remediation evidence for ${boundary.id}`,
         });
+        await ctx.markConclusionsOutOfDate(req.params.id, "rows attached as remediation evidence"); // #1923, #1599
       }
       const out = await s.attach(req.params.id, boundary.id, ids);
       if (out === "full")
