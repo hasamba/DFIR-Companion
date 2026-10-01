@@ -35,7 +35,17 @@
             bodyEl.innerHTML = `<div data-safe-style="color:var(--text-muted)">${esc(presidioHoldText("Explain"))}</div>`;
             return null;
           }
-          throw new Error("HTTP " + r.status);
+          // Keep the server's own reason (#1910): with Presidio down the 500 body names the cause,
+          // and a bare "HTTP 500" sent the analyst to the server log for it.
+          const reason =
+            typeof body.error === "string"
+              ? body.error
+              : typeof body.error?.message === "string"
+                ? body.error.message
+                : "";
+          const err = new Error("HTTP " + r.status + (reason ? ": " + reason : ""));
+          err.status = r.status;
+          throw err;
         }
         return r.json();
       })
@@ -111,12 +121,19 @@
       })
       .catch((e) => {
         const msg = String(e.message || e);
-        const hint = /501/.test(msg)
-          ? "AI provider not configured — check Settings → AI"
-          : /404/.test(msg)
-            ? "route not found — restart the companion server"
-            : "check the server console for details";
-        bodyEl.innerHTML = `<div data-safe-style="color:var(--sev-high)">explain failed: ${esc(msg)} — ${hint}</div>`;
+        // The hint comes from the HTTP status only. The message now carries server text, and a
+        // network error carries none, so a "404" inside either must not pick the wrong hint.
+        const hint =
+          e.status === 501
+            ? "AI provider not configured — check Settings → AI"
+            : e.status === 404
+              ? "route not found — restart the companion server"
+              : "check the server console for details";
+        // Server text is untrusted: it goes in as text, never as markup.
+        const line = document.createElement("div");
+        line.style.color = "var(--sev-high)";
+        line.textContent = `explain failed: ${msg} — ${hint}`;
+        bodyEl.replaceChildren(line);
       });
   }
 
