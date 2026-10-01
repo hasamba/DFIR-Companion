@@ -467,6 +467,13 @@ describe("store and matcher agree on every event (#928)", () => {
     "mixed CaSe MiXeD",
     "emoji 🔥 in a filename.txt",
     "trailing space ",
+    // #1914: the only characters whose lowercase reaches ASCII, final sigma, and a lone surrogate
+    // (stored as the ASCII escape text "\ud800", so a non-ASCII fallback never offered it).
+    "CORP\\ADMİN — logon",
+    "TEMP\\\u212Aeylogger.dll",
+    "ΟΔΟΣ ΣΤΑΣΗΣ",
+    "broken \uD800 surrogate",
+    "em dash — only, nothing to fold",
   ];
   const TERMS = [
     "C:\\Users\\bob",
@@ -498,6 +505,22 @@ describe("store and matcher agree on every event (#928)", () => {
     "🔥",
     "trailing space ",
     "mimikatz",
+    // #1914
+    "admi",
+    "admin",
+    "admi\u0307n",
+    "\u0307",
+    "keylogger",
+    "KEYLOGGER",
+    "οδος",
+    "οδοσ",
+    "στασης",
+    "ς σ",
+    "\uD800",
+    "\uDC00",
+    "surrogate",
+    "—",
+    "nothing to fold",
     "",
   ];
 

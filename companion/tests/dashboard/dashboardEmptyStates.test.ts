@@ -54,7 +54,8 @@ describe("render() empty states", () => {
 describe("Forensic Timeline empty state", () => {
   it("renders through timelineEmptyHtml instead of a dash", () => {
     expect(HTML).toContain(
-      'No events match the current filters.</div>" : timelineEmptyHtml(((DfirState.lastState() || {}).forensicTimeline || []).length);',
+      // #1916: the filtered-empty branch also draws the Load more bar, so unloaded events stay reachable.
+      'No events match the current filters.</div>" + (typeof timelineMoreMatchesBar === "function" ? timelineMoreMatchesBar() : "") : timelineEmptyHtml(((DfirState.lastState() || {}).forensicTimeline || []).length);',
     );
   });
 });

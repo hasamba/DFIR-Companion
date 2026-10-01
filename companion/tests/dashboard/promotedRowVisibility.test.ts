@@ -22,6 +22,13 @@ interface Ev {
 
 interface DisplayApi {
   isPromotedEvent(e: Ev | null | undefined): boolean;
+  isManualEvent(e: unknown): boolean;
+  keepsAnySeverity(e: Ev | null | undefined): boolean;
+  manualKeptCount(
+    visible: Ev[] | null,
+    activeSevs: Set<string> | null,
+    meetsFloor: ((sev: string) => boolean) | null,
+  ): number;
   promotedBadge(e: Ev | null | undefined): string;
   promotedKeptCount(
     visible: Ev[] | null,
@@ -36,6 +43,7 @@ interface DisplayApi {
     totalPages: number;
     filtering: boolean;
     promotedKept?: number;
+    manualKept?: number;
   }): { text: string; title: string };
 }
 
@@ -70,6 +78,8 @@ function presets(minSeverity?: string): PresetApi {
     // shared global lexical environment at call time; here it has to actually be present, because
     // its absence is what the guard in viewMeetsMinSev is for and is covered separately below.
     isPromotedEvent: (e: Ev | null | undefined) => !!(e && e.promotedAt),
+    // The display module's published rule (#1919), resolved the same way in the browser.
+    keepsAnySeverity: (e: Ev | null | undefined) => display().keepsAnySeverity(e),
   });
 }
 
@@ -156,7 +166,7 @@ describe("the severity legend in dashboard.html", () => {
   it("lets a promoted row through even when its severity box is unticked", async () => {
     const html = await readFile(HTML, "utf8");
     expect(html).toContain(
-      "let visible = filtering ? ft.filter(e => activeSevs.has(e.severity) || isPromotedEvent(e)) : ft;",
+      "let visible = filtering ? ft.filter(e => activeSevs.has(e.severity) || keepsAnySeverity(e)) : ft;",
     );
   });
 
@@ -289,5 +299,67 @@ describe("promotedKeptCount", () => {
   it("counts nothing when no filter is in force", () => {
     expect(api.promotedKeptCount([PROMOTED_INFO, PLAIN_INFO], null, null)).toBe(0);
     expect(api.promotedKeptCount(null, null, null)).toBe(0);
+  });
+});
+
+// #1919: the server keeps an analyst's hand-entered event (id `manual-…`) at any severity, like a
+// promoted row. The display had copied the old rule and dropped those rows again.
+describe("hand-entered events ride through severity filters like promoted rows (#1919)", () => {
+  const api = display();
+  const MANUAL_INFO: Ev = { id: "manual-1a2b", severity: "Info" };
+
+  it("recognises a manual row by its id prefix only", () => {
+    expect(api.isManualEvent(MANUAL_INFO)).toBe(true);
+    expect(api.isManualEvent({ id: "e-manual-1", severity: "Info" })).toBe(false);
+    expect(api.isManualEvent({ id: "Manual-1", severity: "Info" })).toBe(false);
+    expect(api.isManualEvent({ id: 7, severity: "Info" })).toBe(false);
+    expect(api.isManualEvent({ severity: "Info" })).toBe(false);
+    expect(api.isManualEvent(null)).toBe(false);
+  });
+
+  it("keeps a manual or promoted row whatever its severity, and nothing else", () => {
+    expect(api.keepsAnySeverity(MANUAL_INFO)).toBe(true);
+    expect(api.keepsAnySeverity(PROMOTED_INFO)).toBe(true);
+    expect(api.keepsAnySeverity(PLAIN_INFO)).toBe(false);
+  });
+
+  it("is not a promotion: no badge, not in the promoted count", () => {
+    expect(api.promotedBadge(MANUAL_INFO)).toBe("");
+    expect(api.promotedKeptCount([MANUAL_INFO], new Set(["High"]), null)).toBe(0);
+  });
+
+  it("counts manual rows a filter would have dropped, a manual promoted row only once", () => {
+    const both = { id: "manual-9", severity: "Info", promotedAt: "2026-09-20T00:00:00Z" };
+    const rows = [MANUAL_INFO, both, { id: "manual-h", severity: "High" }, PLAIN_INFO];
+    expect(api.manualKeptCount(rows, new Set(["High"]), null)).toBe(1);
+    expect(api.promotedKeptCount(rows, new Set(["High"]), null)).toBe(1);
+    const meetsHigh = (sev: string) => sev === "High" || sev === "Critical";
+    expect(api.manualKeptCount([MANUAL_INFO], null, meetsHigh)).toBe(1);
+    expect(api.manualKeptCount([MANUAL_INFO], null, null)).toBe(0);
+  });
+
+  it("says the number out loud in the label, apart from promoted rows", () => {
+    const lbl = api.timelineCountLabel({
+      total: 10,
+      totalFiltered: 4,
+      pageSize: 0,
+      page: 0,
+      totalPages: 1,
+      filtering: true,
+      promotedKept: 1,
+      manualKept: 2,
+    });
+    expect(lbl.text).toBe("(4 of 10 events, 6 hidden by filters, 1 promoted kept, 2 manual kept)");
+    expect(lbl.title).toContain("entered them by hand");
+  });
+
+  it("passes a manual Info row through a High view floor", () => {
+    expect(presets("High").viewMeetsMinSev("Info", MANUAL_INFO)).toBe(true);
+    expect(presets("High").viewMeetsMinSev("Info", PLAIN_INFO)).toBe(false);
+  });
+
+  it("hands the manual count to the label from dashboard.html", async () => {
+    const html = await readFile(HTML, "utf8");
+    expect(html).toContain("manualKept: manualKeptCount(visible, filtering ? activeSevs : null");
   });
 });

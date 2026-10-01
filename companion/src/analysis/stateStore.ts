@@ -61,10 +61,13 @@ export interface EntityQuery {
   searchLike?: string;
   /**
    * Turn the full-text prefilter on. Set independently of `searchLike` because a non-ASCII term has
-   * no usable LIKE pattern — LIKE folds case for ASCII only — and the prefilter then narrows to
-   * rows holding a non-ASCII character instead. See analysis/forensicSearch.ts.
+   * no usable LIKE pattern — LIKE folds case for ASCII only. See analysis/searchFoldPrefilter.ts.
    */
   searchPrefilter?: boolean;
+  /** #1914: the fold-prefilter fields searchFoldPrefilter.ts plans (fold characters, needle, restamp). */
+  searchFoldChars?: readonly string[];
+  searchFoldNeedle?: string;
+  searchEdgeObserved?: boolean;
   /** Internal/export optimization: skip the full matching-row count when only cursor batches matter. */
   includeTotal?: boolean;
 }
@@ -385,6 +388,9 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         indexValue,
         searchLike: query.searchLike,
         searchPrefilter: query.searchPrefilter,
+        searchFoldChars: query.searchFoldChars,
+        searchFoldNeedle: query.searchFoldNeedle,
+        searchEdgeObserved: query.searchEdgeObserved,
         includeTotal: query.includeTotal,
       },
     });
