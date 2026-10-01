@@ -19,7 +19,8 @@ import { demoteBelowSeverity, resolveForensicMinSeverity, SEVERITY_RANK } from "
  *
  * #1874: it no longer loads and saves the whole case. The severity index finds the candidates (a
  * missing or unrecognized severity is a candidate, as it always was), demoteBelowSeverity applies
- * the exact rule to them (a promoted row stays), and the demoted rows are deleted by row id.
+ * the exact rule to them (a promoted row or a manual event stays, #1919), and the demoted rows are
+ * deleted by row id.
  */
 export interface ImportDemoteDeps {
   options: AppOptions;

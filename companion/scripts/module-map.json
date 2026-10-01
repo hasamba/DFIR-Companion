@@ -592,6 +592,7 @@
     "macosPersistence.ts": "analysis/ingest",
     "malfindContext.ts": "analysis/ingest",
     "manualEntry.ts": "analysis/workflow",
+    "manualId.ts": "shared",
     "memoryCallbackOwnership.ts": "analysis/ingest",
     "memoryCrossView.ts": "analysis/ingest",
     "memoryFields.ts": "analysis/ingest",

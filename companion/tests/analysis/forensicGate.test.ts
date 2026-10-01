@@ -43,6 +43,24 @@ describe("demoteBelowSeverity", () => {
   });
 });
 
+// #1919: an analyst-entered manual event stays at any severity, like a promoted row. The exemption
+// is the manual- id only the manual-entry builders mint, so imported Info telemetry is still cut.
+describe("demoteBelowSeverity — manual events (#1919)", () => {
+  it("keeps a manual Info event and still demotes an imported Info row", () => {
+    const { kept, demoted } = demoteBelowSeverity([ev("manual-abc", "Info"), ev("imported", "Info")], "Low");
+    expect(kept.map((e) => e.id)).toEqual(["manual-abc"]);
+    expect(demoted.map((e) => e.id)).toEqual(["imported"]);
+  });
+  it("keeps a manual Low event under a Medium floor", () => {
+    const { demoted } = demoteBelowSeverity([ev("manual-xyz", "Low"), ev("row", "Low")], "Medium");
+    expect(demoted.map((e) => e.id)).toEqual(["row"]);
+  });
+  it("does not exempt an imported row whose sources merely say 'manual'", () => {
+    const { demoted } = demoteBelowSeverity([{ ...ev("ai-row", "Info"), sources: ["manual"] }], "Low");
+    expect(demoted.map((e) => e.id)).toEqual(["ai-row"]);
+  });
+});
+
 describe("resolveForensicMinSeverity", () => {
   it("prefers the per-case value", () => {
     expect(resolveForensicMinSeverity("Medium", "Low")).toBe("Medium");

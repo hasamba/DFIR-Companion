@@ -12,6 +12,7 @@ import {
   type StateDelta,
 } from "./importUndoDelta.js";
 import type { ImportCheckpoint } from "./importUndo.js";
+import { isManualId } from "./manualId.js";
 
 /**
  * An import's undo checkpoint from row sets (#1874), not from a full copy of the case held since the
@@ -64,7 +65,8 @@ export async function baselineCheckpoint(
       if (!lists) return null;
       target.iocs = lists.before;
     }
-    const delta = computeUndoDelta(target, await store.load(caseId));
+    const current = await store.load(caseId);
+    const delta = computeUndoDelta(keepManualRows(target, current), current);
     return { label, at, delta, counts };
   }
   const keyed = await forensicDelta(
@@ -108,6 +110,24 @@ async function putIocDelta(store: StateStore, ref: IocJournalRef, delta: StateDe
   return true;
 }
 
+// The whole-timeline fallback restores the target as given, so the manual events added since the
+// baseline join it (#1904) — each after the nearest row before it that the target holds, or first — to survive the undo.
+function keepManualRows(target: InvestigationState, current: InvestigationState): InvestigationState {
+  const had = new Set(target.forensicTimeline.map((e) => e.id));
+  const rows = [...target.forensicTimeline];
+  current.forensicTimeline.forEach((e, i) => {
+    if (had.has(e.id) || !isManualId(e.id)) return;
+    let prev = -1;
+    for (let j = i - 1; j >= 0 && prev < 0; j--) {
+      const id = current.forensicTimeline[j].id;
+      if (had.has(id)) prev = rows.map((r) => r.id).lastIndexOf(id);
+    }
+    rows.splice(prev + 1, 0, e);
+    had.add(e.id);
+  });
+  return { ...target, forensicTimeline: rows };
+}
+
 const uniqueIds = (ids: readonly (string | null)[]): boolean =>
   ids.every((id) => typeof id === "string") && new Set(ids).size === ids.length;
 
@@ -139,7 +159,9 @@ async function forensicDelta(
     if (changed.has(id))
       restore.push({ i, after: i === 0 ? null : beforeIds[i - 1], row: imageById.get(id) });
   });
-  const added = afterIds.filter((id) => !beforeSet.has(id));
+  // #1904: a manual event the analyst added while the import held the case is not the import's to
+  // undo. Left out of `added`, it is a row the delta never saw, and undo keeps it where it is.
+  const added = afterIds.filter((id) => !beforeSet.has(id) && !isManualId(id));
   const inTarget = beforeIds.filter((id) => !changed.has(id));
   const inFrom = afterIds.filter((id) => beforeSet.has(id) && !changed.has(id));
   const sameOrder = inTarget.length === inFrom.length && inTarget.every((id, k) => id === inFrom[k]);
