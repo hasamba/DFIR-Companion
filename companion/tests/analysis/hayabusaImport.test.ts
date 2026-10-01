@@ -451,3 +451,71 @@ describe("parseHayabusaTimeline — Velociraptor artifact-map export (#1726)", (
     expect(parseHayabusaTimeline(text, { aggregate: false }).events).toHaveLength(1);
   });
 });
+
+// #1905: the aggregation key masks digit runs so rotating ids collapse, but it used to mask the HOST
+// too. WS01/WS02/WS03 then shared one key and three hosts came back as one event on WS01 — the
+// lateral-movement scope the detections exist to show was gone from the forensic timeline.
+describe("parseHayabusaTimeline — per-host aggregation (#1905)", () => {
+  const psexecRow = (host: string, detail = "Svc: PSEXESVC"): string[] => [
+    "2021-12-12 10:00:00.000 +00:00",
+    host,
+    "Sys",
+    "7045",
+    "high",
+    "PsExec Service Installation",
+    detail,
+    "t1021.002",
+  ];
+
+  it("keeps hosts that differ only by digits as separate events (CSV)", () => {
+    const r = parseHayabusaTimeline(
+      csvTimeline([
+        psexecRow("WS01.example.com"),
+        psexecRow("WS02.example.com"),
+        psexecRow("WS03.example.com"),
+      ]),
+    );
+    expect(r.events).toHaveLength(3);
+    expect(r.events.map((e) => e.asset).sort()).toEqual([
+      "WS01.example.com",
+      "WS02.example.com",
+      "WS03.example.com",
+    ]);
+    for (const e of r.events) expect(e.count ?? 1).toBe(1);
+  });
+
+  it("keeps hosts that differ only by digits as separate events (JSONL)", () => {
+    const rec = (host: string): string => JSON.stringify({ ...jsonProc(), Computer: host });
+    const r = parseHayabusaTimeline([rec("WS01.example.com"), rec("WS02.example.com")].join("\n"));
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS01.example.com", "WS02.example.com"]);
+  });
+
+  it("still aggregates one host's rows that differ only by a digit in the details", () => {
+    const r = parseHayabusaTimeline(
+      csvTimeline([psexecRow("WS01.example.com", "Pid: 1234"), psexecRow("WS01.example.com", "Pid: 5678")]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  it("treats a host's case as the same host", () => {
+    const r = parseHayabusaTimeline(
+      csvTimeline([psexecRow("WS01.example.com"), psexecRow("ws01.EXAMPLE.com")]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+  });
+
+  it("keeps two long subjects apart when they differ past the key's length bound", () => {
+    const pad = "a".repeat(110);
+    const detail = (tail: string): string =>
+      [1, 2, 3, 4, 5].map((i) => `F${"x".repeat(i)}: ${pad}`).join(" ¦ ") + ` ¦ Last: ${pad}${tail}`;
+    const r = parseHayabusaTimeline(
+      csvTimeline([
+        psexecRow("WS01.example.com", detail("alpha")),
+        psexecRow("WS01.example.com", detail("bravo")),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+});

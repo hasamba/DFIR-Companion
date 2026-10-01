@@ -84,6 +84,14 @@ import {
   downloadAggKey,
   mftAggKey,
   taskAggKey,
+  genericVrAggKey,
+  usnAggKey,
+  actionAggKey,
+  pslistAggKey,
+  netstatAggKey,
+  startupAggKey,
+  sigmaOverlayAggKey,
+  withMessageFingerprint,
 } from "./veloAggKeys.js";
 import { readStream } from "./ntfsStreams.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
@@ -572,7 +580,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
     win.description = `Velociraptor Sigma: ${titleSafe(title)} - ${win.description}`.slice(0, 600);
-    win.aggKey = `vr-sigma|${title.toLowerCase()}|${win.aggKey}`;
+    win.aggKey = sigmaOverlayAggKey(win.aggKey, title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
     return win;
@@ -847,12 +855,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   else if (rdp) description = `${description} — ${rdp.note} (T1021.001)`.slice(0, 600);
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
-  const aggKey =
-    special?.aggKey ??
-    `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = special?.aggKey ?? genericVrAggKey(host, artifact, base);
 
   const m: MappedEvent = {
     timestamp: pickTime(row),
@@ -912,9 +915,7 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
   const ransom = ransomwareSignal(path);
   const aggKey = ransom
     ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
-    : `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`
-        .replace(/\d+/g, "#")
-        .slice(0, 400);
+    : usnAggKey(host, reason, path);
   return {
     timestamp: pickTime(row),
     description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
@@ -1033,10 +1034,7 @@ function actionEvent(o: {
       600,
     );
   description = withHostSuffix(description, o.host).slice(0, 600);
-  const aggKey =
-    `vr|${o.artifact.toLowerCase()}|${o.host.toLowerCase()}|${o.action.toLowerCase()}|${(o.aggSubject ?? o.subject).toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = actionAggKey(o.host, o.artifact, o.action, o.aggSubject ?? o.subject);
   return {
     timestamp: o.time,
     description,
@@ -1236,11 +1234,7 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   if (subject) description += `: ${oneLine(subject).slice(0, 300)}`;
   description = withHostSuffix(description, host).slice(0, 600);
 
-  const aggKey =
-    `vr-pslist|${name.toLowerCase()}|${ppid}|${host.toLowerCase()}|${(cmdline || exe || name).toLowerCase()}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = pslistAggKey(host, name, ppid, cmdline || exe || name);
 
   return {
     timestamp: pickTime(row),
@@ -1288,10 +1282,7 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
 
-  const aggKey =
-    `vr-netstat|${name.toLowerCase()}|${status.toLowerCase()}|${lport}|${raddr.toLowerCase()}|${rport}|${host.toLowerCase()}`
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  const aggKey = netstatAggKey(host, name, status, lport, raddr, rport);
 
   return {
     timestamp: pickTime(row),
@@ -1377,9 +1368,7 @@ function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   // Active persistence is worth surfacing; disabled items are informational.
   const severity: Severity = enabled ? "Low" : "Info";
 
-  const aggKey = `vr-startup|${name.toLowerCase()}|${ospath.toLowerCase()}`
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  const aggKey = startupAggKey(host, name, ospath);
 
   return {
     timestamp: pickTime(row),
@@ -1649,7 +1638,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
-      if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
+      if (fp) m.aggKey = withMessageFingerprint(m.aggKey, fp);
       if (m.origin !== "collector") mergeRowIocs(ctx.iocSink, rowSink, m.aggKey); // collector rows name its own tooling (#1555)
       out.push(m);
     }

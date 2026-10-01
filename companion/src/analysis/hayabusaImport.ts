@@ -58,6 +58,7 @@ import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { applyOsBehaviourRules } from "./osBehaviourRules.js";
+import { boundedAggKey, foldVolatileIds } from "./aggKey.js";
 import {
   createDecisionTally,
   firstPresentKey,
@@ -292,11 +293,13 @@ function mapRecord(
   const recordIdentity = fullMessage
     ? undefined
     : evtxRecordIdentity(channel, firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]));
-  const aggKey =
-    `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  // Volatile GUIDs and digit runs are masked so rotating ids aggregate — but never in the HOST.
+  // Masking the whole key made WS01, WS02 and WS03 one key, and three hosts came back as one event
+  // on the first (#1905). The host sits before the unbounded subject, and the bound keeps a digest
+  // of the full key, so a long subject can never push the host or a later difference out of it.
+  const aggKey = boundedAggKey(
+    `${foldVolatileIds(`hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}`)}|${host.toLowerCase()}|${foldVolatileIds(subject)}`,
+  );
 
   const mapped: MappedEvent = {
     timestamp,

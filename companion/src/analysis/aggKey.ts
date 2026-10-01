@@ -53,3 +53,13 @@ export const boundedText = boundedAggKey;
 export function stripNoteBrackets(text: string): string {
   return text.replace(/[[\]]/gu, "");
 }
+
+// Volatile identifiers (pids, record ids, GUIDs) fold so one detection repeated with a fresh id stays
+// one row. Apply it to a key's DISCRIMINATOR fields only, never to the host: WS01 and WS02 are two
+// machines, and folding their digits merges them into one event on the first (#1905, #1917).
+// The GUID pattern is lowercase hex, so callers lowercase first.
+const GUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
+
+export function foldVolatileIds(s: string): string {
+  return s.replace(GUID_RE, "<guid>").replace(/\d+/g, "#");
+}

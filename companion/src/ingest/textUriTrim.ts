@@ -24,10 +24,21 @@ const STRUCTURAL_CLOSERS: ReadonlyArray<readonly [string, string]> = [
   ["]", "["],
 ];
 
-function occurrences(text: string, ch: string): number {
-  let n = 0;
-  for (const c of text) if (c === ch) n++;
-  return n;
+// How many of each structural character `text` holds, counted once. The trim loop below strips
+// closers one at a time, and recounting per stripped character made a long run of `)` quadratic —
+// 40 K of them stalled an import for ~8 s (#1908). Only closers and prose punctuation ever come
+// off, so the loop keeps these counts exact by decrementing the closer it strips.
+function structuralCounts(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const [close, open] of STRUCTURAL_CLOSERS) {
+    counts.set(close, 0);
+    counts.set(open, 0);
+  }
+  for (const c of text) {
+    const n = counts.get(c);
+    if (n !== undefined) counts.set(c, n + 1);
+  }
+  return counts;
 }
 
 /**
@@ -55,24 +66,29 @@ export function trimSentencePunctuation(match: string, text: string, index: numb
   const closer = text[index + match.length] ?? "";
   if ((opener === '"' || opener === "'") && closer === opener) return match;
 
-  let out = match;
-  for (;;) {
-    const last = out.slice(-1);
-    if (last === "") break;
+  // Walk an end index rather than re-slicing per character, and count the structural characters
+  // lazily: a URI that ends on an ordinary character pays nothing extra.
+  let end = match.length;
+  let counts: Map<string, number> | undefined;
+  while (end > 0) {
+    const last = match[end - 1];
     const structural = STRUCTURAL_CLOSERS.find(([close]) => close === last);
     if (structural) {
       const [close, open] = structural;
+      counts ??= structuralCounts(match.slice(0, end));
+      const closes = counts.get(close) ?? 0;
       // Balanced (or opened more than closed) means the URI needs it. Stop rather than continue:
       // anything to its left is inside the URI too.
-      if (occurrences(out, close) <= occurrences(out, open)) break;
-      out = out.slice(0, -1);
+      if (closes <= (counts.get(open) ?? 0)) break;
+      counts.set(close, closes - 1);
+      end--;
       continue;
     }
     if (PROSE_PUNCTUATION.test(last)) {
-      out = out.slice(0, -1);
+      end--;
       continue;
     }
     break;
   }
-  return out;
+  return end === match.length ? match : match.slice(0, end);
 }
