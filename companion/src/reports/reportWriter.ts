@@ -5,6 +5,7 @@ import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { loadFilteredState } from "./filteredState.js";
+import { CaseLoadCoalescer } from "./stateLoadGate.js";
 import {
   applyFalsePositive,
   filterFalsePositiveEvents,
@@ -174,6 +175,7 @@ export class ReportWriter {
   private readonly complianceControl?: ComplianceControlStore;
   private readonly custodyStore?: CustodyStore;
   private readonly instanceSecret?: Buffer;
+  private readonly filteredLoads = new CaseLoadCoalescer<InvestigationState>();
 
   constructor(
     private readonly cases: CaseStore,
@@ -262,16 +264,11 @@ export class ReportWriter {
   // client-confirmed false-positive items — so every export is scope/false-positive-consistent
   // even if AI re-synthesis hasn't run. Shared by the full report and single-section exports.
   private loadFilteredState(caseId: string): Promise<InvestigationState> {
-    // The projection every report surface reads — see reports/filteredState.ts.
-    return loadFilteredState(
-      {
-        state: this.state,
-        cases: this.cases,
-        clockSkew: this.clockSkew,
-        scope: this.scope,
-        falsePositives: this.falsePositives,
-      },
-      caseId,
+    // The projection every report surface reads — see reports/filteredState.ts. Concurrent calls for
+    // one case share one load, never one older than the call (#1915, reports/stateLoadGate.ts).
+    const { state, cases, clockSkew, scope, falsePositives } = this;
+    return this.filteredLoads.load(caseId, () =>
+      loadFilteredState({ state, cases, clockSkew, scope, falsePositives }, caseId),
     );
   }
 

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { wholeCaseLoads } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -288,7 +289,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async load(caseId: string): Promise<InvestigationState> {
-    return this.loadState(caseId, []);
+    return wholeCaseLoads.run(() => this.loadState(caseId, [])); // #1915: capped across the process
   }
 
   async loadOverview(caseId: string): Promise<InvestigationState> {
