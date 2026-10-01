@@ -160,6 +160,9 @@ export interface AppOptions {
   // import never counts a concurrent writer's events as its own. createApp makes one when unset;
   // pass an instance to hold the section from a test. See analysis/importLock.ts.
   importLock?: ImportLock;
+  // How long an archive/export waits for in-flight ingest before it answers 409 (#1903/#1920);
+  // routes/archiveImportBarrier.ts's ARCHIVE_INGEST_WAIT_MS when unset. Tests shorten it.
+  archiveIngestWaitMs?: number;
   aiConfigured?: boolean;
   operationalMetrics?: OperationalMetricsStore;
   liveConnectionCount?: () => number;

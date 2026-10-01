@@ -1,27 +1,43 @@
 import type { NextFunction, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
-import { admitIngest, beginArchive, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
+import {
+  admitIngest,
+  beginArchive,
+  CaseArchivingError,
+  hasIngestReservation,
+} from "../analysis/caseIngestAdmission.js";
+
+/** How long an archive waits for in-flight ingest before it answers 409. */
+export const ARCHIVE_INGEST_WAIT_MS = 30_000;
+const ARCHIVE_INGEST_POLL_MS = 25;
 
 /**
  * An archive of a case and an import into it never overlap (#1903, #1920).
  *
  * Archive used to zip the case folder while imports were still merging: the zip held every raw
  * import but a half-merged state database, and with removeFromList the live case kept changing after
- * the manifest was written. The archive now REFUSES (409) rather than waits — an import stores its raw
- * evidence before it queues for the import section, so waiting would still zip unmerged evidence, and
- * an archive request should not hang for the length of a multi-minute import. It refuses while:
+ * the manifest was written. An import counts as in flight while:
  *
- *   - the case's import section (analysis/importLock.ts) is held or queued;
- *   - an import or MCP JOB is queued or running for the case (an MCP run or agent writes its output,
- *     its report and its preview state in the background, after its request has answered);
  *   - any ingest holds a reservation (analysis/caseIngestAdmission.ts) — every ingest path takes one
- *     before its first evidence write, which covers the window the two checks above cannot see.
+ *     before its first evidence write, which covers the window before it is a job or in the section;
+ *   - the case's import section (analysis/importLock.ts) is held or queued — an import keeps it
+ *     through its settle tail (demote, import meta, undo checkpoint, whitelist/NSRL/deobfuscation),
+ *     well after its events are visible in the state;
+ *   - an import or MCP JOB is queued or running for the case (an MCP run or agent writes its output,
+ *     its report and its preview state in the background, after its request has answered).
  *
- * Otherwise it marks the case (new ingest is refused or deferred while the mark is set) and builds
- * its file inside the import section. The checks, the mark and the enqueue all happen in one
- * synchronous step, so an ingest and an archive cannot both get through.
+ * The archive WAITS until none of that is in flight, then — in one synchronous step — checks once
+ * more, marks the case (every new ingest is refused or deferred from that moment) and queues for the
+ * import section, where it builds its file. Waiting is safe because every ingest path reserves before
+ * its first write, so "nothing in flight" means nothing is half-way. The case is not marked while the
+ * archive waits: an ingest already running may start nested ingests of its own (a drop sweep, a tool
+ * run, an MCP job each call the streamed ingest), and refusing those would fail work it already began.
+ * The wait is bounded: an archive that would wait longer than the limit (a multi-minute import, a
+ * long hunt collect, a steady stream of pushes) answers 409 instead of hanging.
+ *
+ * Analysts hit the wait in practice: an import's events appear in the dashboard while its settle
+ * tail still holds the section, so "import, then export at once" used to get a 409 (#1921 CI).
  */
-
 type Handler = (req: Request, res: Response) => Promise<unknown>;
 
 export function archiveBusyMessage(caseId: string): string {
@@ -41,18 +57,31 @@ export function withArchiveBarrier(
   return async (req, res) => {
     if (!zips(req)) return handler(req, res);
     const caseId = String(req.params.id);
-    const importRunning =
-      ctx.importLock.isBusy(caseId) ||
-      (ctx.options.jobManager?.hasActive(caseId, "import") ?? false) ||
-      (ctx.options.jobManager?.hasActive(caseId, "mcp") ?? false);
-    const endArchive = importRunning ? null : beginArchive(ctx.store.casesRoot, caseId);
-    if (!endArchive) return res.status(409).json({ error: archiveBusyMessage(caseId) });
+    const waitMs = ctx.options.archiveIngestWaitMs ?? ARCHIVE_INGEST_WAIT_MS;
+    const deadline = Date.now() + waitMs;
+    let endArchive: (() => void) | null = null;
+    // beginArchive is null while a reservation is open or another archive holds the case.
+    while (ingestInFlight(ctx, caseId) || !(endArchive = beginArchive(ctx.store.casesRoot, caseId))) {
+      if (Date.now() >= deadline) return res.status(409).json({ error: archiveBusyMessage(caseId) });
+      await new Promise((r) => setTimeout(r, Math.min(ARCHIVE_INGEST_POLL_MS, waitMs)));
+    }
+    const end = endArchive;
     try {
+      // The last check, the mark and the enqueue ran in this same tick: nothing can slip in between.
       return await ctx.importLock.runExclusive(caseId, () => handler(req, res));
     } finally {
-      endArchive();
+      end();
     }
   };
+}
+
+function ingestInFlight(ctx: RouteContext, caseId: string): boolean {
+  return (
+    hasIngestReservation(ctx.store.casesRoot, caseId) ||
+    ctx.importLock.isBusy(caseId) ||
+    (ctx.options.jobManager?.hasActive(caseId, "import") ?? false) ||
+    (ctx.options.jobManager?.hasActive(caseId, "mcp") ?? false)
+  );
 }
 
 /** A delete builds an archive only when asked to archive first. */

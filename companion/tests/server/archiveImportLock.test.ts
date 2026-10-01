@@ -11,24 +11,27 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { withArchiveBarrier } from "../../src/routes/archiveImportBarrier.js";
-import { isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
+import { admitIngest, isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
 import { registerImportCaseGuard } from "../../src/routes/importCaseGuard.js";
 import type { RouteContext } from "../../src/routes/context.js";
 
 // #1903: archiving a case while imports ran produced a torn archive — every raw import in the zip but
 // a half-merged state database — and with removeFromList the archived case kept changing afterwards.
 // An archive (and the other two routes that zip the whole case: delete-with-archive and the encrypted
-// export) now refuses with a 409 while an import runs, and holds the case's import section while it
-// builds the file, during which a new import is refused before it writes anything.
+// export) now WAITS for an in-flight import to finish — answering 409 only past a bounded wait — and
+// holds the case's import section while it builds the file, during which a new import is refused
+// before it writes anything. The 409 tests shorten the wait (archiveIngestWaitMs) so they stay fast.
 
-async function setup() {
+const SHORT_WAIT_MS = 100;
+
+async function setup(archiveIngestWaitMs = SHORT_WAIT_MS) {
   const root = await mkdtemp(join(tmpdir(), "dfir-archive-lock-"));
   const store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(store);
   await stateStore.save(emptyState("c1"));
   const importLock = new ImportLock();
-  const app = createApp(store, { stateStore, importLock });
+  const app = createApp(store, { stateStore, importLock, archiveIngestWaitMs });
   return { root, store, app, importLock };
 }
 
@@ -48,12 +51,41 @@ function fakeCtx(
   return {
     store: { casesRoot },
     importLock,
-    options: { jobManager: { hasActive: (_id: string, kind: string) => kind === activeJob } },
+    options: {
+      archiveIngestWaitMs: SHORT_WAIT_MS,
+      jobManager: { hasActive: (_id: string, kind: string) => kind === activeJob },
+    },
   } as unknown as RouteContext;
 }
 
 describe("archive vs a running import (#1903)", () => {
-  it("POST /archive answers 409 and writes no zip while the case's import section is held", async () => {
+  // #1921 CI: an import's events show in the state while its settle tail (demote, import meta, undo
+  // checkpoint, whitelist/NSRL/deobfuscation) still holds the import section. "Import, then export at
+  // once" answered 409 about one run in three. The export now waits for that tail, then succeeds.
+  it("an export right after an import waits for the import's settle tail instead of answering 409", async () => {
+    const { app, importLock } = await setup(5_000);
+    const release = await importLock.acquire("c1"); // the import's section, still settling
+    const settleTail = setTimeout(release, 150);
+    const startedAt = Date.now();
+    const exp = await request(app)
+      .post("/cases/c1/export/encrypted")
+      .send({ password: "a-long-enough-pass" });
+    clearTimeout(settleTail);
+    expect(exp.status).toBe(200);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(140); // it waited for the tail
+  });
+
+  it("the archive waits for an ingest that holds a reservation, then builds once it drains", async () => {
+    const { root, app } = await setup(5_000);
+    const releaseIngest = admitIngest(root, "c1"); // e.g. a push storing its raw file
+    const settled = setTimeout(releaseIngest, 120);
+    const ok = await request(app).post("/cases/c1/archive").send({});
+    clearTimeout(settled);
+    expect(ok.status).toBe(200);
+    expect(await zipsIn(root)).toHaveLength(1);
+  });
+
+  it("POST /archive answers 409 and writes no zip when the import section stays held past the wait", async () => {
     const { root, app, importLock } = await setup();
     const release = await importLock.acquire("c1");
     const refused = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
