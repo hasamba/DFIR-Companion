@@ -44,6 +44,12 @@ export interface ImportBaseline {
   iocOutline?: IocOutline;
   /** The full pre-import state, only when a legacy caller supplied one. */
   full?: InvestigationState;
+  /**
+   * When the snapshot was taken (ISO), read just before it. A row stamped `promotedAt` at or after it
+   * was promoted while the import held the case — another writer's row, not the import's (#1904).
+   * Absent on a legacy baseline.
+   */
+  capturedAt?: string;
 }
 
 export function isImportBaseline(v: unknown): v is ImportBaseline {
@@ -53,6 +59,7 @@ export function isImportBaseline(v: unknown): v is ImportBaseline {
 /** Snapshot the case and arm its import journal. Release it with releaseImportBaseline. */
 export async function captureImportBaseline(stateStore: StateStore, caseId: string): Promise<ImportBaseline> {
   const token = randomUUID();
+  const capturedAt = new Date().toISOString();
   const captured = await stateStore.captureImportBaseline(caseId, token, rowFactsStamp());
   if (!captured) {
     return {
@@ -64,6 +71,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
       empty: true,
       unfresh: [],
       iocOutline: { rowIds: [], ids: [], objects: 0 },
+      capturedAt,
     };
   }
   return {
@@ -76,6 +84,7 @@ export async function captureImportBaseline(stateStore: StateStore, caseId: stri
     unfresh: captured.unfresh ?? null,
     ...(captured.fence === undefined ? {} : { journalFence: captured.fence }),
     ...(captured.iocOutline ? { iocOutline: captured.iocOutline } : {}),
+    capturedAt,
   };
 }
 
