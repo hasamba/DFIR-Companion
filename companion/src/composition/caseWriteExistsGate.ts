@@ -14,8 +14,13 @@
  * It runs after caseIdGate (an unsafe id is still a 400) and caseLockGate (a locked case still asks
  * for its password first), both mounted in httpStack.
  *
- * WRITES ONLY. Reads are out of scope: the dashboard probes a few GETs (/jev/status) before a case
- * exists, and GET /state already 404s. The Velociraptor prefix keeps its own all-method gate.
+ * WRITES, plus the reads in STORE_OPENING_READS (#1901). Reads in general stay out of scope: the
+ * dashboard probes a few GETs (/jev/status) before a case exists, and most reads touch no disk for
+ * an unknown id. Those eleven did: each opens the per-case database, the worker mkdirs on open, and a
+ * stale poll or a typo'd id left casesRoot/<id>/state/investigation.sqlite behind — which then made
+ * POST /cases for that id a 409. tests/server/caseReadExistsGate.test.ts walks every GET under
+ * /cases/:id/ for an unknown id and fails if any leaves a folder: the fix is to list it here.
+ * The Velociraptor prefix keeps its own all-method gate.
  *
  * The routes it deliberately lets through, and why:
  *   - /cases/import/encrypted, /cases/import/zip and /cases/seed-demo are not cases at all — Express
@@ -48,6 +53,20 @@ import { isNonCasePath } from "../auth/policy.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+/** Reads that open the per-case database, so must 404 an unknown case (#1901). Same spelling rules. */
+export const STORE_OPENING_READS: ReadonlySet<string> = new Set([
+  "/export/redacted",
+  "/host-scope",
+  "/login-graph",
+  "/proxy-host-identity-matches",
+  "/remediation",
+  "/report.docx",
+  "/resolver-endpoint-matches",
+  "/static-report-attestations",
+  "/super-timeline",
+  "/super-timeline.jsonl",
+  "/tls-graph",
+]);
 /** Sub-paths of /cases/:id that keep their own ordering. Compared lowercased, trailing slash off. */
 const OWN_ORDER_ROUTES = new Set(["/lock", "/push"]);
 /** Syntax checks that never read case state. Same spelling rules as OWN_ORDER_ROUTES. */
@@ -59,10 +78,15 @@ function normalize(path: string): string {
   return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
 }
 
+/** The path below /cases/:id, normalized: "/cases/c1/Login-Graph/" → "/login-graph". */
+function caseRelative(fullPath: string): string {
+  return normalize(fullPath).replace(/^\/cases\/[^/]+/, "") || "/";
+}
+
 /** True when a write to this full path is allowed to reach its route without a case.json. */
 export function bypassesCaseWriteExistsGate(fullPath: string): boolean {
   if (isNonCasePath(fullPath)) return true;
-  const rel = normalize(fullPath).replace(/^\/cases\/[^/]+/, "") || "/";
+  const rel = caseRelative(fullPath);
   if (OWN_ORDER_ROUTES.has(rel) || STATELESS_ROUTES.has(rel)) return true;
   return rel === OWN_GATE_PREFIX || rel.startsWith(`${OWN_GATE_PREFIX}/`);
 }
@@ -77,7 +101,11 @@ export function mountCaseWriteExistsGate(app: Express, store: CaseStore): void {
     // work of the case incarnation that exists NOW. Captured synchronously, before the exists
     // check's await, so a delete + re-create in between cannot hand this request the new case.
     return runInCaseScope(store.casesRoot, String(req.params.id), () => {
-      if (READ_METHODS.has(req.method)) return next();
+      if (READ_METHODS.has(req.method)) {
+        const opensStore =
+          req.method !== "OPTIONS" && STORE_OPENING_READS.has(caseRelative(req.baseUrl + req.path));
+        return opensStore ? exists(req, res, next) : next();
+      }
       if (bypassesCaseWriteExistsGate(req.baseUrl + req.path)) return next();
       return exists(req, res, next);
     });
