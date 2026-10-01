@@ -72,12 +72,17 @@
     // Origins + hosts are EXCLUDE-model checklists: send the UNCHECKED items as the exclude list, so
     // all checked → exclude nothing → all shown; some unchecked → those hidden; ALL unchecked → 0
     // events. (An include list would treat "none checked" as "show all" — the bug this avoids.)
-    if (superSelectedOrigins && superOrigins.length) {
-      const excluded = superOrigins.filter(o => !superSelectedOrigins.has(o));
+    //
+    // The unchecked items come from every value SEEN in this case, not from the current facet: the
+    // facet is window-scoped, so a narrow window returns an empty list, and the first query after
+    // widening is built while the panel still holds that empty list (#1911). The server ignores a
+    // name it does not hold, so excluding a value outside the window costs nothing.
+    if (superSelectedOrigins) {
+      const excluded = [...superKnownOrigins].filter(o => !superSelectedOrigins.has(o));
       if (excluded.length) p.set("exclude", excluded.join(","));
     }
-    if (superSelectedHosts && superHosts.length) {
-      const excluded = superHosts.filter(h => !superSelectedHosts.has(h));
+    if (superSelectedHosts) {
+      const excluded = [...superKnownHosts].filter(h => !superSelectedHosts.has(h));
       if (excluded.length) p.set("excludeHosts", excluded.join(","));
     }
     // Tags are an INCLUDE-model filter: checked tags narrow to events carrying at least one of them
@@ -100,6 +105,7 @@
       if (list) list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>Open a case to view its super-timeline.</div>";
       return;
     }
+    scopeSuperFiltersToCase(caseId);
     // Taken here, not above: a call with no case sends nothing, so it must not invalidate a load
     // that is still in flight.
     const requestToken = ++superLoadRequestToken;
@@ -136,19 +142,37 @@
       });
   }
 
+  // The origin/host choices belong to ONE case. They used to be pruned against every answer, which
+  // hid that; kept across a narrow window (#1911) they would otherwise follow the analyst into the
+  // next case and hide a host there that happens to share a name. Reset before the first query.
+  let superFilterCase = null;
+  function scopeSuperFiltersToCase(caseId) {
+    if (caseId === superFilterCase) return;
+    superFilterCase = caseId;
+    superSelectedOrigins = null;
+    superKnownOrigins = new Set();
+    superSelectedHosts = null;
+    superKnownHosts = new Set();
+  }
+
   function renderSuperFilters(data) {
     superOrigins = Array.isArray(data.origins) ? data.origins : [];
     superHosts = Array.isArray(data.hosts) ? data.hosts : [];
     superLabelsAvail = Array.isArray(data.labelsAvailable) ? data.labelsAvailable : [];
     // Origins + hosts are EXCLUDE-model: seed the checked set to "all" on first sight, and a NEW facet
     // (a fresh import) defaults to CHECKED so exclude-filtering never silently hides fresh data; a box
-    // the analyst actually unchecked stays unchecked. Then drop any stale selection that no longer exists.
+    // the analyst actually unchecked stays unchecked.
+    //
+    // NO PRUNING against the current facet (#1911). The facet is window-scoped: a To time before
+    // every event returns an empty list, and pruning against it unticked every box while the "ever
+    // seen" sets kept the names — so after Clear time they came back as known and stayed unticked.
+    // A choice for a value outside the window is kept until the value comes back. Nothing reads a
+    // stale entry by mistake: the dropdown counts only the current facet, and the exclude list is
+    // "seen minus checked", so a kept tick excludes nothing.
     if (superSelectedOrigins === null) superSelectedOrigins = new Set(superOrigins);
     for (const o of superOrigins) if (!superKnownOrigins.has(o)) { superKnownOrigins.add(o); superSelectedOrigins.add(o); }
-    for (const o of [...superSelectedOrigins]) if (!superOrigins.includes(o)) superSelectedOrigins.delete(o);
     if (superSelectedHosts === null) superSelectedHosts = new Set(superHosts);
     for (const h of superHosts) if (!superKnownHosts.has(h)) { superKnownHosts.add(h); superSelectedHosts.add(h); }
-    for (const h of [...superSelectedHosts]) if (!superHosts.includes(h)) superSelectedHosts.delete(h);
     // Tags are INCLUDE-model: prune selected tags that vanished so a stale filter can't hide everything.
     for (const l of [...superSelectedLabels]) if (!superLabelsAvail.includes(l)) superSelectedLabels.delete(l);
     renderStDropdown("origin", superOrigins, superSelectedOrigins, false);
@@ -192,7 +216,11 @@
   function stSetAllFacet(kind, checked) {
     const facet = stFacet(kind), set = stSelectedSet(kind);
     if (!set) return;
-    if (checked) facet.forEach(f => set.add(f)); else set.clear();
+    // All ticks every value seen in this case, not only the ones this window shows: the exclude list
+    // is "seen minus checked", so a value left unticked outside the window would stay hidden after
+    // the analyst pressed All (#1911). Tags (include-model) have no "seen" set and use the facet.
+    const known = kind === "origin" ? superKnownOrigins : kind === "host" ? superKnownHosts : null;
+    if (checked) (known ? [...known, ...facet] : facet).forEach(f => set.add(f)); else set.clear();
     superPage(0);
   }
   function stCloseDropdowns() { document.querySelectorAll(".st-dd .src-filter-menu").forEach(m => { m.hidden = true; }); }
