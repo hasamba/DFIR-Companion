@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-01
+
 ### Added
 - **Import memory guard** — an import that would exhaust the server's memory on a very large case is refused with a message naming the case size and memory needed; the file stays saved (`DFIR_IMPORT_MEMORY_GUARD`, part of #1874)
 
@@ -1258,7 +1260,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.36.0...v0.37.0

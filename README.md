@@ -242,6 +242,7 @@ list of known compromised hosts and users.
 - **External tool runner** (Settings → Tools) — run your own Hayabusa, Chainsaw, Velociraptor CLI, Suricata, Snort, YARA or custom tools on raw evidence and import their output; raw `.evtx` kept byte-for-byte, parser version and exit code in custody, fail-closed, off by default
 - **MCP through Claude Code** (Settings → Tools) — send case evidence to the MCP servers you configured in Claude Code (SIFT, REMnux, windows-triage); needs Claude Code on the host. A server with a command runner means command execution there — read [Using your MCP servers](#using-your-mcp-servers) first
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
+- **Large-case imports** — each import merges, settles and undoes only the rows it changed, and an import memory guard refuses an import that would exhaust the server before it starts (`DFIR_IMPORT_MEMORY_GUARD`)
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
 - **Chain of custody** — every screenshot and import gets an automatic, hash-chained custody record with a signed manifest
