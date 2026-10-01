@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -72,9 +72,9 @@ describe("ReportMetaStore", () => {
     store = new ReportMetaStore(cases);
   });
 
-  it("returns empty defaults when no file exists yet", async () => {
+  it("returns empty defaults, seeded with the creation-time investigator, when no file exists yet", async () => {
     const m = await store.load("case-1");
-    expect(m).toEqual(emptyReportMeta());
+    expect(m).toEqual({ ...emptyReportMeta(), investigators: ["i"] });
   });
 
   it("persists and reloads a normalized value (round-trip)", async () => {
@@ -91,5 +91,57 @@ describe("ReportMetaStore", () => {
     const reloaded = await store.load("case-1");
     expect(reloaded).toEqual(saved);
     expect(reloaded.distribution[0].name).toBe("CISO");
+  });
+});
+
+// #1913: the investigator typed at case creation lives in case.json; the Case Details form and every
+// report read report-meta.json's own list, which nothing seeded — so both showed "(investigator not
+// set)" for a case that had one. Until the analyst saves Case Details, the creation-time investigator
+// is the list. Once saved, the saved list is returned as saved, an empty one included.
+describe("ReportMetaStore — creation-time investigator (#1913)", () => {
+  async function storeFor(investigator: string) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-reportmeta-inv-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator, aiProvider: null });
+    return new ReportMetaStore(cases);
+  }
+
+  it("seeds the list from the case when Case Details was never saved", async () => {
+    const store = await storeFor("  Alice Example  ");
+    expect((await store.load("c1")).investigators).toEqual(["Alice Example"]);
+  });
+
+  it("keeps a list the analyst saved, and does not re-add the creator", async () => {
+    const store = await storeFor("Alice Example");
+    await store.save("c1", { investigators: ["Bob Example"] });
+    expect((await store.load("c1")).investigators).toEqual(["Bob Example"]);
+  });
+
+  it("keeps a saved empty list empty, so the round trip holds and the analyst can clear it", async () => {
+    const store = await storeFor("Alice Example");
+    const saved = await store.save("c1", { organization: "ExampleCorp" });
+    expect(await store.load("c1")).toEqual(saved);
+    expect(saved.investigators).toEqual([]);
+  });
+
+  it("seeds nothing from a blank or placeholder investigator", async () => {
+    for (const placeholder of ["", "   ", "unknown", "Unknown"]) {
+      const store = await storeFor(placeholder);
+      expect((await store.load("c1")).investigators, JSON.stringify(placeholder)).toEqual([]);
+    }
+  });
+
+  it("seeds nothing, and does not throw, for a case that does not exist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-reportmeta-inv-"));
+    const store = new ReportMetaStore(new CaseStore(root));
+    expect(await store.load("ghost")).toEqual(emptyReportMeta());
+  });
+
+  it("a corrupt case.json fails the load visibly instead of dropping the investigator", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-reportmeta-inv-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "alice", aiProvider: null });
+    await writeFile(join(root, "c1", "case.json"), "{not json", "utf8");
+    await expect(new ReportMetaStore(cases).load("c1")).rejects.toThrow();
   });
 });

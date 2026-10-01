@@ -101,6 +101,8 @@ export function normalizeReportMeta(input: unknown): ReportMeta {
   return parsed.success ? parsed.data : emptyReportMeta();
 }
 
+const UNKNOWN_INVESTIGATOR = "unknown";
+
 export class ReportMetaStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -108,13 +110,24 @@ export class ReportMetaStore {
     return join(this.cases.stateDir(caseId), "report-meta.json");
   }
 
+  // Until Case Details is first saved, the investigator typed at case creation is the list (#1913):
+  // it lives in case.json, and without this the form and every report said "(investigator not set)".
+  // Only when the file is MISSING — a saved list, an empty one included, is the analyst's and is
+  // returned as saved, so save → load round-trips and clearing the field sticks.
   async load(caseId: string): Promise<ReportMeta> {
     try {
       return normalizeReportMeta(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyReportMeta();
-      throw err;
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      return { ...emptyReportMeta(), investigators: await this.creationInvestigators(caseId) };
     }
+  }
+
+  private async creationInvestigators(caseId: string): Promise<string[]> {
+    // getCaseMeta is null for a missing case; a corrupt or unreadable case.json throws, visibly.
+    const name = (await this.cases.getCaseMeta(caseId))?.investigator?.trim() ?? "";
+    // "unknown" is POST /cases's own placeholder for a case created with no investigator.
+    return name && name.toLowerCase() !== UNKNOWN_INVESTIGATOR ? [name] : [];
   }
 
   // Persist atomically (temp-file + rename), like the other per-case stores. Returns the
