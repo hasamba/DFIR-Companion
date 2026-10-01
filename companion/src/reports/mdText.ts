@@ -41,7 +41,21 @@ const CONTAINER_PREFIX = "[ \\t]*(?:(?:>|[-*+][ \\t]|\\d{1,9}[.)][ \\t])[ \\t]*)
 // Group 1 is the prefix the marker actually follows, so the backslash lands right before the marker.
 const SECTION_MARKER_RE = new RegExp(`^(${CONTAINER_PREFIX})(?:#{1,6}(?:\\s|$)|=+[ \\t]*$|-+[ \\t]*$)`);
 
+// A code fence, or a raw-HTML block of the kinds that only end at a closing marker (`</pre>`, `-->`,
+// `?>`, `>`, `]]>`) or at the end of the document. Left open, either one turns every later report
+// section into code or hidden markup (#1918). Group 2 is the opener, which is escaped in full: a
+// fence with only its first character escaped would still leave a `` `` `` code-span opener.
+const RUNAWAY_BLOCK_RE = new RegExp(
+  `^(${CONTAINER_PREFIX})(\`{3,}|~{3,}|<(?=(?:script|pre|style|textarea)(?:[\\s>]|$)|!--|\\?|![A-Za-z]|!\\[CDATA\\[))`,
+  "i",
+);
+
 function escapeSectionMarker(line: string): string {
+  const block = RUNAWAY_BLOCK_RE.exec(line);
+  if (block) {
+    const [, prefix, opener] = block;
+    return `${prefix}${opener.replace(/./g, "\\$&")}${line.slice(prefix.length + opener.length)}`;
+  }
   const m = SECTION_MARKER_RE.exec(line);
   return m ? `${m[1]}\\${line.slice(m[1].length)}` : line;
 }
@@ -55,6 +69,9 @@ function escapeSectionMarker(line: string): string {
  * document. The check looks past any indent (a list item's continuation can sit at four or more
  * spaces) and past blockquote and list-item markers, and the backslash goes after them, so a quote
  * stays a quote and a list stays a list.
+ * The same holds for a block that never ends on its own: a code fence (```` ``` ````, `~~~`) or a raw
+ * HTML block such as `<pre>` or `<!--` is escaped, so finding text cannot turn the rest of the report
+ * into code (#1918). Inline code spans are untouched.
  * A line that only holds `-` is never a list item with text, so real bullets are untouched.
  * Thematic breaks of `*` or `_` are left alone: they render a rule, never a heading.
  */

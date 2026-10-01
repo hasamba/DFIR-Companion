@@ -72,6 +72,31 @@ describe("blockMd escapes a setext underline of any length (#1898)", () => {
   });
 });
 
+describe("blockMd escapes a block that would run past the end of the text (#1918)", () => {
+  // An unclosed fence or raw-HTML block runs to the end of the document, so every later report
+  // section would render as code. Finding text does not need code blocks; inline code spans stay.
+  it.each([
+    ["x\n```\nfoo", "x\n\\`\\`\\`\nfoo"],
+    ["```js", "\\`\\`\\`js"],
+    ["  ~~~~", "  \\~\\~\\~\\~"],
+    ["- ```", "- \\`\\`\\`"],
+    ["> ~~~", "> \\~\\~\\~"],
+    ["<pre>", "\\<pre>"],
+    ["<SCRIPT src=x>", "\\<SCRIPT src=x>"],
+    ["<!-- hide", "\\<!-- hide"],
+    ["<![CDATA[", "\\<![CDATA["],
+    ["<?php", "\\<?php"],
+  ])("escapes %j", (input, expected) => {
+    expect(blockMd(input)).toBe(expected);
+  });
+
+  it("leaves inline code spans and ordinary tags in prose alone", () => {
+    expect(blockMd("ran `whoami` then ``a`b``")).toBe("ran `whoami` then ``a`b``");
+    expect(blockMd("the <pre> tag")).toBe("the <pre> tag");
+    expect(blockMd("``two only")).toBe("``two only");
+  });
+});
+
 describe("blockMd leaves ordinary prose alone", () => {
   // The other half of the contract. Over-escaping would put stray backslashes through every
   // AI-written description in every report, which is a worse deliverable than the one this guards.
