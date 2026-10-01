@@ -9,6 +9,7 @@ import { MERGE_WORKER_SOURCE } from "./caseSqliteWorkerMerge.js";
 import { FACTS_WORKER_SOURCE } from "./caseSqliteWorkerFacts.js";
 import { IOC_WORKER_SOURCE } from "./caseSqliteWorkerIoc.js";
 import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
+import { SEARCH_WORKER_SOURCE } from "./caseSqliteWorkerSearch.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -353,18 +354,8 @@ function queryEntities(dbPath, kind, query) {
       where.push("(entities.timestamp_ms IS NULL OR entities.timestamp_ms<=?)");
       params.push(Date.parse(query.to));
     }
-    // #928 search prefilter. Two clauses, and analysis/forensicSearch.ts documents why both are
-    // needed: LIKE folds case for ASCII only, so the GLOB keeps every row holding a non-ASCII
-    // character as a candidate rather than losing it.
-    if (query && query.searchPrefilter) {
-      const clauses = [];
-      if (typeof query.searchLike === "string" && query.searchLike) {
-        clauses.push("entities.payload LIKE ? ESCAPE '\\'");
-        params.push(query.searchLike);
-      }
-      clauses.push("entities.payload GLOB '*[^ -~]*'");
-      where.push("(" + clauses.join(" OR ") + ")");
-    }
+    // #928/#1914 search prefilter: caseSqliteWorkerSearch.ts, planned by analysis/searchFoldPrefilter.ts.
+    addSearchPrefilter(db, query, where, params);
     const totalClause = where.join(" AND ");
     let total = -1;
     if (!(query && query.includeTotal === false)) {
@@ -597,6 +588,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   FACTS_WORKER_SOURCE +
   IOC_WORKER_SOURCE +
   TAGS_WORKER_SOURCE +
+  SEARCH_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {

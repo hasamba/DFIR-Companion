@@ -1,5 +1,6 @@
 import type { EntityPage, EntityQuery, InvestigationStateStorage } from "./stateStore.js";
 import { eventMatchesSearch } from "./searchFilter.js";
+import { searchLikePattern, searchPrefilterPlan, type SearchPrefilterPlan } from "./searchFoldPrefilter.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 // Rows pulled per round-trip while scanning for matches. Only rows whose raw JSON already contains
@@ -21,51 +22,9 @@ const DEFAULT_LIMIT = 500;
  */
 const TOTAL_CEILING = 10_000;
 
-/**
- * A term as a SQL LIKE pattern to be matched against the raw STORED JSON text.
- *
- * Two escapings, and getting only the second one right is a silent evidence-loss bug. The pattern
- * is compared against JSON source, where a Windows path is held as "C:\\\\Users\\\\bob" — two characters
- * per backslash. An analyst types ONE backslash, so a pattern built from the raw term matched
- * nothing at all for the most common search in Windows forensics, while the in-memory matcher on
- * the same event said yes. The term is therefore JSON-encoded first (quotes, backslashes, control
- * characters — exactly what the payload holds), and only then are LIKE's own wildcards escaped so
- * "100%" and "foo_bar" stay literal.
- */
-export function searchLikePattern(term: string): string {
-  const asStoredJson = JSON.stringify(term).slice(1, -1);
-  return "%" + asStoredJson.replace(/[\\%_]/g, (char) => "\\" + char) + "%";
-}
-
-/**
- * WHY THE STORE'S PREFILTER HAS TWO CLAUSES (caseSqliteWorker's `searchPrefilter`).
- *
- * It must never reject a row this module's matcher would accept, or the analyst is told "no
- * results" for evidence the case holds — which in an investigation reads as proof of absence.
- * LIKE folds case for ASCII ONLY, while the matcher folds with toLowerCase(), which folds the whole
- * of Unicode: LIKE alone silently loses "ÉVIL.exe" searched as "évil.exe", or "Администратор"
- * searched in lower case. So any row carrying a character outside printable ASCII is ALWAYS a
- * candidate and gets parsed (the GLOB), and a pure-ASCII payload cannot case-fold into a non-ASCII
- * character, so nothing is lost by filtering those with LIKE.
- */
-
-/**
- * Whether SQL LIKE can be trusted to find this term at all.
- *
- * LIKE folds case for ASCII only; the matcher folds with toLowerCase(), which folds all of Unicode.
- * For a term that stays non-ASCII once folded the two disagree — "évil.exe" never finds the stored
- * "ÉVIL.exe" — so the pattern is dropped and the store falls back to offering every row holding a
- * non-ASCII character, the only set such a term can match.
- *
- * The test is on the FOLDED term, not the typed one, and that distinction is the whole point.
- * Folding is not closed over the ASCII boundary: U+212A KELVIN SIGN folds to plain "k", so "bacKup"
- * typed with one is a non-ASCII term that matches the pure-ASCII stored word "backup". Judging the
- * typed term instead dropped the LIKE, left the non-ASCII GLOB as the only prefilter, and rejected
- * the very ASCII row the matcher accepts.
- */
-function likeCanMatch(folded: string): boolean {
-  return !/[^\u0000-\u007f]/.test(folded);
-}
+// The LIKE pattern builder moved with the rest of the prefilter planning (#1914); re-exported
+// because callers and tests know it by this module.
+export { searchLikePattern };
 
 /**
  * Full-text search over the WHOLE forensic timeline (#928), not just a page of it.
@@ -81,8 +40,8 @@ function likeCanMatch(folded: string): boolean {
  * that is what keeps a term that only appears as a JSON key ("description", "severity") from
  * matching, where the raw LIKE alone would have handed back the entire case.
  *
- * This is a scan, not an index. It is correct on any case size; whether it is fast enough on a
- * large one has not been measured, and an FTS5 index is the answer if it turns out not to be.
+ * This is a scan, not an index. The prefilter (analysis/searchFoldPrefilter.ts) keeps it cheap: on a
+ * 70,000-event case a term that matches nothing used to parse every payload twice (~5 s, #1914).
  */
 export async function searchForensicTimeline(
   stateStore: InvestigationStateStorage,
@@ -95,15 +54,18 @@ export async function searchForensicTimeline(
 
   const limit = Math.max(0, Math.floor(query.limit ?? DEFAULT_LIMIT));
   // The matcher compares lower(value) against lower(term), so the term the prefilter has to model
-  // is the folded one — see likeCanMatch. LIKE is ASCII-case-insensitive, so a folded pattern still
-  // finds the stored original whatever case it was written in.
-  const folded = needle.toLowerCase();
-  const like = likeCanMatch(folded) ? searchLikePattern(folded) : undefined;
+  // is the folded one — U+212A KELVIN SIGN typed in "bacKup" folds to plain ASCII "backup".
+  const plan = searchPrefilterPlan(needle.toLowerCase());
+  const wantTotal = query.includeTotal !== false;
+  // ONE scan when the page and the count both start at the top of the case — the dashboard's first
+  // request for every term. A cursor (Load more) still needs the count from the top, so it scans twice.
+  if (wantTotal && query.cursor === undefined)
+    return pageAndCount(stateStore, caseId, needle, query, plan, limit);
+
   const entities: ForensicEvent[] = [];
   let nextCursor: number | null = null;
-
   if (limit > 0) {
-    scan: for await (const page of candidates(stateStore, caseId, query, like, query.cursor)) {
+    scan: for await (const page of candidates(stateStore, caseId, query, plan, query.cursor)) {
       for (let index = 0; index < page.entities.length; index++) {
         const event = page.entities[index];
         if (!eventMatchesSearch(event, needle)) continue;
@@ -121,25 +83,70 @@ export async function searchForensicTimeline(
 
   // The count is over MATCHES, not over the case — the UI shows it as "n of m", and a filtered view
   // reporting the unfiltered size tells the analyst nothing.
-  let total = -1;
-  let totalIsLowerBound = false;
-  if (query.includeTotal !== false) {
-    total = 0;
-    count: for await (const page of candidates(stateStore, caseId, query, like, undefined)) {
-      for (const event of page.entities) {
-        if (!eventMatchesSearch(event, needle)) continue;
-        total++;
-        // One match PAST the ceiling, not one at it. A case with exactly 10,000 matches has an
-        // exact total, and reporting it as "10,000+" would invent evidence that is not there.
-        if (total > TOTAL_CEILING) {
-          total = TOTAL_CEILING;
-          totalIsLowerBound = true;
-          break count;
-        }
-      }
+  if (!wantTotal) return { entities, nextCursor, total: -1 };
+  const tally = { total: 0, lowerBound: false };
+  count: for await (const page of candidates(stateStore, caseId, query, plan, undefined)) {
+    for (const event of page.entities) {
+      if (eventMatchesSearch(event, needle) && countMatch(tally)) break count;
     }
   }
-  return { entities, nextCursor, total, ...(totalIsLowerBound ? { totalIsLowerBound } : {}) };
+  return withTally(entities, nextCursor, tally);
+}
+
+/**
+ * The page and the match count from one scan. Same answers as the two-pass path: the page holds the
+ * first `limit` matches, the cursor is the ordinal of the match that filled it, and the count stops
+ * one match PAST the ceiling. The scan ends only when both are done.
+ */
+async function pageAndCount(
+  stateStore: InvestigationStateStorage,
+  caseId: string,
+  needle: string,
+  query: EntityQuery,
+  plan: SearchPrefilterPlan,
+  limit: number,
+): Promise<EntityPage<ForensicEvent>> {
+  const entities: ForensicEvent[] = [];
+  let nextCursor: number | null = null;
+  const tally = { total: 0, lowerBound: false };
+  scan: for await (const page of candidates(stateStore, caseId, query, plan, undefined)) {
+    for (let index = 0; index < page.entities.length; index++) {
+      const event = page.entities[index];
+      if (!eventMatchesSearch(event, needle)) continue;
+      if (entities.length < limit) {
+        entities.push(event);
+        if (entities.length === limit) nextCursor = page.ordinals?.[index] ?? null;
+      }
+      const countDone = tally.lowerBound || countMatch(tally);
+      if (countDone && entities.length >= limit) break scan;
+    }
+  }
+  return withTally(entities, nextCursor, tally);
+}
+
+/** Count one match. True once the count has passed the ceiling and is now a floor. */
+function countMatch(tally: { total: number; lowerBound: boolean }): boolean {
+  tally.total++;
+  // One match PAST the ceiling, not one at it. A case with exactly 10,000 matches has an exact
+  // total, and reporting it as "10,000+" would invent evidence that is not there.
+  if (tally.total > TOTAL_CEILING) {
+    tally.total = TOTAL_CEILING;
+    tally.lowerBound = true;
+  }
+  return tally.lowerBound;
+}
+
+function withTally(
+  entities: ForensicEvent[],
+  nextCursor: number | null,
+  tally: { total: number; lowerBound: boolean },
+): EntityPage<ForensicEvent> {
+  return {
+    entities,
+    nextCursor,
+    total: tally.total,
+    ...(tally.lowerBound ? { totalIsLowerBound: true } : {}),
+  };
 }
 
 /** Pages of rows whose raw payload contains the term, in ordinal order, with their ordinals. */
@@ -147,7 +154,7 @@ async function* candidates(
   stateStore: InvestigationStateStorage,
   caseId: string,
   query: EntityQuery,
-  like: string | undefined,
+  plan: SearchPrefilterPlan,
   afterOrdinal: number | undefined,
 ): AsyncGenerator<EntityPage<ForensicEvent>> {
   let cursor = afterOrdinal;
@@ -156,8 +163,12 @@ async function* candidates(
       ...query,
       cursor,
       limit: SCAN_BATCH,
-      searchLike: like,
-      searchPrefilter: true,
+      // A term holding a lone surrogate has no sound prefilter: every row is a candidate.
+      searchPrefilter: !plan.scanAll,
+      searchLike: plan.like,
+      searchFoldChars: plan.foldChars,
+      searchFoldNeedle: plan.foldNeedle,
+      searchEdgeObserved: plan.edgeObserved,
       includeTotal: false,
     });
     if (!page.entities.length) return;
