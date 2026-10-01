@@ -16,6 +16,12 @@ function cell(value: string): string {
 function row(values: string[]): string {
   return values.map(cell).join(",");
 }
+// A number the export computed itself, not text from evidence. A finite number prints as digits, '.',
+// '-', 'e' and '+' only, so it cannot be a formula, and the guard's apostrophe would only stop a
+// spreadsheet reading a negative coordinate as a number (#1899). Anything else takes the string path.
+function numberCell(value: number): string {
+  return Number.isFinite(value) ? `"${String(value)}"` : cell(String(value));
+}
 
 export function findingsCsv(state: InvestigationState): string {
   // effectiveSeverity lets a spreadsheet sort/filter without a dismissed Critical (e.g. a confirmed
@@ -120,20 +126,17 @@ export function geoMapCsv(data: GeoMapData): string {
   const header =
     "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported";
   const rows = data.markers.map((m) =>
-    row([
-      m.ip,
-      m.country ?? "",
-      m.city ?? "",
-      String(m.lat),
-      String(m.lon),
-      m.asn ?? "",
-      m.severity,
-      m.verdict ?? "",
-      m.internal ? "yes" : "no",
-      String(m.eventCount),
-      m.approximate ? "yes" : "no",
-      m.clientReported ? "yes" : "no", // #1326: a pin placed from a sender-controlled header
-    ]),
+    [
+      row([m.ip, m.country ?? "", m.city ?? ""]),
+      numberCell(m.lat),
+      numberCell(m.lon),
+      row([m.asn ?? "", m.severity, m.verdict ?? "", m.internal ? "yes" : "no"]),
+      numberCell(m.eventCount),
+      row([
+        m.approximate ? "yes" : "no",
+        m.clientReported ? "yes" : "no", // #1326: a pin placed from a sender-controlled header
+      ]),
+    ].join(","),
   );
   return [header, ...rows].join("\n") + "\n";
 }
