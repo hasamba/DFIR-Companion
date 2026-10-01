@@ -111,3 +111,55 @@ describe("defangIndicators runs in linear time on adversarial text (#1907)", () 
     );
   });
 });
+
+describe("defangIndicators defangs known domains with underscores or wrapper characters (#1909)", () => {
+  it("defangs a known domain whose label holds an underscore", () => {
+    expect(defangIndicators("c2_node.evil.example.net", ["c2_node.evil.example.net"])).toBe(
+      "c2_node[.]evil[.]example[.]net",
+    );
+    expect(defangIndicators("beacon to c2_node.evil.example.net.", ["C2_node.evil.example.net"])).toBe(
+      "beacon to c2_node[.]evil[.]example[.]net.",
+    );
+  });
+
+  it("defangs a known domain behind a leading junk character", () => {
+    expect(defangIndicators("-c2_node.evil.example.net", ["c2_node.evil.example.net"])).toBe(
+      "-c2_node[.]evil[.]example[.]net",
+    );
+    expect(defangIndicators("(%evil.example.net)", ["evil.example.net"])).toBe("(%evil[.]example[.]net)");
+  });
+
+  it("defangs the live core of a wildcard or root-dotted domain IOC", () => {
+    expect(defangIndicators("seen evil.example.net today", ["*.evil.example.net"])).toBe(
+      "seen evil[.]example[.]net today",
+    );
+    expect(defangIndicators("seen evil.example.net today", ["evil.example.net."])).toBe(
+      "seen evil[.]example[.]net today",
+    );
+    expect(defangIndicators("_sip._tcp.evil.example", ["_sip._tcp.evil.example"])).toBe(
+      "_sip[.]_tcp[.]evil[.]example",
+    );
+  });
+
+  it("defangs an email whose domain holds an underscore", () => {
+    expect(defangIndicators("from x@c2_node.evil.example")).toBe("from x[@]c2_node[.]evil[.]example");
+  });
+
+  it("defangs a known domain or a URL inside a Markdown underscore wrapper", () => {
+    expect(defangIndicators("_evil.example_", ["evil.example"])).toBe("_evil[.]example_");
+    expect(defangIndicators("__evil.example__", ["evil.example"])).toBe("__evil[.]example__");
+    expect(defangIndicators("_http://evil.example/x_")).toBe("_hxxp://evil[.]example/x_");
+    expect(defangIndicators("_www.evil.example_")).toBe("_www[.]evil[.]example_");
+  });
+
+  it("strips a long run of wrapper characters from a known value in linear time", () => {
+    const t0 = performance.now();
+    defangIndicators("evil.example", ["a" + "%".repeat(200_000) + "a"]);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
+  it("still leaves underscore filenames the case never called domains alone", () => {
+    const text = "dropped my_file.txt and run_me.ps1";
+    expect(defangIndicators(text)).toBe(text);
+  });
+});

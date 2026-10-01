@@ -31,17 +31,42 @@ export function caseDomains(state: InvestigationState): string[] {
   return state.iocs.filter((ioc) => ioc.type === "domain").map((ioc) => ioc.value);
 }
 
+/**
+ * The part of a domain IOC value a click can reach: the value without the wrapper characters an
+ * indicator list puts around a name — the `*.` of a wildcard, the root dot of `evil.example.`, a
+ * stray leading `-` or `%` (#1909). `_` stays, because it is part of a label. Case is kept.
+ */
+export function domainCore(value: string): string {
+  return trimEdges(value.trim(), (c) => !/[A-Za-z0-9_]/.test(c));
+}
+
+// Drop the characters `strip` accepts from both ends. An index walk, not a `^x+|x+$` regex: that
+// regex's second branch restarts at every position of a long internal run and is quadratic on it.
+function trimEdges(value: string, strip: (c: string) => boolean): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && strip(value[start])) start++;
+  while (end > start && strip(value[end - 1])) end--;
+  return value.slice(start, end);
+}
+
 // Every quantifier in the email and domain branches is bounded (#1907). Unbounded, a branch that
 // starts at each word boundary inside a long run (`a-a-a-…`, `a+a+…`, `1.1.1.…`) scanned to the end of
 // the run before failing, which is quadratic: 200 KB of description froze the server for most of a
 // minute. Bounded, a failing attempt costs a constant and the whole pass is linear. The bounds are the
 // DNS limits (a label is at most 63 characters, a name at most 127 labels) and a generous local part;
 // a longer local part still has its `@` and domain defanged, from a later start inside it.
-const LABEL = "[A-Za-z0-9-]{1,63}";
+//
+// A label also takes `_` (#1909): C2 and DGA names (`c2_node.evil.example`) and service records
+// (`_sip._tcp.…`) carry one, and without it such a name never matched as one token, so it never
+// equalled the domain IOC the case recorded and reached the report live.
+const LABEL = "[A-Za-z0-9_-]{1,63}";
 const DOTTED_NAME = `${LABEL}(?:\\.${LABEL}){1,126}`;
 const INDICATOR_RE = new RegExp(
   [
-    "\\bhttps?:\\/\\/[^\\s<>\"'`|\\]),]+",
+    // Not `\\b`: the GFM autolinker accepts a URL right after `_` (emphasis), and `_` is a word
+    // character, so `\\b` let `_http://…_` through live. Any non-alphanumeric may come before.
+    "(?<![A-Za-z0-9])https?:\\/\\/[^\\s<>\"'`|\\]),]+",
     `\\b[A-Za-z0-9._%+-]{1,256}@${DOTTED_NAME}`,
     "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b",
     `\\b${DOTTED_NAME}\\b`,
@@ -90,7 +115,9 @@ function defangEmail(email: string): string {
  * match, so running it twice is the same as running it once.
  */
 export function defangIndicators(text: string, knownDomains: Iterable<string> = []): string {
-  const known = new Set([...knownDomains].map((d) => d.trim().toLowerCase()).filter(Boolean));
+  const known = new Set(
+    [...knownDomains].flatMap((d) => [d.trim().toLowerCase(), domainCore(d).toLowerCase()]).filter(Boolean),
+  );
   return text.replace(INDICATOR_RE, (match) => {
     const cut = trailingPunctuationStart(match);
     const trailing = match.slice(cut);
@@ -104,8 +131,12 @@ export function defangIndicators(text: string, knownDomains: Iterable<string> = 
     // forensic report is full of — `vitest.config.ts` and `History.db` have the shape of a domain
     // and a two-letter TLD, and analysis/textDomains deliberately accepts that class because for
     // IOC extraction a false positive is cheap. In a deliverable it is not.
+    // `_` is part of a label, so a Markdown emphasis wrapper (`_evil.example_`) rides along inside
+    // the token; the name is also tried without edge underscores.
     const lower = indicator.toLowerCase();
-    if (lower.startsWith("www.") || known.has(lower)) return defangHost(indicator) + trailing;
+    const unwrapped = trimEdges(lower, (c) => c === "_");
+    if (unwrapped.startsWith("www.") || known.has(lower) || known.has(unwrapped))
+      return defangHost(indicator) + trailing;
     return match;
   });
 }
