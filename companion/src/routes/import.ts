@@ -38,7 +38,7 @@ import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
-import { logActivity } from "../analysis/activityLog.js";
+import { logImportActivity } from "./importActivity.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
 import {
   toolForExtension,
@@ -388,11 +388,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 });
                 options.onImportMeta?.(caseId);
               }
-              void logActivity(options.activityLogStore, options.onActivity, caseId, {
-                category: "import",
-                action: "import",
-                detail: `${kind} (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)`,
-              });
+              logImportActivity(options, caseId, `${kind} (${storedName})`, { timeline: tDiff, iocs: iDiff });
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
@@ -660,6 +656,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 });
                 options.onImportMeta?.(caseId);
               }
+              logImportActivity(options, caseId, `${kind} (${storedName})`, { timeline: tDiff, iocs: iDiff });
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
                 await pushImportCheckpoint(caseId, baseline, `${kind} (${storedName})`);
               }

@@ -3,6 +3,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { InvestigationState } from "./stateTypes.js";
+import { StateLock } from "./stateLock.js";
 
 // A kind of thing the client has confirmed is NOT a real threat — either because it's
 // authorized/benign activity the client performed, or because a tool/rule mis-flagged it.
@@ -136,6 +137,19 @@ export function buildAuthorizedContextBlock(markers: FalsePositiveMarker[]): str
   );
 }
 
+// One lock for false-positive.json, shared by EVERY FalsePositiveStore instance (the findings routes,
+// createApp and the whitelist/NSRL sweeps each build their own) and keyed by the file's path (#1902).
+// Unlocked load -> modify -> save let parallel marks/unmarks clobber each other: all answered 200 and
+// the last write won. Deliberately NOT the state.json lock — a false-positive write can run inside a
+// state-locked section, and sharing that lock would self-deadlock. In-process only, like StateLock.
+const fileLock = new StateLock();
+
+export interface FalsePositiveUpdate<T> {
+  /** The new marker list to persist, or null to leave the file untouched. */
+  next: FalsePositiveMarker[] | null;
+  result: T;
+}
+
 export class FalsePositiveStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -148,11 +162,56 @@ export class FalsePositiveStore {
   }
 
   async load(caseId: string): Promise<FalsePositiveMarker[]> {
+    // Fast path without the lock: atomicWrite renames into place, so a read never sees a torn file.
+    const current = await this.readCurrent(caseId);
+    if (current) return current;
+    // The legacy migration WRITES, so it runs under the lock — else it could overwrite an update().
+    return fileLock.runExclusive(this.path(caseId), () => this.loadUnlocked(caseId));
+  }
+
+  /** Replace every marker. Prefer update() for a read-modify-write: save() alone cannot merge. */
+  async save(caseId: string, markers: FalsePositiveMarker[]): Promise<void> {
+    await fileLock.runExclusive(this.path(caseId), () => this.write(caseId, markers));
+  }
+
+  /**
+   * Read-modify-write under the per-file lock (#1902): `fn` sees the current markers and returns the
+   * list to persist (or null for no write) plus a result for the caller. Returns what is now stored.
+   */
+  async update<T>(
+    caseId: string,
+    fn: (current: FalsePositiveMarker[]) => FalsePositiveUpdate<T> | Promise<FalsePositiveUpdate<T>>,
+  ): Promise<{ markers: FalsePositiveMarker[]; result: T }> {
+    return fileLock.runExclusive(this.path(caseId), async () => {
+      const current = await this.loadUnlocked(caseId);
+      const { next, result } = await fn(current);
+      if (next === null) return { markers: current, result };
+      await this.write(caseId, next);
+      return { markers: next, result };
+    });
+  }
+
+  /** update() for the common case: `fn` maps the current markers to the list to persist. */
+  async modify(
+    caseId: string,
+    fn: (current: FalsePositiveMarker[]) => FalsePositiveMarker[],
+  ): Promise<FalsePositiveMarker[]> {
+    return (await this.update(caseId, (current) => ({ next: fn(current), result: null }))).markers;
+  }
+
+  private async readCurrent(caseId: string): Promise<FalsePositiveMarker[] | null> {
     try {
       return JSON.parse(await readFile(this.path(caseId), "utf8")) as FalsePositiveMarker[];
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      return null;
     }
+  }
+
+  // Caller holds the lock.
+  private async loadUnlocked(caseId: string): Promise<FalsePositiveMarker[]> {
+    const current = await this.readCurrent(caseId);
+    if (current) return current;
     // One-time migration: an older case may only have the pre-rename legitimate.json. Read it,
     // map each marker onto the new shape (reason defaults to "other", its old note preserved),
     // persist under the new filename, and leave the legacy file in place as a safety net.
@@ -175,7 +234,7 @@ export class FalsePositiveStore {
         markedBy: "anonymous",
         ...(m.label ? { label: m.label } : {}),
       }));
-      await this.save(caseId, migrated);
+      await this.write(caseId, migrated);
       return migrated;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -183,7 +242,7 @@ export class FalsePositiveStore {
     }
   }
 
-  async save(caseId: string, markers: FalsePositiveMarker[]): Promise<void> {
+  private async write(caseId: string, markers: FalsePositiveMarker[]): Promise<void> {
     await atomicWrite(this.path(caseId), JSON.stringify(markers, null, 2));
   }
 }

@@ -13,6 +13,7 @@ import { toImportBaseline, type ImportBaseline } from "../analysis/importBaselin
 import { capBuildTimeScoped } from "./importSettleCap.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
+  isForeignToImport,
   rewriteRows,
   runUnlocked,
   settleScope,
@@ -159,7 +160,9 @@ export async function settleForensicImport(
   // Gated on the super-timeline store like the dual-write: demote removes a sub-threshold row from
   // the forensic timeline whether or not a capture store exists, so lowering a grade with no store
   // wired would delete evidence. Only the rows that change are written, under the state lock.
-  const stamped = await lock(caseId, () => carryAndStamp(deps, caseId, ledger, scope, scanAll));
+  const stamped = await lock(caseId, () =>
+    carryAndStamp(deps, caseId, ledger, scope, scanAll, baseline.capturedAt),
+  );
   added = stamped.added;
   traced ||= stamped.carried > 0;
   debug(
@@ -250,9 +253,10 @@ async function carryAndStamp(
   ledger: InvestigationState,
   scope: SettleScope,
   scanAll: boolean,
+  capturedAt: string | undefined,
 ): Promise<{ added: ForensicEvent[]; carried: number; touched: ForensicEvent[] }> {
   const store = deps.stateStore;
-  const addedIds = new Set(scope.addedIds);
+  const newIds = new Set(scope.addedIds);
   const touched = await store.forensicRowsByRowId(caseId, scope.touchedRowIds);
   const touchedIds = touched.map((r) => r.event.id);
   // With a ledger change (or no journal) any old row may need re-homing: find them page by page.
@@ -264,6 +268,12 @@ async function carryAndStamp(
   }
   const ids = [...new Set([...scope.addedIds, ...touchedIds, ...carryIds])];
   const rows = ids.length ? await store.forensicRowsById(caseId, ids) : [];
+  // #1904: a new row another writer added mid-import is carried like any old row, never stamped.
+  const addedIds = new Set(
+    rows
+      .filter((r) => newIds.has(r.event.id) && !isForeignToImport(r.event, capturedAt))
+      .map((r) => r.event.id),
+  );
   const importedAt = new Date().toISOString();
   const importBatchId = randomUUID();
   let carried = 0;

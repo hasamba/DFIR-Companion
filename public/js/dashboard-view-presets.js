@@ -45,6 +45,8 @@
   // wearing the "✓ Promoted" badge, which reads as "an analyst put this here", not as a
   // high-severity finding.
   function viewMeetsMinSev(sev, ev) {
+    // A hand-entered (manual-) row rides through too, as it does the server's cut (#1919).
+    if (ev && typeof keepsAnySeverity === "function" && keepsAnySeverity(ev)) return true;
     if (ev && typeof isPromotedEvent === "function" && isPromotedEvent(ev)) return true;
     const min = viewFilters().minSeverity;
     if (!min) return true;

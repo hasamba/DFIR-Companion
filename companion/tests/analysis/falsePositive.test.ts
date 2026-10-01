@@ -257,4 +257,47 @@ describe("FalsePositiveStore", () => {
     const fp = new FalsePositiveStore(store);
     expect(await fp.load(caseId)).toEqual([]);
   });
+
+  // #1902: every writer goes through update(), which serializes load -> modify -> save per case file.
+  // The lock is shared by every FalsePositiveStore instance (the routes, createApp and the
+  // whitelist/NSRL sweeps each build their own), so two instances still cannot clobber each other.
+  it("update() keeps every one of 15 parallel adds, across two store instances", async () => {
+    const a = new FalsePositiveStore(store);
+    const b = new FalsePositiveStore(store);
+    await Promise.all(
+      Array.from({ length: 15 }, (_, i) =>
+        (i % 2 ? a : b).update(caseId, (cur) => ({
+          next: [...cur, marker("ioc", `10.0.0.${i}`)],
+          result: i,
+        })),
+      ),
+    );
+    expect(await new FalsePositiveStore(store).load(caseId)).toHaveLength(15);
+  });
+
+  it("update() returns the saved markers and the callback's result, and skips the write on null", async () => {
+    const fp = new FalsePositiveStore(store);
+    const out = await fp.update(caseId, (cur) => ({ next: [...cur, marker("ioc", "a")], result: "added" }));
+    expect(out).toEqual({ markers: [marker("ioc", "a")], result: "added" });
+    const noop = await fp.update(caseId, () => ({ next: null, result: 0 }));
+    expect(noop).toEqual({ markers: [marker("ioc", "a")], result: 0 });
+  });
+
+  it("a first-access legacy migration cannot overwrite a concurrent update", async () => {
+    await writeFile(
+      join(store.stateDir(caseId), "legitimate.json"),
+      JSON.stringify([
+        { id: "ioc:old", kind: "ioc", ref: "old", note: "", markedAt: "2026-01-01T00:00:00Z" },
+      ]),
+    );
+    const reader = new FalsePositiveStore(store);
+    const writer = new FalsePositiveStore(store);
+    await Promise.all([
+      reader.load(caseId),
+      writer.update(caseId, (cur) => ({ next: [...cur, marker("ioc", "new")], result: null })),
+      reader.load(caseId),
+    ]);
+    const ids = (await new FalsePositiveStore(store).load(caseId)).map((m) => m.id).sort();
+    expect(ids).toEqual(["ioc:new", "ioc:old"]);
+  });
 });

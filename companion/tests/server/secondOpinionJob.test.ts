@@ -154,12 +154,16 @@ describe("a second opinion is a job for its whole run (#1753)", () => {
       .post("/cases/c1/second-opinion")
       .send({})
       .then((r) => r);
-    const refused = await second;
+    // Each supertest call opens its own connection, so the server may handle `second` first. The
+    // refused click is whichever answers while model B is still held: waiting on `second` by name
+    // hung for the whole timeout when the arrival order flipped on a loaded CI runner.
+    const refused = await Promise.race([first, second]);
     expect(refused.status).toBe(409);
     expect(refused.body.error).toMatch(/already running/);
 
     b.open();
-    expect((await first).status).toBe(200);
+    const [a, z] = await Promise.all([first, second]);
+    expect([a.status, z.status].sort()).toEqual([200, 409]);
     expect(b.synthCalls).toBe(1);
     expect(soJobs(jobManager)).toHaveLength(1);
   });

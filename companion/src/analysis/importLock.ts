@@ -80,6 +80,11 @@ export class ImportLock {
     };
   }
 
+  /** True while an import section for the case is held or queued (#1903 — archive refuses then). */
+  isBusy(caseId: string): boolean {
+    return this.lock.isBusy(caseId);
+  }
+
   private admit(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
     return this.admission && hint ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
   }

@@ -13,6 +13,8 @@
  * paths stay decoupled, and each one's comment says where its parallel lives, so a change to the
  * super-only field mapping is visibly a change in two places rather than invisibly one.
  */
+import type { CaseStore } from "../storage/caseStore.js";
+import { statusFromStore, withIngestAdmission } from "../analysis/caseIngestAdmission.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImportBase } from "../routes/context.js";
@@ -53,6 +55,8 @@ function knownHostIdentityOf(state: InvestigationState | null): {
 
 export interface VeloExternalIngestDeps {
   options: AppOptions;
+  /** Keys the archive admission and reads the case's lifecycle (analysis/caseIngestAdmission.ts, #1920). */
+  store: Pick<CaseStore, "casesRoot" | "getCaseMeta">;
   /** One import writer per case, across every import path (see analysis/importLock.ts). */
   importLock: ImportLock;
   /** The case's state lock (createApp's runStateExclusive): the settle's row writes run inside it (#1874). */
@@ -110,6 +114,7 @@ async function diffWithoutDemote(
 export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExternalIngest {
   const {
     options,
+    store,
     importLock,
     persistEvidence,
     dispatchImport,
@@ -472,5 +477,14 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     }
   }
 
-  return { ingestVeloArtifactMap, ingestVeloUploads };
+  // #1920: both reserve the case against an archive before their first evidence write and release
+  // once settled; while an archive holds the case they are refused before anything is written.
+  // An archived case is refused too, so nothing lands in the archived folder after its zip.
+  const statusOf = statusFromStore(store);
+  return {
+    ingestVeloArtifactMap: (caseId, ...rest) =>
+      withIngestAdmission(store.casesRoot, caseId, () => ingestVeloArtifactMap(caseId, ...rest), statusOf),
+    ingestVeloUploads: (caseId, ...rest) =>
+      withIngestAdmission(store.casesRoot, caseId, () => ingestVeloUploads(caseId, ...rest), statusOf),
+  };
 }

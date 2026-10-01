@@ -35,21 +35,52 @@ export function oneLineMd(value: string): string {
   return mdControlPictures(value.replace(/[\r\n]+/g, " ").trim());
 }
 
+// Indent, then any blockquote and list-item markers: the part of a line before its content. A
+// heading may open inside a list item (`- # Forged`), so the check looks past those markers too.
+const CONTAINER_PREFIX = "[ \\t]*(?:(?:>|[-*+][ \\t]|\\d{1,9}[.)][ \\t])[ \\t]*)*";
+// Group 1 is the prefix the marker actually follows, so the backslash lands right before the marker.
+const SECTION_MARKER_RE = new RegExp(`^(${CONTAINER_PREFIX})(?:#{1,6}(?:\\s|$)|=+[ \\t]*$|-+[ \\t]*$)`);
+
+// A code fence, or a raw-HTML block of the kinds that only end at a closing marker (`</pre>`, `-->`,
+// `?>`, `>`, `]]>`) or at the end of the document. Left open, either one turns every later report
+// section into code or hidden markup (#1918). Group 2 is the opener, which is escaped in full: a
+// fence with only its first character escaped would still leave a `` `` `` code-span opener.
+const RUNAWAY_BLOCK_RE = new RegExp(
+  `^(${CONTAINER_PREFIX})(\`{3,}|~{3,}|<(?=(?:script|pre|style|textarea)(?:[\\s>]|$)|!--|\\?|![A-Za-z]|!\\[CDATA\\[))`,
+  "i",
+);
+
+function escapeSectionMarker(line: string): string {
+  const block = RUNAWAY_BLOCK_RE.exec(line);
+  if (block) {
+    const [, prefix, opener] = block;
+    return `${prefix}${opener.replace(/./g, "\\$&")}${line.slice(prefix.length + opener.length)}`;
+  }
+  const m = SECTION_MARKER_RE.exec(line);
+  return m ? `${m[1]}\\${line.slice(m[1].length)}` : line;
+}
+
 /**
  * A block of prose emitted on its own lines. Paragraphs, lists, emphasis and code spans survive —
  * this is the report's body text and it should read as written. What does not survive is anything
- * that opens a SECTION: an ATX heading (`## …`), a setext underline (`===`), or a thematic break
- * (`---`, which is also a setext H2 underline). Those are escaped with a backslash, so the marker
- * renders as the literal characters the author typed instead of restructuring the document.
+ * that opens a SECTION: an ATX heading (`## …`) or a setext underline of ANY length (`===`, `---`,
+ * and a single `-`, which CommonMark also accepts — #1898). Those are escaped with a backslash, so
+ * the marker renders as the literal characters the author typed instead of restructuring the
+ * document. The check looks past any indent (a list item's continuation can sit at four or more
+ * spaces) and past blockquote and list-item markers, and the backslash goes after them, so a quote
+ * stays a quote and a list stays a list.
+ * The same holds for a block that never ends on its own: a code fence (```` ``` ````, `~~~`) or a raw
+ * HTML block such as `<pre>` or `<!--` is escaped, so finding text cannot turn the rest of the report
+ * into code (#1918). Inline code spans are untouched.
+ * A line that only holds `-` is never a list item with text, so real bullets are untouched.
+ * Thematic breaks of `*` or `_` are left alone: they render a rule, never a heading.
  */
 export function blockMd(value: string): string {
   // A lone CR is a line break to marked, so it is split on here too — otherwise "benign\r## X"
   // would slip past the per-line check and forge a heading.
   return mdControlPictures(value)
     .split(/\r\n|\r|\n/)
-    .map((line) =>
-      /^ {0,3}(#{1,6}(\s|$)|=+[ \t]*$|-{2,}[ \t]*$)/.test(line) ? line.replace(/^([ \t]*)/, "$1\\") : line,
-    )
+    .map(escapeSectionMarker)
     .join("\n");
 }
 

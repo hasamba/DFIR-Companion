@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { importWhileArchivingMessage, isCaseArchiving } from "../analysis/caseIngestAdmission.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { generatePushToken } from "../analysis/pushTokenStore.js";
 import { resolvePushAuth } from "../analysis/pushAuth.js";
@@ -85,6 +86,11 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
     logSiemFallback(caseId, filename, kind, debug); // #1824: a webhook's 202 is not read by the analyst
+    // #1920: an archive of the case is building its file — refuse before the 202. From here to the
+    // ingestStreamed call below is synchronous, and that call reserves the case, so no archive can
+    // start in between.
+    if (isCaseArchiving(store.casesRoot, caseId))
+      return res.status(409).json({ error: importWhileArchivingMessage(caseId) });
     res.status(202).json({ accepted: true, kind, source, ...siemFallbackWarning(kind, debug) });
     // Import in the background; the 202 already went out. The failure ring is the one place a
     // failed import is logged (#1438), so a push that dies after the 202 still leaves a line.

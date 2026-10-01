@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { wholeCaseLoads } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -58,12 +59,12 @@ export interface EntityQuery {
    * Deliberately not a bare term, so nothing can mistake a payload substring hit for a match.
    */
   searchLike?: string;
-  /**
-   * Turn the full-text prefilter on. Set independently of `searchLike` because a non-ASCII term has
-   * no usable LIKE pattern — LIKE folds case for ASCII only — and the prefilter then narrows to
-   * rows holding a non-ASCII character instead. See analysis/forensicSearch.ts.
-   */
+  /** Prefilter on; apart from `searchLike` since LIKE folds ASCII only. See searchFoldPrefilter.ts. */
   searchPrefilter?: boolean;
+  /** #1914: the fold-prefilter fields searchFoldPrefilter.ts plans (fold characters, needle, restamp). */
+  searchFoldChars?: readonly string[];
+  searchFoldNeedle?: string;
+  searchEdgeObserved?: boolean;
   /** Internal/export optimization: skip the full matching-row count when only cursor batches matter. */
   includeTotal?: boolean;
 }
@@ -288,7 +289,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async load(caseId: string): Promise<InvestigationState> {
-    return this.loadState(caseId, []);
+    return wholeCaseLoads.run(() => this.loadState(caseId, [])); // #1915: capped across the process
   }
 
   async loadOverview(caseId: string): Promise<InvestigationState> {
@@ -384,6 +385,9 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         indexValue,
         searchLike: query.searchLike,
         searchPrefilter: query.searchPrefilter,
+        searchFoldChars: query.searchFoldChars,
+        searchFoldNeedle: query.searchFoldNeedle,
+        searchEdgeObserved: query.searchEdgeObserved,
         includeTotal: query.includeTotal,
       },
     });

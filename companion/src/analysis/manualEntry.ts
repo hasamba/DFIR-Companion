@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, IOC } from "./stateTypes.js";
+import { MANUAL_ID_PREFIX } from "./manualId.js";
 import { toUtcIso } from "./timeUtc.js";
 import { repairIocValue } from "./iocValue.js";
 
@@ -63,7 +64,7 @@ export function buildManualEvent(input: unknown, deps: BuildDeps = {}): Forensic
   const p = manualEventSchema.parse(input);
   const id = deps.id ?? randomUUID;
   return {
-    id: `manual-${id()}`,
+    id: `${MANUAL_ID_PREFIX}${id()}`,
     timestamp: toUtcIso(p.timestamp),
     description: p.description.trim(),
     severity: p.severity,
@@ -88,7 +89,7 @@ export function buildManualIoc(input: unknown, deps: BuildDeps = {}): IOC {
   // An explicit note from the analyst wins over one derived from the value they typed.
   const note = p.note || repaired.note;
   return {
-    id: `manual-${id()}`,
+    id: `${MANUAL_ID_PREFIX}${id()}`,
     type: p.type,
     value: repaired.value,
     firstSeen: now(),

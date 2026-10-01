@@ -141,6 +141,32 @@ describe("checkEvidenceSafety — unescaped evidence", () => {
   });
 });
 
+describe("checkEvidenceSafety and its warning agree with the defang pass on domains (#1909)", () => {
+  function stateWithDomain(value: string): InvestigationState {
+    const state = emptyState("c1");
+    state.iocs.push({ id: "i1", type: "domain", value, firstSeen: "2026-05-01T00:00:00Z" });
+    return state;
+  }
+
+  it("does not name a bare domain live in the warning itself", () => {
+    const lines = evidenceSafetyLines(
+      checkEvidenceSafety(stateWithDomain("evil.example"), "to evil.example"),
+    );
+    expect(lines[0]).toContain("evil[.]example");
+    expect(lines[0]).not.toContain("evil.example");
+  });
+
+  it("checks the live core of a wildcard domain IOC", () => {
+    const state = stateWithDomain("*.evil.example");
+    expect(checkEvidenceSafety(state, "beacon to evil.example").map((f) => f.value)).toEqual([
+      "*.evil.example",
+    ]);
+    expect(checkEvidenceSafety(state, "beacon to evil[.]example")).toEqual([]);
+    const lines = evidenceSafetyLines(checkEvidenceSafety(state, "beacon to evil.example"));
+    expect(lines[0]).not.toContain("evil.example");
+  });
+});
+
 describe("the warning", () => {
   const findings = checkEvidenceSafety(
     caseWithIocs(),

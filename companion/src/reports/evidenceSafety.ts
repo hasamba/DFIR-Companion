@@ -27,7 +27,7 @@
 
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { escapeHtml } from "./escapeHtml.js";
-import { defangIndicators } from "./defang.js";
+import { defangIndicators, domainCore } from "./defang.js";
 import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 
 export type EvidenceSafetyKind = "live-indicator" | "unescaped-evidence";
@@ -63,8 +63,11 @@ function liveIndicatorFindings(state: InvestigationState, output: string): Evide
     if (!value) continue;
     let live = false;
     if (ioc.type === "url") live = output.includes(value);
-    else if (ioc.type === "domain" || (ioc.type === "ip" && IPV4_RE.test(value)))
-      live = boundedPattern(value).test(output);
+    // A domain is checked by its live core, the same form the defang pass rewrites (#1909): a
+    // wildcard `*.evil.example` IOC is live wherever `evil.example` reaches the output.
+    else if (ioc.type === "domain")
+      live = !!domainCore(value) && boundedPattern(domainCore(value)).test(output);
+    else if (ioc.type === "ip" && IPV4_RE.test(value)) live = boundedPattern(value).test(output);
     else if (ioc.type === "other" && EMAIL_RE.test(value)) live = output.includes(value);
     if (live) out.push({ kind: "live-indicator", value });
   }
@@ -140,7 +143,9 @@ function summarise(findings: EvidenceSafetyFinding[], kind: EvidenceSafetyKind):
   if (values.length === 0) return null;
   const shown = values
     .slice(0, EVIDENCE_SAFETY_BANNER_MAX)
-    .map((v) => (kind === "live-indicator" ? defangIndicators(v) : v));
+    // The value is passed as its own known domain: a bare domain is otherwise not one the pass
+    // rewrites, and the banner would name it live (#1909).
+    .map((v) => (kind === "live-indicator" ? defangIndicators(v, [v]) : v));
   const more = values.length - shown.length;
   const label =
     kind === "live-indicator"

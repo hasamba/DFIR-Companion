@@ -138,24 +138,34 @@ async function roundTrip(seed: number, o: Opts): Promise<void> {
   }
 }
 
+// Each randomized property test drives 30-60 seeded imports through the real case database. Idle
+// that is ~1.5s, but a loaded Linux runner has taken 9-15s+, right on the 15s default, and a
+// timed-out run then surfaced as a misleading ImportJournalLostError (#1897). Keep every seed —
+// the random coverage is the point — and give these tests their own ceiling.
+const PROPERTY_TIMEOUT_MS = 60_000;
+
 describe("IOC journal: diff and undo equal the whole-list algorithms (#1874)", () => {
-  it("string values, unique ids", async () => {
+  it("string values, unique ids", { timeout: PROPERTY_TIMEOUT_MS }, async () => {
     for (let seed = 1; seed <= 60; seed++) {
-      await rm(join(cases.stateDir(C), INVESTIGATION_DB_FILENAME), { force: true });
+      await freshCase(seed);
       await roundTrip(seed, {});
     }
   });
 
-  it("non-string values, missing / empty / duplicate / numeric ids", async () => {
-    for (let seed = 100; seed <= 160; seed++) {
-      await rm(join(cases.stateDir(C), INVESTIGATION_DB_FILENAME), { force: true });
-      await roundTrip(seed, { weirdIds: true, weirdValues: true });
-    }
-  });
+  it(
+    "non-string values, missing / empty / duplicate / numeric ids",
+    { timeout: PROPERTY_TIMEOUT_MS },
+    async () => {
+      for (let seed = 100; seed <= 160; seed++) {
+        await freshCase(seed);
+        await roundTrip(seed, { weirdIds: true, weirdValues: true });
+      }
+    },
+  );
 
-  it("an object value anywhere takes the whole lists", async () => {
+  it("an object value anywhere takes the whole lists", { timeout: PROPERTY_TIMEOUT_MS }, async () => {
     for (let seed = 200; seed <= 230; seed++) {
-      await rm(join(cases.stateDir(C), INVESTIGATION_DB_FILENAME), { force: true });
+      await freshCase(seed);
       await roundTrip(seed, { objects: true, weirdValues: true });
     }
   });

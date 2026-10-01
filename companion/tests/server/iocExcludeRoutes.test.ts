@@ -81,3 +81,18 @@ describe("IOC exclude list routes (per-case)", () => {
     ).toBe(501);
   });
 });
+
+describe("IOC exclude refuses a regex that can match an empty string (#1900)", () => {
+  it.each(["evil\\.com|", "x*"])("400s on %s with a clear reason and purges nothing", async (pattern) => {
+    const { app, stateStore } = await harness();
+    await stateStore.save({
+      ...emptyState("c1"),
+      iocs: [{ id: "i1", type: "domain", value: "keep.example.com", firstSeen: "2026-01-01T00:00:00Z" }],
+    });
+    const res = await request(app).post("/cases/c1/ioc-exclude").send({ match: "regex", pattern });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/empty string/i);
+    expect((await stateStore.load("c1")).iocs).toHaveLength(1);
+    expect((await request(app).get("/cases/c1/ioc-exclude")).body).toEqual([]);
+  });
+});

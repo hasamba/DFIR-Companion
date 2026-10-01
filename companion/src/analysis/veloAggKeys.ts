@@ -12,17 +12,11 @@
 //
 // Kept out of velociraptorImport.ts, which is frozen at its current size by the file-size ledger
 // (#384) — see check-file-size.mjs.
-import { boundedAggKey } from "./aggKey.js";
+import { boundedAggKey, boundedTextTo, foldVolatileIds } from "./aggKey.js";
 
-// Volatile identifiers (pids, record ids, GUIDs) fold so one detection repeated with a fresh id
-// stays one row. That normalisation must never reach the HOST: WS01 and WS02 are two machines, and
-// digit-stripping them recreates the exact merge the host-first ordering exists to prevent. Every
-// key below therefore normalises its DISCRIMINATOR fields only, with the host held literal.
-const GUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
-
-function foldVolatileIds(s: string): string {
-  return s.replace(GUID_RE, "<guid>").replace(/\d+/g, "#");
-}
+// Volatile identifiers fold (foldVolatileIds), but never the HOST: digit-stripping WS01 and WS02
+// recreates the exact merge the host-first ordering exists to prevent. Every key below therefore
+// normalises its DISCRIMINATOR fields only, with the host held literal.
 
 // Sigma with no parsed event underneath. The rule title is the only discriminator besides the host,
 // and a verbose Sigma title reaches the bound on its own.
@@ -81,4 +75,61 @@ export function persistenceAggKey(host: string, technique: string, subject: stri
   return boundedAggKey(
     `vr-persist|${host.toLowerCase()}|${foldVolatileIds(`${technique}|${subject}`.toLowerCase())}`,
   );
+}
+
+// The generic row (any artifact without a dedicated mapper). `base` is the row's lead text.
+export function genericVrAggKey(host: string, artifact: string, base: string): string {
+  return boundedAggKey(`vr|${host.toLowerCase()}|${foldVolatileIds(`${artifact}|${base}`.toLowerCase())}`);
+}
+
+// A USN change-journal row: the operation (Reason) and the path it touched.
+export function usnAggKey(host: string, reason: string, path: string): string {
+  return boundedAggKey(`vr|usn|${host.toLowerCase()}|${foldVolatileIds(`${reason}|${path}`.toLowerCase())}`);
+}
+
+// A forensic-artifact action row (Prefetch, Shellbags, UserAssist, Amcache, LNK, browser history …).
+export function actionAggKey(host: string, artifact: string, action: string, subject: string): string {
+  return boundedAggKey(
+    `vr|${host.toLowerCase()}|${foldVolatileIds(`${artifact}|${action}|${subject}`.toLowerCase())}`,
+  );
+}
+
+// A pslist/pstree row. The pid is not in the key; the parent pid folds with the other ids.
+export function pslistAggKey(host: string, name: string, ppid: string, subject: string): string {
+  return boundedAggKey(
+    `vr-pslist|${host.toLowerCase()}|${foldVolatileIds(`${name}|${ppid}|${subject}`.toLowerCase())}`,
+  );
+}
+
+// A netstat row. Ports and the remote address fold as they always have; only the host stays exact.
+export function netstatAggKey(
+  host: string,
+  name: string,
+  status: string,
+  lport: string,
+  raddr: string,
+  rport: string,
+): string {
+  return boundedAggKey(
+    `vr-netstat|${host.toLowerCase()}|${foldVolatileIds(`${name}|${status}|${lport}|${raddr}|${rport}`.toLowerCase())}`,
+  );
+}
+
+// A startup item. The key used to hold no host at all, so one Run key on many machines was one event.
+export function startupAggKey(host: string, name: string, ospath: string): string {
+  return boundedAggKey(
+    `vr-startup|${host.toLowerCase()}|${foldVolatileIds(`${name}|${ospath}`.toLowerCase())}`,
+  );
+}
+
+// A Sigma verdict overlaid on a parsed Windows event. The Windows key leads with its host; the rule
+// title is unbounded and trails. It used to LEAD, so a long title pushed the host out (#1917 review).
+export function sigmaOverlayAggKey(windowsAggKey: string, title: string): string {
+  return boundedAggKey(`vr-sigma|${windowsAggKey}|${title.toLowerCase()}`);
+}
+
+// The message fingerprint that splits detections sharing a title. Bounded with a digest of the whole
+// key rather than cut, so a long key cannot lose its host or its fingerprint to the cut.
+export function withMessageFingerprint(aggKey: string, fp: string): string {
+  return boundedTextTo(`${aggKey}|m:${fp}`, 440);
 }

@@ -706,6 +706,10 @@ export const FEATURES: Feature[] = [
       "isPromotedEvent",
       "promotedBadge",
       "promotedKeptCount",
+      // #1919: a hand-entered (manual-) row is kept at any severity too, and counted apart.
+      "isManualEvent",
+      "keepsAnySeverity",
+      "manualKeptCount",
       // The pager's "a refresh keeps the page" rule (#1652), the timeline twin of #1649.
       "timelineFilterKey",
       "resolveTimelinePage",

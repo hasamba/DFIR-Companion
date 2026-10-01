@@ -262,6 +262,64 @@ describe("geoMapCsv (#133)", () => {
   });
 });
 
+describe("geoMapCsv keeps coordinates numeric (#1899)", () => {
+  const marker = (lat: number, lon: number, ip = "203.0.113.5"): GeoMapData["markers"][number] => ({
+    iocId: "i1",
+    ip,
+    lat,
+    lon,
+    country: "Chile",
+    asn: undefined,
+    severity: "High",
+    color: "red",
+    verdict: undefined,
+    internal: false,
+    falsePositive: false,
+    eventCount: 1,
+    sources: [],
+  });
+  const data = (markers: GeoMapData["markers"]): GeoMapData => ({
+    markers,
+    flows: [],
+    countries: [],
+    stats: {
+      totalIps: 1,
+      resolved: 1,
+      unresolved: 0,
+      internal: 0,
+      external: 1,
+      distinctCountries: 1,
+      distinctAsns: 0,
+    },
+  });
+
+  it("writes a southern or western coordinate without the formula apostrophe", () => {
+    const [, row] = geoMapCsv(data([marker(-33.8688, -70.6693)]))
+      .trim()
+      .split("\n");
+    const cells = row.split(",");
+    expect(cells[3]).toBe('"-33.8688"');
+    expect(cells[4]).toBe('"-70.6693"');
+    expect(Number(JSON.parse(cells[3]))).toBe(-33.8688);
+  });
+
+  it("still guards a string cell that starts with '-'", () => {
+    const [, row] = geoMapCsv(data([marker(1, 2, "-cmd|calc")]))
+      .trim()
+      .split("\n");
+    expect(row.startsWith(`"'-cmd|calc"`)).toBe(true);
+  });
+
+  it("guards a coordinate that is not a finite number", () => {
+    const [, row] = geoMapCsv(data([marker(Number.NaN, -Infinity)]))
+      .trim()
+      .split("\n");
+    const cells = row.split(",");
+    expect(cells[3]).toBe('"NaN"');
+    expect(cells[4]).toBe(`"'-Infinity"`);
+  });
+});
+
 describe("the enrichment cell says when the verdict applies (#933 item 19)", () => {
   it("each hit carries the provider's dated facts against the case time, inside the quoted cell", async () => {
     const { iocsCsv } = await import("../../src/reports/csv.js");

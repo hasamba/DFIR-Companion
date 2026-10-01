@@ -10,7 +10,7 @@
 // purge-on-add wiring lives in the /cases/:id/ioc-exclude route, and the going-forward filter
 // lives in stateMerge.ts's mergeDelta.
 
-import { checkRegexSafety } from "./regexSafety.js";
+import { checkRegexSafety, EMPTY_MATCH_REASON, regexMatchesEmptyString } from "./regexSafety.js";
 import type { IOC } from "./stateTypes.js";
 
 export const EXCLUDE_MATCH_MODES = ["exact", "suffix", "regex"] as const;
@@ -55,7 +55,9 @@ export function ruleMatchesIoc(
     }
     case "regex":
       try {
-        return new RegExp(rule.pattern, "i").test(raw);
+        const re = new RegExp(rule.pattern, "i");
+        // A nullable pattern stored before #1900 would match every IOC — it matches nothing instead.
+        return !re.test("") && re.test(raw);
       } catch {
         return false;
       }
@@ -80,29 +82,42 @@ export function excludeMatches(iocs: readonly IOC[], rules: readonly IocExcludeR
 }
 
 // ── validation ───────────────────────────────────────────────────────────────────────────────
-// Coerce an untrusted object into a valid rule core, or null when it can't be (bad mode, empty
-// pattern, invalid regex). Keeps the route from persisting garbage.
-export function sanitizeExcludeRuleInput(raw: unknown): ExcludeRuleInput | null {
-  if (!raw || typeof raw !== "object") return null;
+export type ExcludeRuleValidation = { ok: true; rule: ExcludeRuleInput } | { ok: false; reason: string };
+
+// Coerce an untrusted object into a valid rule core, or say why it can't be (bad mode, empty
+// pattern, invalid/unsafe regex, a regex that matches the empty string). Keeps the route from
+// persisting garbage, and gives the analyst a reason they can act on.
+export function validateExcludeRuleInput(raw: unknown): ExcludeRuleValidation {
+  if (!raw || typeof raw !== "object") return { ok: false, reason: "rule must be an object" };
   const r = raw as Record<string, unknown>;
   const mode = String(r.match ?? "")
     .trim()
     .toLowerCase();
-  if (!EXCLUDE_MATCH_MODES.includes(mode as ExcludeMatchMode)) return null;
+  if (!EXCLUDE_MATCH_MODES.includes(mode as ExcludeMatchMode))
+    return { ok: false, reason: `match must be one of ${EXCLUDE_MATCH_MODES.join("|")}` };
   const match = mode as ExcludeMatchMode;
   let pattern = String(r.pattern ?? "").trim();
-  if (!pattern || pattern.length > 500) return null;
+  if (!pattern || pattern.length > 500) return { ok: false, reason: "pattern must be 1-500 characters" };
   if (match === "suffix") pattern = normalizeSuffixPattern(pattern);
   if (match === "regex") {
     // Same reasoning as the whitelist's sanitizeRuleInput: vet the pattern's COST, not just its
     // syntax, because it runs against adversary-controlled IOC values.
     // "i" because ruleMatchesIoc matches with it — see checkRegexSafety on why that matters.
-    if (!checkRegexSafety(pattern, "i").ok) return null;
+    const safety = checkRegexSafety(pattern, "i");
+    if (!safety.ok) return { ok: false, reason: `invalid regex: ${safety.reason ?? "rejected"}` };
+    // #1900: a nullable regex (`x*`, `evil\.com|`) matches every IOC, and the add purges one-way.
+    if (regexMatchesEmptyString(pattern, "i")) return { ok: false, reason: EMPTY_MATCH_REASON };
   }
   const rawType = String(r.iocType ?? "")
     .trim()
     .toLowerCase();
   const iocType = (IOC_TYPES as readonly string[]).includes(rawType) ? (rawType as IOC["type"]) : undefined;
   const note = r.note != null ? String(r.note).trim().slice(0, 500) : undefined;
-  return { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) };
+  return { ok: true, rule: { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) } };
+}
+
+// The validated rule core, or null when it is invalid — validateExcludeRuleInput without the reason.
+export function sanitizeExcludeRuleInput(raw: unknown): ExcludeRuleInput | null {
+  const v = validateExcludeRuleInput(raw);
+  return v.ok ? v.rule : null;
 }

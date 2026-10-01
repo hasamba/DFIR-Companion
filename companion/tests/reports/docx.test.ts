@@ -98,7 +98,10 @@ describe("renderDocxReport", () => {
     const xml = await unzipDocumentXml(buf);
     // The angle brackets get XML-escaped inside the text run; the literal payload is present
     // as escaped characters and never as a docx structural element.
-    expect(xml).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    // #1918: blockMd escapes the raw-HTML opener, so the payload may span more than one text run;
+    // what matters is the text a reader sees, joined across runs.
+    const text = [...xml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("");
+    expect(text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(xml).not.toContain("<script>alert(1)</script>");
   });
 });

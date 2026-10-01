@@ -20,6 +20,7 @@
  * nothing logged. The import-meta diff is then computed on the POST-demote state so "+N events"
  * counts what actually entered the forensic timeline, not what was parsed.
  */
+import { statusFromStore, withIngestAdmission } from "../analysis/caseIngestAdmission.js";
 import { Buffer } from "node:buffer";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
@@ -477,7 +478,17 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   const releaseBaseline = (baseline: ImportBaseline | null): Promise<void> =>
     options.stateStore ? releaseImportBaseline(options.stateStore, baseline) : Promise.resolve();
 
-  async function ingestStreamed(
+  // #1920: every streamed ingest (/push, MCP, Velociraptor monitors, external tools, drop folder)
+  // reserves the case against an archive before its first evidence write and releases once settled;
+  // while an archive holds the case it is refused with CaseArchivingError, before anything is written.
+  // An archived case takes no new evidence: a monitor deferred during an archive keeps its cursor.
+  const statusOf = statusFromStore(store);
+  const ingestStreamed: typeof ingestStreamedAdmitted = (caseId, ...rest) =>
+    withIngestAdmission(store.casesRoot, caseId, () => ingestStreamedAdmitted(caseId, ...rest), statusOf);
+  const ingestMacLoginItemStreamed: typeof ingestMacLoginItemAdmitted = (caseId, ...rest) =>
+    withIngestAdmission(store.casesRoot, caseId, () => ingestMacLoginItemAdmitted(caseId, ...rest), statusOf);
+
+  async function ingestStreamedAdmitted(
     caseId: string,
     kind: string,
     text: string,
@@ -602,7 +613,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
    *   no whitelist/NSRL/deobfuscation auto-mark pass: this importer never produces IOCs (bookmark
    *     path facts only), so those three would be guaranteed no-ops here.
    */
-  async function ingestMacLoginItemStreamed(
+  async function ingestMacLoginItemAdmitted(
     caseId: string,
     bytes: Buffer,
     originalName: string,

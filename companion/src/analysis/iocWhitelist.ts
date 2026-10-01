@@ -10,7 +10,7 @@
 // hide lateral movement, so the analyst chooses every rule. "Missing a real threat is worse than
 // leaving noise" (see CLAUDE.md): the whitelist starts empty.
 
-import { checkRegexSafety } from "./regexSafety.js";
+import { checkRegexSafety, EMPTY_MATCH_REASON, regexMatchesEmptyString } from "./regexSafety.js";
 import type { IOC } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 
@@ -83,7 +83,9 @@ export function ruleMatchesIoc(
       return val.toLowerCase() === rule.pattern.trim().toLowerCase();
     case "regex":
       try {
-        return new RegExp(rule.pattern, "i").test(val);
+        const re = new RegExp(rule.pattern, "i");
+        // A nullable pattern stored before #1900 would match every IOC — it matches nothing instead.
+        return !re.test("") && re.test(val);
       } catch {
         return false;
       }
@@ -116,19 +118,24 @@ export function whitelistMatches(
 }
 
 // ── validation ───────────────────────────────────────────────────────────────────────────────
-// Coerce an untrusted object into a valid rule core, or null when it can't be (bad mode, empty
-// pattern, invalid CIDR/regex). Keeps the store + routes from persisting garbage.
-export function sanitizeRuleInput(raw: unknown): WhitelistRuleInput | null {
-  if (!raw || typeof raw !== "object") return null;
+export type WhitelistRuleValidation = { ok: true; rule: WhitelistRuleInput } | { ok: false; reason: string };
+
+// Coerce an untrusted object into a valid rule core, or say why it can't be (bad mode, empty
+// pattern, invalid CIDR, invalid/unsafe regex, a regex that matches the empty string). Keeps the
+// store + routes from persisting garbage, and gives the analyst a reason they can act on.
+export function validateRuleInput(raw: unknown): WhitelistRuleValidation {
+  if (!raw || typeof raw !== "object") return { ok: false, reason: "rule must be an object" };
   const r = raw as Record<string, unknown>;
   const mode = String(r.match ?? "")
     .trim()
     .toLowerCase();
-  if (!WHITELIST_MATCH_MODES.includes(mode as WhitelistMatchMode)) return null;
+  if (!WHITELIST_MATCH_MODES.includes(mode as WhitelistMatchMode))
+    return { ok: false, reason: `match must be one of ${WHITELIST_MATCH_MODES.join("|")}` };
   const match = mode as WhitelistMatchMode;
   const pattern = String(r.pattern ?? "").trim();
-  if (!pattern || pattern.length > 500) return null;
-  if (match === "cidr" && !isValidCidr(pattern)) return null;
+  if (!pattern || pattern.length > 500) return { ok: false, reason: "pattern must be 1-500 characters" };
+  if (match === "cidr" && !isValidCidr(pattern))
+    return { ok: false, reason: "pattern is not a valid IPv4 CIDR (e.g. 10.0.0.0/8)" };
   if (match === "regex") {
     // Compiling is not the same as being AFFORDABLE to run. This pattern is matched against IOC
     // values that came out of adversary-controlled evidence, and `^(a|aa)+b$` compiles fine while
@@ -136,14 +143,24 @@ export function sanitizeRuleInput(raw: unknown): WhitelistRuleInput | null {
     // is the same fail-closed vetting the declarative importers use; it also rejects patterns that
     // will not compile, so it replaces the try/new RegExp rather than sitting next to it.
     // "i" because ruleMatchesIoc matches with it — see checkRegexSafety on why that matters.
-    if (!checkRegexSafety(pattern, "i").ok) return null;
+    const safety = checkRegexSafety(pattern, "i");
+    if (!safety.ok) return { ok: false, reason: `invalid regex: ${safety.reason ?? "rejected"}` };
+    // #1900: a nullable regex (`x*`, `evil\.com|`) matches every IOC and marks it false positive.
+    if (regexMatchesEmptyString(pattern, "i")) return { ok: false, reason: EMPTY_MATCH_REASON };
   }
   const rawType = String(r.iocType ?? "")
     .trim()
     .toLowerCase();
   const iocType = (IOC_TYPES as readonly string[]).includes(rawType) ? (rawType as IOC["type"]) : undefined;
   const note = r.note != null ? String(r.note).trim().slice(0, 500) : undefined;
-  return { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) };
+  return { ok: true, rule: { match, pattern, ...(iocType ? { iocType } : {}), ...(note ? { note } : {}) } };
+}
+
+// The validated rule core, or null when it is invalid — validateRuleInput without the reason.
+// Runs on write (POST, import) AND on load (IocWhitelistStore.load), so a bad rule on disk is dropped.
+export function sanitizeRuleInput(raw: unknown): WhitelistRuleInput | null {
+  const v = validateRuleInput(raw);
+  return v.ok ? v.rule : null;
 }
 
 // ── CSV / JSON import-export ─────────────────────────────────────────────────────────────────

@@ -129,6 +129,10 @@
     tlLoadMoreMatches: () => {
       if (typeof loadMoreMatches === "function") loadMoreMatches();
     },
+    // #1916: the same for the unfiltered timeline past its first batch.
+    tlLoadMoreEvents: () => {
+      if (typeof loadMoreEvents === "function") loadMoreEvents();
+    },
     tlSetPageSize: (el) => {
       tlPageSize = +el.value;
       renderTimelineEvents(DfirState.lastFt());

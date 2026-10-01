@@ -185,6 +185,10 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     kind: "agnostic",
     why: "'does this event still mention IOC X' — one of six fields, description included, so weaker fields already count",
   },
+  "caseSqliteWorkerSearch.ts": {
+    kind: "agnostic",
+    why: "search prefilter only: a row with a source address stays a candidate so the read-time 'edge-observed' restamp stays searchable (#1914) — a wider candidate set, never a host claim",
+  },
   "huntQueryFields.ts": {
     kind: "agnostic",
     why: "analyst hunt field source.ip (fallback event.srcIp) and the free-text index — analyst search over what the records say",

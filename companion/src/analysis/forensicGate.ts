@@ -1,4 +1,5 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { isManualId } from "./manualId.js";
 
 // Info is the "don't know / not suspicious" floor; Low+ is a deliberate signal (source verdict or
 // one of our deterministic rules). The forensic timeline keeps Low+ and above; Info telemetry is
@@ -23,10 +24,14 @@ export function demoteBelowSeverity(
   const kept: ForensicEvent[] = [];
   const demoted: ForensicEvent[] = [];
   // A promoted row stays regardless of severity: the analyst put it here on purpose, and the cut
-  // exists to keep unreviewed telemetry out, not to remove what an analyst asked to see (#1432).
-  for (const e of events) (e.promotedAt || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
+  // exists to keep unreviewed telemetry out, not to remove what an analyst asked to see (#1432). A
+  // manual event the analyst typed in stays for the same reason (#1919) — recognised by the manual-
+  // id only the manual-entry builders mint, never by `sources`, which an import can fill freely.
+  for (const e of events) (analystPlaced(e) || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
   return { kept, demoted };
 }
+
+const analystPlaced = (e: ForensicEvent): boolean => !!e.promotedAt || isManualId(e.id);
 
 // per-case override ?? global env ?? "Low". An unrecognized env value falls back to "Low".
 export function resolveForensicMinSeverity(

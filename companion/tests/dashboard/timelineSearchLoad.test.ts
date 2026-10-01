@@ -363,3 +363,118 @@ describe("a burst of live state replacements", () => {
     expect(h.urls).toHaveLength(1); // a plain failure is left for the next refresh to retry
   });
 });
+
+// #1916: the unfiltered timeline arrives in batches of 10,000 with the case's real total and a
+// cursor. Past the first batch, the rest of the case was reachable only by searching.
+describe("reaching the unfiltered timeline past its first batch (#1916)", () => {
+  interface MoreApi {
+    loadMoreEvents: () => void;
+    hasMoreEvents: () => boolean;
+    loadingMoreEvents: () => boolean;
+  }
+  const batch = (
+    ids: string[],
+    total: number,
+    cursor: number | null,
+    names: Record<string, string> = {},
+  ) => ({
+    caseId: "INC-1",
+    forensicTimeline: ids.map((id) => ({ id })),
+    forensicTimelineTotal: total,
+    forensicTimelineNextCursor: cursor,
+    techniqueNames: names,
+  });
+  const more = (api: SearchApi) => api as unknown as SearchApi & MoreApi;
+
+  it("offers more only while the case holds events the view has not loaded", () => {
+    const { api } = harness();
+    api.DfirState.setLastState(batch(["e1", "e2"], 2, null));
+    expect(more(api).hasMoreEvents()).toBe(false);
+    api.DfirState.setLastState(batch(["e1", "e2"], 5, 1));
+    expect(more(api).hasMoreEvents()).toBe(true);
+  });
+
+  it("appends the next batch and keeps the ATT&CK names of the earlier one", async () => {
+    const { api, urls, pending, rendered } = harness();
+    api.DfirState.setLastState(batch(["e1", "e2"], 4, 41, { T1059: "Command and Scripting Interpreter" }));
+    more(api).loadMoreEvents();
+    expect(urls).toEqual(["/cases/INC-1/state?timelineCursor=41"]);
+    expect(more(api).loadingMoreEvents()).toBe(true);
+
+    more(api).loadMoreEvents(); // a second press while the first is out asks for nothing
+    expect(urls).toHaveLength(1);
+
+    pending[0].resolve(batch(["e3", "e4"], 4, null, { T1003: "OS Credential Dumping" }));
+    await settle();
+    const last = rendered[rendered.length - 1] as {
+      forensicTimeline: { id: string }[];
+      techniqueNames: Record<string, string>;
+    };
+    expect(last.forensicTimeline.map((e) => e.id)).toEqual(["e1", "e2", "e3", "e4"]);
+    expect(last.techniqueNames).toEqual({
+      T1059: "Command and Scripting Interpreter",
+      T1003: "OS Credential Dumping",
+    });
+    expect(more(api).hasMoreEvents()).toBe(false);
+    expect(more(api).loadingMoreEvents()).toBe(false);
+  });
+
+  it("lets the analyst press it again after a failed batch", async () => {
+    const { api, urls, pending } = harness();
+    api.DfirState.setLastState(batch(["e1"], 3, 9));
+    more(api).loadMoreEvents();
+    pending[0].reject(new Error("offline"));
+    await settle();
+    expect(more(api).hasMoreEvents()).toBe(true);
+    more(api).loadMoreEvents();
+    expect(urls).toHaveLength(2);
+  });
+
+  it("drops a batch that lands on another case", async () => {
+    const { api, caseEl, pending, rendered } = harness();
+    api.DfirState.setLastState(batch(["e1"], 3, 9));
+    more(api).loadMoreEvents();
+    caseEl.value = "INC-2";
+    api.DfirState.setLastState({ ...batch(["x1"], 1, null), caseId: "INC-2" });
+    const before = rendered.length;
+    pending[0].resolve(batch(["e2"], 3, null));
+    await settle();
+    expect(rendered).toHaveLength(before);
+    expect(api.DfirState.lastState()?.forensicTimeline?.map((e) => e.id)).toEqual(["x1"]);
+  });
+
+  it("drops a batch once a search has taken the timeline over", async () => {
+    const { api, pending, rendered } = harness();
+    api.DfirState.setLastState(batch(["e1"], 3, 9));
+    more(api).loadMoreEvents();
+    api.DfirTimelineView.setSearch("certutil");
+    const before = rendered.length;
+    pending[0].resolve(batch(["e2"], 3, null));
+    await settle();
+    expect(rendered).toHaveLength(before);
+  });
+
+  // Ordinals are gapped: a live import can add rows after the cursor without moving it. The batch
+  // fetched before that update would skip them, so ANY replacement drops it (Codex review, #1916).
+  it("drops a batch when a live update replaced the timeline, even at the same cursor", async () => {
+    const { api, urls, pending, rendered } = harness();
+    api.DfirState.setLastState(batch(["e1"], 3, 9));
+    more(api).loadMoreEvents();
+    api.DfirState.setLastState(batch(["e1"], 4, 9)); // same first batch end, one more event in the case
+    expect(more(api).loadingMoreEvents()).toBe(false);
+    const before = rendered.length;
+    pending[0].resolve(batch(["e2"], 3, null));
+    await settle();
+    expect(rendered).toHaveLength(before);
+    expect(api.DfirState.lastState()?.forensicTimeline?.map((e) => e.id)).toEqual(["e1"]);
+    more(api).loadMoreEvents(); // the analyst can ask again, for the timeline now on screen
+    expect(urls).toHaveLength(2);
+  });
+
+  it("is not offered while a search term is set — search pages through its own control", () => {
+    const { api } = harness();
+    api.DfirState.setLastState(batch(["e1"], 3, 9));
+    api.DfirTimelineView.setSearch("certutil");
+    expect(more(api).hasMoreEvents()).toBe(false);
+  });
+});

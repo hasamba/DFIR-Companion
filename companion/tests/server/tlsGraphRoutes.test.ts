@@ -52,7 +52,10 @@ function graphRow(id: string, sensor: string, names: string[], importBatchId: st
 describe("GET /cases/:id/tls-graph", () => {
   it("501 without a state store", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-tls-graph-"));
-    const app = createApp(new CaseStore(root), {});
+    const store = new CaseStore(root);
+    // The case exists: a missing one is a 404 before the route runs (#1901).
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, {});
     const res = await request(app).get("/cases/c1/tls-graph");
     expect(res.status).toBe(501);
   });
