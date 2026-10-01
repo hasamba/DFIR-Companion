@@ -267,6 +267,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // launch, so no job record, outcome ledger or checkpoint. See composition/veloExternalIngest.ts.
   const externalIngest = createVeloExternalIngest({
     options,
+    store,
     importLock,
     runStateExclusive,
     persistEvidence: imports.persistEvidence,

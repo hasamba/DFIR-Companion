@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import { CaseArchivingError } from "../analysis/caseIngestAdmission.js";
+import { reserveCaseForWrites } from "./archiveImportBarrier.js";
 import { join, basename } from "node:path";
 import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { deliver, spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
@@ -407,6 +409,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * `{ tool, args, targetPath? }`, where `<target>` anywhere in `args` becomes the path the
    * analysis host sees once delivery has run.
    */
+  app.use("/cases/:id/mcp", reserveCaseForWrites(store.casesRoot)); // no MCP write during an archive (#1920)
   app.post("/cases/:id/mcp/:serverId/run", async (req: Request, res: Response) => {
     const resolved = await resolveRun(req, res);
     if (!resolved) return;
@@ -555,7 +558,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       return res.status(200).json({ ok: true, reportId: report.id, ...counts, ...warning });
     } catch (err) {
       recordImportFailure(caseId, `mcp:${p.server}/${p.tool}`, p.label, err, debug);
-      return res.status(400).json({ ok: false, error: (err as Error).message });
+      // #1920: an archive holds the case — the preview stays staged; approve again once it finishes.
+      const status = err instanceof CaseArchivingError ? 409 : 400;
+      return res.status(status).json({ ok: false, error: (err as Error).message });
     }
   });
 

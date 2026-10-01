@@ -10,7 +10,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { isCaseArchiving, withArchiveBarrier } from "../../src/routes/archiveImportBarrier.js";
+import { withArchiveBarrier } from "../../src/routes/archiveImportBarrier.js";
+import { isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
 import { registerImportCaseGuard } from "../../src/routes/importCaseGuard.js";
 import type { RouteContext } from "../../src/routes/context.js";
 
@@ -39,13 +40,15 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fakeCtx(casesRoot: string, importLock: ImportLock, activeImportJob = false): RouteContext {
+function fakeCtx(
+  casesRoot: string,
+  importLock: ImportLock,
+  activeJob: false | "import" | "mcp" = false,
+): RouteContext {
   return {
     store: { casesRoot },
     importLock,
-    options: {
-      jobManager: { hasActive: (_id: string, kind: string) => activeImportJob && kind === "import" },
-    },
+    options: { jobManager: { hasActive: (_id: string, kind: string) => kind === activeJob } },
   } as unknown as RouteContext;
 }
 
@@ -98,7 +101,7 @@ describe("archive vs a running import (#1903)", () => {
     const handler = async (_req: Request, res: Response) => res.status(200).json({ ok: true });
     const busy = express().post(
       "/cases/:id/archive",
-      withArchiveBarrier(fakeCtx(root, new ImportLock(), true), handler),
+      withArchiveBarrier(fakeCtx(root, new ImportLock(), "import"), handler),
     );
     expect((await request(busy).post("/cases/c1/archive")).status).toBe(409);
     const idle = express().post(
@@ -181,6 +184,16 @@ describe("archive vs a running import (#1903)", () => {
     expect((await imp).status).toBe(202);
     await new Promise((r) => setTimeout(r, 10)); // 'close' follows the response
     expect((await request(app).post("/cases/c1/archive")).status).toBe(200);
+  });
+
+  it("an MCP run or agent job counts too: it writes its output after its request answered (#1920)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-archive-lock-"));
+    const handler = async (_req: Request, res: Response) => res.status(200).json({ ok: true });
+    const app = express().post(
+      "/cases/:id/archive",
+      withArchiveBarrier(fakeCtx(root, new ImportLock(), "mcp"), handler),
+    );
+    expect((await request(app).post("/cases/c1/archive")).status).toBe(409);
   });
 
   it("the mark is cleared when the archive fails", async () => {

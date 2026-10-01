@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { reserveCaseForWrites } from "./archiveImportBarrier.js";
 import { join, basename } from "node:path";
 import { writeFile, rm, mkdtemp } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
@@ -52,6 +53,12 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
   // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
   // from env so it reflects settings just saved + reconnected.
+  // #1920: a tool run stages and preserves evidence inside the case before its output is ingested —
+  // reserve the case for the whole request, and refuse it (409) while an archive holds the case.
+  app.post(
+    ["/cases/:id/tools/:toolId/run", "/cases/:id/tools/:toolId/run-upload"],
+    reserveCaseForWrites(store.casesRoot),
+  );
   app.get("/tools/status", (_req: Request, res: Response) => {
     const configured = ctx.liveToolConfigs()();
     const builtins = (Object.keys(TOOL_DEFS) as ToolId[]).map((id) => {
