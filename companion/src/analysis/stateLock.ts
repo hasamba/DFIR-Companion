@@ -25,4 +25,10 @@ export class StateLock {
     });
     return next;
   }
+
+  /** True while a section for the case is running or queued. Synchronous, so a caller can check and
+   *  then enqueue with runExclusive in the same tick with nothing slipping in between. */
+  isBusy(caseId: string): boolean {
+    return this.tails.has(caseId);
+  }
 }

@@ -268,6 +268,7 @@
     "caseEncryption.ts": "analysis/privacy",
     "caseExistsGate.ts": "analysis/case",
     "caseExportArchive.ts": "analysis/case",
+    "caseIngestAdmission.ts": "analysis/ingest",
     "caseRestore.ts": "analysis/case",
     "caseZipImport.ts": "analysis/case",
     "caseZipReader.ts": "analysis/case",

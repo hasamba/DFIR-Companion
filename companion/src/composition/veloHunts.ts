@@ -34,6 +34,7 @@ import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPolle
 import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClients.js";
 import { inventorySignature } from "../analysis/collectionInventory.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
+import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
@@ -194,6 +195,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
   });
+  const admittedCollect = createHuntCollectAdmission(store, logLine, scheduleVeloHuntStatusPoll);
 
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
   // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
@@ -756,7 +758,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         do {
           entry.rerun = false;
           try {
-            await collectVeloHuntOnce(caseId, huntId);
+            await admittedCollect(caseId, huntId, () => collectVeloHuntOnce(caseId, huntId)); // #1920
           } catch (err) {
             logLine(`[velociraptor] collect pass failed for hunt ${huntId}: ${(err as Error).message}`);
           }

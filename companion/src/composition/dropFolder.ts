@@ -64,6 +64,7 @@ import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
+import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
@@ -536,6 +537,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
 
   async function scanCaseDrops(caseId: string): Promise<void> {
     if (scanning.has(caseId)) return; // a previous sweep of this case is still running
+    // #1920: the sweep holds the case against an archive while it reads and imports; while an archive
+    // holds the case, the files stay in drop/ and the next poll sweeps them.
+    let releaseAdmission: () => void;
+    try {
+      releaseAdmission = admitIngest(store.casesRoot, caseId);
+    } catch (err) {
+      if (!(err instanceof CaseArchivingError)) throw err;
+      logLine(`[drop] ${caseId}: sweep deferred — ${err.message}`);
+      return;
+    }
     scanning.add(caseId);
     // Surface the auto-import sweep as a background job (registered below once we know files are
     // ready) so the dashboard Jobs panel shows drop-folder activity, exactly like a manual /import (#225).
@@ -671,6 +682,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       throw err;
     } finally {
       scanning.delete(caseId);
+      releaseAdmission();
     }
   }
 

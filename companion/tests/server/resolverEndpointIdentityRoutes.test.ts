@@ -228,11 +228,13 @@ describe("GET /cases/:id/resolver-endpoint-matches", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns an empty match list for a well-formed but nonexistent case, never a 500", async () => {
+  // #1901: a nonexistent case is a 404 — this read opens the per-case database, which used to
+  // create the case folder as a side effect and then block POST /cases for that id.
+  it("answers 404 for a well-formed but nonexistent case, never a 500 or an empty 200", async () => {
     const { app } = await makeApp();
     const res = await request(app).get("/cases/nonexistent-case/resolver-endpoint-matches");
-    expect(res.status).toBe(200);
-    expect(res.body.matches).toEqual([]);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("case nonexistent-case does not exist");
   });
 
   // #1277: dab20efe added the forensic ∪ super-timeline union read (#1243) but neither route's own

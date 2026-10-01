@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
+import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 
 // Every POST route that ingests evidence into a case: the unified sniffing import, the server-side
 // file import, and each per-format importer. Kept as ONE list so the existence guard below is
@@ -59,6 +60,15 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
   const paths = EVIDENCE_IMPORT_ROUTES.map((route) => `/cases/:id/${route}`);
   app.post(paths, async (req: Request, res: Response, next: NextFunction) => {
     const caseId = req.params.id;
+    // #1903/#1920: reserve the case against an archive from before the route writes anything until
+    // its response closes — by then the import has finished, registered its job, or queued for the
+    // import section. While an archive is building its file, refuse before anything is written.
+    try {
+      res.once("close", admitIngest(store.casesRoot, caseId));
+    } catch (err) {
+      if (err instanceof CaseArchivingError) return res.status(409).json({ error: err.message });
+      throw err;
+    }
     try {
       if (await store.caseExists(caseId)) return next();
     } catch (err) {
