@@ -20,9 +20,20 @@ interface SuperTimelineApi {
   superPage: (delta: number) => void;
 }
 
-const PRELOAD = ["dashboard-state.js", "dashboard-escape.js", "dashboard-time.js", "dashboard-timeline-view.js"];
+const PRELOAD = [
+  "dashboard-state.js",
+  "dashboard-escape.js",
+  "dashboard-time.js",
+  "dashboard-timeline-view.js",
+];
 
-const answer = (origins: string[], hosts: string[]) => ({ events: [], total: 0, origins, hosts, labelsAvailable: [] });
+const answer = (origins: string[], hosts: string[]) => ({
+  events: [],
+  total: 0,
+  origins,
+  hosts,
+  labelsAvailable: [],
+});
 
 function dropdownParts() {
   return {

@@ -28,9 +28,22 @@ function display(state: unknown, extra: Record<string, unknown> = {}): DisplayAp
 }
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `e${i}` }));
-const BIG = { caseId: "big", forensicTimeline: rows(100), forensicTimelineTotal: 700, forensicTimelineNextCursor: 99 };
+const BIG = {
+  caseId: "big",
+  forensicTimeline: rows(100),
+  forensicTimelineTotal: 700,
+  forensicTimelineNextCursor: 99,
+};
 const label = (api: DisplayApi, o: Partial<Parameters<DisplayApi["timelineCountLabel"]>[0]> = {}) =>
-  api.timelineCountLabel({ total: 100, totalFiltered: 100, pageSize: 50, page: 0, totalPages: 2, filtering: false, ...o });
+  api.timelineCountLabel({
+    total: 100,
+    totalFiltered: 100,
+    pageSize: 50,
+    page: 0,
+    totalPages: 2,
+    filtering: false,
+    ...o,
+  });
 
 describe("the timeline count on a case larger than one batch (#1916)", () => {
   it("states the case's real size and how much of it is loaded", () => {
@@ -60,14 +73,20 @@ describe("the timeline count on a case larger than one batch (#1916)", () => {
 
 describe("the Load more events bar (#1916)", () => {
   it("offers the next batch while the case holds more", () => {
-    const bar = display(BIG, { hasMoreEvents: () => true, loadingMoreEvents: () => false }).timelineMoreMatchesBar();
+    const bar = display(BIG, {
+      hasMoreEvents: () => true,
+      loadingMoreEvents: () => false,
+    }).timelineMoreMatchesBar();
     expect(bar).toContain('data-act="tlLoadMoreEvents"');
     expect(bar).toContain("Showing the first 100 of 700 events.");
     expect(bar).not.toContain("disabled");
   });
 
   it("shows a press in flight as busy", () => {
-    const bar = display(BIG, { hasMoreEvents: () => true, loadingMoreEvents: () => true }).timelineMoreMatchesBar();
+    const bar = display(BIG, {
+      hasMoreEvents: () => true,
+      loadingMoreEvents: () => true,
+    }).timelineMoreMatchesBar();
     expect(bar).toContain("disabled");
     expect(bar).toContain("Loading…");
   });
@@ -77,7 +96,10 @@ describe("the Load more events bar (#1916)", () => {
   });
 
   it("keeps the search bar first: a truncated search pages through its own control", () => {
-    const bar = display(BIG, { hasMoreMatches: () => true, hasMoreEvents: () => true }).timelineMoreMatchesBar();
+    const bar = display(BIG, {
+      hasMoreMatches: () => true,
+      hasMoreEvents: () => true,
+    }).timelineMoreMatchesBar();
     expect(bar).toContain('data-act="tlLoadMoreMatches"');
     expect(bar).not.toContain("tlLoadMoreEvents");
   });

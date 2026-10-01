@@ -372,7 +372,12 @@ describe("reaching the unfiltered timeline past its first batch (#1916)", () => 
     hasMoreEvents: () => boolean;
     loadingMoreEvents: () => boolean;
   }
-  const batch = (ids: string[], total: number, cursor: number | null, names: Record<string, string> = {}) => ({
+  const batch = (
+    ids: string[],
+    total: number,
+    cursor: number | null,
+    names: Record<string, string> = {},
+  ) => ({
     caseId: "INC-1",
     forensicTimeline: ids.map((id) => ({ id })),
     forensicTimelineTotal: total,

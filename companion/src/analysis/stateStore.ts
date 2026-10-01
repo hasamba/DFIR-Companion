@@ -59,10 +59,7 @@ export interface EntityQuery {
    * Deliberately not a bare term, so nothing can mistake a payload substring hit for a match.
    */
   searchLike?: string;
-  /**
-   * Turn the full-text prefilter on. Set independently of `searchLike` because a non-ASCII term has
-   * no usable LIKE pattern — LIKE folds case for ASCII only. See analysis/searchFoldPrefilter.ts.
-   */
+  /** Prefilter on; apart from `searchLike` since LIKE folds ASCII only. See searchFoldPrefilter.ts. */
   searchPrefilter?: boolean;
   /** #1914: the fold-prefilter fields searchFoldPrefilter.ts plans (fold characters, needle, restamp). */
   searchFoldChars?: readonly string[];
