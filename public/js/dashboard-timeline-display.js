@@ -97,6 +97,19 @@
     return !!(e && e.promotedAt);
   }
 
+  // An event the analyst typed in by hand (#1919). The server keeps it in the forensic timeline at
+  // any severity, exactly like a promoted row — an analyst wrote it there on purpose — and marks it
+  // by its id alone (analysis/manualEntry.ts mints `manual-<id>`). It is NOT a promotion: it gets
+  // no "✓ Promoted" badge and is counted separately in the label.
+  function isManualEvent(e) {
+    return !!(e && typeof e.id === "string" && e.id.startsWith("manual-"));
+  }
+
+  // The display's half of the server rule: rows no severity filter or view floor may drop.
+  function keepsAnySeverity(e) {
+    return isPromotedEvent(e) || isManualEvent(e);
+  }
+
   // The compact row's own cue — NOT buried in the collapsed details panel, which is where the
   // second-look provenance line already hid. Deliberately the super-timeline's existing wording
   // (see js/dashboard-super-timeline.js): one idiom for one idea, not a second vocabulary.
@@ -123,9 +136,19 @@
   // `activeSevs` is the legend's checked set, or null when the legend is not filtering.
   // `meetsFloor` is the view's severity test, or null when no view floor is in force.
   function promotedKeptCount(visible, activeSevs, meetsFloor) {
+    return keptCount(visible, activeSevs, meetsFloor, isPromotedEvent);
+  }
+
+  // The same count for hand-entered rows (#1919). A manual row that is ALSO promoted is counted
+  // once, as promoted, so the two clauses never add up to more rows than the screen holds.
+  function manualKeptCount(visible, activeSevs, meetsFloor) {
+    return keptCount(visible, activeSevs, meetsFloor, (e) => isManualEvent(e) && !isPromotedEvent(e));
+  }
+
+  function keptCount(visible, activeSevs, meetsFloor, kept) {
     let n = 0;
     for (const e of visible || []) {
-      if (!isPromotedEvent(e)) continue;
+      if (!kept(e)) continue;
       const bySev = !activeSevs || activeSevs.has(e.severity);
       const byFloor = typeof meetsFloor !== "function" || meetsFloor(e.severity);
       if (!bySev || !byFloor) n++;
@@ -158,11 +181,13 @@
     const totalText = floor ? `${o.total}+` : `${o.total}`;
     const hidden = Math.max(0, (o.total || 0) - (o.totalFiltered || 0));
     const promoted = o.promotedKept > 0 ? o.promotedKept : 0;
+    const manual = o.manualKept > 0 ? o.manualKept : 0;
     let base;
     if (o.filtering) {
       base = `${o.totalFiltered} of ${totalText} events`;
       if (hidden > 0) base += `, ${hidden} hidden by filters`;
       if (promoted > 0) base += `, ${promoted} promoted kept`;
+      if (manual > 0) base += `, ${manual} manual kept`;
     } else {
       base = `${totalText} event${o.total !== 1 ? "s" : ""}`;
     }
@@ -182,6 +207,11 @@
       title +=
         ` ${promoted} row(s) are shown although your severity filter excludes them: they carry a ` +
         "promotion stamp, so they stay whatever their severity — the same rule the server applies.";
+    }
+    if (manual > 0) {
+      title +=
+        ` ${manual} row(s) are shown although your severity filter excludes them: an analyst entered ` +
+        "them by hand, so they stay whatever their severity — the same rule the server applies.";
     }
     return { text, title };
   }
@@ -253,6 +283,9 @@
   }
 
   window.isPromotedEvent = isPromotedEvent;
+  window.isManualEvent = isManualEvent;
+  window.keepsAnySeverity = keepsAnySeverity;
+  window.manualKeptCount = manualKeptCount;
   window.promotedBadge = promotedBadge;
   window.promotedKeptCount = promotedKeptCount;
   window.timelineCountLabel = timelineCountLabel;

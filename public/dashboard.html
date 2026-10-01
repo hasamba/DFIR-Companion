@@ -5172,7 +5172,7 @@
       // Info rows at all; a PROMOTED row is exempt from that cut by design (forensicGate.ts) — 262 of them hid here.
       const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
       const filtering = activeSevs.size < allSevs.length;
-      let visible = filtering ? ft.filter(e => activeSevs.has(e.severity) || isPromotedEvent(e)) : ft;
+      let visible = filtering ? ft.filter(e => activeSevs.has(e.severity) || keepsAnySeverity(e)) : ft;
       if (DfirTimelineView.eventIdFilterActive()) visible = visible.filter(e => DfirTimelineView.hasEventId(e.id));
       if (DfirTimelineView.starredOnly()) visible = visible.filter(e => DfirStarred.has(String(e.id)));
       if (DfirTimelineView.search()) visible = visible.filter(e => _evMatchesSearch(e, DfirTimelineView.search()));
@@ -5206,7 +5206,7 @@
       renderEvIdFilterChip(visible.length, ft.length);
 
       renderTimelineCount(document.getElementById('timelineCount'), {
-        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages, promotedKept: promotedKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null),
+        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages, promotedKept: promotedKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null), manualKept: manualKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null),
         filtering: filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter(),
       });
       _updateSearchCount(totalFiltered, ft.length);
