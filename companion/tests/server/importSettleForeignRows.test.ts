@@ -207,4 +207,24 @@ describe("settleForensicImport — rows another writer added while the import ra
       await releaseImportBaseline(stateStore, baseline);
     }
   });
+
+  // #1919: the case-wide demote at the end of every import kept a below-floor row only when it was
+  // promoted, so a manual Info event the analyst wrote left the forensic timeline on the next import.
+  it("the import's demote keeps a manual Info event and still demotes the imported Info rows", async () => {
+    const manual = await addManual("Info", "analyst context note");
+    const baseline = await captureImportBaseline(stateStore, "c1");
+    try {
+      await addRows([ev("imp-info", "Info"), ev("imp-high", "High")]);
+      await settleForensicImport(deps([]), "c1", baseline, "label");
+      const ids = (await stateStore.load("c1")).forensicTimeline.map((e) => e.id);
+      expect(ids).toContain(manual.id);
+      expect(ids).toContain("imp-high");
+      expect(ids).not.toContain("imp-info");
+      const sup = await superIds();
+      expect(sup).toContain("imp-info");
+      expect(sup).not.toContain(manual.id);
+    } finally {
+      await releaseImportBaseline(stateStore, baseline);
+    }
+  });
 });
