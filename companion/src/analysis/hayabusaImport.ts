@@ -58,6 +58,7 @@ import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { applyOsBehaviourRules } from "./osBehaviourRules.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   createDecisionTally,
   firstPresentKey,
@@ -207,6 +208,8 @@ const PATH_KEYS = ["TgtFile", "TargetFilename", "Path", "File", "FilePath", "Ima
 // whole command line to find the MSI name and the whole destination to match the server (#1471).
 const CMDLINE_KEYS = ["Cmdline", "CommandLine", "CmdLine"];
 const DST_IP_KEYS = ["TgtIP", "DstIP", "DestinationIp"];
+// A volatile GUID in an aggregation key (a logon or activity id) — masked so rotating ids aggregate.
+const GUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
 
 // Map one Hayabusa record (already field-merged: top-level fields + the parsed details map)
 // to a forensic event, pulling IOCs into the sink. Verdict-first; null only if there is no
@@ -292,11 +295,14 @@ function mapRecord(
   const recordIdentity = fullMessage
     ? undefined
     : evtxRecordIdentity(channel, firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]));
-  const aggKey =
-    `hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}|${host.toLowerCase()}|${subject}`
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-      .replace(/\d+/g, "#")
-      .slice(0, 400);
+  // Volatile GUIDs and digit runs are masked so rotating ids aggregate — but never in the HOST.
+  // Masking the whole key made WS01, WS02 and WS03 one key, and three hosts came back as one event
+  // on the first (#1905). The host sits before the unbounded subject, and the bound keeps a digest
+  // of the full key, so a long subject can never push the host or a later difference out of it.
+  const masked = (s: string): string => s.replace(GUID_RE, "<guid>").replace(/\d+/g, "#");
+  const aggKey = boundedAggKey(
+    `${masked(`hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}`)}|${host.toLowerCase()}|${masked(subject)}`,
+  );
 
   const mapped: MappedEvent = {
     timestamp,
