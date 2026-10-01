@@ -44,6 +44,7 @@ import { WIN_EVENTS, channelTable, windowsDnsOverlay, type WinEventDef } from ".
 export { WIN_EVENTS, type WinEventDef };
 import { processGuid, processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
+import { boundedAggKey, foldVolatileIds } from "./aggKey.js";
 import { firstStr, getCI, getPath, hostSource, isObject, str, TIME_KEYS } from "./siemFieldPick.js";
 import { timestampSource, windowsEventDataRaw } from "./siemFieldPick.js";
 export { firstStr, getCI, getPath, isObject, str };
@@ -1341,12 +1342,10 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     description = `${description} @ ${host}`.slice(0, 600);
 
   const severity = pickGenericSeverity(rec);
-  // Aggregate identical generic events, normalizing volatile numbers/GUIDs out of the key.
-  const aggKey = `gen|${vendor ?? ""}|${host}|${base}`
-    .toLowerCase()
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
-    .replace(/\d+/g, "#")
-    .slice(0, 400);
+  // Aggregate identical generic events: volatile numbers/GUIDs fold, the host never does (#1917).
+  const aggKey = boundedAggKey(
+    `gen|${host.toLowerCase()}|${foldVolatileIds(`${vendor ?? ""}|${base}`.toLowerCase())}`,
+  );
 
   return {
     timestamp: pickTimestamp(rec, undefined),
