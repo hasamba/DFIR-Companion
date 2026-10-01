@@ -47,7 +47,11 @@ class FakeElement {
   appendChild(): void {}
   focus(): void {}
   scrollIntoView(): void {}
-  setRangeText(): void {}
+  /** Models HTMLInputElement.setRangeText with "end": replace [start, end) and move the cursor. */
+  setRangeText(text: string, start: number, end: number): void {
+    this.value = this.value.slice(0, start) + text + this.value.slice(end);
+    this.selectionStart = start + text.length;
+  }
   querySelectorAll(): unknown[] {
     return [];
   }
@@ -324,6 +328,8 @@ describe("hunt workbench — a late validate reply (#1777)", () => {
   });
 
   it("an autocomplete pick makes an in-flight validate stale", async () => {
+    // Fake timers only so the pick's own debounced validate never fires after the test ends.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const h = await mount();
     h.el("hqQuery").value = "severity>=High";
     const held = h.holdValidate();
@@ -335,6 +341,22 @@ describe("hunt workbench — a late validate reply (#1777)", () => {
     await h.settle();
 
     expect(h.el("hqStatus").textContent).toBe("before");
+  });
+
+  it("an autocomplete pick re-validates the completed query (#1912)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const h = await mount();
+    const query = h.el("hqQuery");
+    query.value = "user";
+    query.selectionStart = 4;
+    await h.el("hqSuggestions").fire("click", { closest: () => ({ dataset: { hqComplete: "user.name" } }) });
+    expect(query.value).toBe("user.name");
+    vi.advanceTimersByTime(400);
+    await h.settle();
+
+    const validates = h.calls.filter((c) => c.url.endsWith("/validate"));
+    expect(validates.map((c) => c.body?.query)).toEqual(["user.name"]);
+    expect(h.el("hqStatus").textContent).toBe("Filter: explanation");
   });
 
   it("a successful Save clears an earlier error colour", async () => {

@@ -633,6 +633,10 @@ function initialize() {
     statusSeq += 1; // a completion is a query edit too: an in-flight validate is now stale
     query.focus();
     renderSuggestions();
+    // setRangeText fires no input event, so schedule the validate the input handler would have
+    // (#1912) — otherwise the preview keeps the error for the text the completion just replaced.
+    clearTimeout(validationTimer);
+    validationTimer = setTimeout(validate, 350);
   });
   savedSelect.addEventListener("change", () => {
     const hunt = savedHunts.find((item) => item.id === savedSelect.value);
