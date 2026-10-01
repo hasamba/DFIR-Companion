@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkRegexSafety } from "../../src/analysis/regexSafety.js";
+import { checkRegexSafety, regexMatchesEmptyString } from "../../src/analysis/regexSafety.js";
 
 const reject = (src: string) => expect(checkRegexSafety(src).ok, `expected REJECT: ${src}`).toBe(false);
 const accept = (src: string) => expect(checkRegexSafety(src).ok, `expected ACCEPT: ${src}`).toBe(true);
@@ -117,5 +117,17 @@ describe("checkRegexSafety — the rejected patterns really are dangerous", () =
       time(12); // warm up the engine
       expect(time(22), `${src} was expected to backtrack`).toBeGreaterThan(5);
     }
+  });
+});
+
+describe("regexMatchesEmptyString (#1900)", () => {
+  it.each(["x*", "a|", "(?:)", "^$", "(?!x)"])("is true for %s", (src) => {
+    expect(regexMatchesEmptyString(src, "i")).toBe(true);
+  });
+  it.each(["x", "x+", "^a$", "evil\\.com"])("is false for %s", (src) => {
+    expect(regexMatchesEmptyString(src, "i")).toBe(false);
+  });
+  it("is false for a pattern that does not compile", () => {
+    expect(regexMatchesEmptyString("(", "i")).toBe(false);
   });
 });

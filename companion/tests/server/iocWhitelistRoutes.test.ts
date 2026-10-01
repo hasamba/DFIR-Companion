@@ -153,3 +153,13 @@ describe("POST /cases/:id/ioc-whitelist/apply", () => {
     expect(res.body.added).toBe(0);
   });
 });
+
+describe("IOC whitelist refuses a regex that can match an empty string (#1900)", () => {
+  it("400s with a clear reason and stores nothing", async () => {
+    const { app } = await harness();
+    const res = await request(app).post("/ioc-whitelist").send({ match: "regex", pattern: "evil\\.com|" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/empty string/i);
+    expect((await request(app).get("/ioc-whitelist")).body).toEqual([]);
+  });
+});

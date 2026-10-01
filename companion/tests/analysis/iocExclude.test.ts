@@ -4,6 +4,7 @@ import {
   matchIocToExclude,
   excludeMatches,
   sanitizeExcludeRuleInput,
+  validateExcludeRuleInput,
   normalizeSuffixPattern,
   type IocExcludeRule,
 } from "../../src/analysis/iocExclude.js";
@@ -111,5 +112,41 @@ describe("sanitizeExcludeRuleInput regex safety", () => {
       match: "regex",
       pattern: "^host-[0-9]+$",
     });
+  });
+});
+
+// #1900: a regex that matches the empty string matches at offset 0 of every unanchored value, so
+// `evil\.com|` (a trailing pipe) or `x*` purged every IOC in the case, one-way. Such a pattern is
+// refused outright — conservatively, so anchored nullable shapes like `^$` are refused too.
+describe("sanitizeExcludeRuleInput refuses a regex that can match an empty string (#1900)", () => {
+  it.each(["x*", "evil\\.com|", "(?:)", "a?", "^", "(?=)", "^$", "^a*$"])("refuses %s", (pattern) => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern })).toBeNull();
+    const v = validateExcludeRuleInput({ match: "regex", pattern });
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/empty string/i);
+  });
+
+  it("refuses it even when the rule is scoped to one IOC type", () => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "x*", iocType: "domain" })).toBeNull();
+  });
+
+  it("still accepts a regex that needs at least one character", () => {
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "evil\\.com" })).not.toBeNull();
+    expect(sanitizeExcludeRuleInput({ match: "regex", pattern: "^x+$" })).not.toBeNull();
+  });
+
+  it("explains each other rejection too", () => {
+    const bad = validateExcludeRuleInput({ match: "bogus", pattern: "x" });
+    expect(bad.ok).toBe(false);
+    const ok = validateExcludeRuleInput({ match: "exact", pattern: "x" });
+    expect(ok).toEqual({ ok: true, rule: { match: "exact", pattern: "x" } });
+  });
+
+  it("a stored rule from before the fix matches nothing instead of everything", () => {
+    for (const pattern of ["x*", "evil\\.com|"]) {
+      expect(ruleMatchesIoc(rule({ match: "regex", pattern }), ioc("domain", "keep.example.com"))).toBe(
+        false,
+      );
+    }
   });
 });

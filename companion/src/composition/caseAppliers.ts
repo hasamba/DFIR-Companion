@@ -157,25 +157,27 @@ export function createCaseAppliers({
     const state = await options.stateStore.loadOverview(caseId);
     const matches = whitelistMatches(state.iocs, rules);
     if (matches.length === 0) return { matched: 0, added: 0 };
-    const markers = await falsePositives.load(caseId);
-    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
-    let added = 0;
-    for (const { ioc, rule } of matches) {
-      const id = markerId("ioc", ioc.value);
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id,
-        kind: "ioc",
-        ref: ioc.value,
-        reason: "known-good-tool",
-        note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
-        markedAt: new Date().toISOString(),
-        markedBy: "anonymous",
-        label: ioc.value,
-      });
-      added++;
-    }
-    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
+    // #1902: under the false-positive file lock, so a parallel analyst mark is never overwritten.
+    const { result: added } = await falsePositives.update(caseId, (markers) => {
+      const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
+      let fresh = 0;
+      for (const { ioc, rule } of matches) {
+        const id = markerId("ioc", ioc.value);
+        if (byId.has(id)) continue;
+        byId.set(id, {
+          id,
+          kind: "ioc",
+          ref: ioc.value,
+          reason: "known-good-tool",
+          note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
+          markedAt: new Date().toISOString(),
+          markedBy: "anonymous",
+          label: ioc.value,
+        });
+        fresh++;
+      }
+      return { next: fresh > 0 ? [...byId.values()] : null, result: fresh };
+    });
     return { matched: matches.length, added };
   }
 
@@ -226,41 +228,43 @@ export function createCaseAppliers({
     const eventMatches = await nsrlEventMatches(options.stateStore, caseId, lookup);
     if (iocMatches.length === 0 && eventMatches.length === 0)
       return { matchedIocs: 0, matchedEvents: 0, added: 0 };
-    const markers = await falsePositives.load(caseId);
-    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
-    const now = new Date().toISOString();
-    let added = 0;
-    for (const { ioc, hash } of iocMatches) {
-      const id = markerId("ioc", ioc.value);
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id,
-        kind: "ioc",
-        ref: ioc.value,
-        reason: "known-good-tool",
-        note: `NSRL known-good hash (${hash})`,
-        markedAt: now,
-        markedBy: "anonymous",
-        label: ioc.value,
-      });
-      added++;
-    }
-    for (const { event, hash } of eventMatches) {
-      const id = markerId("event", event.id);
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id,
-        kind: "event",
-        ref: event.id,
-        reason: "known-good-tool",
-        note: `NSRL known-good file (${hash})`,
-        markedAt: now,
-        markedBy: "anonymous",
-        label: event.description,
-      });
-      added++;
-    }
-    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
+    // #1902: under the false-positive file lock, so a parallel analyst mark is never overwritten.
+    const { result: added } = await falsePositives.update(caseId, (markers) => {
+      const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
+      const now = new Date().toISOString();
+      let fresh = 0;
+      for (const { ioc, hash } of iocMatches) {
+        const id = markerId("ioc", ioc.value);
+        if (byId.has(id)) continue;
+        byId.set(id, {
+          id,
+          kind: "ioc",
+          ref: ioc.value,
+          reason: "known-good-tool",
+          note: `NSRL known-good hash (${hash})`,
+          markedAt: now,
+          markedBy: "anonymous",
+          label: ioc.value,
+        });
+        fresh++;
+      }
+      for (const { event, hash } of eventMatches) {
+        const id = markerId("event", event.id);
+        if (byId.has(id)) continue;
+        byId.set(id, {
+          id,
+          kind: "event",
+          ref: event.id,
+          reason: "known-good-tool",
+          note: `NSRL known-good file (${hash})`,
+          markedAt: now,
+          markedBy: "anonymous",
+          label: event.description,
+        });
+        fresh++;
+      }
+      return { next: fresh > 0 ? [...byId.values()] : null, result: fresh };
+    });
     return { matchedIocs: iocMatches.length, matchedEvents: eventMatches.length, added };
   }
 
