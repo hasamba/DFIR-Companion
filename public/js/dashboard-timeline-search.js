@@ -111,6 +111,7 @@
     painted = null;
     nextCursor = null;
     moreTruncated = false;
+    eventsRequest = 0; // a Load more events batch in flight no longer continues what is on screen
     // `asking` deliberately SURVIVES. It is what makes a burst of replacements coalesce: while a
     // scan is out, every further replacement finds the slot taken and asks for nothing, and the
     // request that eventually lands re-asks once for whatever the question has become. Clearing it
@@ -265,17 +266,98 @@
         // Read the snapshot HERE rather than binding it earlier: paint() replaces it, and a
         // binding that outlives that call is a stale snapshot waiting to be used (the gate in
         // tests/dashboard/dashboardState.test.ts refuses the shape for exactly that reason).
-        var before = (DfirState.lastState() || {}).forensicTimeline || [];
-        var merged = {};
-        for (var k in state) {
-          if (Object.prototype.hasOwnProperty.call(state, k)) merged[k] = state[k];
-        }
-        merged.forensicTimeline = before.concat(state.forensicTimeline || []);
         absorb(state);
-        paint(merged);
+        paint(appendPage(DfirState.lastState() || {}, state));
       })
       .catch(function () {
         if (token === requestToken) nextCursor = cursorAt; // let the analyst press it again
+      });
+  }
+
+  /**
+   * The snapshot on screen with the next page's rows appended. The rest of the reply is fresher
+   * than the snapshot, so it wins — except `techniqueNames`, which the server builds from THAT
+   * page's rows only: replacing the map would strip the ATT&CK names from every earlier page.
+   */
+  function appendPage(current, page) {
+    var merged = {};
+    for (var k in page) {
+      if (Object.prototype.hasOwnProperty.call(page, k)) merged[k] = page[k];
+    }
+    merged.forensicTimeline = (current.forensicTimeline || []).concat(page.forensicTimeline || []);
+    merged.techniqueNames = Object.assign({}, current.techniqueNames || {}, page.techniqueNames || {});
+    return merged;
+  }
+
+  // ── The unfiltered timeline past its first batch (#1916) ─────────────────────────────────
+  // The state route answers with at most 10,000 events plus the real total and a cursor. The
+  // dashboard used to print the batch size as the case size and offered no way past it: on a
+  // 70,000-event case, events 10,001 and up were reachable only by searching.
+  // The in-flight request's id, or 0. An id rather than a flag, so a reply from a request that
+  // invalidate() already abandoned cannot clear the busy state of a newer one.
+  var eventsRequest = 0;
+  var eventsRequestSeq = 0;
+
+  /** The cursor the unfiltered timeline on screen continues from, or null when it is complete. */
+  function unfilteredCursor() {
+    var st = typeof DfirState !== "undefined" ? DfirState.lastState() : null;
+    if (!st || currentTerm() || showingSearchedSubset()) return null;
+    if (st.caseId && st.caseId !== caseIdOf()) return null;
+    var loaded = (st.forensicTimeline || []).length;
+    var total = typeof st.forensicTimelineTotal === "number" ? st.forensicTimelineTotal : loaded;
+    if (total <= loaded || typeof st.forensicTimelineNextCursor !== "number") return null;
+    return st.forensicTimelineNextCursor;
+  }
+
+  /** Whether the unfiltered timeline holds back events this view has not loaded yet. */
+  function hasMoreEvents() {
+    return unfilteredCursor() !== null;
+  }
+
+  /** Whether a Load more events request is in flight (the button shows it as busy). */
+  function loadingMoreEvents() {
+    return eventsRequest !== 0;
+  }
+
+  function redrawTimeline() {
+    if (typeof renderTimelineEvents === "function" && typeof DfirState !== "undefined" && DfirState.lastFt()) {
+      renderTimelineEvents(DfirState.lastFt());
+    }
+  }
+
+  /**
+   * Fetch the next batch of the unfiltered timeline and APPEND it, like loadMoreMatches does for a
+   * search. The reply lands only if NOTHING replaced the state meanwhile: any replacement (a live
+   * import, a case connect) or a search retires `requestToken`, and the batch is dropped. Matching
+   * on the cursor alone is not enough — ordinals are gapped, so a live import can slot rows in after
+   * the cursor without moving it, and appending the old batch would skip them (Codex review).
+   */
+  function loadMoreEvents() {
+    var caseId = caseIdOf();
+    var cursorAt = unfilteredCursor();
+    if (!caseId || eventsRequest !== 0 || cursorAt === null) return;
+    var tokenAt = requestToken;
+    var id = ++eventsRequestSeq;
+    eventsRequest = id;
+    redrawTimeline(); // the button reads as busy rather than inviting a second press
+    fetch("/cases/" + encodeURIComponent(caseId) + "/state?timelineCursor=" + cursorAt)
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (state) {
+        if (eventsRequest !== id) return; // abandoned by a replacement; a newer press owns the slot
+        eventsRequest = 0;
+        if (requestToken !== tokenAt || caseIdOf() !== caseId || unfilteredCursor() !== cursorAt) {
+          return redrawTimeline();
+        }
+        paint(appendPage(DfirState.lastState() || {}, state));
+      })
+      .catch(function () {
+        // The snapshot is untouched, so the button comes back to be pressed again.
+        if (eventsRequest !== id) return;
+        eventsRequest = 0;
+        redrawTimeline();
       });
   }
 
@@ -309,6 +391,9 @@
     loadSearchedTimeline: loadSearchedTimeline,
     loadMoreMatches: loadMoreMatches,
     hasMoreMatches: hasMoreMatches,
+    loadMoreEvents: loadMoreEvents,
+    hasMoreEvents: hasMoreEvents,
+    loadingMoreEvents: loadingMoreEvents,
     afterUnfilteredPaint: afterUnfilteredPaint,
     cancelAfterClear: cancelAfterClear,
     showingSearchedSubset: showingSearchedSubset,
@@ -318,4 +403,7 @@
   window.loadSearchedTimeline = loadSearchedTimeline;
   window.loadMoreMatches = loadMoreMatches;
   window.hasMoreMatches = hasMoreMatches;
+  window.loadMoreEvents = loadMoreEvents;
+  window.hasMoreEvents = hasMoreEvents;
+  window.loadingMoreEvents = loadingMoreEvents;
 })();

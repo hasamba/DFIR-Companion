@@ -170,6 +170,20 @@
     return !!(st && st.forensicTimelineTotalIsLowerBound);
   }
 
+  // HOW MUCH OF THE CASE THE PAGE HAS LOADED (#1916).
+  //
+  // The state route sends at most 10,000 events, plus the case's real total. The label used to
+  // print the batch as if it were the case — "10000 events" on a 70,000-event case — so an analyst
+  // could read the first batch as the whole record. A search answer is not this: its total counts
+  // matches, and a search floor has its own wording above.
+  function timelineLoadState() {
+    const st = typeof DfirState !== "undefined" ? DfirState.lastState() : null;
+    if (!st || st.forensicTimelineTotalIsLowerBound) return null;
+    const loaded = Array.isArray(st.forensicTimeline) ? st.forensicTimeline.length : 0;
+    const total = typeof st.forensicTimelineTotal === "number" ? st.forensicTimelineTotal : loaded;
+    return total > loaded ? { loaded, total } : null;
+  }
+
   // SAY HOW MANY ROWS THE FILTERS ARE HOLDING BACK, IN THE LABEL (#1554).
   //
   // "203 of 465 events" states a subtraction and leaves the analyst to do it. The one who
@@ -178,16 +192,20 @@
   // filters", because the rows are in the record, not missing from it.
   function timelineCountLabel(o) {
     const floor = timelineTotalIsFloor();
+    const partial = timelineLoadState();
     const totalText = floor ? `${o.total}+` : `${o.total}`;
     const hidden = Math.max(0, (o.total || 0) - (o.totalFiltered || 0));
     const promoted = o.promotedKept > 0 ? o.promotedKept : 0;
     const manual = o.manualKept > 0 ? o.manualKept : 0;
     let base;
     if (o.filtering) {
-      base = `${o.totalFiltered} of ${totalText} events`;
+      base = `${o.totalFiltered} of ${totalText}${partial ? " loaded" : ""} events`;
       if (hidden > 0) base += `, ${hidden} hidden by filters`;
       if (promoted > 0) base += `, ${promoted} promoted kept`;
       if (manual > 0) base += `, ${manual} manual kept`;
+      if (partial) base += `; ${partial.total} in case`;
+    } else if (partial) {
+      base = `${partial.total} events, first ${partial.loaded} loaded`;
     } else {
       base = `${totalText} event${o.total !== 1 ? "s" : ""}`;
     }
@@ -197,11 +215,17 @@
     let title = floor
       ? `This search matched more events than one response carries. Only the first ${o.total} are ` +
         "shown — narrow the search term to reach the rest."
-      : "Total events in scope; updates in real time";
+      : partial
+        ? `This case holds ${partial.total} forensic-timeline events; the dashboard has loaded the ` +
+          `first ${partial.loaded}. Paging, filters and counts cover the loaded events only — press ` +
+          '"Load more events" under the timeline for the next batch, or search to query the whole case'
+        : "Total events in scope; updates in real time";
     if (hidden > 0) {
-      title +=
-        `. The filters above are hiding ${hidden} of this case's ${o.total} forensic-timeline ` +
-        "events. They are still in the record — clear a filter to bring them back.";
+      title += partial
+        ? `. The filters above are hiding ${hidden} of the ${o.total} loaded events. They are still in ` +
+          "the record — clear a filter to bring them back."
+        : `. The filters above are hiding ${hidden} of this case's ${o.total} forensic-timeline ` +
+          "events. They are still in the record — clear a filter to bring them back.";
     }
     if (promoted > 0) {
       title +=
@@ -218,11 +242,25 @@
 
   // The client pager walks the events this view HOLDS; when the server held matches back, no amount
   // of paging here can reach them, so the only honest control is one that asks for the next batch.
+  //
+  // The unfiltered timeline gets the same control (#1916): past its first batch the rest of the
+  // case is otherwise unreachable except by searching. Rendered under an empty filter result too —
+  // that is exactly when the matching rows may sit in a batch nobody has loaded yet.
   function timelineMoreMatchesBar() {
-    if (typeof hasMoreMatches !== "function" || !hasMoreMatches()) return "";
+    if (typeof hasMoreMatches === "function" && hasMoreMatches()) {
+      return '<div class="tl-page-bar">'
+        + '<span class="tl-page-info">More events match this search than are shown.</span>'
+        + '<button class="tl-page-btn" data-act="tlLoadMoreMatches">Load more matches</button>'
+        + "</div>";
+    }
+    const partial = timelineLoadState();
+    if (!partial || typeof hasMoreEvents !== "function" || !hasMoreEvents()) return "";
+    const busy = typeof loadingMoreEvents === "function" && loadingMoreEvents();
     return '<div class="tl-page-bar">'
-      + '<span class="tl-page-info">More events match this search than are shown.</span>'
-      + '<button class="tl-page-btn" data-act="tlLoadMoreMatches">Load more matches</button>'
+      + `<span class="tl-page-info">Showing the first ${Number(partial.loaded)} of ${Number(partial.total)} events.`
+      + " Filters and paging cover loaded events only.</span>"
+      + `<button class="tl-page-btn" data-act="tlLoadMoreEvents"${busy ? " disabled" : ""}>`
+      + (busy ? "Loading…" : "Load more events") + "</button>"
       + "</div>";
   }
 
