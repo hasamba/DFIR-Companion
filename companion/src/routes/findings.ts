@@ -118,17 +118,18 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     };
   };
 
-  // Immediate FP cascade (investigation-guidance #12): the instant markers are saved, synchronously
-  // reconsider the STORED conclusions that stay stale until the analyst re-synthesizes (#1599: marking
-  // starts no run) — key questions + next-steps that rested on a now-rejected finding (badged "stale —
-  // press Re-synthesize"), and hypotheses whose supporting evidence was just rejected. Best-effort: a
-  // failure here must never fail the FP marking itself. Runs under the state lock so it can't race a
-  // running synthesis's read-modify-write. The next real synthesis clears the flags.
-  const cascadeFalsePositive = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
+  // Immediate FP cascade (investigation-guidance #12): once markers are saved, reconsider the STORED
+  // conclusions that stay stale until the analyst re-synthesizes (#1599: marking starts no run) — key
+  // questions + next-steps resting on a now-rejected finding (badged "stale — press Re-synthesize"), and
+  // hypotheses whose evidence was just rejected. Best-effort: never fails the FP marking. Runs under the
+  // state lock (no race with synthesis) and reads the CURRENT markers there (#1902), not a stale snapshot.
+  const cascadeFalsePositive = async (caseId: string): Promise<void> => {
     try {
       const stateStore = options.stateStore;
       if (stateStore) {
+        let markers: FalsePositiveMarker[] = [];
         await ctx.runStateExclusive(caseId, async () => {
+          markers = await falsePositives.load(caseId);
           const state = await stateStore.load(caseId);
           const survivingFindingIds = new Set(applyFalsePositive(state, markers).findings.map((f) => f.id));
           const priorFindingIds = state.findings.map((f) => f.id);
@@ -226,9 +227,10 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           .status(400)
           .json({ error: "ref is required (and note is required when reason is 'other')" });
       await stampPatternFingerprints(req.params.id, [marker]);
-      const markers = await falsePositives.load(req.params.id);
-      const next = [...markers.filter((m) => m.id !== marker.id), marker];
-      await falsePositives.save(req.params.id, next);
+      const next = await falsePositives.modify(req.params.id, (cur) => [
+        ...cur.filter((m) => m.id !== marker.id),
+        marker,
+      ]);
       if (marker.kind === "ioc" && req.body?.addToWhitelist && options.iocWhitelistStore) {
         const state = options.stateStore ? await options.stateStore.load(req.params.id) : null;
         const iocType = state?.iocs.find((i) => i.value.toLowerCase() === marker.ref.toLowerCase())?.type;
@@ -250,7 +252,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         targetType: marker.kind,
         targetId: marker.ref,
       });
-      await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
+      await cascadeFalsePositive(req.params.id); // #12: neutralize dependent conclusions NOW
       await markConclusionsOutOfDate(req.params.id, "false positive marked"); // #1599: no run of its own
       return res.status(200).json(next);
     } catch (err) {
@@ -291,12 +293,10 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       if (!built.length)
         return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
       await stampPatternFingerprints(req.params.id, built); // #15b: capture each event's pattern key
-      const markers = await falsePositives.load(req.params.id);
       // De-dupe within the batch and against existing markers (last occurrence wins) by id.
-      const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
-      for (const m of built) byId.set(m.id, m);
-      const next = [...byId.values()];
-      await falsePositives.save(req.params.id, next);
+      const next = await falsePositives.modify(req.params.id, (cur) => [
+        ...new Map<string, FalsePositiveMarker>([...cur, ...built].map((m) => [m.id, m])).values(),
+      ]);
       options.onFalsePositive?.(req.params.id);
       await recordLearnedPatterns(req.params.id, built); // #65 accumulate the reasoned dismissals
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -305,7 +305,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         actor: fallbackMarkedBy ?? "",
         detail: `${built.length} item(s) marked false-positive`,
       });
-      await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
+      await cascadeFalsePositive(req.params.id); // #12: neutralize dependent conclusions NOW
       await markConclusionsOutOfDate(req.params.id, "false positives marked"); // #1599: no run of its own
       return res.status(200).json(next);
     } catch (err) {
@@ -316,10 +316,10 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/false-positive/remove", async (req: Request, res: Response) => {
     try {
       const id = String(req.body?.id ?? "");
-      const markers = await falsePositives.load(req.params.id);
-      const removedMarker = markers.find((m) => m.id === id);
-      const next = markers.filter((m) => m.id !== id);
-      await falsePositives.save(req.params.id, next);
+      const { markers: next, result: removedMarker } = await falsePositives.update(req.params.id, (cur) => ({
+        next: cur.filter((m) => m.id !== id),
+        result: cur.find((m) => m.id === id),
+      }));
       options.onFalsePositive?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage",
