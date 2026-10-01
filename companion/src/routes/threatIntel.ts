@@ -7,8 +7,8 @@ import { enrichIocs } from "../enrichment/enrichService.js";
 import { mergeEnrichedSubset } from "../analysis/iocBulkOps.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { createIocProvenanceReads, type IocProvenanceReads } from "../analysis/iocProvenanceRead.js";
-import { parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "../analysis/iocWhitelist.js";
-import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
+import { parseWhitelistText, toWhitelistCsv, validateRuleInput } from "../analysis/iocWhitelist.js";
+import { validateExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
 import { ingestNsrlFiles, splitNsrlPaths } from "../analysis/nsrlStore.js";
 import { parseNsrlText } from "../analysis/nsrl.js";
 import { NsrlDb, saveNsrlDbPath, removeNsrlDbPath } from "../analysis/nsrlDb.js";
@@ -419,12 +419,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Add one rule. Body: { match: "cidr"|"regex"|"exact", pattern, iocType?, note? }
   app.post("/ioc-whitelist", async (req: Request, res: Response) => {
     if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
-    const input = sanitizeRuleInput(req.body ?? {});
-    if (!input)
-      return res.status(400).json({
-        error:
-          "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)",
-      });
+    const checked = validateRuleInput(req.body ?? {});
+    if (!checked.ok) return res.status(400).json({ error: `invalid rule — ${checked.reason}` });
+    const input = checked.rule;
     try {
       const rule = await options.iocWhitelistStore.add(input);
       return res.status(201).json(rule);
@@ -504,12 +501,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // { match: "exact"|"suffix"|"regex", pattern, iocType?, note? }. Returns { rule, purged }.
   app.post("/cases/:id/ioc-exclude", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
-    const input = sanitizeExcludeRuleInput(req.body ?? {});
-    if (!input)
-      return res.status(400).json({
-        error:
-          "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)",
-      });
+    const checked = validateExcludeRuleInput(req.body ?? {});
+    if (!checked.ok) return res.status(400).json({ error: `invalid rule — ${checked.reason}` });
+    const input = checked.rule;
     const caseId = req.params.id;
     const stateStore = options.stateStore;
     let rule: IocExcludeRule | undefined;

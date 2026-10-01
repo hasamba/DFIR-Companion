@@ -6,6 +6,7 @@ import {
   matchIocToWhitelist,
   whitelistMatches,
   sanitizeRuleInput,
+  validateRuleInput,
   parseWhitelistText,
   toWhitelistCsv,
   type IocWhitelistRule,
@@ -199,5 +200,35 @@ describe("sanitizeRuleInput regex safety", () => {
       match: "regex",
       pattern: "^evil-[0-9]+\\.exe$",
     });
+  });
+});
+
+// #1900: the whitelist has the same hole — a nullable regex auto-marked every IOC false positive.
+describe("sanitizeRuleInput refuses a regex that can match an empty string (#1900)", () => {
+  it.each(["x*", "evil\\.com|", "(?:)", "^$"])("refuses %s", (pattern) => {
+    expect(sanitizeRuleInput({ match: "regex", pattern })).toBeNull();
+    const v = validateRuleInput({ match: "regex", pattern });
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toMatch(/empty string/i);
+  });
+
+  it("still accepts a regex that needs at least one character, and cidr/exact rules", () => {
+    expect(sanitizeRuleInput({ match: "regex", pattern: "\\.corp\\.example\\.com$" })).not.toBeNull();
+    expect(sanitizeRuleInput({ match: "cidr", pattern: "10.0.0.0/8" })).not.toBeNull();
+    expect(validateRuleInput({ match: "exact", pattern: "x" })).toEqual({
+      ok: true,
+      rule: { match: "exact", pattern: "x" },
+    });
+  });
+
+  it("a stored rule from before the fix matches nothing instead of everything", () => {
+    expect(ruleMatchesIoc(rule({ match: "regex", pattern: "x*" }), ioc("domain", "keep.example.com"))).toBe(
+      false,
+    );
+  });
+
+  it("drops such a rule from a pasted import", () => {
+    const parsed = parseWhitelistText('[{"match":"regex","pattern":"x*"},{"match":"exact","pattern":"a"}]');
+    expect(parsed).toEqual([{ match: "exact", pattern: "a" }]);
   });
 });

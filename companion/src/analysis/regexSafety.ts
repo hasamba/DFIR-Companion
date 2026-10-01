@@ -461,3 +461,22 @@ export function checkRegexSafety(src: string, flags = ""): RegexSafetyResult {
   if (why) return { ok: false, reason: `${why} — rewrite it to avoid catastrophic backtracking (ReDoS)` };
   return { ok: true };
 }
+
+// Message for a refused nullable pattern (#1900), shared by the IOC whitelist and exclude lists.
+export const EMPTY_MATCH_REASON =
+  "regex can match an empty string (for example 'x*' or a trailing '|'), so it could match every IOC — " +
+  "make every alternative require at least one character";
+
+/**
+ * True when `src` matches the empty string (#1900). Such a pattern is NULLABLE: unless it is anchored
+ * it matches at offset 0 of every subject — `evil\.com|` (a trailing pipe) or `x*` matches every IOC.
+ * Anchored nullable shapes (`^$`, `^a*$`) do not match everything, but they are refused too: the
+ * check is deliberately conservative for rules that purge or hide IOCs. False when it does not compile.
+ */
+export function regexMatchesEmptyString(src: string, flags = ""): boolean {
+  try {
+    return new RegExp(src, flags).test("");
+  } catch {
+    return false;
+  }
+}
