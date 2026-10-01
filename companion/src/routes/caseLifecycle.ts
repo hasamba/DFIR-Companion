@@ -19,6 +19,7 @@ import {
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
+import { deleteArchivesFirst, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
@@ -227,7 +228,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // closed cases. Returns the archive path and a manifest of archived files + checksums. With
   // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
   // status: "archived" — non-destructive and reversible via POST /cases/:id/restore.
-  app.post("/cases/:id/archive", async (req: Request, res: Response) => {
+  const archiveRoute = async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
@@ -265,7 +266,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
-  });
+  };
+  app.post("/cases/:id/archive", withArchiveBarrier(ctx, archiveRoute));
 
   // Restore a case previously archived via the removeFromList option: moves it back from
   // _archived/ into the active cases root and sets status to "closed" (the state it must have
@@ -314,7 +316,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // a case is closed→archived→deleted in quick succession could still try to touch the now-gone
   // folder and error out. Accepted for now (writes are already blocked once closed/archived; this
   // is a single-user localhost tool) — not fixed here to avoid scope creep into unrelated timers.
-  app.post("/cases/:id/delete", async (req: Request, res: Response) => {
+  const deleteRoute = async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
@@ -373,7 +375,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       errLine(`[delete] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
-  });
+  };
+  app.post("/cases/:id/delete", withArchiveBarrier(ctx, deleteRoute, deleteArchivesFirst));
 
   registerCaseStateRoutes(app, ctx); // GET /cases/:id/state — the case as the dashboard reads it
 
@@ -451,7 +454,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // The whole case directory is zipped, then AES-256-GCM encrypted under a password the analyst
   // chooses. Only openable via another DFIR Companion's Import (see analysis/caseEncryption.ts +
   // caseExportArchive.ts). Password travels in the POST body, not the URL/query string.
-  app.post("/cases/:id/export/encrypted", async (req: Request, res: Response) => {
+  const exportEncryptedRoute = async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
@@ -505,7 +508,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       }
       return res.status(500).json({ error: (err as Error).message });
     }
-  });
+  };
+  app.post("/cases/:id/export/encrypted", withArchiveBarrier(ctx, exportEncryptedRoute));
 
   // Import a `.dfircase` encrypted archive into a NEW case — POST /cases/import/encrypted
   // (routes/encryptedImport.ts).

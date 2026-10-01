@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
+import { importWhileArchivingMessage, isCaseArchiving, reserveImport } from "./archiveImportBarrier.js";
 
 // Every POST route that ingests evidence into a case: the unified sniffing import, the server-side
 // file import, and each per-format importer. Kept as ONE list so the existence guard below is
@@ -59,6 +60,13 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
   const paths = EVIDENCE_IMPORT_ROUTES.map((route) => `/cases/:id/${route}`);
   app.post(paths, async (req: Request, res: Response, next: NextFunction) => {
     const caseId = req.params.id;
+    // #1903: an archive of this case is zipping it now — refuse before the raw file is written, so
+    // the zip never holds evidence whose merge has not happened (routes/archiveImportBarrier.ts).
+    if (isCaseArchiving(store.casesRoot, caseId))
+      return res.status(409).json({ error: importWhileArchivingMessage(caseId) });
+    // ...and an archive refuses while this request is between here and its response (#1903): the
+    // route writes the raw file before the import is visible as a job or in the import section.
+    res.once("close", reserveImport(store.casesRoot, caseId));
     try {
       if (await store.caseExists(caseId)) return next();
     } catch (err) {
