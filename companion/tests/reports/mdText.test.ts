@@ -29,6 +29,49 @@ describe("blockMd escapes what would restructure the report", () => {
   });
 });
 
+describe("blockMd escapes a setext underline of any length (#1898)", () => {
+  // CommonMark accepts ONE '-' as a setext H2 underline, so "Forged\n-" opened a section.
+  it.each([
+    ["Forged\n-", "Forged\n\\-"],
+    ["Forged\n- ", "Forged\n\\- "],
+    ["Forged\n   -", "Forged\n   \\-"],
+    ["Forged\n=", "Forged\n\\="],
+    ["Forged\n-\t", "Forged\n\\-\t"],
+  ])("escapes %j", (input, expected) => {
+    expect(blockMd(input)).toBe(expected);
+  });
+
+  it("escapes an underline inside a list item, at any continuation indent", () => {
+    expect(blockMd("- Forged\n  -")).toBe("- Forged\n  \\-");
+    expect(blockMd("10. Forged\n    -")).toBe("10. Forged\n    \\-");
+  });
+
+  it("escapes after a blockquote marker, so the quote stays a quote", () => {
+    expect(blockMd("> Forged\n> -")).toBe("> Forged\n> \\-");
+    expect(blockMd("> ## Forged")).toBe("> \\## Forged");
+    expect(blockMd(">> Forged\n>> ==")).toBe(">> Forged\n>> \\==");
+  });
+
+  it("escapes an ATX heading opened inside a list item", () => {
+    expect(blockMd("- # Forged")).toBe("- \\# Forged");
+    expect(blockMd("1. ## Forged")).toBe("1. \\## Forged");
+    expect(blockMd("> - ## Forged")).toBe("> - \\## Forged");
+  });
+
+  it("stays fast on a very long line of list markers", () => {
+    const t0 = performance.now();
+    blockMd("- ".repeat(100_000) + "x");
+    blockMd("> ".repeat(100_000) + "x");
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
+  it("leaves list items and dashes inside prose alone", () => {
+    expect(blockMd("- item\n- second")).toBe("- item\n- second");
+    expect(blockMd("range 1-5\n-x")).toBe("range 1-5\n-x");
+    expect(blockMd("> quoted text")).toBe("> quoted text");
+  });
+});
+
 describe("blockMd leaves ordinary prose alone", () => {
   // The other half of the contract. Over-escaping would put stray backslashes through every
   // AI-written description in every report, which is a worse deliverable than the one this guards.
