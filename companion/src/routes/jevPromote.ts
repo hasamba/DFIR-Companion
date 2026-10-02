@@ -22,7 +22,8 @@ import { emptyPromotionOutcome, type FoldedRow } from "../analysis/ingest/promot
  * halves.
  *
  * NO RE-SYNTHESIS. Promoting spends nothing; an AI call the analyst did not ask for would. The
- * panel promotes, the analyst re-synthesizes when they have finished picking.
+ * panel promotes and marks the conclusions out of date (#1923); the analyst re-synthesizes when they
+ * have finished picking.
  *
  * THE BROWSER SENDS IDS, AND NOTHING ELSE IS READ FROM IT (#1578). The grade, the confidence and the
  * model all come from the server's own record of what the review graded. They used to come from the
@@ -277,6 +278,11 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         refused: outcome.refused.length,
         stayedInfo: after.forensicTimeline.filter((e) => added.has(e.id) && e.severity === "Info").length,
       });
+
+      // #1923: what the next synthesis reads changed, so the pill says so — no run of its own (#1599).
+      // Gated on what landed: a row that folded into an event already analyzed adds only lineage.
+      if (promoted > 0)
+        await ctx.markConclusionsOutOfDate(caseId, "rows promoted by the missed-evidence review");
 
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai",

@@ -9,6 +9,7 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { RemediationStore, RECEIPTS_PER_BOUNDARY_MAX } from "../../src/analysis/remediationBoundary.js";
 import { createApp } from "../../src/server.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { loadFilteredState } from "../../src/reports/filteredState.js";
@@ -250,5 +251,46 @@ describe("remediation routes", () => {
     const b = (await remediationStore.load("c1"))[0];
     expect(b.receipts).toHaveLength(RECEIPTS_PER_BOUNDARY_MAX + 1);
     expect(b.receipts.some((r) => r.id === first)).toBe(true);
+  });
+});
+
+// #1923: attaching a super-timeline row promotes it, which changes what the next synthesis reads. It
+// marks the conclusions out of date (#1599) and starts no run of its own.
+describe("the conclusions after a remediation attach (#1923)", () => {
+  const REASON = "rows attached as remediation evidence";
+
+  async function declared() {
+    const h = await harness();
+    const meta = new SynthMetaStore(h.store);
+    // An earlier synthesis finished: without one there are no conclusions to be out of date.
+    await meta.record("c1", null as never, "2026-06-01T12:00:00.000Z");
+    const bid = (
+      await request(h.app)
+        .post("/cases/c1/remediation")
+        .send({ host: "ws-042", artifact: { kind: "path", value: PATH }, remediatedAt: T })
+    ).body.boundary.id as string;
+    return { ...h, meta, bid };
+  }
+
+  it("marks the conclusions out of date when a super-timeline row is promoted", async () => {
+    const { app, meta, bid } = await declared();
+
+    const res = await request(app)
+      .post(`/cases/c1/remediation/${bid}/attach`)
+      .send({ eventIds: ["r1"] });
+
+    expect(res.body).toMatchObject({ promoted: 1 });
+    expect((await meta.load("c1")).outOfDate?.reason).toBe(REASON);
+  });
+
+  it("leaves the conclusions alone when every attached row was already analyzed", async () => {
+    const { app, meta, bid } = await declared();
+
+    const res = await request(app)
+      .post(`/cases/c1/remediation/${bid}/attach`)
+      .send({ eventIds: ["f1"] });
+
+    expect(res.body).toMatchObject({ promoted: 0 });
+    expect((await meta.load("c1")).outOfDate ?? null).toBeNull();
   });
 });
