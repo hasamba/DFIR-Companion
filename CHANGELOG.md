@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Network connections stay separate** — two connections from one program to different destinations no longer merge into one row, so a C2 connection is no longer hidden; re-import an affected case to recover lost rows (closes #1922)
+- **Clearer filtered partial-load label** — the Forensic Timeline label now says "of the first N loaded events … case holds M" when a filter is on (closes #1928)
+- **Archive wait hardening** — the archive wait ignores an invalid wait setting and checks less often while an import finishes (closes #1927)
+- **Ingest-reservation guide for contributors** — code comments now say which reservation a new import route needs (closes #1929)
+
 ## [0.40.0] - 2026-10-01
 
 ### Added
