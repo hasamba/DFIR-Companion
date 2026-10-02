@@ -17,7 +17,30 @@
  * behind /push, MCP, the Velociraptor monitors, external tools and the drop folder
  * (composition/importIngest.ts), the Velociraptor external hunt/flow ingest
  * (composition/veloExternalIngest.ts), the hunt collect (composition/veloHunts.ts) and the
- * drop-folder sweep (composition/dropFolder.ts).
+ * drop-folder sweep (composition/dropFolder.ts). The MCP routes and the external-tool run routes also
+ * reserve for the whole request through reserveCaseForWrites (routes/archiveImportBarrier.ts),
+ * because they stage files inside the case before anything reaches the streamed ingest.
+ *
+ * Reserving a new ingest path — pick ONE:
+ *  1. A new /cases/:id/import-* evidence POST: add it to EVIDENCE_IMPORT_ROUTES in
+ *     routes/importCaseGuard.ts. The guard reserves it, and tests/server/importMissingCase.test.ts
+ *     fails if you forget.
+ *  2. A new write route under /cases/:id/mcp/...: nothing to do. The scope gate
+ *     app.use("/cases/:id/mcp", reserveCaseForWrites(...)) in routes/mcp.ts covers it. Register the
+ *     route AFTER that line. Reads (GET/HEAD/OPTIONS) pass through.
+ *  3. Any other route that writes into the case before it calls the streamed ingest (staging,
+ *     preserving an upload): add its path to a route-level app.post([...paths],
+ *     reserveCaseForWrites(store.casesRoot)) registered BEFORE its handler, as routes/tools.ts does.
+ *     Use a scope app.use only when every write route under a prefix needs it.
+ *  4. Background or non-route ingest (timer, poller, sweep): withIngestAdmission, or admitOrDefer
+ *     when a skipped pass is retried by its own schedule. A path that only calls ingestStreamed
+ *     (composition/importIngest.ts) is already covered.
+ *
+ * Reservations nest (they are counted), so a route-level reservation plus the streamed ingest's own
+ * is safe. A change to route registration shape (a new app.use, a re-registered path, a moved order)
+ * changes tests/architecture/route-inventory.json. Regenerate it with
+ * `UPDATE_ROUTE_INVENTORY=1 npx vitest run tests/architecture/routeInventory.test.ts` and show the
+ * diff in the PR.
  *
  * Process-local, keyed by cases root + case id, like every other per-case in-memory map.
  */

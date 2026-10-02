@@ -35,6 +35,8 @@ Settings → Per-case → Correlation Profile:
 
 Use Aggressive when you have many tools all logging the same events differently. Use Strict when tools legitimately report the same artifact at different times for different reasons.
 
+A path or hash match never merges two network connections to different destinations; a file record found at the same time (Amcache, Prefetch) attaches to one of them.
+
 **Cross-tool command-line correlation** — process-creation events that describe the *same* creation but come from different tools (e.g. Sysmon and an EDR) with different pids and no shared file hash are merged into one timeline row when they share a normalized command line + parent process + host within a window (default 60s, `cmdlineWindowSeconds`). A same-tool corroboration guard keeps genuinely distinct commands from one tool separate, so kill-chain steps are never collapsed into each other. Deterministic, no AI.
 
 ---

@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DSU,
+  networkPeerFacts,
   unionEligible,
   type EligibleMember,
   type UnionFacts,
@@ -285,5 +286,75 @@ describe("unionEligible — the bucket walk reaches what the cross product reach
     unionEligible(members, dsu, pathEligible, "nearest");
     expect(dsu.find(2)).toBe(dsu.find(1));
     expect(dsu.find(0)).not.toBe(dsu.find(1));
+  });
+});
+
+describe("the network peer is a guard fact (#1922)", () => {
+  const always: Eligible = () => true;
+
+  it.each([
+    ["dstAddr", { dstAddr: "198.51.100.7" }, { dstAddr: "203.0.113.9" }],
+    ["dstPort", { dstPort: "8888" }, { dstPort: "5353" }],
+    ["proto", { proto: "tcp" }, { proto: "udp" }],
+  ] as const)("a bridge row with no %s cannot join two different peers", (_name, a, b) => {
+    const facts: UnionFacts[] = [{ path: "p", ...a }, { path: "p" }, { path: "p", ...b }];
+    const dsu = new DSU(facts);
+    expect(dsu.union(0, 1)).toBe(true);
+    expect(dsu.union(1, 2)).toBe(false);
+    expect(dsu.find(2)).not.toBe(dsu.find(0));
+
+    const walked = new DSU(facts);
+    unionEligible(
+      facts.map((_, i) => ({ i, sig: "s" })),
+      walked,
+      always,
+    );
+    expect(partition(walked, 3).split(" | ")).toHaveLength(2);
+  });
+
+  it("a row that knows only the address agrees with one that knows address, port and protocol", () => {
+    const dsu = new DSU([
+      { record: "r", dstAddr: "198.51.100.7" },
+      { record: "r", dstAddr: "198.51.100.7", dstPort: "8888", proto: "tcp" },
+    ]);
+    expect(dsu.union(0, 1)).toBe(true);
+  });
+});
+
+describe("networkPeerFacts", () => {
+  it("reads the canonical destination first, then the flat fields, normalised", () => {
+    expect(
+      networkPeerFacts({
+        canonical: { network: { destination: { address: " 198.51.100.7 ", port: 8888 }, protocol: "TCP" } },
+        dstIp: "203.0.113.9",
+        port: 443,
+      }),
+    ).toEqual({ dstAddr: "198.51.100.7", dstPort: "8888", proto: "tcp" });
+    expect(networkPeerFacts({ dstIp: "FF02::FB", port: 5353 })).toEqual({
+      dstAddr: "ff02::fb",
+      dstPort: "5353",
+      proto: undefined,
+    });
+  });
+
+  it("spells one peer the same whatever form a parser wrote", () => {
+    const plain = networkPeerFacts({
+      canonical: { network: { destination: { address: "198.51.100.7", port: 8888 }, protocol: "tcp" } },
+    });
+    const mapped = networkPeerFacts({
+      canonical: { network: { destination: { address: "::FFFF:198.51.100.7", port: 8888 }, protocol: "6" } },
+    });
+    expect(mapped).toEqual(plain);
+    expect(networkPeerFacts({ canonical: { network: { protocol: "17" } } }).proto).toBe("udp");
+    expect(networkPeerFacts({ dstIp: "::ffff:7f00:1" }).dstAddr).toBe("::ffff:7f00:1");
+  });
+
+  it("returns no fact for a row that recorded no peer", () => {
+    expect(networkPeerFacts({})).toEqual({ dstAddr: undefined, dstPort: undefined, proto: undefined });
+    expect(networkPeerFacts({ port: Number.NaN, dstIp: "  " })).toEqual({
+      dstAddr: undefined,
+      dstPort: undefined,
+      proto: undefined,
+    });
   });
 });

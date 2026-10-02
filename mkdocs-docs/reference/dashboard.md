@@ -253,7 +253,7 @@ Has its own report section ("Attacker Sessions") — see [Reports & Exports](rep
 
 The core of the investigation. A table of all forensic events, sorted by timestamp (or severity — click the column header to sort).
 
-The dashboard loads the first 10,000 events of a large case. The heading then shows the case total and how many are loaded, for example "70000 events, first 10000 loaded". Filters and paging cover the loaded events only. Press **Load more events** at the end of the list to load the next batch.
+The dashboard loads the first 10,000 events of a large case. The heading then shows the case total and how many are loaded, for example "70000 events, first 10000 loaded". With a filter on, the heading reads like "40 of the first 10000 loaded events, 9960 hidden by filters; case holds 70000". Filters and paging cover the loaded events only. Press **Load more events** at the end of the list to load the next batch.
 
 Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message in one shared panel below the row. Row actions:
 

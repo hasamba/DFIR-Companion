@@ -10,6 +10,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import type { JevGradeSignals } from "../../src/analysis/ai/jev/jevGrader.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 
 // The WRITE half of the missed-evidence review (#1568).
 //
@@ -464,5 +465,59 @@ describe("what the promote route refuses", () => {
     const { app } = await harness({ archive: [raw("r1")] });
     const res = await request(app).post("/cases/nope/jev/promote").send(ids("r1"));
     expect(res.status).toBe(404);
+  });
+});
+
+// #1923: a promotion changes what the next synthesis reads, so it marks the conclusions out of date
+// (#1599) — the header pill then says so, and Re-synthesize stops warning that nothing changed. It
+// starts no run of its own: the analyst re-synthesizes when they have finished picking.
+describe("the conclusions after a missed-evidence promotion (#1923)", () => {
+  const REASON = "rows promoted by the missed-evidence review";
+  const existing = raw("e1", { severity: "High", description: "toolkit written to C:\\Users\\Public" });
+
+  async function synthesized(opts: Parameters<typeof harness>[0]) {
+    const h = await harness(opts);
+    const meta = new SynthMetaStore(h.store);
+    // An earlier synthesis finished: without one there are no conclusions to be out of date.
+    await meta.record("c1", null as never, "2026-01-01T12:00:00.000Z");
+    return { ...h, meta };
+  }
+
+  it("marks the conclusions out of date when a row lands", async () => {
+    const { app, meta } = await synthesized({ archive: [raw("r1")], reviewed: [tick("r1", "High")] });
+
+    const res = await promote(app, ids("r1"));
+
+    expect(res.body.promoted).toBe(1);
+    expect((await meta.load("c1")).outOfDate?.reason).toBe(REASON);
+  });
+
+  it("leaves the conclusions alone when every ticked row was already analyzed", async () => {
+    const { app, meta } = await synthesized({
+      archive: [existing],
+      forensic: [existing],
+      reviewed: [tick("e1", "Critical")],
+    });
+
+    const res = await promote(app, ids("e1"));
+
+    expect(res.body.promoted).toBe(0);
+    expect((await meta.load("c1")).outOfDate ?? null).toBeNull();
+  });
+
+  // A row the merge folds into an event already analyzed adds only lineage (a raw-record locator
+  // and an alias). The surviving event's severity, description and promotion mark are unchanged,
+  // so the next synthesis would read exactly what the last one did.
+  it("leaves the conclusions alone when every ticked row folds into an event already analyzed", async () => {
+    const { app, meta } = await synthesized({
+      forensic: [existing],
+      archive: [raw("d1", { description: existing.description })],
+      reviewed: [tick("d1", "Medium")],
+    });
+
+    const res = await promote(app, ids("d1"));
+
+    expect(res.body.promoted).toBe(0);
+    expect((await meta.load("c1")).outOfDate ?? null).toBeNull();
   });
 });
