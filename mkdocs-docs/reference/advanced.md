@@ -280,6 +280,9 @@ thing it records. What you tick is another matter — see *Promoting what it fin
 
 **Read it with the confidence column.** The grade says what; the confidence says whether to trust it.
 A Medium at 0.9 is worth your time; a Medium at 0.3 is the model telling you it is guessing.
+The confidence filter starts at **40%**: on seven lab cases, the rows below it held 4 of 306 attack
+rows and about a quarter of the false alarms. The caption counts the rows it hides. Drag the slider
+to 0 to see every row.
 
 **Filter the tooling.** The most common false positive is your own collection kit: the agent's
 binary and service, and the detection packs' rule files, whose names read like the tools they hunt

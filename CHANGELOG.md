@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Missed-evidence review confidence floor** — the panel's confidence filter starts at 40% instead of 0 (part of #1924)
+
 ## [0.40.0] - 2026-10-01
 
 ### Added
