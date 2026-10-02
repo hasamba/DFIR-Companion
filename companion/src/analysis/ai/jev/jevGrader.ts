@@ -311,13 +311,13 @@ export function planBatches(
 ): number[][] {
   // The analyst context rides in EVERY request of the review, so it comes off every batch's budget.
   // A floor keeps a huge context from planning zero-row batches; the size-refusal split still guards.
-  budget = Math.max(MIN_ROW_BUDGET, budget - (caseContext ? estimateTokens(caseContext) : 0));
+  const rowBudget = Math.max(MIN_ROW_BUDGET, budget - (caseContext ? estimateTokens(caseContext) : 0));
   const out: number[][] = [];
   let cur: number[] = [];
   let cost = 0;
   texts.forEach((t, i) => {
     const c = rowCost(t, shape);
-    if (cur.length && (cost + c > budget || cur.length >= maxRows)) {
+    if (cur.length && (cost + c > rowBudget || cur.length >= maxRows)) {
       out.push(cur);
       cur = [];
       cost = 0;

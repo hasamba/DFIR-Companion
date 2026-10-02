@@ -398,7 +398,7 @@ describe("gradeEvents — decomposed shape", () => {
     return {
       mask: (t) => t,
       ask: async (state, questions) => {
-        seen.push({ state: state as Record<string, unknown>, questions: questions as Seen["questions"] });
+        seen.push({ state: state as Record<string, unknown>, questions: questions });
         const rowIds = Object.keys(questions).filter((k) => k.endsWith("_mal"));
         if (opts.refuseOver !== undefined && rowIds.length > opts.refuseOver)
           throw new Error("Jev 400: max_tokens_exceeded");
@@ -519,7 +519,7 @@ describe("gradeEvents — decomposed shape", () => {
     const wrapped: JevGraderDeps = {
       mask: deps.mask,
       ask: (s, q) => {
-        seen.push({ state: s as Record<string, unknown>, questions: q as Seen["questions"] });
+        seen.push({ state: s as Record<string, unknown>, questions: q });
         return deps.ask(s, q);
       },
     };
