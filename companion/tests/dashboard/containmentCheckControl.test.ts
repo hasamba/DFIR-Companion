@@ -176,8 +176,26 @@ describe("the chip", () => {
   it("is shown when Jev is configured, and carries the escaped finding id", async () => {
     const h = await configured();
     const chip = h.api.containmentCheckChip('f"1');
-    expect(chip).toContain("Containment check");
     expect(chip).toContain('data-ccheck-run="f&quot;1"');
+  });
+
+  it("is an icon button like the other finding actions, named by its tooltip and aria-label", async () => {
+    const chip = (await configured()).api.containmentCheckChip("f1");
+    expect(chip).toContain('class="ccheck-btn"');
+    expect(chip).toContain("<svg");
+    expect(chip).toContain('aria-label="Containment check"');
+    expect(chip).toMatch(/title="Containment check — /);
+    expect(chip).not.toMatch(/>\s*Containment check\s*</);
+    expect(chip).not.toContain("fwf-btn");
+  });
+
+  it("is disabled and says Checking… in its tooltip while the check runs", async () => {
+    const h = await configured();
+    h.click("[data-ccheck-run]", { "data-ccheck-run": "f1" });
+    const chip = h.api.containmentCheckChip("f1");
+    expect(chip).toContain(" disabled");
+    expect(chip).toContain('aria-busy="true"');
+    expect(chip).toMatch(/title="Checking…/);
   });
 
   it("posts to the finding's route with encoded ids", async () => {
@@ -190,12 +208,12 @@ describe("the chip", () => {
 });
 
 describe("the panel", () => {
-  it("shows every answer, flagged answers, and the in-progress caveat", async () => {
+  it("shows every answer with its value and the in-progress caveat, with no check-manually badge", async () => {
     const html = (await withResult()).api.containmentCheckPanel("f1");
     expect(html).toContain("Credentials exposed");
     expect(html).toContain("yes · 82% likely");
     expect(html).toContain("one entity (confidence 55%)");
-    expect(html).toContain("check manually");
+    expect(html).not.toContain("check manually");
     expect(html).toContain("still in progress at the end of the collected evidence — not a live status");
     expect(html).toContain("10 of 12 cited events sent, 2 not in the forensic timeline + truncated");
     expect(html).toContain("because: Credentials exposed");
@@ -336,7 +354,7 @@ describe("a case switch", () => {
 });
 
 describe("the Playbook attribution line", () => {
-  it("names the model, the date and the basis answers, with check-manually marked", () => {
+  it("names the model, the date and the basis answers, with no check-manually badge", () => {
     const h = harness();
     const html = h.api.containmentAttributionHtml({
       title: "Isolate the host",
@@ -371,7 +389,7 @@ describe("the Playbook attribution line", () => {
     expect(html).toContain("typesafe/jev-1.13");
     expect(html).toContain("2026-10-02 10:20");
     expect(html).toContain("Persistence &lt;x&gt;: unsure · 40% likely");
-    expect(html).toContain("check manually");
+    expect(html).not.toContain("check manually");
     expect(html).not.toContain("Reach");
     expect(html).toContain("not a live status");
   });

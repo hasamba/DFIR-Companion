@@ -327,7 +327,6 @@ input { background: var(--bg-primary); color: var(--text-bright); border: 1px so
 .ccheck-meta, .ccheck-coverage, .ccheck-foot, .ccheck-because, .ccheck-caveat { color: var(--text-muted); font-size: 11px; }
 .ccheck-sub { margin-top: 6px; font-weight: 600; }
 .ccheck-answers, .ccheck-steps { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.ccheck-manual { font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 4px; background: var(--warning-bg-strong); color: var(--badge-warning-text); }
 .ccheck-inpb { font-size: 10px; color: var(--accent); }
 .ccheck-error { color: var(--tag-red-text); }
 .ccheck-add { margin: 4px 0; }

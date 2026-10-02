@@ -359,7 +359,7 @@ pick containment steps. "Generate remediation plan" writes a whole plan in one p
 whether it believes credentials were stolen, whether the activity survives a reboot, or whether data
 is leaving. This check asks.
 
-**Run it:** the **Containment check** button on a finding card. It shows only when Jev is set up
+**Run it:** the **Containment check** button (the shield icon) in a finding's action row. It shows only when Jev is set up
 (Settings → AI → Missed evidence review). One press is one Jev call.
 
 **What Jev reads:** the finding and the forensic-timeline events it cites — never the super-timeline.
@@ -374,15 +374,16 @@ the activity was still in progress, it reached beyond the flagged host or accoun
 the reach (one entity / a workgroup / the whole organization) and the attack type.
 
 **Read the answers with their numbers.** A yes/no answer of 60% or more counts as yes, under 15% as
-no, and anything between is marked **check manually**. A choice under 60% confidence is marked too.
+no, and anything between is shown as **unsure**. Each choice shows its confidence. A low number means
+Jev is guessing: look at the finding's evidence yourself before you act on it.
 "In progress" means *still in progress at the end of the collected evidence* — it is not a live status.
 
 **Suggested steps** come from a fixed, tested rule, not from the model: block the attacker
 destination (org-wide or this host), disable the account, revoke sessions, reset exposed credentials,
 block the sender and purge the mail, isolate the host (persistence) or kill the process, remove
 forwarding rules, delegations or consents — or escalate for manual review when nothing applies. Each
-step lists the answers that led to it. A step that rests on an unsure answer is marked
-**check manually**. When the activity is still in progress, the steps are Critical.
+step lists the answers that led to it, so a step that rests on an unsure answer or a low-confidence
+choice shows that number. When the activity is still in progress, the steps are Critical.
 
 **Nothing runs.** The check is advice. Tick the steps you accept and press **Add to Playbook**; each
 becomes a Playbook task linked to the finding, recording that the containment check suggested it and
