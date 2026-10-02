@@ -23,7 +23,7 @@ import {
 import { combineMarkings } from "./tlp.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature, executionIdentity } from "./chainSignature.js";
-import { DSU, unionEligible, type UnionFacts } from "./correlateUnion.js";
+import { DSU, networkPeerFacts, unionEligible, type UnionFacts } from "./correlateUnion.js";
 import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
@@ -101,6 +101,7 @@ function unionFactsOf(e: ForensicEvent): UnionFacts {
     exec: executionIdentity(e) || undefined,
     record: e.sourceRecordId?.trim() || undefined,
     act: writeOrLaunch(e),
+    ...networkPeerFacts(e), // a connection's peer: two peers are two rows (#1922)
   };
 }
 

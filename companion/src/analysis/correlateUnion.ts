@@ -17,6 +17,14 @@
 // facts about one binary — who dropped it, and what it ran — so a component holding one never takes
 // in the other, whatever path, hash or pid they share, and no untyped row can bridge the two.
 //
+// Three more facts are the PEER a network connection reached (#1922): destination address, port and
+// protocol, each its own fact. A Sysmon EID 3 burst from one image — mDNS multicasts and one TCP
+// connection to a C2 server — shares the image path, and an Amcache row of that image within 2 s
+// corroborated each connection pairwise; the union is transitive, so every connection became one row
+// and the multicast text won. A row with no peer (Amcache, Prefetch, MFT) still joins one connection.
+// They stay separate facts so a reading that knows only the address (a Hayabusa row) still merges
+// with one that knows all three (a Chainsaw reading of the same record, #688).
+//
 // A member with no structured path, or no command line, constrains nothing and joins freely; a
 // pathless hash-only hit that could belong to either of two files stays on its own (that ambiguity
 // is real, and picking one would be the guess this refuses to make).
@@ -36,11 +44,38 @@ export interface UnionFacts {
   record?: string;
   /** "file-write" or "process-start" for a typed row; unset when the row's act is not one of them (#1557). */
   act?: string;
+  /** The destination address of a network connection, lowercased (#1922). */
+  dstAddr?: string;
+  /** The destination port, as a decimal string (#1922). */
+  dstPort?: string;
+  /** The transport protocol, lowercased (#1922). */
+  proto?: string;
+}
+
+/** The structural slice of an event the peer facts are read from — no import edge on stateTypes. */
+export interface NetworkPeerSource {
+  canonical?: { network?: { destination?: { address?: string; port?: number }; protocol?: string } };
+  dstIp?: string;
+  port?: number;
+}
+
+/** The destination of a network connection as three union facts; each is undefined when absent (#1922). */
+export function networkPeerFacts(e: NetworkPeerSource): Pick<UnionFacts, "dstAddr" | "dstPort" | "proto"> {
+  const net = e.canonical?.network;
+  const addr = (net?.destination?.address ?? e.dstIp ?? "").trim().toLowerCase();
+  const port = net?.destination?.port ?? e.port;
+  const proto = (net?.protocol ?? "").trim().toLowerCase();
+  return {
+    dstAddr: addr || undefined,
+    dstPort: typeof port === "number" && Number.isFinite(port) ? String(port) : undefined,
+    proto: proto || undefined,
+  };
 }
 
 /** How many facts a component carries — the length of every `facts()` tuple. */
-const FACT_COUNT = 4;
-type Facts = [string, string, string, string];
+const FACT_KEYS = ["path", "exec", "record", "act", "dstAddr", "dstPort", "proto"] as const;
+const FACT_COUNT = FACT_KEYS.length;
+type Facts = string[];
 
 /** Union attempts and candidate probes, for the tests that pin the cost (#1483). */
 export interface UnionStats {
@@ -50,18 +85,18 @@ export interface UnionStats {
 
 export class DSU {
   private parent: number[];
-  private paths: Array<Set<string> | undefined>;
-  private execs: Array<Set<string> | undefined>;
-  private records: Array<Set<string> | undefined>;
-  private acts: Array<Set<string> | undefined>;
+  /** Per fact position (FACT_KEYS), per member: the values its component recorded. */
+  private sets: Array<Array<Set<string> | undefined>>;
   /** Every union() call, refused or not. */
   unions = 0;
   constructor(facts: readonly UnionFacts[]) {
     this.parent = facts.map((_, i) => i);
-    this.paths = facts.map((f) => (f.path ? new Set([f.path]) : undefined));
-    this.execs = facts.map((f) => (f.exec ? new Set([f.exec]) : undefined));
-    this.records = facts.map((f) => (f.record ? new Set([f.record]) : undefined));
-    this.acts = facts.map((f) => (f.act ? new Set([f.act]) : undefined));
+    this.sets = FACT_KEYS.map((k) =>
+      facts.map((f) => {
+        const v = f[k];
+        return v ? new Set([v]) : undefined;
+      }),
+    );
   }
   find(x: number): number {
     let i = x;
@@ -76,12 +111,7 @@ export class DSU {
     const ra = this.find(a),
       rb = this.find(b);
     if (ra === rb) return true;
-    return (
-      agree(this.paths[ra], this.paths[rb]) &&
-      agree(this.execs[ra], this.execs[rb]) &&
-      agree(this.records[ra], this.records[rb]) &&
-      agree(this.acts[ra], this.acts[rb])
-    );
+    return this.sets.every((s) => agree(s[ra], s[rb]));
   }
   /** Merge when compatible; returns whether the two now share a component. */
   union(a: number, b: number): boolean {
@@ -93,16 +123,13 @@ export class DSU {
     const keep = Math.min(ra, rb),
       drop = Math.max(ra, rb);
     this.parent[drop] = keep;
-    this.paths[keep] = mergeSets(this.paths[keep], this.paths[drop]);
-    this.execs[keep] = mergeSets(this.execs[keep], this.execs[drop]);
-    this.records[keep] = mergeSets(this.records[keep], this.records[drop]);
-    this.acts[keep] = mergeSets(this.acts[keep], this.acts[drop]);
+    for (const s of this.sets) s[keep] = mergeSets(s[keep], s[drop]);
     return true;
   }
   /** The component's current facts, "" where it recorded nothing. Every set is a singleton (agree). */
   facts(x: number): Facts {
     const r = this.find(x);
-    return [single(this.paths[r]), single(this.execs[r]), single(this.records[r]), single(this.acts[r])];
+    return this.sets.map((s) => single(s[r]));
   }
 }
 
