@@ -14,6 +14,7 @@ interface DisplayApi {
     page: number;
     totalPages: number;
     filtering: boolean;
+    promotedKept?: number;
   }): { text: string; title: string };
   timelineMoreMatchesBar(): string;
 }
@@ -55,8 +56,16 @@ describe("the timeline count on a case larger than one batch (#1916)", () => {
 
   it("says a filtered count is over the loaded events, and names the case total", () => {
     const lbl = label(display(BIG), { totalFiltered: 40, filtering: true, pageSize: 0, totalPages: 1 });
-    expect(lbl.text).toBe("(40 of 100 loaded events, 60 hidden by filters; 700 in case)");
+    expect(lbl.text).toBe("(40 of the first 100 loaded events, 60 hidden by filters; case holds 700)");
     expect(lbl.title).toContain("hiding 60 of the 100 loaded events");
+  });
+
+  // #1928: the batch and the case total read as two bare totals one clause apart.
+  it("keeps the clause order with paging and a promoted row on a partial case", () => {
+    const lbl = label(display(BIG), { totalFiltered: 60, filtering: true, promotedKept: 5 });
+    expect(lbl.text).toBe(
+      "(60 of the first 100 loaded events, 40 hidden by filters, 5 promoted kept; case holds 700 — page 1 of 2)",
+    );
   });
 
   it("reads exactly as before when the whole case is loaded", () => {
