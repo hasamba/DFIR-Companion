@@ -88,7 +88,10 @@
   let activeRun = null; // { controller, timer } for the review in flight; null when none is
   let reviewNote = ""; // why the panel stopped waiting — the analyst's own press, or the time limit
   let minGrade = ""; // the write half (#1568). "" = any grade; else the LOWEST grade the table draws
-  let minConfidence = 0; // 0..1, the model's own confidence floor
+  // The model's own confidence floor, 0..1. It starts at 40%, not 0 (#1924 eval): on 7 lab cases the
+  // old grade's Medium+ rows below 40% held 4 of 306 attack rows and a quarter of the false alarms.
+  // The caption counts what the floor hides; the analyst drags it to 0 to see every row.
+  let minConfidence = 0.4;
   let picked = new Set(); // row ids the analyst has ticked
   let sentIds = new Set(); // row ids this panel has already posted to promote
   let promoting = false; // a promote is in flight — the lock, not the `disabled` attribute
