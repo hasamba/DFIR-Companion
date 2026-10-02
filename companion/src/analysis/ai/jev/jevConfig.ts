@@ -1,3 +1,5 @@
+import type { JevGradeShape } from "./jevGrader.js";
+
 /**
  * Where Jev's settings come from (#1540), and — the real point of this file — which API key it is
  * allowed to use.
@@ -35,6 +37,11 @@ export interface JevSettings {
   readonly timeoutMs: number;
   readonly maxRows: number;
   readonly batchSize: number;
+  /**
+   * How the review grades a row (#1924): `single` asks one Info..Critical question; `decomposed`
+   * ("narrow" in the setting) asks narrow questions and lets a tested rule set the grade.
+   */
+  readonly shape: JevGradeShape;
 }
 
 /** `typesafe/jev-latest` does NOT exist on OpenRouter — it 400s. Only a versioned id works there. */
@@ -156,6 +163,14 @@ export function resolveJevSettings(env: NodeJS.ProcessEnv = process.env): Resolv
     return unusable(`DFIR_JEV_BASE_URL is not a URL: "${baseUrl}".`);
   }
 
+  // The setting's words are the analyst's ("single", "narrow"); the grader's are "single",
+  // "decomposed". An unknown word is refused by name — guessing would pick a grade the analyst did not.
+  const grading = (text(env, "DFIR_JEV_GRADING") ?? "single").toLowerCase();
+  if (grading !== "single" && grading !== "narrow")
+    return unusable(
+      `DFIR_JEV_GRADING="${grading}" is not a grading style. Use "single" (the default) or "narrow".`,
+    );
+
   const ownKey = text(env, "DFIR_JEV_KEY");
   const keyResult = resolveKey(env, provider, ownKey, host);
   if (typeof keyResult !== "string") return keyResult;
@@ -170,6 +185,7 @@ export function resolveJevSettings(env: NodeJS.ProcessEnv = process.env): Resolv
       timeoutMs: positiveInt(env.DFIR_JEV_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
       maxRows: clampedInt(env.DFIR_JEV_MAX_ROWS, DEFAULT_MAX_ROWS, MIN_MAX_ROWS, MAX_MAX_ROWS),
       batchSize: clampedInt(env.DFIR_JEV_BATCH_SIZE, DEFAULT_BATCH_SIZE, MIN_BATCH_SIZE, MAX_BATCH_SIZE),
+      shape: grading === "narrow" ? "decomposed" : "single",
     },
   };
 }

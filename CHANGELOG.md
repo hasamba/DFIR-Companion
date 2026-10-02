@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Missed-evidence grading style setting** — `DFIR_JEV_GRADING` picks one-question (default) or experimental narrow-question grading, with the trade-off explained in Settings (relates to #1924)
+
 ### Changed
 
 - **Missed-evidence review confidence floor** — the panel's confidence filter starts at 40% instead of 0 (part of #1924)
