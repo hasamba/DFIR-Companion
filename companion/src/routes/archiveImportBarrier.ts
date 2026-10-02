@@ -112,6 +112,7 @@ export function deleteArchivesFirst(req: Request): boolean {
  * Reserve the case for a whole write request — staging, run, ingest, report — and refuse it with a 409
  * while an archive holds the case (#1920). Mounted ahead of the MCP and external-tool routes, whose
  * requests stage files inside the case before anything reaches ingestStreamed. Reads pass through.
+ * Which reservation shape a new route needs: see analysis/caseIngestAdmission.ts.
  */
 export function reserveCaseForWrites(casesRoot: string) {
   return function caseIngestReservation(req: Request, res: Response, next: NextFunction): void {
