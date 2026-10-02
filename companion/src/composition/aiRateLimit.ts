@@ -91,7 +91,12 @@ export const AI_ANSWER_AFTER_MODEL_PATHS = new Set([
 ]);
 
 /** AI-cost POST routes carrying a dynamic segment, so the static set cannot express them. */
-export const AI_LIMIT_PATTERNS = [/^\/events\/[^/]+\/explain$/, /^\/sessions\/[^/]+\/summary$/];
+export const AI_LIMIT_PATTERNS = [
+  /^\/events\/[^/]+\/explain$/,
+  /^\/sessions\/[^/]+\/summary$/,
+  // Per-finding Jev containment check (#1925). The `$` leaves its .../playbook add route unmetered.
+  /^\/findings\/[^/]+\/containment-check$/,
+];
 
 export function mountAiRateLimit(app: Express): void {
   // Charged here, refunded when the route refuses before any AI work (#1825) — see chargeAiBudget.

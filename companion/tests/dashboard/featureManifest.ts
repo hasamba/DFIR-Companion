@@ -874,6 +874,31 @@ export const FEATURES: Feature[] = [
     private: ["outcomeByFinding", "activeCase", "patchSeq", "EXECUTION_LABELS", "CONTROL_LABELS", "bound"],
   },
   {
+    // Per-finding containment check (#1925): Jev answers + suggested steps, added to the Playbook
+    // on the analyst's tick. Results are memory-only and cleared on a case switch.
+    file: "dashboard-containment-check.js",
+    publish: [
+      "loadContainmentCheck",
+      "containmentCheckChip",
+      "containmentCheckPanel",
+      "containmentAttributionHtml",
+      "containmentSyncPlaybook",
+    ],
+    private: [
+      "ccByFinding",
+      "ccActiveCase",
+      "ccCaseGen",
+      "ccConfigured",
+      "ccPlaybookKeys",
+      "ccClock",
+      "ccSyncAt",
+      "ccBound",
+      "IN_PROGRESS_CAVEAT",
+      "RERUN_MESSAGE",
+      "NOT_CONFIGURED",
+    ],
+  },
+  {
     // Pinned findings (#220) — the other half of that banner. Nothing here references the feature
     // above it and nothing there references this.
     // The three bindings and loadPins() came home in #415: the feature had moved out but its state

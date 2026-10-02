@@ -17,6 +17,10 @@ import {
 } from "../../src/analysis/ai/jev/jevGrader.js";
 import type { JevAnswer } from "../../src/analysis/ai/jev/jevClient.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
+import { buildContainmentState } from "../../src/analysis/ai/jev/containmentState.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import type { Finding } from "../../src/analysis/stateTypes.js";
 
 // THE FORENSIC / SUPER-TIMELINE RULE, made executable (#384).
 //
@@ -438,5 +442,44 @@ describe("a bare synthesize() never touches the raw record (#1554)", () => {
     const { events } = await superTimelineStore.query("c1", { offset: 0, limit: 100 });
     expect(events.map((e) => e.id)).toContain("rawhit");
     expect(events.every((e) => !e.promotedAt)).toBe(true);
+  });
+});
+
+describe("the containment check reads the forensic timeline only (#1925)", () => {
+  // Not a fourth exception: the check sends a finding's CITED events, resolved against the forensic
+  // timeline. A cited id that lives only in the raw record is counted as missing, never fetched.
+  const finding = {
+    id: "f1",
+    title: "t",
+    description: "d",
+    severity: "High",
+    mitreTechniques: [],
+  } as unknown as Finding;
+
+  it("sends a cited forensic event and counts a raw-only id as not in the timeline", async () => {
+    const { stateStore, superTimelineStore } = await harness([
+      ev({ id: "rawonly", description: "raw secret row" }),
+    ]);
+    const state = {
+      ...(await stateStore.load("c1")),
+      forensicTimeline: [ev({ id: "e1", description: "graded row", severity: "High" })],
+    };
+    const query = vi.spyOn(superTimelineStore, "query");
+    const out = buildContainmentState({ ...finding, relatedEventIds: ["e1", "rawonly"] }, state, (t) => t);
+    expect(JSON.stringify(out.state)).toContain("graded row");
+    expect(JSON.stringify(out.state)).not.toContain("raw secret row");
+    expect(out.coverage).toMatchObject({ cited: 2, sent: 1, notInTimeline: 1 });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("has no path to the super-timeline store in its route or state builder", () => {
+    for (const rel of [
+      "../../src/routes/containmentCheck.ts",
+      "../../src/routes/containmentCheckPlaybook.ts",
+      "../../src/analysis/ai/jev/containmentState.ts",
+    ]) {
+      const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+      expect(src, rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js/);
+    }
   });
 });

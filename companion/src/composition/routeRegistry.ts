@@ -63,6 +63,7 @@ import { registerJobRoutes } from "../routes/jobs.js";
 import { registerDeepPassRoutes } from "../routes/deepPass.js";
 import { registerJevReviewRoutes } from "../routes/jevReview.js";
 import { registerJevPromoteRoutes } from "../routes/jevPromote.js";
+import { registerContainmentCheckRoutes } from "../routes/containmentCheck.js";
 import { registerSecondLookRoutes } from "../routes/secondLook.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
@@ -194,6 +195,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerDeepPassRoutes(app, ctx);
   registerJevReviewRoutes(app, ctx);
   registerJevPromoteRoutes(app, ctx);
+  registerContainmentCheckRoutes(app, ctx);
   registerSecondLookRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so

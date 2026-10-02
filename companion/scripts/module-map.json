@@ -653,6 +653,7 @@
     "pipeline.ts": "analysis/ai",
     "plasoImport.ts": "analysis/ingest",
     "playbook.ts": "analysis/intel",
+    "playbookContainment.ts": "analysis/intel",
     "playbookControl.ts": "analysis/intel",
     "playbookHunt.ts": "analysis/hunt",
     "playbookHuntStore.ts": "analysis/hunt",

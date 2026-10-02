@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Containment check on findings** — Jev answers eleven narrow questions about a finding's cited evidence, a tested rule suggests containment steps, and ticked steps go to the Playbook with their attribution (closes #1925)
 - **Missed-evidence grading style setting** — `DFIR_JEV_GRADING` picks one-question (default) or experimental narrow-question grading, with the trade-off explained in Settings (relates to #1924)
 
 ### Changed
