@@ -72,7 +72,7 @@
 .comment-chip:hover { color: var(--accent); border-color: var(--accent); }
 .comment-chip.has { color: var(--accent); border-color: var(--border-strong); background: var(--surface-selected); }
 .comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg,
-.hunt-add svg, .explain-btn svg, .ioc-chain-btn svg, .sigma-export-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+.hunt-add svg, .explain-btn svg, .ioc-chain-btn svg, .sigma-export-btn svg, .ccheck-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
 .anon-chip { display:inline-block; background:var(--badge-bg-neutral); border:1px solid var(--border-color); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
 .anon-chip.anon-chip-sup { opacity:.6; }
 .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--text-dim); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
@@ -308,6 +308,11 @@
 .sigma-export-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
   padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
 .sigma-export-btn:hover { color: var(--sev-low); border-color: var(--success-border); }
+/* Per-finding "Containment check" button (#1925) — the same row-action chip, icon only. */
+.ccheck-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.ccheck-btn:hover { color: var(--accent); border-color: var(--accent); }
+.ccheck-btn:disabled { opacity: 0.5; cursor: progress; }
 /* Per-finding "push to Jira / ServiceNow" chips (#297) — match the other row-action chips, but
    stay hidden until GET /jira/status | /servicenow/status says the integration is configured.
    The switch is a class on <body> rather than a render-time branch: the status answer usually

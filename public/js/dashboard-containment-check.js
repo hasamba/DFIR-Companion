@@ -87,7 +87,10 @@
     return [a.verdict ? String(a.verdict) : "", p ? `${p} likely` : ""].filter(Boolean).join(" · ");
   }
 
-  const ccManualBadge = (on) => (on ? ` <span class="ccheck-manual">check manually</span>` : "");
+  // A shield, drawn like the other finding-action icons (16-unit box, currentColor stroke).
+  const ICON_CCHECK =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M8 1.8 3 3.7v3.9c0 3 2.1 5.4 5 6.6 2.9-1.2 5-3.6 5-6.6V3.7L8 1.8z"/><path d="M5.8 8.1 7.3 9.6l3-3.1"/></svg>';
 
   function ccDate(v) {
     return String(v == null ? "" : v).slice(0, 16).replace("T", " ");
@@ -103,10 +106,13 @@
     if (!ccConfigured) return "";
     const rec = ccByFinding.get(String(fid));
     const busy = !!(rec && rec.busy);
+    const tip = busy
+      ? "Checking… — Jev is answering the containment questions for this finding"
+      : "Containment check — ask Jev narrow questions about this finding and suggest containment steps (advice only)";
     return (
-      `<button type="button" class="fwf-btn ccheck-chip" data-ccheck-run="${escAttr(String(fid))}"` +
-      ` title="Ask Jev narrow questions about this finding and suggest containment steps (advice only)"${busy ? " disabled" : ""}>` +
-      `${busy ? "Checking…" : "Containment check"}</button>`
+      `<button type="button" class="ccheck-btn" data-ccheck-run="${escAttr(String(fid))}"` +
+      ` aria-label="Containment check" title="${escAttr(tip)}"${busy ? ' disabled aria-busy="true"' : ""}>` +
+      `${ICON_CCHECK}</button>`
     );
   }
 
@@ -118,7 +124,7 @@
           const caveat = a && a.id === "in_progress" ? ` <span class="ccheck-caveat">${esc(IN_PROGRESS_CAVEAT)}</span>` : "";
           return (
             `<li><span class="ccheck-q">${esc((a && (a.label || a.id)) || "")}</span>: ` +
-            `<span class="ccheck-v">${esc(ccAnswerValue(a))}</span>${ccManualBadge(a && a.checkManually)}${caveat}</li>`
+            `<span class="ccheck-v">${esc(ccAnswerValue(a))}</span>${caveat}</li>`
           );
         })
         .join("") +
@@ -150,7 +156,7 @@
             `<input type="checkbox" class="ccheck-step-cb" data-ccheck-fid="${escAttr(String(fid))}" data-ccheck-step="${escAttr(String(s.id))}"` +
             `${ticked ? " checked" : ""}${inPb || rec.adding ? " disabled" : ""} /> ` +
             `<span class="pb-pri pb-pri-${escAttr(String(s.priority || ""))}">${esc(s.priority)}</span> ` +
-            `<span class="ccheck-step-title">${esc(s.title)}</span>${because}${ccManualBadge(s.checkManually)}` +
+            `<span class="ccheck-step-title">${esc(s.title)}</span>${because}` +
             (inPb ? ` <span class="ccheck-inpb">in Playbook${s.taskShortId ? ` (${esc(s.taskShortId)})` : ""}</span>` : "") +
             `</label></li>`
           );
@@ -315,7 +321,7 @@
     const answers = (Array.isArray(c.answers) ? c.answers : []).filter((a) => a && typeof a === "object");
     const used = basis.length ? answers.filter((a) => basis.includes(String(a.id))) : answers;
     const parts = used.map(
-      (a) => `${esc(a.label || a.id)}: ${esc(ccAnswerValue(a))}${ccManualBadge(a.checkManually)}`,
+      (a) => `${esc(a.label || a.id)}: ${esc(ccAnswerValue(a))}`,
     );
     const caveat = c.inProgressCaveat
       ? ` · <span class="ccheck-caveat">${esc(typeof c.inProgressCaveat === "string" ? c.inProgressCaveat : IN_PROGRESS_CAVEAT)}</span>`
