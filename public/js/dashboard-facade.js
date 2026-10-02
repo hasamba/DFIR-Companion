@@ -253,6 +253,9 @@
     "setFindingControl",
     "findingSimulationChip",
     "setSimulationOverride",
+    // Containment check (#1925) — no initializer. Its chip and panel are guarded at the render call
+    // site; the loader is called bare from the case-load list, so it is stubbed here.
+    "loadContainmentCheck",
     "renderPinned",
     "loadPins",
     "pinBtn",

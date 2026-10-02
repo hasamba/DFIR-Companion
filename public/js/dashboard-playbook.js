@@ -111,6 +111,7 @@
             )
           : [];
         renderPlaybook(d.stats);
+        if (typeof containmentSyncPlaybook === "function") containmentSyncPlaybook(playbookTasks);
       })
       .catch(() => {});
   }
@@ -142,8 +143,12 @@
           ([v, l]) =>
             `<option value="${v}" ${t.status === v ? "selected" : ""}>${l}</option>`,
         ).join("");
-        const src =
-          t.source === "custom"
+        // #1925: a task a containment check created is "custom" to the store, but the analyst
+        // needs to see where it came from and what it was based on.
+        const ccAttr = typeof containmentAttributionHtml === "function" ? containmentAttributionHtml(t) : "";
+        const src = t.containmentCheck
+          ? "from containment check"
+          : t.source === "custom"
             ? "custom"
             : t.source === "finding"
               ? "from finding"
@@ -188,6 +193,7 @@
           `</span>` +
           `</div>` +
           desc +
+          ccAttr +
           `<div class="pb-row2">` +
           `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" data-act="pbPatchAssignee" data-act-on="change" data-id="${escAttr(t.id)}" />` +
           `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" data-act="pbPatchDueDate" data-act-on="change" data-id="${escAttr(t.id)}" title="Due date" />` +

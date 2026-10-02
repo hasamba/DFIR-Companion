@@ -18,6 +18,7 @@ import {
   validateDependsOn,
   PlaybookValidationError,
 } from "./playbook.js";
+import type { ContainmentAttribution } from "./playbookContainment.js";
 
 // Per-case playbook store: a trackable checklist auto-derived from the case's next
 // steps + high-severity findings, plus analyst-added custom tasks. Kept in
@@ -47,6 +48,9 @@ export interface NewPlaybookTask {
   dueDate?: string;
   notes?: string;
   relatedFindingId?: string;
+  // #1925: attribution for a task added from a Jev containment check. Set by the server from its
+  // own check record; the generic POST /cases/:id/playbook route never reads it from a body.
+  containmentCheck?: ContainmentAttribution;
 }
 
 export interface PlaybookTaskPatch {
@@ -65,6 +69,29 @@ function normalizeStatus(s: unknown): PlaybookStatus | undefined {
 }
 function normalizePriority(p: unknown): StepPriority | undefined {
   return STEP_PRIORITIES.includes(p as StepPriority) ? (p as StepPriority) : undefined;
+}
+
+// Build one custom task from an analyst/server input: fresh id, the next shortId and order after
+// `tasks`, trimmed text, empty optional fields omitted.
+function buildCustomTask(tasks: readonly PlaybookTask[], input: NewPlaybookTask, now: string): PlaybookTask {
+  const maxOrder = tasks.reduce((m, t) => Math.max(m, t.order), -1);
+  return {
+    id: `custom:${randomUUID()}`,
+    shortId: nextShortId(tasks),
+    title: String(input.title).trim(),
+    description: String(input.description ?? "").trim(),
+    status: normalizeStatus(input.status) ?? "todo",
+    priority: normalizePriority(input.priority) ?? "medium",
+    source: "custom",
+    ...(input.relatedFindingId ? { relatedFindingId: input.relatedFindingId } : {}),
+    ...(input.assignee?.trim() ? { assignee: input.assignee.trim() } : {}),
+    ...(input.dueDate?.trim() ? { dueDate: input.dueDate.trim() } : {}),
+    ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+    ...(input.containmentCheck ? { containmentCheck: input.containmentCheck } : {}),
+    order: maxOrder + 1,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 export class PlaybookStore {
@@ -91,26 +118,35 @@ export class PlaybookStore {
   add(caseId: string, input: NewPlaybookTask): Promise<PlaybookTask> {
     return playbookLock.runExclusive(caseId, async () => {
       const tasks = await this.load(caseId);
-      const maxOrder = tasks.reduce((m, t) => Math.max(m, t.order), -1);
-      const now = new Date().toISOString();
-      const task: PlaybookTask = {
-        id: `custom:${randomUUID()}`,
-        shortId: nextShortId(tasks),
-        title: String(input.title).trim(),
-        description: String(input.description ?? "").trim(),
-        status: normalizeStatus(input.status) ?? "todo",
-        priority: normalizePriority(input.priority) ?? "medium",
-        source: "custom",
-        ...(input.relatedFindingId ? { relatedFindingId: input.relatedFindingId } : {}),
-        ...(input.assignee?.trim() ? { assignee: input.assignee.trim() } : {}),
-        ...(input.dueDate?.trim() ? { dueDate: input.dueDate.trim() } : {}),
-        ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
-        order: maxOrder + 1,
-        createdAt: now,
-        updatedAt: now,
-      };
+      const task = buildCustomTask(tasks, input, new Date().toISOString());
       await this.save(caseId, [...tasks, task]);
       return task;
+    });
+  }
+
+  // Add several custom tasks in one locked load->save (#1925). An input that `isDuplicate`
+  // matches against any stored task (any status) or against one added earlier in this batch is
+  // skipped. Under the same lock as add(), so two concurrent calls cannot both add one step.
+  addMany(
+    caseId: string,
+    inputs: NewPlaybookTask[],
+    isDuplicate: (existing: PlaybookTask, input: NewPlaybookTask) => boolean,
+  ): Promise<{ added: PlaybookTask[]; skipped: NewPlaybookTask[] }> {
+    return playbookLock.runExclusive(caseId, async () => {
+      const tasks = await this.load(caseId);
+      const now = new Date().toISOString();
+      const added: PlaybookTask[] = [];
+      const skipped: NewPlaybookTask[] = [];
+      for (const input of inputs) {
+        const all = [...tasks, ...added];
+        if (all.some((t) => isDuplicate(t, input))) {
+          skipped.push(input);
+          continue;
+        }
+        added.push(buildCustomTask(all, input, now));
+      }
+      if (added.length) await this.save(caseId, [...tasks, ...added]);
+      return { added, skipped };
     });
   }
 

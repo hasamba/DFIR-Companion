@@ -64,7 +64,8 @@ import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
 import { hypothesesSection } from "./hypothesisReport.js";
-import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
+import type { PlaybookTask } from "../analysis/playbook.js";
+import { playbookSection } from "./playbookSection.js";
 import {
   DEFAULT_COVER_TITLE,
   buildBrandingContext,
@@ -1098,13 +1099,6 @@ function uncertaintyLedger(state: InvestigationState, lines: string[]): void {
   lines.push("");
 }
 
-const PLAYBOOK_STATUS_LABEL: Record<PlaybookStatus, string> = {
-  todo: "To do",
-  in_progress: "In progress",
-  done: "Done",
-  skipped: "Skipped",
-};
-
 // ATT&CK Mitigations (#178) — the actionable layer: the concrete mitigations MITRE ATT&CK
 // recommends for the case's techniques, ranked by how many techniques each addresses (so the
 // highest-leverage actions lead), each with its technique-specific detail. Offline (no AI).
@@ -1359,26 +1353,6 @@ function d3fendSection(state: InvestigationState, lines: string[]): void {
     lines.push("### This incident & context", "");
     band2.forEach(renderAction);
   }
-}
-
-function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
-  lines.push("## Response Playbook", "");
-  const stats = playbookStats(tasks);
-  lines.push(
-    `_Actionable remediation/investigation checklist derived from the recommended next steps and high-severity findings, tracked by the analyst. **${stats.done}/${stats.total} complete (${stats.completionPct}%)**._`,
-    "",
-  );
-  lines.push(
-    "| # | Status | Priority | Task | Assignee | Due | Notes |",
-    "| --- | --- | --- | --- | --- | --- | --- |",
-  );
-  tasks.forEach((t, i) => {
-    const status = PLAYBOOK_STATUS_LABEL[t.status] ?? t.status;
-    lines.push(
-      `| ${i + 1} | ${status} | ${t.priority.toUpperCase()} | ${cellMd(t.title)} | ${cellMd(t.assignee || "—")} | ${cellMd(t.dueDate || "—")} | ${cellMd(t.notes || "—")} |`,
-    );
-  });
-  lines.push("");
 }
 
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {

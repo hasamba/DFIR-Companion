@@ -121,6 +121,7 @@ Your primary conclusions. Each finding has:
 - **Possible rabbit hole** — findings disconnected from the case's main corroborated evidence graph (a planted red herring, an unrelated benign event) are demoted and badged instead of ranking alongside real leads.
 - **Stale — re-synthesis queued** — marking a finding/IOC/event false positive immediately re-evaluates every key question, next step, and hypothesis that depended on it, badging the affected items instead of waiting for the next synthesis run.
 - **Attack outcome** — two dropdowns in the card's action row record what happened on two separate axes: **execution** (observed / not observed / unknown — was the malicious action itself seen?) and **control** (blocked before execution / remediated after execution / remediation failed / allowed by control / no control action seen / unknown — what did a security control do?). Both are analyst-set, kept in a side file that a re-synthesis cannot wipe, and printed in the report with each axis attributed. A blocked attack no longer has to be dismissed as a false positive or left open at High.
+- **Containment check** — when Jev is set up, a button asks Jev eleven narrow questions about the finding's cited evidence (credentials exposed, persistence, data leaving, reach …) and suggests containment steps from a fixed rule. Each answer shows its confidence; unsure ones are marked *check manually*. Tick the steps you accept and press **Add to Playbook**. Nothing runs on its own. See *Containment Check* in the advanced reference.
 - **🚫 Mark False Positive** — exclude from analysis
 
 Findings sit in a dense table (severity / ID / confidence in real grid columns) with inline icon
@@ -798,6 +799,7 @@ A trackable checklist of response tasks:
 - Auto-generated from findings — every Critical/High finding becomes one **task**, not a restatement of the finding
 - Auto-generated from the AI's next steps and open key questions
 - Analyst-added custom tasks
+- Steps you accept from a finding's **Containment check** — labelled *from containment check*, with the Jev answers behind each step. The report's Response Playbook section repeats that attribution.
 
 Each task has: status, assignee, due date, notes.
 

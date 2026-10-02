@@ -419,6 +419,7 @@
       ["pins", () => loadPins(caseId)],
       ["findingWorkflow", () => loadFindingWorkflow(caseId)],
       ["findingOutcome", () => loadFindingOutcome(caseId)],
+      ["containmentCheck", () => loadContainmentCheck(caseId)], // #1925 per-finding containment check (Jev)
       ["notebook", () => loadNotebook(caseId)],
       ["nbAiToggle", () => loadNbAiToggle(caseId)],
       ["hypotheses", () => loadHypotheses(caseId)],

@@ -66,6 +66,15 @@ describe("AI rate limiter ↔ the routes that spend AI budget", () => {
     expect(routes).toContain("/synthesize");
     // Gated on its own settings rather than the synthesis provider (#1577).
     expect(routes).toContain("/jev/review");
+    // The per-finding containment check (#1925) calls askJev lexically in its own handler.
+    expect(routes).toContain("/findings/:findingId/containment-check");
+  });
+
+  it("meters the containment check but not its add-to-Playbook route (#1925)", () => {
+    const metered = (rel: string) => AI_LIMIT_PATTERNS.some((re) => re.test(rel));
+    expect(metered("/findings/f1/containment-check")).toBe(true);
+    expect(metered("/findings/f1/containment-check/playbook")).toBe(false);
+    expect(aiGatedRoutes()).not.toContain("/findings/:findingId/containment-check/playbook");
   });
 
   it("imports a limiter coverage list that is actually populated", () => {
