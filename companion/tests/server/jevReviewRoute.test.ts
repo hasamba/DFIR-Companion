@@ -33,6 +33,7 @@ const JEV_ENV = [
   "DFIR_JEV_PROVIDER",
   "DFIR_JEV_BASE_URL",
   "DFIR_JEV_MODEL",
+  "DFIR_JEV_GRADING",
 ] as const;
 
 async function harness() {
@@ -351,4 +352,60 @@ describe("what the analyst is told about coverage", () => {
     expect(String(res.body.error)).toContain("disk full");
     expect(res.body.rows).toBeUndefined();
   });
+
+  /**
+   * A stand-in decisions endpoint that answers every question it is asked, so the route's grading
+   * style can be checked end to end without the real service.
+   */
+  async function answeringServer() {
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const { questions } = JSON.parse(body) as { questions: Record<string, { type: string }> };
+        const answers: Record<string, unknown> = {};
+        for (const [id, q] of Object.entries(questions))
+          answers[id] =
+            q.type === "noul"
+              ? { type: "noul", noul: id.endsWith("_tool") ? 0.05 : 0.9 }
+              : {
+                  type: "score",
+                  score: id.endsWith("_imp") ? 1 : 2.2,
+                  legend: {},
+                  probabilities: {},
+                  confidence: 0.8,
+                };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({ model: "jev-test", answers, usage: { input_tokens: 10, output_tokens: 1 } }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/decisions` };
+  }
+
+  it.each([
+    ["single", undefined, false],
+    ["narrow", "narrow", true],
+  ])(
+    "grades with the %s style the setting names, and says which in the reply",
+    async (style, value, hasSignals) => {
+      const { server, url } = await answeringServer();
+      try {
+        process.env.DFIR_JEV_ENABLED = "1";
+        process.env.DFIR_JEV_KEY = "jev-test-credential-NOTAREALKEY";
+        process.env.DFIR_JEV_BASE_URL = url;
+        if (value) process.env.DFIR_JEV_GRADING = value;
+        const { app } = await harness();
+        const res = await request(app).post("/cases/c1/jev/review").send({ limit: 2 });
+        expect(res.status).toBe(200);
+        expect(res.body.shape).toBe(style === "narrow" ? "decomposed" : "single");
+        expect(res.body.rows.length).toBeGreaterThan(0);
+        for (const row of res.body.rows) expect(Boolean(row.signals)).toBe(hasSignals);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 });

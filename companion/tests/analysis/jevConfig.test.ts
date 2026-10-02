@@ -175,3 +175,21 @@ describe("resolveJevSettings — numeric defaults and clamps", () => {
     expect(resolveJevSettings().settings).toBeNull();
   });
 });
+
+describe("resolveJevSettings — grading style", () => {
+  const on = { DFIR_JEV_ENABLED: "1", DFIR_JEV_KEY: "k-test" };
+
+  it("defaults to the single-question grade", () => {
+    expect(settingsOf(on).shape).toBe("single");
+    expect(settingsOf({ ...on, DFIR_JEV_GRADING: "  " }).shape).toBe("single");
+  });
+
+  it("reads single and narrow, in any case", () => {
+    expect(settingsOf({ ...on, DFIR_JEV_GRADING: "single" }).shape).toBe("single");
+    expect(settingsOf({ ...on, DFIR_JEV_GRADING: "Narrow" }).shape).toBe("decomposed");
+  });
+
+  it("refuses an unknown style by name, rather than guessing which grade the analyst meant", () => {
+    expect(reasonOf({ ...on, DFIR_JEV_GRADING: "fast" })).toMatch(/DFIR_JEV_GRADING="fast".*single.*narrow/);
+  });
+});

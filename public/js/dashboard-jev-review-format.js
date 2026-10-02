@@ -90,7 +90,9 @@
     // read names what it never reached below. It used to claim "all N that matched" even when the cap
     // had held rows back (Codex review of #1700). The build-window clause is #1700: the review sets
     // the host's own provisioning rows aside before it grades anything.
-    let line = `Graded ${num(graded)} archive row(s).`;
+    // DFIR_JEV_GRADING: say when the experimental style graded the rows, so a grade is never read
+    // without knowing which method produced it. An older server sends no shape — nothing is said.
+    let line = `Graded ${num(graded)} archive row(s)${result.shape === "decomposed" ? " with narrow questions (experimental)" : ""}.`;
     const skipped = [];
     if (analyzed > 0)
       skipped.push(`${num(analyzed)} were skipped because the case has already analysed them — the AI can see those`);

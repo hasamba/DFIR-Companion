@@ -5,7 +5,7 @@ import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
-import { JEV_DEFAULT_SHAPE, gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { buildAnalystContext } from "../analysis/ai/jev/jevDecomposed.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
@@ -195,7 +195,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const anon = await buildImportAnonContext({ log: getServerLogger(), opts: options }, caseId, state);
     const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
 
-    const shape = JEV_DEFAULT_SHAPE;
+    // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
+    const shape = settings.shape;
     try {
       // The analyst's own authorized/known-good records (#1924), masked like the rows. Read only when
       // the decomposed shape will ask about them, and inside the try: a damaged marker file must not
@@ -257,7 +258,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
           `); ${promoted} above Info — nothing was promoted`,
       });
 
-      return res.json({ ...result, ...coverage });
+      return res.json({ ...result, ...coverage, shape });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       getServerLogger().warn(`[jev] ${caseId}: review failed — ${detail}`, { caseId });

@@ -330,6 +330,23 @@ large case that costs more and takes longer, so the panel estimates both before 
 | `DFIR_JEV_KEY` | blank | Blank on OpenRouter inherits your existing OpenRouter key. Required on `typesafe`. |
 | `DFIR_JEV_MAX_ROWS` | 2000 | Rows one ordinary press reads. A default, not a ceiling — the panel can read every row. |
 | `DFIR_JEV_BATCH_SIZE` | 40 | Rows per request. |
+| `DFIR_JEV_GRADING` | `single` | How a row is graded. See *Grading style* below. |
+
+### Grading style
+
+Settings → AI → *Grading style* picks one of two ways to grade a row. Both read the same rows.
+
+- **One question** (`single`, the default). Jev grades each row Info to Critical in one step. On 10
+  lab cases it caught every attack row, but half or more of its flags were false alarms. The 40%
+  confidence filter removes many of them.
+- **Narrow questions** (`narrow`, experimental). Jev answers three small questions per row: is this
+  attacker activity, how strong is the evidence, and how much damage does it do. A fixed rule turns
+  the answers into the grade, and the panel shows those answers under each row. It raised fewer
+  false alarms, but it missed up to 1 in 4 attack rows and costs about 40% more.
+
+The panel's caption says when a review used the narrow questions. A promoted row's tag ends in
+`· d1` when the narrow questions graded it, so the record always shows which method set its
+severity. Use the default unless you are comparing the two on a case you know.
 
 !!! warning "The model id is versioned"
     On OpenRouter the id is `typesafe/jev-1.13`. `typesafe/jev-latest` does not exist there and

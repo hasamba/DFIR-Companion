@@ -1828,6 +1828,16 @@
           <div class="sfield"><label for="env-DFIR_JEV_MODEL">Model<span class="sfield-hint">DFIR_JEV_MODEL &mdash; blank uses <code>typesafe/jev-1.13</code> on openrouter, <code>jev-latest</code> on typesafe</span></label><input id="env-DFIR_JEV_MODEL" placeholder="typesafe/jev-1.13" /></div>
         </div>
         <div class="sfield-row">
+          <div class="sfield">
+            <label for="env-DFIR_JEV_GRADING">Grading style<span class="sfield-hint">DFIR_JEV_GRADING &mdash; <b>One question</b> (default): Jev grades each row Info&ndash;Critical in one step. In our tests on 10 lab cases it caught every attack row, but half or more of its flags were false alarms (the 40% confidence filter removes many of them). <b>Narrow questions</b> (experimental): Jev answers three small questions per row &mdash; is it attacker activity, how strong is the evidence, how much damage &mdash; and a fixed rule sets the grade. It raises fewer false alarms and shows the reason for each grade, but in our tests it could miss up to 1 in 4 attack rows, and it costs about 40% more</span></label>
+            <select id="env-DFIR_JEV_GRADING">
+              <option value="">&mdash; default (one question, single) &mdash;</option>
+              <option value="single">One question (single)</option>
+              <option value="narrow">Narrow questions (experimental)</option>
+            </select>
+          </div>
+        </div>
+        <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_JEV_KEY">Review API key<span class="sfield-hint" id="jevKeyHint">DFIR_JEV_KEY &mdash; checking whether a key can be inherited&hellip;</span></label><input id="env-DFIR_JEV_KEY" type="password" placeholder="" autocomplete="new-password" /></div>
           <div class="sfield"><label for="env-DFIR_JEV_BASE_URL">Review base URL<span class="sfield-hint">DFIR_JEV_BASE_URL &mdash; leave blank for the provider default</span></label><input id="env-DFIR_JEV_BASE_URL" /></div>
         </div>
