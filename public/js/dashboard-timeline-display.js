@@ -199,11 +199,13 @@
     const manual = o.manualKept > 0 ? o.manualKept : 0;
     let base;
     if (o.filtering) {
-      base = `${o.totalFiltered} of ${totalText}${partial ? " loaded" : ""} events`;
+      base = partial
+        ? `${o.totalFiltered} of the first ${o.total} loaded events`
+        : `${o.totalFiltered} of ${totalText} events`;
       if (hidden > 0) base += `, ${hidden} hidden by filters`;
       if (promoted > 0) base += `, ${promoted} promoted kept`;
       if (manual > 0) base += `, ${manual} manual kept`;
-      if (partial) base += `; ${partial.total} in case`;
+      if (partial) base += `; case holds ${partial.total}`;
     } else if (partial) {
       base = `${partial.total} events, first ${partial.loaded} loaded`;
     } else {

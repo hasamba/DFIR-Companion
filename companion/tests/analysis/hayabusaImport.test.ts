@@ -519,3 +519,79 @@ describe("parseHayabusaTimeline — per-host aggregation (#1905)", () => {
     expect(r.events).toHaveLength(2);
   });
 });
+
+// #1922: Hayabusa renders a Sysmon EID 3 with the peer and the image AFTER the sixth detail field,
+// and the key masked every digit, so a C2 connection aggregated into another image's group.
+describe("parseHayabusaTimeline — Net Conn aggregation keeps each peer and each image apart (#1922)", () => {
+  const PROC = "C:\\Users\\Public\\updater.exe";
+  let seq = 0;
+  function netConn(
+    tgtIp: string,
+    tgtPort: number,
+    proto: string,
+    proc = PROC,
+    srcPort = 50000 + seq,
+  ): object {
+    seq++;
+    return {
+      Timestamp: `2026-10-01 10:00:${String(seq % 60).padStart(2, "0")}.000 +00:00`,
+      Computer: "WKS-ALPHA",
+      Channel: "Sysmon",
+      EventID: 3,
+      Level: "medium",
+      RuleTitle: "Net Conn (Sysmon Alert)",
+      RecordID: 7000 + seq,
+      Details: {
+        Initiated: true,
+        Proto: proto,
+        SrcIP: "192.0.2.10",
+        SrcPort: srcPort,
+        SrcHost: "WKS-ALPHA",
+        TgtIP: tgtIp,
+        TgtPort: tgtPort,
+        TgtHost: "-",
+        User: "EXAMPLE\\analyst",
+        Proc: proc,
+        PID: 1000 + seq,
+        PGUID: `0f0e0d0c-0000-1111-2222-${String(seq).padStart(12, "0")}`,
+      },
+    };
+  }
+  const parse = (recs: object[]) =>
+    parseHayabusaTimeline(recs.map((r) => JSON.stringify(r)).join("\n"), { aggregate: true }).events;
+
+  it("keeps a TCP connection apart from the image's mDNS multicasts, with its port", () => {
+    const evs = parse([
+      netConn("224.0.0.251", 5353, "udp"),
+      netConn("192.0.2.10", 5353, "udp"),
+      netConn("ff02::fb", 5353, "udp"),
+      netConn("198.51.100.7", 8888, "tcp"),
+    ]);
+    const tcp = evs.filter((e) => e.dstIp === "198.51.100.7");
+    expect(tcp).toHaveLength(1);
+    expect(tcp[0].port).toBe(8888);
+    expect(tcp[0].count ?? 1).toBe(1);
+  });
+
+  it("keeps two servers contacted by one image apart", () => {
+    const evs = parse([netConn("198.51.100.7", 8888, "tcp"), netConn("203.0.113.9", 443, "tcp")]);
+    expect(evs).toHaveLength(2);
+  });
+
+  it("keeps the same connection from two images apart", () => {
+    const evs = parse([
+      netConn("198.51.100.7", 443, "tcp", "C:\\Program Files\\Sync\\sync.exe"),
+      netConn("198.51.100.7", 443, "tcp", PROC),
+    ]);
+    expect(evs).toHaveLength(2);
+  });
+
+  it("still aggregates a repeat of one connection whose source port, pid and guid rotate", () => {
+    const evs = parse([
+      netConn("198.51.100.7", 8888, "tcp", PROC, 51001),
+      netConn("198.51.100.7", 8888, "tcp", PROC, 52002),
+    ]);
+    expect(evs).toHaveLength(1);
+    expect(evs[0].count).toBe(2);
+  });
+});

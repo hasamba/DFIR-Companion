@@ -208,6 +208,8 @@ const PATH_KEYS = ["TgtFile", "TargetFilename", "Path", "File", "FilePath", "Ima
 // whole command line to find the MSI name and the whole destination to match the server (#1471).
 const CMDLINE_KEYS = ["Cmdline", "CommandLine", "CmdLine"];
 const DST_IP_KEYS = ["TgtIP", "DstIP", "DestinationIp"];
+const DST_PORT_KEYS = ["TgtPort", "DstPort", "DestinationPort"];
+const PROTO_KEYS = ["Proto", "Protocol"];
 
 // Map one Hayabusa record (already field-merged: top-level fields + the parsed details map)
 // to a forensic event, pulling IOCs into the sink. Verdict-first; null only if there is no
@@ -271,6 +273,7 @@ function mapRecord(
   if (processName) addIoc(iocSink, "process", processName);
   const commandLine = firstStr(details, CMDLINE_KEYS);
   const dstIp = cleanIp(firstStr(details, DST_IP_KEYS)); // loopback and noise addresses are dropped
+  const port = Number.parseInt(firstStr(details, DST_PORT_KEYS), 10);
 
   // A compact subject from the first few rendered detail fields.
   const subject = pairs
@@ -293,12 +296,22 @@ function mapRecord(
   const recordIdentity = fullMessage
     ? undefined
     : evtxRecordIdentity(channel, firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]));
+  // A connection's image and peer (#1922). Hayabusa renders a Sysmon EID 3 with TgtPort 7th and Proc
+  // 10th — past the 6-field subject — and the fold masked every digit of TgtIP, so a C2 connection
+  // aggregated into another image's group. The peer is raw (loopback peers still separate); the image
+  // is folded (a versioned directory still groups); source port, PID and PGUID stay out, so a repeat
+  // of one connection still aggregates. Both sit before the unbounded subject.
+  const rawDst = firstStr(details, DST_IP_KEYS).trim().toLowerCase();
+  const peer = rawDst
+    ? `|dst=${rawDst}:${firstStr(details, DST_PORT_KEYS).trim()}/${firstStr(details, PROTO_KEYS).trim().toLowerCase()}`
+    : "";
+  const proc = procRaw ? `|proc=${foldVolatileIds(procRaw.toLowerCase())}` : "";
   // Volatile GUIDs and digit runs are masked so rotating ids aggregate — but never in the HOST.
   // Masking the whole key made WS01, WS02 and WS03 one key, and three hosts came back as one event
   // on the first (#1905). The host sits before the unbounded subject, and the bound keeps a digest
   // of the full key, so a long subject can never push the host or a later difference out of it.
   const aggKey = boundedAggKey(
-    `${foldVolatileIds(`hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}`)}|${host.toLowerCase()}|${foldVolatileIds(subject)}`,
+    `${foldVolatileIds(`hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}`)}|${host.toLowerCase()}${proc}${peer}|${foldVolatileIds(subject)}`,
   );
 
   const mapped: MappedEvent = {
@@ -321,6 +334,7 @@ function mapRecord(
     ...(parentName ? { parentName } : {}),
     ...(commandLine ? { commandLine } : {}),
     ...(dstIp ? { dstIp } : {}),
+    ...(Number.isFinite(port) && port > 0 ? { port } : {}),
     ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
   };
   // A sample-corpus host (veloDetectionNoise.ts) is demoted to Info — but only when the row has NO

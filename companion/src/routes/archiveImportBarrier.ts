@@ -9,7 +9,23 @@ import {
 
 /** How long an archive waits for in-flight ingest before it answers 409. */
 export const ARCHIVE_INGEST_WAIT_MS = 30_000;
-const ARCHIVE_INGEST_POLL_MS = 25;
+/** The first re-check interval of the wait; each later one doubles, up to the cap. */
+const ARCHIVE_INGEST_FIRST_POLL_MS = 25;
+const ARCHIVE_INGEST_MAX_POLL_MS = 250;
+
+/** The wait option when it is a finite, non-negative number (0 means "never wait"), else the default. */
+export function archiveWaitMs(option: unknown): number {
+  return typeof option === "number" && Number.isFinite(option) && option >= 0
+    ? option
+    : ARCHIVE_INGEST_WAIT_MS;
+}
+
+/** The next re-check interval: 25, 50, 100, 200, then 250 ms — never past the deadline, at least 1 ms. */
+export function nextArchivePollMs(previousMs: number, remainingMs: number): number {
+  const grown =
+    previousMs > 0 ? Math.min(previousMs * 2, ARCHIVE_INGEST_MAX_POLL_MS) : ARCHIVE_INGEST_FIRST_POLL_MS;
+  return Math.max(1, Math.min(grown, remainingMs));
+}
 
 /**
  * An archive of a case and an import into it never overlap (#1903, #1920).
@@ -33,7 +49,8 @@ const ARCHIVE_INGEST_POLL_MS = 25;
  * archive waits: an ingest already running may start nested ingests of its own (a drop sweep, a tool
  * run, an MCP job each call the streamed ingest), and refusing those would fail work it already began.
  * The wait is bounded: an archive that would wait longer than the limit (a multi-minute import, a
- * long hunt collect, a steady stream of pushes) answers 409 instead of hanging.
+ * long hunt collect, a steady stream of pushes) answers 409 instead of hanging. The wait re-checks with
+ * a short, growing interval (25 ms up to 250 ms).
  *
  * Analysts hit the wait in practice: an import's events appear in the dashboard while its settle
  * tail still holds the section, so "import, then export at once" used to get a 409 (#1921 CI).
@@ -57,13 +74,14 @@ export function withArchiveBarrier(
   return async (req, res) => {
     if (!zips(req)) return handler(req, res);
     const caseId = String(req.params.id);
-    const waitMs = ctx.options.archiveIngestWaitMs ?? ARCHIVE_INGEST_WAIT_MS;
-    const deadline = Date.now() + waitMs;
+    const deadline = Date.now() + archiveWaitMs(ctx.options.archiveIngestWaitMs);
     let endArchive: (() => void) | null = null;
+    let delay = 0;
     // beginArchive is null while a reservation is open or another archive holds the case.
     while (ingestInFlight(ctx, caseId) || !(endArchive = beginArchive(ctx.store.casesRoot, caseId))) {
       if (Date.now() >= deadline) return res.status(409).json({ error: archiveBusyMessage(caseId) });
-      await new Promise((r) => setTimeout(r, Math.min(ARCHIVE_INGEST_POLL_MS, waitMs)));
+      delay = nextArchivePollMs(delay, deadline - Date.now());
+      await new Promise((r) => setTimeout(r, delay));
     }
     const end = endArchive;
     try {
@@ -94,6 +112,7 @@ export function deleteArchivesFirst(req: Request): boolean {
  * Reserve the case for a whole write request — staging, run, ingest, report — and refuse it with a 409
  * while an archive holds the case (#1920). Mounted ahead of the MCP and external-tool routes, whose
  * requests stage files inside the case before anything reaches ingestStreamed. Reads pass through.
+ * Which reservation shape a new route needs: see analysis/caseIngestAdmission.ts.
  */
 export function reserveCaseForWrites(casesRoot: string) {
   return function caseIngestReservation(req: Request, res: Response, next: NextFunction): void {
