@@ -337,6 +337,18 @@ describe("networkPeerFacts", () => {
     });
   });
 
+  it("spells one peer the same whatever form a parser wrote", () => {
+    const plain = networkPeerFacts({
+      canonical: { network: { destination: { address: "198.51.100.7", port: 8888 }, protocol: "tcp" } },
+    });
+    const mapped = networkPeerFacts({
+      canonical: { network: { destination: { address: "::FFFF:198.51.100.7", port: 8888 }, protocol: "6" } },
+    });
+    expect(mapped).toEqual(plain);
+    expect(networkPeerFacts({ canonical: { network: { protocol: "17" } } }).proto).toBe("udp");
+    expect(networkPeerFacts({ dstIp: "::ffff:7f00:1" }).dstAddr).toBe("::ffff:7f00:1");
+  });
+
   it("returns no fact for a row that recorded no peer", () => {
     expect(networkPeerFacts({})).toEqual({ dstAddr: undefined, dstPort: undefined, proto: undefined });
     expect(networkPeerFacts({ port: Number.NaN, dstIp: "  " })).toEqual({

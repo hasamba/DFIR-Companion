@@ -59,12 +59,25 @@ export interface NetworkPeerSource {
   port?: number;
 }
 
+const IANA_PROTOCOL_NAMES: Readonly<Record<string, string>> = {
+  "1": "icmp",
+  "6": "tcp",
+  "17": "udp",
+  "58": "ipv6-icmp",
+};
+
 /** The destination of a network connection as three union facts; each is undefined when absent (#1922). */
 export function networkPeerFacts(e: NetworkPeerSource): Pick<UnionFacts, "dstAddr" | "dstPort" | "proto"> {
   const net = e.canonical?.network;
-  const addr = (net?.destination?.address ?? e.dstIp ?? "").trim().toLowerCase();
+  // An IPv4-mapped IPv6 address and an IANA protocol number name the same peer as their plain forms,
+  // so two parsers' readings of one record never split on spelling.
+  const addr = (net?.destination?.address ?? e.dstIp ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, "");
   const port = net?.destination?.port ?? e.port;
-  const proto = (net?.protocol ?? "").trim().toLowerCase();
+  const rawProto = (net?.protocol ?? "").trim().toLowerCase();
+  const proto = IANA_PROTOCOL_NAMES[rawProto] ?? rawProto;
   return {
     dstAddr: addr || undefined,
     dstPort: typeof port === "number" && Number.isFinite(port) ? String(port) : undefined,
