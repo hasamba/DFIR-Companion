@@ -3,6 +3,9 @@ import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
+import { AnonControlStore } from "../analysis/anonControl.js";
+import { CustomEntitiesStore } from "../analysis/anonEntities.js";
+import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
@@ -68,6 +71,16 @@ const REVIEW_RUNNING = "a missed-evidence review of this case is already running
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
   const grades = options.jevGradeStore ?? new JevGradeStore(store);
+  // The anonymizer's own stores, over the case files (#1934). AppOptions carries none of them —
+  // only the pipeline's options do — so `opts: options` alone built no anonymizer and every review
+  // sent the rows in clear. Spread LAST so they always win: a test that injects its own store must
+  // not hide this again. Stateless file readers; the pipeline builds the same three over this store.
+  const withAnon = {
+    ...options,
+    anonStore: new AnonControlStore(store),
+    customEntitiesStore: new CustomEntitiesStore(store),
+    discoveredStore: new DiscoveredEntitiesStore(store),
+  };
 
   // Not case-scoped: the settings screen asks this before any case is open, so it can say whether
   // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
@@ -186,13 +199,14 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       });
     }
 
-    // The same (known entities, anonymizer) pair every chat model sits behind. Null means the
-    // analyst turned masking off for this case; the identity function is then the honest mask.
+    // The same (known entities, anonymizer) pair every chat model sits behind. The stores are
+    // always wired (withAnon above), so null means only that the analyst turned masking off for
+    // this case; the identity function is then the honest mask.
     // #1840: the review masks every batch with this one snapshot, so it records the revision the
     // snapshot was built at (read BEFORE the lists load) and holds any batch that would leave after
     // a Hide or a settings change. Batches already sent cannot be recalled; the rest are not sent.
     const maskedAt = anonRevision(caseId);
-    const anon = await buildImportAnonContext({ log: getServerLogger(), opts: options }, caseId, state);
+    const anon = await buildImportAnonContext({ log: getServerLogger(), opts: withAnon }, caseId, state);
     const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
 
     // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
