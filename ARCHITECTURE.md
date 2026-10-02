@@ -248,6 +248,11 @@ interesting events live. Each promotion carries a note saying which action cause
 told apart from an import six months later. This is the seam the second look uses too —
 deterministic search, promote with provenance, then re-synthesize.
 
+The per-finding **containment check** (#1925, `routes/containmentCheck.ts`) is not a fourth path
+and not an exception. It sends Jev one finding and the events it cites, resolved against the
+forensic timeline only (`analysis/ai/jev/containmentState.ts`); a cited id that is not there is
+counted as missing, never fetched from the raw record. `forensicBoundary.test.ts` pins both.
+
 ### The second look became a button (#1554)
 
 It used to run at the end of every synthesis, and it was the one automatic path that WROTE into the

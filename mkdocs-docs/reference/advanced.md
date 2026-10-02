@@ -351,3 +351,40 @@ severity. Use the default unless you are comparing the two on a case you know.
 !!! warning "The model id is versioned"
     On OpenRouter the id is `typesafe/jev-1.13`. `typesafe/jev-latest` does not exist there and
     returns a 400 — the `latest` alias only works against TypeSafe's own endpoint.
+
+## Containment Check
+
+A per-finding check that states what the evidence says about the incident's **state** before you
+pick containment steps. "Generate remediation plan" writes a whole plan in one pass and never says
+whether it believes credentials were stolen, whether the activity survives a reboot, or whether data
+is leaving. This check asks.
+
+**Run it:** the **Containment check** button on a finding card. It shows only when Jev is set up
+(Settings → AI → Missed evidence review). One press is one Jev call.
+
+**What Jev reads:** the finding and the forensic-timeline events it cites — never the super-timeline.
+Everything is masked like every other AI call, and the attacker's text is marked as data, not
+instructions. A very large finding is cut at a size limit; the panel says how many cited events were
+sent and how many were left out.
+
+**The questions.** Nine yes/no questions — credentials reached someone unauthorized, an attacker
+session or token was in use, malicious mail was delivered, persistence, a malicious process or task
+ran, traffic went to an attacker destination, the attacker changed configuration that persists,
+the activity was still in progress, it reached beyond the flagged host or account — and two choices:
+the reach (one entity / a workgroup / the whole organization) and the attack type.
+
+**Read the answers with their numbers.** A yes/no answer of 60% or more counts as yes, under 15% as
+no, and anything between is marked **check manually**. A choice under 60% confidence is marked too.
+"In progress" means *still in progress at the end of the collected evidence* — it is not a live status.
+
+**Suggested steps** come from a fixed, tested rule, not from the model: block the attacker
+destination (org-wide or this host), disable the account, revoke sessions, reset exposed credentials,
+block the sender and purge the mail, isolate the host (persistence) or kill the process, remove
+forwarding rules, delegations or consents — or escalate for manual review when nothing applies. Each
+step lists the answers that led to it. A step that rests on an unsure answer is marked
+**check manually**. When the activity is still in progress, the steps are Critical.
+
+**Nothing runs.** The check is advice. Tick the steps you accept and press **Add to Playbook**; each
+becomes a Playbook task linked to the finding, recording that the containment check suggested it and
+the answers behind it. A step already in the Playbook is marked **in Playbook** and cannot be added
+twice. The result is not saved until you add a step: after a server restart, run the check again.

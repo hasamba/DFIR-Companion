@@ -14,6 +14,7 @@ import {
   type FindingTask,
   type StoredFindingTask,
 } from "./findingTasks.js";
+import { containmentAttributionSchema } from "./playbookContainment.js";
 
 // Playbook tracking (issue #36, Phase 1). Turns the AI's "next steps" and the
 // high-severity findings into a trackable checklist of remediation/investigation
@@ -50,6 +51,9 @@ export const playbookTaskSchema = z.object({
   dueDate: z.string().optional(), // free-form date, e.g. "2026-06-15"
   notes: z.string().optional(),
   dependsOn: z.array(z.string()).optional(), // ids of tasks that must be "done" first (issue #81)
+  // #1925: set on a task added from a Jev containment check. A damaged entry is dropped on load
+  // instead of failing the task, so one bad field can never wipe the list via playbookSchema.catch.
+  containmentCheck: containmentAttributionSchema.optional().catch(undefined),
   order: z.number().catch(0),
   createdAt: z.string(),
   updatedAt: z.string(),

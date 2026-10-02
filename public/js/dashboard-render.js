@@ -454,7 +454,8 @@
                 : "") +
               `</span>` +
               `<span class="finding-conf-cell">${confMeter}</span>` +
-              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${findingOutcomeControls(f.id, f)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${sigmaCompileChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
+              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${findingOutcomeControls(f.id, f)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${sigmaCompileChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}${typeof containmentCheckChip === "function" ? " " + containmentCheckChip(f.id) : ""}</span>` +
+              (typeof containmentCheckPanel === "function" ? containmentCheckPanel(f.id) : "") +
               (hasEvidence
                 ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>`
                 : "") +

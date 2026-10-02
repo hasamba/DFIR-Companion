@@ -1,19 +1,18 @@
 {
-  "analysis/anonymize.ts": 848,
   "analysis/downloadExecution.ts": 815,
   "analysis/evidenceGraph.ts": 855,
   "analysis/memoryImport.ts": 1633,
   "analysis/seedDemoCase.ts": 2700,
-  "analysis/siemImport.ts": 1446,
-  "analysis/velociraptorImport.ts": 1805,
+  "analysis/siemImport.ts": 1445,
+  "analysis/velociraptorImport.ts": 1794,
   "integrations/velociraptor/velociraptorApi.ts": 1244,
   "public/dashboard.html#inline-js": 1921,
-  "reports/markdown.ts": 1495,
-  "reports/reportWriter.ts": 833,
-  "routes/caseLifecycle.ts": 829,
+  "reports/markdown.ts": 1469,
+  "reports/reportWriter.ts": 827,
+  "routes/caseLifecycle.ts": 826,
   "routes/findings.ts": 815,
-  "routes/import.ts": 2847,
-  "routes/mcp.ts": 905,
-  "routes/threatIntel.ts": 863,
-  "routes/velociraptor.ts": 1028
+  "routes/import.ts": 2783,
+  "routes/mcp.ts": 896,
+  "routes/threatIntel.ts": 857,
+  "routes/velociraptor.ts": 1027
 }
