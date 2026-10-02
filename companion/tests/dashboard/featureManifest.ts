@@ -169,9 +169,10 @@ export const FEATURES: Feature[] = [
       "jevUnreadRows",
       "jevFullReadPlan",
       "jevCaptionHtml",
+      "jevSignalsText",
       "jevFullReadConfirmHtml",
     ],
-    private: ["GRADES"],
+    private: ["GRADES", "STRENGTH_WORDS", "STRENGTH_CUTS", "IMPACT_WORDS"],
   },
   {
     // #1540. The busy flag is listed as private on purpose: it is the flag whose wedging this

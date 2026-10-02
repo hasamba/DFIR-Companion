@@ -90,4 +90,58 @@ describe("the review grade record", () => {
     expect(record.has("r1")).toBe(true);
     expect(record.has("bad")).toBe(false);
   });
+
+  it("keeps a decomposed grade's signals, so the grade can be reproduced under its rule (#1924)", async () => {
+    const store = await cases();
+    const signals = {
+      shape: "decomposed" as const,
+      rule: "d1",
+      malicious: 0.9,
+      explained: null,
+      strength: 2.2,
+      strengthConfidence: 0.7,
+      impact: 1.1,
+      decision: "graded" as const,
+    };
+    await new JevGradeStore(store).record(
+      "c1",
+      "m",
+      [{ ...graded("r1", "High"), signals }],
+      "2026-10-02T00:00:00.000Z",
+    );
+    expect((await new JevGradeStore(store).load("c1")).get("r1")?.signals).toEqual(signals);
+  });
+
+  it("still loads an entry written before signals existed", async () => {
+    const store = await cases();
+    await new JevGradeStore(store).record("c1", "m", [graded("r1", "Low")]);
+    const entry = (await new JevGradeStore(store).load("c1")).get("r1");
+    expect(entry?.grade).toBe("Low");
+    expect(entry?.signals).toBeUndefined();
+  });
+
+  it("drops an entry whose signals are out of range rather than trusting them", async () => {
+    const store = await cases();
+    const grades = new JevGradeStore(store);
+    await grades.record("c1", "m", [graded("ok", "Low")]);
+    const file = join(store.stateDir("c1"), "jev-grades.json");
+    const doc = JSON.parse(await readFile(file, "utf8"));
+    doc.rows.bad = {
+      ...doc.rows.ok,
+      signals: {
+        shape: "decomposed",
+        rule: "d1",
+        malicious: 4,
+        explained: null,
+        strength: 2,
+        strengthConfidence: 0.5,
+        impact: 1,
+        decision: "graded",
+      },
+    };
+    await writeFile(file, JSON.stringify(doc));
+    const loaded = await grades.load("c1");
+    expect(loaded.has("ok")).toBe(true);
+    expect(loaded.has("bad")).toBe(false);
+  });
 });

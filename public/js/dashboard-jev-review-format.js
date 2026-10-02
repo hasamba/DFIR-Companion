@@ -190,6 +190,35 @@
     </div>`;
   }
 
+  // THE REASON LINE (#1924). A decomposed grade was decided by a rule from a few answers; this says
+  // which, in words. Evidence words use the server rule's own cut points (jevDecomposed.ts: 1, 1.5,
+  // 2.5), so the word never disagrees with the grade; impact words round to the nearest level, whose
+  // top edge is the rule's 2.5. Plain text — the caller escapes it. Anything malformed reads as no reason.
+  const STRENGTH_CUTS = [1, 1.5, 2.5];
+  const STRENGTH_WORDS = ["speculative", "circumstantial", "strong", "confirmed"];
+  const IMPACT_WORDS = [
+    "none or limited",
+    "host-level",
+    "credentials, privilege or persistence",
+    "domain-wide or destructive",
+  ];
+  const fin = (v) => typeof v === "number" && isFinite(v);
+  const levelWord = (words, v) => words[Math.min(words.length - 1, Math.max(0, Math.round(v)))];
+
+  function signalsText(row) {
+    const s = row && row.signals;
+    if (!s || !fin(s.malicious) || !fin(s.strength) || !fin(s.impact)) return "";
+    const parts = [
+      `attacker activity ${pct(s.malicious)}`,
+      `evidence: ${STRENGTH_WORDS[STRENGTH_CUTS.filter((c) => s.strength >= c).length]}`,
+      `impact: ${levelWord(IMPACT_WORDS, s.impact)}`,
+    ];
+    if (s.decision === "conflict") parts.push("conflicts with an analyst record — check it");
+    else if (s.decision === "explained" && fin(s.explained))
+      parts.push(`an analyst record explains it (${pct(s.explained)})`);
+    return parts.join(" · ");
+  }
+
   // Accessor, not the array: published names must be callable, and a shared array is one another
   // module could push to.
   window.jevGrades = () => GRADES.slice();
@@ -202,5 +231,6 @@
   window.jevUnreadRows = unreadRows;
   window.jevFullReadPlan = fullReadPlan;
   window.jevCaptionHtml = captionHtml;
+  window.jevSignalsText = signalsText;
   window.jevFullReadConfirmHtml = confirmHtml;
 })();

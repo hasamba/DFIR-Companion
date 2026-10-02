@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Missed-evidence review confidence floor** — the panel's confidence filter starts at 40% instead of 0 (part of #1924)
+
 ### Fixed
 - **Network connections stay separate** — two connections from one program to different destinations no longer merge into one row, so a C2 connection is no longer hidden; re-import an affected case to recover lost rows (closes #1922)
 - **Clearer filtered partial-load label** — the Forensic Timeline label now says "of the first N loaded events … case holds M" when a filter is on (closes #1928)

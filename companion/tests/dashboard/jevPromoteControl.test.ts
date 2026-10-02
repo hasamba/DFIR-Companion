@@ -289,6 +289,26 @@ describe("the grade and confidence filters", () => {
     h.el("jevMinConfidence").fire("input");
   };
 
+  // The default floor (#1924 eval): on 7 lab cases, 40% kept 302 of 306 attack rows and dropped a
+  // quarter of the false alarms. Below it the model is mostly guessing.
+  it("start at a 40% confidence floor, and say so on the slider", async () => {
+    const h = await reviewed([...ROWS, row("e-unsure", "High", 0.35)]);
+    expect(h.el("jevMinConfidence").value).toBe("40");
+    expect(h.el("jevMinConfidenceOut").textContent).toBe("40% and above");
+    selectAll(h);
+    // 0.40 is AT the floor and stays; 0.35 is under it and is counted as filtered, not lost.
+    expect(postedIds(promote(h)!).sort()).toEqual(["e-crit", "e-high", "e-med"]);
+    expect(h.panel().innerHTML).toContain("are below the grade or confidence filter");
+  });
+
+  it("show every row again when the analyst drags the floor to zero", async () => {
+    const h = await reviewed([...ROWS, row("e-unsure", "High", 0.35)]);
+    setConfidence(h, 0);
+    expect(h.el("jevMinConfidenceOut").textContent).toBe("any");
+    selectAll(h);
+    expect(postedIds(promote(h)!)).toContain("e-unsure");
+  });
+
   it("narrow what select-all can reach", async () => {
     const h = await reviewed();
     setGrade(h, "High");
@@ -568,6 +588,8 @@ describe("what the panel says it does", () => {
     expect(page).toContain('id="jevMinConfidence"');
     expect(page).toMatch(/<select id="jevGradeFilter"/);
     expect(page).toMatch(/<input type="range" id="jevMinConfidence"/);
+    // The page's first paint and the module's default agree, so the slider never shows 0 for a 40% floor.
+    expect(page).toMatch(/<input type="range" id="jevMinConfidence"[^>]*value="40"/);
     // Labelled, or the control is unusable without sight.
     expect(page).toContain('for="jevGradeFilter"');
     expect(page).toContain('for="jevMinConfidence"');

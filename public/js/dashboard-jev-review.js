@@ -88,7 +88,10 @@
   let activeRun = null; // { controller, timer } for the review in flight; null when none is
   let reviewNote = ""; // why the panel stopped waiting — the analyst's own press, or the time limit
   let minGrade = ""; // the write half (#1568). "" = any grade; else the LOWEST grade the table draws
-  let minConfidence = 0; // 0..1, the model's own confidence floor
+  // The model's own confidence floor, 0..1. It starts at 40%, not 0 (#1924 eval): on 7 lab cases the
+  // old grade's Medium+ rows below 40% held 4 of 306 attack rows and a quarter of the false alarms.
+  // The caption counts what the floor hides; the analyst drags it to 0 to see every row.
+  let minConfidence = 0.4;
   let picked = new Set(); // row ids the analyst has ticked
   let sentIds = new Set(); // row ids this panel has already posted to promote
   let promoting = false; // a promote is in flight — the lock, not the `disabled` attribute
@@ -183,6 +186,7 @@
   function rowHtml(row) {
     const grade = grades().indexOf(row.grade) < 0 ? "Info" : row.grade;
     const sub = [row.asset, row.path].filter(Boolean).map(esc).join(" — ");
+    const why = jevSignalsText(row); // #1924: the answers a decomposed grade rests on
     const tool = isTooling(row)
       ? `<div class="jev-tool-score">reads as our own collection tooling (${pct(row.tooling)})</div>`
       : "";
@@ -192,7 +196,7 @@
       <td class="jev-conf">${esc(pct(row.confidence))}</td>
       <td>${esc(when(row.timestamp))}</td>
       <td>${esc(row.artifactName || "—")}${tool}</td>
-      <td class="jev-desc">${esc(row.description || "—")}${sub ? `<div class="jev-tool-score">${sub}</div>` : ""}</td>
+      <td class="jev-desc">${esc(row.description || "—")}${sub ? `<div class="jev-tool-score">${sub}</div>` : ""}${why ? `<div class="jev-tool-score">${esc(why)}</div>` : ""}</td>
     </tr>`;
   }
 

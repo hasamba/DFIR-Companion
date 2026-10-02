@@ -5,6 +5,7 @@ import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { StateLock } from "../../stateLock.js";
 import type { Severity } from "../../stateTypes.js";
+import type { JevGradeSignals } from "./jevGrader.js";
 
 /**
  * The server's own record of what a missed-evidence review graded (#1578).
@@ -31,6 +32,8 @@ export interface JevGradeEntry {
   readonly score: number;
   readonly model: string;
   readonly reviewedAt: string;
+  /** A decomposed grade's inputs and rule version (#1924); absent on a single-question grade. */
+  readonly signals?: JevGradeSignals;
 }
 
 /** One graded row, in the shape the grader returns it. */
@@ -39,7 +42,23 @@ export interface JevGradedRow {
   readonly grade: Severity;
   readonly confidence: number;
   readonly score: number;
+  readonly signals?: JevGradeSignals;
 }
+
+const unit = z.number().finite().min(0).max(1);
+const level = z.number().finite().min(0).max(3);
+
+/** Bounded: a value outside its scale did not come from the rule, so the entry is not trusted. */
+const signalsSchema = z.object({
+  shape: z.literal("decomposed"),
+  rule: z.string().min(1).max(16),
+  malicious: unit,
+  explained: unit.nullable(),
+  strength: level,
+  strengthConfidence: unit,
+  impact: level,
+  decision: z.enum(["graded", "explained", "conflict"]),
+});
 
 const entrySchema = z.object({
   grade: z.enum(SEVERITIES),
@@ -47,6 +66,7 @@ const entrySchema = z.object({
   score: z.number().finite(),
   model: z.string(),
   reviewedAt: z.string(),
+  signals: signalsSchema.optional(),
 });
 
 const FILE = "jev-grades.json";
@@ -102,6 +122,7 @@ export class JevGradeStore {
           score: row.score,
           model,
           reviewedAt: at,
+          ...(row.signals ? { signals: row.signals } : {}),
         });
       }
       const doc = { version: VERSION, rows: Object.fromEntries(merged) };

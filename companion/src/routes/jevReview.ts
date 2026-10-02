@@ -5,7 +5,9 @@ import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
-import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { JEV_DEFAULT_SHAPE, gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { buildAnalystContext } from "../analysis/ai/jev/jevDecomposed.js";
+import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { markAiBudgetUnspent } from "../http/rateLimiter.js";
@@ -193,7 +195,15 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const anon = await buildImportAnonContext({ log: getServerLogger(), opts: options }, caseId, state);
     const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
 
+    const shape = JEV_DEFAULT_SHAPE;
     try {
+      // The analyst's own authorized/known-good records (#1924), masked like the rows. Read only when
+      // the decomposed shape will ask about them, and inside the try: a damaged marker file must not
+      // break a single-shape review that never reads it.
+      const caseContext =
+        shape === "decomposed"
+          ? buildAnalystContext(await new FalsePositiveStore(store).load(caseId), mask)
+          : "";
       const result = await gradeEvents(
         {
           mask,
@@ -212,7 +222,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
             ),
         },
         candidates,
-        { batchSize: settings.batchSize },
+        { batchSize: settings.batchSize, shape, caseContext },
       );
 
       await options.aiCostStore?.record(caseId, "other", "jev", result.model, {

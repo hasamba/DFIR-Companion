@@ -1,5 +1,14 @@
 import type { ForensicEvent, Severity } from "../../stateTypes.js";
 import type { JevBatchResult, JevQuestion } from "./jevClient.js";
+import {
+  CASE_CONTEXT_KEY,
+  DECOMPOSED_RULE,
+  buildDecomposedQuestions,
+  clampSignals,
+  decideSeverity,
+  readDecomposedAnswers,
+  type DecomposedDecision,
+} from "./jevDecomposed.js";
 
 /**
  * The Jev second grader (#1540).
@@ -138,6 +147,27 @@ const GRADE_CONCURRENCY = 4;
 const ROW_TEXT_MAX = 2000;
 const MESSAGE_MAX = 700;
 
+/**
+ * Which questions a review asks (#1924). `single` is the original one-grade question; `decomposed`
+ * asks narrow questions and lets jevDecomposed.ts decide the severity. Both keep the tooling question.
+ */
+export type JevGradeShape = "single" | "decomposed";
+
+/** The shape a review uses when the caller does not name one. */
+export const JEV_DEFAULT_SHAPE: JevGradeShape = "single";
+
+/** What a decomposed grade was decided from — enough to reproduce it under its rule version. */
+export interface JevGradeSignals {
+  readonly shape: "decomposed";
+  readonly rule: string;
+  readonly malicious: number;
+  readonly explained: number | null;
+  readonly strength: number;
+  readonly strengthConfidence: number;
+  readonly impact: number;
+  readonly decision: DecomposedDecision;
+}
+
 export interface JevGradeRow {
   readonly id: string;
   readonly score: number;
@@ -149,6 +179,8 @@ export interface JevGradeRow {
   readonly timestamp: string;
   readonly asset?: string;
   readonly path?: string;
+  /** Present only on a decomposed grade. */
+  readonly signals?: JevGradeSignals;
 }
 
 export interface JevReviewResult {
@@ -196,15 +228,24 @@ export function renderRowForToolingQuestion(e: ForensicEvent, mask: (text: strin
   return renderRow(e, mask, true);
 }
 
-/** Two questions per row: the grade, and whether the row is the investigator's own tooling. */
-export function buildBatchQuestions(ids: readonly string[]): Record<string, JevQuestion> {
-  const questions: Record<string, JevQuestion> = {};
+/**
+ * The questions for one batch. `single`: the grade and the tooling question. `decomposed`: the
+ * narrow questions from jevDecomposed.ts and the same tooling question.
+ */
+export function buildBatchQuestions(
+  ids: readonly string[],
+  shape: JevGradeShape = "single",
+  withContext = false,
+): Record<string, JevQuestion> {
+  const questions: Record<string, JevQuestion> =
+    shape === "decomposed" ? buildDecomposedQuestions(ids, { withContext }) : {};
   for (const id of ids) {
-    questions[id] = {
-      type: "score",
-      instructions: GRADE_QUESTION.replace("%ID%", id),
-      criteria: [...JEV_SEVERITY_LEVELS],
-    };
+    if (shape === "single")
+      questions[id] = {
+        type: "score",
+        instructions: GRADE_QUESTION.replace("%ID%", id),
+        criteria: [...JEV_SEVERITY_LEVELS],
+      };
     questions[`${id}_tool`] = {
       type: "noul",
       instructions: TOOLING_QUESTION.replace("%ID%", id),
@@ -234,6 +275,9 @@ function severityFor(score: number): Severity {
  */
 const BATCH_TOKEN_BUDGET = 24_000;
 
+/** What a batch keeps for rows however large the shared context is. */
+const MIN_ROW_BUDGET = 4_000;
+
 /** The repo's own 4-chars-to-a-token heuristic; see analysis/promptBudget.ts. */
 const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
@@ -242,10 +286,15 @@ const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
  * question overhead is the rubric, repeated per question by the API's shape — on a batch of short
  * rows it is the DOMINANT term, which is why a row count is the wrong unit here.
  */
-const QUESTION_OVERHEAD_TOKENS = 220;
+const QUESTION_OVERHEAD_TOKENS: Readonly<Record<JevGradeShape, number>> = {
+  single: 220,
+  // Four questions instead of two, two of them with four-level rubrics. Estimated, not measured;
+  // the size-refusal split below still catches an estimate that runs short.
+  decomposed: 480,
+};
 
-function rowCost(text: string): number {
-  return estimateTokens(text) * 2 + QUESTION_OVERHEAD_TOKENS;
+function rowCost(text: string, shape: JevGradeShape): number {
+  return estimateTokens(text) * 2 + QUESTION_OVERHEAD_TOKENS[shape];
 }
 
 /**
@@ -257,13 +306,18 @@ export function planBatches(
   texts: readonly string[],
   maxRows: number,
   budget: number = BATCH_TOKEN_BUDGET,
+  shape: JevGradeShape = "single",
+  caseContext = "",
 ): number[][] {
+  // The analyst context rides in EVERY request of the review, so it comes off every batch's budget.
+  // A floor keeps a huge context from planning zero-row batches; the size-refusal split still guards.
+  const rowBudget = Math.max(MIN_ROW_BUDGET, budget - (caseContext ? estimateTokens(caseContext) : 0));
   const out: number[][] = [];
   let cur: number[] = [];
   let cost = 0;
   texts.forEach((t, i) => {
-    const c = rowCost(t);
-    if (cur.length && (cost + c > budget || cur.length >= maxRows)) {
+    const c = rowCost(t, shape);
+    if (cur.length && (cost + c > rowBudget || cur.length >= maxRows)) {
       out.push(cur);
       cur = [];
       cost = 0;
@@ -288,26 +342,40 @@ function isTooLarge(err: unknown): boolean {
  * that is still refused throws: there is nothing left to halve, and pretending it was graded
  * would put a row in the output that no model ever read.
  */
+/** What every request of one review carries besides its rows. */
+interface AskPlan {
+  readonly shape: JevGradeShape;
+  /** The analyst's own records, masked; "" when the case has none (then nothing is asked of it). */
+  readonly caseContext: string;
+}
+
 async function askWithSplit(
   deps: JevGraderDeps,
   batch: readonly ForensicEvent[],
   ids: readonly string[],
+  plan: AskPlan,
 ): Promise<JevBatchResult> {
   const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
   const subjectText = Object.fromEntries(
     batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, deps.mask)]),
   );
   try {
+    const withContext = plan.shape === "decomposed" && plan.caseContext !== "";
     return await deps.ask(
-      { note: STATE_NOTE, [ROWS_KEY]: rowText, [SUBJECTS_KEY]: subjectText },
-      buildBatchQuestions([...ids]),
+      {
+        note: STATE_NOTE,
+        [ROWS_KEY]: rowText,
+        [SUBJECTS_KEY]: subjectText,
+        ...(withContext ? { [CASE_CONTEXT_KEY]: plan.caseContext } : {}),
+      },
+      buildBatchQuestions([...ids], plan.shape, withContext),
     );
   } catch (err) {
     if (!isTooLarge(err) || batch.length < 2) throw err;
     const mid = Math.ceil(batch.length / 2);
     const [a, b] = await Promise.all([
-      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid)),
-      askWithSplit(deps, batch.slice(mid), ids.slice(mid)),
+      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan),
+      askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan),
     ]);
     return {
       model: a.model || b.model,
@@ -323,6 +391,34 @@ async function askWithSplit(
   }
 }
 
+/** One row's answers → its graded row, by the shape the review asked in. */
+function toGradeRow(e: ForensicEvent, id: string, result: JevBatchResult, plan: AskPlan): JevGradeRow {
+  const tool = result.answers[`${id}_tool`];
+  const base = {
+    id: e.id,
+    tooling: tool?.type === "noul" ? tool.noul : 0,
+    description: e.description,
+    artifactName: e.artifactName,
+    timestamp: e.timestamp,
+    asset: e.asset,
+    path: e.path,
+  };
+  if (plan.shape === "decomposed") {
+    const sig = clampSignals(readDecomposedAnswers(result.answers, id, plan.caseContext !== ""));
+    const d = decideSeverity(sig);
+    return {
+      ...base,
+      score: d.score,
+      grade: d.grade,
+      confidence: d.confidence,
+      signals: { shape: "decomposed", rule: DECOMPOSED_RULE, ...sig, decision: d.decision },
+    };
+  }
+  const grade = result.answers[id];
+  if (grade?.type !== "score") throw new Error(`Jev returned no grade for row ${e.id}`);
+  return { ...base, score: grade.score, grade: severityFor(grade.score), confidence: grade.confidence };
+}
+
 /**
  * Grade a set of events. This function does NOT decide what the analyst is told about coverage.
  *
@@ -336,7 +432,13 @@ async function askWithSplit(
 export async function gradeEvents(
   deps: JevGraderDeps,
   events: readonly ForensicEvent[],
-  opts: { batchSize: number },
+  opts: {
+    batchSize: number;
+    /** Defaults to JEV_DEFAULT_SHAPE. */
+    shape?: JevGradeShape;
+    /** The analyst's own records, already masked. Used by the decomposed shape only. */
+    caseContext?: string;
+  },
 ): Promise<JevReviewResult> {
   // Explicit, because Math.max(1, NaN) is NaN and chunk() would then hand back one EMPTY batch —
   // a review that quietly graded nothing and reported success. Found when a harness passed the
@@ -347,7 +449,14 @@ export async function gradeEvents(
   // Planned by what each batch will COST. `batchSize` survives as an upper bound on rows so a
   // case of tiny rows cannot build a request of 500 questions; the budget is what actually binds.
   const rendered = events.map((e) => renderRowForJev(e, deps.mask));
-  const batches = planBatches(rendered, Math.floor(opts.batchSize)).map((idx) => idx.map((i) => events[i]));
+  const plan: AskPlan = { shape: opts.shape ?? JEV_DEFAULT_SHAPE, caseContext: opts.caseContext ?? "" };
+  const batches = planBatches(
+    rendered,
+    Math.floor(opts.batchSize),
+    BATCH_TOKEN_BUDGET,
+    plan.shape,
+    plan.shape === "decomposed" ? plan.caseContext : "",
+  ).map((idx) => idx.map((i) => events[i]));
   let inputTokens = 0;
   let outputTokens = 0;
   let costUSD: number | undefined;
@@ -374,28 +483,12 @@ export async function gradeEvents(
       // batch and ask again, down to a single row. Any other failure still rejects the whole
       // review — a review that silently covered half the rows would be the coverage lie this
       // panel exists to avoid. Found by a real 40-row batch being refused on the first case it met.
-      const result = await askWithSplit(deps, batch, ids);
+      const result = await askWithSplit(deps, batch, ids, plan);
       model = result.model;
       inputTokens += result.usage.inputTokens;
       outputTokens += result.usage.outputTokens;
       if (result.usage.costUSD !== undefined) costUSD = (costUSD ?? 0) + result.usage.costUSD;
-      graded[index] = batch.map((e, i) => {
-        const grade = result.answers[ids[i]];
-        const tool = result.answers[`${ids[i]}_tool`];
-        if (grade?.type !== "score") throw new Error(`Jev returned no grade for row ${e.id}`);
-        return {
-          id: e.id,
-          score: grade.score,
-          grade: severityFor(grade.score),
-          confidence: grade.confidence,
-          tooling: tool?.type === "noul" ? tool.noul : 0,
-          description: e.description,
-          artifactName: e.artifactName,
-          timestamp: e.timestamp,
-          asset: e.asset,
-          path: e.path,
-        };
-      });
+      graded[index] = batch.map((e, i) => toGradeRow(e, ids[i], result, plan));
     }
   });
   await Promise.all(workers);
