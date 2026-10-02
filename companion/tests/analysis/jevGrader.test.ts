@@ -380,3 +380,152 @@ describe("batching is planned by cost, not by row count (#1568 follow-up)", () =
     await expect(gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 40 })).rejects.toThrow(/401/);
   });
 });
+
+/**
+ * The decomposed shape (#1924): narrow questions per row, severity decided by code.
+ */
+describe("gradeEvents — decomposed shape", () => {
+  type Seen = {
+    state: Record<string, unknown>;
+    questions: Record<string, { type: string; instructions: string }>;
+  };
+
+  function decomposedStub(
+    per: Record<string, { mal: number; str: number; imp: number; exp?: number; tool?: number }>,
+    seen: Seen[] = [],
+    opts: { refuseOver?: number; drop?: string } = {},
+  ): JevGraderDeps {
+    return {
+      mask: (t) => t,
+      ask: async (state, questions) => {
+        seen.push({ state: state as Record<string, unknown>, questions: questions as Seen["questions"] });
+        const rowIds = Object.keys(questions).filter((k) => k.endsWith("_mal"));
+        if (opts.refuseOver !== undefined && rowIds.length > opts.refuseOver)
+          throw new Error("Jev 400: max_tokens_exceeded");
+        const answers: Record<string, JevAnswer> = {};
+        for (const qid of Object.keys(questions)) {
+          if (qid === opts.drop) continue;
+          const [rid, kind] = qid.split("_");
+          const p = per[rid] ?? { mal: 0, str: 0, imp: 0 };
+          if (kind === "mal") answers[qid] = { type: "noul", noul: p.mal };
+          else if (kind === "exp") answers[qid] = { type: "noul", noul: p.exp ?? 0 };
+          else if (kind === "tool") answers[qid] = { type: "noul", noul: p.tool ?? 0 };
+          else
+            answers[qid] = {
+              type: "score",
+              score: kind === "str" ? p.str : p.imp,
+              legend: {},
+              probabilities: {},
+              confidence: 0.9,
+            };
+        }
+        return {
+          model: "typesafe/jev-1.13-test",
+          answers,
+          usage: { inputTokens: 5, outputTokens: 1, costUSD: 0.00001 },
+        };
+      },
+    };
+  }
+
+  it("asks malicious, strength, impact and tooling per row — no explained question without analyst records", async () => {
+    const seen: Seen[] = [];
+    await gradeEvents(decomposedStub({}, seen), [ev("a")], { batchSize: 10, shape: "decomposed" });
+    expect(Object.keys(seen[0].questions).sort()).toEqual(["R000_imp", "R000_mal", "R000_str", "R000_tool"]);
+    expect(seen[0].state.caseContext).toBeUndefined();
+    // #1554 survives: the tooling question still reads the collector-blind view.
+    expect(seen[0].questions.R000_tool.instructions).toContain("`subjects`");
+  });
+
+  it("adds the explained question and a separate caseContext block when the case has analyst records", async () => {
+    const seen: Seen[] = [];
+    await gradeEvents(decomposedStub({}, seen), [ev("a")], {
+      batchSize: 10,
+      shape: "decomposed",
+      caseContext: "- ioc: psexec.exe [authorized-test] — red team week",
+    });
+    expect(seen[0].questions.R000_exp.type).toBe("noul");
+    expect(seen[0].state.caseContext).toContain("authorized-test");
+  });
+
+  it("grades by the rule and keeps the signals that produced the grade", async () => {
+    const res = await gradeEvents(
+      decomposedStub({ R000: { mal: 0.95, str: 2.8, imp: 3 }, R001: { mal: 0.1, str: 0.2, imp: 0 } }),
+      [ev("bad"), ev("quiet")],
+      { batchSize: 10, shape: "decomposed" },
+    );
+    const bad = res.rows.find((r) => r.id === "bad")!;
+    const quiet = res.rows.find((r) => r.id === "quiet")!;
+    expect(bad.grade).toBe("Critical");
+    expect(bad.signals).toMatchObject({
+      shape: "decomposed",
+      rule: "d1",
+      malicious: 0.95,
+      decision: "graded",
+    });
+    expect(quiet.grade).toBe("Info");
+    expect(res.rows[0].id).toBe("bad");
+  });
+
+  it("records the signals inside their scales, so the grade record never refuses them", async () => {
+    const res = await gradeEvents(
+      decomposedStub({ R000: { mal: 1.0000001, str: 3.0004, imp: -0.001 } }),
+      [ev("a")],
+      {
+        batchSize: 10,
+        shape: "decomposed",
+      },
+    );
+    expect(res.rows[0].signals).toMatchObject({ malicious: 1, strength: 3, impact: 0 });
+  });
+
+  it("throws when any asked answer is missing, rather than grading the row on a guess", async () => {
+    await expect(
+      gradeEvents(decomposedStub({}, [], { drop: "R000_imp" }), [ev("a")], {
+        batchSize: 10,
+        shape: "decomposed",
+      }),
+    ).rejects.toThrow(/R000_imp/);
+  });
+
+  it("leaves room in each batch for the analyst context every request carries", () => {
+    const texts = Array.from({ length: 30 }, () => "x".repeat(2000));
+    const plain = planBatches(texts, 100, 24_000, "decomposed");
+    const withContext = planBatches(texts, 100, 24_000, "decomposed", "c".repeat(16_000));
+    expect(withContext.length).toBeGreaterThan(plain.length);
+  });
+
+  it("keeps the shape (and the analyst context) through a size-refusal split", async () => {
+    const seen: Seen[] = [];
+    const res = await gradeEvents(decomposedStub({}, seen, { refuseOver: 1 }), [ev("a"), ev("b"), ev("c")], {
+      batchSize: 10,
+      shape: "decomposed",
+      caseContext: "- ioc: x [known-good-tool]",
+    });
+    expect(res.rows).toHaveLength(3);
+    const answered = seen.filter(
+      (s) => Object.keys(s.questions).filter((k) => k.endsWith("_mal")).length === 1,
+    );
+    expect(answered.length).toBe(3);
+    for (const s of answered) {
+      expect(Object.keys(s.questions).some((k) => k.endsWith("_exp"))).toBe(true);
+      expect(s.state.caseContext).toBeDefined();
+    }
+  });
+
+  it("the single shape still asks one grade and the tooling question, and records no decomposed signals", async () => {
+    const seen: Seen[] = [];
+    const deps = stubAsk({ R000: 3 });
+    const wrapped: JevGraderDeps = {
+      mask: deps.mask,
+      ask: (s, q) => {
+        seen.push({ state: s as Record<string, unknown>, questions: q as Seen["questions"] });
+        return deps.ask(s, q);
+      },
+    };
+    const res = await gradeEvents(wrapped, [ev("a")], { batchSize: 10, shape: "single" });
+    expect(Object.keys(seen[0].questions).sort()).toEqual(["R000", "R000_tool"]);
+    expect(res.rows[0].grade).toBe("High");
+    expect(res.rows[0].signals).toBeUndefined();
+  });
+});

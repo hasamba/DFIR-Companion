@@ -58,7 +58,10 @@ const MODEL_ID_MAX = 48;
 function reviewProvenance(entry: JevGradeEntry): string {
   const confidence = Number.isFinite(entry.confidence) ? entry.confidence.toFixed(2) : "?";
   const model = entry.model.trim() || UNKNOWN_MODEL;
-  return `[missed-evidence: ${entry.grade} conf ${confidence} by ${model.slice(0, MODEL_ID_MAX)}]`;
+  // A decomposed grade (#1924) adds its rule version and nothing else: the signals behind it stay
+  // in the review record and the panel, where there is room to read them.
+  const rule = entry.signals ? ` · ${entry.signals.rule}` : "";
+  return `[missed-evidence: ${entry.grade} conf ${confidence} by ${model.slice(0, MODEL_ID_MAX)}${rule}]`;
 }
 
 /**

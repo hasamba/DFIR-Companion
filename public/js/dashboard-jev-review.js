@@ -183,6 +183,7 @@
   function rowHtml(row) {
     const grade = grades().indexOf(row.grade) < 0 ? "Info" : row.grade;
     const sub = [row.asset, row.path].filter(Boolean).map(esc).join(" — ");
+    const why = jevSignalsText(row); // #1924: the answers a decomposed grade rests on
     const tool = isTooling(row)
       ? `<div class="jev-tool-score">reads as our own collection tooling (${pct(row.tooling)})</div>`
       : "";
@@ -192,7 +193,7 @@
       <td class="jev-conf">${esc(pct(row.confidence))}</td>
       <td>${esc(when(row.timestamp))}</td>
       <td>${esc(row.artifactName || "—")}${tool}</td>
-      <td class="jev-desc">${esc(row.description || "—")}${sub ? `<div class="jev-tool-score">${sub}</div>` : ""}</td>
+      <td class="jev-desc">${esc(row.description || "—")}${sub ? `<div class="jev-tool-score">${sub}</div>` : ""}${why ? `<div class="jev-tool-score">${esc(why)}</div>` : ""}</td>
     </tr>`;
   }
 

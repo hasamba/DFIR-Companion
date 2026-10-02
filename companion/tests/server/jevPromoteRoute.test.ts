@@ -9,6 +9,7 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
+import type { JevGradeSignals } from "../../src/analysis/ai/jev/jevGrader.js";
 
 // The WRITE half of the missed-evidence review (#1568).
 //
@@ -40,7 +41,7 @@ const tick = (id: string, grade: Severity, confidence = 0.86, score = 3.4) => ({
   score,
 });
 
-type Tick = ReturnType<typeof tick>;
+type Tick = ReturnType<typeof tick> & { signals?: JevGradeSignals };
 
 async function harness(
   opts: {
@@ -117,6 +118,33 @@ describe("promoting what the missed-evidence review found", () => {
     // r3 was not ticked, so it is still archive-only. A review that promoted what it read rather
     // than what the analyst picked would fail here and nowhere else.
     expect(byId.has("r3")).toBe(false);
+  });
+
+  it("adds the rule version to the tag when the grade came from the decomposed questions (#1924)", async () => {
+    const signals = {
+      shape: "decomposed" as const,
+      rule: "d1",
+      malicious: 0.92,
+      explained: null,
+      strength: 2.6,
+      strengthConfidence: 0.8,
+      impact: 2.7,
+      decision: "graded" as const,
+    };
+    const { app, stateStore } = await harness({
+      archive: [raw("r1"), raw("r2")],
+      reviewed: [{ ...tick("r1", "Critical", 0.8), signals }, tick("r2", "High", 0.7)],
+    });
+
+    await promote(app, ids("r1", "r2"));
+
+    const byId = new Map((await stateStore.load("c1")).forensicTimeline.map((e) => [e.id, e]));
+    const decomposed = (byId.get("r1")?.provenance ?? []).join(" ");
+    expect(decomposed).toMatch(/\[missed-evidence: Critical conf 0\.80 by typesafe\/jev-1\.13 · d1\]/);
+    // A single-question grade keeps today's tag, unchanged.
+    expect((byId.get("r2")?.provenance ?? []).join(" ")).toMatch(
+      /\[missed-evidence: High conf 0\.70 by typesafe\/jev-1\.13\]/,
+    );
   });
 
   it("records the review, the grade, the confidence and the model on the promoted row", async () => {
