@@ -19,8 +19,7 @@ const IN_PROGRESS_NOTE =
 
 function answerText(a: ContainmentAnswer): string {
   const value = a.value.toFixed(2);
-  const manual = a.checkManually ? ", check manually" : "";
-  const detail = a.kind === "choice" ? `confidence ${value}${manual}` : `${value}${manual}`;
+  const detail = a.kind === "choice" ? `confidence ${value}` : value;
   return `${cellMd(a.label)}: ${cellMd(a.verdict)} (${detail})`;
 }
 

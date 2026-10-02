@@ -84,8 +84,9 @@ describe("playbookSection", () => {
     expect(md).toContain("**Containment-check attribution**");
     expect(md).toContain(
       "- #1 (T001) — suggested by the Jev containment check of finding F3 (model typesafe/jev-1.13, 2026-10-02, rule containment-v1): " +
-        "data/command traffic to attacker destination: yes (0.91); reach: whole organization (confidence 0.72, check manually).",
+        "data/command traffic to attacker destination: yes (0.91); reach: whole organization (confidence 0.72).",
     );
+    expect(md).not.toContain("check manually");
     expect(md).not.toContain("end of the collected evidence");
   });
 
