@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-02
+
 ### Added
 
 - **Containment check on findings** — Jev answers eleven narrow questions about a finding's cited evidence, a tested rule suggests containment steps, and ticked steps go to the Playbook with their attribution (closes #1925)
@@ -23,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Missed-evidence review confidence floor** — the panel's confidence filter starts at 40% instead of 0 (part of #1924)
 
 ### Fixed
+
+- **Jev actions refresh conclusions** — promoting Jev rows or attaching a remediation plan now marks the conclusions out of date (closes #1923)
+- **Missed-evidence review respects the anonymizer** — rows sent to Jev now pass through the case anonymizer (closes #1934)
 - **Network connections stay separate** — two connections from one program to different destinations no longer merge into one row, so a C2 connection is no longer hidden; re-import an affected case to recover lost rows (closes #1922)
 - **Clearer filtered partial-load label** — the Forensic Timeline label now says "of the first N loaded events … case holds M" when a filter is on (closes #1928)
 - **Archive wait hardening** — the archive wait ignores an invalid wait setting and checks less often while an import finishes (closes #1927)
@@ -1275,7 +1280,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.37.0...v0.38.0

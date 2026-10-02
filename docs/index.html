@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.40.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.41.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.40.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.41.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -912,6 +912,12 @@
           <h3>Hardened Reports</h3>
           <p>Attacker-controlled text in evidence can no longer forge a report heading, hide later sections, or stall an export. Indicators are defanged in linear time, including domains with underscores, and numbered hosts like WS01 and WS02 stay separate events.</p>
           <span class="tag">v0.40.0 — evidence can't rewrite the report</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon green">🧯</div>
+          <h3>Containment Check</h3>
+          <p>Press the shield on a finding. A fast model answers eleven narrow questions about the evidence the finding cites, and a tested rule turns the answers into containment steps. Tick the steps you want and they land in the Playbook, each one showing the answers behind it.</p>
+          <span class="tag">v0.41.0 — containment steps you can trace</span>
         </div>
       </div>
     </div>
