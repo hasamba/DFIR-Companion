@@ -138,12 +138,12 @@ test("host-scope: clicking Clear… prompts for a reason and records the decisio
   expect(wkstn?.decision?.reason).toContain("Verified clean");
 });
 
-test("host-scope: an unknown case derives an empty ledger rather than erroring", async ({ page }) => {
+test("host-scope: an unknown case is refused rather than given a folder", async ({ page }) => {
   await page.goto("/dashboard");
   const res = await page.request.get("/cases/no-such-case-e2e-hs/host-scope");
-  // Ledger derivation does not require the case to exist yet (loadHostScopeLedger reads whatever
-  // state/timeline/decisions are present, defaulting to empty) — so this must not 404 or 500.
-  expect(res.status(), await res.text()).toBe(200);
-  const body = (await res.json()) as { hosts: unknown[] };
-  expect(body.hosts).toEqual([]);
+  // #1901: reading the ledger opens the per-case database, which would create the case folder for a
+  // typo'd id. So this read 404s an unknown case, with the same sentence every case-exists gate uses.
+  expect(res.status(), await res.text()).toBe(404);
+  const body = (await res.json()) as { error: string };
+  expect(body.error).toBe("case no-such-case-e2e-hs does not exist — create it in the dashboard first");
 });
