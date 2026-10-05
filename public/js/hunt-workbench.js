@@ -685,9 +685,10 @@ function initialize() {
       renderResults();
     });
   });
+  // `change` only: the case picker replays input+change on one case change, and an input
+  // listener here doubled every saved-hunts request (#1962).
   const loadSavedForCase = () => loadSaved({ keep: false });
   document.getElementById("caseId")?.addEventListener("change", loadSavedForCase);
-  document.getElementById("caseId")?.addEventListener("input", loadSavedForCase);
 
   async function loadCatalog() {
     if (!caseId()) return;

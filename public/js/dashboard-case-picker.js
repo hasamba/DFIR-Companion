@@ -75,12 +75,18 @@
       .catch(() => {});
   }
 
-  function resolveCaseId(text) {
+  // The id of a listed case the text names (its name, `name (id)`, or its exact id), else "".
+  function knownCaseId(text) {
     const t = String(text || "").trim();
     if (byText.has(t)) return byText.get(t);
     const m = /\(([^()]+)\)$/.exec(t); // `name (id)` typed by hand or half-edited
     if (m && byId.has(m[1])) return m[1];
-    return t;
+    if (byId.has(t)) return t;
+    return "";
+  }
+
+  function resolveCaseId(text) {
+    return knownCaseId(text) || String(text || "").trim();
   }
 
   // Make the visible box show the name of whatever id #caseId holds. Called after every
@@ -102,7 +108,8 @@
     if (idEl.value === id) return;
     idEl.value = id;
     // Listeners on #caseId (the hunt workbench reloads its saved hunts on a case change) fire on
-    // user input only; a programmatic write is silent, so replay the events by hand.
+    // user input only; a programmatic write is silent, so replay the events by hand. Only a real
+    // case change reaches here: a keystroke pushes only text that names a listed case (#1962).
     idEl.dispatchEvent(new Event("input", { bubbles: true }));
     idEl.dispatchEvent(new Event("change", { bubbles: true }));
   }
@@ -110,7 +117,12 @@
   function initCasePicker() {
     const picker = document.getElementById("casePicker");
     if (!picker) return;
-    picker.addEventListener("input", pushPickerToCaseId);
+    // A datalist pick fires `input` (not `change`) in Chromium, so `input` pushes at once — but
+    // only text that names a listed case. Half-typed ids wait for `change` (blur) or Enter, which
+    // pass any text through so Connect can still create a new case (#1962).
+    picker.addEventListener("input", () => {
+      if (knownCaseId(picker.value)) pushPickerToCaseId();
+    });
     picker.addEventListener("change", pushPickerToCaseId);
     picker.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;

@@ -430,7 +430,7 @@ describe("hunt workbench — execution history panel (#1833)", () => {
     const h = await mount([HUNT]);
     await select(h, "h1");
     const held = h.holdSaved();
-    void h.el("caseId").fire("input"); // older load, held
+    void h.el("caseId").fire("change"); // older load, held
     await h.settle();
     await h.el("caseId").fire("change"); // newer load, answers
     await h.settle();
@@ -462,6 +462,31 @@ describe("hunt workbench — execution history panel (#1833)", () => {
     expect(h.savedGets().length).toBe(before + 1);
     expect(h.savedGets().at(-1)).toContain("/cases/case-2/");
     expect(h.el("hqHistory").innerHTML).toBe("");
+  });
+
+  it("one case change sends exactly one saved-hunts request (#1962)", async () => {
+    const h = await mount([HUNT]);
+    const before = h.savedGets().length;
+    h.el("caseId").value = "case-2";
+    // the case picker replays both events on one case change
+    await h.el("caseId").fire("input");
+    await h.el("caseId").fire("change");
+    await h.settle();
+
+    expect(h.savedGets().length).toBe(before + 1);
+    expect(h.savedGets().at(-1)).toContain("/cases/case-2/");
+  });
+
+  it("a picked case still loads its saved hunts (#1962)", async () => {
+    const h = await mount([HUNT]);
+    h.el("caseId").value = "case-2";
+    await h.el("caseId").fire("input");
+    await h.el("caseId").fire("change");
+    await h.settle();
+    await select(h, "h1");
+
+    expect(h.el("hqSaved").value).toBe("h1");
+    expect(h.el("hqHistory").innerHTML).toContain("seed-analyst");
   });
 
   it("a re-render with the same case does not reload the list", async () => {
