@@ -208,8 +208,20 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
         error: String((x as { error?: unknown }).error ?? ""),
       })),
       truncatedArtifacts: named(j.truncatedArtifacts).map((x) => {
-        const t = x as { name: string; kept?: unknown; total?: unknown };
-        return { name: t.name, kept: Number(t.kept) || 0, total: Number(t.total) || 0 };
+        const t = x as {
+          name: string;
+          kept?: unknown;
+          total?: unknown;
+          earliest?: unknown;
+          latest?: unknown;
+        };
+        const span = spanTime(t.earliest) && spanTime(t.latest);
+        return {
+          name: t.name,
+          kept: Number(t.kept) || 0,
+          total: Number(t.total) || 0,
+          ...(span ? { earliest: spanTime(t.earliest), latest: spanTime(t.latest) } : {}),
+        };
       }),
       unreadArtifacts: named(j.unreadArtifacts).map((x) => ({
         name: x.name,
@@ -357,6 +369,23 @@ function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasInd
 }
 
 /**
+ * The line for an artifact whose read hit the row cap (#1950). The cap keeps the FIRST rows in read
+ * order, not the incident window, so the line names the kept span when it is known. It never prints
+ * the read's total: that is the cap plus one, not how many rows the artifact really had.
+ */
+function partialDetail(t: { kept: number; earliest?: string; latest?: string }): string {
+  const span = t.earliest && t.latest ? ` (dated ${t.earliest} to ${t.latest})` : "";
+  return `partial — first ${t.kept} rows kept${span}, later rows in read order NOT COLLECTED (row cap)`;
+}
+
+// A stored kept-span bound (#1950): an ISO time, or "". The job file is on disk and the value reaches
+// the prompt, so anything that is not plainly a timestamp is dropped.
+const SPAN_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})?$/;
+function spanTime(v: unknown): string {
+  return typeof v === "string" && SPAN_TIME_RE.test(v) && !Number.isNaN(Date.parse(v)) ? v : "";
+}
+
+/**
  * The line for an artifact whose source list could not be looked up (#1635). Its named sources were
  * never read, so its silence is not absence: an "unread" line never settles a class.
  */
@@ -410,7 +439,7 @@ function huntLines(
       else if (empty.has(a)) {
         const e = emptyLine(job, a, aliasIndex);
         put(a, "empty", e.detail, e.bounded, e.reached);
-      } else if (t) put(a, "truncated", `partial — kept ${t.kept} of ${t.total}`);
+      } else if (t) put(a, "truncated", partialDetail(t));
       else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
     }
   }
@@ -520,7 +549,10 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
       [...j.artifacts].sort(),
       [...(j.emptyArtifacts ?? [])].sort(),
       (j.skippedArtifacts ?? []).map((s) => s.name).sort(),
-      (j.truncatedArtifacts ?? []).map((t) => `${t.name}:${t.kept}/${t.total}`).sort(),
+      // The kept span (#1950) only when present, so an older job keeps its old signature.
+      (j.truncatedArtifacts ?? [])
+        .map((t) => `${t.name}:${t.kept}/${t.total}${t.earliest ? `:${t.earliest}-${t.latest}` : ""}`)
+        .sort(),
       !!j.superTimelineOnly,
       // What decides fleet-wide and bounded (#1604) — a change there changes what the inventory says.
       JSON.stringify(j.target ?? null),

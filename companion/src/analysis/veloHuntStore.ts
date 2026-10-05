@@ -133,6 +133,10 @@ export interface TruncatedArtifact {
   name: string;
   kept: number; // rows imported
   total: number; // rows the read returned before the cap (kept + 1 once the cap bit)
+  // The time span of the kept rows (#1950). The cap keeps the FIRST rows in read order, not the
+  // incident window, so anything outside this span was never collected. Absent on older jobs.
+  earliest?: string;
+  latest?: string;
 }
 
 /**
@@ -167,7 +171,8 @@ export function collectWarnings(
   if (cut.length)
     out.push(
       `[velociraptor] hunt ${huntId}: ${cut.length} artifact(s) hit the collection row cap — ` +
-        `${cut.map((t) => `${t.name} (kept ${t.kept})`).join("; ")}. Findings BEYOND the cap were never ` +
+        `${cut.map((t) => `${t.name} (kept ${t.kept}${t.earliest ? `, ${t.earliest} to ${t.latest}` : ""})`).join("; ")}. ` +
+        `Later rows in read order were NOT COLLECTED, so findings BEYOND the cap were never ` +
         `read; raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
     );
   if (unread.length)

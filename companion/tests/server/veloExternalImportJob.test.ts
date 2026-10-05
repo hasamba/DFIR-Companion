@@ -135,7 +135,15 @@ describe("importArtifactsUnderJob", () => {
         if (art === "Bad") throw new Error("too large");
         if (art === "Unread.Empty") return { rows: [], sourcesUnknown: true as const };
         if (art === "Unread.Partial") return { rows: [{ x: 1 }], sourcesUnknown: true as const };
-        if (art === "Cut") return { rows: [{ x: 1 }, { x: 2 }], truncated: true, total: 3 };
+        if (art === "Cut")
+          return {
+            rows: [
+              { x: 1, Timestamp: "2026-09-29T19:00:00Z" },
+              { x: 2, Timestamp: "2026-09-29T00:00:00Z" },
+            ],
+            truncated: true,
+            total: 3,
+          };
         return { rows: [{ x: 1 }] };
       },
       async () => ({ addedEvents: 1, addedIocs: 0 }),
@@ -145,7 +153,10 @@ describe("importArtifactsUnderJob", () => {
       { name: "Unread.Empty", rows: 0 },
       { name: "Unread.Partial", rows: 1 },
     ]);
-    expect(out.truncated).toEqual([{ name: "Cut", kept: 2, total: 3 }]);
+    // #1950 — the kept span is stored, so the inventory can say which time range the rows cover.
+    expect(out.truncated).toEqual([
+      { name: "Cut", kept: 2, total: 3, earliest: "2026-09-29T00:00:00Z", latest: "2026-09-29T19:00:00Z" },
+    ]);
     expect(out.failed).toEqual([{ name: "Bad", error: "too large" }]);
     expect(lines.some((l) => l.includes("Unread.Empty") && /not read in full/.test(l))).toBe(true);
     expect(lines.some((l) => l.includes("Unread.Partial") && /not read in full/.test(l))).toBe(true);

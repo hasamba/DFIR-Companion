@@ -37,6 +37,18 @@ describe("veloCoverageHtml", () => {
     expect(html).toContain("DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS");
   });
 
+  // #1950 — the cap keeps the first rows in read order, so the line names the time span they cover.
+  it("names the kept time span of a cut-short artifact, escaped, when the job stored one", () => {
+    const t = { name: "Windows.Forensics.Usn", kept: 1000, total: 1001 };
+    const span = { earliest: "2026-09-29T00:00:00Z", latest: "2026-09-29T19:00:00Z" };
+    const card = cov.veloCoverageHtml(imported({ truncatedArtifacts: [{ ...t, ...span }] }));
+    expect(card).toContain("dated 2026-09-29T00:00:00Z to 2026-09-29T19:00:00Z");
+    const gaps = cov.veloReadGapsHtml({ truncated: [{ ...t, earliest: "<i>x</i>", latest: "y" }] }, "Again.");
+    expect(gaps).toContain("&lt;i&gt;x&lt;/i&gt;");
+    expect(gaps).not.toContain("<i>x</i>");
+    expect(cov.veloCoverageHtml(imported({ truncatedArtifacts: [t] }))).not.toContain("dated");
+  });
+
   // The bug this module was extracted to fix: the old inline version only rendered for a bundle of
   // MORE than one artifact, so a single-artifact THOR hunt that was cut short showed a green job and
   // no warning at all.

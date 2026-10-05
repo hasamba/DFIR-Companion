@@ -861,6 +861,7 @@
     "veloAggKeys.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
     "veloHuntStore.ts": "analysis/case",
+    "veloKeptSpan.ts": "analysis/ingest",
     "veloMessageFields.ts": "analysis/ingest",
     "veloMonitorStore.ts": "analysis/case",
     "veloRef.ts": "analysis/case",
