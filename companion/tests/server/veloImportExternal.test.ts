@@ -88,8 +88,10 @@ async function makeApp(
   // like any other, so it takes the case's slot and shows in the Background jobs popover (#1428).
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
   let rowsFetchCalls = 0;
+  let lookupCalls = 0; // getHuntArtifacts / getFlowInfo: the first Velociraptor call of a row import
   const client: MockVeloClient = {
     async getHuntArtifacts() {
+      lookupCalls++;
       return Object.keys(huntResults);
     },
     async huntResultsByArtifact() {
@@ -103,6 +105,7 @@ async function makeApp(
       return { rows, total: rows.length, truncated: false, ...unknown };
     },
     async getFlowInfo() {
+      lookupCalls++;
       return { artifacts: ["Windows.NTFS.MFT"], hostname: "DESKTOP-01" };
     },
     async collectionResults() {
@@ -134,7 +137,14 @@ async function makeApp(
     >["velociraptorClient"],
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore, jobManager, getRowsFetchCalls: () => rowsFetchCalls };
+  return {
+    app,
+    store,
+    stateStore,
+    jobManager,
+    getRowsFetchCalls: () => rowsFetchCalls,
+    getLookupCalls: () => lookupCalls,
+  };
 }
 
 // The same app with NO Velociraptor client — the "API not configured" gate. Every branch of this route
@@ -715,5 +725,98 @@ describe("POST /cases/:id/velociraptor/import-external — runs as a Background 
     await jobManager.finish(blocker.jobId);
     expect((await pending).status).toBe(200);
     expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
+  });
+});
+
+// #1965: a second paste of the same hunt or flow re-read every row (up to the 100,000-row cap) under
+// the case's import slot, only to dedup to "+0 events". The route now answers 409 with what is
+// already in the case, before any Velociraptor call, unless the analyst chose "Re-import anyway".
+describe("POST /cases/:id/velociraptor/import-external — already imported (#1965)", () => {
+  type App = Awaited<ReturnType<typeof makeApp>>["app"];
+  const post = (app: App, body: Record<string, unknown>) =>
+    request(app).post("/cases/c1/velociraptor/import-external").send(body);
+
+  it("answers 409 for a hunt already in the case, with no Velociraptor call", async () => {
+    const { app, getRowsFetchCalls, getLookupCalls } = await makeApp();
+    expect((await post(app, { ref: "H.ABC" })).status).toBe(200);
+    const reads = getRowsFetchCalls();
+    const lookups = getLookupCalls();
+
+    const again = await post(app, { ref: "H.ABC" });
+    expect(again.status).toBe(409);
+    expect(again.body.alreadyImported).toMatchObject({
+      kind: "hunt",
+      huntId: "H.ABC",
+      artifacts: ["Windows.NTFS.MFT"],
+    });
+    expect(typeof again.body.alreadyImported.firstImportedAt).toBe("string");
+    expect(getRowsFetchCalls()).toBe(reads);
+    expect(getLookupCalls()).toBe(lookups);
+  });
+
+  it("reads and imports as today when the request says reimport: true", async () => {
+    const { app, getRowsFetchCalls } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    const reads = getRowsFetchCalls();
+    const again = await post(app, { ref: "H.ABC", reimport: true });
+    expect(again.status).toBe(200);
+    expect(again.body.alreadyImported).toBeUndefined();
+    expect(getRowsFetchCalls()).toBeGreaterThan(reads);
+  });
+
+  it("only a literal true re-imports — a truthy string does not", async () => {
+    const { app } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    expect((await post(app, { ref: "H.ABC", reimport: "yes" })).status).toBe(409);
+  });
+
+  it("answers 409 for a flow already in the case, and reimport: true reads it again", async () => {
+    const { app, getRowsFetchCalls, getLookupCalls } = await makeApp();
+    expect((await post(app, { ref: "C.123/F.XYZ" })).status).toBe(200);
+    const reads = getRowsFetchCalls();
+    const lookups = getLookupCalls();
+    const again = await post(app, { ref: "C.123/F.XYZ" });
+    expect(again.status).toBe(409);
+    expect(again.body.alreadyImported).toMatchObject({ kind: "flow", flowId: "F.XYZ" });
+    expect(getRowsFetchCalls()).toBe(reads);
+    expect(getLookupCalls()).toBe(lookups);
+    expect((await post(app, { ref: "C.123/F.XYZ", reimport: true })).status).toBe(200);
+    expect(getRowsFetchCalls()).toBeGreaterThan(reads);
+  });
+
+  it("does not hold back a different hunt in the same case", async () => {
+    const { app } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    expect((await post(app, { ref: "H.DEF" })).status).toBe(200);
+  });
+
+  // A hunt the Companion collected itself ("Collect now") stores its rows under the same label, so
+  // pasting that hunt afterwards warns too. That is correct: the rows are already in the case.
+  it("warns for a hunt that a bundle collect already brought in", async () => {
+    const { app, store } = await makeApp();
+    await store.appendImport("c1", {
+      caseId: "c1",
+      sequenceNumber: 1,
+      importedAt: "2026-10-01T00:00:00.000Z",
+      filename: "0001_velo-hunt_H.BUNDLE_Windows.System.Pslist.json",
+      originalName: "velo-hunt_H.BUNDLE_Windows.System.Pslist.json",
+      rows: 0,
+      bytes: 2,
+    });
+    const res = await post(app, { ref: "H.BUNDLE" });
+    expect(res.status).toBe(409);
+    expect(res.body.alreadyImported.artifacts).toEqual(["Windows.System.Pslist"]);
+  });
+
+  it("leaves the uploads path alone: an uploads URL for an imported hunt still imports", async () => {
+    const { app } = await makeApp({ "Windows.NTFS.MFT": [MFT_ROW] }, [
+      { name: "thor.jsonl", clientId: "C.1", content: THOR_LINE },
+    ]);
+    await post(app, { ref: "H.ABC" });
+    const res = await post(app, {
+      ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.uploadsOnly).toBe(true);
   });
 });

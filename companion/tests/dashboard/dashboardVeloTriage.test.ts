@@ -96,3 +96,94 @@ describe("the Settings bundle library", () => {
     expect(bundleList.innerHTML).not.toContain("velo-run-btn");
   });
 });
+
+// #1965: a hunt or flow already pulled into the case answers 409 { alreadyImported } before any
+// Velociraptor read. The panel says when, and offers "Re-import anyway" — never a block, since a
+// running hunt can gain rows. The Import button calls veloImportExternal with its click event, so
+// only a literal `true` may ask for the re-import.
+describe("import external: already pulled into this case", () => {
+  const reimportBtn = { onclick: null as null | (() => void) };
+  const extMsg = {
+    textContent: "",
+    innerHTML: "",
+    querySelector: (sel: string) => (sel === ".velo-reimport-btn" ? reimportBtn : null),
+  };
+  const extEls: Record<string, unknown> = {
+    veloExtMsg: extMsg,
+    veloExtRef: { value: " H.ABC " },
+    veloExtMinsev: { value: "" },
+    veloExtSuper: { checked: false },
+    veloExtGo: { disabled: false },
+  };
+  const bodies: Record<string, unknown>[] = [];
+  let answer: { status: number; json: unknown } = { status: 200, json: {} };
+  const ext = loadDashboardModule<{
+    veloImportExternal(reimport?: unknown): void;
+    activeCaseId: string | null;
+  }>("dashboard-velo-triage.js", ["dashboard-escape.js", "dashboard-velo-case.js"], {
+    document: { getElementById: (id: string) => extEls[id] ?? null },
+    fetch: async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      const { status, json } = answer;
+      return { ok: status < 300, status, json: async () => json };
+    },
+    activeCaseId: "c1",
+    veloEnabled: true,
+  });
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  const PRIOR = {
+    alreadyImported: {
+      kind: "hunt",
+      huntId: "H.ABC",
+      firstImportedAt: "2026-10-01T09:00:00.000Z",
+      lastImportedAt: "2026-10-02T10:30:00.000Z",
+      artifacts: ["Windows.NTFS.MFT", "Windows.System.Pslist"],
+    },
+  };
+
+  beforeEach(() => {
+    bodies.length = 0;
+    reimportBtn.onclick = null;
+    extMsg.innerHTML = "";
+    extMsg.textContent = "";
+    ext.activeCaseId = "c1";
+  });
+
+  it("does not ask for a re-import when the Import button passes its click event", async () => {
+    answer = { status: 200, json: { kind: "hunt", huntId: "H.ABC", artifacts: [] } };
+    ext.veloImportExternal({ type: "click" });
+    await settle();
+    expect(bodies[0].reimport).toBe(false);
+  });
+
+  it("shows the prior import date and a Re-import anyway button, and the click re-imports", async () => {
+    answer = { status: 409, json: PRIOR };
+    ext.veloImportExternal({ type: "click" });
+    await settle();
+    expect(extMsg.innerHTML).toContain("already pulled into this case");
+    expect(extMsg.innerHTML).toContain("2026-10-02");
+    expect(extMsg.innerHTML).toContain("2 artifact(s)");
+    expect(extMsg.innerHTML).toContain("velo-reimport-btn");
+    expect(extMsg.innerHTML).toContain("Re-import anyway");
+    expect(extMsg.innerHTML).not.toContain("error:");
+    expect(typeof reimportBtn.onclick).toBe("function");
+
+    answer = { status: 200, json: { kind: "hunt", huntId: "H.ABC", artifacts: ["Windows.NTFS.MFT"] } };
+    reimportBtn.onclick?.();
+    await settle();
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({ ref: "H.ABC", reimport: true });
+  });
+
+  it("escapes the server's strings", async () => {
+    answer = {
+      status: 409,
+      json: { alreadyImported: { ...PRIOR.alreadyImported, huntId: "H.<i>x</i>" } },
+    };
+    ext.veloImportExternal();
+    await settle();
+    expect(extMsg.innerHTML).not.toContain("<i>");
+    expect(extMsg.innerHTML).toContain("&lt;i&gt;");
+  });
+});

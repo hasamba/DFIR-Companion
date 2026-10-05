@@ -39,7 +39,7 @@ export const HUNT_REFUSAL_WORDING: RefusalWording = {
 /** An external import refusal: the analyst pasted a link, so pasting it again is the retry. */
 export const EXTERNAL_REFUSAL_WORDING: RefusalWording = {
   saved: "What Velociraptor returned is saved in the case as evidence",
-  retry: "paste the hunt or flow link again",
+  retry: "paste the hunt or flow link again and choose Re-import anyway",
 };
 
 /**

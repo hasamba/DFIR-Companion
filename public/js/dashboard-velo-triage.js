@@ -465,8 +465,24 @@
       });
   }
 
+  // "Already pulled into this case" (#1965): the server answered 409 before reading anything. Say when,
+  // and offer the re-import — a running hunt can have gained rows since, so this never blocks.
+  function veloShowAlreadyImported(msg, prior) {
+    const what =
+      prior.kind === "flow" ? `Flow ${esc(prior.flowId)}` : `Hunt ${esc(prior.huntId)}`;
+    const when = esc(String(prior.lastImportedAt || "").replace("T", " ").slice(0, 16));
+    msg.innerHTML =
+      `${what} was already pulled into this case on ${when} UTC ` +
+      `(${esc((prior.artifacts || []).length)} artifact(s)). Import again? It re-reads every row; ` +
+      `do this if the hunt collected more since. ` +
+      `<button type="button" class="velo-reimport-btn">Re-import anyway</button>`;
+    const btn = msg.querySelector(".velo-reimport-btn");
+    if (btn) btn.onclick = () => veloImportExternal(true);
+  }
+
   // Import the results of a hunt/flow launched directly in the Velociraptor GUI (paste id or URL).
-  function veloImportExternal() {
+  // The Import button passes its click event, so only a literal `true` asks for the re-import.
+  function veloImportExternal(reimport) {
     const caseId = veloCaseId();
     const msg = document.getElementById("veloExtMsg");
     if (!caseId) {
@@ -486,10 +502,14 @@
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/import-external`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref, minSeverity, superTimelineOnly }),
+      body: JSON.stringify({ ref, minSeverity, superTimelineOnly, reimport: reimport === true }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (j && j.alreadyImported) {
+          veloShowAlreadyImported(msg, j.alreadyImported);
+          return;
+        }
         if (!ok || j.error) {
           msg.textContent = "error: " + (j.error || "failed");
           return;
