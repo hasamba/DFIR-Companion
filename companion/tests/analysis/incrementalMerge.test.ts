@@ -286,6 +286,33 @@ describe("incremental importer merge — same result as the full merge", () => {
     await expectSame();
   });
 
+  it("reads every transfer-tool row on every merge, so a tool and its config split across imports join (#1955)", async () => {
+    await importBoth(delta(batch("a", 20)));
+    const file = (id: string, s: number, name: string, extra: Partial<Ev> = {}): Ev => ({
+      id,
+      timestamp: day(9, 3, 0, s),
+      description: `File created ${name}`,
+      severity: "Info",
+      path: `C:\\Users\\Public\\Music\\${name}`,
+      asset: "HOST-9",
+      ...extra,
+    });
+    expect(await importBoth(delta([file("t1", 0, "rclone.exe")]))).toBe(true);
+    await expectSame();
+    expect(await importBoth(delta([file("t2", 10, "rclone.conf")]))).toBe(true);
+    await expectSame();
+    expect(
+      await importBoth(
+        delta([file("t3", 40, "rclone.exe", { sources: ["Amcache"], description: "Amcache rclone" })]),
+      ),
+    ).toBe(true);
+    const state = await expectSame();
+    const row = (id: string) => state.forensicTimeline.find((e) => e.id === id);
+    expect(row("t1")?.description).toContain("[transfer tool staged:");
+    expect(row("t2")?.severity).toBe("Medium");
+    expect(row("t3")?.severity).toBe("High");
+  });
+
   it("keeps order when every new row sorts before every stored one (the timeline is respaced)", async () => {
     await importBoth(delta(batch("a", 30)));
     for (let k = 0; k < 4; k++) {

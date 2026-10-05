@@ -28,6 +28,7 @@ import { correlateEventsTracked } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
 import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
+import { linkTransferToolStaging } from "./transferToolStaging.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
@@ -405,7 +406,7 @@ export function runTimelineChain(
   // SEQUENCE is the exfil signal (a lone upload to routine SaaS/cloud infra is not), so a matched
   // upload is raised to High and tagged — a deterministic, destination-agnostic "Data Exfiltration"
   // signal instead of relying on the synthesis model to notice the pairing. Conservative + idempotent.
-  const withExfil = linkArchiveToExfil(withInitialAccess);
+  const withExfil = linkTransferToolStaging(linkArchiveToExfil(withInitialAccess)); // + tool & config staged (#1955)
   // Raise a process whose parent is not the one that ordinarily starts it, and an argument-free
   // host that something else already makes odd (#909 item 6). Runs here,
   // beside the other deterministic correlations, because parentage is only judgeable once the

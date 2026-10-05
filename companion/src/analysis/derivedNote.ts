@@ -62,6 +62,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "CLR usage log",
   "own-child handle",
   "normal OS behaviour",
+  "transfer tool staged",
 ];
 
 /**
