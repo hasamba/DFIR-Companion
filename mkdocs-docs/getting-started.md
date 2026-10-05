@@ -1,6 +1,6 @@
 # Getting Started
 
-## Installation
+## Quick start
 
 Choose one option. Windows and Linux users should start with the release download. Docker suits servers and teams. Building from source is for developers.
 
