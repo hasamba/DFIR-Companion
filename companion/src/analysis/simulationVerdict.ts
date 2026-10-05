@@ -79,6 +79,66 @@ export function isSimulationVerdictTitle(title: string): boolean {
   return !NEGATION.test(title.slice(0, noun.index));
 }
 
+// #1948: the synthesis often states the verdict with less confidence. A weaker verdict finding counts
+// only when the case summary ALSO states the verdict — and the title test alone is too loose for
+// prose: it accepts "It is likely a real intrusion rather than a simulation." So a summary sentence
+// must pass the title test AND carry no contrast or hedge, and no sentence about the exercise may
+// contest it. Rejecting is cheap: a miss only leaves the live-intrusion severities in place.
+export const SIMULATION_SUMMARY_MIN_CONFIDENCE = 25;
+export const SUMMARY_BASIS_LABEL = "verdict from summary";
+const SUMMARY_HEDGE =
+  /\b(but|however|although|though|rather than|whether|unconfirmed|unverified|not (yet )?(been )?confirmed|should confirm|must confirm|to confirm|until|unless|if|instead of|real intrusion|genuine|uncertain|unclear|possibly|may|might|could|pending|cannot|rul(e|es|ed)\b(\s+\S+){0,4}?\s+out)\b/i;
+const SENTENCE_SPLIT = /(?<=[.!?;])\s+|\n+/u;
+
+/** Whether the case summary states the simulation verdict, strictly: affirmed and contested nowhere. */
+export function summaryStatesSimulationVerdict(summary: string | undefined): boolean {
+  let affirmed = false;
+  for (const raw of (summary ?? "").split(SENTENCE_SPLIT)) {
+    const s = raw.trim();
+    if (!EXERCISE_NOUN.test(s)) continue;
+    if (SUMMARY_HEDGE.test(s) || HOSTILE_MARKER.test(s) || DENIAL.test(s)) return false;
+    if (isSimulationVerdictTitle(s)) affirmed = true;
+  }
+  return affirmed;
+}
+
+/** The verdict finding and, when it came in on the weaker path, the reason it counts. */
+export interface SimulationVerdictPick {
+  finding: Finding;
+  basis?: "summary";
+}
+
+function bestVerdict(
+  findings: readonly Finding[],
+  confidenceOf: (f: Finding) => number,
+  floor: number,
+): Finding | undefined {
+  let best: Finding | undefined;
+  let bestConf = -1;
+  for (const f of findings) {
+    if (f.status === "dismissed" || f.ungrounded || f.contentMismatch) continue;
+    if (!isSimulationVerdictTitle(f.title)) continue;
+    const conf = confidenceOf(f);
+    if (conf < floor || conf <= bestConf) continue;
+    best = f;
+    bestConf = conf;
+  }
+  return best;
+}
+
+/** The verdict at 80+, else (#1948) the best one at 25+ when the summary states the verdict too. */
+export function pickSimulationVerdict(
+  findings: readonly Finding[],
+  confidenceOf: (f: Finding) => number = (f) => f.confidence ?? 0,
+  summary?: string,
+): SimulationVerdictPick | undefined {
+  const strong = bestVerdict(findings, confidenceOf, SIMULATION_VERDICT_MIN_CONFIDENCE);
+  if (strong) return { finding: strong };
+  if (!summaryStatesSimulationVerdict(summary)) return undefined;
+  const weak = bestVerdict(findings, confidenceOf, SIMULATION_SUMMARY_MIN_CONFIDENCE);
+  return weak ? { finding: weak, basis: "summary" } : undefined;
+}
+
 /**
  * The verdict finding: an undismissed simulation conclusion whose confidence reaches the threshold.
  * `confidenceOf` lets synthesis judge the model's OWN confidence: grading caps any single-tool,
@@ -88,18 +148,9 @@ export function isSimulationVerdictTitle(title: string): boolean {
 export function findSimulationVerdict(
   findings: readonly Finding[],
   confidenceOf: (f: Finding) => number = (f) => f.confidence ?? 0,
+  summary?: string,
 ): Finding | undefined {
-  let best: Finding | undefined;
-  let bestConf = -1;
-  for (const f of findings) {
-    if (f.status === "dismissed" || f.ungrounded || f.contentMismatch) continue;
-    if (!isSimulationVerdictTitle(f.title)) continue;
-    const conf = confidenceOf(f);
-    if (conf < SIMULATION_VERDICT_MIN_CONFIDENCE || conf <= bestConf) continue;
-    best = f;
-    bestConf = conf;
-  }
-  return best;
+  return pickSimulationVerdict(findings, confidenceOf, summary)?.finding;
 }
 
 function isPersistence(f: Finding): boolean {
@@ -116,6 +167,8 @@ export interface SimulationVerdictOptions {
   aliasIndex?: HostAliasIndex;
   /** The model's confidence per finding id, before grading capped it (synthesis only). */
   modelConfidence?: ReadonlyMap<string, number>;
+  /** The case summary (#1948): lets a verdict finding below 80 count when the summary agrees. */
+  summary?: string;
 }
 
 /** Strip a previous run's annotation. The stored original returns only if nothing rewrote the severity since. */
@@ -139,19 +192,28 @@ export function applySimulationVerdict(
   const hadAnnotation = findings.some((f) => f.simulation);
   // A verdict this step already accepted stays accepted while its finding stands: the override route
   // and an accepted second opinion re-apply the step without the model's pre-grading confidence.
-  const accepted = new Set(findings.filter((f) => f.simulation?.role === "verdict").map((f) => f.id));
-  const base = hadAnnotation ? findings.map(normalize) : [...findings];
-  const verdict = findSimulationVerdict(base, (f) =>
-    accepted.has(f.id)
-      ? Number.MAX_SAFE_INTEGER
-      : Math.max(f.confidence ?? 0, opts.modelConfidence?.get(f.id) ?? 0),
+  // A verdict accepted on the summary path (#1948) is NOT pinned: it is re-judged on that path, so it
+  // keeps its "verdict from summary" basis and still needs the summary to agree.
+  const accepted = new Set(
+    findings.filter((f) => f.simulation?.role === "verdict" && !f.simulation.basis).map((f) => f.id),
   );
-  if (!verdict) return hadAnnotation ? base : (findings as Finding[]);
+  const base = hadAnnotation ? findings.map(normalize) : [...findings];
+  const pick = pickSimulationVerdict(
+    base,
+    (f) =>
+      accepted.has(f.id)
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(f.confidence ?? 0, opts.modelConfidence?.get(f.id) ?? 0),
+    opts.summary,
+  );
+  if (!pick) return hadAnnotation ? base : (findings as Finding[]);
+  const verdict = pick.finding;
+  const basis = pick.basis ? { basis: pick.basis } : {};
 
   if (opts.treatAsReal) {
     return base.map((f) =>
       f.id === verdict.id
-        ? { ...f, simulation: annotation("verdict", f.severity, f.severity, { overridden: true }) }
+        ? { ...f, simulation: annotation("verdict", f.severity, f.severity, { overridden: true, ...basis }) }
         : f,
     );
   }
@@ -175,12 +237,12 @@ export function applySimulationVerdict(
   );
   return base.map((f) => {
     if (f.id === verdict.id)
-      return { ...f, severity: top, simulation: annotation("verdict", f.severity, top) };
+      return { ...f, severity: top, simulation: annotation("verdict", f.severity, top, basis) };
     if (!explainedIds.has(f.id)) return f;
     if (isPersistence(f)) {
       return {
         ...f,
-        simulation: annotation("live-exposure", f.severity, f.severity, { verdictId: verdict.id }),
+        simulation: annotation("live-exposure", f.severity, f.severity, { verdictId: verdict.id, ...basis }),
       };
     }
     const capped =
@@ -190,7 +252,7 @@ export function applySimulationVerdict(
     return {
       ...f,
       severity: capped,
-      simulation: annotation("simulated", f.severity, capped, { verdictId: verdict.id }),
+      simulation: annotation("simulated", f.severity, capped, { verdictId: verdict.id, ...basis }),
     };
   });
 }
@@ -200,7 +262,10 @@ export function reconcileSimulationVerdict(
   state: InvestigationState,
   opts: SimulationVerdictOptions = {},
 ): InvestigationState {
-  const findings = applySimulationVerdict(state.findings, state.forensicTimeline, opts);
+  const findings = applySimulationVerdict(state.findings, state.forensicTimeline, {
+    summary: state.lastSummary,
+    ...opts,
+  });
   return findings === state.findings ? state : { ...state, findings };
 }
 
@@ -208,7 +273,7 @@ function annotation(
   role: FindingSimulation["role"],
   originalSeverity: Severity,
   appliedSeverity: Severity,
-  extra: Pick<FindingSimulation, "verdictId" | "overridden"> = {},
+  extra: Pick<FindingSimulation, "verdictId" | "overridden" | "basis"> = {},
 ): FindingSimulation {
   return { role, originalSeverity, appliedSeverity, ...extra };
 }
@@ -268,15 +333,16 @@ function hostResolver(
 export function simulationSeverityLabel(f: Pick<Finding, "severity" | "simulation">): string {
   const s = f.simulation;
   if (!s) return "";
+  const from = s.basis === "summary" ? `; ${SUMMARY_BASIS_LABEL}` : "";
   if (s.role === "verdict") {
     if (s.overridden) return "[treated as real intrusion (analyst)]";
     return s.originalSeverity !== f.severity
-      ? `[simulation verdict; raised from ${s.originalSeverity}]`
-      : "[simulation verdict]";
+      ? `[simulation verdict${from}; raised from ${s.originalSeverity}]`
+      : `[simulation verdict${from}]`;
   }
   if (s.role === "live-exposure")
-    return "[simulated case — live exposure, remediate regardless of attribution]";
+    return `[simulated case${from} — live exposure, remediate regardless of attribution]`;
   return s.originalSeverity !== f.severity
-    ? `[${SIMULATED_LABEL}; live-intrusion severity: ${s.originalSeverity}]`
-    : `[${SIMULATED_LABEL}]`;
+    ? `[${SIMULATED_LABEL}${from}; live-intrusion severity: ${s.originalSeverity}]`
+    : `[${SIMULATED_LABEL}${from}]`;
 }

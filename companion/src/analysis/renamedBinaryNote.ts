@@ -74,7 +74,7 @@ export function renderDecoyTag(e: Pick<ForensicEvent, "description">): string {
 // renders from the text: the model already reads that text, the tag only makes it legible.
 const RENAME_SOURCE = "velociraptor";
 const RENAME_TECHNIQUES = new Set(["T1036", "T1036.003"]);
-function isTrustedRenameRow(e: ForensicEvent): boolean {
+export function isTrustedRenameRow(e: ForensicEvent): boolean {
   const fromCollector = (e.sources ?? []).some((s) => s.toLowerCase() === RENAME_SOURCE);
   return fromCollector && (e.mitreTechniques ?? []).some((t) => RENAME_TECHNIQUES.has(t));
 }
@@ -89,7 +89,7 @@ const PRESENCE_ARTIFACT_RE = /\b(MFT|Amcache|Shimcache|AppCompatCache|Prefetch|U
 // network fields, and a path whose leaf is the decoy's name or its prefetch
 // (`MIMIKATZ.EXE-A84515FA.pf`). A row with a process identity is behavioral evidence in its own
 // right — Sysmon EID 10 on lsass, an EDR verdict — and is never folded in by name.
-function isFileTraceOf(e: ForensicEvent, decoyLeaves: ReadonlySet<string>): boolean {
+export function isFileTraceOf(e: ForensicEvent, decoyLeaves: ReadonlySet<string>): boolean {
   if (!PRESENCE_ARTIFACT_RE.test(e.artifactName ?? "")) return false;
   if (e.processName || e.commandLine || e.pid !== undefined) return false;
   if (e.srcIp || e.dstIp || e.port !== undefined) return false;

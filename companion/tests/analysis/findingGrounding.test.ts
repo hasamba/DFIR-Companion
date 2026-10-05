@@ -13,6 +13,7 @@ import {
   DECOY_BINARY_SEVERITY_FLOOR,
   BUILD_BASELINE_CONFIDENCE_CAP,
   BUILD_BASELINE_SEVERITY_FLOOR,
+  ECHO_ONLY_SEVERITY_CAP,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 import { capLabSetupRow, labSetupPaths } from "../../src/analysis/labSetupTransfer.js";
@@ -840,5 +841,74 @@ describe("groundAndScoreFindings — lab-setup gate (#1946)", () => {
     const stale = { ...f({ id: "f3", severity: "High", relatedEventIds: ["s1"] }), labSetup: true };
     const out = groundAndScoreFindings({ ...base, findings: [stale], scopedEvents: [beacon] });
     expect(flag(out[0])).toBeUndefined();
+  });
+});
+
+describe("groundAndScoreFindings — echo-only command gate (#1948)", () => {
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>() };
+  const echoRow = (id: string, commandLine: string, over: Partial<ForensicEvent> = {}): ForensicEvent =>
+    ev({ id, severity: "High", processName: "cmd.exe", commandLine, sources: ["Hayabusa"], ...over });
+  const run = (events: ForensicEvent[], severity: Finding["severity"] = "High"): Finding =>
+    groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity, confidence: 60, relatedEventIds: events.map((e) => e.id) })],
+      scopedEvents: events,
+    })[0];
+
+  it("caps a High finding that cites only `cmd /c echo` rows, and leaves the rows alone", () => {
+    const rows = [echoRow("a", "cmd.exe /c echo canary one"), echoRow("b", "cmd /c echo canary two")];
+    const out = run(rows);
+    expect(out.severity).toBe(ECHO_ONLY_SEVERITY_CAP);
+    expect(out.confidenceReason).toMatch(/echo only, no effect/);
+    expect(rows.every((e) => e.severity === "High")).toBe(true);
+  });
+
+  // A trusted rename row reaches the #1502 decoy gate first; either way the rename fact stays visible.
+  it("keeps the rename fact of a renamed cmd.exe in the reason", () => {
+    const renamed = echoRow("r", "wmiexec.exe /c echo canary", {
+      processName: "wmiexec.exe",
+      description: "Process wmiexec.exe [renamed binary: wmiexec.exe is really Cmd.Exe]",
+      sources: ["velociraptor"],
+      mitreTechniques: ["T1036"],
+    });
+    const out = run([renamed], "Critical");
+    expect(out.severity).toBe("Medium");
+    expect(out.confidenceReason).toMatch(/wmiexec\.exe is a renamed cmd\.exe/i);
+  });
+
+  it("caps echo rows plus a presence trace of the same file", () => {
+    const mft = ev({
+      id: "m",
+      severity: "Info",
+      artifactName: "MFT",
+      path: "C:\\Windows\\System32\\cmd.exe",
+    });
+    expect(run([echoRow("a", "cmd /c echo x"), mft]).severity).toBe("Medium");
+  });
+
+  it.each([
+    "cmd /c echo x & whoami",
+    "cmd /c echo x > C:\\Users\\Public\\f.txt",
+    "cmd /c echo x | clip",
+    "cmd /c echo %X%",
+    "cmd /k echo x",
+  ])("keeps the grade for %j", (cl) => {
+    expect(run([echoRow("a", cl)]).severity).toBe("High");
+  });
+
+  it("keeps the grade on mixed evidence", () => {
+    const net = ev({ id: "n", severity: "High", dstIp: "203.0.113.5", port: 445 });
+    expect(run([echoRow("a", "cmd /c echo x"), net]).severity).toBe("High");
+  });
+
+  it("keeps the grade when the first word is not cmd and the row does not identify cmd.exe", () => {
+    const row = echoRow("a", "wmiexec.exe /c echo x", { processName: "wmiexec.exe" });
+    expect(run([row]).severity).toBe("High");
+  });
+
+  it("never raises a Medium finding", () => {
+    const out = run([echoRow("a", "cmd /c echo x")], "Medium");
+    expect(out.severity).toBe("Medium");
+    expect(out.confidenceReason ?? "").not.toMatch(/echo only/);
   });
 });

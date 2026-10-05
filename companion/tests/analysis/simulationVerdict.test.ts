@@ -4,6 +4,7 @@ import {
   findSimulationVerdict,
   isSimulationVerdictTitle,
   simulationSeverityLabel,
+  summaryStatesSimulationVerdict,
   SIMULATED_LABEL,
 } from "../../src/analysis/simulationVerdict.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
@@ -295,5 +296,86 @@ describe("simulationSeverityLabel (#1595)", () => {
     const { findings, events } = labCase();
     const out = byId(applySimulationVerdict(findings, events, { treatAsReal: true }));
     expect(simulationSeverityLabel(out.f14)).toBe("[treated as real intrusion (analyst)]");
+  });
+});
+
+// #1948: the synthesis often states the verdict with less confidence. A verdict finding below 80 is
+// accepted only when the summary ALSO states the verdict, in a sentence that passes a strict test
+// (no contrast or hedge), and never below the floor of 25.
+describe("simulation verdict from the summary (#1948)", () => {
+  const WEAK_TITLE = "Activity strongly consistent with an authorized attack simulation";
+  const AFFIRMATIVE =
+    "Multiple host artifacts were collected. The activity is strongly consistent with an authorized attack simulation. Six findings were raised.";
+  function weakCase(conf: number): { findings: Finding[]; events: ForensicEvent[] } {
+    const { findings, events } = labCase();
+    const withWeak = findings.map((f) =>
+      f.id === "f14" ? { ...f, title: WEAK_TITLE, confidence: conf } : f,
+    );
+    return { findings: withWeak, events };
+  }
+
+  it("states the verdict in an affirmative sentence", () => {
+    expect(summaryStatesSimulationVerdict(AFFIRMATIVE)).toBe(true);
+    expect(summaryStatesSimulationVerdict("")).toBe(false);
+    expect(summaryStatesSimulationVerdict(undefined)).toBe(false);
+  });
+
+  it("caps the other findings when a weak verdict finding and the summary agree", () => {
+    const { findings, events } = weakCase(30);
+    const out = byId(applySimulationVerdict(findings, events, { summary: AFFIRMATIVE }));
+    expect(out.f1.severity).toBe("Medium");
+    expect(out.f1.simulation?.basis).toBe("summary");
+    expect(out.f14.simulation?.role).toBe("verdict");
+    expect(out.f14.simulation?.basis).toBe("summary");
+    expect(simulationSeverityLabel(out.f1)).toMatch(/verdict from summary/);
+    expect(simulationSeverityLabel(out.f14)).toMatch(/verdict from summary/);
+    expect(findSimulationVerdict(findings, undefined, AFFIRMATIVE)?.id).toBe("f14");
+    expect(findSimulationVerdict(findings)).toBeUndefined();
+  });
+
+  it("is idempotent on the summary path, and an override keeps the basis", () => {
+    const { findings, events } = weakCase(30);
+    const once = applySimulationVerdict(findings, events, { summary: AFFIRMATIVE });
+    expect(applySimulationVerdict(once, events, { summary: AFFIRMATIVE })).toEqual(once);
+    const real = byId(applySimulationVerdict(once, events, { summary: AFFIRMATIVE, treatAsReal: true }));
+    expect(real.f1.severity).toBe("Critical");
+    expect(real.f14.simulation?.overridden).toBe(true);
+    expect(real.f14.simulation?.basis).toBe("summary");
+  });
+
+  it("leaves the case unchanged when the summary does not state the verdict", () => {
+    const { findings, events } = weakCase(30);
+    const summary = "Credential theft and log clearing were observed on one workstation.";
+    expect(applySimulationVerdict(findings, events, { summary })).toBe(findings);
+    expect(applySimulationVerdict(findings, events)).toBe(findings);
+  });
+
+  it("leaves the case unchanged below the floor of 25", () => {
+    const { findings, events } = weakCase(20);
+    expect(applySimulationVerdict(findings, events, { summary: AFFIRMATIVE })).toBe(findings);
+  });
+
+  it.each([
+    "It is likely a real intrusion rather than a simulation.",
+    "Although triage first suggested an authorized red-team exercise, the evidence rules this out.",
+    "The tooling resembles a red-team framework, but the activity is consistent with a financially motivated actor.",
+    "Whether this is an authorized simulation remains unconfirmed.",
+    "The owner should confirm whether this was a planned penetration test; until then treat it as hostile.",
+  ])("does not cap a real intrusion whose summary says: %s", (summary) => {
+    expect(summaryStatesSimulationVerdict(summary)).toBe(false);
+    const { findings, events } = weakCase(30);
+    expect(applySimulationVerdict(findings, events, { summary })).toBe(findings);
+  });
+
+  it("rejects a summary that states the verdict and contests it in another sentence", () => {
+    const summary = `${AFFIRMATIVE} However, the owner has not confirmed a planned exercise.`;
+    expect(summaryStatesSimulationVerdict(summary)).toBe(false);
+  });
+
+  it("keeps the 80+ path free of the summary basis", () => {
+    const { findings, events } = labCase(85);
+    const out = byId(applySimulationVerdict(findings, events, { summary: AFFIRMATIVE }));
+    expect(out.f1.severity).toBe("Medium");
+    expect(out.f1.simulation?.basis).toBeUndefined();
   });
 });

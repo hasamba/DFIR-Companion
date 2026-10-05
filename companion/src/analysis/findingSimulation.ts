@@ -14,4 +14,6 @@ export interface FindingSimulation {
   appliedSeverity: SimulationSeverity;
   verdictId?: string; // simulated / live-exposure: the verdict finding that explains it
   overridden?: boolean; // verdict only: the analyst said "treat as real intrusion"
+  // #1948: the verdict finding was below 80 and the case summary stated the verdict too.
+  basis?: "summary";
 }

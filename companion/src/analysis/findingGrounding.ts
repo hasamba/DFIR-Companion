@@ -33,6 +33,7 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
 import { simulationSeverityLabel } from "./simulationVerdict.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
+import { echoOnlyEvidence, echoOnlyReason } from "./echoOnlyCommand.js";
 import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
 import { selfDisclaimedPhrase, SELF_DISCLAIMED_SEVERITY_FLOOR } from "./selfDisclaimedSubject.js";
@@ -83,6 +84,7 @@ export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
 export const DECOY_BINARY_CONFIDENCE_CAP = 40;
 export const DECOY_BINARY_SEVERITY_FLOOR: Severity = "Medium";
 export const CONTENT_MISMATCH_SEVERITY_FLOOR: Severity = "Medium";
+export const ECHO_ONLY_SEVERITY_CAP: Severity = "Medium"; // #1948, echoOnlyCommand.ts
 
 // Actor-provenance gate for lateral-movement findings (meridian-tax-ransomware benchmark 2026-07-23).
 // A High/Critical finding that claims the attacker moved/pivoted TO a host counts as confirmed only if
@@ -392,6 +394,14 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
           `capped: ${decoys.map((d) => `${d.onDisk} is a renamed ${d.original}`).join(", ")} — the file identifies as a shell, so the cited evidence does not substantiate execution of the named tool; the command line is a label, not a run`,
         );
       }
+    }
+
+    // Echo-only commands (#1948): every cited row runs only `cmd /c echo …` or is a presence trace of
+    // that file. Floors only High/Critical; the rows keep their own severity.
+    const echoOnly = echoOnlyEvidence(supporting);
+    if (echoOnly && (severity === "Critical" || severity === "High")) {
+      severity = ECHO_ONLY_SEVERITY_CAP;
+      confidenceReason = appendReason(confidenceReason, echoOnlyReason(echoOnly));
     }
 
     // Defender-tamper timing (#1941): console history only, or every row well before the burst.

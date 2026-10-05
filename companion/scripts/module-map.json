@@ -844,6 +844,7 @@
     "defenderEvents.ts": "analysis/detect",
     "defenderTamperCap.ts": "analysis/findings",
     "labSetupTransfer.ts": "analysis/detect",
+    "echoOnlyCommand.ts": "analysis/timeline",
     "rowFacts.ts": "analysis/case",
     "tradecraftRules.ts": "analysis/detect",
     "webChainJoin.ts": "analysis/ingest",
