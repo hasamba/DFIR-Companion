@@ -13,6 +13,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ClickFix download cradle graded High** — a PowerShell fetch from a bare-number or raw-IP host into a temp script or iex is graded High (closes #1947)
+- **Web-scanner detection** — sqlmap, dirsearch, xray, vulmap and WebLogicScan runs grade Medium as T1595.002, exploit modes High with T1190 (closes #1964)
+- **Emulation framework agent** — Caldera sandcat agents are tagged, and synthesis gets a context block to weigh exercise against real compromise (closes #1957)
+- **C2 settings in script blocks** — a logged script block that defines beacon-style C2 settings becomes a prompt fact and, when no finding names them, a Medium finding (closes #1959)
+- **Transfer tool staged with its config** — a transfer tool and its config in one folder within 10 minutes are raised, and their execution record goes High (closes #1955)
+- **Look-alike admin accounts flagged** — a new account or group member named close to a built-in account is graded High (closes #1956)
+- **THOR content versus name** — a THOR hit whose file type contradicts its name is noted and graded up one level (closes #1966)
+- **Nitrogen playbook** — Playbook Match recognises the Nitrogen malvertising-to-BlackCat chain (closes #1963)
+- **Lab-setup file transfers capped** — files dropped through a hypervisor drag-and-drop folder are capped at Medium, with `DFIR_LAB_SETUP_PATHS` for more folders (closes #1946)
+- **Duplicate hunt import warning** — importing a hunt or flow already in the case imports nothing until the analyst chooses Re-import anyway (closes #1965)
+
+### Fixed
+
+- **No silent unmasked AI paths** — every outbound AI path now applies masking, stops with a clear reason, or asks before sending (closes #1952)
+- **Presidio fails fast** — an unreachable Presidio stops the AI call after one attempt, with Retry and Continue without Presidio for this case (closes #1945)
+- **Command line in the synthesis prompt** — a row whose 240-character cut hid the command line now carries the arguments as a capped tag (closes #1951)
+- **Program-name citation check** — a High finding that names a program none of its cited rows carry is marked as a citation mismatch (closes #1954)
+- **Absorbed High row gets its own finding** — a High row in another folder that its citing finding never names gets its own finding (closes #1943)
+- **Self-disclaimed findings capped** — a finding that says its subject is not in the evidence and guesses at it is capped at Medium (closes #1944)
+- **Defender-tamper timing cap** — a Defender-tamper finding built only on console history or on events days before the incident is capped at Medium (closes #1941)
+- **Coverage gaps graded by evidence** — a complete silence is High only next to a Medium-or-higher event or a log clear; a reboot at the edge explains it (closes #1942)
+- **Simulation verdict from the summary, echo-only caps** — a plainly stated simulation summary caps the attack findings, and echo-only commands no longer make High findings (closes #1948)
+- **Jev review skips collector rows** — the missed-evidence review and promote set aside the collector's own footprint, domain-joined hosts included (closes #1949)
+- **Generic Sysmon registry alerts demoted** — routine Sigma registry-write rows go to Info before the tagger, while persistence keys keep their grade (closes #1958)
+- **Referee sees the same tags** — the second-opinion referee reads each cited event with the same structured tags as synthesis (closes #1960)
+- **Row-cap line names the kept span** — a capped collection states which time span it kept and that later rows were not collected (closes #1950)
+- **Failed synthesis marks conclusions out of date** — a failed background synthesis no longer lets the AI pill return to up to date (closes #1953)
+- **Graph panels CSP warning** — the graph panels no longer trigger a CSP style violation (closes #1961)
+- **Case box stops per-keystroke requests** — typing in the case box sends one saved-hunts request per case change (closes #1962)
+
 ## [0.41.0] - 2026-10-02
 
 ### Added

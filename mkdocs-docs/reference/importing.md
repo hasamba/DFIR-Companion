@@ -115,6 +115,14 @@ The row keeps its grade when any of these is true:
 
 Cases imported before this change do not change. Re-import the evidence to apply it.
 
+### Account look-alikes
+
+When a new account (EID 4720) or a group member (EID 4728/4732/4756) has a name close to a built-in
+account, such as Administrator, krbtgt or Guest, the event is graded High. The description ends with
+`[look-alike of built-in account "<name>"]`. Localized built-in names, numbered copies such as
+`admin2`, and names shorter than five characters are not flagged. A member logged only by its SID is
+not checked.
+
 ### Collecting Linux persistence artifacts
 
 The Companion reads the files that decide what a Linux host runs on its own: SSH authorized keys,
