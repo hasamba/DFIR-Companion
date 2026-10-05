@@ -7,10 +7,11 @@ import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
+import { downgradeGenericSysmonRegistry } from "../analysis/genericSysmonRegistry.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
-import { capBuildTimeScoped } from "./importSettleCap.js";
+import { capBuildTimeScoped, capLabSetupScoped } from "./importSettleCap.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
   isForeignToImport,
@@ -214,6 +215,10 @@ export async function settleForensicImport(
   const extraIds = [...added, ...stamped.touched].filter(hasBuildTimeMark).map((e) => e.id);
   const capped = await lock(caseId, () => capBuildTimeScoped(store, caseId, ledger, { scanAll, extraIds }));
   changed ||= capped > 0;
+  // Lab setup (#1946): a file copied in through a hypervisor drag-and-drop folder is capped at Medium.
+  const candidates = [...added, ...stamped.touched];
+  const labCapped = await lock(caseId, () => capLabSetupScoped(store, caseId, { scanAll, candidates }));
+  changed ||= labCapped > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
   // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).
@@ -278,13 +283,18 @@ async function carryAndStamp(
   const importBatchId = randomUUID();
   let carried = 0;
   let downgraded = 0;
+  let genericRegistry = 0;
   const carry = hostRenameCarrier(ledger);
   for (const r of rows) if (carry(r.event) !== r.event) carried++;
   const transform = (e: ForensicEvent): ForensicEvent => {
     const moved = carry(e);
     if (!addedIds.has(e.id)) return moved;
-    const lowered = deps.superTimelineStore ? downgradeFirstPartyEgress([moved]).events[0] : moved;
-    if (lowered.severity !== moved.severity) downgraded++;
+    if (!deps.superTimelineStore) return { ...moved, importedAt, importBatchId };
+    const egress = downgradeFirstPartyEgress([moved]).events[0];
+    if (egress.severity !== moved.severity) downgraded++;
+    // #1958: generic Sysmon registry alerts, in the same position and for the same reason.
+    const lowered = downgradeGenericSysmonRegistry([egress]).events[0];
+    if (lowered.severity !== egress.severity) genericRegistry++;
     return { ...lowered, importedAt, importBatchId };
   };
   const written = await rewriteRows(store, caseId, rows, transform);
@@ -292,6 +302,13 @@ async function carryAndStamp(
     getServerLogger().info(`[import] ${caseId}: ${downgraded} first-party update connection(s) graded Info`, {
       caseId,
     });
+  if (genericRegistry)
+    getServerLogger().info(
+      `[import] ${caseId}: ${genericRegistry} generic Sysmon registry alert(s) graded Info`,
+      {
+        caseId,
+      },
+    );
   const writtenById = new Map(written.map((r) => [r.rowId, r.event]));
   const added = rows.filter((r) => addedIds.has(r.event.id)).map((r) => writtenById.get(r.rowId) ?? r.event);
   const others = rows

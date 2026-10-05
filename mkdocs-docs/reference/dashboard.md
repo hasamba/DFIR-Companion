@@ -190,7 +190,9 @@ Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
 
 ## Timeline Gaps
 
-Detects suspicious silent periods in the forensic timeline — windows where events go quiet. A **complete** gap, where every source goes dark at once, is flagged as the classic log-tampering signature. Detection is deterministic; the panel labels it a lead, not proof.
+Detects suspicious silent periods in the forensic timeline — windows where events go quiet. Detection is deterministic.
+
+A **complete** gap (every source silent) is graded **High** only when it is corroborated. That means a Medium-or-higher event sits at either edge of the gap, or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719). Otherwise the gap is **Low** and is shown as a lead, not proof of tampering, with no T1070 mapping. A reboot or shutdown at the gap edge (EID 1074/6005/6006 or a boot event) explains the silence. That gap stays Low and is labelled as a reboot. A **partial** gap (one source quiet) stays Medium.
 
 **✨ Hypothesize gaps** — one AI call over the detected gaps. For each silent window it hypothesizes what the attacker likely did (inferred from the surrounding events) and pairs it with shadow-artifact collections that could reconstruct the missing window. Each suggested artifact carries a **▶ Deploy collection** button — enabled only when Velociraptor is configured — that launches the collection to recover the missing evidence.
 
@@ -620,7 +622,7 @@ Offline, no AI, no network calls at runtime.
 
 Adversary Hints (above) answers "which techniques does this case share with a known group". This answers the harder question: did they happen **in the order** a published playbook describes.
 
-Compares the case's chronological ATT&CK technique sequence against a bundled catalog of ransomware/intrusion chains distilled from MITRE ATT&CK and CISA #StopRansomware advisories — Conti, LockBit, BlackCat (ALPHV), Akira, Scattered Spider, Black Basta, BlackSuit (Royal), and Play — plus The DFIR Report's *Egg-Cellent Resume* intrusion (more_eggs → Cobalt Strike → Pyramid). Matching is a **fuzzy subsequence** match: a playbook step counts as satisfied if its technique appears anywhere later in the case's timeline, allowing unrelated activity in between — a real attacker's timeline is noisy and incomplete. Deterministic, offline, no AI.
+Compares the case's chronological ATT&CK technique sequence against a bundled catalog of ransomware/intrusion chains distilled from MITRE ATT&CK and CISA #StopRansomware advisories — Conti, LockBit, BlackCat (ALPHV), Akira, Scattered Spider, Black Basta, BlackSuit (Royal), and Play — plus The DFIR Report's *Egg-Cellent Resume* intrusion (more_eggs → Cobalt Strike → Pyramid) and *Nitrogen* (fake IP scanner → Sliver/Cobalt Strike → BlackCat). Matching is a **fuzzy subsequence** match: a playbook step counts as satisfied if its technique appears anywhere later in the case's timeline, allowing unrelated activity in between — a real attacker's timeline is noisy and incomplete. Deterministic, offline, no AI.
 
 Each playbook is matched both **case-wide** and against **each known host's own slice** of the timeline, keeping whichever scope scores higher — ransomware chains are typically cross-host (lateral movement, then fleet-wide encryption), so per-host-only matching would miss the chains the feature exists to find. Events with no recorded host are excluded from per-host scoring (they could span several machines) but still count case-wide.
 
@@ -750,7 +752,9 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
   OS, minimum severity, time scope, label filters) opens under the bundle. The job card above the
   list shows the running hunt, with **Collect now** to pull early.
 - **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
-  collection launched outside the Companion.
+  collection launched outside the Companion. If the hunt or flow is already in the case, the panel
+  says when it was pulled in and imports nothing. Choose **Re-import anyway** to read every row
+  again, for example when a running hunt has collected more since.
 - **Live Monitoring** — start, stop and watch the CLIENT_EVENT monitors streaming into this case
   (see [Live Monitoring](live-monitoring.md)). The toolbar's **🔴 LIVE** badge jumps here.
 

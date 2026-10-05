@@ -23,6 +23,8 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **When to use it.** Never manually — it runs by itself, locally (Tesseract), after every capture. Nothing leaves the machine and no AI provider is involved. To backfill an older case: `npm run ocr-index -- <caseId>`.
 
+**If OCR cannot read a screenshot.** The screenshot is not sent, and the analysis stops with an error. To continue, fix OCR, point vision at a local vision model, or turn anonymisation off for the case.
+
 **Settings.** `DFIR_OCR_SEARCH` (full-text search, on by default; set to `off` to disable), `DFIR_OCR_DEBUG` / `DFIR_OCR_DEBUG_DIR` (log each redaction and dump the redacted copies for inspection). The redaction half only runs when an external provider is configured, and follows your anonymization settings (`DFIR_ANONYMIZE`).
 
 ### 2. Extraction — evidence into events
@@ -47,6 +49,12 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
     Synthesis is skipped automatically if nothing in the timeline changed since last time. Click **AI Re-synthesize** → **Force** to override.
 
 **If the safety filter stops a run.** A model's safety filter can stop a synthesis answer partway. Today only the Claude Code provider reports this stop. Synthesis then asks the same model again, up to `DFIR_AI_SYNTH_SAFETY_RETRIES` times (default 1). If the model is still stopped, the run moves once to the fallback synthesis model (`DFIR_AI_SYNTH_FALLBACK_MODEL`) and stays on it for the rest of that run. The Investigation Log line says whether the model passed on a retry or the fallback wrote the run, and how many stops occurred. With no fallback set, you get one clear error that names both settings. The second-opinion model (B) and replays retry, but never switch to the fallback. See [Settings → AI](settings.md#ai).
+
+**Adversary-emulation context.** When a row in the scoped forensic timeline shows a Caldera sandcat agent, synthesis gets one extra block. The block names each host (up to five) and tells the model to weigh this when it judges exercise against real compromise. It is not proof of an exercise: a real attacker can also run Caldera. The block reads the forensic timeline only, never the super-timeline. Synthesis computes it each time it runs, so cases imported before this change get it too.
+
+**Simulation verdict.** Sometimes the synthesis concludes that the case is an authorized attack simulation. One finding states that verdict at confidence 80 or more. The attack findings are then capped at Medium and marked "simulated — pending owner confirmation". Persistence on the host keeps its severity. A verdict finding at confidence 25 to 79 also counts, but only when the case summary states the verdict in plain words. A summary that hedges or contests the verdict does not count, for example one that says "but", "whether", "unconfirmed", "until" or "real intrusion". These caps show "verdict from summary". To undo the cap, click **Treat as real intrusion** on the verdict finding.
+
+**Echo-only commands.** Some findings cite only process rows that run `cmd /c echo …` and print text, plus file traces of that program. These findings are capped at Medium with the reason "echo only, no effect". A row with `%`, `!`, a pipe, a redirect, `&`, `^`, brackets or `/k` keeps its grade. The rows keep their own severity. For the other finding caps, see [Advanced → Finding Severity Caps](advanced.md#finding-severity-caps).
 
 **Settings.** `DFIR_AI_SYNTH_PROVIDER` / `DFIR_AI_SYNTH_MODEL` / `DFIR_AI_SYNTH_KEY` / `DFIR_AI_SYNTH_BASE_URL` (a separate, stronger model than the vision one is the recommended setup), `DFIR_AI_SYNTH_MAX_EVENTS` (how many timeline rows fit in the prompt — default 600), `DFIR_SYNTH_INCLUDE_INFO=1` (give Info-severity events prompt space too; off by default), `DFIR_SYNTH_GROUP*` (collapse repeated detection bursts into one row so more of the case fits), `DFIR_AI_SYNTH_PROMPT_FILE`.
 
@@ -244,6 +252,8 @@ Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to
 For a technique disagreement, the referee also reads the findings that carry the technique. A staged tool or script that never ran keeps its technique: the finding text records that it did not run. The referee suggests a removal only when the technique is wrong for the artefact, for example build-time activity.
 
 A **referee** model reads each disagreement together with the forensic events the disputed finding cites, and writes a *referee suggests: accept B* or *referee suggests: keep A* line under it. The referee is model A unless you change it under **Settings → AI → Referee for 2nd-opinion verdicts** (`same-as-b` lets model B judge its own findings; any other model ID names a neutral third referee).
+
+The referee reads each cited event with the same tags the main analysis reads: host, process, network connection, the full command line when the description cuts it, build-time and lab-setup markers, and the C2 settings found in script blocks. It judges each disagreement with the same facts both models saw.
 
 If the referee call fails, the panel header says so: *⚠ referee (name) failed: reason*. The disagreements are still listed, without referee lines, and **follow referee** stays hidden. Fix the cause (for example a referee CLI that is not on the server's PATH), then click **↻ re-run referee**. Only the referee runs again. Neither synthesis is repeated, and your accept/reject decisions stay. The re-run judges the same comparison the failed attempt was given, not the timeline as it is now.
 

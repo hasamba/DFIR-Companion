@@ -537,3 +537,52 @@ describe("settleForensicImport — first-party update traffic", () => {
     expect(saved?.forensicTimeline[0].severity).toBe("Medium");
   });
 });
+
+// #1958 — generic Sysmon registry alerts are lowered in the #1530 position: before the dual-write
+// and the tagger. A key on the pass's own keep-list keeps its grade with the tagger doing nothing,
+// so the persistence rows never depend on auto-tagging.
+describe("settleForensicImport — generic Sysmon registry alerts", () => {
+  function regRow(id: string, key: string): ForensicEvent {
+    return ev(
+      id,
+      "Medium",
+      `Hayabusa: Reg Key Value Set (Sysmon Alert) (EID 13 Sysmon) — EventType=SetValue TgtObj=${key} Details=DWORD (0x00000001) @ HOST-01`,
+    );
+  }
+  const ORDINARY = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Foo";
+  const RUN = "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater";
+
+  it("lowers an ordinary key before the dual-write; demote then takes it out of the forensic timeline", async () => {
+    const seen: Record<string, ForensicEvent[]> = {};
+    const rows = memoryRowStore(state([regRow("ord", ORDINARY), regRow("run", RUN)]));
+    const deps = {
+      stateStore: rows,
+      superTimelineStore: {
+        append: async (_c: string, events: ForensicEvent[]) => {
+          seen.super = events;
+          return events.length;
+        },
+      },
+      autoTagImported: async (_c: string, events: ForensicEvent[]) => {
+        seen.tagged = events;
+      },
+      demoteForensic: () => rows.demoteInfo(),
+    };
+    await settleForensicImport(deps, "c1", state([]));
+    const bySuper = new Map(seen.super.map((e) => [e.id, e]));
+    expect(bySuper.get("ord")?.severity).toBe("Info");
+    expect(bySuper.get("ord")?.description).toContain("generic Sysmon alert");
+    expect(seen.tagged.find((e) => e.id === "ord")?.severity).toBe("Info");
+    // The Run-key row keeps Medium with a no-op tagger: the keep-list, not the tagger, holds it.
+    expect(bySuper.get("run")?.severity).toBe("Medium");
+    const saved = await rows.load();
+    expect(saved?.forensicTimeline.map((e) => e.id)).toEqual(["run"]);
+  });
+
+  it("leaves the grade alone when no super-timeline store is wired — demote would delete the row", async () => {
+    const rows = memoryRowStore(state([regRow("ord", ORDINARY)]));
+    const deps = { stateStore: rows, autoTagImported: async () => {}, demoteForensic: async () => [] };
+    await settleForensicImport(deps, "c1", state([]));
+    expect((await rows.load())?.forensicTimeline[0].severity).toBe("Medium");
+  });
+});

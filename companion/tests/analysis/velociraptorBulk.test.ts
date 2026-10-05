@@ -792,3 +792,60 @@ describe("importVelociraptorBulk — the collector's runspace and a mentioned IO
     expect(url?.provenance).toBe("mentioned");
   });
 });
+
+// #1958 — the bulk flush lowers a generic Sysmon registry alert before the tagger, in the same
+// position as #1530, and keeps a Run-key row at the rule's grade with no tagger at all.
+describe("runVelociraptorBulk — generic Sysmon registry alerts (#1958)", () => {
+  function sigmaRegRow(key: string, recordId: number) {
+    return {
+      Timestamp: `2026-08-30T15:02:4${recordId}.005Z`,
+      Computer: "HOST-01",
+      Channel: "Microsoft-Windows-Sysmon/Operational",
+      EID: 13,
+      Level: "medium",
+      Title: "Reg Key Value Set (Sysmon Alert)",
+      Tags: ["attack.defense-evasion", "attack.t1112"],
+      RecordID: recordId,
+      _Event: {
+        System: {
+          Provider: { Name: "Microsoft-Windows-Sysmon" },
+          EventID: { Value: 13 },
+          Channel: "Microsoft-Windows-Sysmon/Operational",
+          Computer: "HOST-01",
+        },
+        EventData: {
+          EventType: "SetValue",
+          UtcTime: `2026-08-30 15:02:4${recordId}.005`,
+          Image: "C:\\Windows\\System32\\svchost.exe",
+          TargetObject: key,
+          Details: "DWORD (0x00000001)",
+        },
+      },
+      _Source: "Windows.Sigma.Base",
+    };
+  }
+
+  it("lowers the ordinary-key row and keeps the Run-key row in the forensic table", async () => {
+    const sink = memorySink({ taggerOff: true });
+    const text = JSON.stringify({
+      "Windows.Sigma.Base": [
+        sigmaRegRow("HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Foo", 1),
+        sigmaRegRow("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater", 2),
+      ],
+    });
+    const res = await runVelociraptorBulk(
+      sink,
+      "c1",
+      text,
+      baseOpts("0019_velo-flow_Windows.Sigma.Base.json"),
+      "forensic",
+    );
+    expect(res).not.toBeNull();
+    const ordinary = sink.superRows.find((e) => e.description.includes("AppCompatFlags"));
+    expect(ordinary?.severity).toBe("Info");
+    expect(ordinary?.description).toContain("generic Sysmon alert");
+    expect(sink.forensic.map((e) => e.description).join("\n")).not.toContain("AppCompatFlags");
+    const run = sink.forensic.find((e) => e.description.includes("CurrentVersion\\Run\\"));
+    expect(run?.severity).toBe("Medium");
+  });
+});

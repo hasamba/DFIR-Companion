@@ -54,10 +54,17 @@ export const COLLECTOR_NOTE_PREFIX = " [DFIR collector ";
  */
 export const FIRST_PARTY_EGRESS_MARKER = " [first-party update traffic —";
 
+/**
+ * The stated reason analysis/genericSysmonRegistry.ts writes (#1958), as a stable prefix, here for
+ * the same layering reason as the marker above. Reword the tail freely; do not reword this.
+ */
+export const GENERIC_SYSMON_REGISTRY_MARKER = " [generic Sysmon alert —";
+
 /** The stated demotion reasons a set-aside row may carry. Prefixes — the tail is free text. */
 export const SET_ASIDE_NOTE_MARKERS: readonly string[] = [
   COLLECTOR_NOTE_PREFIX,
   FIRST_PARTY_EGRESS_MARKER,
+  GENERIC_SYSMON_REGISTRY_MARKER,
   ...DERIVED_NOTE_DOWNGRADES.map((name) => `[${name}:`),
 ];
 

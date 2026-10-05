@@ -49,6 +49,7 @@ interface Over {
   hostApp?: string;
   detection?: string;
   extraContext?: string;
+  userId?: string;
 }
 
 const base = (eid: number, channel: string, over: Over, eventData: object, message: string) => {
@@ -112,7 +113,7 @@ const row4100 = (scriptName: string, over: Over = {}) => {
 const row800 = (scriptName: string, over: Over = {}) => {
   const command = '    Add-Type -TypeDefinition @"\r\n';
   const context =
-    `\tDetailSequence=1\r\n\tDetailTotal=1\r\n\r\n\tSequenceNumber=7587\r\n\r\n\tUserId=WORKGROUP\\SYSTEM\r\n` +
+    `\tDetailSequence=1\r\n\tDetailTotal=1\r\n\r\n\tSequenceNumber=7587\r\n\r\n\tUserId=${over.userId ?? "WORKGROUP\\SYSTEM"}\r\n` +
     `\tHostName=ConsoleHost\r\n\tHostVersion=5.1.26100.7019\r\n\tHostId=${over.hostId ?? HOST_ID}\r\n` +
     `\tHostApplication=${over.hostApp ?? HOST_APP}\r\n\tEngineVersion=5.1.26100.7019\r\n` +
     `\tRunspaceId=${over.runspace ?? RUNSPACE}\r\n\tPipelineId=20\r\n\tScriptName=${scriptName}\r\n` +
@@ -292,6 +293,58 @@ describe("parseVelociraptorJson — records that share the collector's runspace 
     const bits = parse([seed, row4103(BITS), intruder]).filter((e) => e.description.includes("using System"));
     expect(bits.map((e) => e.severity).sort()).toEqual(["High", "Info"]);
     expect(bits.find((e) => e.severity === "Info")?.aggKey?.endsWith("|collector")).toBe(true);
+  });
+});
+
+// INC-2026-026 (#1949): on a DOMAIN-JOINED host the 800's context block names the NetBIOS domain —
+// `UserId=WINDOMAIN\SYSTEM` — so the 800 never proved itself and its High DetectRaptor rows reached
+// the forensic timeline while the same session's 4103s were claimed. Such an 800 is now a runspace
+// candidate only: it is claimed when a SID-proven Tools-tree record seeded its HostId|RunspaceId, and
+// it never seeds a session itself. The domain spelling is a text field, not the SID.
+describe("parseVelociraptorJson — a domain-SYSTEM 800 joins a proven runspace (#1949)", () => {
+  const seed = row4103(PSNIPER);
+  const domain800 = (script: string, over: Over = {}) =>
+    row800(script, { userId: "WINDOMAIN\\SYSTEM", ...over });
+
+  it("grades a domain-SYSTEM Tools-tree 800 in a SID-proven runspace Info, as the collector's", () => {
+    for (const rows of [
+      [seed, domain800(PSNIPER)],
+      [domain800(PSNIPER), seed],
+    ]) {
+      const e = eventFor(rows, rows[0] === seed ? 1 : 0);
+      expect(e.severity).toBe("Info");
+      expect(e.origin).toBe("collector");
+      expect(e.description.endsWith(RUNSPACE_SCRIPT_NOTE)).toBe(true);
+    }
+  });
+
+  it("grades a domain-SYSTEM system-Modules 800 in a SID-proven runspace Info", () => {
+    const e = eventFor([seed, domain800(BITS)], 1);
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBe("collector");
+  });
+
+  it("keeps the grade in another runspace", () => {
+    expect(eventFor([seed, domain800(PSNIPER, { runspace: OTHER_RUNSPACE })], 1).severity).toBe("High");
+  });
+
+  it("keeps the grade with no seed: the domain spelling never proves itself", () => {
+    expect(parse([domain800(PSNIPER)])[0].severity).toBe("High");
+  });
+
+  it("never seeds a session: a domain-SYSTEM 800 vouches for no other record", () => {
+    expect(eventFor([domain800(PSNIPER), row4103(BITS)], 1).severity).toBe("High");
+  });
+
+  it("keeps the grade of a domain USER 800 in the proven runspace", () => {
+    expect(eventFor([seed, row800(PSNIPER, { userId: "WINDOMAIN\\alice" })], 1).severity).toBe("High");
+  });
+
+  it("never lowers a Critical 800 in the proven runspace", () => {
+    const critical = "T1486-LockBit Ransomware Execution via PowerShell";
+    const e = eventFor([seed, domain800(PSNIPER, { detection: critical })], 1);
+    expect(e.severity).toBe("Critical");
+    expect(e.origin).toBeUndefined();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { thorFields } from "../../src/analysis/thorRowMap.js";
+import { contentMismatch, thorFields } from "../../src/analysis/thorRowMap.js";
 
 // Field-for-field copies of three real findings from a THOR scan collected through
 // `Generic.Scanner.ThorZIP/ThorResultsJson` (case INC-2026-010). Trimmed to the keys the mapper reads.
@@ -243,5 +243,113 @@ describe("thorFields — two entries that differ only late stay two findings", (
     const f = thorFields(entryRow("threat A"))!;
     expect(f.aggKey.length).toBeLessThanOrEqual(440);
     expect(f.description.length).toBeLessThanOrEqual(600);
+  });
+});
+
+// #1966 — THOR's own `type` (from the magic bytes) and the hex half of `firstbytes` against the name.
+const MZ = "4d5a90000300000004000000ffff0000b8000000 / MZ";
+const disguised = {
+  ...ENVELOPE,
+  level: "Warning",
+  module: "Filescan",
+  message: "Possibly Dangerous file found",
+  file: "C:\\x\\invoice.pdf",
+  type: "EXE",
+  firstbytes: MZ,
+  reason_1: "YARA rule X",
+};
+
+describe("contentMismatch — content and name disagree (#1966)", () => {
+  it("notes a PE executable named .pdf and grades it up one level", () => {
+    const f = thorFields(disguised)!;
+    expect(f.description).toContain("[content: PE executable, name says .pdf]");
+    expect(f.detail).toContain("content: PE executable, name says .pdf");
+    expect(f.severity).toBe("Critical");
+  });
+
+  it("keeps the note inside the 600-character title bound", () => {
+    const f = thorFields({ ...disguised, message: "m".repeat(700) })!;
+    expect(f.description.length).toBeLessThanOrEqual(600);
+    expect(f.description.endsWith("[content: PE executable, name says .pdf]")).toBe(true);
+  });
+
+  it("adds nothing when the name matches the content", () => {
+    const row = { ...disguised, file: "C:\\x\\tool.exe" };
+    expect(thorFields(row)!.description).not.toContain("[content:");
+    expect(thorFields(row)!.severity).toBe("High");
+    expect(contentMismatch(row, "High")).toBeUndefined();
+  });
+
+  it("maps a row with no firstbytes and no type exactly as before", () => {
+    expect(thorFields(fileHit)!.description).toBe(
+      "THOR Warning [Filescan]: Possibly Dangerous file found — mimikatz.exe",
+    );
+    expect(thorFields(fileHit)!.severity).toBe("High");
+    expect(contentMismatch(fileHit, "High")).toBeUndefined();
+  });
+
+  it("falls back to the hex magic when THOR's type is UNKNOWN", () => {
+    const m = contentMismatch({ ...disguised, type: "UNKNOWN", file: "C:\\notes.txt" }, "Medium");
+    expect(m).toEqual({ note: "[content: PE executable, name says .txt]", severity: "High" });
+  });
+
+  it("never reads an EVTX file as ELF (its magic spells ElfFile)", () => {
+    const evtx = {
+      ...disguised,
+      file: "C:\\Security.evtx",
+      type: "EVTX",
+      firstbytes: "456c6646696c6500000000000000000000000000 / ElfFile",
+    };
+    expect(contentMismatch(evtx, "High")).toBeUndefined();
+    expect(contentMismatch({ ...evtx, type: "UNKNOWN", file: "C:\\a.txt" }, "High")).toBeUndefined();
+  });
+
+  it("ignores firstbytes_N on a LogScan row — those name other files, not the subject", () => {
+    const row = { ...logHit, firstbytes_1: MZ, type_1: "EXE", file_1: "C:\\x.jpg" };
+    expect(contentMismatch(row, "High")).toBeUndefined();
+    expect(thorFields(row)!.severity).toBe("High");
+  });
+
+  it("ignores archive_* fields — they describe the container, not the hit", () => {
+    const row = {
+      ...fileHit,
+      file: "C:\\a.zip\\b.txt",
+      archive_type: "ZIP",
+      archive_firstbytes: "504b0304 / PK",
+    };
+    expect(contentMismatch(row, "High")).toBeUndefined();
+  });
+
+  it("reads the process image on a ProcessCheck row, capped at Critical", () => {
+    const row = { ...processHit, image_file: "C:\\x\\svc.jpg", image_type: "EXE", image_firstbytes: MZ };
+    expect(contentMismatch(row, "Critical")).toEqual({
+      note: "[content: PE executable, name says .jpg]",
+      severity: "Critical",
+    });
+  });
+
+  it("never raises an Info row", () => {
+    expect(contentMismatch(disguised, "Info")).toBeUndefined();
+    expect(thorFields({ ...disguised, level: "Info" })!.severity).toBe("Info");
+  });
+
+  it("never echoes a hostile extension or the ASCII half of firstbytes", () => {
+    const m = contentMismatch(
+      { ...disguised, file: "C:\\x.pdf\n| =cmd", firstbytes: "4d5a / <script>alert(1)</script>" },
+      "High",
+    )!;
+    expect(m.note).toBe("[content: PE executable, name has no recognised extension]");
+  });
+
+  it("recognises ELF, ZIP, PDF and shebang magic from the hex alone", () => {
+    const hex = (h: string, file: string) =>
+      contentMismatch({ ...disguised, type: "", file, firstbytes: `${h} / x` }, "Medium")?.note;
+    expect(hex("7f454c46", "C:\\a.png")).toBe("[content: ELF executable, name says .png]");
+    expect(hex("504b0304", "C:\\a.txt")).toBe("[content: ZIP archive, name says .txt]");
+    expect(hex("504b0304", "C:\\a.docx")).toBeUndefined();
+    expect(hex("25504446", "C:\\a.exe")).toBe("[content: PDF document, name says .exe]");
+    expect(hex("2321", "/tmp/a.jpg")).toBe("[content: script, name says .jpg]");
+    expect(hex("2321", "/usr/local/bin/run")).toBeUndefined(); // an extensionless script is normal
+    expect(hex("zz4d5a", "C:\\a.txt")).toBeUndefined(); // not hex
   });
 });

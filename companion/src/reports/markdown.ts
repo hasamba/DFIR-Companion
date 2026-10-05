@@ -26,7 +26,7 @@ import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beac
 import { buildGeoMap } from "../analysis/geoMap.js";
 import { iocValueLabel, mentionedLabel } from "../analysis/iocMentioned.js";
 import { iocSourcesLabel } from "../analysis/iocProvenanceLabel.js";
-import { GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { GAP_BANNER, gapKindLabel } from "../analysis/gapDetect.js";
 import { detectGapsWithWaves, gapOptionsFor } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
@@ -345,8 +345,8 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
 }
 
 // 3.3 — timeline coverage: suspiciously long silent periods in the forensic timeline. A COMPLETE gap
-// (every source dark) is the classic signature of cleared logs / a stopped collector; a PARTIAL gap is
-// a single-tool coverage blindspot. Deterministic, no AI — a lead, not proof of tampering. Thresholds:
+// (every source dark) is High only when a Medium+ row sits at its edge or the case records a log clear
+// / audit-policy change, else Low (#1942); a PARTIAL gap is a single-tool coverage blindspot. Deterministic, no AI — a lead, not proof of tampering. Thresholds:
 // DFIR_GAP_MIN_MINUTES / DFIR_GAP_DENSITY_FACTOR / DFIR_GAP_ACTIVE_HOURS.
 // Synthesis coverage footnote (#62) — how much of the in-scope timeline the AI actually read on the
 // last synthesis run. Opt-in via DFIR_REPORT_SYNTH_COVERAGE (the report writer passes null when the
@@ -374,7 +374,7 @@ function modelPerformanceNote(modelPerf: ModelPerfSnapshot | null | undefined, l
 
 function timelineCoverage(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.3 Timeline coverage", "");
-  lines.push(`_${GAP_CAVEAT}_`, "");
+  lines.push(`_${GAP_BANNER}_`, "");
   const gaps = detectGapsWithWaves(state.forensicTimeline, gapOptionsFor(state)).gaps;
   if (gaps.length === 0) {
     lines.push("_No suspicious silent periods detected in the forensic timeline._", "");
@@ -387,7 +387,7 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
   for (const g of gaps) {
     // A wave boundary is accounted-for dwell time, not suspected missing data — the same wording
     // the finding for this window uses, so the two surfaces never disagree.
-    const kind = g.betweenWaves ? "dwell interval" : g.complete ? "complete silence" : "partial";
+    const kind = gapKindLabel(g);
     const silent = g.silentSources.length ? g.silentSources.join(", ") : "all sources";
     const active = g.activeSources.length ? g.activeSources.join(", ") : "—";
     lines.push(

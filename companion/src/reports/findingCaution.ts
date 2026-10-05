@@ -6,6 +6,8 @@
 
 import type { Finding } from "../analysis/stateTypes.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
+import { findingTamperTiming } from "../analysis/defenderTamperCap.js";
+import { findingIsLabSetup } from "../analysis/labSetupTransfer.js";
 
 /** The markdown line under a finding heading, or "" when nothing qualifies it. */
 export function findingCautionLine(f: Finding): string {
@@ -13,12 +15,21 @@ export function findingCautionLine(f: Finding): string {
     return `> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`;
   if (f.buildBaseline)
     return `> \u26a0\ufe0f **Build baseline** \u2014 every cited event sits inside the host's own provisioning window (the image being built, not the incident). Severity floored and confidence capped.`;
+  if (findingIsLabSetup(f))
+    return `> ⚠️ **Lab setup** — every cited event is a file copied into the VM through a hypervisor drag-and-drop folder (or a configured lab-setup path): the operator staging the lab, not the intrusion. Severity capped at Medium.`;
   if (f.decoyBinary)
     return `> ⚠️ **Renamed shell, not the named tool** — every cited event is a binary that identifies as a plain shell (or a file trace of it); the command line is a label, not a run. Severity floored and confidence capped.`;
+  if (f.selfDisclaimed)
+    return `> ⚠️ **Subject not in evidence** — the finding says so itself and guesses at what happened; an open question, not a finding. Severity floored.`;
   if (f.contentMismatch)
-    return `> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`;
+    return `> ⚠️ **Citation mismatch** — a claimed detail (an IP or a program name) never appears in the cited events; severity floored and confidence capped pending verification.`;
   if (f.lateralUnconfirmed)
     return `> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`;
+  const tamperTiming = findingTamperTiming(f); // #1941
+  if (tamperTiming === "date-unknown")
+    return `> ⚠️ **Date unknown** — the only evidence is PowerShell console history, which has no per-line time; the time shown is the history file's. Severity capped at Medium.`;
+  if (tamperTiming === "before-incident")
+    return `> ⚠️ **Before the incident** — every cited event is dated well before the main activity burst; kept as a lead. Severity capped at Medium.`;
   if (f.corroboration) return `- Corroboration: ${corroborationLabel(f)}`;
   return "";
 }

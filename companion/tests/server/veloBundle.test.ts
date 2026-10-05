@@ -784,10 +784,25 @@ describe("Velociraptor triage bundles — routes", () => {
 
       const job = await pollHuntJob<{
         status: string;
-        truncatedArtifacts?: { name: string; kept: number; total: number }[];
+        truncatedArtifacts?: {
+          name: string;
+          kept: number;
+          total: number;
+          earliest?: string;
+          latest?: string;
+        }[];
       }>(made.app);
       expect(job.status).toBe("imported");
-      expect(job.truncatedArtifacts).toEqual([{ name: "Generic.System.Pstree", kept: 2, total: 3 }]);
+      // #1950 — the kept rows' time span rides along, so the inventory can name it.
+      expect(job.truncatedArtifacts).toEqual([
+        {
+          name: "Generic.System.Pstree",
+          kept: 2,
+          total: 3,
+          earliest: "2026-06-01T10:00:00Z",
+          latest: "2026-06-01T10:00:00Z",
+        },
+      ]);
     },
     POLL_TIMEOUT_MS * 2,
   );

@@ -419,7 +419,7 @@ off, the answer is the first row.
 | **Burst grouping** | Collapses four or more repeats of the same detection within an hour into one prompt row. Prompt only — your case keeps every row. |
 | **Prevalence** | A per-case baseline of command *shapes*. Feeds a rarity bias into what synthesis is shown, and the common/rare tag on a row. |
 | **Attack phases** | Groups the timeline into phases by time gap and labels each with its dominant tactic. Pure arithmetic. |
-| **High-severity backfill** | Mints findings the model did not: any Critical or High event it left unlinked, Defender episodes, script-block commands, coverage gaps. **A finding can exist with no model involvement at all.** |
+| **High-severity backfill** | Mints findings the model did not: any Critical or High event it left unlinked, Defender episodes, script-block commands, coverage gaps. A High or Critical row that a finding cites but does not name gets its own finding when it sits in a different folder from the finding's other rows (the finding must cite at least 3 rows with a file path). **A finding can exist with no model involvement at all.** |
 | **Refutation gate** | Downgrades a model "refuted" verdict to unknown when the host scope never collected the evidence class being denied. It can only ever weaken a claim. |
 | **Screenshot OCR** | Local Tesseract. Makes screenshots searchable, and blacks out entities before an image reaches an external vision model. |
 

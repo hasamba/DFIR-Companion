@@ -19,6 +19,25 @@ export interface OcrRunner {
 
 export const DEFAULT_CONFIDENCE_THRESHOLD = 60;
 
+/**
+ * OCR could not read a screenshot, so it could not be redacted (#1952). The call fails closed:
+ * nothing is sent. The capture itself stays on disk; only its AI read stops. The same bytes fail
+ * the same way on a retry, so the retry policy surfaces this on the first throw.
+ */
+export class OcrRedactionError extends Error {
+  constructor(
+    readonly failedCount: number,
+    readonly detail: string,
+  ) {
+    super(
+      `Screenshot not sent to the AI: OCR could not read ${failedCount} screenshot(s), so they ` +
+        `could not be redacted (${detail}). Fix OCR, point vision at a local vision model, or ` +
+        `turn anonymisation off for this case.`,
+    );
+    this.name = "OcrRedactionError";
+  }
+}
+
 /** Outcome of one OCR-redact pass — the image plus what OCR saw, for logging/inspection. */
 export interface OcrRedactResult {
   /** The redacted image, or the ORIGINAL buffer (same reference) when nothing was redacted. */

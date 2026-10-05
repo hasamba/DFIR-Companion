@@ -24,6 +24,7 @@ import {
 import { readCloudRecord } from "./cloudBulkRead.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
+import { isTransferToolRow } from "./transferToolStaging.js";
 
 /**
  * What the incremental importer merge keeps per forensic row (#1874), computed from the row exactly
@@ -102,6 +103,7 @@ const INERT_NOTES = new Set([
   "CLR usage log",
   "own-child handle",
   "normal OS behaviour",
+  "transfer tool staged", // transferToolStaging: its rows are LOAD rows, read on every merge
 ]);
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const TRIGGER_NOTE = new RegExp(
@@ -158,14 +160,16 @@ export function mergeTrigger(e: ForensicEvent): string | null {
  * Whether a pass that reads only its own rows could read this one (#1874): the archive-staging →
  * upload link (exfilCorrelate.ts reads staging rows and transfer candidates, nothing else) and the
  * ransomware-precursor clustering (ransomwarePrecursor.ts reads rows carrying a precursor technique).
- * Both are supersets of what the pass reads; the merge reads every such row, so the pass sees all of
- * its input, in timeline order, however many of them the delta touched.
+ * The transfer-tool staging join (transferToolStaging.ts, #1955) reads only rows whose path names a
+ * transfer tool or its config. All are supersets of what the pass reads; the merge reads every such
+ * row, so the pass sees all of its input, in timeline order, however many of them the delta touched.
  */
 export function mergeLoadAlways(e: ForensicEvent): boolean {
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;
   if (/^SRUM total:/.test(e.description ?? "")) return true;
+  if (isTransferToolRow(e)) return true;
   return mitre.some((t) => PRECURSOR_TECHNIQUES.has(t));
 }
 

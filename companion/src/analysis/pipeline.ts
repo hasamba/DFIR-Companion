@@ -37,7 +37,9 @@ export {
 } from "./ai/viewReports.js";
 import type { ExtractionContext } from "./ai/extraction.js";
 import * as extraction from "./ai/extraction.js";
-import { analyzeRestored } from "./ai/providerCall.js";
+import { analyzeRestored, presidioGate } from "./ai/providerCall.js";
+import type { KnownEntities } from "./anonymize.js";
+import type { AnonControl } from "./anonControl.js";
 import type { HuntContext } from "./ai/hunts.js";
 import * as synthesis from "./ai/synthesis.js";
 import type { SynthesisContext } from "./ai/synthesis.js";
@@ -195,6 +197,11 @@ export class AnalysisPipeline {
 
   hasAiProvider(): boolean {
     return Boolean(this.opts.provider);
+  }
+
+  /** The Presidio gate over text a route masked itself, e.g. a Jev payload (#1952). Fails closed. */
+  presidioGateMasked(caseId: string, maskedText: string, known: KnownEntities, control: AnonControl | null) {
+    return presidioGate(this.aiCtx, caseId, maskedText, known, control);
   }
 
   // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs. Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.

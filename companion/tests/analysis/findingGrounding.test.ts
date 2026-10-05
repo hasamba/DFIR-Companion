@@ -13,8 +13,10 @@ import {
   DECOY_BINARY_SEVERITY_FLOOR,
   BUILD_BASELINE_CONFIDENCE_CAP,
   BUILD_BASELINE_SEVERITY_FLOOR,
+  ECHO_ONLY_SEVERITY_CAP,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
+import { capLabSetupRow, labSetupPaths } from "../../src/analysis/labSetupTransfer.js";
 
 function f(p: Partial<Finding>): Finding {
   return {
@@ -702,5 +704,211 @@ describe("groundAndScoreFindings — build baseline gate (#1529)", () => {
     });
     expect(out[0].buildBaseline).toBeUndefined();
     expect(out[0].severity).toBe("High");
+  });
+});
+
+describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => {
+  const CMD = "Set-MpPreference -DisableRealtimeMonitoring $true";
+  const history = ev({
+    id: "ps",
+    timestamp: "2026-10-05T13:24:48Z",
+    severity: "Medium",
+    description: CMD,
+    artifactName: "DetectRaptor.Windows.Detection.Powershell.PSReadline",
+    path: "C:\\Users\\a\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt",
+    sources: ["Velociraptor"],
+  });
+  // Ten High rows on 10-05 — the attack burst.
+  const burst = Array.from({ length: 10 }, (_, i) =>
+    ev({ id: `b${i}`, timestamp: `2026-10-05T10:${String(i).padStart(2, "0")}:00Z`, sources: ["Hayabusa"] }),
+  );
+  const early = ev({
+    id: "5001",
+    timestamp: "2026-09-30T10:00:00Z",
+    description: "EID 5001 Real-time Protection Disabled",
+    sources: ["Hayabusa"],
+  });
+  const inBurst = ev({
+    id: "5001b",
+    timestamp: "2026-10-05T10:30:00Z",
+    description: "EID 5001 Real-time Protection Disabled",
+    sources: ["Hayabusa"],
+  });
+  const tamper = (p: Partial<Finding>): Finding =>
+    f({ title: "Microsoft Defender real-time protection disabled", mitreTechniques: ["T1562.001"], ...p });
+  const run = (findings: Finding[], extra: ForensicEvent[]): Finding[] =>
+    groundAndScoreFindings({
+      findings,
+      scopedEvents: [...burst, ...extra],
+      iocs: [],
+      graphLinkedEventIds: new Set(),
+    });
+  const timing = (x: Finding): unknown => (x as Finding & { tamperTiming?: string }).tamperTiming;
+
+  it("caps a High tamper finding whose only evidence is console history at Medium, marked date unknown", () => {
+    const out = run([tamper({ severity: "High", confidence: 65, relatedEventIds: ["ps"] })], [history]);
+    expect(out[0].severity).toBe("Medium");
+    expect(timing(out[0])).toBe("date-unknown");
+    expect(out[0].confidenceReason).toMatch(/console history/i);
+    expect(out[0].confidenceReason).toMatch(/no per-line time/i);
+  });
+
+  it("caps a tamper finding dated 5 days before the burst at Medium, marked before the incident", () => {
+    const out = run([tamper({ severity: "Critical", confidence: 80, relatedEventIds: ["5001"] })], [early]);
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe("Medium");
+    expect(timing(out[0])).toBe("before-incident");
+    expect(out[0].confidenceReason).toMatch(/before the main activity burst/i);
+  });
+
+  it("leaves a High tamper finding inside the burst alone", () => {
+    const out = run([tamper({ severity: "High", confidence: 80, relatedEventIds: ["5001b"] })], [inBurst]);
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("leaves mixed console-history and in-burst evidence alone", () => {
+    const out = run([tamper({ severity: "High", relatedEventIds: ["ps", "5001b"] })], [history, inBurst]);
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("leaves a non-tamper finding that cites only console history alone", () => {
+    const out = run(
+      [f({ title: "Recon commands run", severity: "High", relatedEventIds: ["ps"] })],
+      [history],
+    );
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("never changes row severity", () => {
+    const rows = [history, early];
+    run([tamper({ severity: "High", relatedEventIds: ["ps"] })], rows);
+    expect(history.severity).toBe("Medium");
+    expect(early.severity).toBe("High");
+  });
+
+  it("is idempotent on a second pass", () => {
+    const once = run([tamper({ severity: "High", confidence: 65, relatedEventIds: ["ps"] })], [history]);
+    const twice = run(once, [history]);
+    expect(twice[0].severity).toBe("Medium");
+    expect(timing(twice[0])).toBe("date-unknown");
+    expect(twice[0].confidenceReason).toBe(once[0].confidenceReason);
+  });
+
+  it("clears a stale marker once the evidence moves inside the burst", () => {
+    const stale = {
+      ...tamper({ severity: "High", relatedEventIds: ["5001b"] }),
+      tamperTiming: "before-incident",
+    };
+    const out = run([stale], [inBurst]);
+    expect(timing(out[0])).toBeUndefined();
+  });
+});
+
+describe("groundAndScoreFindings — lab-setup gate (#1946)", () => {
+  const DND = "c:\\users\\vagrant\\appdata\\local\\temp\\vmware-vagrant\\vmwarednd\\f47a154c\\recon.ps1";
+  const paths = labSetupPaths({});
+  const dnd1 = capLabSetupRow(ev({ id: "d1", path: DND, sources: ["THOR"] }), paths);
+  const dnd2 = capLabSetupRow(ev({ id: "d2", path: DND, sources: ["DetectRaptor"] }), paths);
+  const beacon = ev({ id: "s1", description: "Cobalt Strike beacon", sources: ["Velociraptor"] });
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>() };
+  const flag = (x: Finding): boolean | undefined => (x as Finding & { labSetup?: boolean }).labSetup;
+
+  it("caps a High finding whose every cited row is lab setup at Medium, with a flag and a reason", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity: "High", relatedEventIds: ["d1", "d2"] })],
+      scopedEvents: [dnd1, dnd2],
+    });
+    expect(out[0].severity).toBe("Medium");
+    expect(flag(out[0])).toBe(true);
+    expect(out[0].confidenceReason).toMatch(/lab-setup folder/);
+  });
+
+  it("keeps the grade of a finding with mixed evidence", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f2", severity: "High", relatedEventIds: ["d1", "s1"] })],
+      scopedEvents: [dnd1, beacon],
+    });
+    expect(out[0].severity).toBe("High");
+    expect(flag(out[0])).toBeUndefined();
+  });
+
+  it("clears a stale flag once the rows are no longer lab setup", () => {
+    const stale = { ...f({ id: "f3", severity: "High", relatedEventIds: ["s1"] }), labSetup: true };
+    const out = groundAndScoreFindings({ ...base, findings: [stale], scopedEvents: [beacon] });
+    expect(flag(out[0])).toBeUndefined();
+  });
+});
+
+describe("groundAndScoreFindings — echo-only command gate (#1948)", () => {
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>() };
+  const echoRow = (id: string, commandLine: string, over: Partial<ForensicEvent> = {}): ForensicEvent =>
+    ev({ id, severity: "High", processName: "cmd.exe", commandLine, sources: ["Hayabusa"], ...over });
+  const run = (events: ForensicEvent[], severity: Finding["severity"] = "High"): Finding =>
+    groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity, confidence: 60, relatedEventIds: events.map((e) => e.id) })],
+      scopedEvents: events,
+    })[0];
+
+  it("caps a High finding that cites only `cmd /c echo` rows, and leaves the rows alone", () => {
+    const rows = [echoRow("a", "cmd.exe /c echo canary one"), echoRow("b", "cmd /c echo canary two")];
+    const out = run(rows);
+    expect(out.severity).toBe(ECHO_ONLY_SEVERITY_CAP);
+    expect(out.confidenceReason).toMatch(/echo only, no effect/);
+    expect(rows.every((e) => e.severity === "High")).toBe(true);
+  });
+
+  // A trusted rename row reaches the #1502 decoy gate first; either way the rename fact stays visible.
+  it("keeps the rename fact of a renamed cmd.exe in the reason", () => {
+    const renamed = echoRow("r", "wmiexec.exe /c echo canary", {
+      processName: "wmiexec.exe",
+      description: "Process wmiexec.exe [renamed binary: wmiexec.exe is really Cmd.Exe]",
+      sources: ["velociraptor"],
+      mitreTechniques: ["T1036"],
+    });
+    const out = run([renamed], "Critical");
+    expect(out.severity).toBe("Medium");
+    expect(out.confidenceReason).toMatch(/wmiexec\.exe is a renamed cmd\.exe/i);
+  });
+
+  it("caps echo rows plus a presence trace of the same file", () => {
+    const mft = ev({
+      id: "m",
+      severity: "Info",
+      artifactName: "MFT",
+      path: "C:\\Windows\\System32\\cmd.exe",
+    });
+    expect(run([echoRow("a", "cmd /c echo x"), mft]).severity).toBe("Medium");
+  });
+
+  it.each([
+    "cmd /c echo x & whoami",
+    "cmd /c echo x > C:\\Users\\Public\\f.txt",
+    "cmd /c echo x | clip",
+    "cmd /c echo %X%",
+    "cmd /k echo x",
+  ])("keeps the grade for %j", (cl) => {
+    expect(run([echoRow("a", cl)]).severity).toBe("High");
+  });
+
+  it("keeps the grade on mixed evidence", () => {
+    const net = ev({ id: "n", severity: "High", dstIp: "203.0.113.5", port: 445 });
+    expect(run([echoRow("a", "cmd /c echo x"), net]).severity).toBe("High");
+  });
+
+  it("keeps the grade when the first word is not cmd and the row does not identify cmd.exe", () => {
+    const row = echoRow("a", "wmiexec.exe /c echo x", { processName: "wmiexec.exe" });
+    expect(run([row]).severity).toBe("High");
+  });
+
+  it("never raises a Medium finding", () => {
+    const out = run([echoRow("a", "cmd /c echo x")], "Medium");
+    expect(out.severity).toBe("Medium");
+    expect(out.confidenceReason ?? "").not.toMatch(/echo only/);
   });
 });

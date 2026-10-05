@@ -136,6 +136,12 @@
         (sim.originalSeverity !== f.severity ? ` · live-intrusion severity ${sim.originalSeverity}` : "");
       tip = "Capped at Medium because the case is judged an authorized simulation. Confirm with the system owner.";
     }
+    // #1948: the verdict finding was below 80 and the case summary stated the verdict too.
+    if (sim.basis === "summary" && !sim.overridden) {
+      text += " · verdict from summary";
+      tip +=
+        " The verdict finding had low confidence; the case summary also states the verdict. Use \"Treat as real intrusion\" if this is wrong.";
+    }
     return ` <span class="rel-chip rel-sim rel-sim-${esc(sim.role)}" title="${escAttr(tip)}">🎭 ${esc(text)}</span>`;
   }
   function setSimulationOverride(treatAsReal) {

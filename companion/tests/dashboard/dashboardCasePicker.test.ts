@@ -123,12 +123,39 @@ describe("dashboard-case-picker.js", () => {
     expect(h.caseId.fired).toEqual(["input", "change"]);
   });
 
-  it("text that matches no case passes through as the id, so Connect can create it", async () => {
+  it("text that matches no case passes through as the id on change, so Connect can create it", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     h.picker.value = "  brand-new-case ";
-    h.picker.fire("input");
+    h.picker.fire("change");
     expect(h.caseId.value).toBe("brand-new-case");
+  });
+
+  it("typing an unknown id fires nothing per keystroke; blur lands it once (#1962)", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.caseId.value = "INC-2026-001";
+    for (const partial of ["n", "ne", "new", "new-", "new-c"]) {
+      h.picker.value = partial;
+      h.picker.fire("input");
+    }
+    expect(h.caseId.value).toBe("INC-2026-001");
+    expect(h.caseId.fired).toEqual([]);
+    h.picker.fire("change");
+    expect(h.caseId.value).toBe("new-c");
+    expect(h.caseId.fired).toEqual(["input", "change"]);
+  });
+
+  it("Enter on an unknown id still lands it and connects (#1962)", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.picker.value = "brand-new-case";
+    h.picker.fire("input");
+    expect(h.caseId.fired).toEqual([]);
+    h.picker.fire("keydown", { key: "Enter" });
+    expect(h.caseId.value).toBe("brand-new-case");
+    expect(h.caseId.fired).toEqual(["input", "change"]);
+    expect(h.connected()).toBe(1);
   });
 
   it("typing an id directly still works", async () => {

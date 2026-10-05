@@ -16,6 +16,13 @@
 // It is also why this renders for a SINGLE-artifact hunt, which the multi-artifact coverage line
 // deliberately skips — a one-artifact THOR hunt is exactly the case that showed no warning at all.
 
+// One cut-short artifact. The cap keeps the FIRST rows in read order, not the incident window, so the
+// kept rows' time span is named when the job stored one (#1950) — anything outside it was never read.
+function veloCutLine(t) {
+  const span = t.earliest && t.latest ? `, dated ${esc(String(t.earliest))} to ${esc(String(t.latest))}` : "";
+  return `${esc(t.name)} (kept ${esc(String(t.kept))} rows${span}, there were more)`;
+}
+
 /* exported veloCoverageHtml */
 function veloCoverageHtml(job) {
   const cut = job.truncatedArtifacts || [];
@@ -39,7 +46,7 @@ function veloCoverageHtml(job) {
   let html = box(bits.join(" &middot; "), "var(--text-muted)");
   if (cut.length) {
     const names = cut
-      .map((t) => `${esc(t.name)} (kept ${esc(String(t.kept))} rows, there were more)`)
+      .map(veloCutLine)
       .join("<br>");
     html += box(
       `&#9888; INCOMPLETE &mdash; ${names}<br>Findings past the cap were never read. Raise ` +
@@ -86,7 +93,7 @@ function veloReadGapsHtml(gaps, again) {
   if (cut.length)
     html += box(
       `&#9888; INCOMPLETE &mdash; ${cut
-        .map((t) => `${esc(t.name)} (kept ${esc(String(t.kept))} rows, there were more)`)
+        .map(veloCutLine)
         .join("<br>")}<br>Rows past the cap were never read.`,
       "var(--sev-high)",
     );

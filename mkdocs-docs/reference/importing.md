@@ -43,11 +43,11 @@ kept apart from what a collector or the machine itself wrote.
 
 | Category | Formats |
 |----------|---------|
-| **Windows detection** | Chainsaw hunt JSON/JSONL, EVTX dump (evtx_dump), Hayabusa JSON/CSV timeline |
+| **Windows detection** | Chainsaw hunt JSON/JSONL, EVTX dump (evtx_dump), Hayabusa JSON/CSV timeline — see [Generic Sysmon registry alerts](#generic-sysmon-registry-alerts) |
 | **Windows Event Log XML** | Event Viewer "Save As XML", `wevtutil qe /f:xml`, PowerShell `Get-WinEvent … ToXml()` (Security, Sysmon, System, any channel) — same per-EID Windows/Sysmon mapping as the SIEM/EVTX-JSON paths |
 | **Windows crash reports** | Windows Error Reporting `Report.wer` — the faulting application, its loaded modules and the crash signature |
 | **Windows host triage** | KAPE/EZ Tools CSVs (Prefetch, Amcache, ShimCache, LNK, JumpLists, USN Journal, MFT, SRUM, Recycle Bin, Shellbags), Cyber Triage JSONL/JSON/CSV |
-| **EDR / SIEM** | Velociraptor native JSON/JSONL/artifact-map, Velociraptor **upload-only artifacts** (e.g. THOR) — paste the GUI's "Uploaded Files" tab URL to import just the uploaded report, skipping rows entirely; also reads `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`, SIEM/EDR JSON (Elastic, Splunk, Kibana, winlogbeat), Wazuh JSON, THOR Nextron JSONL, ECAR (EDR Common Activity Record) NDJSON |
+| **EDR / SIEM** | Velociraptor native JSON/JSONL/artifact-map, Velociraptor **upload-only artifacts** (e.g. THOR) — paste the GUI's "Uploaded Files" tab URL to import just the uploaded report, skipping rows entirely; also reads `.csv`/`.txt`/`.log`/`.jsonl` uploads, not just `.json`, SIEM/EDR JSON (Elastic, Splunk, Kibana, winlogbeat), Wazuh JSON, THOR Nextron JSONL (see [THOR file hits](#thor-file-hits-content-versus-name)), ECAR (EDR Common Activity Record) NDJSON |
 | **Network** | Suricata eve.json, Zeek JSON (combined or per-stream conn/dns/http/ssl/x509/files), Security Onion events |
 | **Firewall / IDS / web logs** | Cisco ASA syslog (Built/Teardown/Deny), Snort/Suricata `alert_fast` IDS alerts, Apache/Nginx/Squid combined access logs, plain syslog (RFC 5424 / RFC 3164, Linux/Unix hosts) |
 | **Memory forensics** | Volatility 3 JSON + default text output, Rekall JSON, MemProcFS timeline CSV, MemProcFS findevil, Intact (trimmed VolWeb) `memory_payload.json` + `yarascan_results.jsonl` |
@@ -89,6 +89,39 @@ the tagger sees. Set `DFIR_IMPORT_BULK_MIN_MB=0` to batch every Velociraptor imp
 Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.
+
+### THOR file hits: content versus name
+
+If a THOR file hit's content does not match its name (for example, an executable named
+`invoice.pdf`), the row gets a note such as `[content: PE executable, name says .pdf]` and goes up
+one severity level. The check uses THOR's own file type, then the first bytes of the file. Info rows
+are not raised, and hits in detection-tool folders still drop to Info.
+
+### Generic Sysmon registry alerts
+
+Hayabusa and Velociraptor's `Windows.Sigma.Base` pack both include generic rules, "Reg Key Value
+Set (Sysmon Alert)" and "Reg Key Create/Delete (Sysmon Alert)". They fire at medium on every Sysmon
+registry write that the Sysmon configuration tags. On import, such a row goes to Info when it names
+an ordinary registry key and nothing more specific fired. It stays searchable in the super-timeline,
+with the note `[generic Sysmon alert — no specific rule matched this registry write]`.
+
+The row keeps its grade when any of these is true:
+
+- It sits on a persistence or defence-evasion key: Run keys, IFEO, Winlogon, LSA, Defender
+  settings, or a service `ImagePath`.
+- A specific rule fired on it, or it names a technique other than T1112.
+- It is High or Critical, or an analyst promoted it.
+- Its registry key is missing or cut short.
+
+Cases imported before this change do not change. Re-import the evidence to apply it.
+
+### Account look-alikes
+
+When a new account (EID 4720) or a group member (EID 4728/4732/4756) has a name close to a built-in
+account, such as Administrator, krbtgt or Guest, the event is graded High. The description ends with
+`[look-alike of built-in account "<name>"]`. Localized built-in names, numbered copies such as
+`admin2`, and names shorter than five characters are not flagged. A member logged only by its SID is
+not checked.
 
 ### Collecting Linux persistence artifacts
 

@@ -16,7 +16,7 @@ import {
 } from "./secondOpinionTargets.js";
 import { heldForAnalyst } from "./secondOpinionGuard.js";
 import { byEventTime } from "./forensicSort.js";
-import { renderEventLine } from "./ai/eventLine.js";
+import { renderTaggedEventLine } from "./ai/eventLine.js";
 import { stateEventResolver } from "./eventAliasLookup.js";
 import { rejectedTechniqueIds, withRejectedTechniqueIds } from "./rejectedTechniques.js";
 import { projectScope } from "./scopeProject.js";
@@ -501,7 +501,7 @@ function renderDeltaWithEvents(
     return { text: lines.join("\n"), used: 0 };
   }
   const shown = events.slice(0, Math.max(0, Math.min(RECONCILE_EVENTS_PER_DELTA, budget)));
-  for (const e of shown) lines.push(`${EVENT_INDENT}${renderEventLine(e)}`);
+  for (const e of shown) lines.push(`${EVENT_INDENT}${renderTaggedEventLine(e)}`);
   const left = events.length - shown.length;
   if (left > 0) {
     const why = shown.length < RECONCILE_EVENTS_PER_DELTA ? " (run-wide event budget reached)" : "";

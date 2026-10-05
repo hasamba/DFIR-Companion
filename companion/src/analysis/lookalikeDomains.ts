@@ -133,7 +133,7 @@ const MULTIPART_SUFFIXES = new Set([
 
 // Confusable / homoglyph folds → the ASCII letter they imitate. Covers the practical set seen in
 // real phishing: Latin diacritics, Cyrillic / Greek lookalikes, and ASCII digit / shape homoglyphs.
-const CONFUSABLES: Record<string, string> = {
+export const CONFUSABLES: Record<string, string> = {
   // Latin diacritics
   á: "a",
   à: "a",
@@ -246,7 +246,7 @@ export function skeleton(host: string): string {
 }
 
 // Levenshtein edit distance, capped implicitly by string length (domains are short).
-function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string, b: string): number {
   const m = a.length,
     n = b.length;
   if (m === 0) return n;

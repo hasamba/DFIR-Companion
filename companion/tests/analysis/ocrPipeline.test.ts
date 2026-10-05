@@ -8,7 +8,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { AnonControlStore } from "../../src/analysis/anonControl.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
-import type { OcrRunner, OcrWord } from "../../src/analysis/ocrRedact.js";
+import { OcrRedactionError, type OcrRunner, type OcrWord } from "../../src/analysis/ocrRedact.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import type { CaptureMetadata } from "../../src/types.js";
 
@@ -129,6 +129,47 @@ describe("analyzeWindow OCR redaction (pipeline glue)", () => {
 
     // Nothing matched → the same buffer is forwarded untouched.
     expect(provider.lastReq!.images[0].base64).toBe(original);
+  });
+
+  // #1952: an OCR failure used to forward the UNREDACTED screenshot. It now fails closed.
+  it("sends nothing when OCR fails and says why", async () => {
+    const original = await whitePngBase64();
+    const broken: OcrRunner = {
+      recognize: async () => {
+        throw new Error("tesseract worker crashed");
+      },
+    };
+    const { pipeline, provider } = await makePipeline(broken, original);
+
+    const err = await pipeline.analyzeWindow("c1", [capture(1)]).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(provider.lastReq, "no request may reach the provider").toBeUndefined();
+    expect(err).toBeInstanceOf(OcrRedactionError);
+    const msg = (err as Error).message;
+    expect(msg).toMatch(/not sent/i);
+    expect(msg).toMatch(/local vision model/i);
+    expect(msg).toMatch(/anonymi[sz]ation off/i);
+  });
+
+  it("sends nothing when one screenshot in a window fails OCR", async () => {
+    const original = await whitePngBase64();
+    let n = 0;
+    const flaky: OcrRunner = {
+      recognize: async () => {
+        n += 1;
+        if (n === 2) throw new Error("tesseract worker crashed");
+        return [];
+      },
+    };
+    const { pipeline, provider } = await makePipeline(flaky, original);
+
+    await expect(pipeline.analyzeWindow("c1", [capture(1), capture(2)])).rejects.toBeInstanceOf(
+      OcrRedactionError,
+    );
+    expect(provider.lastReq).toBeUndefined();
   });
 
   it("writes the redacted copy to DFIR_OCR_DEBUG_DIR when set", async () => {

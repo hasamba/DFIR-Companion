@@ -7,6 +7,8 @@
   function applyAiStatus(evt) {
     // A push is newer than any correction still in flight; that correction must not repaint over it.
     aiStateSeq++;
+    // Any newer state ends the Presidio offer; only an error can bring it back (#1945).
+    hidePresidioActions();
     if (evt.status === "analyzing") {
       // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
       const m =
@@ -97,6 +99,108 @@
       // Same reason as the Presidio line above: an import is fire-and-forget, so a gate that fires
       // mid-import has no response to carry its 409. This is the only path it surfaces on.
       loadHostDuplicates(activeCaseId);
+      // #1945: when the analyzer is down, offer the two ways on. Asks the server's health probe,
+      // never the error text, so a wording change cannot hide the buttons or show them wrongly.
+      offerPresidioActions(activeCaseId);
+    }
+  }
+
+  // ── Presidio unreachable: Retry, or Continue without Presidio for this case (#1945) ──────────
+  //
+  // The gate fails closed and is never retried, so an AI call with the analyzer down stops at once.
+  // These two buttons are the analyst's way on. Neither runs by itself: continuing without the
+  // layer is an evidentiary choice, and the route's activity entry records it.
+  let presidioOfferSeq = 0;
+  function presidioButtons() {
+    return [
+      document.getElementById("presidioRetryBtn"),
+      document.getElementById("presidioContinueBtn"),
+    ];
+  }
+  function hidePresidioActions() {
+    presidioOfferSeq++; // an offer still in flight must not show the buttons after this
+    for (const b of presidioButtons()) if (b) b.style.display = "none";
+  }
+  async function getJson(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+  const anonControlUrl = (caseId) => `/cases/${encodeURIComponent(caseId)}/anon-control`;
+  async function offerPresidioActions(caseId) {
+    if (!caseId) return;
+    const seq = ++presidioOfferSeq;
+    try {
+      const c = await getJson(anonControlUrl(caseId));
+      // No analyzer, or the case already stands it down: Presidio cannot be what failed.
+      if (!c.presidioConfigured || c.presidio === false) return;
+      const h = await getJson("/system/presidio-health");
+      if (seq !== presidioOfferSeq || caseId !== activeCaseId || h.reachable !== false) return;
+      showPresidioActions(caseId, h.url);
+    } catch {
+      // An older server without the probe: leave the pill and its message as they are.
+    }
+  }
+  function showPresidioActions(caseId, url) {
+    const [retry, cont] = presidioButtons();
+    if (!retry || !cont) return;
+    const where = url ? " at " + url : "";
+    retry.setAttribute(
+      "data-tip",
+      `Check the Presidio analyzer${where} again. If it answers, AI Re-synthesize starts.`,
+    );
+    cont.setAttribute(
+      "data-tip",
+      "Untick Presidio for this case only, then run AI Re-synthesize. Real names are no longer " +
+        "detected; the built-in masking (IPs, hosts, users, secrets) stays on. No restart. The " +
+        "case activity log records this choice. Tick it again in the Anonymization panel.",
+    );
+    retry.onclick = () => retryPresidio(caseId);
+    cont.onclick = () => continueWithoutPresidio(caseId);
+    retry.style.display = "";
+    cont.style.display = "";
+  }
+  async function retryPresidio(caseId) {
+    const status = document.getElementById("status");
+    status.textContent = "checking Presidio…";
+    try {
+      const h = await getJson("/system/presidio-health");
+      if (caseId !== activeCaseId) return;
+      if (h.reachable === false) {
+        status.textContent =
+          "Presidio is still not reachable" +
+          (h.url ? " at " + h.url : "") +
+          ". Start the analyzer, or continue without Presidio for this case.";
+        return;
+      }
+      hidePresidioActions();
+      resynthesize();
+    } catch (e) {
+      status.textContent = "Presidio check failed: " + e.message;
+    }
+  }
+  async function continueWithoutPresidio(caseId) {
+    const status = document.getElementById("status");
+    try {
+      // The version the switch is saved against (#1839): a stale one is refused, never overwritten.
+      const c = await getJson(anonControlUrl(caseId));
+      const r = await fetch(anonControlUrl(caseId), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ presidio: false, version: c.version }),
+      });
+      if (caseId !== activeCaseId) return;
+      if (r.status === 409) {
+        status.textContent =
+          "Nothing changed: another window changed this case's anonymization settings. Press Continue again.";
+        return;
+      }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      hidePresidioActions();
+      loadAnonToggle(caseId);
+      resynthesize();
+    } catch (e) {
+      status.textContent = "Could not switch Presidio off for this case: " + e.message;
     }
   }
 

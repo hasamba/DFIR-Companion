@@ -19,6 +19,12 @@ available under **Advanced** for testing and exceptional cases.
     configure a shared path or SCP delivery. Most `FILE_NOT_FOUND` failures are caused by completing
     the first step but not the second.
 
+!!! warning "MCP runs are not anonymised"
+    The Companion is not the MCP client. Claude Code calls the tools and reads their output itself,
+    so tool output and your instruction reach it unmasked. On a case with anonymisation on, each run
+    shows a warning and starts only when you press **Continue unmasked**. With anonymisation off for
+    the case, no warning is shown.
+
 ---
 
 ## Recommended DFIR MCP servers

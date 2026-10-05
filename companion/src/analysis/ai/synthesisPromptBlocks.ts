@@ -8,6 +8,7 @@ import {
   buildAuthorizedContextBlock,
   type FalsePositiveMarker,
 } from "../falsePositive.js";
+import { buildEmulationAgentBlock } from "../emulationAgentContext.js";
 import { corroborationLabel } from "../findingGrounding.js";
 import { textMentionsFindingId } from "../fpCascade.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
@@ -71,6 +72,7 @@ export interface SynthesisBlocks {
   openThreads: string;
   falsePositiveBlock: string;
   authorizedContextBlock: string;
+  emulationAgentBlock: string;
   learnedPatternsBlock: string;
 }
 
@@ -151,6 +153,8 @@ export async function buildSynthesisBlocks(
     // Rabbit-hole detection (#13): authorized-test / known-good-tool markers are RETAINED as shaping
     // context (a sanctioned pentest during the window is signal, not just noise), not merely erased.
     authorizedContextBlock: buildAuthorizedContextBlock(markers),
+    // #1957: a Caldera sandcat agent in the SCOPED forensic timeline, stated as a fact to weigh.
+    emulationAgentBlock: buildEmulationAgentBlock(scopedEvents),
     learnedPatternsBlock,
   };
 }
@@ -364,6 +368,7 @@ export function overheadSourceText(b: SynthesisBlocks, lastSummary: string): str
     b.openThreads +
     b.falsePositiveBlock +
     b.authorizedContextBlock +
+    b.emulationAgentBlock +
     b.learnedPatternsBlock +
     lastSummary
   );
@@ -389,6 +394,7 @@ export function assembleUserPrompt(b: SynthesisBlocks, t: TimelineSection): stri
     `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${b.openThreads}\n\n` +
     (b.falsePositiveBlock ? `${b.falsePositiveBlock}\n\n` : "") +
     (b.authorizedContextBlock ? `${b.authorizedContextBlock}\n\n` : "") +
+    (b.emulationAgentBlock ? `${b.emulationAgentBlock}\n\n` : "") +
     (b.learnedPatternsBlock ? `${b.learnedPatternsBlock}\n\n` : "") +
     `Running notes: ${t.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`
   );

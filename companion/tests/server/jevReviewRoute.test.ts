@@ -327,6 +327,67 @@ describe("what the analyst is told about coverage", () => {
     expect([...(await new JevGradeStore(cases).load("c1")).keys()].sort()).toEqual(["fresh", "hayabusa2"]);
   });
 
+  // #1949. A row the importer marked `origin: "collector"` is the investigator's own tooling at work.
+  // Grading it buys a High the AI then reads as the intruder; it is set aside and counted instead.
+  // The mark is the origin, never the note: a Critical keeps the note but no origin, and stays graded.
+  describe("the collector's own footprint (#1949)", () => {
+    const NOTE = " [DFIR collector footprint — script the Velociraptor client ran from its tool tree]";
+    async function collectorCase(rows: ForensicEvent[]) {
+      const root = await mkdtemp(join(tmpdir(), "dfir-jev-collector-"));
+      const cases = new CaseStore(root);
+      await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      const stateStore = new StateStore(cases);
+      await stateStore.save(emptyState("c1"));
+      const superTimelineStore = new SuperTimelineStore(cases);
+      await superTimelineStore.append("c1", rows);
+      const details: string[] = [];
+      const activityLogStore = {
+        add: async (_caseId: string, e: { detail: string }) => void details.push(e.detail),
+      } as never;
+      return { app: createApp(cases, { stateStore, superTimelineStore, activityLogStore }), cases, details };
+    }
+
+    it("sets aside collector rows, counts them, and the sum still closes", async () => {
+      const { app, cases, details } = await collectorCase([
+        raw("plain", "certutil -urlcache"),
+        { ...raw("c1", `Add-Type AdjPriv${NOTE}`), severity: "Info", origin: "collector" },
+        { ...raw("c2", "psniper results"), origin: "collector" },
+        // A Critical the importer refused to demote: note, no origin. It must still be graded.
+        { ...raw("crit", `Add-Type TokPriv1Luid${NOTE}`), severity: "Critical" },
+      ]);
+      const res = await request(app).post("/cases/c1/jev/review").send({});
+      expect(res.status).toBe(200);
+      expect(res.body.collectorFootprint).toBe(2);
+      expect(res.body.graded).toBe(2);
+      const { read, alreadyAnalyzed, buildWindow, collectorFootprint, graded } = res.body;
+      expect(graded + alreadyAnalyzed + buildWindow + collectorFootprint).toBe(read);
+      expect((res.body.rows as { id: string }[]).map((r) => r.id).sort()).toEqual(["crit", "plain"]);
+      expect([...(await new JevGradeStore(cases).load("c1")).keys()].sort()).toEqual(["crit", "plain"]);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(details.some((d) => d.includes("2 set aside: collector footprint"))).toBe(true);
+    });
+
+    it("sends nothing to Jev and returns the AI-budget slot when every row is the collector's", async () => {
+      resetLimiters();
+      const { app, details } = await collectorCase([
+        { ...raw("c1", "psniper"), origin: "collector" },
+        { ...raw("c2", "psniper 2"), origin: "collector" },
+      ]);
+      for (let i = 0; i < 25; i++) {
+        const res = await request(app).post("/cases/c1/jev/review").send({});
+        expect(res.status).toBe(200);
+        expect(res.body.graded).toBe(0);
+        expect(res.body.collectorFootprint).toBe(2);
+        expect(res.body.rows).toEqual([]);
+      }
+      const limiter = getAiLimiter();
+      for (let i = 0; i < 20; i++) expect(limiter.tryAcquire("c1")).toBe(true);
+      resetLimiters();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(details.some((d) => d.includes("2 set aside: collector footprint"))).toBe(true);
+    });
+  });
+
   it("merges a second review into the record rather than replacing it", async () => {
     const { cases, stateStore, superTimelineStore } = await caseRoot(6, 0);
     const app = createApp(cases, { stateStore, superTimelineStore });

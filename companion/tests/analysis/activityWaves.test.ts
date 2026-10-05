@@ -182,17 +182,18 @@ describe("gap findings for wave boundaries", () => {
   });
 
   it("still reports an unaccounted-for silence as a coverage gap", () => {
-    // A trailing burst too thin to be a wave leaves the silence unexplained.
+    // A trailing burst too thin to be a wave leaves the silence unexplained. The resume row is
+    // graded Medium, so the gap is corroborated and keeps High + T1070 (#1942).
     const events = [
       ...burst("w1-", "2026-08-07T14:30:00.000Z", 6),
-      ev("lone", "2026-08-25T17:30:00.000Z", { sources: ["velo"] }),
+      ev("lone", "2026-08-25T17:30:00.000Z", { sources: ["velo"], severity: "Medium" }),
     ];
     const gaps = detectTimelineGaps(events);
     const pattern = detectActivityWaves(events, gaps);
     expect(pattern).toBeNull();
     const state = backfillSilenceGapFindings(
       { ...emptyState("INC-TEST"), forensicTimeline: events },
-      markWaveBoundaries(gaps, pattern),
+      classifyGapEdges(markWaveBoundaries(gaps, pattern), events, pattern),
       "2026-08-26T20:00:00.000Z",
     );
     expect(state.findings[0].title).toContain("coverage gap");

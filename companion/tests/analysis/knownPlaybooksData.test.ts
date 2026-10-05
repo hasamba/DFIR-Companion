@@ -39,6 +39,7 @@ describe("loadKnownPlaybooks", () => {
       "Conti",
       "Egg-Cellent Resume (more_eggs → Cobalt Strike → Pyramid)",
       "LockBit",
+      "Nitrogen (fake IP scanner → Sliver/Cobalt Strike → BlackCat)",
       "Play",
       "Scattered Spider",
     ]);
@@ -133,5 +134,69 @@ describe("Egg-Cellent Resume playbook (#1560)", () => {
   it("does not match a generic ransomware case that shares only T1059.001", () => {
     const result = buildPlaybookMatchResult(events([["T1059.001"], ["T1486"]]), loadKnownPlaybooks());
     expect(result.matches.map((m) => m.name)).not.toContain(EGG);
+  });
+});
+
+// #1963: a malvertising intrusion (The DFIR Report, 2024-09-30) — a fake Advanced IP Scanner
+// side-loads python311.dll, Python loaders run Sliver and Cobalt Strike, and BlackCat ends it. The
+// entry must surface for its own chain, must not outrank another family's own chain, and must stay
+// quiet on a case that shares only the generic C2 + encryption tail with it.
+describe("Nitrogen playbook (#1963)", () => {
+  const NITROGEN = "Nitrogen (fake IP scanner → Sliver/Cobalt Strike → BlackCat)";
+  const events = (chain: string[][]): ForensicEvent[] =>
+    chain.map((techniques, i) => ({
+      id: `e${i}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+      description: techniques.join(","),
+      severity: "High" as const,
+      mitreTechniques: techniques,
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    }));
+
+  beforeEach(() => _resetKnownPlaybooksCache());
+
+  it("cites The DFIR Report write-up", () => {
+    const pb = loadKnownPlaybooks().playbooks.find((p) => p.name === NITROGEN);
+    expect(pb?.reference).toBe(
+      "https://thedfirreport.com/2024/09/30/nitrogen-campaign-drops-sliver-and-ends-with-blackcat-ransomware/",
+    );
+  });
+
+  it("matches a case whose techniques cover the Nitrogen steps", () => {
+    const result = buildPlaybookMatchResult(
+      events([
+        ["T1189", "T1204.002"], // malvertising fake IP scanner
+        ["T1574.002"], // python311.dll side-load
+        ["T1059.006"], // Python loaders (Sliver, Cobalt Strike)
+        ["T1071.001"], // Sliver / Cobalt Strike web C2
+        ["T1069.002", "T1482"], // domain discovery
+        ["T1047"], // Impacket wmiexec
+        ["T1048"], // restic over HTTP
+        ["T1486", "T1490"], // BlackCat
+      ]),
+      loadKnownPlaybooks(),
+    );
+    const top = result.matches[0];
+    expect(top?.name).toBe(NITROGEN);
+    expect(top?.score).toBe(100);
+  });
+
+  it.each(["LockBit", "BlackCat (ALPHV)"])("keeps %s first on a case built from its own steps", (name) => {
+    const own = loadKnownPlaybooks().playbooks.find((p) => p.name === name);
+    expect(own).toBeDefined();
+    const result = buildPlaybookMatchResult(
+      events((own?.steps ?? []).map((s) => [s.technique])),
+      loadKnownPlaybooks(),
+    );
+    expect(result.matches[0]?.name).toBe(name);
+    expect(result.matches[0]?.score).toBe(100);
+    const nitrogen = result.matches.find((m) => m.name === NITROGEN);
+    if (nitrogen) expect(nitrogen.score).toBeLessThan(100);
+  });
+
+  it("does not match a case that shares only T1071.001 and T1486", () => {
+    const result = buildPlaybookMatchResult(events([["T1071.001"], ["T1486"]]), loadKnownPlaybooks());
+    expect(result.matches.map((m) => m.name)).not.toContain(NITROGEN);
   });
 });

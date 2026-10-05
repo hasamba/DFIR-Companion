@@ -222,7 +222,7 @@ export function engineScriptPath(row: Row): string {
 // The classic "Windows PowerShell" channel an 800 lands on records NO Security.UserID, so the SID
 // reader below finds nothing for it. The engine writes the identity it ran under into the record's
 // own context block instead — `UserId=WORKGROUP\SYSTEM` on a workgroup host, `NT AUTHORITY\SYSTEM`
-// on a domain-joined one — the same engine-recorded fact the SID is, and the only spelling of SYSTEM
+// in some hosts' records — the same engine-recorded fact the SID is, and the only spelling of SYSTEM
 // the token can produce (SYSTEM is a reserved account name; no user or domain account can be given
 // it). Read from the validated context block only, never from the command or payload elements.
 const PIPELINE_SYSTEM_USER = /^\t?UserId=(?:NT AUTHORITY|WORKGROUP)\\SYSTEM\s*$/im;
@@ -408,15 +408,32 @@ export function scriptRunspace(row: Row): string {
 
 /**
  * May this row be linked to the collector by its runspace alone? A 400 engine-state record, or a
- * SYSTEM script record whose engine-written path is under the signed system Modules root. This is
- * the CANDIDATE test only: it never demotes by itself (#1555).
+ * SYSTEM script record whose engine-written path is under the signed system Modules root, or an 800
+ * naming `<domain>\SYSTEM` whose path is under that root or the Tools tree (#1949). This is the
+ * CANDIDATE test only: it never demotes by itself (#1555).
  */
 export function isRunspaceLinkCandidate(row: Row): boolean {
   const eid = eventId(row);
   if (eid === ENGINE_STATE_EID) return true;
-  if (!COLLECTOR_SCRIPT_EIDS.has(eid) || !ranAsSystem(row)) return false;
+  if (!COLLECTOR_SCRIPT_EIDS.has(eid)) return false;
   const path = engineScriptPath(row);
-  return SYSTEM_MODULES_ROOT.test(path) && !PATH_TRAVERSAL.test(path);
+  if (PATH_TRAVERSAL.test(path)) return false;
+  if (ranAsSystem(row)) return SYSTEM_MODULES_ROOT.test(path);
+  return isDomainSystemPipeline(row) && (SYSTEM_MODULES_ROOT.test(path) || COLLECTOR_TOOL_TREE.test(path));
+}
+
+// A domain-joined host's 800 names SYSTEM under the NetBIOS domain — `UserId=WINDOMAIN\SYSTEM` —
+// which PIPELINE_SYSTEM_USER does not accept (#1949). That regex is NOT widened: the domain part is a
+// text field, and a domain account literally named SYSTEM would pass, so it must never let an 800
+// prove ITSELF (isDetectionToolScript) or seed a session. It makes the 800 a runspace CANDIDATE only:
+// claimed when a SID-proven Tools-tree record seeded the same engine-written HostId|RunspaceId, never
+// on its own. Exactly one UserId line, and no SID on the record (a SID, when present, decides).
+const PIPELINE_DOMAIN_SYSTEM_USER = /^\t?UserId=[^\\\r\n=]{1,15}\\SYSTEM\s*$/im;
+const PIPELINE_USER_LINE = /^\t?UserId=/gim;
+function isDomainSystemPipeline(row: Row): boolean {
+  if (eventId(row) !== PIPELINE_EID || logonSid(row)) return false;
+  const context = pipelineContext(row);
+  return context.match(PIPELINE_USER_LINE)?.length === 1 && PIPELINE_DOMAIN_SYSTEM_USER.test(context);
 }
 
 // The process id the ENGINE wrote into the record's System block (`Execution ProcessID`): the

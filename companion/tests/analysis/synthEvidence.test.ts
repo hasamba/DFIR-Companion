@@ -63,6 +63,33 @@ describe("renderStructuredTags", () => {
     expect(t).toContain("T1069.002");
   });
 
+  it("carries C2 settings a script block defines as one script-content tag (#1959)", () => {
+    const t = renderStructuredTags(
+      ev({
+        asset: "WS01",
+        description: "Script block logged (EID 4104)",
+        message: "$server='x.example.com'; $port=443; $uri='/submit.php'; $watermark=123456",
+      }),
+    );
+    expect(t).toContain("<host:WS01>");
+    expect(t).toContain(
+      "<script-c2-config:server=x.example.com; port=443; uri=/submit.php; watermark=123456>",
+    );
+  });
+
+  it("emits no C2-config tag for a port alone or a Chocolatey-shaped install script (#1959)", () => {
+    const base = { asset: "WS01", description: "Script block logged (EID 4104)" };
+    expect(renderStructuredTags(ev({ ...base, message: "$port=443" }))).not.toContain("script-c2-config");
+    expect(
+      renderStructuredTags(
+        ev({
+          ...base,
+          message: "$url = ''\n$uri = [System.Uri]$url\n[string] $userAgent = 'chocolatey command line'",
+        }),
+      ),
+    ).not.toContain("script-c2-config");
+  });
+
   it("emits no script tags for a row the case's own collector produced (#1500)", () => {
     const t = renderStructuredTags(
       ev({
@@ -171,6 +198,21 @@ describe("renderStructuredTags — destination facts and the renamed-binary flag
 
   it("adds nothing to a bare row", () => {
     expect(renderStructuredTags(ev({ description: "Logon 4624" }))).toBe("");
+  });
+
+  it("puts the command-line tag right after the proc tag when the cut hides the arguments (#1951)", () => {
+    const t = renderStructuredTags(
+      ev({
+        asset: "WS01",
+        processName: "powershell.exe",
+        parentName: "explorer.exe",
+        commandLine: "powershell.exe -NoProfile -File C:\\Users\\Public\\x.ps1",
+        description: `Sysmon EID 1 ${"Rule detail ".repeat(30)}`,
+      }),
+    );
+    expect(t).toBe(
+      " <host:WS01> <proc:powershell.exe←explorer.exe> <cmd:-NoProfile -File C:\\Users\\Public\\x.ps1>",
+    );
   });
 });
 

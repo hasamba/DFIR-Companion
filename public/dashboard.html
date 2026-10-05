@@ -27,7 +27,8 @@
   <link rel="stylesheet" href="/css/dashboard-themes-a.css" />
   <link rel="stylesheet" href="/css/dashboard-themes-b.css" />
   <link rel="stylesheet" href="/css/dashboard-layout.css" />
-  <link rel="stylesheet" href="/css/dashboard-panels.css" />
+  <!-- The id tells Cytoscape its container rule is already loaded, so it injects no un-nonced style the CSP would block (#1961). -->
+  <link rel="stylesheet" href="/css/dashboard-panels.css" id="__________cytoscape_stylesheet" />
   <link rel="stylesheet" href="/css/dashboard-timeline.css" />
   <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
   <link rel="stylesheet" href="/css/dashboard-sections.css" />
@@ -591,6 +592,8 @@
     </span>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" data-safe-style="margin-left:auto; font-weight:bold;">AI: —</span>
+    <button id="presidioRetryBtn" type="button" data-safe-style="display:none" data-tip="Check the Presidio analyzer again. If it answers, AI Re-synthesize starts.">Retry Presidio</button>
+    <button id="presidioContinueBtn" type="button" data-safe-style="display:none" data-tip="Untick Presidio for this case only, then run AI Re-synthesize. The built-in masking stays on.">Continue without Presidio for this case</button>
     <button id="presidioPendingBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
     <button id="hostDuplicatesBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="This case has hosts that appear under more than one name. AI analysis is on hold until you confirm whether they are the same machine.">⚠ Duplicate hosts: 0</button>
     <span id="captureCount" data-safe-style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
@@ -1427,6 +1430,10 @@
         <div class="settings-group-head">Detection-noise suppression (collector tools &amp; sample data)</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_SAMPLE_HOSTS">Extra sample/demo hostnames<span class="sfield-hint">DFIR_SAMPLE_HOSTS — comma-separated, in addition to the built-in list, so a foreign sample corpus a tool unpacks (e.g. EVTX-ATTACK-SAMPLES) is demoted instead of read as case-host evidence</span></label><input id="env-DFIR_SAMPLE_HOSTS" placeholder="EVTX-ATTACK-SAMPLES" /></div>
+        </div>
+        <div class="settings-group-head">Lab setup (operator file transfer)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_LAB_SETUP_PATHS">Extra lab-setup folders<span class="sfield-hint">DFIR_LAB_SETUP_PATHS — comma-separated folder fragments, in addition to the built-in VMware (\VMwareDnD\) and VirtualBox (\VirtualBox Dropped Files\) drag-and-drop folders. A file copied in there is capped at Medium as lab setup; running it is not</span></label><input id="env-DFIR_LAB_SETUP_PATHS" placeholder="\LabShare\" /></div>
         </div>
         <div class="settings-group-head">Lookalike-domain detection</div>
         <div class="sfield-row">
@@ -2482,7 +2489,7 @@
         <div data-safe-style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
 
         <div class="settings-group-head" data-safe-style="margin-top:18px">MCP servers <span data-safe-style="color:var(--text-dim);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
-        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. Case anonymization does not apply to MCP runs: Claude Code reads the tool output unmasked, so on a case with anonymization on the analyst is asked before each run. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
         <p class="rm-hint" data-safe-style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
         <div class="sfield-row" data-safe-style="margin-bottom:10px">
           <div class="sfield"><label for="env-DFIR_MCP_AGENT_TIMEOUT_MS">Investigation timeout (ms)<span class="sfield-hint">DFIR_MCP_AGENT_TIMEOUT_MS — default 3600000 (1 hour), range 60000–86400000</span></label><input id="env-DFIR_MCP_AGENT_TIMEOUT_MS" placeholder="3600000" /></div>
@@ -3462,7 +3469,7 @@
     <section id="sec-hostranking" data-safe-style="grid-column: 1 / -1"><h2>Host &amp; Account Ranking<span class="ev-sub">which hosts/accounts carry the attack — scored by signal (severity-weighted events + techniques + connective IOCs), not volume (derived, no AI)</span></h2><div id="hostRanking">—</div></section>
     <section id="sec-evidence-gaps" data-safe-style="grid-column: 1 / -1"><h2>Evidence Gaps<span class="ev-sub">what this case is MISSING — uncovered kill-chain phases (with where to collect), silent windows, and lookalike-actor next moves (derived, no AI); a lead, not proof</span></h2><div id="evidenceGaps">—</div></section>
     <section id="sec-cloud-coverage" data-safe-style="grid-column: 1 / -1"><h2>Cloud Coverage<span class="ev-sub">what each imported CloudTrail/GCP/Azure/M365/Workspace upload can and cannot answer — record counts and categories present, per account/project/subscription/tenant (derived, no AI); a missing category is stated, never assumed to mean nothing happened</span></h2><div id="cloudCoverage">—</div></section>
-    <section id="sec-gaps" data-safe-style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
+    <section id="sec-gaps" data-safe-style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is High only next to attack activity or a log-clear event (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <section id="sec-swimlane" data-safe-style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
       <div class="swimlane-hint">💡 <strong>Click</strong> a dot for details and to flash its row in the Forensic Timeline · <strong>Shift-click</strong> a dot (or <strong>Shift-drag</strong> a box) to select events, then <strong>🚫 Mark False Positive</strong> · <strong>Drag the time axis</strong> (bottom bar) to filter the Forensic Timeline to that range</div>
@@ -4154,6 +4161,14 @@
           </label>
           <span id="mcpRunMsg" class="manual-msg"></span>
         </div>
+        <div id="mcpUnmaskedWarn" role="alert" data-safe-style="display:none;margin:6px 0;padding:8px;border:1px solid var(--badge-danger-text);border-radius:4px;font-size:12px">
+          <span id="mcpUnmaskedText"></span>
+          <div data-safe-style="margin-top:6px;display:flex;gap:8px">
+            <button id="mcpUnmaskedContinueBtn" type="button">Continue unmasked</button>
+            <button id="mcpUnmaskedCancelBtn" type="button">Cancel</button>
+          </div>
+        </div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">MCP runs are not anonymized: Claude Code reads the tool output and your instruction directly. On a case with anonymization on, you are asked before each run.</p>
         <details data-safe-style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
           <summary>Advanced: call one MCP tool manually</summary>
           <div class="sgrid" data-safe-style="margin-top:8px">

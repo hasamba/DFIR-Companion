@@ -33,6 +33,7 @@ import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysi
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
 import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClients.js";
 import { inventorySignature } from "../analysis/collectionInventory.js";
+import { truncatedRecord } from "../analysis/veloKeptSpan.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
@@ -294,7 +295,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const artifactFiles: { name: string; file: string; rows: number }[] = [];
       const snapshotFragments: HuntRunSnapshot[] = [];
       const skipped: SkippedArtifact[] = [];
-      const cutShort: { name: string; kept: number; total: number }[] = []; // TruncatedArtifact
+      const cutShort: ReturnType<typeof truncatedRecord>[] = []; // TruncatedArtifact
       const unread: { name: string; rows: number }[] = []; // source list unknown — never "empty" (#1635)
       let totalRows = 0;
       for (const artifact of job.artifacts) {
@@ -306,7 +307,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           const srcs = sourcesByArtifact?.[name] ?? [];
           const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name], true);
           rows = res.rows;
-          if (res.truncated) cutShort.push({ name, kept: rows.length, total: res.total });
+          if (res.truncated) cutShort.push(truncatedRecord(name, rows, res.total)); // + kept span (#1950)
           if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still

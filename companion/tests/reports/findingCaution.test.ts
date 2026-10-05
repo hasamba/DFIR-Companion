@@ -48,7 +48,43 @@ describe("findingCautionLine", () => {
       ),
     ).toMatch(/^- Corroboration: 2 tools/);
   });
+  it("says the citation mismatch covers an IP or a program name (#1954)", () => {
+    expect(findingCautionLine(f({ contentMismatch: true }))).toMatch(/an IP or a program name/);
+  });
   it("is empty for a plain finding", () => {
     expect(findingCautionLine(f({}))).toBe("");
+  });
+});
+
+describe("findingCautionLine — lab setup (#1946)", () => {
+  const marked = (p: Partial<Finding> = {}): Finding => ({ ...f(p), labSetup: true }) as Finding;
+  it("prints the lab-setup badge", () => {
+    expect(findingCautionLine(marked())).toMatch(
+      /^> ⚠️ \*\*Lab setup\*\* — every cited event is a file copied into the VM through a hypervisor drag-and-drop folder/,
+    );
+  });
+  it("ranks below the build baseline and above corroboration", () => {
+    expect(findingCautionLine(marked({ buildBaseline: true }))).toMatch(/Build baseline/);
+    expect(findingCautionLine(marked({ ungrounded: true }))).toMatch(/No cited evidence/);
+  });
+});
+
+describe("findingCautionLine — Defender-tamper timing (#1941)", () => {
+  const marked = (t: string, p: Partial<Finding> = {}): Finding => ({ ...f(p), tamperTiming: t }) as Finding;
+  it("prints the date-unknown badge", () => {
+    expect(findingCautionLine(marked("date-unknown"))).toMatch(
+      /^> ⚠️ \*\*Date unknown\*\* — the only evidence is PowerShell console history, which has no per-line time/,
+    );
+  });
+  it("prints the before-the-incident badge", () => {
+    expect(findingCautionLine(marked("before-incident"))).toMatch(
+      /^> ⚠️ \*\*Before the incident\*\* — every cited event is dated well before the main activity burst/,
+    );
+  });
+  it("ranks below the evidence gates and above corroboration", () => {
+    expect(findingCautionLine(marked("date-unknown", { ungrounded: true }))).toMatch(/No cited evidence/);
+    expect(findingCautionLine(marked("date-unknown", { lateralUnconfirmed: true }))).toMatch(
+      /Unconfirmed lateral movement/,
+    );
   });
 });

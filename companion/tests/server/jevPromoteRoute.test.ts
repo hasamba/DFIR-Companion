@@ -219,6 +219,27 @@ describe("promoting what the missed-evidence review found", () => {
     expect(landed).toEqual(["r2"]);
   });
 
+  // #1949. A grade recorded before the review set collector rows aside, or an older tab, must not
+  // land the investigator's own tooling at the model's High. Keyed on the structured origin, so the
+  // refusal holds for a row whose description carries no collector note at all.
+  it("refuses a collector-footprint row by its origin and names the reason", async () => {
+    const { app, stateStore, activity } = await harness({
+      archive: [raw("col1", { origin: "collector" }), raw("crit", { severity: "Critical" }), raw("r2")],
+      reviewed: [tick("col1", "High"), tick("crit", "High"), tick("r2", "Medium")],
+    });
+
+    const res = await promote(app, ids("col1", "crit", "r2"));
+
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(2);
+    expect(res.body.skipped).toBe(1);
+    expect(res.body.reasons.join(" ")).toMatch(/1 row\(s\) are the collector's own footprint/);
+    const landed = (await stateStore.load("c1")).forensicTimeline.map((e) => e.id).sort();
+    expect(landed).toEqual(["crit", "r2"]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(activity.join(" ")).toMatch(/collector's own footprint/);
+  });
+
   it("reports a row the archive no longer holds rather than 404-ing the whole selection", async () => {
     const { app } = await harness({
       archive: [raw("r1")],

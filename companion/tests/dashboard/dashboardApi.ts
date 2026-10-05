@@ -554,14 +554,14 @@ export interface VeloCoverageApi {
     artifacts?: string[];
     skippedArtifacts?: { name: string; error: string }[];
     emptyArtifacts?: string[];
-    truncatedArtifacts?: { name: string; kept: number; total: number }[];
+    truncatedArtifacts?: { name: string; kept: number; total: number; earliest?: string; latest?: string }[];
     unreadArtifacts?: { name: string; rows: number }[];
   }): string;
   veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
   veloReadGapsHtml(
     gaps: {
       unread?: { name: string; rows: number }[];
-      truncated?: { name: string; kept: number; total: number }[];
+      truncated?: { name: string; kept: number; total: number; earliest?: string; latest?: string }[];
       failed?: { name: string; error: string }[];
     },
     again: string,

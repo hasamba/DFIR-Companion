@@ -21,7 +21,7 @@ import type { HostHistoryMarker } from "./gapHostHistory.js";
 //
 // Two flavours, weighted by how suspicious they are:
 //   • COMPLETE silence — a window where the WHOLE environment went dark (no source logged anything).
-//     The classic "logs cleared / collector stopped" signature → High. Detected on the full timeline.
+//     Detected on the full timeline. High only when corroborated, else Low (#1942, gapEdgeClass.ts).
 //   • PARTIAL silence — one source (tool) went quiet while OTHER sources kept logging. A coverage
 //     blindspot for that tool, less alarming than total darkness → Medium. Detected per-source.
 //
@@ -45,7 +45,9 @@ export interface TimelineGap {
   endTimestamp: string; // when activity resumed — the first event after the silence
   durationSeconds: number; // length of the silence (seconds)
   durationLabel: string; // human-readable duration, e.g. "2h 15m"
-  severity: Severity; // High when ALL sources went silent (complete), else Medium (partial)
+  // Complete: High from detectTimelineGaps, then graded by classifyGapEdges (#1942) — High only
+  // when corroborated, else Low. Partial: Medium.
+  severity: Severity;
   complete: boolean; // true when the WHOLE environment went dark (no source logged at all)
   // Set by activityWaves.ts markWaveBoundaries(): this silence separates two substantial waves of
   // activity, so it is accounted-for dwell time rather than suspected missing data. Absent until
@@ -63,6 +65,11 @@ export interface TimelineGap {
   provisioningEdges?: boolean;
   provisioningReason?: string;
   hostHistory?: boolean;
+  //   • `corroborated` / `rebootEdge` (#1942) — on a complete, non-wave gap: corroborated when a
+  //     Medium+ row sits at an edge or the case records a log clear / audit-policy change (then
+  //     High, else Low); rebootEdge when a reboot or shutdown row bounds it (always Low).
+  corroborated?: boolean;
+  rebootEdge?: boolean;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -115,6 +122,19 @@ const OUTLIER_CORE_HI_Q = 0.975;
 // The shared "this is a lead, not a verdict" disclaimer — rendered on every surface (panel + report).
 export const GAP_CAVEAT =
   "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where EVERY source went silent is the classic signature of cleared logs or a stopped collector; confirm against the collection scope and host clocks before concluding.";
+// The lead-only wording for an uncorroborated complete gap (#1942): no "classic signature" claim.
+export const GAP_CAVEAT_LEAD =
+  "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused; confirm against the collection scope and host clocks before concluding.";
+// The panel and report banner: how a complete gap is graded (#1942).
+export const GAP_BANNER =
+  "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is High only when a Medium-or-higher row sits at its edge or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719); otherwise it is Low. A reboot or shutdown at the gap edge explains the silence. Confirm against the collection scope and host clocks.";
+
+// The report's one-phrase gap kind. A wave boundary is dwell time; a reboot at the edge is named.
+export function gapKindLabel(g: TimelineGap): string {
+  if (g.betweenWaves) return "dwell interval";
+  if (!g.complete) return "partial";
+  return g.rebootEdge ? "complete silence, reboot at edge" : "complete silence";
+}
 
 const MS_PER_HOUR = 3_600_000;
 
@@ -418,8 +438,8 @@ export function parseActiveHours(raw: string | undefined): { start: number; end:
 }
 
 // Deterministic safety net (issue #83): a COMPLETE-silence gap — a window where every source went
-// dark — is the classic signature of cleared logs / a stopped collector, so it earns a finding even
-// though no single event is "high severity". Mirrors the high-severity backfill: pure (returns a new
+// dark — earns a finding even though no single event is "high severity". The finding takes the
+// gap's grade (#1942): High with T1070 when corroborated, else Low and worded as a lead. Mirrors the high-severity backfill: pure (returns a new
 // state, never mutates), and idempotent — the finding id is derived from the bounding event ids, so
 // re-running synthesis over an unchanged timeline produces the same finding rather than duplicating.
 //
@@ -469,26 +489,36 @@ export function backfillSilenceGapFindings(
     const title = gap.betweenWaves
       ? `Dwell interval: ${gap.durationLabel} between two waves of activity from ${gap.startTimestamp}`
       : `Timeline coverage gap: ${gap.durationLabel} of complete silence from ${gap.startTimestamp}`;
+    // A complete gap takes the grade classifyGapEdges gave it (#1942): High only when corroborated by
+    // a Medium+ edge row or a log-clear / audit-policy event, else Low with the lead-only wording.
+    const tampering = !gap.betweenWaves && gap.severity === "High";
+    const silence =
+      `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
+      `(${gap.durationLabel}) — every source went silent (${sources}). `;
     const description = gap.betweenWaves
       ? `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
         `(${gap.durationLabel}), but substantial activity resumed afterwards and continued — so this is a ` +
         `boundary between two waves of activity rather than a hole in the collection. Treat the interval ` +
         `itself as the finding: establish whether the later wave reuses access, accounts, or an unpatched ` +
         `entry point established by the earlier one. ${GAP_CAVEAT}`
-      : `No forensic activity was recorded from ${gap.startTimestamp} to ${gap.endTimestamp} ` +
-        `(${gap.durationLabel}) — every source went silent (${sources}). A complete coverage gap is a ` +
-        `classic indicator of log tampering (cleared Windows Event Logs, a stopped collector/auditd, or ` +
-        `deleted log files) or a collection blindspot. ${GAP_CAVEAT}`;
+      : tampering
+        ? `${silence}A complete coverage gap is a ` +
+          `classic indicator of log tampering (cleared Windows Event Logs, a stopped collector/auditd, or ` +
+          `deleted log files) or a collection blindspot. ${GAP_CAVEAT}`
+        : gap.rebootEdge
+          ? `${silence}A reboot or shutdown event bounds the gap, which likely explains the silence. ${GAP_CAVEAT_LEAD}`
+          : `${silence}No attack activity sits at either edge and the case records no log clear or ` +
+            `audit-policy change, so this is most likely idle time or a collection blindspot. ${GAP_CAVEAT_LEAD}`;
     newFindings.push({
       id,
-      severity: gap.betweenWaves ? "Medium" : "High",
+      severity: gap.betweenWaves ? "Medium" : gap.severity,
       confidence: 50,
       title,
       description,
       relatedIocs: [],
-      // T1070 (Indicator Removal) only fits the missing-data reading. A dwell interval between two
-      // visits is not evidence that anything was removed, so it carries no technique of its own.
-      mitreTechniques: gap.betweenWaves ? [] : ["T1070"],
+      // T1070 (Indicator Removal) only fits the corroborated missing-data reading. A dwell interval
+      // between two visits, or an uncorroborated silence, is not evidence that anything was removed.
+      mitreTechniques: tampering ? ["T1070"] : [],
       sourceScreenshots: [],
       firstSeen: gap.startTimestamp || timestamp,
       lastUpdated: timestamp,

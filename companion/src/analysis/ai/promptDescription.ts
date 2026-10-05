@@ -26,7 +26,7 @@ const ELLIPSIS = " … ";
 const HEAD_MIN = 40;
 
 /** `head … tail` inside `max` characters; the text itself when it already fits. */
-function headAndTail(text: string, max: number): string {
+export function headAndTail(text: string, max: number): string {
   if (text.length <= max) return text;
   const tail = Math.min(PROMPT_DESCRIPTION_TAIL, Math.max(0, max - HEAD_MIN - ELLIPSIS.length));
   const head = Math.max(HEAD_MIN, max - tail - ELLIPSIS.length);

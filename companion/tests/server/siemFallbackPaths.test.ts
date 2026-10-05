@@ -344,6 +344,7 @@ describe("MCP preview approval names a guessed JSON kind (#1824)", () => {
         args: { command: ["vol.py", "-f", "<target>", "pslist"] },
         targetPath: "imports/mem.raw",
         preview: true,
+        ackUnmasked: true, // a default case has anonymisation on (#1952)
       });
     await pollFor("the preview job to finish", async () => {
       const st = jobManager.get(run.body.jobId)?.status;

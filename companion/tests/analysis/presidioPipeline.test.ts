@@ -47,6 +47,14 @@ class StubProvider implements AIProvider {
   }
 }
 
+class CountingProvider extends StubProvider {
+  calls = 0;
+  override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    this.calls += 1;
+    return super.analyze(req);
+  }
+}
+
 function stubClient(findings: PresidioFinding[], seen: string[] = []): PresidioClient {
   return {
     analyze: async (text: string) => {
@@ -81,7 +89,11 @@ async function makePipeline(
   // Test-only extras layered onto the pipeline's options — currently used only by the
   // truncation-warning test, which needs a tiny presidioScanCapsOverride and a logger it can
   // inspect. Optional and additive so every existing call site is unaffected.
-  extraOptions: { presidioScanCapsOverride?: { chunkChars: number; maxChars: number }; logger?: Logger } = {},
+  extraOptions: {
+    presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
+    logger?: Logger;
+    provider?: AIProvider;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-presidiopipe-"));
   const cases = new CaseStore(root);
@@ -212,6 +224,32 @@ describe("analyzeRestored + Presidio", () => {
     };
     const { pipeline } = await makePipeline(dead);
     await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toThrow(/not reachable/);
+  });
+
+  // #1945: an unreachable analyzer was retried four times before the run gave up, and the message
+  // pointed at a restart-only fix. One attempt, no provider call, and both exits named.
+  it("fails on the first unreachable scan, never calls the model, and names both exits", async () => {
+    let scans = 0;
+    const dead: PresidioClient = {
+      analyze: async () => {
+        scans += 1;
+        throw new Error("fetch failed");
+      },
+    };
+    const provider = new CountingProvider();
+    const { pipeline } = await makePipeline(dead, [], undefined, undefined, { provider });
+    const err = await pipeline.analyzeWindow("c1", [capture()]).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(PresidioScanError);
+    expect((err as PresidioScanError).timedOut).toBe(false);
+    expect(scans, "an unreachable analyzer must not be retried").toBe(1);
+    expect(provider.calls, "no unscanned text may reach the model").toBe(0);
+    const msg = (err as Error).message;
+    expect(msg).toMatch(/^Presidio is not reachable at http:\/\/localhost:5002\. The AI call did not run\./);
+    expect(msg).toMatch(/Start the analyzer/);
+    expect(msg).toMatch(/untick Presidio for this case in the Anonymization panel/);
+    expect(msg).toMatch(/no restart/);
+    // The restart-only fix is still named, but last.
+    expect(msg.indexOf("DFIR_PRESIDIO_URL")).toBeGreaterThan(msg.indexOf("Anonymization panel"));
   });
 
   // A busy analyzer and a dead one need OPPOSITE advice. Reporting a timeout as "not reachable —
@@ -448,6 +486,26 @@ describe("per-case Presidio switch", () => {
     // known host is still derived and still tokenized for the wire.
     const s = await stateStore.load("c1");
     expect(s.forensicTimeline[0].asset).toBe("DC01.victim.local");
+  });
+
+  // #1945 "continue without Presidio for this case": with the analyzer still down, unticking the
+  // layer for the case lets the run go ahead on the built-in masking alone.
+  it("runs the model with the analyzer down once the case has Presidio off", async () => {
+    let scans = 0;
+    const dead: PresidioClient = {
+      analyze: async () => {
+        scans += 1;
+        throw new Error("fetch failed");
+      },
+    };
+    const provider = new CountingProvider();
+    const { pipeline, cases } = await makePipeline(dead, [], undefined, undefined, { provider });
+    const store = new AnonControlStore(cases);
+    await store.save("c1", { ...(await store.load("c1")), presidio: false });
+
+    await expect(pipeline.analyzeWindow("c1", [capture()])).resolves.toBeDefined();
+    expect(scans).toBe(0);
+    expect(provider.calls).toBeGreaterThan(0);
   });
 
   it("scans by default — a case that never touched the switch keeps its coverage", async () => {

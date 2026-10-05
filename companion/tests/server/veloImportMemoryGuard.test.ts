@@ -294,6 +294,25 @@ describe("the external Velociraptor import asks the guard only after its rows ar
     expect(admission.hints).toEqual([expect.objectContaining({ incomingEvents: rows.length })]);
   });
 
+  // The audit line is written before the guard can refuse, so the paste-again retry meets the
+  // "already pulled into this case" answer (#1965). The refusal says to choose Re-import anyway,
+  // and that choice goes through.
+  it("points the retry at Re-import anyway, and that retry imports", async () => {
+    const { app, stateStore, admission } = await makeExternalApp();
+    const refused = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.EXT" });
+    expect(refused.status).toBe(503);
+    expect(refused.body.error).toMatch(/Re-import anyway/);
+    admission.refuse = false;
+    const again = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.EXT" });
+    expect(again.status).toBe(409);
+    expect(again.body.alreadyImported).toMatchObject({ kind: "hunt", huntId: "H.EXT" });
+    const forced = await request(app)
+      .post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "H.EXT", reimport: true });
+    expect(forced.status).toBe(200);
+    expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
+  });
+
   it("imports as before when admitted", async () => {
     const { app, store, stateStore, admission } = await makeExternalApp();
     admission.refuse = false;

@@ -33,7 +33,17 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
 import { simulationSeverityLabel } from "./simulationVerdict.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
+import { echoOnlyEvidence, echoOnlyReason } from "./echoOnlyCommand.js";
+import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
+import { selfDisclaimedPhrase, SELF_DISCLAIMED_SEVERITY_FLOOR } from "./selfDisclaimedSubject.js";
+import * as tamperCap from "./defenderTamperCap.js";
+import {
+  labSetupOnly,
+  LAB_SETUP_FINDING_REASON,
+  LAB_SETUP_SEVERITY_CAP,
+  type FindingLabSetup,
+} from "./labSetupTransfer.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -62,8 +72,8 @@ export const LOW_TRUST_CONFIDENCE_CAP = 55;
 // AI's own citation can look fine while the claim's content is simply wrong). Deep-pass on veridia-breach
 // (2026-07-22) produced exactly this: "External RDP logon from public IP 45.33.32.156" cited three benign
 // internal-IP logons (real event ids, wrong content) instead of the one event that actually matched.
-// IP-only by design — concrete, regex-extractable, and the exact entity type that produced that false
-// positive — not a general fact-checker.
+// IPs and `.exe` program names only (#1954, findingImageNames.ts) — concrete, regex-extractable
+// entities, not a general fact-checker.
 export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
 // A High/Critical finding whose EVERY cited event is a renamed plain shell (`mimikatz.exe is really
 // Cmd.Exe`) or a file trace of that same decoy (its MFT / Amcache / Prefetch rows) rests on a command
@@ -74,6 +84,7 @@ export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
 export const DECOY_BINARY_CONFIDENCE_CAP = 40;
 export const DECOY_BINARY_SEVERITY_FLOOR: Severity = "Medium";
 export const CONTENT_MISMATCH_SEVERITY_FLOOR: Severity = "Medium";
+export const ECHO_ONLY_SEVERITY_CAP: Severity = "Medium"; // #1948, echoOnlyCommand.ts
 
 // Actor-provenance gate for lateral-movement findings (meridian-tax-ransomware benchmark 2026-07-23).
 // A High/Critical finding that claims the attacker moved/pivoted TO a host counts as confirmed only if
@@ -213,6 +224,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   const intelIocs = intelFlaggedIocIds(iocs);
   // Hosts the evidence independently confirms as attack-involved — the actor-provenance gate's allow-list.
   const compromisedHosts = confirmedCompromisedHosts(scopedEvents);
+  const burst = tamperCap.incidentBurst(scopedEvents); // #1941: the densest 24 h of High/Critical rows
 
   return findings.map((f) => {
     // Supporting in-scope events: forward links (finding.relatedEventIds present in scope) UNION reverse
@@ -318,14 +330,23 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     let severity = f.severity;
     if (supporting.length > 0 && (f.severity === "Critical" || f.severity === "High")) {
       const mismatched = claimedIpsNotInEvidence(f, supporting);
-      if (mismatched.length) {
+      const images = claimedImagesNotInEvidence(f, supporting);
+      if (mismatched.length || images.length) {
         contentMismatch = true;
         severity = CONTENT_MISMATCH_SEVERITY_FLOOR;
         if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP)
           confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
+      }
+      if (mismatched.length)
         confidenceReason = appendReason(
           confidenceReason,
           `capped: claims ${mismatched.join(", ")} but the cited events never mention it — verify the citation before treating as confirmed`,
+        );
+      if (images.length) {
+        const shown = soleCitedImage(supporting);
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: names ${images.join(", ")} but no cited event carries that program — verify the process chain before treating as confirmed${shown ? `; the cited rows show ${shown}` : ""}`,
         );
       }
     }
@@ -348,6 +369,17 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Self-disclaimed subject (#1944): the text says its subject is not in the evidence AND guesses at
+    // it. Runs with or without cited rows; records the flag at any severity and only ever lowers.
+    const selfDisclaimer = selfDisclaimedPhrase(`${f.title}\n${f.description ?? ""}`);
+    if (selfDisclaimer) {
+      if (severity === "Critical" || severity === "High") severity = SELF_DISCLAIMED_SEVERITY_FLOOR;
+      confidenceReason = appendReason(
+        confidenceReason,
+        `capped: the finding's own text says its subject is not in the evidence ("${selfDisclaimer}") and guesses at it — an open question, not a finding`,
+      );
+    }
+
     // Decoy-binary gate (#1502). Runs on every grounded finding, whatever the gates above already
     // floored, so the flag is recorded even on a finding that is already Medium; it never raises.
     let decoyBinary = false;
@@ -362,6 +394,31 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
           `capped: ${decoys.map((d) => `${d.onDisk} is a renamed ${d.original}`).join(", ")} — the file identifies as a shell, so the cited evidence does not substantiate execution of the named tool; the command line is a label, not a run`,
         );
       }
+    }
+
+    // Echo-only commands (#1948): every cited row runs only `cmd /c echo …` or is a presence trace of
+    // that file. Floors only High/Critical; the rows keep their own severity.
+    const echoOnly = echoOnlyEvidence(supporting);
+    if (echoOnly && (severity === "Critical" || severity === "High")) {
+      severity = ECHO_ONLY_SEVERITY_CAP;
+      confidenceReason = appendReason(confidenceReason, echoOnlyReason(echoOnly));
+    }
+
+    // Defender-tamper timing (#1941): console history only, or every row well before the burst.
+    // Records the marker at any severity (like the decoy gate), floors only High/Critical, never raises.
+    const tamperTiming = tamperCap.tamperTimingOf(f, supporting, burst);
+    if (tamperTiming) {
+      if (severity === "Critical" || severity === "High") severity = tamperCap.TAMPER_CAP_SEVERITY;
+      const note =
+        tamperTiming === "date-unknown" ? tamperCap.DATE_UNKNOWN_REASON : tamperCap.BEFORE_INCIDENT_REASON;
+      if (!(confidenceReason ?? "").includes(note)) confidenceReason = appendReason(confidenceReason, note);
+    }
+
+    // Lab setup (#1946): every cited row is a file the operator copied in through a lab-setup folder.
+    const labSetup = labSetupOnly(supporting);
+    if (labSetup) {
+      if (severity === "Critical" || severity === "High") severity = LAB_SETUP_SEVERITY_CAP;
+      confidenceReason = appendReason(confidenceReason, LAB_SETUP_FINDING_REASON);
     }
 
     // Build baseline (#1529). A finding whose EVERY cited row is the host's own provisioning — the
@@ -396,8 +453,11 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       lateralUnconfirmed: _prevLu,
       decoyBinary: _prevDb,
       buildBaseline: _prevBb,
+      selfDisclaimed: _prevSd,
+      tamperTiming: _prevTt,
+      labSetup: _prevLs,
       ...rest
-    } = f;
+    } = f as Finding & tamperCap.FindingDefenderCap & FindingLabSetup;
     return {
       ...rest,
       severity,
@@ -412,6 +472,9 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(lateralUnconfirmed ? { lateralUnconfirmed: true } : {}),
       ...(decoyBinary ? { decoyBinary: true } : {}),
       ...(buildBaseline ? { buildBaseline: true } : {}),
+      ...(selfDisclaimer ? { selfDisclaimed: true } : {}),
+      ...(tamperTiming ? { tamperTiming } : {}),
+      ...(labSetup ? { labSetup: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };

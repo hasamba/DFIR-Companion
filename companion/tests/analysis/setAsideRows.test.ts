@@ -15,6 +15,7 @@ import {
   isSetAsideRow,
 } from "../../src/analysis/setAsideRows.js";
 import { downgradeFirstPartyEgress } from "../../src/analysis/firstPartyEgress.js";
+import { downgradeGenericSysmonRegistry } from "../../src/analysis/genericSysmonRegistry.js";
 import { SPAWNED_CHILD_NOTE } from "../../src/analysis/collectorChildren.js";
 import { SPAWNED_SCRIPT_NOTE } from "../../src/analysis/collectorLineage.js";
 import { TOOL_TREE_SCRIPT_NOTE } from "../../src/analysis/veloDetectionNoise.js";
@@ -69,6 +70,20 @@ describe("isSetAsideRow — the named passes, run for real", () => {
   it("claims the row the first-party egress pass demoted (#1530)", () => {
     const { events, downgraded } = downgradeFirstPartyEgress([
       oneDriveEgress("Velociraptor [Windows.Sigma.Base] Sigma: Net Conn (Sysmon Alert) (EID 3)"),
+    ]);
+    expect(downgraded).toHaveLength(1);
+    expect(events[0].severity).toBe("Info");
+    expect(isSetAsideRow(events[0])).toBe(true);
+  });
+
+  it("claims the row the generic Sysmon registry pass demoted (#1958)", () => {
+    const { events, downgraded } = downgradeGenericSysmonRegistry([
+      row({
+        description:
+          "Hayabusa: Reg Key Value Set (Sysmon Alert) (EID 13 Sysmon) — EventType=SetValue TgtObj=HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Foo Details=DWORD (0x00000001) @ HOST-01",
+        severity: "Medium",
+        sources: ["Hayabusa"],
+      }),
     ]);
     expect(downgraded).toHaveLength(1);
     expect(events[0].severity).toBe("Info");

@@ -370,10 +370,10 @@ export interface Finding {
   // uninvolved user's WS-09 logon were both fabricated into "RDP lateral movement"; the deep pass then
   // HARDENED the WS-17 one from confidence 45 → 82 by citing the real-but-benign logon).
   lateralUnconfirmed?: boolean;
-  // Every cited event is a renamed plain shell (`mimikatz.exe is really Cmd.Exe`) or a file trace of
-  // that same decoy — the command line is a label, not a run. Set post-synthesis by
-  // groundAndScoreFindings (#1502); High/Critical floored to Medium and confidence capped.
+  // Every cited event is a renamed plain shell (`mimikatz.exe is really Cmd.Exe`) or its file trace — a
+  // label, not a run. Set by groundAndScoreFindings (#1502); High/Critical → Medium, confidence capped.
   decoyBinary?: boolean;
+  selfDisclaimed?: boolean; // #1944: own text says subject not in evidence + guesses; High/Critical → Medium
   // Every cited event is the host's own provisioning (#1529) — a build-day log clear, the image's
   // own accounts, the guest-driver services. Set post-synthesis by groundAndScoreFindings; severity
   // floored to Low and confidence capped. A finding with ANY non-build evidence is not flagged; its

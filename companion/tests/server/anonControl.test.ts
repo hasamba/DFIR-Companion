@@ -7,6 +7,8 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { createApp } from "../../src/server.js";
 import { postAnonControl } from "../helpers/anonControl.js";
+import { ActivityLogStore } from "../../src/analysis/activityLog.js";
+import { awaitActivityEntry } from "../helpers/activityLog.js";
 
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
@@ -54,6 +56,19 @@ describe("/cases/:id/anon-control", () => {
     const on = await postAnonControl(app, "c1", { presidio: true });
     expect(on.body.presidio).toBe(true);
     expect((await request(app).get("/cases/c1/anon-control")).body.presidio).toBe(true);
+  });
+
+  // #1945: "Continue without Presidio for this case" is this same switch, posted from the error
+  // pill. The case record must say the analyst chose it.
+  it("records the analyst's choice to continue without Presidio in the activity log", async () => {
+    const logged = createApp(cases, {
+      stateStore: new StateStore(cases),
+      activityLogStore: new ActivityLogStore(cases),
+    });
+    const off = await postAnonControl(logged, "c1", { presidio: false });
+    expect(off.status).toBe(200);
+    const entry = await awaitActivityEntry(logged, "c1", "anon-presidio");
+    expect(entry.detail).toBe("Presidio PII scanning disabled for this case");
   });
 
   it("keeps the current presidio value when the field is absent or not a boolean", async () => {

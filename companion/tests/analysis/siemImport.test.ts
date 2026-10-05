@@ -1665,6 +1665,31 @@ describe("persistence and account events — High is earned, not assumed", () =>
     expect(sev(win(4732, { TargetUserName: "Users", MemberName: "CN=svc_backup" }))).toBe("Medium");
   });
 
+  // #1956: a new account or group member named like a built-in account is how an attacker hides a
+  // backdoor admin in plain sight. The name alone is the signal, so the group need not be privileged.
+  it("grades a look-alike of a built-in account High and names both accounts", () => {
+    const desc = (rec: object) => parseSiemExport(elastic(rec)).events[0].description;
+    const created = win(4720, { TargetUserName: "administratr" });
+    expect(sev(created)).toBe("High");
+    expect(desc(created)).toContain('[look-alike of built-in account "administrator"]');
+    const added = win(4728, {
+      TargetUserName: "Domain Admins",
+      MemberName: "CN=administratr,CN=Users,DC=example,DC=com",
+    });
+    expect(sev(added)).toBe("High");
+    expect(desc(added)).toContain('[look-alike of built-in account "administrator"]');
+    const toUsers = win(4732, {
+      TargetUserName: "Users",
+      MemberName: "CN=administratr,CN=Users,DC=example,DC=com",
+    });
+    expect(sev(toUsers)).toBe("High");
+    expect(desc(toUsers)).toContain("look-alike of");
+    expect(desc(win(4728, { TargetUserName: "Domain Admins", MemberName: "CN=jsmith" }))).not.toContain(
+      "look-alike",
+    );
+    expect(desc(win(4720, { TargetUserName: "Administrateur" }))).not.toContain("look-alike");
+  });
+
   it("grades an add to a privileged group High", () => {
     expect(sev(win(4728, { TargetUserName: "Domain Admins", MemberName: "CN=jsmith" }))).toBe("High");
     expect(sev(win(4732, { TargetUserName: "Administrators", MemberName: "CN=jsmith" }))).toBe("High");

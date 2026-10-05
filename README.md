@@ -363,7 +363,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Collection plan** — incident-type evidence checklist as a dashboard panel; items self-check off as matching evidence lands
 - **Attacker session / story reconstruction** — the timeline re-threaded into per-host session chapters, with AI summaries and a report section
 - **Clock-skew detection & timeline alignment** — flags host clock drift beyond 60s; an "Align timelines" toggle corrects it everywhere
-- **Playbook Match panel** — did the case's techniques occur in the order a published playbook describes (Conti, LockBit, BlackCat, Akira, Scattered Spider, Black Basta, BlackSuit, Play, Egg-Cellent Resume); missing steps feed Evidence Gaps. Matches the playbook, **not** the actor
+- **Playbook Match panel** — did the case's techniques occur in the order a published playbook describes (Conti, LockBit, BlackCat, Akira, Scattered Spider, Black Basta, BlackSuit, Play, Egg-Cellent Resume, Nitrogen); missing steps feed Evidence Gaps. Matches the playbook, **not** the actor
 - **Zero-yield import warnings** — flags a large AI-triaged file that produced zero events, on the import banner and Evidence Gaps panel
 - **Second look** — an analyst-pressed pass resolves open questions against the super-timeline, previews what it would promote, then re-runs the conclusions
 - **Immediate false-positive cascade** — marking a finding/IOC/event FP synchronously re-evaluates dependent questions, next-steps, and hypotheses

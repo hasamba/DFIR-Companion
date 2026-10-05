@@ -25,7 +25,7 @@
 #aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondLookBtn::before, #secondOpinion::before, #deepPassBtn::before,
 #importBtn::before, #importCaseBtn::before,
 #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
-#toggleAll::before, #toggleSearchBar::before {
+#toggleAll::before, #toggleSearchBar::before, #presidioRetryBtn::before, #presidioContinueBtn::before {
   content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
   margin-right: 6px; background: no-repeat center / contain; }
 #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
@@ -56,6 +56,10 @@
 /* Undo / redo the latest import (#76) — curved arrows, distinct from the synthesize refresh circle. */
 #importUndoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 14 4 9l5-5'/><path d='M4 9h11a5 5 0 0 1 0 10h-4'/></svg>"); }
 #importRedoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m15 14 5-5-5-5'/><path d='M20 9H9a5 5 0 0 0 0 10h4'/></svg>"); }
+/* Presidio unreachable (#1945) — retry: a circular arrow around a dot (probe again); continue: a
+   struck-out shield (go on without that layer). Shown only while the analyzer is down. */
+#presidioRetryBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 12a9 9 0 0 1 15.4-6.4L21 8'/><path d='M21 3v5h-5'/><path d='M21 12a9 9 0 0 1-15.4 6.4L3 16'/><circle cx='12' cy='12' r='1.5'/></svg>"); }
+#presidioContinueBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/><path d='M4 4l16 16'/></svg>"); }
 #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
 /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
    labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take

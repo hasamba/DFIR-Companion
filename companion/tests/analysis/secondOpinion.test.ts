@@ -241,7 +241,7 @@ describe("buildReconcilePrompt — cited events under each delta (#1466)", () =>
     );
     expect(sevBlock.indexOf("[e1]")).toBeGreaterThan(-1);
     expect(sevBlock.indexOf("[e2]")).toBeGreaterThan(sevBlock.indexOf("[e1]"));
-    expect(sevBlock).toContain("<WS01>");
+    expect(sevBlock).toContain("<host:WS01>");
   });
 
   it("says when a finding cites no events — that is itself a signal", () => {

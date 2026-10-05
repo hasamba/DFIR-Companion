@@ -20,6 +20,10 @@
 .asset-graph-wrap:fullscreen { background: var(--bg-secondary); padding: 12px; }
 .asset-graph-wrap:fullscreen .login-graph { height: calc(100vh - 90px); }
 /* ── Login Graph (cytoscape) ─────────────────────────── */
+/* Cytoscape adds this class to every graph container and normally injects this rule itself.
+   The CSP blocks that injection, so the rule lives here; dashboard.html marks this file with
+   the id Cytoscape checks for, so it skips the injection (#1961). */
+.__________cytoscape_container { position: relative; }
 .login-graph-wrap { position: relative; }
 .login-graph { height: 480px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); }
 .login-graph-wrap:fullscreen { background: var(--bg-secondary); padding: 12px; }

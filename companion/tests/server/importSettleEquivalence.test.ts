@@ -21,6 +21,7 @@ import { carryHostRenames } from "../../src/analysis/hostRenameCarry.js";
 import { capBuildTimeRows } from "../../src/analysis/buildTimeWindow.js";
 import { demoteBelowSeverity } from "../../src/analysis/forensicGate.js";
 import { downgradeFirstPartyEgress } from "../../src/analysis/firstPartyEgress.js";
+import { downgradeGenericSysmonRegistry } from "../../src/analysis/genericSysmonRegistry.js";
 import { runAndApplyTagger } from "../../src/analysis/taggerRun.js";
 import { diffTimeline } from "../../src/analysis/timelineDiff.js";
 import { diffIocs } from "../../src/analysis/iocsDiff.js";
@@ -133,10 +134,9 @@ async function reference(before: InvestigationState, merged: InvestigationState)
   const beforeIds = new Set(before.forensicTimeline.map((e) => e.id));
   const addedIds = new Set(imported.forensicTimeline.filter((e) => !beforeIds.has(e.id)).map((e) => e.id));
   const lowered = new Map(
-    downgradeFirstPartyEgress(imported.forensicTimeline.filter((e) => addedIds.has(e.id))).events.map((e) => [
-      e.id,
-      e,
-    ]),
+    downgradeGenericSysmonRegistry(
+      downgradeFirstPartyEgress(imported.forensicTimeline.filter((e) => addedIds.has(e.id))).events,
+    ).events.map((e) => [e.id, e]),
   );
   imported = {
     ...imported,

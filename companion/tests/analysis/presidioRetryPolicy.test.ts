@@ -25,9 +25,10 @@ describe("retry policy — Presidio scan failures", () => {
     expect(calls, "a timed-out scan must be surfaced on the first throw").toBe(1);
   });
 
-  it("still retries a scan that failed for another reason", async () => {
-    // A refused connection can be a genuine blip — the analyzer restarting, a port rebinding — and
-    // costs nothing to re-attempt, because nothing was left running on the other end.
+  it("does not retry a scan that failed for another reason either (#1945)", async () => {
+    // A refused connection used to be retried as a possible blip. In practice a down analyzer stays
+    // down within a backoff window: the analyst sat through four failed attempts and still got no
+    // clear answer. The first failure is surfaced, and the analyst decides what happens next.
     let calls = 0;
     const run = withRetry(
       async () => {
@@ -38,7 +39,7 @@ describe("retry policy — Presidio scan failures", () => {
       1,
     );
     await expect(run).rejects.toBeInstanceOf(PresidioScanError);
-    expect(calls).toBe(4);
+    expect(calls, "an unreachable analyzer must be surfaced on the first throw").toBe(1);
   });
 
   it("still does not retry an approval gate", async () => {

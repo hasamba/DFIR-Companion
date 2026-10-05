@@ -170,6 +170,9 @@ describe("merge triggers and always-read rows", () => {
       mergeLoadAlways(ev("a", "2026-01-01T00:00:00Z", { asset: "H", mitreTechniques: ["T1560.001"] })),
     ).toBe(true);
     expect(mergeLoadAlways(ev("a", "2026-01-01T00:00:00Z", { mitreTechniques: ["T1490"] }))).toBe(false);
+    // The transfer-tool staging join (#1955) reads tool and config files by name.
+    for (const path of ["C:\\Users\\Public\\Music\\rclone.conf", "C:\\Users\\Public\\Music\\RCLONE.EXE"])
+      expect(mergeLoadAlways(ev("a", "2026-01-01T00:00:00Z", { asset: "H", path }))).toBe(true);
   });
 });
 

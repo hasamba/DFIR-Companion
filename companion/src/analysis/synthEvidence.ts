@@ -17,7 +17,9 @@ import { labIntelTag } from "./labIntel.js";
 import { renderDestinationTags } from "./destinationFacts.js";
 import { renderDecoyTag } from "./renamedBinaryNote.js";
 import { renderScriptCommandTags } from "./scriptBlockCommands.js";
+import { renderScriptC2Tag } from "./scriptBlockC2Config.js";
 import { renderBuildTimeTag } from "./buildTimeWindow.js";
+import { renderCommandLineTag } from "./commandLineTag.js";
 import { canonicalFile, canonicalNetwork } from "./canonicalEvent.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
@@ -69,6 +71,10 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
     tags.push(`<proc:${child}${parent ? `←${parent}` : ""}>`);
   }
 
+  // The stored command line, when the 240-char render cuts its arguments out (#1951).
+  const cmd = renderCommandLineTag(e);
+  if (cmd) tags.push(cmd);
+
   const srcIp = e.srcIp || cn?.source?.address || "";
   const dstIp = e.dstIp || cn?.destination?.address || "";
   const dstPort = typeof e.port === "number" ? e.port : cn?.destination?.port;
@@ -100,6 +106,10 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   // the model wrote a credential-access finding that never mentioned one of them. Tagged as SCRIPT
   // content, never as a process that ran, and never for a row the case's own collector produced.
   tags.push(...renderScriptCommandTags(e));
+  // The C2 settings a script block defines (#1959): a bare domain, a separate port, a scheme-less
+  // URI and a watermark reach the model as nothing otherwise. Script content, not a connection.
+  const c2 = renderScriptC2Tag(e);
+  if (c2) tags.push(c2);
 
   // The host building itself (#1529). A tag, not prose: the row's own note sits past the 240-char
   // render cut, and this is the one fact that stops a provisioning-day log clear from opening the

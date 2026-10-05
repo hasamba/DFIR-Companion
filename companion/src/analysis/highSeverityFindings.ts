@@ -1,4 +1,5 @@
 import { AUTO_FINDING_ID_PREFIX } from "./responseSchema.js";
+import { absorbedHighRowIds } from "./absorbedHighRows.js";
 import type { InvestigationState, Finding, Severity, ForensicEvent } from "./stateTypes.js";
 
 const HIGH_SEVERITY = new Set<Severity>(["Critical", "High"]);
@@ -292,22 +293,25 @@ export function rederiveAutoFindingTechniques(state: InvestigationState): Invest
 
 // Uncovered eligible High/Critical events, split into the ones that need a new finding and the ones
 // an existing finding already explains (event id -> that finding's id): a dismissed corpus-level
-// finding over the same directory, or a live finding citing the event's twin (#1556).
+// finding over the same directory, or a live finding citing the event's twin (#1556). A cited row
+// the citing finding absorbed without naming it (#1943) still counts as uncovered.
 function partitionUncovered(
   state: InvestigationState,
   eligibleIds: ReadonlySet<string>,
 ): { eligible: ForensicEvent[]; foldOnto: Map<string, string> } {
   const dismissed = dismissedEventPaths(state);
   const cited = citedEvents(state);
+  const absorbed = absorbedHighRowIds(state);
   const eligible: ForensicEvent[] = [];
   const foldOnto = new Map<string, string>();
   for (const e of state.forensicTimeline) {
     if (!HIGH_SEVERITY.has(e.severity)) continue;
     if (!eligibleIds.has(e.id)) continue;
-    if (e.relatedFindingIds.length > 0) continue;
+    if (e.relatedFindingIds.length > 0 && !absorbed.has(e.id)) continue;
     const explainedBy =
       (dismissed.length > 0 ? findDismissingFinding(e, dismissed) : undefined) ??
       (cited.length > 0 ? findTwinFinding(e, cited) : undefined);
+    if (explainedBy && e.relatedFindingIds.includes(explainedBy)) continue;
     if (explainedBy) foldOnto.set(e.id, explainedBy);
     else eligible.push(e);
   }

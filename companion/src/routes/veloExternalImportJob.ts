@@ -19,6 +19,7 @@ import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportFailed } from "../logging/importLog.js";
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import type { TruncatedArtifact, UnreadArtifact } from "../analysis/veloHuntStore.js";
+import { truncatedRecord } from "../analysis/veloKeptSpan.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { ImportMemoryRefusedError } from "../analysis/importMemoryGuard.js";
@@ -152,7 +153,7 @@ export async function importArtifactsUnderJob(
         deps.logLine(unreadLogLine(what, artifact, rows.length));
       }
       if (read.truncated) {
-        truncated.push({ name: artifact, kept: rows.length, total: Number(read.total) || rows.length });
+        truncated.push(truncatedRecord(artifact, rows, Number(read.total) || rows.length)); // + kept span (#1950)
         deps.logLine(
           `[velociraptor] ${what}: artifact ${artifact} cut short at the row cap (kept ${rows.length}); ` +
             `raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and import again.`,

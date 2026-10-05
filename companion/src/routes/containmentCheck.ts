@@ -22,6 +22,7 @@ import {
   type ContainmentCheckRecord,
 } from "./containmentCheckPlaybook.js";
 import type { RouteContext } from "./context.js";
+import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
 
 /**
  * The per-finding containment check (#1925) — analyst-pressed, one Jev call per press.
@@ -83,6 +84,8 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
       let result: JevBatchResult;
       let answers: ContainmentAnswer[];
       try {
+        // The Presidio gate on the masked payload, right before it leaves (#1952).
+        await jevPresidioCheck(options, caseId, anon)(jevState);
         result = await askJev(
           {
             baseUrl: settings.baseUrl,
@@ -96,6 +99,7 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
         );
         answers = classifyAnswers(result.answers);
       } catch (err) {
+        if (sendJevPresidioStop(res, err, caseId, options)) return res;
         const detail = err instanceof Error ? err.message : String(err);
         getServerLogger().warn(`[jev] ${caseId}: containment check failed — ${detail}`, { caseId });
         return res.status(502).json({ error: `Jev containment check failed: ${detail}` });

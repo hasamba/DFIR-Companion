@@ -29,6 +29,7 @@ import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
+import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
@@ -611,12 +612,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     // flow/hunt's complete raw collected rows (a different, much larger row set), which silently imports
     // far more than the analyst is looking at. Only the browser extension's "Push rows" button captures
     // the notebook's actual rendered/filtered results (it reads the GUI's own table), so redirect there.
-    if (ref.isNotebookUrl) {
-      return res.status(400).json({
-        error:
-          "this is a Velociraptor NOTEBOOK URL — importing it here would pull the flow/hunt's complete raw results, not your notebook's filtered query. Open the notebook in your browser and use the DFIR Companion extension's \"Push rows → DFIR-Companion\" button instead, which imports exactly what the notebook shows.",
-      });
-    }
+    if (ref.isNotebookUrl) return res.status(400).json({ error: NOTEBOOK_URL_ERROR });
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     const superOnly = req.body?.superTimelineOnly === true;
     // Uploaded reports (THOR/Hayabusa) only have a forensic-merge importer (dispatchImport) — routing
@@ -631,6 +627,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const client = options.velociraptorClient;
     const importJobDeps = { jobManager: options.jobManager, onAiStatus: options.onAiStatus, logLine };
     try {
+      // Already pulled into this case? Answer before any Velociraptor call (#1965); "Re-import anyway" skips it.
+      const prior = await priorVeloImportToWarn(ctx.store, caseId, ref, req.body?.reimport);
+      if (prior) return res.status(409).json({ alreadyImported: prior });
       if (ref.kind === "hunt") {
         if (ref.isUploadsUrl) {
           const uploads = await client.huntUploads(ref.huntId);
