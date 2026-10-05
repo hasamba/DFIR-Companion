@@ -452,6 +452,7 @@
     "gwsOAuthLifecycle.ts": "analysis/ingest",
     "gwsTakeout.ts": "analysis/ingest",
     "graphContext.ts": "analysis/detect",
+    "hayabusaAct.ts": "analysis/ingest",
     "hayabusaImport.ts": "analysis/ingest",
     "highSeverityFindings.ts": "analysis/findings",
     "hijackLibImport.ts": "analysis/ingest",
