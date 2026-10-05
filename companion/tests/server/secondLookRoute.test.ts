@@ -179,6 +179,15 @@ describe("POST /cases/:id/second-look", () => {
     const meta = await synthMetaStore.load("c1");
     expect(meta.lastSynthesizedAt).toBe(before); // the conclusions were deliberately left alone
     expect(meta.secondLook?.promoted).toBe(1); // but the sweep itself is still on the record
+    // The AI chip must say so: the timeline now holds rows the conclusions never saw.
+    expect(meta.outOfDate?.reason).toBe("rows promoted by second look");
+  });
+
+  it("does not mark the conclusions out of date after a re-synthesis", async () => {
+    const { app, synthMetaStore } = await harness();
+    await seedSynthesis(app);
+    await request(app).post("/cases/c1/second-look").send({});
+    expect((await synthMetaStore.load("c1")).outOfDate).toBeUndefined();
   });
 
   it("treats a missing or non-boolean flag as the default, never as the opt-out", async () => {

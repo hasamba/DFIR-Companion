@@ -18,7 +18,7 @@ import type { RouteContext } from "./context.js";
  * cancellation of a search that does not need cancelling.
  */
 export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options } = ctx;
+  const { store, options, markConclusionsOutOfDate } = ctx;
 
   // A case with no super-timeline has no raw record to re-query, so the button has nothing to offer.
   // 501 is the same answer the Jev review gives for the same missing store.
@@ -81,6 +81,11 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
     try {
       const result = await options.pipeline.secondLook(caseId, { resynthesize });
       if (!result) return unconfigured(res);
+      // Promoted rows the conclusions never saw: say so on the AI chip (#1599). A re-synthesis
+      // already refreshed them, so only the opt-out path marks.
+      if (result.promoted > 0 && !result.resynthesized) {
+        await markConclusionsOutOfDate(caseId, "rows promoted by second look");
+      }
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai",
         action: "second-look",
