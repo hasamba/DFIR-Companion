@@ -456,6 +456,7 @@
     "graphContext.ts": "analysis/detect",
     "hayabusaAct.ts": "analysis/ingest",
     "hayabusaImport.ts": "analysis/ingest",
+    "absorbedHighRows.ts": "analysis/findings",
     "highSeverityFindings.ts": "analysis/findings",
     "hijackLibImport.ts": "analysis/ingest",
     "hindsightImport.ts": "analysis/ingest",
