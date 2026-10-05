@@ -36,6 +36,7 @@ import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
 import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
 import { selfDisclaimedPhrase, SELF_DISCLAIMED_SEVERITY_FLOOR } from "./selfDisclaimedSubject.js";
+import * as tamperCap from "./defenderTamperCap.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -215,6 +216,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   const intelIocs = intelFlaggedIocIds(iocs);
   // Hosts the evidence independently confirms as attack-involved — the actor-provenance gate's allow-list.
   const compromisedHosts = confirmedCompromisedHosts(scopedEvents);
+  const burst = tamperCap.incidentBurst(scopedEvents); // #1941: the densest 24 h of High/Critical rows
 
   return findings.map((f) => {
     // Supporting in-scope events: forward links (finding.relatedEventIds present in scope) UNION reverse
@@ -386,6 +388,16 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Defender-tamper timing (#1941): console history only, or every row well before the burst.
+    // Records the marker at any severity (like the decoy gate), floors only High/Critical, never raises.
+    const tamperTiming = tamperCap.tamperTimingOf(f, supporting, burst);
+    if (tamperTiming) {
+      if (severity === "Critical" || severity === "High") severity = tamperCap.TAMPER_CAP_SEVERITY;
+      const note =
+        tamperTiming === "date-unknown" ? tamperCap.DATE_UNKNOWN_REASON : tamperCap.BEFORE_INCIDENT_REASON;
+      if (!(confidenceReason ?? "").includes(note)) confidenceReason = appendReason(confidenceReason, note);
+    }
+
     // Build baseline (#1529). A finding whose EVERY cited row is the host's own provisioning — the
     // image's log clear, the accounts Packer made, the VMware driver services — is baseline, not the
     // intrusion; it is floored to Low and capped. A finding with mixed evidence keeps its severity:
@@ -419,8 +431,9 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       decoyBinary: _prevDb,
       buildBaseline: _prevBb,
       selfDisclaimed: _prevSd,
+      tamperTiming: _prevTt,
       ...rest
-    } = f;
+    } = f as Finding & tamperCap.FindingDefenderCap;
     return {
       ...rest,
       severity,
@@ -436,6 +449,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(decoyBinary ? { decoyBinary: true } : {}),
       ...(buildBaseline ? { buildBaseline: true } : {}),
       ...(selfDisclaimer ? { selfDisclaimed: true } : {}),
+      ...(tamperTiming ? { tamperTiming } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };

@@ -704,3 +704,103 @@ describe("groundAndScoreFindings — build baseline gate (#1529)", () => {
     expect(out[0].severity).toBe("High");
   });
 });
+
+describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => {
+  const CMD = "Set-MpPreference -DisableRealtimeMonitoring $true";
+  const history = ev({
+    id: "ps",
+    timestamp: "2026-10-05T13:24:48Z",
+    severity: "Medium",
+    description: CMD,
+    artifactName: "DetectRaptor.Windows.Detection.Powershell.PSReadline",
+    path: "C:\\Users\\a\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt",
+    sources: ["Velociraptor"],
+  });
+  // Ten High rows on 10-05 — the attack burst.
+  const burst = Array.from({ length: 10 }, (_, i) =>
+    ev({ id: `b${i}`, timestamp: `2026-10-05T10:${String(i).padStart(2, "0")}:00Z`, sources: ["Hayabusa"] }),
+  );
+  const early = ev({
+    id: "5001",
+    timestamp: "2026-09-30T10:00:00Z",
+    description: "EID 5001 Real-time Protection Disabled",
+    sources: ["Hayabusa"],
+  });
+  const inBurst = ev({
+    id: "5001b",
+    timestamp: "2026-10-05T10:30:00Z",
+    description: "EID 5001 Real-time Protection Disabled",
+    sources: ["Hayabusa"],
+  });
+  const tamper = (p: Partial<Finding>): Finding =>
+    f({ title: "Microsoft Defender real-time protection disabled", mitreTechniques: ["T1562.001"], ...p });
+  const run = (findings: Finding[], extra: ForensicEvent[]): Finding[] =>
+    groundAndScoreFindings({
+      findings,
+      scopedEvents: [...burst, ...extra],
+      iocs: [],
+      graphLinkedEventIds: new Set(),
+    });
+  const timing = (x: Finding): unknown => (x as Finding & { tamperTiming?: string }).tamperTiming;
+
+  it("caps a High tamper finding whose only evidence is console history at Medium, marked date unknown", () => {
+    const out = run([tamper({ severity: "High", confidence: 65, relatedEventIds: ["ps"] })], [history]);
+    expect(out[0].severity).toBe("Medium");
+    expect(timing(out[0])).toBe("date-unknown");
+    expect(out[0].confidenceReason).toMatch(/console history/i);
+    expect(out[0].confidenceReason).toMatch(/no per-line time/i);
+  });
+
+  it("caps a tamper finding dated 5 days before the burst at Medium, marked before the incident", () => {
+    const out = run([tamper({ severity: "Critical", confidence: 80, relatedEventIds: ["5001"] })], [early]);
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe("Medium");
+    expect(timing(out[0])).toBe("before-incident");
+    expect(out[0].confidenceReason).toMatch(/before the main activity burst/i);
+  });
+
+  it("leaves a High tamper finding inside the burst alone", () => {
+    const out = run([tamper({ severity: "High", confidence: 80, relatedEventIds: ["5001b"] })], [inBurst]);
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("leaves mixed console-history and in-burst evidence alone", () => {
+    const out = run([tamper({ severity: "High", relatedEventIds: ["ps", "5001b"] })], [history, inBurst]);
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("leaves a non-tamper finding that cites only console history alone", () => {
+    const out = run(
+      [f({ title: "Recon commands run", severity: "High", relatedEventIds: ["ps"] })],
+      [history],
+    );
+    expect(out[0].severity).toBe("High");
+    expect(timing(out[0])).toBeUndefined();
+  });
+
+  it("never changes row severity", () => {
+    const rows = [history, early];
+    run([tamper({ severity: "High", relatedEventIds: ["ps"] })], rows);
+    expect(history.severity).toBe("Medium");
+    expect(early.severity).toBe("High");
+  });
+
+  it("is idempotent on a second pass", () => {
+    const once = run([tamper({ severity: "High", confidence: 65, relatedEventIds: ["ps"] })], [history]);
+    const twice = run(once, [history]);
+    expect(twice[0].severity).toBe("Medium");
+    expect(timing(twice[0])).toBe("date-unknown");
+    expect(twice[0].confidenceReason).toBe(once[0].confidenceReason);
+  });
+
+  it("clears a stale marker once the evidence moves inside the burst", () => {
+    const stale = {
+      ...tamper({ severity: "High", relatedEventIds: ["5001b"] }),
+      tamperTiming: "before-incident",
+    };
+    const out = run([stale as Finding], [inBurst]);
+    expect(timing(out[0])).toBeUndefined();
+  });
+});

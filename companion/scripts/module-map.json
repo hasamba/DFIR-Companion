@@ -841,6 +841,7 @@
     "defenderEpisodeFindings.ts": "analysis/findings",
     "defenderEpisodes.ts": "analysis/timeline",
     "defenderEvents.ts": "analysis/detect",
+    "defenderTamperCap.ts": "analysis/findings",
     "rowFacts.ts": "analysis/case",
     "tradecraftRules.ts": "analysis/detect",
     "webChainJoin.ts": "analysis/ingest",

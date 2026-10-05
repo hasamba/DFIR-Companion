@@ -55,3 +55,23 @@ describe("findingCautionLine", () => {
     expect(findingCautionLine(f({}))).toBe("");
   });
 });
+
+describe("findingCautionLine — Defender-tamper timing (#1941)", () => {
+  const marked = (t: string, p: Partial<Finding> = {}): Finding => ({ ...f(p), tamperTiming: t }) as Finding;
+  it("prints the date-unknown badge", () => {
+    expect(findingCautionLine(marked("date-unknown"))).toMatch(
+      /^> ⚠️ \*\*Date unknown\*\* — the only evidence is PowerShell console history, which has no per-line time/,
+    );
+  });
+  it("prints the before-the-incident badge", () => {
+    expect(findingCautionLine(marked("before-incident"))).toMatch(
+      /^> ⚠️ \*\*Before the incident\*\* — every cited event is dated well before the main activity burst/,
+    );
+  });
+  it("ranks below the evidence gates and above corroboration", () => {
+    expect(findingCautionLine(marked("date-unknown", { ungrounded: true }))).toMatch(/No cited evidence/);
+    expect(findingCautionLine(marked("date-unknown", { lateralUnconfirmed: true }))).toMatch(
+      /Unconfirmed lateral movement/,
+    );
+  });
+});
