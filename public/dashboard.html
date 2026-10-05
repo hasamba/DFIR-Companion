@@ -591,6 +591,8 @@
     </span>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" data-safe-style="margin-left:auto; font-weight:bold;">AI: —</span>
+    <button id="presidioRetryBtn" type="button" data-safe-style="display:none" data-tip="Check the Presidio analyzer again. If it answers, AI Re-synthesize starts.">Retry Presidio</button>
+    <button id="presidioContinueBtn" type="button" data-safe-style="display:none" data-tip="Untick Presidio for this case only, then run AI Re-synthesize. The built-in masking stays on.">Continue without Presidio for this case</button>
     <button id="presidioPendingBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
     <button id="hostDuplicatesBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="This case has hosts that appear under more than one name. AI analysis is on hold until you confirm whether they are the same machine.">⚠ Duplicate hosts: 0</button>
     <span id="captureCount" data-safe-style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>

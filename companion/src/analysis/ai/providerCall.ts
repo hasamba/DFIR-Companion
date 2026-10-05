@@ -260,10 +260,14 @@ function presidioScanFailed(url: string, err: unknown): PresidioScanError {
         `or untick Presidio in the case's Anonymization panel to proceed without name detection.`,
       true,
     );
+  // Every AI path goes through this gate, so the message says "the AI call", never "synthesis".
+  // The per-case untick comes before DFIR_PRESIDIO_URL because it works at once (#1945).
   return new PresidioScanError(
-    `Presidio is enabled but the scan at ${url} failed (not reachable, or returned an ` +
-      `unusable response): ${(err as Error).message}. Start the container or clear ` +
-      `DFIR_PRESIDIO_URL to disable the layer.`,
+    `Presidio is not reachable at ${url}. The AI call did not run. ` +
+      `(${(err as Error).message}; not reachable, or returned an unusable response.) ` +
+      `Start the analyzer and try again, or untick Presidio for this case in the Anonymization ` +
+      `panel to continue with the built-in masking only (no restart). Clearing DFIR_PRESIDIO_URL ` +
+      `also disables the layer, but needs a restart.`,
     false,
   );
 }

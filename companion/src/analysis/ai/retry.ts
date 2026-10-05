@@ -36,13 +36,14 @@ function isRetryableError(err: unknown): boolean {
   // Same reasoning as the approval gate above: a merge decision is a wall, not a blip. Retrying
   // re-derives the identical pending list and delays the 409 the analyst is waiting on.
   if (err instanceof HostMergeDecisionRequired) return false;
-  // A Presidio scan that ran out of budget is actively made WORSE by retrying, which is why it is
-  // singled out from scan failures in general (a refused connection can still be a blip worth one
-  // more go). Aborting the request does not cancel the analyzer's work, so the retry queues behind
-  // the scan we just abandoned and is slower than the attempt before it — the same compounding
-  // stall the timeout fix was written to end. It also multiplies the wait: at four attempts and a
-  // 60s budget an analyst sits through ~240s to be told what attempt one already knew.
-  if (err instanceof PresidioScanError && err.timedOut) return false;
+  // A Presidio scan that could not run is never retried (#1945). A timeout is actively made WORSE
+  // by a retry: aborting the request does not cancel the analyzer's work, so the retry queues
+  // behind the scan we just abandoned and is slower than the attempt before it. A refused
+  // connection was once retried as a possible blip, but a down analyzer stays down within a backoff
+  // window — the analyst sat through four failed attempts and still had no clear answer. The first
+  // failure is surfaced, and the analyst decides: start the analyzer, or stand the layer down for
+  // the case. The gate fails closed either way; nothing unscanned reaches the model.
+  if (err instanceof PresidioScanError) return false;
   return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
 }
 
