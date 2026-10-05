@@ -35,7 +35,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
 - [Quick start](#quick-start)
 - [Docker / Docker Compose](#docker--docker-compose)
-- [Windows (Chocolatey)](#windows-chocolatey)
+- [Windows](#windows)
 - [Linux (AppImage)](#linux-appimage)
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
@@ -807,10 +807,27 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
 - To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
   (on Linux without Docker Desktop, also uncomment the `extra_hosts` line in the compose file).
 
-## Windows (Chocolatey)
+## Windows
 
-Install the portable Windows build with [Chocolatey](https://chocolatey.org/) — no Node.js
-required. In an elevated shell:
+Two options. Both need no Node.js.
+
+### Option 1 — Release binary (recommended)
+
+Download `dfir-companion-<version>-win-x64.zip` from the
+[Releases page](https://github.com/hasamba/DFIR-Companion/releases/latest). Unzip it. Double-click
+`dfir-companion.exe`, then open `http://127.0.0.1:4773/dashboard`.
+
+**Your data lives next to the EXE:** `cases/` (evidence + state) and an optional `.env` (AI /
+threat-intel config, all optional). Keep the folder somewhere you can write to. Override with
+`DFIR_CASES_ROOT` (absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
+
+For the capture extension, use the Chrome Web Store or load the extension zip from the same release
+(see [Quick start](#quick-start)).
+
+### Option 2 — Chocolatey (optional)
+
+Prefer a package manager? Install the same portable build with [Chocolatey](https://chocolatey.org/).
+In an elevated shell:
 
 ```
 choco install dfir-companion
@@ -822,7 +839,7 @@ removes the binary and PATH shim. The installer downloads the same portable zip 
 the [Releases page](https://github.com/hasamba/DFIR-Companion/releases) and verifies its
 SHA256.
 
-**Your data lives in your user profile**, not the admin-owned install dir: cases in
+**With Chocolatey, your data lives in your user profile**, not the admin-owned install dir: cases in
 `%LOCALAPPDATA%\DFIR-Companion\cases` and config in `%LOCALAPPDATA%\DFIR-Companion\.env`
 (seeded from the example; edit it for AI / threat-intel keys — all optional). Uninstall
 **keeps** that folder so evidence is never deleted. No firewall rule is created — the server
@@ -857,7 +874,7 @@ config) are created/read next to where you launch the AppImage. Override with `D
 | Install                | Cases + state                         | Config (`.env`)                       |
 | ---------------------- | ------------------------------------- | ------------------------------------- |
 | Source / `npm run dev` | `companion/cases/`                    | `companion/.env`                      |
-| Portable Windows EXE   | `cases/` next to the EXE              | `.env` next to the EXE                |
+| Windows release zip    | `cases/` next to the EXE              | `.env` next to the EXE                |
 | Windows (Chocolatey)   | `%LOCALAPPDATA%\DFIR-Companion\cases` | `%LOCALAPPDATA%\DFIR-Companion\.env`  |
 | Linux AppImage         | `$PWD/cases` (launch dir)             | `$PWD/.env` (or `DFIR_ENV_FILE`)      |
 | Docker / Compose       | mounted `./cases` volume              | `environment:` / `--env-file`         |
