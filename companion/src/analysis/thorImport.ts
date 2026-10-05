@@ -12,6 +12,7 @@ import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { maxEventsDefault } from "./siemImport.js";
 import { isDetectionToolLocation } from "./veloDetectionNoise.js";
 import { createDecisionTally, type ImportDebugRecorder } from "./rowDecisionDebug.js";
+import { contentMismatch } from "./thorRowMap.js";
 
 // Modules that report scan lifecycle / app status, not host findings — dropped by default.
 const LIFECYCLE_MODULES = new Set(["Init", "Startup", "Control", "ThorDB", "Report"]);
@@ -227,7 +228,12 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
 
     let severity = LEVEL_SEVERITY[level] ?? "Medium";
     const timestamp = pickTimestamp(row);
-    const description = describe(row);
+    // Content vs name (#1966): graded before the self-scan demote below, so that demote still wins.
+    const mismatch = contentMismatch(row, severity);
+    if (mismatch) severity = mismatch.severity;
+    const description = mismatch
+      ? `${describe(row).slice(0, 599 - mismatch.note.length)} ${mismatch.note}`
+      : describe(row);
     const sig = [
       module,
       str(row.message),

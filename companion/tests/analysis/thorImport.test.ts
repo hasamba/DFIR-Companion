@@ -190,3 +190,29 @@ describe("parseThorReport — a file inside an archive (#1603)", () => {
     expect(e.timestamp).toBe("2026-09-24T08:58:30Z");
   });
 });
+
+describe("parseThorReport — content and name disagree (#1966)", () => {
+  const DISGUISED = {
+    ...FILE_WARN,
+    file: "C:\\Users\\srv\\invoice.pdf",
+    type: "EXE",
+    firstbytes: "4d5a90000300000004000000ffff0000b8000000 / MZ",
+  };
+
+  it("notes the mismatch and grades the row up one level", () => {
+    const e = parseThorReport(jsonl(DISGUISED)).events[0];
+    expect(e.description).toContain("[content: PE executable, name says .pdf]");
+    expect(e.severity).toBe("Critical");
+  });
+
+  it("adds nothing when the name matches", () => {
+    const e = parseThorReport(jsonl({ ...DISGUISED, file: "C:\\Users\\srv\\tool.exe" })).events[0];
+    expect(e.description).not.toContain("[content:");
+    expect(e.severity).toBe("High");
+  });
+
+  it("still demotes a detection-tool location to Info", () => {
+    const row = { ...DISGUISED, file: "C:\\Program Files\\Velociraptor\\Tools\\x.pdf" };
+    expect(parseThorReport(jsonl(row)).events[0].severity).toBe("Info");
+  });
+});

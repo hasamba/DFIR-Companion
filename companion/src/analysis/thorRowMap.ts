@@ -133,13 +133,17 @@ export function thorFields(
   // dashboard truncates the title for display at its own limit and shows the rest in [details], so the
   // length costs nothing on screen and is what keeps the findings apart.
   const shortSubject = PATH_KEYS.has(subjectKey) ? baseName(subject) : oneLine(subject);
-  const description = clip(
-    `THOR ${levelWord} [${module}]: ${message}${shortSubject ? ` — ${shortSubject}` : ""}`.replace(
-      / - /g,
-      " — ",
-    ),
-    600,
-  );
+  // Graded here, BEFORE velociraptorImport demotes detection-tool locations, so that demote still wins.
+  const mismatch = contentMismatch(r, level);
+  const suffix = mismatch ? ` ${mismatch.note}` : "";
+  const description =
+    clip(
+      `THOR ${levelWord} [${module}]: ${message}${shortSubject ? ` — ${shortSubject}` : ""}`.replace(
+        / - /g,
+        " — ",
+      ),
+      600 - suffix.length,
+    ) + suffix;
 
   // IDENTITY vs CONTEXT. `path`/`sha256`/`md5` are what correlate.ts merges events on — step 1 unions
   // equal hashes, step 2 unions equal paths — so they must describe the SUBJECT of the finding and
@@ -160,10 +164,11 @@ export function thorFields(
     // those modules outright) kept two licence banners out of the forensic timeline and cost the
     // reconciliation an analyst actually performs: THOR's summary reports 1 Alert / 40 Warnings /
     // 2 Notices, and the case showed no Medium at all. A timeline that disagrees with the scanner's
-    // own totals is worth less than one carrying two banners.
-    severity: level,
+    // own totals is worth less than one carrying two banners. The one change: a file whose content
+    // disagrees with its name goes up one level (#1966).
+    severity: mismatch?.severity ?? level,
     description,
-    detail: buildDetail(r),
+    detail: mismatch ? `${buildDetail(r)}\n${mismatch.note}` : buildDetail(r),
     // Keyed like thorImport.ts's dedup signature — module + message + SUBJECT + rule — plus the HOST,
     // as the generic Velociraptor key has always done. Without the subject, 39 different suspicious log
     // entries collapse into one "×39" row naming none of them; without the host, the same finding on
@@ -183,6 +188,85 @@ export function thorFields(
     ...(procName ? { processName: baseName(procName) } : {}),
     ...(parent ? { parentName: baseName(parent) } : {}),
   };
+}
+
+// ── Content vs name (#1966) ───────────────────────────────────────────────────────────────────────
+// THOR names the file type it read from the magic bytes in its own `type` column, and logs the first
+// 20 bytes as `firstbytes` ("<40 hex chars> / <ascii>"). An executable named invoice.pdf reached the
+// timeline as a PDF because neither was read. THOR's `type` wins; the hex half is the fallback. The
+// ASCII half is never read: EVTX's magic spells "ElfFile", so an ASCII /ELF/ test grades every event
+// log as a Linux binary — ELF matches the hex 7f454c46 only.
+type ContentClass = { label: string; exts: ReadonlySet<string>; extensionless?: boolean };
+const PE: ContentClass = {
+  label: "PE executable",
+  exts: new Set("exe dll sys scr com cpl ocx drv efi mui ax acm tlb pyd winmd mun node msstyles".split(" ")),
+};
+const ELF: ContentClass = {
+  label: "ELF executable",
+  exts: new Set("so ko o bin elf out axf prx mod run".split(" ")),
+  extensionless: true,
+};
+const ZIP: ContentClass = {
+  label: "ZIP archive",
+  exts: new Set(
+    "zip docx xlsx pptx docm xlsm pptm dotx xltx jar apk war ear odt ods odp epub nupkg vsix whl xpi crx appx msix kmz 3mf xps oxps ipa aar".split(
+      " ",
+    ),
+  ),
+};
+const PDF: ContentClass = { label: "PDF document", exts: new Set(["pdf", "ai"]) };
+const SCRIPT: ContentClass = {
+  label: "script",
+  exts: new Set("sh bash zsh ksh csh py pl rb php js cgi awk tcl lua".split(" ")),
+  extensionless: true,
+};
+const TYPE_CLASS: Record<string, ContentClass> = { EXE: PE, ELF, ZIP, PDF };
+const HEX_MAGIC: [string, ContentClass][] = [
+  ["4d5a", PE],
+  ["7f454c46", ELF],
+  ["504b0304", ZIP],
+  ["25504446", PDF],
+  ["2321", SCRIPT],
+];
+const SAFE_EXT = /^[a-z0-9]{1,8}$/;
+const RAISE: Partial<Record<Severity, Severity>> = { Low: "Medium", Medium: "High", High: "Critical" };
+
+function contentClass(type: string, firstbytes: string): ContentClass | undefined {
+  const byType = TYPE_CLASS[type.trim().toUpperCase()];
+  if (byType) return byType;
+  const hex = firstbytes.trim().split(/[\s/]/)[0].toLowerCase();
+  if (!/^[0-9a-f]+$/.test(hex)) return undefined;
+  return HEX_MAGIC.find(([magic]) => hex.startsWith(magic))?.[1];
+}
+
+/**
+ * The subject file's content disagrees with its extension: a fixed-vocabulary note and the severity
+ * one level up (capped at Critical). `undefined` when they agree, when nothing says what the content
+ * is, or for an Info row. Reads only the SUBJECT's own fields — `file`/`type`/`firstbytes`, or the
+ * ProcessCheck image — never `firstbytes_N` (files named inside a LogScan/Autoruns row) or `archive_*`
+ * (the container). The note carries no row text beyond an extension clipped to [a-z0-9]{1,8}.
+ */
+export function contentMismatch(
+  row: unknown,
+  severity: Severity,
+): { note: string; severity: Severity } | undefined {
+  if (!isObject(row) || severity === "Info") return undefined;
+  const r: Row = row;
+  if (str(getCI(r, "entry")).trim()) return undefined; // LogScan: `file` is the log, not the hit
+  const prefix = str(getCI(r, "file")).trim() ? "" : "image_";
+  const file = str(getCI(r, `${prefix}file`)).trim();
+  if (!file) return undefined;
+  const cls = contentClass(str(getCI(r, `${prefix}type`)), str(getCI(r, `${prefix}firstbytes`)));
+  if (!cls) return undefined;
+  const leaf = baseName(file);
+  const dot = leaf.lastIndexOf(".");
+  const ext = dot > 0 ? leaf.slice(dot + 1).toLowerCase() : "";
+  const safe = SAFE_EXT.test(ext);
+  if (safe && cls.exts.has(ext)) return undefined;
+  if (!ext && cls.extensionless) return undefined;
+  if (safe && cls === ELF && /^\d+$/.test(ext)) return undefined; // libfoo.so.1
+  const name = safe ? `name says .${ext}` : "name has no recognised extension";
+  return { note: `[content: ${cls.label}, ${name}]`, severity: RAISE[severity] ?? severity };
 }
 
 function hash(row: Row, keys: string[], len: number): { sha256: string } | { md5: string } | undefined {
