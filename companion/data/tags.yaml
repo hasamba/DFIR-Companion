@@ -246,6 +246,38 @@ web_server_named_shell:
   severity: High
   view: 'Web-server spawned shells'
 
+# Web vulnerability scanners (#1964). Offensive tooling, not routine admin enumeration, so Medium —
+# unlike the tag-only host discovery in reconTechniques.ts. The tool must be an argv token (after
+# start, whitespace, a quote or a path separator) FOLLOWED by an argument (-flag, an IP or a URL),
+# so `cd /opt/sqlmap`, `vim vulmap.py` and `git clone …/sqlmap` do not match. `xray` is a common
+# word and a radiology product name, so it matches only with a scan subcommand (webscan/ws/
+# servicescan/ss), with at most two option pairs before it. Bash rows carry the command only in
+# `description`, so that side is anchored on the "Shell command" prefix.
+web_scanner_tool:
+  description: Web vulnerability scanner run (sqlmap, dirsearch, xray webscan/servicescan, vulmap, WebLogicScan)
+  any:
+    - { field: commandLine, regex: '(?:^|[\s"\\/])(?:sqlmap|dirsearch|vulmap|weblogicscan)(?:\.py|\.exe)?"?\s+(?:-|\d|https?:)', flags: 'i' }
+    - { field: commandLine, regex: '(?:^|[\s"\\/])xray(?:_[a-z0-9_]+)?(?:\.exe)?"? (?:-{1,2}[a-z-]+[ =][^ ]+ ){0,2}(?:webscan|ws|servicescan|ss)(?= |$)', flags: 'i' }
+    - { field: description, regex: '^Shell command[^:]*:[^\n]*?(?:^|[\s"\\/])(?:sqlmap|dirsearch|vulmap|weblogicscan)(?:\.py|\.exe)?"?\s+(?:-|\d|https?:)', flags: 'i' }
+    - { field: description, regex: '^Shell command[^:]*:[^\n]*?(?:^|[\s"\\/])xray(?:_[a-z0-9_]+)?(?:\.exe)?"? (?:-{1,2}[a-z-]+[ =][^ ]+ ){0,2}(?:webscan|ws|servicescan|ss)(?= |$)', flags: 'i' }
+  none:
+    - { field: commandLine, regex: '\b(?:pip[\d.]*|apt(?:-get)?|yum|dnf|brew|choco|winget|git)(?:\.exe)?\s+(?:install|download|clone|show|search)\b', flags: 'i' }
+    - { field: description, regex: '\b(?:pip[\d.]*|apt(?:-get)?|yum|dnf|brew|choco|winget|git)(?:\.exe)?\s+(?:install|download|clone|show|search)\b', flags: 'i' }
+  tags: ['web-scanner', 'reconnaissance']
+  mitre: ['T1595.002']
+  severity: Medium
+  view: 'Web scanners'
+
+web_scanner_exploit_mode:
+  description: Web scanner run in an exploit mode (sqlmap --os-shell / --os-pwn / --file-write, vulmap -m exp)
+  any:
+    - { field: commandLine, regex: '(?:^|[\s"\\/])(?:sqlmap|dirsearch|vulmap|weblogicscan)(?:\.py|\.exe)?"?\s+(?:-|\d|https?:)[^\n]*?\s(?:--os-(?:shell|pwn|cmd|smbrelay|bof)|--file-write|--sql-shell|-m\s+exp|--mode[\s=]exp)(?=[\s=]|$)', flags: 'i' }
+    - { field: description, regex: '^Shell command[^:]*:[^\n]*?(?:^|[\s"\\/])(?:sqlmap|dirsearch|vulmap|weblogicscan)(?:\.py|\.exe)?"?\s+(?:-|\d|https?:)[^\n]*?\s(?:--os-(?:shell|pwn|cmd|smbrelay|bof)|--file-write|--sql-shell|-m\s+exp|--mode[\s=]exp)(?=[\s=]|$)', flags: 'i' }
+  tags: ['web-scanner', 'exploitation']
+  mitre: ['T1595.002', 'T1190']
+  severity: High
+  view: 'Web scanners'
+
 # The ClickFix paste (#1947): a lure tells the user to paste a PowerShell line into Run, and the line
 # fetches from a bare-number host (a decimal-encoded IPv4 such as http://3232235777/) or a raw IPv4
 # and writes the payload to a temp script, or hands it straight to iex. At Medium the paste was read
