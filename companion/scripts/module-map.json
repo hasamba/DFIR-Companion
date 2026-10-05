@@ -428,6 +428,7 @@
     "findingTaskStore.ts": "analysis/intel",
     "findingTasks.ts": "analysis/intel",
     "firstPartyEgress.ts": "analysis/detect",
+    "genericSysmonRegistry.ts": "analysis/detect",
     "forensicGate.ts": "analysis/timeline",
     "forensicGateControl.ts": "analysis/timeline",
     "forensicSort.ts": "analysis/timeline",

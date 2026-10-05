@@ -7,6 +7,7 @@ import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
+import { downgradeGenericSysmonRegistry } from "../analysis/genericSysmonRegistry.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
@@ -282,13 +283,18 @@ async function carryAndStamp(
   const importBatchId = randomUUID();
   let carried = 0;
   let downgraded = 0;
+  let genericRegistry = 0;
   const carry = hostRenameCarrier(ledger);
   for (const r of rows) if (carry(r.event) !== r.event) carried++;
   const transform = (e: ForensicEvent): ForensicEvent => {
     const moved = carry(e);
     if (!addedIds.has(e.id)) return moved;
-    const lowered = deps.superTimelineStore ? downgradeFirstPartyEgress([moved]).events[0] : moved;
-    if (lowered.severity !== moved.severity) downgraded++;
+    if (!deps.superTimelineStore) return { ...moved, importedAt, importBatchId };
+    const egress = downgradeFirstPartyEgress([moved]).events[0];
+    if (egress.severity !== moved.severity) downgraded++;
+    // #1958: generic Sysmon registry alerts, in the same position and for the same reason.
+    const lowered = downgradeGenericSysmonRegistry([egress]).events[0];
+    if (lowered.severity !== egress.severity) genericRegistry++;
     return { ...lowered, importedAt, importBatchId };
   };
   const written = await rewriteRows(store, caseId, rows, transform);
@@ -296,6 +302,13 @@ async function carryAndStamp(
     getServerLogger().info(`[import] ${caseId}: ${downgraded} first-party update connection(s) graded Info`, {
       caseId,
     });
+  if (genericRegistry)
+    getServerLogger().info(
+      `[import] ${caseId}: ${genericRegistry} generic Sysmon registry alert(s) graded Info`,
+      {
+        caseId,
+      },
+    );
   const writtenById = new Map(written.map((r) => [r.rowId, r.event]));
   const added = rows.filter((r) => addedIds.has(r.event.id)).map((r) => writtenById.get(r.rowId) ?? r.event);
   const others = rows

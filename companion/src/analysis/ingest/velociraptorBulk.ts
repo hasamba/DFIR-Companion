@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState, Severity } from "../stateTypes.js";
 import { demoteBelowSeverity } from "../forensicGate.js";
 import { downgradeFirstPartyEgress } from "../firstPartyEgress.js";
+import { downgradeGenericSysmonRegistry } from "../genericSysmonRegistry.js";
 import type { MappedEvent, SiemEvent } from "../siemImport.js";
 import { aggregateEvents } from "../eventAggregate.js";
 import type { SiemIoc } from "../iocSink.js";
@@ -409,6 +410,7 @@ export async function runVelociraptorBulk(
     // update traffic drops to Info BEFORE the tagger, so a tagger rule can still raise it and the
     // super-timeline receives the graded copy.
     events = downgradeFirstPartyEgress(events).events;
+    events = downgradeGenericSysmonRegistry(events).events; // #1958, same position
     totals.detections += out.detections;
     totals.belowFloor += out.belowFloor;
     if (tagger && events.length) {
