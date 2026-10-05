@@ -10,14 +10,16 @@
 // whose path no longer matches (the setting was narrowed) gets its recorded grade back.
 //
 // Only the file ARRIVING is lab setup. Running the copied tool is the scenario itself, so a row that
-// executes from the folder (an execute action, or its own command line names the folder) keeps its
-// grade. A promoted row or a hard attacker signal keeps its grade too (buildTimeWindow.protectedFromCap).
+// executes from the folder keeps its grade: an execute action, a command line that names the folder,
+// or an execution artifact (Prefetch, UserAssist, Amcache, BAM, ShimCache with its execution flag, a
+// process start — isExecutionRecord). A promoted row or a hard attacker signal keeps its grade too (buildTimeWindow.protectedFromCap).
 //
 // The record lives here, not in stateTypes.ts (at its size ledger): `labSetup` is the one extra
 // field on a row and on a finding, and the readers below are the only ones that touch it.
 
 import { appendDerivedNote, DESCRIPTION_BASE_MAX } from "./derivedNote.js";
 import { protectedFromCap } from "./buildTimeWindow.js";
+import { veloAction } from "./downloadCorroborationShared.js";
 import {
   SEVERITY_RANK,
   worstSeverity,
@@ -59,9 +61,29 @@ export function labSetupPaths(env: NodeJS.ProcessEnv = process.env): string[] {
   return [...new Set([...DEFAULT_SET, ...extra])];
 }
 
+// Execution evidence, read from the marks each importer itself writes — never the row's subject text.
+// KAPE stamps `sources` with the tool's name; Velociraptor writes `sources: ["Velociraptor"]` and
+// its fixed `[<artifact>]: <action>` segment (veloAction). Amcache and BAM are recorded when a
+// binary runs, not when a file is copied in; ShimCache counts only with its execution flag.
+const EXEC_SOURCES = /^(?:prefetch|userassist|amcache|bam)$/i;
+const VELO_EXEC_ACTION = /prefetch|userassist|amcache|shimcache, execution flag set/i;
+const VELO_BAM = /^Velociraptor(?: \[[^\]]*\])? BAM: /;
+const KAPE_SHIM_EXECUTED = /^ShimCache: .* — present in the cache, execution flag set; time shown/;
+
+/** True when the row records that the binary RAN: a process start or an execution artifact. */
+export function isExecutionRecord(e: ForensicEvent): boolean {
+  if (e.action === "execute") return true;
+  if (e.canonical?.event?.category === "process" && e.canonical.event.type === "start") return true;
+  const sources = e.sources ?? [];
+  if (sources.some((s) => EXEC_SOURCES.test(s))) return true;
+  if (sources.includes("ShimCache") && KAPE_SHIM_EXECUTED.test(e.description)) return true;
+  if (!sources.includes("Velociraptor")) return false;
+  return VELO_EXEC_ACTION.test(veloAction(e)) || VELO_BAM.test(e.description);
+}
+
 /** The lab-setup folder this row's file sits in, or null. A run from the folder is not setup. */
 export function labSetupFolder(e: ForensicEvent, paths: readonly string[]): string | null {
-  if (!e.path || e.action === "execute") return null;
+  if (!e.path || isExecutionRecord(e)) return null;
   const p = norm(e.path);
   const hit = paths.find((x) => p.includes(x));
   if (!hit) return null;

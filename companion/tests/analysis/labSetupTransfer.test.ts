@@ -9,7 +9,10 @@ import {
 } from "../../src/analysis/labSetupTransfer.js";
 import { DERIVED_NOTE_NAMES, DERIVED_NOTE_DOWNGRADES } from "../../src/analysis/derivedNote.js";
 import { applyToForensicEvent } from "../../src/analysis/tagger.js";
-import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { Finding, ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { parseKapeCsv } from "../../src/analysis/kapeImport.js";
+import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
+import { groundAndScoreFindings } from "../../src/analysis/findingGrounding.js";
 
 function ev(p: Partial<ForensicEvent>): ForensicEvent {
   return {
@@ -132,5 +135,150 @@ describe("lab-setup registration and guards (#1946)", () => {
     expect(labSetupOnly([a])).toBe(true);
     expect(labSetupOnly([a, b])).toBe(false);
     expect(labSetupOnly([])).toBe(false);
+  });
+});
+
+// Codex review (#1946): the cap read only `action === "execute"` and the row's own command line, so
+// an execution ARTIFACT naming a binary in the folder — Prefetch, UserAssist, Amcache, BAM, a process
+// start — was capped and labelled operator staging. Running the copied tool is the scenario. These
+// rows are built by the real importers, not by hand.
+describe("execution evidence from the drag-and-drop folder keeps its grade (#1946 review)", () => {
+  const EXE = "C:\\Users\\vagrant\\AppData\\Local\\Temp\\vmware-vagrant\\VMwareDnD\\f47a154c\\mimikatz.exe";
+  const VOL_EXE =
+    "\\VOLUME{01d0a1b2c3d4e5f6-0123abcd}\\USERS\\VAGRANT\\APPDATA\\LOCAL\\TEMP\\VMWARE-VAGRANT\\VMWAREDND\\F47A154C\\MIMIKATZ.EXE";
+  // An importer row as the forensic timeline holds it; `severity` stands in for a later raise
+  // (tagger, merge) on artifacts the importer itself leaves at Info.
+  const toRow = (e: object, id: string, severity?: ForensicEvent["severity"]): ForensicEvent => {
+    const s = e as ForensicEvent;
+    return { ...s, id, severity: severity ?? s.severity, relatedFindingIds: [], sourceScreenshots: [] };
+  };
+  const kapeRow = (csv: string, id: string, severity?: ForensicEvent["severity"]): ForensicEvent => {
+    const out = parseKapeCsv(csv, { aggregate: false });
+    expect(out.events).toHaveLength(1);
+    return toRow(out.events[0], id, severity);
+  };
+  const veloRow = (artifact: string, row: object, id: string, severity?: ForensicEvent["severity"]) => {
+    const out = parseVelociraptorJson(JSON.stringify({ [artifact]: [row] }), { aggregate: false });
+    const hit = out.events.filter((e) => (e.path ?? "").toLowerCase().includes("vmwarednd"));
+    expect(hit).toHaveLength(1);
+    return toRow(hit[0], id, severity);
+  };
+  const rows = (): ForensicEvent[] => [
+    kapeRow(
+      [
+        "SourceFilename,ExecutableName,RunCount,LastRun,FilesLoaded",
+        `C:\\Windows\\Prefetch\\MIMIKATZ.EXE-1A2B3C4D.pf,MIMIKATZ.EXE,2,2026-09-30 13:25:00,"${VOL_EXE}"`,
+      ].join("\n"),
+      "kape-pf",
+    ),
+    kapeRow(
+      [
+        "FullPath,SHA1,FileKeyLastWriteTimestamp",
+        `${EXE},0000aabbccddeeff00112233445566778899aabbcc,2026-09-30 13:25:00`,
+      ].join("\n"),
+      "kape-amcache",
+      "High",
+    ),
+    veloRow(
+      "Windows.Forensics.Prefetch",
+      { Executable: "mimikatz.exe", ExecutablePath: EXE, RunCount: 2, LastRunTimes: "2026-09-30T13:25:00Z" },
+      "velo-pf",
+    ),
+    veloRow(
+      "Windows.Registry.UserAssist",
+      { Name: EXE, NumberOfExecutions: 1, LastExecution: "2026-09-30T13:25:00Z" },
+      "velo-ua",
+      "High",
+    ),
+    veloRow(
+      "Windows.Forensics.Amcache",
+      {
+        FullPath: EXE,
+        SHA1: "aabbccddeeff00112233445566778899aabbccdd",
+        OriginalFileName: "mimikatz.exe",
+        Timestamp: "2026-09-30T13:25:00Z",
+      },
+      "velo-amcache",
+      "High",
+    ),
+  ];
+
+  it("the importers put these rows at High on a path inside the folder", () => {
+    for (const r of rows()) {
+      expect(r.severity, r.id).toBe("High");
+      expect((r.path ?? "").toLowerCase(), r.id).toContain("vmwarednd");
+    }
+  });
+
+  it("caps none of them and records no lab-setup mark", () => {
+    for (const r of rows()) {
+      const out = capLabSetupRow(r, defaults);
+      expect(out.severity, r.id).toBe("High");
+      expect(labSetupOf(out), r.id).toBeUndefined();
+      expect(hasLabSetupMark(out), r.id).toBe(false);
+    }
+  });
+
+  it("keeps a process-start row (canonical process start) at its grade", () => {
+    const start = ev({
+      path: EXE,
+      sources: ["Hayabusa"],
+      canonical: { event: { category: "process", type: "start" } } as ForensicEvent["canonical"],
+    });
+    expect(capLabSetupRow(start, defaults)).toBe(start);
+  });
+
+  it("lifts a cap an earlier pass wrote onto a Prefetch row", () => {
+    const pf = rows()[0];
+    const stale = {
+      ...pf,
+      severity: "Medium",
+      labSetup: { tag: LAB_SETUP_TAG, folder: "\\vmwarednd\\", cappedFrom: "High" },
+    } as ForensicEvent;
+    const out = capLabSetupRow(stale, defaults);
+    expect(out.severity).toBe("High");
+    expect(labSetupOf(out)).toBeUndefined();
+  });
+
+  it("ShimCache keeps its grade only with the execution flag — presence alone is still the copy", () => {
+    const shim = (flag: string, id: string) =>
+      veloRow(
+        "Windows.Registry.AppCompatCache",
+        { Path: EXE, ExecutionFlag: flag, ModificationTime: "2026-09-30T13:25:00Z" },
+        id,
+        "High",
+      );
+    expect(capLabSetupRow(shim("true", "s1"), defaults).severity).toBe("High");
+    expect(capLabSetupRow(shim("false", "s2"), defaults).severity).toBe("Medium");
+  });
+
+  it("still caps the copied file itself (a THOR hit on the same path)", () => {
+    expect(capLabSetupRow(ev({ path: EXE, sources: ["THOR"] }), defaults).severity).toBe("Medium");
+  });
+
+  it("a finding that cites only these execution rows is not capped", () => {
+    const supporting = rows().map((r) => capLabSetupRow(r, defaults));
+    const finding: Finding = {
+      id: "f1",
+      severity: "High",
+      title: "mimikatz executed",
+      description: "",
+      relatedIocs: [],
+      relatedEventIds: supporting.map((r) => r.id),
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    };
+    const out = groundAndScoreFindings({
+      iocs: [],
+      graphLinkedEventIds: new Set<string>(),
+      findings: [finding],
+      scopedEvents: supporting,
+    });
+    expect(out[0].severity).toBe("High");
+    expect((out[0] as Finding & { labSetup?: boolean }).labSetup).toBeUndefined();
+    expect(out[0].confidenceReason ?? "").not.toMatch(/lab-setup folder/);
   });
 });
