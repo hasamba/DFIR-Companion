@@ -134,6 +134,21 @@
         { "technique": "T1572", "name": "cloudflared Tunnel" },
         { "technique": "T1059.006", "name": "Pyramid Python" }
       ]
+    },
+    {
+      "name": "Nitrogen (fake IP scanner → Sliver/Cobalt Strike → BlackCat)",
+      "description": "Nitrogen malvertising intrusion: a Google ad serves a fake Advanced IP Scanner (Version.zip), setup.exe side-loads a malicious python311.dll, Python loaders run Sliver (StartW export) and Cobalt Strike shellcode, net group, nltest, PowerView and SharpHound map the domain, Impacket wmiexec and RDP move laterally, restic exfiltrates to an HTTP REST server, and BlackCat is pushed with PsExec after shadow copies are deleted and hosts are set to boot into safe mode.",
+      "reference": "https://thedfirreport.com/2024/09/30/nitrogen-campaign-drops-sliver-and-ends-with-blackcat-ransomware/",
+      "steps": [
+        { "technique": "T1189", "name": "Malvertising Fake Advanced IP Scanner (Version.zip)", "alternatives": ["T1204.002"] },
+        { "technique": "T1574.002", "name": "python311.dll Side-Load" },
+        { "technique": "T1059.006", "name": "Nitrogen Python Loaders (Sliver StartW, Cobalt Strike shellcode)", "alternatives": ["T1055"] },
+        { "technique": "T1071.001", "name": "Sliver / Cobalt Strike Web C2" },
+        { "technique": "T1069.002", "name": "Domain Discovery (net group, nltest, PowerView, SharpHound)", "alternatives": ["T1482", "T1018"] },
+        { "technique": "T1047", "name": "Impacket wmiexec / RDP Lateral", "alternatives": ["T1021.001", "T1021.002"] },
+        { "technique": "T1048", "name": "Restic Exfiltration over HTTP" },
+        { "technique": "T1486", "name": "BlackCat via PsExec (shadow copies deleted, safe-mode boot)", "alternatives": ["T1490"] }
+      ]
     }
   ]
 }
