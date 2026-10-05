@@ -57,6 +57,7 @@ import {
 import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
+import { hayabusaAct, hayabusaActEnvelope } from "./hayabusaAct.js";
 import { applyOsBehaviourRules } from "./osBehaviourRules.js";
 import { boundedAggKey, foldVolatileIds } from "./aggKey.js";
 import {
@@ -314,6 +315,24 @@ function mapRecord(
     `${foldVolatileIds(`hayabusa|${(ruleTitle || eid).toLowerCase()}|${channel.toLowerCase()}|${eid}`)}|${host.toLowerCase()}${proc}${peer}|${foldVolatileIds(subject)}`,
   );
 
+  // A write of a file or the start of a process says so on its envelope (#1557), so correlate keeps a
+  // write and the launch of that file apart. Every other event keeps no envelope, as before.
+  const act = hayabusaAct(eid, channel);
+  const canonical = act
+    ? hayabusaActEnvelope({
+        act,
+        eid,
+        channel,
+        host,
+        observed: firstStr(rec, ["Timestamp", "@timestamp", "datetime"]),
+        normalized: timestamp,
+        recordId: firstStr(rec, ["RecordID", "Record ID", "RecordId", "EventRecordID"]) || undefined,
+        path: pathRaw || undefined,
+        processName,
+        commandLine: commandLine || undefined,
+      })
+    : undefined;
+
   const mapped: MappedEvent = {
     timestamp,
     description,
@@ -336,6 +355,7 @@ function mapRecord(
     ...(dstIp ? { dstIp } : {}),
     ...(Number.isFinite(port) && port > 0 ? { port } : {}),
     ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
+    ...(canonical ? { canonical } : {}),
   };
   // A sample-corpus host (veloDetectionNoise.ts) is demoted to Info — but only when the row has NO
   // collector identity, so a renamed host's own history is never mistaken for a foreign sample (#1417).
