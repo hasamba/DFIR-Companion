@@ -206,6 +206,7 @@
     "buildTimeMerge.ts": "analysis/timeline",
     "buildTimeWindow.ts": "analysis/detect",
     "burstDetect.ts": "analysis/detect",
+    "emulationAgentContext.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
     "canonicalProvenanceCompact.ts": "shared",
     "canonicalProvenanceRestamp.ts": "shared",

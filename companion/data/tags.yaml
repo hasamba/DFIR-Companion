@@ -387,3 +387,22 @@ privesc_coercion_tooling:
   mitre: ['T1068', 'T1134.002']
   severity: High
   view: 'Privilege escalation tooling'
+
+# ─────────────────────────── Adversary-emulation framework agents ───────────────────────────
+# A MITRE Caldera sandcat agent: the binary itself (often renamed, e.g. splunkd.exe in C:\Users\Public),
+# its launch arguments (-server <url> -group <name>), and the stager that fetches it from /file/download
+# with a platform/file header. A FACT for synthesis, not a verdict: no severity (a real attacker can run
+# Caldera too), so every row keeps its import grade. It reads file/process names and launch arguments
+# only — never description or message — so a script comment or a write-up that NAMES sandcat does not
+# fire (the #747 hazard). analysis/emulationAgentContext.ts mirrors these patterns for the synthesis
+# context line; keep the two in step — a drift test runs both over one fixture set (#1957).
+emulation_framework_agent:
+  description: Adversary-emulation framework agent (MITRE Caldera sandcat) — file, process or launch arguments
+  any:
+    - { field: path, regex: '(?:^|[\\/])sandcat(?:\.[^\\/]{1,40})?$', flags: 'i' }
+    - { field: processName, regex: '(?:^|[\\/])sandcat(?:\.[^\\/]{1,40})?$', flags: 'i' }
+    - { field: commandLine, regex: '(?:^|[\s"''])-server [^\n]{1,200}\s-group [^\s]' }
+    - { field: commandLine, regex: '/file/download[^\n]{0,300}\b(?:platform|file)[\\"'']{0,2}\s*[:=,]', flags: 'i' }
+    - { field: commandLine, regex: '\b(?:platform|file)[\\"'']{0,2}\s*[:=,][^\n]{0,300}/file/download', flags: 'i' }
+  tags: ['emulation-framework-agent']
+  view: 'Emulation framework agents'
