@@ -802,7 +802,7 @@ describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => 
       ...tamper({ severity: "High", relatedEventIds: ["5001b"] }),
       tamperTiming: "before-incident",
     };
-    const out = run([stale as Finding], [inBurst]);
+    const out = run([stale], [inBurst]);
     expect(timing(out[0])).toBeUndefined();
   });
 });

@@ -417,8 +417,8 @@ describe("dashboard.html", () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     const tags = [...html.matchAll(new RegExp(`<[^>]*id="${ID}"[^>]*>`, "g"))];
     expect(tags).toHaveLength(1);
-    const tag = tags[0]!;
-    expect(tag.index!).toBeLessThan(html.indexOf("/vendor/cytoscape/cytoscape.min.js"));
+    const tag = tags[0];
+    expect(tag.index).toBeLessThan(html.indexOf("/vendor/cytoscape/cytoscape.min.js"));
     expect(tag[0]).toMatch(/^<link\b/);
     expect(tag[0]).toContain('rel="stylesheet"');
     const href = /href="([^"]+)"/.exec(tag[0])?.[1];

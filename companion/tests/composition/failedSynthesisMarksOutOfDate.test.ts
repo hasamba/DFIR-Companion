@@ -116,7 +116,7 @@ describe.each(PATHS)("a failed %s (#1953)", (_name, start) => {
     const job = await pollFor("a running synthesis job", async () =>
       h.synthJob()?.status === "running" ? h.synthJob() : undefined,
     );
-    await h.jobManager.cancel(job!.id);
+    await h.jobManager.cancel(job.id);
     await h.settled();
     expect(await h.marker()).toBeNull();
   });
