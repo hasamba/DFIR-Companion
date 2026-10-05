@@ -11,7 +11,10 @@
 // same folder, and the two file records are dated within STAGING_WINDOW_MS of each other. Both rows
 // are raised to Medium and tagged T1567.002. A Prefetch, Amcache or process-start record on that
 // host that names the tool's full path is raised to High: the staged tool also ran (Amcache is a
-// presence record, but a staged kit beside it is the context that makes it worth reading). It does
+// presence record, but a staged kit beside it is the context that makes it worth reading). That
+// record must be dated within EXECUTION_WINDOW_MS after the staging, and must not carry a digest
+// that disagrees with the staged binary's: a reused path otherwise joins an unrelated prior run
+// (Codex review of #1955). It does
 // not establish that data left the host, what the remote was, or that the config was ever read.
 //
 // Only ever raises. Its notes are recomputed on every merge, so a note whose partner row has left
@@ -22,13 +25,20 @@
 
 import { worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { appendDerivedNote } from "./derivedNote.js";
-import { filePath, sameLocation, type FilePath } from "./downloadExecution.js";
+import { filePath, hashVeto, sameLocation, type FilePath } from "./downloadExecution.js";
 import { excerpt, hostOf, ms, neutral, veloAction } from "./downloadCorroborationShared.js";
 
 export const TRANSFER_TOOL_STAGED_MARKER = "[transfer tool staged:";
 
 /** The two file records must be dated this close to each other. */
 export const STAGING_WINDOW_MS = 10 * 60_000;
+
+/**
+ * An execution record joins the kit only when it is dated from STAGING_WINDOW_MS before the
+ * staging (the later of the two file records; the slack absorbs clock skew between artifacts) to
+ * this long after it. A run outside that span is an unrelated use of a reused install path.
+ */
+export const EXECUTION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
 const MEGA_CONFIGS = [".megarc", "megarc.ini"] as const;
 
@@ -120,6 +130,25 @@ function withoutOwnNote(description: string): string {
   return description.replace(OWN_NOTE, "");
 }
 
+/** The execution records of this tool path that follow the staging of `tool` and `config`. */
+function runsAfter(tool: Row, config: Row, runs: readonly Row[]): Row[] {
+  const staged = Math.max(tool.time ?? 0, config.time ?? 0);
+  return runs.filter(
+    (x) =>
+      x.time !== null &&
+      x.time >= staged - STAGING_WINDOW_MS &&
+      x.time <= staged + EXECUTION_WINDOW_MS &&
+      !hashVeto(tool.event, x.event) &&
+      sameLocation(tool.file, x.file).same,
+  );
+}
+
+const ranList = (ran: readonly Row[]): string =>
+  ran
+    .slice(0, PAIRS_NAMED_MAX)
+    .map((x) => `${artifactOf(x.event)} row ${id(x)} ${neutral(x.event.timestamp ?? "").slice(0, 40)}`)
+    .join(", ");
+
 /** The pairs and the execution records of the staged tools, as note words per row. */
 function findStaging(rows: Row[]): Map<ForensicEvent, { words: string[]; raiseTo: Severity }> {
   const files = rows.filter((r) => !isExecutionRecord(r.event));
@@ -147,20 +176,11 @@ function findStaging(rows: Row[]): Map<ForensicEvent, { words: string[]; raiseTo
           sameLocation(tool.folder, c.folder).same,
       );
       if (!partners.length) continue;
-      const ran = (runsByPath.get(`${tool.host}|${tool.file.relative}`) ?? []).filter(
-        (x) => sameLocation(tool.file, x.file).same,
-      );
-      const folder = excerpt(parentOf(tool.event.path ?? ""));
-      const where = `in ${folder} on ${neutral(tool.host).slice(0, 80)}`;
-      const ranWords = ran.length
-        ? `; tool also recorded by: ${ran
-            .slice(0, PAIRS_NAMED_MAX)
-            .map(
-              (x) => `${artifactOf(x.event)} row ${id(x)} ${neutral(x.event.timestamp ?? "").slice(0, 40)}`,
-            )
-            .join(", ")}`
-        : "";
+      const toolRuns = runsByPath.get(`${tool.host}|${tool.file.relative}`) ?? [];
+      const where = `in ${excerpt(parentOf(tool.event.path ?? ""))} on ${neutral(tool.host).slice(0, 80)}`;
       for (const c of partners) {
+        const ran = runsAfter(tool, c, toolRuns);
+        const ranWords = ran.length ? `; tool also recorded by: ${ranList(ran)}` : "";
         add(
           tool,
           `${tool.name} beside its config ${c.name} (row ${id(c)}, ${gap(tool, c)}) ${where}${ranWords}`,

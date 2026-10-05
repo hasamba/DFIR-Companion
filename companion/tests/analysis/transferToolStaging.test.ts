@@ -7,6 +7,7 @@ import {
   TRANSFER_TOOL_NAMES,
   TRANSFER_TOOL_STAGED_MARKER,
   STAGING_WINDOW_MS,
+  EXECUTION_WINDOW_MS,
 } from "../../src/analysis/transferToolStaging.js";
 import { DERIVED_NOTE_NAMES } from "../../src/analysis/derivedNote.js";
 import { mergeLoadAlways, mergeTrigger } from "../../src/analysis/mergeIndex.js";
@@ -140,6 +141,70 @@ describe("linkTransferToolStaging", () => {
   it("ignores an execution record on another host", () => {
     const out = linkTransferToolStaging([tool(), conf(), amcache({ asset: "WS02" })]);
     expect(byId(out, "amc").severity).toBe("Info");
+  });
+
+  // Codex review of #1955: a reused install path joined an unrelated prior run to the staged kit.
+  describe("only an execution that follows the staging, with a matching hash", () => {
+    it("does not raise an execution dated before the staging pair", () => {
+      const out = linkTransferToolStaging([
+        tool({ timestamp: "2026-10-01T10:00:00.000Z" }),
+        conf({ timestamp: "2026-10-01T10:00:10.000Z" }),
+        amcache({ timestamp: "2025-01-15T09:00:00.000Z" }),
+      ]);
+      expect(byId(out, "amc").severity).toBe("Info");
+      expect(byId(out, "amc").description).not.toContain(TRANSFER_TOOL_STAGED_MARKER);
+      expect(byId(out, "tool").description).not.toMatch(/amc/);
+      expect(byId(out, "tool").severity).toBe("Medium");
+    });
+
+    it("does not raise an execution beyond the run window after staging", () => {
+      expect(EXECUTION_WINDOW_MS).toBe(7 * 24 * 60 * 60_000);
+      const late = (EXECUTION_WINDOW_MS + 60_000) / 1000;
+      const out = linkTransferToolStaging([tool(), conf(), amcache({ timestamp: at(10 + late) })]);
+      expect(byId(out, "amc").severity).toBe("Info");
+    });
+
+    it("raises an execution shortly after staging, and one a few minutes before it (clock skew)", () => {
+      expect(
+        linkTransferToolStaging([tool(), conf(), amcache({ timestamp: at(3600) })]).find(
+          (e) => e.id === "amc",
+        )!.severity,
+      ).toBe("High");
+      expect(
+        linkTransferToolStaging([tool(), conf(), amcache({ timestamp: at(-120) })]).find(
+          (e) => e.id === "amc",
+        )!.severity,
+      ).toBe("High");
+    });
+
+    it("measures the window from the later of the two staged files", () => {
+      // Config written 9 minutes after the tool; the run lands just inside the window from the config.
+      const runAt = 540 + (EXECUTION_WINDOW_MS - 30_000) / 1000;
+      const out = linkTransferToolStaging([
+        tool(),
+        conf({ timestamp: at(540) }),
+        amcache({ timestamp: at(runAt) }),
+      ]);
+      expect(byId(out, "amc").severity).toBe("High");
+    });
+
+    it("does not raise an execution whose sha256 differs from the staged tool's", () => {
+      const a = "a".repeat(64);
+      const b = "b".repeat(64);
+      const out = linkTransferToolStaging([tool({ sha256: a }), conf(), amcache({ sha256: b })]);
+      expect(byId(out, "amc").severity).toBe("Info");
+      const same = linkTransferToolStaging([
+        tool({ sha256: a }),
+        conf(),
+        amcache({ sha256: a.toUpperCase() }),
+      ]);
+      expect(byId(same, "amc").severity).toBe("High");
+    });
+
+    it("does not raise an execution with no timestamp", () => {
+      const out = linkTransferToolStaging([tool(), conf(), amcache({ timestamp: "" })]);
+      expect(byId(out, "amc").severity).toBe("Info");
+    });
   });
 
   it("joins the mega tools to their config", () => {
