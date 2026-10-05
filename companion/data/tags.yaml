@@ -246,6 +246,27 @@ web_server_named_shell:
   severity: High
   view: 'Web-server spawned shells'
 
+# The ClickFix paste (#1947): a lure tells the user to paste a PowerShell line into Run, and the line
+# fetches from a bare-number host (a decimal-encoded IPv4 such as http://3232235777/) or a raw IPv4
+# and writes the payload to a temp script, or hands it straight to iex. At Medium the paste was read
+# as noise and the case reported the entry vector as unknown. Three parts must all be present: a
+# fetch verb, a numeric host (a dotted quad followed by `.example.com` is a hostname, not an IP), and
+# a temp-script or iex sink. Named hosts are left out on purpose — vendor installers fetch into TEMP
+# every day. High, not Critical: admin scripts also fetch from raw IPs, so this is a "download
+# cradle" lead, not proof. An `echo` of the string with no sink (a lab stand-in) does not match.
+# No TRADECRAFT_RULES entry grades this shape, so it is not double-graded. Reads commandLine
+# (Sysmon/EDR), description (Hayabusa, console history) and message (script-block rows).
+win_clickfix_download_cradle:
+  description: PowerShell download cradle from a bare-number or raw-IP host into a temp script or iex (ClickFix paste)
+  any:
+    - { field: commandLine, regex: '^(?=[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl(?:\.exe)?|wget|downloadstring|downloadfile|start-bitstransfer)\b)(?=[^\n]*\bhttps?://(?:\d{8,10}|\d{1,3}(?:\.\d{1,3}){3})(?=[:/"''\s)]|$))(?=[^\n]*(?:(?:\\temp\\|\$env:temp|%temp%)[^\s"'';|]*\.(?:ps1|bat|cmd|vbs|js|hta)\b|\b(?:iex|invoke-expression)\b))', flags: 'i' }
+    - { field: description, regex: '^(?=[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl(?:\.exe)?|wget|downloadstring|downloadfile|start-bitstransfer)\b)(?=[^\n]*\bhttps?://(?:\d{8,10}|\d{1,3}(?:\.\d{1,3}){3})(?=[:/"''\s)]|$))(?=[^\n]*(?:(?:\\temp\\|\$env:temp|%temp%)[^\s"'';|]*\.(?:ps1|bat|cmd|vbs|js|hta)\b|\b(?:iex|invoke-expression)\b))', flags: 'i' }
+    - { field: message, regex: '^(?=[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl(?:\.exe)?|wget|downloadstring|downloadfile|start-bitstransfer)\b)(?=[^\n]*\bhttps?://(?:\d{8,10}|\d{1,3}(?:\.\d{1,3}){3})(?=[:/"''\s)]|$))(?=[^\n]*(?:(?:\\temp\\|\$env:temp|%temp%)[^\s"'';|]*\.(?:ps1|bat|cmd|vbs|js|hta)\b|\b(?:iex|invoke-expression)\b))', flags: 'i' }
+  tags: ['download-cradle', 'initial-access']
+  mitre: ['T1105', 'T1059.001', 'T1204.004']
+  severity: High
+  view: 'Download cradles'
+
 # ─────────────────────────── Impact — ransomware precursors ───────────────────────────
 win_shadow_copy_delete:
   description: Volume shadow copy / backup deletion (recovery inhibition)
