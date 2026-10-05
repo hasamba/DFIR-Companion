@@ -19,8 +19,9 @@
   };
   // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
   // Suspiciously long silent periods in the forensic timeline. A COMPLETE gap (every source dark)
-  // is the classic signature of cleared logs / a stopped collector → High; a PARTIAL gap is one tool
-  // going quiet while others keep logging → Medium. Derived server-side (GET /cases/:id/timeline-gaps)
+  // is High only when a Medium+ row sits at its edge or the case records a log clear / audit-policy
+  // change, else Low; a reboot at the edge explains it (#1942, graded server-side). A PARTIAL gap is
+  // one tool going quiet while others keep logging → Medium. Derived server-side (GET /cases/:id/timeline-gaps)
   // from the in-scope timeline; re-derived (debounced) on each state change, like the phases panel.
   // A lead, NOT proof of tampering.
   let timelineGapsData = [];
@@ -53,7 +54,11 @@
       .map((g) => {
         const sevColor = KC_SEV_COLOR[g.severity] || "var(--border-color)";
         const kind = g.complete
-          ? "<span title='Every source went silent — the classic log-tampering signature' data-safe-style='color:var(--sev-critical);font-weight:bold'>complete silence</span>"
+          ? g.rebootEdge
+            ? "<span title='Every source went silent, and a reboot or shutdown event bounds the gap — the likely cause' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence (reboot)</span>"
+            : g.severity === "High"
+              ? "<span title='Every source went silent next to attack activity or a log-clear / audit-policy event' data-safe-style='color:var(--sev-critical);font-weight:bold'>complete silence</span>"
+              : "<span title='Every source went silent, with no attack activity at either edge and no log-clear event — a lead' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence</span>"
           : "<span title='One tool went quiet while others kept logging — a coverage blindspot' data-safe-style='color:var(--text-muted)'>partial</span>";
         const silent =
           g.silentSources && g.silentSources.length
@@ -76,7 +81,7 @@
       })
       .join("");
     el.innerHTML =
-      `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">A coverage gap is a lead, not proof — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is the classic signature of cleared logs or a stopped collector; confirm against the collection scope and host clocks.</div>` +
+      `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">A coverage gap is a lead, not proof — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is High only when a Medium-or-higher row sits at its edge or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719); otherwise it is Low. A reboot or shutdown at the gap edge explains the silence. Confirm against the collection scope and host clocks.</div>` +
       `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
       `<th>Severity</th><th>Type</th><th>Duration</th><th>When</th><th>Silent sources</th><th>Still active</th>` +
       `</tr></thead><tbody>${rows}</tbody></table></div>`;

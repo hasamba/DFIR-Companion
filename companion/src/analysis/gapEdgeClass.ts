@@ -85,6 +85,55 @@ export function attackerGradedInterval(before: ReadonlySet<string>, after: Reado
   return false;
 }
 
+// Corroboration for a complete gap (#1942). A silence alone is a lead: an idle lab VM between two
+// runs is as dark as a cleared log. A complete gap earns High only when a Medium-or-higher row sits
+// at either edge, or the case records a real anti-forensic event — a log clear (EID 1102 / 104) or an
+// audit-policy change (EID 4719, T1562.002). The clear-text matcher is a copy of the one in
+// collectionInventory.ts: that module sits in analysis/ai, which this detect-layer file may not
+// import. A row that RECORDS a clear counts; a Prefetch row showing wevtutil.exe ran does not.
+const CLEAR_TEXT_RE =
+  /\b(?:security\s+audit\s+log\s+(?:was\s+)?cleared|event\s*log\s+(?:was\s+)?cleared|log\s+file\s+was\s+cleared|(?:security|system|application)\s+log\s+(?:was\s+)?cleared)\b/i;
+// "EID 1102", "EventID: 104", "Event ID 4719", "(1102)". The digit guard keeps 11020 out.
+const eidRe = (ids: string): RegExp =>
+  new RegExp(String.raw`\b(?:eid|event\s*id)\s*[:#=]?\s*(?:${ids})(?!\d)|\((?:${ids})\)`, "i");
+const CLEAR_EID_RE = eidRe("1102|104");
+const AUDIT_OFF_EID_RE = eidRe("4719");
+// A reboot or shutdown: 1074 (shutdown initiated), 6006 / 6005 (event-log service stop / start),
+// 6008 (unexpected shutdown), 6009 / 4608 (boot) — or the canonical `boot` type objectAccess.ts sets.
+const REBOOT_EID_RE = eidRe("1074|6005|6006|6008|6009|4608");
+const REBOOT_TEXT_RE = /\bhas initiated the (?:restart|power off|shutdown)\b/i;
+
+function rowText(e: ForensicEvent): string {
+  return `${e.description} ${e.message ?? ""}`;
+}
+
+export function isAntiForensicRow(e: ForensicEvent): boolean {
+  const text = rowText(e);
+  if (CLEAR_TEXT_RE.test(text) || CLEAR_EID_RE.test(text) || AUDIT_OFF_EID_RE.test(text)) return true;
+  return e.mitreTechniques.includes("T1562.002");
+}
+
+export function isRebootRow(e: ForensicEvent): boolean {
+  if (e.canonical?.event.type === "boot") return true;
+  const text = rowText(e);
+  return REBOOT_EID_RE.test(text) || REBOOT_TEXT_RE.test(text);
+}
+
+const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
+  e !== undefined && SEVERITY_RANK[e.severity] <= SEVERITY_RANK.Medium;
+
+// Grade one complete, non-wave gap. A reboot at either edge explains the silence, so it stays Low
+// whatever else the case holds — the clear or the attack row is a finding of its own.
+function gradeCompleteGap(
+  before: ForensicEvent | undefined,
+  after: ForensicEvent | undefined,
+  antiForensic: boolean,
+): Pick<TimelineGap, "severity" | "corroborated" | "rebootEdge"> {
+  const reboot = (before !== undefined && isRebootRow(before)) || (after !== undefined && isRebootRow(after));
+  const corroborated = !reboot && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
+  return { severity: corroborated ? "High" : "Low", corroborated, ...(reboot ? { rebootEdge: true } : {}) };
+}
+
 // Classify every gap's edges. Pure: returns new gap objects.
 //   • `hostHistory` — the silence opens on a row of a renamed host's pre-provisioning history
 //     (gapHostHistory.ts); `historyIds` are those rows.
@@ -93,6 +142,8 @@ export function attackerGradedInterval(before: ReadonlySet<string>, after: Reado
 //   • `provisioningEdges` / `provisioningReason` — both bounding rows are servicing artifacts.
 //     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
 //     dwell finding and the waves finding never disagree about the same window.
+//   • `severity` / `corroborated` / `rebootEdge` — on a complete, non-wave gap only (#1942); see
+//     gradeCompleteGap. Partial gaps and dwell intervals keep their grade.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
@@ -107,12 +158,14 @@ export function classifyGapEdges(
       gradedByResume.set(w.firstEventId, pattern.intervals[i]?.attackerGraded === true);
     });
   }
+  const antiForensic = gaps.some((g) => g.complete) && events.some(isAntiForensicRow);
   return gaps.map((g) => {
     const before = byId.get(g.beforeEventId);
     const after = byId.get(g.afterEventId);
     const reasonBefore = before ? provisioningReason(before) : null;
     const reasonAfter = after ? provisioningReason(after) : null;
     const next: TimelineGap = { ...g };
+    if (g.complete && !g.betweenWaves) Object.assign(next, gradeCompleteGap(before, after, antiForensic));
     if (historyIds.has(g.beforeEventId)) next.hostHistory = true;
     if (g.betweenWaves) next.attackerEdges = gradedByResume.get(g.afterEventId) === true;
     if (reasonBefore && reasonAfter && !next.attackerEdges) {

@@ -331,9 +331,11 @@ export function buildKnownUnknownItems(
   );
   for (const g of orderedGaps) {
     const who = g.complete ? "ALL sources silent" : `silent: ${g.silentSources.join(", ") || "some sources"}`;
+    // A reboot at the edge explains the silence (#1942); asking "cleared logs?" would steer the reader.
+    const ask = g.rebootEdge ? "a reboot or shutdown bounds it" : "collection gap or cleared logs?";
     items.push({
       kind: "silence_gap",
-      label: `No telemetry from ${g.startTimestamp} to ${g.endTimestamp} (${g.durationLabel}; ${who}) — collection gap or cleared logs?`,
+      label: `No telemetry from ${g.startTimestamp} to ${g.endTimestamp} (${g.durationLabel}; ${who}) — ${ask}`,
       window: {
         start: g.startTimestamp,
         end: g.endTimestamp,
