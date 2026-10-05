@@ -154,6 +154,13 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // A newer exclusive registration may have superseded this run — if a synthesis job for this
     // case is still active, that newer run owns the status; don't stomp it to idle.
     if (aborted && options.jobManager?.hasActive(caseId, "synthesis")) return;
+    // #1953: a genuine failure leaves the conclusions behind the evidence. Without the marker, one
+    // later clean job turns the pill back to "up to date". Marked before the error push, so the
+    // refresh that push triggers already sees it. Skipped while a newer run is active: that run read
+    // its start revision before this mark, so it would keep the marker after it succeeds.
+    if (!aborted && !options.jobManager?.hasActive(caseId, "synthesis")) {
+      await markOutOfDate(caseId, "last synthesis failed");
+    }
     options.onAiStatus?.(
       caseId,
       aborted

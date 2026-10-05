@@ -204,6 +204,22 @@ describe("deriveAiState — conclusions out of date (#1599)", () => {
     expect(s.state).toBe("blocked");
   });
 
+  // #1953: a failed background synthesis leaves the marker. While the failure is the latest ended
+  // job the pill stays red; once later work succeeds it must say "out of date", not "up to date".
+  it("says out of date, not up to date, after later work succeeds over a failed synthesis", () => {
+    const s = deriveAiState({
+      ...base,
+      jobs: [
+        job({ id: "a", status: "failed", endedAt: "2026-08-16T11:00:00.000Z", error: "provider timeout" }),
+        job({ id: "b", kind: "enrichment", status: "succeeded", endedAt: "2026-08-16T12:00:00.000Z" }),
+      ],
+      outOfDate: mark("last synthesis failed"),
+    });
+    expect(s.state).toBe("idle");
+    expect(s.outOfDate).toBe(true);
+    expect(s.detail).toBe("conclusions out of date — press Re-synthesize");
+  });
+
   it("running work still wins over out of date", () => {
     const s = deriveAiState({ ...base, jobs: [job()], outOfDate: mark("x") });
     expect(s.state).toBe("analyzing");
