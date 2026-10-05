@@ -10,6 +10,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { hasFieldValue, matchEvent, ruleFields, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
 import { withClrUsageLogNote } from "./clrUsageLogNote.js";
+import { capLabSetupSeverity, labSetupOf } from "./labSetupTransfer.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
 export interface RuleMatch {
@@ -192,10 +193,12 @@ export function applyToForensicEvent(input: ForensicEvent, result: EventTagResul
   // A row inside the host's own provisioning window keeps its capped grade too (#1529): the build
   // window is deterministic evidence the tagger cannot see, and a later manual "Run tagger" would
   // otherwise raise the provisioning-day log clear straight back to Critical.
-  const severity =
+  // A lab-setup row (#1946) may still be raised, but never above its Medium cap.
+  const raised =
     event.origin === "collector" || event.buildTime
       ? event.severity
       : raiseSeverity(event.severity, result.severity);
+  const severity = labSetupOf(event) ? capLabSetupSeverity(raised) : raised;
   const seen = new Set(event.mitreTechniques);
   const mitreTechniques = [...event.mitreTechniques];
   for (const t of result.mitre)

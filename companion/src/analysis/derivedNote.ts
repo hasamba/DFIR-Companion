@@ -63,6 +63,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "own-child handle",
   "normal OS behaviour",
   "transfer tool staged",
+  "lab-setup",
 ];
 
 /**
@@ -77,6 +78,7 @@ export const DERIVED_NOTE_DOWNGRADES: readonly string[] = [
   "build-time",
   "own-child handle",
   "normal OS behaviour",
+  "lab-setup",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

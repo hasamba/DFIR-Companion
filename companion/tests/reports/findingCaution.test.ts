@@ -56,6 +56,19 @@ describe("findingCautionLine", () => {
   });
 });
 
+describe("findingCautionLine — lab setup (#1946)", () => {
+  const marked = (p: Partial<Finding> = {}): Finding => ({ ...f(p), labSetup: true }) as Finding;
+  it("prints the lab-setup badge", () => {
+    expect(findingCautionLine(marked())).toMatch(
+      /^> ⚠️ \*\*Lab setup\*\* — every cited event is a file copied into the VM through a hypervisor drag-and-drop folder/,
+    );
+  });
+  it("ranks below the build baseline and above corroboration", () => {
+    expect(findingCautionLine(marked({ buildBaseline: true }))).toMatch(/Build baseline/);
+    expect(findingCautionLine(marked({ ungrounded: true }))).toMatch(/No cited evidence/);
+  });
+});
+
 describe("findingCautionLine — Defender-tamper timing (#1941)", () => {
   const marked = (t: string, p: Partial<Finding> = {}): Finding => ({ ...f(p), tamperTiming: t }) as Finding;
   it("prints the date-unknown badge", () => {

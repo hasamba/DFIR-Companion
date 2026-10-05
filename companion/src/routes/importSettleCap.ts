@@ -10,6 +10,12 @@ import {
 } from "../analysis/buildTimeWindow.js";
 import { hostBuildMarkers } from "../analysis/gapHostHistory.js";
 import { rewriteRows } from "./importSettleRows.js";
+import {
+  capLabSetupRow,
+  hasLabSetupMark,
+  labSetupFolder,
+  labSetupPaths,
+} from "../analysis/labSetupTransfer.js";
 
 /**
  * The build-time cap (#1529) over the rows it can change, not the whole case (#1874).
@@ -59,4 +65,28 @@ export async function capBuildTimeScoped(
   if (!ids.size) return 0;
   const rows = await store.forensicRowsById(caseId, [...ids]);
   return (await rewriteRows(store, caseId, rows, (e) => capBuildTimeRow(e, windows))).length;
+}
+
+/**
+ * The lab-setup cap (#1946) over this import's added and touched rows. A row's own path decides it,
+ * so no other row is read. `scanAll` also re-reads every row in the folders or carrying a mark, which
+ * is how a narrowed DFIR_LAB_SETUP_PATHS gives an old row its grade back.
+ */
+export async function capLabSetupScoped(
+  store: ForensicRowStore,
+  caseId: string,
+  opts: { scanAll: boolean; candidates: readonly ForensicEvent[] },
+): Promise<number> {
+  const paths = labSetupPaths();
+  const ids = new Set<string>();
+  const read = (batch: readonly ForensicEvent[]): void => {
+    for (const e of batch) if (hasLabSetupMark(e) || labSetupFolder(e, paths)) ids.add(e.id);
+  };
+  read(opts.candidates);
+  if (opts.scanAll) {
+    for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) read(batch);
+  }
+  if (!ids.size) return 0;
+  const rows = await store.forensicRowsById(caseId, [...ids]);
+  return (await rewriteRows(store, caseId, rows, (e) => capLabSetupRow(e, paths))).length;
 }

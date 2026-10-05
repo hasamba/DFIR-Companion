@@ -15,6 +15,7 @@ import {
   BUILD_BASELINE_SEVERITY_FLOOR,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
+import { capLabSetupRow, labSetupPaths } from "../../src/analysis/labSetupTransfer.js";
 
 function f(p: Partial<Finding>): Finding {
   return {
@@ -802,5 +803,42 @@ describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => 
     };
     const out = run([stale as Finding], [inBurst]);
     expect(timing(out[0])).toBeUndefined();
+  });
+});
+
+describe("groundAndScoreFindings — lab-setup gate (#1946)", () => {
+  const DND = "c:\\users\\vagrant\\appdata\\local\\temp\\vmware-vagrant\\vmwarednd\\f47a154c\\recon.ps1";
+  const paths = labSetupPaths({});
+  const dnd1 = capLabSetupRow(ev({ id: "d1", path: DND, sources: ["THOR"] }), paths);
+  const dnd2 = capLabSetupRow(ev({ id: "d2", path: DND, sources: ["DetectRaptor"] }), paths);
+  const beacon = ev({ id: "s1", description: "Cobalt Strike beacon", sources: ["Velociraptor"] });
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>() };
+  const flag = (x: Finding): boolean | undefined => (x as Finding & { labSetup?: boolean }).labSetup;
+
+  it("caps a High finding whose every cited row is lab setup at Medium, with a flag and a reason", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity: "High", relatedEventIds: ["d1", "d2"] })],
+      scopedEvents: [dnd1, dnd2],
+    });
+    expect(out[0].severity).toBe("Medium");
+    expect(flag(out[0])).toBe(true);
+    expect(out[0].confidenceReason).toMatch(/lab-setup folder/);
+  });
+
+  it("keeps the grade of a finding with mixed evidence", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f2", severity: "High", relatedEventIds: ["d1", "s1"] })],
+      scopedEvents: [dnd1, beacon],
+    });
+    expect(out[0].severity).toBe("High");
+    expect(flag(out[0])).toBeUndefined();
+  });
+
+  it("clears a stale flag once the rows are no longer lab setup", () => {
+    const stale = { ...f({ id: "f3", severity: "High", relatedEventIds: ["s1"] }), labSetup: true };
+    const out = groundAndScoreFindings({ ...base, findings: [stale], scopedEvents: [beacon] });
+    expect(flag(out[0])).toBeUndefined();
   });
 });

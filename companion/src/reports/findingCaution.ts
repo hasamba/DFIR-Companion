@@ -7,6 +7,7 @@
 import type { Finding } from "../analysis/stateTypes.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
 import { findingTamperTiming } from "../analysis/defenderTamperCap.js";
+import { findingIsLabSetup } from "../analysis/labSetupTransfer.js";
 
 /** The markdown line under a finding heading, or "" when nothing qualifies it. */
 export function findingCautionLine(f: Finding): string {
@@ -14,6 +15,8 @@ export function findingCautionLine(f: Finding): string {
     return `> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`;
   if (f.buildBaseline)
     return `> \u26a0\ufe0f **Build baseline** \u2014 every cited event sits inside the host's own provisioning window (the image being built, not the incident). Severity floored and confidence capped.`;
+  if (findingIsLabSetup(f))
+    return `> ⚠️ **Lab setup** — every cited event is a file copied into the VM through a hypervisor drag-and-drop folder (or a configured lab-setup path): the operator staging the lab, not the intrusion. Severity capped at Medium.`;
   if (f.decoyBinary)
     return `> ⚠️ **Renamed shell, not the named tool** — every cited event is a binary that identifies as a plain shell (or a file trace of it); the command line is a label, not a run. Severity floored and confidence capped.`;
   if (f.selfDisclaimed)

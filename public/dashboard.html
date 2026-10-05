@@ -1431,6 +1431,10 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_SAMPLE_HOSTS">Extra sample/demo hostnames<span class="sfield-hint">DFIR_SAMPLE_HOSTS — comma-separated, in addition to the built-in list, so a foreign sample corpus a tool unpacks (e.g. EVTX-ATTACK-SAMPLES) is demoted instead of read as case-host evidence</span></label><input id="env-DFIR_SAMPLE_HOSTS" placeholder="EVTX-ATTACK-SAMPLES" /></div>
         </div>
+        <div class="settings-group-head">Lab setup (operator file transfer)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_LAB_SETUP_PATHS">Extra lab-setup folders<span class="sfield-hint">DFIR_LAB_SETUP_PATHS — comma-separated folder fragments, in addition to the built-in VMware (\VMwareDnD\) and VirtualBox (\VirtualBox Dropped Files\) drag-and-drop folders. A file copied in there is capped at Medium as lab setup; running it is not</span></label><input id="env-DFIR_LAB_SETUP_PATHS" placeholder="\LabShare\" /></div>
+        </div>
         <div class="settings-group-head">Lookalike-domain detection</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOOKALIKE_EXTRA_DOMAINS">Extra domains to protect<span class="sfield-hint">DFIR_LOOKALIKE_EXTRA_DOMAINS — comma-separated, in addition to the case's own observed domains, e.g. acmecorp.com,acme-internal.net</span></label><input id="env-DFIR_LOOKALIKE_EXTRA_DOMAINS" placeholder="acmecorp.com,acme-internal.net" /></div>

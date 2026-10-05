@@ -10,7 +10,7 @@ import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
-import { capBuildTimeScoped } from "./importSettleCap.js";
+import { capBuildTimeScoped, capLabSetupScoped } from "./importSettleCap.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
   isForeignToImport,
@@ -214,6 +214,10 @@ export async function settleForensicImport(
   const extraIds = [...added, ...stamped.touched].filter(hasBuildTimeMark).map((e) => e.id);
   const capped = await lock(caseId, () => capBuildTimeScoped(store, caseId, ledger, { scanAll, extraIds }));
   changed ||= capped > 0;
+  // Lab setup (#1946): a file copied in through a hypervisor drag-and-drop folder is capped at Medium.
+  const candidates = [...added, ...stamped.touched];
+  const labCapped = await lock(caseId, () => capLabSetupScoped(store, caseId, { scanAll, candidates }));
+  changed ||= labCapped > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
   // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).

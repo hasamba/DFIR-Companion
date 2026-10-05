@@ -266,6 +266,7 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_RANSOM_EXTS",
   "DFIR_RANSOM_EXTS_STRICT",
   "DFIR_SAMPLE_HOSTS",
+  "DFIR_LAB_SETUP_PATHS", // #1946 — lab-setup folder fragments; only lowers a grade to Medium
 ];
 
 /**

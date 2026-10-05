@@ -37,6 +37,12 @@ import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.
 import { buildTimeSupport } from "./buildTimeWindow.js";
 import { selfDisclaimedPhrase, SELF_DISCLAIMED_SEVERITY_FLOOR } from "./selfDisclaimedSubject.js";
 import * as tamperCap from "./defenderTamperCap.js";
+import {
+  labSetupOnly,
+  LAB_SETUP_FINDING_REASON,
+  LAB_SETUP_SEVERITY_CAP,
+  type FindingLabSetup,
+} from "./labSetupTransfer.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -398,6 +404,13 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       if (!(confidenceReason ?? "").includes(note)) confidenceReason = appendReason(confidenceReason, note);
     }
 
+    // Lab setup (#1946): every cited row is a file the operator copied in through a lab-setup folder.
+    const labSetup = labSetupOnly(supporting);
+    if (labSetup) {
+      if (severity === "Critical" || severity === "High") severity = LAB_SETUP_SEVERITY_CAP;
+      confidenceReason = appendReason(confidenceReason, LAB_SETUP_FINDING_REASON);
+    }
+
     // Build baseline (#1529). A finding whose EVERY cited row is the host's own provisioning — the
     // image's log clear, the accounts Packer made, the VMware driver services — is baseline, not the
     // intrusion; it is floored to Low and capped. A finding with mixed evidence keeps its severity:
@@ -432,8 +445,9 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       buildBaseline: _prevBb,
       selfDisclaimed: _prevSd,
       tamperTiming: _prevTt,
+      labSetup: _prevLs,
       ...rest
-    } = f as Finding & tamperCap.FindingDefenderCap;
+    } = f as Finding & tamperCap.FindingDefenderCap & FindingLabSetup;
     return {
       ...rest,
       severity,
@@ -450,6 +464,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(buildBaseline ? { buildBaseline: true } : {}),
       ...(selfDisclaimer ? { selfDisclaimed: true } : {}),
       ...(tamperTiming ? { tamperTiming } : {}),
+      ...(labSetup ? { labSetup: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };
