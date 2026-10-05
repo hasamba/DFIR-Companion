@@ -99,6 +99,8 @@ export function createGraphView(opts) {
     if (typeof cytoscape === "undefined") return;   // vendor script failed to load
     const elements = buildElements(view);
     if (cy) { cy.destroy(); cy = null; }
+    // Cytoscape logs "You have set a custom wheel sensitivity" for this option. Accepted on purpose
+    // (#1961): the default zooms about x2.5 per wheel notch, 0.2 about x1.2.
     cy = cytoscape({ container, elements, style, wheelSensitivity: 0.2 });
     applyEdgeStyle();
     applyDim();

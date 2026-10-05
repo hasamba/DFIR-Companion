@@ -27,7 +27,8 @@
   <link rel="stylesheet" href="/css/dashboard-themes-a.css" />
   <link rel="stylesheet" href="/css/dashboard-themes-b.css" />
   <link rel="stylesheet" href="/css/dashboard-layout.css" />
-  <link rel="stylesheet" href="/css/dashboard-panels.css" />
+  <!-- The id tells Cytoscape its container rule is already loaded, so it injects no un-nonced style the CSP would block (#1961). -->
+  <link rel="stylesheet" href="/css/dashboard-panels.css" id="__________cytoscape_stylesheet" />
   <link rel="stylesheet" href="/css/dashboard-timeline.css" />
   <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
   <link rel="stylesheet" href="/css/dashboard-sections.css" />

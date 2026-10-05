@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { dashboardClientSource } from "../helpers/dashboardModule.js";
+import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 
 // Reads the whole CLIENT SOURCE, not dashboard.html alone: #415 moved this behaviour into
 // public/js/dashboard-*.js, and the question these assertions ask is "does the dashboard do
@@ -407,6 +408,36 @@ describe("dashboard.html", () => {
     // cytoscape's built-in mouse-wheel zoom (configured via wheelSensitivity in the module).
     expect(html).toContain('id="assetFit"');
     expect(mod).toContain("wheelSensitivity");
+  });
+
+  it("pre-places Cytoscape's stylesheet id so the CSP never blocks an injected style (#1961)", async () => {
+    // Cytoscape injects an un-nonced style element unless an element with this id already exists.
+    // The dashboard CSP blocks that injection, so the id sits on the served panels stylesheet.
+    const ID = "__________cytoscape_stylesheet";
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const tags = [...html.matchAll(new RegExp(`<[^>]*id="${ID}"[^>]*>`, "g"))];
+    expect(tags).toHaveLength(1);
+    const tag = tags[0]!;
+    expect(tag.index!).toBeLessThan(html.indexOf("/vendor/cytoscape/cytoscape.min.js"));
+    expect(tag[0]).toMatch(/^<link\b/);
+    expect(tag[0]).toContain('rel="stylesheet"');
+    const href = /href="([^"]+)"/.exec(tag[0])?.[1];
+    expect(href).toBeDefined();
+    expect(STATIC_ASSETS[href!]).toMatch(/^text\/css/);
+    const css = await readFile(new URL(`../../../public${href}`, import.meta.url), "utf8");
+    expect(css).toMatch(/\.__________cytoscape_container\s*\{\s*position:\s*relative;?\s*\}/);
+    // Vendor contract pin: an upgrade that changes the skip check must fail here.
+    const vendor = await readFile(
+      new URL("../../../public/vendor/cytoscape/cytoscape.min.js", import.meta.url),
+      "utf8",
+    );
+    expect(vendor).toContain(`getElementById("${ID}")`);
+  });
+
+  it("keeps the slow wheel zoom and documents the accepted Cytoscape warning (#1961)", async () => {
+    const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
+    expect(mod).toContain("wheelSensitivity: 0.2");
+    expect(mod).toMatch(/custom wheel sensitivity[^\n]*\n(?:[^\n]*\n){0,4}[^\n]*wheelSensitivity: 0\.2/i);
   });
 
   it("has the hypotheses panel (#140) with CRUD wiring and the notebook→hypothesis bridge", async () => {
