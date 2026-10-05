@@ -19,6 +19,7 @@ import { rowsInBuildWindow } from "./jevBuildWindow.js";
 import { stateEventResolver } from "../analysis/eventAliasLookup.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
 
 /**
  * The Jev second-grader review (#1540) — READ ONLY, analyst-pressed.
@@ -218,6 +219,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const maskedAt = anonRevision(caseId);
     const anon = await buildImportAnonContext({ log: getServerLogger(), opts: withAnon }, caseId, state);
     const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
+    // The Presidio gate on each masked batch, right before it leaves (#1952).
+    const presidioCheck = jevPresidioCheck(withAnon, caseId, anon);
 
     // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
     const shape = settings.shape;
@@ -233,17 +236,19 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
         {
           mask,
           ask: (jevState, questions) =>
-            askJev(
-              {
-                baseUrl: settings.baseUrl,
-                model: settings.model,
-                apiKey: settings.apiKey,
-                timeoutMs: settings.timeoutMs,
-                // Before every attempt, retries included: a retry resends the same masked body.
-                beforeSend: () => assertAnonRevision(caseId, maskedAt, "the missed-evidence review"),
-              },
-              jevState,
-              questions,
+            presidioCheck(jevState).then(() =>
+              askJev(
+                {
+                  baseUrl: settings.baseUrl,
+                  model: settings.model,
+                  apiKey: settings.apiKey,
+                  timeoutMs: settings.timeoutMs,
+                  // Before every attempt, retries included: a retry resends the same masked body.
+                  beforeSend: () => assertAnonRevision(caseId, maskedAt, "the missed-evidence review"),
+                },
+                jevState,
+                questions,
+              ),
             ),
         },
         candidates,
@@ -285,6 +290,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
       return res.json({ ...result, ...coverage, shape });
     } catch (err) {
+      if (sendJevPresidioStop(res, err, caseId, options)) return res;
       const detail = err instanceof Error ? err.message : String(err);
       getServerLogger().warn(`[jev] ${caseId}: review failed — ${detail}`, { caseId });
       return res.status(502).json({ error: `Jev review failed: ${detail}` });

@@ -160,15 +160,10 @@
       }
     }
     msg.textContent = "starting…";
-    fetch(endpoint, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
-      btn.disabled = false;
-      if (!ok) { msg.textContent = (j && j.error) || "run failed"; return; }
+    mcpPost(endpoint, body, btn, "run failed", (j) => {
       msg.textContent = `running ${serverId}/${tool}…`;
       watchMcpJob(cid, j.jobId, preview);
-    }).catch(e => { btn.disabled = false; msg.textContent = "run failed: " + e.message; });
+    });
   }
   async function runMcpAgent() {
     const cid = mcpRunCaseId();
@@ -205,15 +200,47 @@
       }
     }
     msg.textContent = "investigation started…";
+    mcpPost(endpoint, body, btn, "investigation failed", (j) => {
+      msg.textContent = `investigating with ${serverId}…`;
+      watchMcpJob(cid, j.jobId, preview);
+    });
+  }
+  // Start a run. On a case with anonymisation on the server answers 409 until the analyst
+  // acknowledges that MCP output reaches Claude Code unmasked (#1952): show its warning, and send
+  // the same run again with the acknowledgement only if the analyst presses Continue.
+  function mcpPost(endpoint, body, btn, failText, onStarted) {
+    const msg = document.getElementById("mcpRunMsg");
+    hideMcpUnmaskedWarn();
     fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-    }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+    }).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j }))).then(({ ok, status, j }) => {
       btn.disabled = false;
-      if (!ok) { msg.textContent = (j && j.error) || "investigation failed"; return; }
-      msg.textContent = `investigating with ${serverId}…`;
-      watchMcpJob(cid, j.jobId, preview);
-    }).catch(e => { btn.disabled = false; msg.textContent = "investigation failed: " + e.message; });
+      if (status === 409 && j && j.error === "mcp_unmasked_ack_required") {
+        msg.textContent = "not started — read the warning below";
+        showMcpUnmaskedWarn(j.message, () => {
+          btn.disabled = true; msg.textContent = "starting…";
+          mcpPost(endpoint, { ...body, ackUnmasked: true }, btn, failText, onStarted);
+        });
+        return;
+      }
+      if (!ok) { msg.textContent = (j && j.error) || failText; return; }
+      onStarted(j);
+    }).catch(e => { btn.disabled = false; msg.textContent = `${failText}: ` + e.message; });
+  }
+  function showMcpUnmaskedWarn(text, onContinue) {
+    document.getElementById("mcpUnmaskedText").textContent =
+      text || "MCP runs are not anonymized: Claude Code reads the tool output and your instruction unmasked.";
+    document.getElementById("mcpUnmaskedWarn").style.display = "";
+    document.getElementById("mcpUnmaskedContinueBtn").onclick = () => { hideMcpUnmaskedWarn(); onContinue(); };
+    document.getElementById("mcpUnmaskedCancelBtn").onclick = () => {
+      hideMcpUnmaskedWarn();
+      document.getElementById("mcpRunMsg").textContent = "cancelled — nothing was sent";
+    };
+  }
+  function hideMcpUnmaskedWarn() {
+    const w = document.getElementById("mcpUnmaskedWarn");
+    if (w) w.style.display = "none";
   }
   let _mcpPreviewJob = null;
   function hideMcpPreview() {

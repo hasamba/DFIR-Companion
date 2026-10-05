@@ -10,6 +10,7 @@ import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
+import { AnonControlStore } from "../../src/analysis/anonControl.js";
 import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
 import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
@@ -33,7 +34,7 @@ function fakeClaude(opts: { text?: string } = {}): ClaudeRunner {
   });
 }
 
-async function harness(opts: { text?: string } = {}) {
+async function harness(opts: { text?: string; anonymised?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-mcprun-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -65,6 +66,12 @@ async function harness(opts: { text?: string } = {}) {
     mcpTransferRunner,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  // These suites test the run mechanics, so the case has anonymisation off and needs no
+  // acknowledgement. The #1952 suite below turns it on (the shipped default) on purpose.
+  if (!opts.anonymised) {
+    const control = new AnonControlStore(store);
+    await control.save("c1", { ...(await control.load("c1")), enabled: false });
+  }
 
   const evidence = join(store.caseDir("c1"), "imports", "mem.raw");
   await writeFile(evidence, "MZ evidence bytes\n", "utf8");
@@ -613,3 +620,68 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", { timeout: MCP_TEST_TIMEOUT
     expect(res.status).toBe(400);
   });
 });
+
+// #1952: masking cannot apply on the MCP path — Claude Code calls the tools and reads their output
+// itself. On a case with anonymisation on, every MCP run route refuses until the analyst
+// acknowledges that, so no run is unmasked without the analyst knowing.
+describe(
+  "MCP runs on an anonymised case need an acknowledgement (#1952)",
+  { timeout: MCP_TEST_TIMEOUT },
+  () => {
+    const UPLOAD = { filename: "sample.bin", dataBase64: Buffer.from("MZ").toString("base64") };
+    const routes = [
+      ["run", "/cases/c1/mcp/sift-mcp/run", RUN_BODY],
+      ["run-upload", "/cases/c1/mcp/sift-mcp/run-upload", { ...RUN_BODY, targetPath: undefined, ...UPLOAD }],
+      ["agent", "/cases/c1/mcp/agent", { prompt: "investigate" }],
+      [
+        "agent-upload",
+        "/cases/c1/mcp/agent-upload",
+        { prompt: "investigate", servers: ["sift-mcp"], ...UPLOAD },
+      ],
+    ] as const;
+
+    async function anonApp() {
+      const h = await harness({ anonymised: true });
+      const app = createApp(h.store, {
+        pipeline: h.pipeline,
+        stateStore: h.stateStore,
+        importUndoStore: h.importUndoStore,
+        mcpServerStore: h.mcpServerStore,
+        custodyStore: h.custodyStore,
+        jobManager: h.jobManager,
+        mcpClaudeRunner: fakeClaude(),
+        mcpTransferRunner: h.mcpTransferRunner,
+        mcpAgentRunner: fakeClaude({ text: '{"findings":[],"iocs":[]}' }),
+      });
+      return { ...h, app };
+    }
+
+    for (const [label, path, body] of routes) {
+      it(`${label}: answers 409 and starts nothing without the acknowledgement`, async () => {
+        const { app, jobManager, transfers } = await anonApp();
+        const res = await request(app).post(path).send(body);
+        expect(res.status, JSON.stringify(res.body)).toBe(409);
+        expect(res.body.error).toBe("mcp_unmasked_ack_required");
+        expect(String(res.body.message)).toMatch(/not anonymi[sz]ed/i);
+        expect(jobManager.list("c1")).toHaveLength(0);
+        expect(transfers).toHaveLength(0);
+      });
+
+      it(`${label}: runs once the analyst acknowledges`, async () => {
+        const { app, jobManager } = await anonApp();
+        const res = await request(app)
+          .post(path)
+          .send({ ...body, ackUnmasked: true });
+        expect(res.status, JSON.stringify(res.body)).toBe(202);
+        await settle(jobManager, res.body.jobId);
+      });
+    }
+
+    it("needs no acknowledgement when the case has anonymisation off", async () => {
+      const { app, jobManager } = await harness();
+      const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
+      expect(res.status).toBe(202);
+      await settle(jobManager, res.body.jobId);
+    });
+  },
+);

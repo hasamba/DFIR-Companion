@@ -2484,7 +2484,7 @@
         <div data-safe-style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
 
         <div class="settings-group-head" data-safe-style="margin-top:18px">MCP servers <span data-safe-style="color:var(--text-dim);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
-        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. Case anonymization does not apply to MCP runs: Claude Code reads the tool output unmasked, so on a case with anonymization on the analyst is asked before each run. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
         <p class="rm-hint" data-safe-style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
         <div class="sfield-row" data-safe-style="margin-bottom:10px">
           <div class="sfield"><label for="env-DFIR_MCP_AGENT_TIMEOUT_MS">Investigation timeout (ms)<span class="sfield-hint">DFIR_MCP_AGENT_TIMEOUT_MS — default 3600000 (1 hour), range 60000–86400000</span></label><input id="env-DFIR_MCP_AGENT_TIMEOUT_MS" placeholder="3600000" /></div>
@@ -4156,6 +4156,14 @@
           </label>
           <span id="mcpRunMsg" class="manual-msg"></span>
         </div>
+        <div id="mcpUnmaskedWarn" role="alert" data-safe-style="display:none;margin:6px 0;padding:8px;border:1px solid var(--badge-danger-text);border-radius:4px;font-size:12px">
+          <span id="mcpUnmaskedText"></span>
+          <div data-safe-style="margin-top:6px;display:flex;gap:8px">
+            <button id="mcpUnmaskedContinueBtn" type="button">Continue unmasked</button>
+            <button id="mcpUnmaskedCancelBtn" type="button">Cancel</button>
+          </div>
+        </div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">MCP runs are not anonymized: Claude Code reads the tool output and your instruction directly. On a case with anonymization on, you are asked before each run.</p>
         <details data-safe-style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
           <summary>Advanced: call one MCP tool manually</summary>
           <div class="sgrid" data-safe-style="margin-top:8px">

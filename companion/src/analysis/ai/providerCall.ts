@@ -22,7 +22,7 @@ import type { CustomEntitiesStore } from "../anonEntities.js";
 import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
 import { AiCostStore, bucketForLabel } from "../aiCost.js";
 import { parseJsonLoose } from "../extractJson.js";
-import { ocrRedactImage, type OcrRunner } from "../ocrRedact.js";
+import { OcrRedactionError, ocrRedactImage, type OcrRunner } from "../ocrRedact.js";
 import { safeAiErrorKind, safeAiPhase, type OperationalMetricsStore } from "../operationalMetrics.js";
 import {
   mapFindings,
@@ -273,7 +273,7 @@ function presidioScanFailed(url: string, err: unknown): PresidioScanError {
 }
 
 /** Scan already-masked text with Presidio; fail closed on a scan error or unapproved value. */
-async function presidioGate(
+export async function presidioGate(
   ctx: ProviderCallContext,
   caseId: string,
   maskedText: string,
@@ -443,7 +443,7 @@ async function redactImages(
   known: KnownEntities,
   runner: OcrRunner,
 ): Promise<AnalyzeRequest["images"]> {
-  const tally: RedactionTally = { totalRedactions: 0, redactedImages: 0, publicIpsBoxed: 0 };
+  const tally: RedactionTally = { totalRedactions: 0, redactedImages: 0, publicIpsBoxed: 0, failures: [] };
   // OCR-discovered entities to persist into the case's auto-discovery list after this pass.
   const discovered: CustomEntity[] = [];
   const out = await Promise.all(
@@ -451,8 +451,17 @@ async function redactImages(
       redactOneImage(ctx, caseId, img, i, images.length, { policy, known, runner, tally, discovered }),
     ),
   );
-  logRedactionTally(ctx, caseId, images.length, tally);
   await persistOcrDiscoveries(ctx, caseId, discovered);
+  // Fail closed (#1952): one unreadable screenshot stops the whole call, so no image leaves raw.
+  if (tally.failures.length > 0) {
+    ctx.log.warn(
+      `[OCR] ${tally.failures.length} of ${images.length} screenshot(s) could not be read by OCR — ` +
+        `nothing was sent to the model`,
+      { caseId },
+    );
+    throw new OcrRedactionError(tally.failures.length, tally.failures[0]);
+  }
+  logRedactionTally(ctx, caseId, images.length, tally);
   return out;
 }
 
@@ -461,6 +470,8 @@ interface RedactionTally {
   totalRedactions: number;
   redactedImages: number;
   publicIpsBoxed: number;
+  /** One message per screenshot OCR could not read. Any entry stops the call. */
+  failures: string[];
 }
 
 interface RedactOneOptions {
@@ -472,12 +483,10 @@ interface RedactOneOptions {
 }
 
 /**
- * OCR-redact one screenshot. OCR failure is deliberately NON-FATAL: the original image is forwarded
- * and the analysis continues, because a Tesseract crash must not block an investigation.
- *
- * Note what that means — a failure here forwards the UNREDACTED image. That is the accepted
- * trade-off for this layer (the text path's Presidio gate is the fail-closed one); the warning line
- * is what makes it visible rather than silent.
+ * OCR-redact one screenshot. An OCR failure is recorded in the tally, and `redactImages` then
+ * fails the whole call closed (#1952): forwarding the original would send an UNREDACTED image while
+ * the case says anonymisation is on. The capture stays on disk; only its AI read stops. The
+ * analyst's exits are a local vision model or anonymisation off for the case.
  */
 async function redactOneImage(
   ctx: ProviderCallContext,
@@ -510,8 +519,10 @@ async function redactOneImage(
     else ctx.log.debug(line, { caseId });
     return res.changed ? { ...img, base64: res.buffer.toString("base64") } : img;
   } catch (err) {
-    ctx.log.warn(`[OCR redact] ${(err as Error).message}`, { caseId });
-    return img;
+    const message = (err as Error).message;
+    ctx.log.warn(`[OCR redact] image ${index + 1}/${count}: ${message}`, { caseId });
+    o.tally.failures.push(message);
+    return img; // never sent: redactImages throws once every image has settled
   }
 }
 

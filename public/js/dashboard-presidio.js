@@ -511,17 +511,22 @@
         // after the modal is already open, so the analyst may have unticked the box in the
         // meantime — rebuilding the row would restore the tick from anonControl and throw that
         // decision away.
-        `Real names (people) — <span id="anonPresidioStatus" data-safe-style="white-space:nowrap">${esc(presidioStatusText(configured, on))}</span></label>`,
+        `Real names (people) — <span id="anonPresidioStatus" data-safe-style="white-space:nowrap">${esc(presidioStatusText(configured, on, anonLiveEnabled()))}</span></label>`,
     );
-    document.getElementById("anonPresidioNote").innerHTML = presidioNoteHtml(
-      configured,
-      on,
-    );
+    document.getElementById("anonPresidioNote").innerHTML = presidioNoteHtml(configured, on, anonLiveEnabled());
     renderPresidioReachability();
+  }
+  // The anonymisation switch as the modal shows it now, ticked or not yet saved (#1952). With it
+  // off, no AI call is masked, so Presidio has no masked text to scan and never runs.
+  function anonLiveEnabled() {
+    const box = document.getElementById("anonEnabled");
+    return box ? !!box.checked : !!(anonControl && anonControl.enabled);
   }
   // The note as configuration alone describes it. Kept separate because the reachability probe has
   // to be able to put it back: a retry that finds the container up again must undo its own warning.
-  function presidioNoteHtml(configured, on) {
+  function presidioNoteHtml(configured, on, anonOn) {
+    if (configured && !anonOn)
+      return "<strong>Anonymisation is off for this case — Presidio does not run.</strong> Every value, names included, reaches the model in clear and no approval gate fires. Tick Enabled above to turn masking and the Presidio scan back on.";
     return !configured
       ? "<strong>Presidio is not configured.</strong> Names, non-Israeli national IDs and IBANs go undetected. Nothing else changes: cards, phones, IDs and emails are matched by the built-in patterns either way. Set <code>DFIR_PRESIDIO_URL</code> in Settings → AI (needs a restart); until then add known names below as <code>PERSON</code>."
       : on
@@ -530,7 +535,8 @@
   }
   // The phrase after the dash, as configuration alone describes it. Same reason presidioNoteHtml
   // exists: the probe overwrites it, and a retry that finds the container up has to put it back.
-  function presidioStatusText(configured, on) {
+  function presidioStatusText(configured, on, anonOn) {
+    if (configured && !anonOn) return "not running (anonymisation off)";
     return !configured
       ? "needs Presidio"
       : on
@@ -546,10 +552,14 @@
     const h = presidioHealth;
     const configured = !!(anonControl && anonControl.presidioConfigured);
     const on = configured && !(anonControl && anonControl.presidio === false);
-    const plain = esc(presidioStatusText(configured, on));
+    const anonOn = anonLiveEnabled();
+    const plain = esc(presidioStatusText(configured, on, anonOn));
+    // The configuration note, unless an outage below replaces it. With anonymisation off (#1952)
+    // Presidio cannot run whatever the probe says, so there is nothing more to report.
+    note.innerHTML = presidioNoteHtml(configured, on, anonOn);
     // Nothing to report: no analyzer configured, the layer is off for this case anyway, or the
     // probe has not answered yet. The configuration note already says what those states mean.
-    if (!configured || !on || !h) {
+    if (!configured || !on || !h || !anonOn) {
       status.innerHTML = plain;
       return;
     }
@@ -575,7 +585,6 @@
       return;
     }
     status.innerHTML = plain;
-    note.innerHTML = presidioNoteHtml(configured, on);
   }
   // Asks the server, which is the only side that knows DFIR_PRESIDIO_URL — it is startup-only and
   // never sent to the page. Skipped entirely when no analyzer is configured: there is nothing to
@@ -660,6 +669,8 @@
   }
   function fillAnonControlFields() {
     document.getElementById("anonEnabled").checked = !!anonControl.enabled;
+    // Live: the Presidio row says what the switch WILL do, before Save (#1952).
+    document.getElementById("anonEnabled").onchange = () => renderPresidioReachability();
     document.getElementById("anonRedactSecrets").checked =
       anonControl.redactSecrets !== false;
     document.getElementById("anonCategories").innerHTML = ANON_CATEGORIES.map(

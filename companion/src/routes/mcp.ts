@@ -20,6 +20,7 @@ import { registerMcpServerRoutes } from "./mcpServers.js";
 import * as detect from "./mcpPreviewDetection.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { mcpDeliverySource, mcpTransferRecorder } from "./mcpDeliveryWiring.js";
+import { refuseUnmaskedMcp } from "./mcpUnmaskedAck.js";
 
 /**
  * MCP policy + run routes (#296).
@@ -36,13 +37,11 @@ import { mcpDeliverySource, mcpTransferRecorder } from "./mcpDeliveryWiring.js";
 export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, recordImportFailure, ingestStreamed, pushImportCheckpoint } = ctx;
   const reportStore = new McpReportStore(store);
-
   /**
    * What Claude Code last reported. Domain-local rather than on RouteContext: nothing outside this
    * module needs it, and it is cache, not state — empty after a restart just means /mcp/status says
    * "not checked" until something refreshes it.
    */
-
   // Injected in tests so no route test spawns the CLI or scp.
   const transferRunner = options.mcpTransferRunner ?? spawnTransferRunner();
   const claudeBin = process.env.DFIR_AI_CLAUDE_CODE_BIN;
@@ -104,7 +103,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       res.status(400).json({ error: "args must be an object" });
       return null;
     }
-    return { server, tool, args };
+    return (await refuseUnmaskedMcp(req, res, store)) ? null : { server, tool, args }; // #1952
   }
 
   /**
@@ -676,6 +675,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       res.status(400).json({ error: "no allowed MCP servers were selected" });
       return null;
     }
+    if (await refuseUnmaskedMcp(req, res, store)) return null; // #1952: not maskable, so asked
     return { prompt, servers, preview: req.body?.preview === true };
   }
 

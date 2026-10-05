@@ -1,6 +1,7 @@
 import { ProviderError, type ProviderErrorKind } from "../../providers/provider.js";
 import { PresidioApprovalRequired, PresidioScanError } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
+import { OcrRedactionError } from "../ocrRedact.js";
 
 /**
  * Retry policy for AI calls (#418).
@@ -44,6 +45,8 @@ function isRetryableError(err: unknown): boolean {
   // failure is surfaced, and the analyst decides: start the analyzer, or stand the layer down for
   // the case. The gate fails closed either way; nothing unscanned reaches the model.
   if (err instanceof PresidioScanError) return false;
+  // OCR that could not read a screenshot fails the same way on the same bytes (#1952).
+  if (err instanceof OcrRedactionError) return false;
   return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
 }
 
