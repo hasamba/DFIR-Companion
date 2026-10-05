@@ -33,6 +33,7 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
 import { simulationSeverityLabel } from "./simulationVerdict.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
+import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
@@ -62,8 +63,8 @@ export const LOW_TRUST_CONFIDENCE_CAP = 55;
 // AI's own citation can look fine while the claim's content is simply wrong). Deep-pass on veridia-breach
 // (2026-07-22) produced exactly this: "External RDP logon from public IP 45.33.32.156" cited three benign
 // internal-IP logons (real event ids, wrong content) instead of the one event that actually matched.
-// IP-only by design — concrete, regex-extractable, and the exact entity type that produced that false
-// positive — not a general fact-checker.
+// IPs and `.exe` program names only (#1954, findingImageNames.ts) — concrete, regex-extractable
+// entities, not a general fact-checker.
 export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
 // A High/Critical finding whose EVERY cited event is a renamed plain shell (`mimikatz.exe is really
 // Cmd.Exe`) or a file trace of that same decoy (its MFT / Amcache / Prefetch rows) rests on a command
@@ -318,14 +319,23 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     let severity = f.severity;
     if (supporting.length > 0 && (f.severity === "Critical" || f.severity === "High")) {
       const mismatched = claimedIpsNotInEvidence(f, supporting);
-      if (mismatched.length) {
+      const images = claimedImagesNotInEvidence(f, supporting);
+      if (mismatched.length || images.length) {
         contentMismatch = true;
         severity = CONTENT_MISMATCH_SEVERITY_FLOOR;
         if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP)
           confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
+      }
+      if (mismatched.length)
         confidenceReason = appendReason(
           confidenceReason,
           `capped: claims ${mismatched.join(", ")} but the cited events never mention it — verify the citation before treating as confirmed`,
+        );
+      if (images.length) {
+        const shown = soleCitedImage(supporting);
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: names ${images.join(", ")} but no cited event carries that program — verify the process chain before treating as confirmed${shown ? `; the cited rows show ${shown}` : ""}`,
         );
       }
     }

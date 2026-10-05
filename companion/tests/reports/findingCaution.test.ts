@@ -48,6 +48,9 @@ describe("findingCautionLine", () => {
       ),
     ).toMatch(/^- Corroboration: 2 tools/);
   });
+  it("says the citation mismatch covers an IP or a program name (#1954)", () => {
+    expect(findingCautionLine(f({ contentMismatch: true }))).toMatch(/an IP or a program name/);
+  });
   it("is empty for a plain finding", () => {
     expect(findingCautionLine(f({}))).toBe("");
   });

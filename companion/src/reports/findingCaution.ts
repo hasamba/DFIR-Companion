@@ -16,7 +16,7 @@ export function findingCautionLine(f: Finding): string {
   if (f.decoyBinary)
     return `> ⚠️ **Renamed shell, not the named tool** — every cited event is a binary that identifies as a plain shell (or a file trace of it); the command line is a label, not a run. Severity floored and confidence capped.`;
   if (f.contentMismatch)
-    return `> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`;
+    return `> ⚠️ **Citation mismatch** — a claimed detail (an IP or a program name) never appears in the cited events; severity floored and confidence capped pending verification.`;
   if (f.lateralUnconfirmed)
     return `> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`;
   if (f.corroboration) return `- Corroboration: ${corroborationLabel(f)}`;
