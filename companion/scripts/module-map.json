@@ -717,6 +717,8 @@
     "savedHuntStore.ts": "analysis/hunt",
     "scope.ts": "analysis/workflow",
     "scopeProject.ts": "analysis/workflow",
+    "scriptBlockC2Config.ts": "analysis/intel",
+    "scriptBlockC2Findings.ts": "analysis/findings",
     "scriptBlockCommandFindings.ts": "analysis/findings",
     "scriptBlockCommands.ts": "analysis/intel",
     "scriptBlockFragments.ts": "analysis/ingest",

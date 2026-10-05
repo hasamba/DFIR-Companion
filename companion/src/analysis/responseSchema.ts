@@ -40,12 +40,15 @@ export const WAVES_FINDING_ID = "f-waves";
 export const DEFENDER_FINDING_ID_PREFIX = "f-defender-";
 /** Commands present in a logged PowerShell script record that no finding accounts for (#1531). */
 export const SCRIPT_COMMAND_FINDING_ID_PREFIX = "f-cmd-";
+/** C2 settings defined in a logged PowerShell script record that no finding names (#1959). */
+export const SCRIPT_C2_FINDING_ID_PREFIX = "f-c2cfg-";
 
 const RESERVED_FINDING_ID_PREFIXES = [
   AUTO_FINDING_ID_PREFIX,
   GAP_FINDING_ID_PREFIX,
   DEFENDER_FINDING_ID_PREFIX,
   SCRIPT_COMMAND_FINDING_ID_PREFIX,
+  SCRIPT_C2_FINDING_ID_PREFIX,
 ];
 
 /** True for an id only a deterministic backfill is allowed to mint. */

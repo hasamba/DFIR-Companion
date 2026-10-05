@@ -17,6 +17,7 @@ import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWav
 import { backfillHighSeverityFindings, rederiveAutoFindingTechniques } from "../highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
 import { backfillScriptCommandFindings } from "../scriptBlockCommandFindings.js";
+import { backfillScriptC2Findings } from "../scriptBlockC2Findings.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
@@ -439,8 +440,13 @@ function applyBackfills(
   // Commands in a logged script block that NO finding on the row accounts for (#1531). After the
   // High backfill on purpose: that one links an uncovered High row to a finding carrying the row's
   // own techniques, which this pass then reads as coverage — so a High row keeps its High finding
-  // and only a genuine leftover earns the Medium one.
-  const withCommands = backfillScriptCommandFindings(backfilled, eligibleIds, ts);
+  // and only a genuine leftover earns the Medium one. Then C2 settings a script block defines that
+  // no linked finding names (#1959).
+  const withCommands = backfillScriptC2Findings(
+    backfillScriptCommandFindings(backfilled, eligibleIds, ts),
+    eligibleIds,
+    ts,
+  );
   const gapOpts = gapOptionsFor(linked);
   const { gaps, pattern } = detectGapsWithWaves(scopedEvents, gapOpts);
   const withWaves = backfillActivityWaveFinding(withCommands, pattern, ts);
