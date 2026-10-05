@@ -2,42 +2,27 @@
 
 ## Installation
 
-Choose the method that fits your setup:
+Choose one option. Windows and Linux users should start with the release download. Docker suits servers and teams. Building from source is for developers.
 
-=== "From source"
+=== "Windows — Release binary (recommended)"
 
-    Recommended for development or if you want to customise prompts.
+    Download `dfir-companion-<version>-win-x64.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), extract it, and run `dfir-companion.exe`. No Node.js required. Cases and an optional `.env` live next to the EXE.
 
-    1. Install [Node.js](https://nodejs.org/) **22.19 or later** (required by the indexed case store).
-    2. Clone or download the repository.
-    3. Run:
-       ```bash
-       cd companion
-       npm install
-       cp .env.example .env
-       npm run dev
-       ```
-    4. The server starts on **http://127.0.0.1:4773**. Open the dashboard at **http://127.0.0.1:4773/dashboard**.
-
-=== "Windows — Chocolatey"
+=== "Windows — Chocolatey (optional)"
 
     ```powershell
     choco install dfir-companion
     ```
 
-    Installs the portable Windows build and bundles the capture extension on disk for offline "Load unpacked". Data is stored in `%LOCALAPPDATA%\DFIR-Companion`.
-
-=== "Windows — Portable exe"
-
-    Download `dfir-companion-win.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), extract, and run `dfir-companion.exe`. No Node.js required.
+    Installs the same portable Windows build and bundles the capture extension on disk for offline "Load unpacked". Data is stored in `%LOCALAPPDATA%\DFIR-Companion`.
 
 === "Linux — AppImage"
 
-    Download `dfir-companion-linux.AppImage` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), make it executable, and run it.
+    Download `dfir-companion-<version>-x86_64.AppImage` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), make it executable, and run it.
 
     ```bash
-    chmod +x dfir-companion-linux.AppImage
-    ./dfir-companion-linux.AppImage
+    chmod +x dfir-companion-*-x86_64.AppImage
+    ./dfir-companion-*-x86_64.AppImage
     ```
 
     Set `DFIR_ENV_FILE` to point to your `.env` if you need the config file outside the AppImage mount.
@@ -53,6 +38,21 @@ Choose the method that fits your setup:
     ```
 
     Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
+
+=== "From source (developers)"
+
+    For developers, or if you want to customise prompts. Most users should pick another tab.
+
+    1. Install [Node.js](https://nodejs.org/) **22.19 or later** (required by the indexed case store).
+    2. Clone or download the repository.
+    3. Run:
+       ```bash
+       cd companion
+       npm install
+       cp .env.example .env
+       npm run dev
+       ```
+    4. The server starts on **http://127.0.0.1:4773**. Open the dashboard at **http://127.0.0.1:4773/dashboard**.
 
 ---
 

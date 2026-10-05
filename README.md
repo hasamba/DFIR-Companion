@@ -33,7 +33,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
 ## Table of contents
 
-- [Install](#install)
+- [Quick start](#quick-start)
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
@@ -699,7 +699,7 @@ you run that command yourself.
 └── cases/             Evidence + state output (gitignored). Location set by DFIR_CASES_ROOT.
 ```
 
-## Install
+## Quick start
 
 Pick one option. Each one runs the same server and dashboard on `http://127.0.0.1:4773/dashboard`.
 
