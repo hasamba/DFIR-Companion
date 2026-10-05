@@ -46,6 +46,11 @@ const SKIMMER_TITLE = "Card skimmer planted in payment pages";
 const SKIMMER_TEXT =
   "The attacker probably planted a card skimmer in the payment pages. The modified pages are not in the evidence.";
 
+// The Codex review's counter-example: the clear is directly evidenced; only the motive is guessed and
+// only the cleared records are missing. It must keep its severity.
+const LOG_CLEAR_TEXT =
+  "Security event log cleared (EID 1102). The Security log was cleared, likely to conceal activity. The cleared records are not in the evidence";
+
 describe("selfDisclaimedPhrase", () => {
   it("returns the disclaimer phrase when a guessing word is also present", () => {
     expect(selfDisclaimedPhrase(SKIMMER_TEXT)).toMatch(/not in the evidence/i);
@@ -68,6 +73,33 @@ describe("selfDisclaimedPhrase", () => {
   });
   it("returns null without a disclaimer phrase", () => {
     expect(selfDisclaimedPhrase("The attacker likely used this tool to dump credentials.")).toBeNull();
+  });
+  it("returns null on the review's log-clear example: motive guessed, cleared records missing", () => {
+    expect(selfDisclaimedPhrase(LOG_CLEAR_TEXT)).toBeNull();
+  });
+  it("returns null when motive speculation and missing deleted material sit in separate sentences", () => {
+    expect(
+      selfDisclaimedPhrase(
+        "Shadow copies deleted via vssadmin. This was probably done to prevent recovery. The deleted snapshots are not in the evidence.",
+      ),
+    ).toBeNull();
+    expect(
+      selfDisclaimedPhrase(
+        "Prefetch files removed. Likely an attempt to hide tool use. The removed files were not collected.",
+      ),
+    ).toBeNull();
+    expect(
+      selfDisclaimedPhrase(
+        "Event logs wiped with wevtutil, possibly for anti-forensics. The overwritten entries are absent from the collection.",
+      ),
+    ).toBeNull();
+  });
+  it("still fires when the guess concerns the subject, even in another sentence", () => {
+    expect(
+      selfDisclaimedPhrase(
+        "Ransomware may have encrypted the file server. The file server is not in the evidence.",
+      ),
+    ).not.toBeNull();
   });
   it("does not read 'unlikely' as a guessing word", () => {
     expect(selfDisclaimedPhrase("Tampering is unlikely; the old binary is not in the evidence.")).toBeNull();
@@ -112,6 +144,14 @@ describe("groundAndScoreFindings — self-disclaimed subject gate (#1944)", () =
         description: "Security log cleared (EID 1102); the cleared records are not in the evidence.",
         relatedEventIds: ["e1"],
       }),
+    ]);
+    expect(out[0].severity).toBe("High");
+    expect(out[0].selfDisclaimed).toBeUndefined();
+  });
+
+  it("keeps High on the review's log-clear example: motive guessed, cleared records missing", () => {
+    const out = ground([
+      f({ title: "Security event log cleared", description: LOG_CLEAR_TEXT, relatedEventIds: ["e1"] }),
     ]);
     expect(out[0].severity).toBe("High");
     expect(out[0].selfDisclaimed).toBeUndefined();
