@@ -18,6 +18,7 @@ import { renderDestinationTags } from "./destinationFacts.js";
 import { renderDecoyTag } from "./renamedBinaryNote.js";
 import { renderScriptCommandTags } from "./scriptBlockCommands.js";
 import { renderBuildTimeTag } from "./buildTimeWindow.js";
+import { renderCommandLineTag } from "./commandLineTag.js";
 import { canonicalFile, canonicalNetwork } from "./canonicalEvent.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
@@ -68,6 +69,10 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
     const parent = e.parentName ? clip(e.parentName) : "";
     tags.push(`<proc:${child}${parent ? `←${parent}` : ""}>`);
   }
+
+  // The stored command line, when the 240-char render cuts its arguments out (#1951).
+  const cmd = renderCommandLineTag(e);
+  if (cmd) tags.push(cmd);
 
   const srcIp = e.srcIp || cn?.source?.address || "";
   const dstIp = e.dstIp || cn?.destination?.address || "";

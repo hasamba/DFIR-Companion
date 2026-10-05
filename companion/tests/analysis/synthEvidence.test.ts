@@ -172,6 +172,21 @@ describe("renderStructuredTags — destination facts and the renamed-binary flag
   it("adds nothing to a bare row", () => {
     expect(renderStructuredTags(ev({ description: "Logon 4624" }))).toBe("");
   });
+
+  it("puts the command-line tag right after the proc tag when the cut hides the arguments (#1951)", () => {
+    const t = renderStructuredTags(
+      ev({
+        asset: "WS01",
+        processName: "powershell.exe",
+        parentName: "explorer.exe",
+        commandLine: "powershell.exe -NoProfile -File C:\\Users\\Public\\x.ps1",
+        description: `Sysmon EID 1 ${"Rule detail ".repeat(30)}`,
+      }),
+    );
+    expect(t).toBe(
+      " <host:WS01> <proc:powershell.exe←explorer.exe> <cmd:-NoProfile -File C:\\Users\\Public\\x.ps1>",
+    );
+  });
 });
 
 // #1530 — a Sysmon EID 3 row sets no processName and no dstIp/port, so the model saw neither the

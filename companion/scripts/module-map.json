@@ -328,6 +328,7 @@
     "collectionPlan.ts": "analysis/workflow",
     "collectionPlanStore.ts": "analysis/workflow",
     "combinedLogImport.ts": "analysis/ingest",
+    "commandLineTag.ts": "analysis/ai",
     "commandNormalize.ts": "shared",
     "comments.ts": "analysis/findings",
     "complianceControl.ts": "analysis/intel",
