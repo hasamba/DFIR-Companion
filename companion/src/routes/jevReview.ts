@@ -163,7 +163,12 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     // (#1700). They are set aside here, before anything is spent, and counted so the sum still closes.
     const setAside = await rowsInBuildWindow(superStore, caseId, state, unanalyzed);
     const inBuild = setAside.ids;
-    const candidates = unanalyzed.filter((e) => !inBuild.has(e.id));
+    const outsideBuild = unanalyzed.filter((e) => !inBuild.has(e.id));
+    // The collector's own footprint (#1949): rows the importer proved were the investigator's tooling
+    // at work. Graded blind, PersistenceSniper's Add-Type reads as the intruder's. Keyed on the
+    // structured origin, never the note: a Critical keeps the note but no origin, and stays graded.
+    const candidates = outsideBuild.filter((e) => e.origin !== "collector");
+    const collectorFootprint = outsideBuild.length - candidates.length;
 
     // Coverage, as four facts rather than one flag. `capped` is the ONLY one that may blame the
     // cap, and it is true only when the cap actually held rows back: an earlier version inferred
@@ -175,6 +180,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       alreadyAnalyzed: read.length - unanalyzed.length,
       buildWindow: inBuild.size,
       buildWindows: setAside.windows,
+      collectorFootprint,
       graded: candidates.length,
       capped: read.length < total,
       cap: capForWire,
@@ -182,13 +188,17 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     };
 
     if (!candidates.length) {
-      if (inBuild.size)
+      if (inBuild.size || collectorFootprint)
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai",
           action: "jev-review",
           detail:
-            `missed-evidence review graded nothing: ${inBuild.size} archive row(s) sit inside the ` +
-            `host's own build window and were set aside, ${coverage.alreadyAnalyzed} already analyzed`,
+            `missed-evidence review graded nothing: ` +
+            (inBuild.size
+              ? `${inBuild.size} archive row(s) sit inside the host's own build window and were set aside, `
+              : "") +
+            (collectorFootprint ? `${collectorFootprint} set aside: collector footprint, ` : "") +
+            `${coverage.alreadyAnalyzed} already analyzed`,
         });
       markAiBudgetUnspent(res); // nothing sent to Jev: the AI-budget slot goes back (#1825)
       return res.json({
@@ -268,6 +278,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
           `missed-evidence review graded ${coverage.graded} archive row(s) of ${total} matching ` +
           `(${coverage.alreadyAnalyzed} already analyzed` +
           (coverage.buildWindow ? `, ${coverage.buildWindow} set aside: host build window` : "") +
+          (collectorFootprint ? `, ${collectorFootprint} set aside: collector footprint` : "") +
           (coverage.capped ? `, ${total - coverage.read} not read: row cap` : "") +
           `); ${promoted} above Info — nothing was promoted`,
       });

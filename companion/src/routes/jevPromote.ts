@@ -98,6 +98,7 @@ interface PromoteTally {
   ungraded: number;
   missing: number;
   lab: number;
+  collector: number;
   inBuild: number;
   duplicates: readonly FoldedRow[];
   mergedIntoSelected: readonly FoldedRow[];
@@ -125,6 +126,11 @@ function promoteReasons(t: PromoteTally): string[] {
   if (t.ungraded) reasons.push(`${t.ungraded} row(s) were not graded by a review in this case`);
   if (t.missing) reasons.push(`${t.missing} row(s) are no longer in the archive`);
   if (t.lab) reasons.push(`${t.lab} sandbox-produced row(s) cannot be promoted by this review`);
+  if (t.collector)
+    reasons.push(
+      `${t.collector} row(s) are the collector's own footprint — the investigator's tooling at work, ` +
+        `not the incident. Promote one from the super-timeline yourself if you mean it`,
+    );
   if (t.inBuild)
     reasons.push(
       `${t.inBuild} row(s) sit inside the host's own build window — the machine being built, not ` +
@@ -194,6 +200,7 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       let already = 0;
       let missing = 0;
       let lab = 0;
+      let collector = 0;
       let ungraded = 0;
       const eligible: Array<{ row: ForensicEvent; graded: JevGradeEntry }> = [];
 
@@ -225,6 +232,13 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         // seeing a row silently not arrive.
         if (isLabProduced(row)) {
           lab++;
+          continue;
+        }
+        // The collector's own footprint (#1949), refused like the build window below: a grade recorded
+        // before the review set these rows aside, or an older tab, must not land them at the model's
+        // High. Keyed on the origin, never the note — a Critical keeps the note but no origin.
+        if (row.origin === "collector") {
+          collector++;
           continue;
         }
         eligible.push({ row, graded });
@@ -274,6 +288,7 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         ungraded,
         missing,
         lab,
+        collector,
         inBuild: inBuild.size,
         duplicates: [...duplicates, ...outcome.duplicates],
         mergedIntoSelected: outcome.mergedIntoSelected,

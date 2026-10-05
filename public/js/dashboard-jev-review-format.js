@@ -73,6 +73,7 @@
     const matched = result.matched || 0;
     const analyzed = result.alreadyAnalyzed || 0;
     const buildWindow = result.buildWindow || 0;
+    const collector = result.collectorFootprint || 0;
     const read = result.read || 0;
     const graded = result.graded || 0;
     const unread = unreadRows(result);
@@ -112,6 +113,13 @@
           (where ? ` (${where}${more}; open that range in the super-timeline to check them)` : ""),
       );
     }
+    // #1949: rows the importer marked as the investigator's own collector at work. Graded blind they
+    // read as the intruder, so the review sets them aside like the build window.
+    if (collector > 0)
+      skipped.push(
+        `${num(collector)} were set aside because they are the collector's own footprint` +
+          ` — the investigator's tooling at work, not the incident`,
+      );
     if (skipped.length) {
       line += ` Another ${skipped.join(". Another ")}.`;
       line +=
@@ -135,7 +143,7 @@
         ` <span class="jev-truncated">The ${num(result.cap || 0)}-row cap stopped the read — ` +
         `${num(unread)} matching row(s) were never read, so this is not full coverage of the case.</span>`;
     }
-    if (graded === 0 && analyzed + buildWindow > 0 && result.capped !== true) {
+    if (graded === 0 && analyzed + buildWindow + collector > 0 && result.capped !== true) {
       line += " Nothing was left for this review to grade.";
     }
 
