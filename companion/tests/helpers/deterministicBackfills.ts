@@ -18,6 +18,7 @@ import { backfillHostHistoryNote, hostBuildMarkers } from "../../src/analysis/ga
 import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../../src/analysis/defenderEpisodeFindings.js";
 import { backfillScriptCommandFindings } from "../../src/analysis/scriptBlockCommandFindings.js";
+import { backfillScriptC2Findings } from "../../src/analysis/scriptBlockC2Findings.js";
 import { corroborateDefenderEpisodes } from "../../src/analysis/defenderEpisodes.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -119,6 +120,18 @@ const scriptCommandSeed = (): InvestigationState => ({
   forensicTimeline: scriptCommandEvents,
 });
 
+// One logged PowerShell script block that defines beacon-style C2 settings no finding names — the
+// row shape the C2-config pass mints on (#1959).
+export const scriptC2Events: ForensicEvent[] = [
+  {
+    ...event("c2a", "2026-01-01T00:00:00.000Z"),
+    asset: "ws07.example.com",
+    description: "Script block logged (EID 4104)",
+    message: "$server='x.example.com'; $port=443; $uri='/submit.php'; $watermark=123456",
+  },
+];
+const scriptC2Seed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: scriptC2Events });
+
 /**
  * One entry: the pass itself, plus the arguments to call it with.
  *
@@ -177,4 +190,5 @@ export const BACKFILLS = [
     new Set(scriptCommandEvents.map((e) => e.id)),
     stamp,
   ]),
+  pass(backfillScriptC2Findings)(() => [scriptC2Seed(), new Set(scriptC2Events.map((e) => e.id)), stamp]),
 ];
