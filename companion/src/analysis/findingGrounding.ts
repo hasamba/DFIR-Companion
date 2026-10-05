@@ -35,6 +35,7 @@ import { simulationSeverityLabel } from "./simulationVerdict.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
 import { claimedImagesNotInEvidence, soleCitedImage } from "./findingImageNames.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
+import { selfDisclaimedPhrase, SELF_DISCLAIMED_SEVERITY_FLOOR } from "./selfDisclaimedSubject.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -358,6 +359,17 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Self-disclaimed subject (#1944): the text says its subject is not in the evidence AND guesses at
+    // it. Runs with or without cited rows; records the flag at any severity and only ever lowers.
+    const selfDisclaimer = selfDisclaimedPhrase(`${f.title}\n${f.description ?? ""}`);
+    if (selfDisclaimer) {
+      if (severity === "Critical" || severity === "High") severity = SELF_DISCLAIMED_SEVERITY_FLOOR;
+      confidenceReason = appendReason(
+        confidenceReason,
+        `capped: the finding's own text says its subject is not in the evidence ("${selfDisclaimer}") and guesses at it — an open question, not a finding`,
+      );
+    }
+
     // Decoy-binary gate (#1502). Runs on every grounded finding, whatever the gates above already
     // floored, so the flag is recorded even on a finding that is already Medium; it never raises.
     let decoyBinary = false;
@@ -406,6 +418,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       lateralUnconfirmed: _prevLu,
       decoyBinary: _prevDb,
       buildBaseline: _prevBb,
+      selfDisclaimed: _prevSd,
       ...rest
     } = f;
     return {
@@ -422,6 +435,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(lateralUnconfirmed ? { lateralUnconfirmed: true } : {}),
       ...(decoyBinary ? { decoyBinary: true } : {}),
       ...(buildBaseline ? { buildBaseline: true } : {}),
+      ...(selfDisclaimer ? { selfDisclaimed: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };

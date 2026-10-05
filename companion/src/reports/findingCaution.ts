@@ -15,6 +15,8 @@ export function findingCautionLine(f: Finding): string {
     return `> \u26a0\ufe0f **Build baseline** \u2014 every cited event sits inside the host's own provisioning window (the image being built, not the incident). Severity floored and confidence capped.`;
   if (f.decoyBinary)
     return `> ⚠️ **Renamed shell, not the named tool** — every cited event is a binary that identifies as a plain shell (or a file trace of it); the command line is a label, not a run. Severity floored and confidence capped.`;
+  if (f.selfDisclaimed)
+    return `> ⚠️ **Subject not in evidence** — the finding says so itself and guesses at what happened; an open question, not a finding. Severity floored.`;
   if (f.contentMismatch)
     return `> ⚠️ **Citation mismatch** — a claimed detail (an IP or a program name) never appears in the cited events; severity floored and confidence capped pending verification.`;
   if (f.lateralUnconfirmed)

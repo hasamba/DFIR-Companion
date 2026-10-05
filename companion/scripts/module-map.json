@@ -734,6 +734,7 @@
     "seedDemoBackfillFixtures.ts": "analysis/workflow",
     "seedDemoCase.ts": "analysis/workflow",
     "seedDemoPaths.ts": "analysis/workflow",
+    "selfDisclaimedSubject.ts": "analysis/findings",
     "semanticKey.ts": "analysis/timeline",
     "serviceAccountBrowsing.ts": "analysis/timeline",
     "sessionSegmentation.ts": "analysis/detect",
