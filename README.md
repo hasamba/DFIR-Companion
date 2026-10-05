@@ -33,10 +33,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
 ## Table of contents
 
-- [Quick start](#quick-start)
-- [Docker / Docker Compose](#docker--docker-compose)
-- [Windows](#windows)
-- [Linux (AppImage)](#linux-appimage)
+- [Install](#install)
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
@@ -702,68 +699,82 @@ you run that command yourself.
 └── cases/             Evidence + state output (gitignored). Location set by DFIR_CASES_ROOT.
 ```
 
-## Quick start
+## Install
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **22.19 or later** (which ships with `npm`).
-> Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
-> Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
-> cases. The portable build bundles a compatible runtime.
+Pick one option. Each one runs the same server and dashboard on `http://127.0.0.1:4773/dashboard`.
 
-1. **Companion** (the server):
+| Option                                                | Best for                  | Needs                 |
+| ----------------------------------------------------- | ------------------------- | --------------------- |
+| [Windows](#option-1--windows)                         | Most Windows users        | Nothing (release zip) |
+| [Linux (AppImage)](#option-2--linux-appimage)         | Most Linux users          | Nothing (AppImage)    |
+| [Docker / Compose](#option-3--docker--docker-compose) | Servers, teams, isolation | Docker + Compose      |
+| [From source](#option-4--from-source-nodejs)          | Developers, contributors  | Node.js 22.19+, git   |
 
-   ```
-   git clone https://github.com/hasamba/DFIR-Companion.git
-   cd DFIR-Companion/companion
-   npm install
-   cp .env.example .env      # set DFIR_VISION_PROVIDER / MODEL / KEY (or leave AI off)
-   npm run dev               # serves http://127.0.0.1:4773  (dashboard at /dashboard)
-   ```
+After you start the server, [install the capture extension](#capture-extension-and-first-case).
 
-2. **Extension** (capture):
+## Option 1 — Windows
 
-   **Easiest:** install directly from the
-   [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf).
-   On **Firefox 140+**, download `dfir-capture-extension-firefox-*.zip` from the
-   [latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it.
+Two ways to install. Neither needs Node.js.
 
-   Or build from source:
-   ```
-   cd DFIR-Companion/extension
-   npm install
-   npm run build             # Chrome/Comet → load extension/dist as an unpacked extension
-   npm run build:firefox     # Firefox 140+ → load extension/dist-firefox/manifest.json
-   ```
+### Release binary (recommended)
 
-   On Firefox, load it from `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**
-   and pick the `manifest.json` **file** (Chrome asks for the folder; Firefox does not). Firefox
-   drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet,
-   so the release zip is unsigned and cannot be installed permanently.
+Download `dfir-companion-<version>-win-x64.zip` from the
+[Releases page](https://github.com/hasamba/DFIR-Companion/releases/latest). Unzip it. Double-click
+`dfir-companion.exe`, then open `http://127.0.0.1:4773/dashboard`.
 
-   > **What it collects, since a temporary load never asks.** Firefox shows its data-collection
-   > notice only for a signed add-on installed normally; `about:debugging` grants everything
-   > silently. The extension declares **browsing activity** (a capture carries the tab's URL and
-   > title) and **website content** (the screenshot, and the rows a Push scrapes). The extension
-   > sends it to the companion address you configure and nowhere else; what that companion forwards
-   > afterwards — a vision model reads the screenshots, AI synthesis reads the rows, enrichment
-   > queries reputation services — is the companion's own configuration. See
-   > [extension/PRIVACY.md](extension/PRIVACY.md).
+**Your data lives next to the EXE:** `cases/` (evidence + state) and an optional `.env` (AI /
+threat-intel config, all optional). Keep the folder somewhere you can write to. Override with
+`DFIR_CASES_ROOT` (absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
 
-   The popup only **attaches** to an existing case — you create cases in the dashboard.
+For the capture extension, use the Chrome Web Store or load the extension zip from the same release
+(see [Capture extension](#capture-extension-and-first-case)).
 
-3. Open `http://127.0.0.1:4773/dashboard`, click **+ New case** to create your case (it
-   connects automatically). Then in the extension popup pick that case from the **Case**
-   dropdown (**Refresh cases** if it isn't listed yet) and **Start**. Browse your evidence —
-   the dashboard updates live.
+### Chocolatey (optional)
 
-> **Updating an existing checkout?** After `git pull`, re-run `npm install` in **both**
-> `companion/` and `extension/` — new features can add dependencies (e.g. the screenshot
-> OCR redaction added `tesseract.js`). Then restart `npm run dev` (server code loads once
-> at startup).
+Prefer a package manager? Install the same portable build with [Chocolatey](https://chocolatey.org/).
+In an elevated shell:
 
-Full configuration, HTTP endpoints, the case-folder layout, and the analysis model
-are documented in **[companion/README.md](companion/README.md)**.
+```
+choco install dfir-companion
+dfir-companion            # → http://127.0.0.1:4773/dashboard
+```
 
-## Docker / Docker Compose
+`choco upgrade dfir-companion` pulls the next release; `choco uninstall dfir-companion`
+removes the binary and PATH shim. The installer downloads the same portable zip published on
+the [Releases page](https://github.com/hasamba/DFIR-Companion/releases) and verifies its
+SHA256.
+
+**With Chocolatey, your data lives in your user profile**, not the admin-owned install dir: cases in
+`%LOCALAPPDATA%\DFIR-Companion\cases` and config in `%LOCALAPPDATA%\DFIR-Companion\.env`
+(seeded from the example; edit it for AI / threat-intel keys — all optional). Uninstall
+**keeps** that folder so evidence is never deleted. No firewall rule is created — the server
+binds `127.0.0.1` only.
+
+The **capture extension** is bundled on disk at `%LOCALAPPDATA%\DFIR-Companion\extension` for
+offline install (handy on air-gapped workstations) — load it via `chrome://extensions` →
+Developer mode → **Load unpacked** → that folder, or install it from the Chrome Web Store once
+published. It is not auto-installed into the browser.
+
+> Not yet on the Chocolatey community repo? Until it's published there, grab the
+> `dfir-companion.<version>.nupkg` from the release and `choco install dfir-companion --source .`
+> from its folder. Packaging lives in [`packaging/chocolatey/`](packaging/chocolatey/).
+
+## Option 2 — Linux (AppImage)
+
+Download `dfir-companion-<version>-x86_64.AppImage` from the
+[Releases page](https://github.com/hasamba/DFIR-Companion/releases), then:
+
+```
+chmod +x dfir-companion-*-x86_64.AppImage
+./dfir-companion-*-x86_64.AppImage      # → http://127.0.0.1:4773/dashboard
+```
+
+No Node required — it bundles the server, dashboard, and image tooling. **Your data lives in the
+directory you run it from:** `cases/` (evidence + state) and an optional `.env` (AI / threat-intel
+config) are created/read next to where you launch the AppImage. Override with `DFIR_CASES_ROOT`
+(absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
+
+## Option 3 — Docker / Docker Compose
 
 Run the whole thing — companion server + dashboard + the browser add-on — in one container.
 **No Ollama or LiteLLM are bundled**; for AI you point `DFIR_AI_*` at any OpenAI-compatible
@@ -807,69 +818,70 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
 - To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
   (on Linux without Docker Desktop, also uncomment the `extra_hosts` line in the compose file).
 
-## Windows
+## Option 4 — From source (Node.js)
 
-Two options. Both need no Node.js.
+For developers and contributors. Most users should pick one of the options above.
 
-### Option 1 — Release binary (recommended)
-
-Download `dfir-companion-<version>-win-x64.zip` from the
-[Releases page](https://github.com/hasamba/DFIR-Companion/releases/latest). Unzip it. Double-click
-`dfir-companion.exe`, then open `http://127.0.0.1:4773/dashboard`.
-
-**Your data lives next to the EXE:** `cases/` (evidence + state) and an optional `.env` (AI /
-threat-intel config, all optional). Keep the folder somewhere you can write to. Override with
-`DFIR_CASES_ROOT` (absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
-
-For the capture extension, use the Chrome Web Store or load the extension zip from the same release
-(see [Quick start](#quick-start)).
-
-### Option 2 — Chocolatey (optional)
-
-Prefer a package manager? Install the same portable build with [Chocolatey](https://chocolatey.org/).
-In an elevated shell:
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.19 or later** (which ships with `npm`).
+> Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
+> Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
+> cases. The Windows and Linux release binaries bundle a compatible runtime.
 
 ```
-choco install dfir-companion
-dfir-companion            # → http://127.0.0.1:4773/dashboard
+git clone https://github.com/hasamba/DFIR-Companion.git
+cd DFIR-Companion/companion
+npm install
+cp .env.example .env      # set DFIR_VISION_PROVIDER / MODEL / KEY (or leave AI off)
+npm run dev               # serves http://127.0.0.1:4773  (dashboard at /dashboard)
 ```
 
-`choco upgrade dfir-companion` pulls the next release; `choco uninstall dfir-companion`
-removes the binary and PATH shim. The installer downloads the same portable zip published on
-the [Releases page](https://github.com/hasamba/DFIR-Companion/releases) and verifies its
-SHA256.
+> **Updating an existing checkout?** After `git pull`, re-run `npm install` in **both**
+> `companion/` and `extension/` — new features can add dependencies (e.g. the screenshot
+> OCR redaction added `tesseract.js`). Then restart `npm run dev` (server code loads once
+> at startup).
 
-**With Chocolatey, your data lives in your user profile**, not the admin-owned install dir: cases in
-`%LOCALAPPDATA%\DFIR-Companion\cases` and config in `%LOCALAPPDATA%\DFIR-Companion\.env`
-(seeded from the example; edit it for AI / threat-intel keys — all optional). Uninstall
-**keeps** that folder so evidence is never deleted. No firewall rule is created — the server
-binds `127.0.0.1` only.
+Full configuration, HTTP endpoints, the case-folder layout, and the analysis model
+are documented in **[companion/README.md](companion/README.md)**.
 
-The **capture extension** is bundled on disk at `%LOCALAPPDATA%\DFIR-Companion\extension` for
-offline install (handy on air-gapped workstations) — load it via `chrome://extensions` →
-Developer mode → **Load unpacked** → that folder, or install it from the Chrome Web Store once
-published. It is not auto-installed into the browser.
+## Capture extension and first case
 
-> Not yet on the Chocolatey community repo? Until it's published there, grab the
-> `dfir-companion.<version>.nupkg` from the release and `choco install dfir-companion --source .`
-> from its folder. Packaging lives in [`packaging/chocolatey/`](packaging/chocolatey/).
+This applies to every option above. (The Docker option also writes the extension to `./addon`.)
 
-## Linux (AppImage)
+**Easiest:** install directly from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf).
+On **Firefox 140+**, download `dfir-capture-extension-firefox-*.zip` from the
+[latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it.
 
-Download `dfir-companion-<version>-x86_64.AppImage` from the
-[Releases page](https://github.com/hasamba/DFIR-Companion/releases), then:
-
+Or build from source:
 ```
-chmod +x dfir-companion-*-x86_64.AppImage
-./dfir-companion-*-x86_64.AppImage      # → http://127.0.0.1:4773/dashboard
+cd DFIR-Companion/extension
+npm install
+npm run build             # Chrome/Comet → load extension/dist as an unpacked extension
+npm run build:firefox     # Firefox 140+ → load extension/dist-firefox/manifest.json
 ```
 
-No Node required — it bundles the server, dashboard, and image tooling. **Your data lives in the
-directory you run it from:** `cases/` (evidence + state) and an optional `.env` (AI / threat-intel
-config) are created/read next to where you launch the AppImage. Override with `DFIR_CASES_ROOT`
-(absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
+On Firefox, load it from `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**
+and pick the `manifest.json` **file** (Chrome asks for the folder; Firefox does not). Firefox
+drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet,
+so the release zip is unsigned and cannot be installed permanently.
 
-### Where the data lives
+> **What it collects, since a temporary load never asks.** Firefox shows its data-collection
+> notice only for a signed add-on installed normally; `about:debugging` grants everything
+> silently. The extension declares **browsing activity** (a capture carries the tab's URL and
+> title) and **website content** (the screenshot, and the rows a Push scrapes). The extension
+> sends it to the companion address you configure and nowhere else; what that companion forwards
+> afterwards — a vision model reads the screenshots, AI synthesis reads the rows, enrichment
+> queries reputation services — is the companion's own configuration. See
+> [extension/PRIVACY.md](extension/PRIVACY.md).
+
+The popup only **attaches** to an existing case — you create cases in the dashboard.
+
+Open `http://127.0.0.1:4773/dashboard`, click **+ New case** to create your case (it
+connects automatically). Then in the extension popup pick that case from the **Case**
+dropdown (**Refresh cases** if it isn't listed yet) and **Start**. Browse your evidence —
+the dashboard updates live.
+
+## Where the data lives
 
 | Install                | Cases + state                         | Config (`.env`)                       |
 | ---------------------- | ------------------------------------- | ------------------------------------- |
