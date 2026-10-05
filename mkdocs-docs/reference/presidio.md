@@ -10,6 +10,8 @@ The built-in anonymizer (see [AI Analysis → What the AI Sees](ai-analysis.md#w
 
 The built-in anonymizer always runs **first**. Presidio scans the *already-tokenized* text — the version with `ANON_HOST_1`, `ANON_USER_1` and so on already substituted in — so it reports only what the regex layer missed, principally names.
 
+Presidio scans only text that anonymisation has already masked. With anonymisation off for a case, Presidio does not run and every value reaches the model in clear; the panel says so. The missed-evidence review and the containment check use the same Presidio gate as every other AI call.
+
 This still means Presidio receives the shape and content of your case: the timeline text, minus the values the built-in anonymizer already knows how to catch. **The Presidio URL must therefore be local** — a container on this machine or your own LAN, never a public/hosted endpoint. The Settings panel warns when the configured URL doesn't look like `localhost` / `127.0.0.1` / `::1` / `0.0.0.0`.
 
 ## Running the container
@@ -85,11 +87,16 @@ Once every flagged value is resolved, re-run the action (or re-import the file) 
 
 ## Fail-closed behaviour
 
-With `DFIR_PRESIDIO_URL` set but the container unreachable (not started, wrong port, network issue), **AI calls fail** with an explicit error naming the URL and telling you to start the container or clear the variable — they do not silently proceed as if Presidio had found nothing. An analyst who turned this on is trusting that names are being caught; silently skipping the scan would violate that trust.
+With `DFIR_PRESIDIO_URL` set but the container unreachable (not started, wrong port, network issue), **AI calls fail** — they do not silently proceed as if Presidio had found nothing. An analyst who turned this on is trusting that names are being caught; silently skipping the scan would violate that trust.
+
+When the analyzer does not answer, the AI call stops after one attempt. Nothing is retried, and no unscanned text reaches the model. The AI status pill shows: *Presidio is not reachable at &lt;url&gt;. The AI call did not run.* Two buttons appear beside it:
+
+- **Retry Presidio** checks the analyzer again and starts **AI Re-synthesize** if it answers.
+- **Continue without Presidio for this case** unticks Presidio for this case only, then starts **AI Re-synthesize**. Real names are then not detected, but the built-in masking (IPs, hosts, users, secrets) stays on. No restart is needed. The case activity log records the choice. Tick Presidio again in the Anonymization panel when the analyzer is back.
 
 The Anonymization panel warns before that happens: it probes the analyzer when you open it, so an outage shows on the **Real names (people)** row rather than waiting for the next AI call to fail.
 
-To disable the layer, clear `DFIR_PRESIDIO_URL`.
+Clearing `DFIR_PRESIDIO_URL` also disables the layer, but it needs a restart.
 
 ## What Presidio detects, and what's deliberately ignored
 

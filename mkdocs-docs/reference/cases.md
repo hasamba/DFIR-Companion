@@ -62,6 +62,8 @@ file cannot override a built-in type of the same name.
 
 The case selector dropdown (top-left of dashboard) lists all cases, newest first. Select one to load it.
 
+When you type in the case box, the dashboard switches case only when the text names a listed case. A new case id takes effect when you leave the box or press Enter.
+
 ## Case Lifecycle
 
 Each case has a status: **Open** or **Closed**.
