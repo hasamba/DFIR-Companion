@@ -16,6 +16,7 @@ import {
   type SynthesisBlocks,
   type SynthesisPromptContext,
 } from "./synthesisPromptBlocks.js";
+import { buildHostSpikeBlock } from "../hostSpikeLeads.js";
 import { createTimelineSelection, type TimelineSelection } from "./synthesisPromptEvents.js";
 import { isPromoted, promotedLegend, renderNewPromotedBlock } from "./promotedEvidence.js";
 
@@ -157,6 +158,11 @@ export async function buildSynthesisPrompt(
 
   const overhead = trimTimelineToBudget(timeline, blocks, state.lastSummary || "");
   const timelineText = timeline.promptEvents.map((e) => timeline.renderEvent(e)).join("\n");
+  // The spike leads were sized before the trim; re-cite them from the rows the trim kept, so no lead
+  // points at a row the model cannot read. The re-cited block differs from the measured one by at most
+  // one short note per line (HOST_SPIKE_MAX_LINES lines, well under 100 tokens), inside the budget's slack.
+  const shownIds = new Set(timeline.promptEvents.map((e) => e.id));
+  const finalBlocks = { ...blocks, hostSpikeBlock: buildHostSpikeBlock(scopedEvents, undefined, shownIds) };
   const audit = auditCoverage({
     state,
     inWindowEvents,
@@ -167,7 +173,7 @@ export async function buildSynthesisPrompt(
     promptTokensEstimate: overhead + estimateTokens(timelineText),
   });
 
-  const userPrompt = assembleUserPrompt(blocks, {
+  const userPrompt = assembleUserPrompt(finalBlocks, {
     timelineText,
     scopedCount: scopedEvents.length,
     truncatedNote: audit.truncatedNote,

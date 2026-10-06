@@ -246,6 +246,50 @@ web_server_named_shell:
   severity: High
   view: 'Web-server spawned shells'
 
+# A server-side script CREATED under a web root is how a webshell lands. The rules above grade the
+# server SPAWNING a shell; nothing graded the write itself, so a shell dropped and not yet used — or
+# used through a channel that left no process row — never reached the AI. Web roots: IIS
+# (inetpub, wwwroot), Tomcat (webapps), Apache (htdocs), and Exchange's OWA/ECP folders, where the
+# ProxyLogon/ProxyShell shells were written. Only a CREATE is graded — a Sysmon 11 row or a USN
+# FileCreate — never an MFT listing or an overwrite: a site holds thousands of pages and a deploy
+# rewrites them, so presence and modification say nothing on their own.
+#
+# High ONLY when the IIS worker (w3wp.exe) ITSELF wrote an ASP.NET page into a web root: an ASP.NET
+# site does not write its own .aspx/.ashx/.asmx at run time, so that write is the upload shape
+# (aspnet_client, Exchange OWA/ECP). Other servers are left to the Medium rule below ON PURPOSE:
+# Tomcat explodes every deployed .war into .jsp files from tomcat9.exe, and a PHP CMS updates its
+# own .php files through php-cgi/httpd — High there would flood the record with routine deploys.
+# The writer is read from the Sysmon 11 description (`Image=` precedes `TargetFilename=`).
+web_server_script_write:
+  description: IIS worker (w3wp.exe) writing an ASP.NET page under a web root (webshell upload)
+  all:
+    - { field: path, regex: '(?:[\\/](?:inetpub|wwwroot)[\\/]|[\\/]httpproxy[\\/](?:owa|ecp)[\\/]|[\\/]clientaccess[\\/]ecp[\\/])[^\n]*\.(?:aspx?|ashx|asmx)$', flags: 'i' }
+    - { field: description, regex: '\(EID 11\) - Image=[^\n]*?[\\/]w3wp\.exe - TargetFilename=', flags: 'i' }
+  none:
+    - { field: path, regex: '[\\/]inetpub[\\/]temp[\\/]', flags: 'i' }
+  tags: ['webshell-write', 'persistence']
+  mitre: ['T1505.003']
+  severity: High
+  view: 'Webshell writes'
+
+# Any other create of a server-side script under a web root — a USN FileCreate names no writer, and
+# a person, a deploy tool, a .war deploy or a CMS update writes pages too. Medium: in the forensic
+# timeline as a lead, not an anchor; a deploy burst is dismissed once through the FP workflow. IIS's
+# own scratch folder (inetpub\temp — app-pool configs, compression cache) is excluded.
+web_root_script_created:
+  description: Server-side script created under a web root (possible webshell drop)
+  all:
+    - { field: path, regex: '(?:[\\/](?:inetpub|wwwroot|webapps|htdocs)[\\/]|[\\/]httpproxy[\\/](?:owa|ecp)[\\/]|[\\/]clientaccess[\\/]ecp[\\/])[^\n]*\.(?:aspx?|ashx|asmx|cshtml|jspx?|php\d?|phtml)$', flags: 'i' }
+  any:
+    - { field: description, regex: '\(EID 11\) - Image=', flags: 'i' }
+    - { field: description, regex: '^UsnJrnl: [^\n]*\b(?:FileCreate|FILE_CREATE)\b', flags: 'i' }
+  none:
+    - { field: path, regex: '[\\/]inetpub[\\/]temp[\\/]', flags: 'i' }
+  tags: ['webshell-write', 'persistence']
+  mitre: ['T1505.003']
+  severity: Medium
+  view: 'Webshell writes'
+
 # Web vulnerability scanners (#1964). Offensive tooling, not routine admin enumeration, so Medium —
 # unlike the tag-only host discovery in reconTechniques.ts. The tool must be an argv token (after
 # start, whitespace, a quote or a path separator) FOLLOWED by an argument (-flag, an IP or a URL),
@@ -340,6 +384,25 @@ amcache_transfer_tool:
   mitre: ['T1567.002']
   severity: Medium
   view: 'Transfer tools'
+
+# A remote-access (RMM) tool listed in Amcache. Both importers grade Amcache rows Info, and the
+# command-line grader (tradecraftRules.ts) never sees a row with no command line, so an AnyDesk or
+# ScreenConnect install seen only here never reached the AI. Medium with T1219 — the grade Prefetch
+# gives the same names (attackToolNames.ts REMOTE_ACCESS_TOOLS): a lead, because admins install
+# these too. Anchored on the Amcache description like amcache_transfer_tool, so an MFT listing of
+# the same file stays Info. Keep the name list in step with REMOTE_ACCESS_TOOLS
+# (tests/analysis/remoteAccessTools.test.ts pins it).
+amcache_remote_access_tool:
+  description: Remote-access / RMM tool listed in Amcache (AnyDesk, ScreenConnect, TeamViewer, Atera, …)
+  all:
+    - { field: path, regex: '(?:^|[\\/])(?:anydesk|rustdesk|teamviewer|teamviewer_service|logmein|lmiguardiansvc|ateraagent|meshagent|tacticalrmm|dwagent|rutserv|rfusclient|supremo|screenconnect\.clientservice|screenconnect\.windowsclient)\.exe$', flags: 'i' }
+  any:
+    - { field: description, regex: '^Amcache: ', flags: 'i' }
+    - { field: description, regex: '^Velociraptor(?: \[[^\]]*\])?: Program file present \(Amcache\)', flags: 'i' }
+  tags: ['remote-access-tool', 'command-and-control']
+  mitre: ['T1219']
+  severity: Medium
+  view: 'Remote-access tools'
 
 # The CLR writes `<host>.exe.log` under UsageLogs the first time a process loads .NET. These hosts
 # never load .NET on their own, so a usage log named after one is the disk trace of Cobalt Strike

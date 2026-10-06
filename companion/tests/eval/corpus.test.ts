@@ -3,6 +3,8 @@ import { loadGoldenCorpus } from "./corpus.js";
 import { runCorpusCase } from "./harness.js";
 import { mockProvider } from "./harness.js";
 import { passesCaseQuality, scoreCaseQuality, type QualityOutput } from "./qualityScorer.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { HOST_SPIKE_BLOCK_HEADER } from "../../src/analysis/hostSpikeLeads.js";
 
 const REQUIRED_SCENARIOS = [
   "ransomware",
@@ -16,13 +18,14 @@ const REQUIRED_SCENARIOS = [
   "network",
   "clean",
   "web-server",
+  "remote-access",
 ];
 
 describe("versioned production golden corpus (#378)", () => {
   it("documents safe provenance and covers the required investigative scenarios", async () => {
     const corpus = await loadGoldenCorpus();
     expect(corpus.schemaVersion).toBe(1);
-    expect(corpus.version).toBe("1.2.0");
+    expect(corpus.version).toBe("1.3.0");
     expect(new Set(corpus.cases.map((fixture) => fixture.scenario))).toEqual(new Set(REQUIRED_SCENARIOS));
     expect(corpus.cases.every((fixture) => fixture.provenance.origin === "synthetic")).toBe(true);
     expect(corpus.cases.every((fixture) => fixture.provenance.containsClientData === false)).toBe(true);
@@ -41,7 +44,7 @@ describe("versioned production golden corpus (#378)", () => {
   it("gives every forbidden conclusion a claim sentence for the semantic judge (#1704)", async () => {
     const corpus = await loadGoldenCorpus();
     const forbidden = corpus.cases.flatMap((fixture) => fixture.golden.forbiddenConclusions);
-    expect(forbidden).toHaveLength(9);
+    expect(forbidden).toHaveLength(12);
     expect(forbidden.every((item) => (item.claim ?? "").trim().length > 10)).toBe(true);
   });
 
@@ -55,6 +58,54 @@ describe("versioned production golden corpus (#378)", () => {
       expect(passesCaseQuality(scoreCaseQuality(fixture.golden, output))).toBe(true);
     });
   }
+
+  // The detection-gap cases (host spike, RMM persistence, webshell write) share scenarios with older
+  // cases, so the per-scenario loop above never reaches them: each canned answer is checked here.
+  for (const id of ["host-spike-staging", "rmm-anydesk-persistence", "webshell-iis-write"]) {
+    it(`${id}: canned output passes exact evidence-grounded quality gates`, async () => {
+      const fixture = (await loadGoldenCorpus()).cases.find((candidate) => candidate.id === id);
+      expect(fixture).toBeDefined();
+      if (!fixture) return;
+      const output = await runCorpusCase(fixture, mockProvider(fixture.canned));
+      expect(passesCaseQuality(scoreCaseQuality(fixture.golden, output))).toBe(true);
+    });
+  }
+
+  // The host-spike case exists to exercise the lead block, so prove the REAL synthesis path puts it in
+  // the prompt the model receives and names the bursting host — not just that the helper renders it.
+  it("host-spike-staging: the synthesis prompt carries the host-spike lead for the FS-02 burst", async () => {
+    const fixture = (await loadGoldenCorpus()).cases.find(
+      (candidate) => candidate.id === "host-spike-staging",
+    );
+    if (!fixture) throw new Error("corpus case host-spike-staging missing");
+    const prompts: string[] = [];
+    const capturing: AIProvider = {
+      name: "mock",
+      model: "mock-model",
+      analyze: async (req: AnalyzeRequest): Promise<AnalyzeResult> => {
+        prompts.push(req.userPrompt);
+        return { rawText: fixture.canned };
+      },
+    };
+    await runCorpusCase(fixture, capturing);
+    const synthesis = prompts.find((p) => p.includes("FORENSIC TIMELINE"));
+    expect(synthesis).toBeDefined();
+    const block = synthesis?.slice(synthesis.indexOf(HOST_SPIKE_BLOCK_HEADER)) ?? "";
+    expect(synthesis).toContain(HOST_SPIKE_BLOCK_HEADER);
+    // Host names are masked before the prompt leaves (ANON_HOST_n), so the line is identified by the
+    // FS-02 burst rows it cites: one spike line, and it is the staging burst.
+    const lines = block
+      .split("\n\n")[0]
+      .split("\n")
+      .filter((line) => line.startsWith("- "));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("12:30–12:45");
+    expect(lines[0]).toMatch(/\bspk-b1\b/);
+    // Every row the lead cites is one the model can read in the same prompt's timeline.
+    const cited = (/\[([^\]]+)\]$/.exec(lines[0])?.[1] ?? "").split(", ");
+    const timeline = synthesis?.slice(synthesis.indexOf("FORENSIC TIMELINE")) ?? "";
+    for (const id of cited) expect(timeline, id).toContain(`[${id}]`);
+  });
 
   // #1579: a real model run (claude-sonnet-5) got these three right in its own words and the literal
   // phrase match scored them as misses. The golden terms test the concept, so these phrasings — copied

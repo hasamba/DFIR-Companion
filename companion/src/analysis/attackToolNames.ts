@@ -89,6 +89,19 @@ export const DUAL_USE: Readonly<Record<string, readonly string[]>> = {
   "megacmd.exe": ["T1567.002"],
 };
 
+// Remote-access (RMM) tools, by executable name. tradecraftRules.ts grades them from a COMMAND LINE;
+// a Prefetch or Amcache row has none, so the name is all there is. Installing one is the most common
+// operator persistence path, and admins install the same tools every day — so a bare execution is a
+// Medium lead (prefetchExecution.ts), never a finding. Matched on the WHOLE leaf name so a
+// `myteamviewer.exe` or a `.bak` copy stays silent. ScreenConnect's names are longer than the 29
+// characters a Prefetch file keeps, so they also match truncated. The Amcache rule in
+// data/tags.yaml (`amcache_remote_access_tool`) carries the same names; remoteAccessTools.test.ts
+// keeps the two in step.
+export const REMOTE_ACCESS_TOOLS: { readonly re: RegExp; readonly ids: readonly string[] } = {
+  re: /^(?:(?:anydesk|rustdesk|teamviewer|teamviewer_service|logmein|lmiguardiansvc|ateraagent|meshagent|tacticalrmm|dwagent|rutserv|rfusclient|supremo)\.exe|screenconnect\.(?:clientservice|windowsclient)\.e(?:xe?)?)$/i,
+  ids: ["T1219"],
+};
+
 // AD reconnaissance tooling, by the token its file and command names carry. reconTechniques.ts
 // builds its T1087.002 command-line rule from this list; `ping castle` (with a space) is a
 // command-line spelling only and stays there.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "license": "AGPL-3.0-only",
   "provenance": {
     "origin": "synthetic",
@@ -19,6 +19,9 @@
     { "id": "memory-process-injection", "file": "memory-process-injection.json" },
     { "id": "network-egress-gap", "file": "network-egress-gap.json" },
     { "id": "clean-maintenance", "file": "clean-maintenance.json" },
-    { "id": "web-impact-from-filenames", "file": "web-impact-from-filenames.json" }
+    { "id": "web-impact-from-filenames", "file": "web-impact-from-filenames.json" },
+    { "id": "host-spike-staging", "file": "host-spike-staging.json" },
+    { "id": "rmm-anydesk-persistence", "file": "rmm-anydesk-persistence.json" },
+    { "id": "webshell-iis-write", "file": "webshell-iis-write.json" }
   ]
 }

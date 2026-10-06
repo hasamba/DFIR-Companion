@@ -208,6 +208,7 @@
     "burstDetect.ts": "analysis/detect",
     "emulationAgentContext.ts": "analysis/detect",
     "initialAccessCandidates.ts": "analysis/detect",
+    "hostSpikeLeads.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
     "canonicalProvenanceCompact.ts": "shared",
     "canonicalProvenanceRestamp.ts": "shared",

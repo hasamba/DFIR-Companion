@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Host activity spikes for the AI** — synthesis gets the hosts far busier than their peers or their own usual rate, as leads with the rows to check
+- **Remote-access tools reach the AI** — AnyDesk, ScreenConnect, TeamViewer, Atera and similar tools in Prefetch or Amcache are graded Medium (T1219)
+- **Webshell writes graded** — the IIS worker writing an ASP.NET page into a web root is High; any other script created under a web root is Medium (T1505.003)
+- **Eval cases for the new detections** — host-spike staging, AnyDesk persistence and IIS webshell-write golden cases
 - **Restore a capped finding** — a finding lowered by a grading check shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis (closes #1973)
 - **Reopened second-opinion decisions** — when the main model makes a new call on a finding you already decided, the panel marks it reopened with Keep and Drop (closes #1972)
 - **Entry candidates for the AI** — synthesis gets the programs started just before the first script write on each host, plus console-history downloads marked time unknown (closes #1968)

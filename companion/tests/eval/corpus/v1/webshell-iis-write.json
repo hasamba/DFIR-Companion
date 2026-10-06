@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "id": "webshell-iis-write",
+  "title": "Synthetic webshell written by the IIS worker into aspnet_client and then used",
+  "scenario": "web-server",
+  "traits": ["complete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional IIS and Sysmon rows written for this corpus; the file write is graded as the webshell-write tagger rule grades it.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-10-06"
+  },
+  "seedEvents": [
+    {
+      "id": "wsw-e1",
+      "timestamp": "2026-08-03T01:02:00.000Z",
+      "description": "IIS log on WEB-02: POST /ecp/DDI/DDIService.svc/SetObject from 198.51.100.23 returned 200",
+      "severity": "Medium",
+      "mitreTechniques": ["T1190"],
+      "asset": "WEB-02",
+      "srcIp": "198.51.100.23",
+      "sources": ["IIS"]
+    },
+    {
+      "id": "wsw-e2",
+      "timestamp": "2026-08-03T01:03:05.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\Windows\\System32\\inetsrv\\w3wp.exe - TargetFilename=C:\\inetpub\\wwwroot\\aspnet_client\\system_web\\error.aspx @ WEB-02",
+      "severity": "High",
+      "mitreTechniques": ["T1505.003"],
+      "asset": "WEB-02",
+      "path": "C:\\inetpub\\wwwroot\\aspnet_client\\system_web\\error.aspx",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "wsw-e3",
+      "timestamp": "2026-08-03T01:09:00.000Z",
+      "description": "IIS log on WEB-02: POST /aspnet_client/system_web/error.aspx from 198.51.100.23 returned 200",
+      "severity": "Medium",
+      "mitreTechniques": ["T1505.003"],
+      "asset": "WEB-02",
+      "srcIp": "198.51.100.23",
+      "sources": ["IIS"]
+    },
+    {
+      "id": "wsw-e4",
+      "timestamp": "2026-08-03T01:09:01.000Z",
+      "description": "Sysmon Process Create (EID 1) - ParentImage=C:\\Windows\\System32\\inetsrv\\w3wp.exe - Image=C:\\Windows\\System32\\cmd.exe - CommandLine=cmd.exe /c whoami @ WEB-02",
+      "severity": "High",
+      "mitreTechniques": ["T1190", "T1059.003"],
+      "asset": "WEB-02",
+      "sources": ["Sysmon"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "wsw-f1",
+        "severity": "High",
+        "confidence": 85,
+        "confidenceReason": "The IIS worker wrote error.aspx, the same file was then POSTed to, and the worker spawned a shell one second later.",
+        "title": "Webshell error.aspx written by w3wp.exe and used on WEB-02",
+        "description": "w3wp.exe created C:\\inetpub\\wwwroot\\aspnet_client\\system_web\\error.aspx; 198.51.100.23 then posted to it and w3wp.exe spawned cmd.exe /c whoami.",
+        "relatedIocs": ["wsw-i1"],
+        "mitreTechniques": ["T1505.003", "T1059.003"],
+        "status": "open",
+        "relatedEventIds": ["wsw-e2", "wsw-e3", "wsw-e4"]
+      }
+    ],
+    "iocs": [
+      {
+        "id": "wsw-i1",
+        "type": "ip",
+        "value": "198.51.100.23"
+      }
+    ],
+    "mitreTechniques": [],
+    "attackerPath": "198.51.100.23 caused the IIS worker on WEB-02 to write the webshell error.aspx, then used it to run commands.",
+    "narrativeTimeline": "",
+    "summary": "A webshell was written and used on WEB-02. The exact vulnerability that let the worker write it is inferred from one ECP request.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "wsw-n1",
+        "priority": "high",
+        "action": "Acquire error.aspx from WEB-02 and record its hash and content",
+        "rationale": "Confirms what the webshell does and gives a hash to hunt for.",
+        "pointer": "WEB-02 C:\\inetpub\\wwwroot\\aspnet_client\\system_web\\error.aspx",
+        "relatedFindingIds": ["wsw-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Exploited vulnerability behind the write",
+        "status": "inferred",
+        "basis": "A POST to the ECP DDIService endpoint preceded the write by one minute.",
+        "gap": "No request body or patch level for WEB-02 was collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "webshell-written",
+        "requiredTerms": ["error.aspx", "w3wp|w3wp.exe|web shell|webshell"],
+        "evidenceEventIds": ["wsw-e2"],
+        "confidence": {
+          "min": 55,
+          "max": 100
+        }
+      }
+    ],
+    "iocs": [
+      {
+        "type": "ip",
+        "value": "198.51.100.23"
+      }
+    ],
+    "forbiddenConclusions": [
+      {
+        "id": "domain-compromise-unsupported",
+        "terms": ["domain admin", "domain controller was compromised", "credentials were dumped"],
+        "claim": "The attacker obtained domain administrator credentials or compromised the domain controller."
+      }
+    ],
+    "uncertainties": [
+      {
+        "id": "exploit-vector",
+        "topicTerms": ["exploited|exploit|vulnerability|initial access|entry"],
+        "allowedStatuses": ["inferred", "speculated", "unknown"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "acquire-webshell",
+        "requiredTerms": ["error.aspx", "hash|content|collect|acquire"]
+      }
+    ],
+    "expectAbstention": false
+  }
+}
