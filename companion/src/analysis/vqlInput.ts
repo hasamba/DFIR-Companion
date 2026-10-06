@@ -30,6 +30,13 @@
 
 export const MAX_WHERE_LENGTH = 1000;
 
+// The cap a READ applies. It is larger than the analyst's cap by the generated incident-window clause
+// (#1969), which the companion builds only from fixed column names and re-serialized ISO dates. The
+// analyst's own filter is still cut to MAX_WHERE_LENGTH before it is combined with that clause, so
+// this cap never lets analyst text grow; it only stops the read from cutting the window clause off.
+export const MAX_WINDOW_CLAUSE_LENGTH = 1000;
+export const MAX_READ_WHERE_LENGTH = MAX_WHERE_LENGTH + MAX_WINDOW_CLAUSE_LENGTH;
+
 /** The refusal both callers raise; the bundle store prefixes the artifact it applies to. */
 export const INVALID_WHERE_FILTER =
   "invalid WHERE filter: must be one boolean expression — balanced parentheses and quotes, no ';' or comment markers";
@@ -53,12 +60,12 @@ export function vqlSizeProblem(vql: string): string | null {
 }
 
 /** Newline-collapsed, trailing-`;` trimmed, length-capped — the normalization both callers apply. */
-export function normalizeWhereText(where: string): string {
+export function normalizeWhereText(where: string, maxLength = MAX_WHERE_LENGTH): string {
   return where
     .replace(/[\r\n]+/g, " ")
     .replace(/;+\s*$/, "")
     .trim()
-    .slice(0, MAX_WHERE_LENGTH);
+    .slice(0, maxLength);
 }
 
 const RAW = "'''";
@@ -113,8 +120,12 @@ export function isContainedWhereExpression(where: string): boolean {
  * Normalize and check in one step: the text safe to inline, or a throw whose message starts with
  * `label` (the bundle store names the artifact the filter applies to).
  */
-export function containedWhereOrThrow(where: string, label = "invalid WHERE filter"): string {
-  const w = normalizeWhereText(where);
+export function containedWhereOrThrow(
+  where: string,
+  label = "invalid WHERE filter",
+  maxLength = MAX_WHERE_LENGTH,
+): string {
+  const w = normalizeWhereText(where, maxLength);
   if (w && !isContainedWhereExpression(w)) {
     throw new Error(INVALID_WHERE_FILTER.replace("invalid WHERE filter", label));
   }

@@ -5,9 +5,19 @@ import {
   incidentWindow,
   readInIncidentWindow,
   windowWhere,
+  WINDOW_TIME_COLUMNS,
   type CappedRead,
 } from "../../src/integrations/velociraptor/veloWindowReread.js";
-import { isContainedWhereExpression } from "../../src/analysis/vqlInput.js";
+import {
+  isContainedWhereExpression,
+  MAX_READ_WHERE_LENGTH,
+  MAX_WHERE_LENGTH,
+} from "../../src/analysis/vqlInput.js";
+import {
+  VelociraptorClient,
+  type VelociraptorApiConfig,
+  type VqlRunner,
+} from "../../src/integrations/velociraptor/velociraptorApi.js";
 
 const USN = "Windows.Forensics.Usn";
 const WIN = { start: "2026-09-20T00:00:00.000Z", end: "2026-09-21T00:00:00.000Z" };
@@ -127,5 +137,87 @@ describe("readInIncidentWindow", () => {
     expect(res.rows).toEqual(cut.rows);
     expect(res.window).toBeUndefined();
     expect(lines.join()).toContain("boom");
+  });
+});
+
+// Review finding on #1969: the combined `(base) AND window` filter was built and validated OUTSIDE the
+// fallback, and validation truncates to the analyst-input cap — a valid near-limit filter plus the
+// window clause was cut into an unbalanced expression, threw, and the caller dropped the plain rows.
+describe("readInIncidentWindow — a near-limit analyst filter", () => {
+  const MFT = "Windows.NTFS.MFT";
+  // A valid filter of exactly `n` characters: `(OSPath =~ 'aaa…')`.
+  const filterOf = (n: number) => `(OSPath =~ '${"a".repeat(n - 14)}')`;
+  const cfg: VelociraptorApiConfig = {
+    apiConfigPath: "/tmp/api.config.yaml",
+    binary: "velociraptor",
+    timeoutMs: 5000,
+    maxRows: 2,
+    maxOutputBytes: 1 << 20,
+  };
+
+  // The real client: its own WHERE validation runs on every read, as in the hunt collect.
+  function realRead(windowed: Record<string, unknown>[]) {
+    const programs: string[] = [];
+    const runner: VqlRunner = async (s) => {
+      programs.push(s[0]);
+      return { rows: programs.length === 1 ? cut.rows.concat(cut.rows) : windowed, raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    const read = (where?: string) => client.huntResults("H.ABC123", MFT, [], where, true);
+    return { read, programs };
+  }
+
+  it("a 910-character filter plus an MFT window re-reads with the whole filter and window intact", async () => {
+    const base = filterOf(910);
+    expect(base).toHaveLength(910);
+    const { read, programs } = realRead(inWindow.rows);
+    const res = await readInIncidentWindow(read, MFT, base, WIN);
+    expect(programs).toHaveLength(2);
+    expect(programs[1]).toContain(`(${base}) AND (`);
+    expect(programs[1]).toContain("timestamp(epoch='2026-09-21T00:00:00.000Z')");
+    expect(res.rows).toEqual(inWindow.rows);
+    expect(res.window).toEqual(WIN);
+  });
+
+  it("a filter at the analyst cap still re-reads, never throws", async () => {
+    const { read } = realRead(inWindow.rows);
+    const res = await readInIncidentWindow(read, MFT, filterOf(MAX_WHERE_LENGTH), WIN);
+    expect(res.rows).toEqual(inWindow.rows);
+  });
+
+  it("a failure while building or running the re-read keeps the plain rows", async () => {
+    const lines: string[] = [];
+    let n = 0;
+    const read = async (where?: string): Promise<CappedRead> => {
+      n++;
+      if (n === 1) return cut;
+      throw new Error(`refused ${String(where).length}`);
+    };
+    const res = await readInIncidentWindow(read, MFT, filterOf(910), WIN, (l) => lines.push(l));
+    expect(res.rows).toEqual(cut.rows);
+    expect(res.window).toBeUndefined();
+    expect(lines.join()).toContain("kept the plain read");
+  });
+
+  it("an injection attempt in the analyst filter is still refused before any read", async () => {
+    const { read, calls } = fakeRead(cut, inWindow);
+    const smuggle = "1=1) SELECT * FROM info() WHERE (1=1";
+    await expect(readInIncidentWindow(read, USN, smuggle, WIN)).rejects.toThrow(/invalid WHERE filter/);
+    await expect(readInIncidentWindow(read, USN, "a = 1 -- x", WIN)).rejects.toThrow(/invalid WHERE filter/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("the analyst filter keeps its own length cap: a longer one is cut to the cap, as before", async () => {
+    const { read, calls } = fakeRead(cut, inWindow);
+    const long = `a = 1 OR b = '${"x".repeat(MAX_WHERE_LENGTH)}'`;
+    await expect(readInIncidentWindow(read, USN, long, WIN)).rejects.toThrow(/invalid WHERE filter/);
+    expect(calls).toHaveLength(0); // cut mid-literal, so unbalanced, so refused — the plain read's own rule
+  });
+
+  it("every window clause fits the generated-text budget, so a capped filter plus a window is never cut", () => {
+    const lengths = Object.keys(WINDOW_TIME_COLUMNS).map((a) => windowWhere(a, WIN)!.length);
+    expect(MAX_WHERE_LENGTH + "() AND ".length + Math.max(...lengths)).toBeLessThanOrEqual(
+      MAX_READ_WHERE_LENGTH,
+    );
   });
 });

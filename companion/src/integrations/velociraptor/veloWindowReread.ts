@@ -11,7 +11,7 @@
 // without a new collection.
 //
 // Lives here, not in velociraptorApi.ts or composition/veloHunts.ts: both sit at their size ceiling.
-import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
+import { containedWhereOrThrow, MAX_READ_WHERE_LENGTH } from "../../analysis/vqlInput.js";
 
 /** An incident window, as ISO-8601 bounds. At least one bound is set. */
 export interface ReadWindow {
@@ -100,12 +100,19 @@ export async function readInIncidentWindow<R extends CappedRead>(
   window: ReadWindow | undefined,
   log?: (line: string) => void,
 ): Promise<WindowedResult<R>> {
-  const plain = await read(baseWhere);
+  // The analyst's filter meets its own rules first — its own length cap and containment — so an
+  // injection attempt is refused before any read, exactly as the plain read alone would refuse it.
+  const base = baseWhere ? containedWhereOrThrow(baseWhere) : undefined;
+  const plain = await read(base || undefined);
   if (!plain.truncated || !window) return plain;
-  const clause = windowWhere(artifact, window);
-  if (!clause) return plain;
-  const where = containedWhereOrThrow(baseWhere ? `(${baseWhere}) AND ${clause}` : clause);
   try {
+    // Built inside the fallback: a failure here must not lose the rows the plain read holds. The
+    // generated clause is checked for containment but never cut to the analyst cap (review, #1969).
+    const clause = windowWhere(artifact, window);
+    if (!clause) return plain;
+    const combined = base ? `(${base}) AND ${clause}` : clause;
+    const where = containedWhereOrThrow(combined, undefined, MAX_READ_WHERE_LENGTH);
+    if (where !== combined) throw new Error("the window filter does not fit the read's WHERE limit");
     const windowed = await read(where);
     return windowed.rows.length ? { ...windowed, window } : plain;
   } catch (e) {
