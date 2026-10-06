@@ -15,13 +15,14 @@ const REQUIRED_SCENARIOS = [
   "memory",
   "network",
   "clean",
+  "web-server",
 ];
 
 describe("versioned production golden corpus (#378)", () => {
   it("documents safe provenance and covers the required investigative scenarios", async () => {
     const corpus = await loadGoldenCorpus();
     expect(corpus.schemaVersion).toBe(1);
-    expect(corpus.version).toBe("1.1.0");
+    expect(corpus.version).toBe("1.2.0");
     expect(new Set(corpus.cases.map((fixture) => fixture.scenario))).toEqual(new Set(REQUIRED_SCENARIOS));
     expect(corpus.cases.every((fixture) => fixture.provenance.origin === "synthetic")).toBe(true);
     expect(corpus.cases.every((fixture) => fixture.provenance.containsClientData === false)).toBe(true);
@@ -40,7 +41,7 @@ describe("versioned production golden corpus (#378)", () => {
   it("gives every forbidden conclusion a claim sentence for the semantic judge (#1704)", async () => {
     const corpus = await loadGoldenCorpus();
     const forbidden = corpus.cases.flatMap((fixture) => fixture.golden.forbiddenConclusions);
-    expect(forbidden).toHaveLength(8);
+    expect(forbidden).toHaveLength(9);
     expect(forbidden.every((item) => (item.claim ?? "").trim().length > 10)).toBe(true);
   });
 
