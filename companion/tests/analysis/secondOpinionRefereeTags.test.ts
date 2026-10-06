@@ -7,6 +7,7 @@ import {
 } from "../../src/analysis/stateTypes.js";
 import { buildSecondOpinionDeltas, buildReconcilePrompt } from "../../src/analysis/secondOpinion.js";
 import { renderEventLine, renderTaggedEventLine } from "../../src/analysis/ai/eventLine.js";
+import { renderStructuredTags } from "../../src/analysis/synthEvidence.js";
 
 // #1960: the referee reads the same structured row tags synthesis reads. Without them a build-time
 // row, a network connection or a long cut command line reached the referee as bare prose, and it
@@ -105,10 +106,29 @@ describe("referee event lines carry the synthesis structured tags (#1960)", () =
     expect(lineFor("bt1")).not.toContain("] <WS01>");
   });
 
-  it("renders a row with no structured fields exactly as before", () => {
+  it("renders a row with no asset and no tags exactly as before", () => {
     const bare = ROWS[3];
     expect(lineFor("bare1").endsWith(` ${renderEventLine(bare)}`)).toBe(true);
     expect(renderTaggedEventLine(bare)).toBe(renderEventLine(bare));
+  });
+
+  // #1980: tags also come from description text, so "no structured fields" is not enough.
+  it("differs from renderEventLine for a no-asset row whose description holds a URL", () => {
+    const url = event("url1", {
+      description: "Download from https://files.example.com/a.ps1",
+    });
+    const tags = renderStructuredTags(url);
+    expect(tags).not.toBe("");
+    expect(renderTaggedEventLine(url)).not.toBe(renderEventLine(url));
+    expect(renderTaggedEventLine(url)).toBe(`${renderEventLine(url)}${tags}`);
+  });
+
+  it("is renderEventLine without the asset, plus renderStructuredTags, for every row", () => {
+    for (const e of ROWS) {
+      const plain = renderEventLine({ ...e, asset: undefined });
+      expect(renderTaggedEventLine(e)).toBe(`${plain}${renderStructuredTags(e)}`);
+      expect(renderTaggedEventLine(e) === renderEventLine(e)).toBe(renderStructuredTags(e) === "");
+    }
   });
 });
 
