@@ -313,7 +313,7 @@ describe("applyNegativeAnswerCoverage — uncovered negative keyQuestion", () =>
     const hunt = job({
       artifacts: [EVTX],
       superTimelineOnly: true,
-      superCappedArtifacts: [{ name: EVTX, kept: 40, total: 100, cap: 50 }],
+      superCappedArtifacts: [{ name: EVTX, kept: 40, total: 100, rows: 100, cap: 50 }],
     });
     const inv = buildCollectionInventory({ events, hunts: [hunt] });
     const out = applyNegativeAnswerCoverage(stateWith(events, [impactQ()]), inv);

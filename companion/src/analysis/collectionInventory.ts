@@ -250,11 +250,12 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
         ? {}
         : {
             superCappedArtifacts: named(j.superCappedArtifacts).map((x) => {
-              const c = x as { name: string; kept?: unknown; total?: unknown; cap?: unknown };
+              const c = x as { name: string; kept?: unknown; total?: unknown; rows?: unknown; cap?: unknown };
               return {
                 name: c.name,
                 kept: Number(c.kept) || 0,
                 total: Number(c.total) || 0,
+                rows: Number(c.rows) || 0,
                 cap: Number(c.cap) || 0,
               };
             }),
@@ -440,7 +441,8 @@ function unreadDetail(rows: number): string {
  * past its share are stored as evidence only — not in the archive — so searching cannot find them.
  */
 function superCappedDetail(c: SuperCappedArtifact): string {
-  return `${c.kept} of ${c.total} rows in the super-timeline — the shared cap was used up; the rest is NOT in the archive. Raise DFIR_SUPERTIMELINE_MAX and collect again`;
+  const rows = c.rows ? ` (from ${c.rows} rows)` : "";
+  return `${c.kept} of ${c.total} mapped events${rows} in the super-timeline — the shared cap was used up; the rest is NOT in the archive. Raise DFIR_SUPERTIMELINE_MAX and collect again`;
 }
 
 /** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
@@ -487,9 +489,12 @@ function huntLines(
       else if (empty.has(a)) {
         const e = emptyLine(job, a, aliasIndex);
         put(a, "empty", e.detail, e.bounded, e.reached);
-      } else if (t) put(a, "truncated", partialDetail(t));
-      else if (capped.has(a)) put(a, "super-capped", superCappedDetail(capped.get(a)!));
-      else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
+      } else if (t || capped.has(a)) {
+        // Both, when both apply (#1982 review): a big MFT read is usually cut at collection too.
+        if (t) put(a, "truncated", partialDetail(t));
+        const c = capped.get(a);
+        if (c) put(a, "super-capped", superCappedDetail(c));
+      } else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
     }
   }
   return [...out.values()].sort(
@@ -631,7 +636,7 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
       ...(Array.isArray(j.superCappedArtifacts) && j.superCappedArtifacts.length
         ? [
             JSON.stringify(
-              j.superCappedArtifacts.map((c) => `${c.name}:${c.kept}/${c.total}:${c.cap}`).sort(),
+              j.superCappedArtifacts.map((c) => `${c.name}:${c.kept}/${c.total}:${c.rows}:${c.cap}`).sort(),
             ),
           ]
         : []),

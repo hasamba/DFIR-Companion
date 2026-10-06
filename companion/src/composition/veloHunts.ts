@@ -444,7 +444,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               cap: superCap,
             },
           );
-          superShare.charge(r.added);
+          superShare.charge(r.offered);
           superTimelineAddedCount += r.added;
           superTimelineEvicted = r.evicted
             ? mergeEvictions(superTimelineEvicted, r.evicted)

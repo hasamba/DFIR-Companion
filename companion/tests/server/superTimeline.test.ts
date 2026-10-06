@@ -562,7 +562,8 @@ describe("super-only hunt: the shared super-timeline cap (#1982)", () => {
         const capped = job.superCappedArtifacts as { name: string; kept: number; total: number }[];
         expect(capped.map((c) => c.name).sort()).toEqual(["Windows.Forensics.Usn", "Windows.NTFS.MFT"]);
         for (const c of capped) {
-          expect(c.total).toBe(20);
+          expect(c.total).toBe(20); // one time per fixture row → one mapped event per row
+          expect((c as { rows?: number }).rows).toBe(20);
           expect(c.kept).toBe(5); // 10 shared by two artifacts of 20 rows — MFT no longer takes it all
         }
         const all = await request(app).get("/cases/c1/super-timeline?limit=100");

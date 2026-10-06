@@ -108,12 +108,14 @@ export interface VeloHuntJob {
 
 /**
  * A super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982): `kept` of its `total`
- * rows reached the super-timeline; the rest are stored as evidence only, NOT in the archive to search.
+ * MAPPED EVENTS were offered to the super-timeline (a row can map to several events); the rest are
+ * stored as evidence only, NOT in the archive to search.
  */
 export interface SuperCappedArtifact {
   name: string;
-  kept: number;
-  total: number;
+  kept: number; // mapped events offered to the super-timeline
+  total: number; // mapped events the artifact produced
+  rows: number; // source rows the artifact returned
   cap: number; // the hunt's DFIR_SUPERTIMELINE_MAX
 }
 

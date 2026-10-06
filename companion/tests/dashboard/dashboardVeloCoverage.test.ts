@@ -43,14 +43,15 @@ describe("veloCoverageHtml", () => {
       imported({
         superTimelineOnly: true,
         superCappedArtifacts: [
-          { name: "Windows.NTFS.MFT", kept: 46000, total: 100000, cap: 100000 },
-          { name: "<b>Usn</b>", kept: 0, total: 5, cap: 100000 },
+          { name: "Windows.NTFS.MFT", kept: 46000, total: 100000, rows: 90000, cap: 100000 },
+          { name: "<b>Usn</b>", kept: 0, total: 5, rows: 5, cap: 100000 },
         ],
       }),
     );
     expect(html).toContain("Windows.NTFS.MFT");
-    expect(html).toContain("46000 of 100000 rows in the super-timeline");
-    expect(html).toContain("0 of 5 rows");
+    expect(html).toContain("46000 of 100000 mapped events");
+    expect(html).toContain("from 90000 rows");
+    expect(html).toContain("0 of 5 mapped events");
     expect(html).toContain("&lt;b&gt;Usn&lt;/b&gt;");
     expect(html).not.toContain("<b>Usn</b>");
     expect(html).toContain("DFIR_SUPERTIMELINE_MAX");

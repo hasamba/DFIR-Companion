@@ -16,10 +16,12 @@
 // It is also why this renders for a SINGLE-artifact hunt, which the multi-artifact coverage line
 // deliberately skips — a one-artifact THOR hunt is exactly the case that showed no warning at all.
 
-// One super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982). The rows past its share
-// are stored as evidence only — not in the super-timeline — so searching there cannot find them.
+// One super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982). The events past its
+// share are stored as evidence only — not in the super-timeline — so searching there cannot find them.
+// Counted in mapped events: one row (an MFT entry) can map to several.
 function veloSuperCapLine(c) {
-  return `${esc(c.name)} (${esc(String(c.kept))} of ${esc(String(c.total))} rows in the super-timeline)`;
+  const rows = c.rows ? ` from ${esc(String(c.rows))} rows` : "";
+  return `${esc(c.name)} (${esc(String(c.kept))} of ${esc(String(c.total))} mapped events${rows} in the super-timeline)`;
 }
 
 // One cut-short artifact. The cap keeps the FIRST rows in read order, not the incident window, so the

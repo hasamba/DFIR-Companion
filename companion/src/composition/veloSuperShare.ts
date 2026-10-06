@@ -8,6 +8,12 @@
 // archive for rows that were never added. The cap is now split by row count before the loop, smallest
 // first: each artifact gets what it needs, up to an equal share of what is left. An artifact the
 // split cut is recorded on the job, so the inventory and the hunt card can say so.
+//
+// The split is in ROWS, the cut is measured in mapped EVENTS. Rows are the only count known before
+// the loop: an event count needs the mapping, and mapping a full MFT twice (once to count) doubles
+// the slowest step of the collect. So a row-based share is the allocation, the ledger charges the
+// events each artifact actually offered (slack flows on), and whether an artifact lost anything is
+// decided from its own mapping result, in events — a row of MFT can map to up to eight.
 
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { runVelociraptorBulk, bulkPathApplies } from "../analysis/ingest/velociraptorBulk.js";
@@ -46,7 +52,7 @@ export function superTimelineShares(rows: readonly number[], cap: number): numbe
 export interface SuperShareLedger {
   /** The event limit for the artifact at `index`. Call once per artifact, in loop order. */
   limit(index: number): number;
-  /** Charge what the artifact actually added, so slack it left goes to a later artifact. */
+  /** Charge the events the artifact offered, so slack it left goes to a later artifact. */
   charge(added: number): void;
 }
 
@@ -95,31 +101,43 @@ export interface SuperOnlyArtifact {
 }
 
 export interface SuperOnlyResult {
+  /** New rows the super-timeline retained (a re-collect's dedup makes this 0). */
   added: number;
+  /** Mapped events offered to the super-timeline: written, or already there from an earlier collect. */
+  offered: number;
   evicted?: SuperEviction;
   imported: boolean;
-  /** Set when the share cut this artifact: kept/total rows, for the job and the inventory. */
+  /** Set when the share cut this artifact's mapped events, for the job and the inventory. */
   capped?: SuperCappedArtifact;
+}
+
+/**
+ * The cut, decided AFTER mapping (#1982 review): one MFT row maps to up to eight events, so a limit
+ * equal to the row count can still lose most of an artifact. Counted in mapped events — offered vs
+ * produced — never the allocated limit, and never as retained rows.
+ */
+function cutRecord(a: SuperOnlyArtifact, mapped: number, offered: number): SuperCappedArtifact | undefined {
+  if (offered >= mapped) return undefined;
+  logLine(
+    `[velociraptor] hunt ${a.huntId}: ${a.name} — ${offered} of ${mapped} mapped events (from ${a.rows} rows) in the super-timeline; the shared cap (${a.cap}) was used up, the rest is stored as evidence only (raise DFIR_SUPERTIMELINE_MAX and collect again)`,
+  );
+  return { name: a.name, kept: offered, total: mapped, rows: a.rows, cap: a.cap };
 }
 
 /**
  * Append one artifact's rows to the super-timeline ONLY (never the forensic timeline), up to its
  * share. The rows are already stored as evidence, so a cut loses nothing from the chain of custody.
+ * A share of zero still maps the artifact, so its record can say how much was lost.
  */
 export async function importSuperOnlyArtifact(
   deps: SuperOnlyDeps,
   a: SuperOnlyArtifact,
 ): Promise<SuperOnlyResult> {
-  const capped =
-    a.limit < a.rows ? { name: a.name, kept: Math.max(0, a.limit), total: a.rows, cap: a.cap } : undefined;
-  if (capped)
-    logLine(
-      `[velociraptor] hunt ${a.huntId}: ${a.name} — ${capped.kept} of ${a.rows} rows in the super-timeline; the shared cap (${a.cap}) was used up, the rest is stored as evidence only (raise DFIR_SUPERTIMELINE_MAX and collect again)`,
-    );
-  if (a.limit <= 0) return { added: 0, imported: false, capped };
+  const limit = Math.max(0, a.limit);
   if (bulkPathApplies(deps.bulkImportSink, a.json)) {
     // A large artifact takes the batched driver (#1439): the same mapping, one batch at a time,
-    // stopped at this artifact's share (#1982).
+    // stopped at this artifact's share (#1982). `events` counts every mapped event after the floor,
+    // and the driver offers the first `limit` of them.
     const res = await runVelociraptorBulk(
       deps.bulkImportSink,
       a.caseId,
@@ -131,23 +149,32 @@ export async function importSuperOnlyArtifact(
         velociraptor: { artifact: a.name, partlyReadArtifact: a.partly },
         minSeverity: a.minSeverity,
         veloUrl: a.veloUrl,
-        superMaxEvents: a.limit,
+        superMaxEvents: limit,
       },
       "super-only",
     );
-    return res
-      ? { added: res.superAppended, evicted: res.superEvicted, imported: true, capped }
-      : { added: 0, imported: false, capped };
+    if (!res) return { added: 0, offered: 0, imported: false };
+    const offered = Math.min(limit, res.events);
+    return {
+      added: res.superAppended,
+      offered,
+      evicted: res.superEvicted,
+      imported: true,
+      capped: cutRecord(a, res.events, offered),
+    };
   }
-  // Parse WITHOUT merging into forensic. Complete record: no aggregation, and the event cap is this
-  // artifact's share, not the 2000-event forensic default.
+  // Parse WITHOUT merging into forensic. Complete record: no aggregation and no event cap here, so
+  // the cut below can count what was lost; the parse path only sees inputs under the bulk threshold.
   const parsed = parseVelociraptorJson(a.json, {
     artifact: a.name,
     aggregate: false,
-    maxEvents: a.limit,
+    maxEvents: Number.MAX_SAFE_INTEGER,
     partlyReadArtifact: a.partly,
   });
-  const floored = applySeverityFloor(parsed.events, a.minSeverity); // the forensic path floors via importVelociraptor
+  const mapped = applySeverityFloor(parsed.events, a.minSeverity); // the forensic path floors via importVelociraptor
+  const floored = mapped.slice(0, limit);
+  const capped = cutRecord(a, mapped.length, floored.length);
+  if (!floored.length) return { added: 0, offered: 0, imported: false, capped };
   // Id by the HUNT id + ARTIFACT NAME: unique across artifacts and STABLE across re-collects — same
   // rows in the same order → same ids → deduped; a straggler that checks in later appends.
   const events: ForensicEvent[] = floored.map((e, i) => ({
@@ -175,5 +202,11 @@ export async function importSuperOnlyArtifact(
   );
   deps.onSuperTimeline?.(a.caseId); // live dashboards refresh as super-only events stream in
   await deps.autoTagImported(a.caseId, events);
-  return { added: appended.retained, evicted: appended.evicted, imported: true, capped };
+  return {
+    added: appended.retained,
+    offered: events.length,
+    evicted: appended.evicted,
+    imported: true,
+    capped,
+  };
 }
