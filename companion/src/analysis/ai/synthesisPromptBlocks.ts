@@ -16,6 +16,7 @@ import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import type { LearnedPatternStore } from "../learnedPatternStore.js";
 import { buildLearnedPatternsBlock } from "../learnedPatterns.js";
+import { buildHostSpikeBlock } from "../hostSpikeLeads.js";
 import { hasScope, type ScopeWindow } from "../scope.js";
 import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationState } from "../stateTypes.js";
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
@@ -54,6 +55,8 @@ export interface SynthesisBlocks {
   contextBlock: string;
   graphBlock: string;
   beaconBlock: string;
+  /** Hosts far busier than their peers or their own usual rate, as leads to verify. */
+  hostSpikeBlock: string;
   attackPhaseBlock: string;
   unknownsBlock: string;
   /** What this case holds per source and host, and the rules for negative answers (#1588). */
@@ -135,6 +138,8 @@ export async function buildSynthesisBlocks(
       { maxEdges: DEFAULT_MAX_GRAPH_EDGES },
     ),
     beaconBlock: buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions())),
+    // The report's host-activity spikes, over the SCOPED forensic timeline, as leads (hostSpikeLeads.ts).
+    hostSpikeBlock: buildHostSpikeBlock(scopedEvents),
     attackPhaseBlock: buildAttackPhaseDigest(buildAttackPhases(scopedEvents)),
     // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases,
     // likely-next techniques) so the model builds on what's MISSING instead of glossing over it.
@@ -345,6 +350,7 @@ function leadingBlocks(b: SynthesisBlocks): string {
     b.contextBlock +
     b.graphBlock +
     b.beaconBlock +
+    b.hostSpikeBlock +
     b.attackPhaseBlock +
     b.unknownsBlock +
     b.collectionInventoryBlock +

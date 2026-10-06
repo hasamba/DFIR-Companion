@@ -36,7 +36,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { LOLBINS, NOISY_LOLBINS } from "./winProcessBaseline.js";
-import { DUAL_USE, OFFENSIVE_TOOLS } from "./attackToolNames.js";
+import { DUAL_USE, OFFENSIVE_TOOLS, REMOTE_ACCESS_TOOLS } from "./attackToolNames.js";
 
 export interface PrefetchSignal {
   severity: Severity;
@@ -91,6 +91,7 @@ export function prefetchSignal(exe: string, exePath = ""): PrefetchSignal | null
 
   const ids = DUAL_USE[name];
   if (ids) return { severity: "Medium", mitre: [...ids] };
+  if (REMOTE_ACCESS_TOOLS.re.test(name)) return { severity: "Medium", mitre: [...REMOTE_ACCESS_TOOLS.ids] };
 
   // Any remaining LOLBin, minus the ones that run constantly on a stock host (cmd/powershell/
   // rundll32/… — see NOISY_LOLBINS), whose presence in prefetch says nothing at all. The named

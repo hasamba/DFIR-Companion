@@ -1,0 +1,612 @@
+{
+  "schemaVersion": 1,
+  "id": "host-spike-staging",
+  "title": "Synthetic archive-staging burst on one file server among quiet hosts",
+  "scenario": "lateral-movement",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional Sysmon and Windows event rows written for this corpus; FS-02 bursts against two quiet workstations so the host-activity-spike lead fires.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-10-06"
+  },
+  "seedEvents": [
+    {
+      "id": "spk-r1",
+      "timestamp": "2026-06-02T09:00:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r2",
+      "timestamp": "2026-06-02T09:05:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r3",
+      "timestamp": "2026-06-02T09:10:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r4",
+      "timestamp": "2026-06-02T09:15:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r5",
+      "timestamp": "2026-06-02T09:20:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r6",
+      "timestamp": "2026-06-02T09:25:00.000Z",
+      "description": "Windows Defender signature update installed on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r7",
+      "timestamp": "2026-06-02T09:30:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r8",
+      "timestamp": "2026-06-02T09:35:00.000Z",
+      "description": "Windows Defender signature update installed on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r9",
+      "timestamp": "2026-06-02T09:40:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r10",
+      "timestamp": "2026-06-02T09:45:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r11",
+      "timestamp": "2026-06-02T09:50:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r12",
+      "timestamp": "2026-06-02T09:55:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r13",
+      "timestamp": "2026-06-02T10:00:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r14",
+      "timestamp": "2026-06-02T10:05:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r15",
+      "timestamp": "2026-06-02T10:10:00.000Z",
+      "description": "Windows Defender signature update installed on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r16",
+      "timestamp": "2026-06-02T10:15:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r17",
+      "timestamp": "2026-06-02T10:20:00.000Z",
+      "description": "Windows Defender signature update installed on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r18",
+      "timestamp": "2026-06-02T10:25:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r19",
+      "timestamp": "2026-06-02T10:30:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r20",
+      "timestamp": "2026-06-02T10:35:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r21",
+      "timestamp": "2026-06-02T10:40:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r22",
+      "timestamp": "2026-06-02T10:45:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r23",
+      "timestamp": "2026-06-02T10:50:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r24",
+      "timestamp": "2026-06-02T10:55:00.000Z",
+      "description": "Windows Defender signature update installed on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r25",
+      "timestamp": "2026-06-02T11:00:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r26",
+      "timestamp": "2026-06-02T11:05:00.000Z",
+      "description": "Windows Defender signature update installed on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r27",
+      "timestamp": "2026-06-02T11:10:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r28",
+      "timestamp": "2026-06-02T11:15:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r29",
+      "timestamp": "2026-06-02T11:20:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r30",
+      "timestamp": "2026-06-02T11:25:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r31",
+      "timestamp": "2026-06-02T11:30:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r32",
+      "timestamp": "2026-06-02T11:35:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r33",
+      "timestamp": "2026-06-02T11:40:00.000Z",
+      "description": "Windows Defender signature update installed on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r34",
+      "timestamp": "2026-06-02T11:45:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r35",
+      "timestamp": "2026-06-02T11:50:00.000Z",
+      "description": "Windows Defender signature update installed on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r36",
+      "timestamp": "2026-06-02T11:55:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r37",
+      "timestamp": "2026-06-02T12:00:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r38",
+      "timestamp": "2026-06-02T12:05:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r39",
+      "timestamp": "2026-06-02T12:10:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r40",
+      "timestamp": "2026-06-02T12:15:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r41",
+      "timestamp": "2026-06-02T12:20:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r42",
+      "timestamp": "2026-06-02T12:25:00.000Z",
+      "description": "Windows Defender signature update installed on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r43",
+      "timestamp": "2026-06-02T12:30:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r44",
+      "timestamp": "2026-06-02T12:35:00.000Z",
+      "description": "Windows Defender signature update installed on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r45",
+      "timestamp": "2026-06-02T12:40:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r46",
+      "timestamp": "2026-06-02T12:45:00.000Z",
+      "description": "Windows Defender signature update installed on WS-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-01",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r47",
+      "timestamp": "2026-06-02T12:50:00.000Z",
+      "description": "Scheduled task \\Microsoft\\Windows\\UpdateOrchestrator\\Schedule Scan ran on WS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-r48",
+      "timestamp": "2026-06-02T12:55:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_monitor [Network] on FS-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FS-02",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "spk-b1",
+      "timestamp": "2026-06-02T12:31:00.000Z",
+      "description": "Sysmon Process Create (EID 1) on FS-02: C:\\ProgramData\\s\\7za.exe a -mx9 -v200m C:\\ProgramData\\s\\hr.7z D:\\Shares\\HR\\Payroll (user CORP\\jdoe-adm)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1560.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\7za.exe",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b2",
+      "timestamp": "2026-06-02T12:30:20.000Z",
+      "description": "Sysmon Process Create (EID 1) on FS-02: cmd.exe /c dir /s /b D:\\Shares\\HR > C:\\ProgramData\\s\\list.txt (user CORP\\jdoe-adm)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1083"],
+      "asset": "FS-02",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b3",
+      "timestamp": "2026-06-02T12:32:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.001 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.001",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b4",
+      "timestamp": "2026-06-02T12:33:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.002 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.002",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b5",
+      "timestamp": "2026-06-02T12:34:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.003 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.003",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b6",
+      "timestamp": "2026-06-02T12:35:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.004 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.004",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b7",
+      "timestamp": "2026-06-02T12:36:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.005 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.005",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "spk-b8",
+      "timestamp": "2026-06-02T12:37:30.000Z",
+      "description": "Sysmon File created (EID 11) - Image=C:\\ProgramData\\s\\7za.exe - TargetFilename=C:\\ProgramData\\s\\hr.7z.006 @ FS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1074.001"],
+      "asset": "FS-02",
+      "path": "C:\\ProgramData\\s\\hr.7z.006",
+      "sources": ["Sysmon"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "spk-f1",
+        "severity": "High",
+        "confidence": 80,
+        "confidenceReason": "The 7za command line and the six archive volumes it wrote are on the same host within minutes.",
+        "title": "Payroll share staged into a split 7-Zip archive on FS-02",
+        "description": "CORP\\jdoe-adm listed D:\\Shares\\HR and compressed D:\\Shares\\HR\\Payroll with 7za.exe into C:\\ProgramData\\s\\hr.7z volumes on FS-02.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1560.001", "T1074.001"],
+        "status": "open",
+        "relatedEventIds": ["spk-b1", "spk-b2", "spk-b3"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "CORP\\jdoe-adm enumerated the HR share on FS-02 and staged the payroll folder into a split 7-Zip archive.",
+    "narrativeTimeline": "",
+    "summary": "Data was staged on FS-02. No network evidence shows whether the archive left the host.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "spk-n1",
+        "priority": "high",
+        "action": "Collect proxy, firewall and EDR network logs for FS-02 after 12:30 UTC",
+        "rationale": "Shows whether the hr.7z volumes were transferred out.",
+        "pointer": "FS-02 egress 2026-06-02 12:30Z onward",
+        "relatedFindingIds": ["spk-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Exfiltration of the staged archive",
+        "status": "unknown",
+        "basis": "Only the archive creation is in the evidence.",
+        "gap": "No network or transfer record for FS-02 was collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "fs02-staging",
+        "requiredTerms": ["FS-02", "7-zip|7za|7z|archive|compressed|staged|staging"],
+        "evidenceEventIds": ["spk-b1"],
+        "confidence": {
+          "min": 50,
+          "max": 100
+        }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [
+      {
+        "id": "exfil-without-egress",
+        "terms": [
+          "data was exfiltrated",
+          "archive was exfiltrated",
+          "exfiltrated the payroll",
+          "exfiltration occurred"
+        ],
+        "claim": "The staged payroll archive was exfiltrated from FS-02."
+      }
+    ],
+    "uncertainties": [
+      {
+        "id": "exfil-gap",
+        "topicTerms": ["exfiltration|exfiltrated|egress|transfer|upload"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "collect-egress",
+        "requiredTerms": ["FS-02", "proxy|firewall|netflow|network|egress|EDR"]
+      }
+    ],
+    "expectAbstention": false
+  }
+}

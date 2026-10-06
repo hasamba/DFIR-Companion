@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "id": "rmm-anydesk-persistence",
+  "title": "Synthetic AnyDesk unattended install for persistence after an external RDP logon",
+  "scenario": "remote-access",
+  "traits": ["complete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional Security, Sysmon, System and Prefetch rows written for this corpus; graded as the importers and tagger grade them.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-10-06"
+  },
+  "seedEvents": [
+    {
+      "id": "rmm-e1",
+      "timestamp": "2026-07-11T03:12:00.000Z",
+      "description": "Security Logon (EID 4624) - svc_backup [RemoteInteractive/RDP from 203.0.113.77] @ WS-07",
+      "severity": "High",
+      "mitreTechniques": ["T1021.001"],
+      "asset": "WS-07",
+      "srcIp": "203.0.113.77",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "rmm-e2",
+      "timestamp": "2026-07-11T03:15:10.000Z",
+      "description": "Sysmon Process Create (EID 1) - Image=C:\\Users\\svc_backup\\Downloads\\AnyDesk.exe - CommandLine=AnyDesk.exe --install \"C:\\ProgramData\\AnyDesk\" --start-with-win --silent @ WS-07",
+      "severity": "High",
+      "mitreTechniques": ["T1219"],
+      "asset": "WS-07",
+      "path": "C:\\Users\\svc_backup\\Downloads\\AnyDesk.exe",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "rmm-e3",
+      "timestamp": "2026-07-11T03:15:14.000Z",
+      "description": "System Service installed (EID 7045) - ServiceName=AnyDesk - ImagePath=\"C:\\ProgramData\\AnyDesk\\AnyDesk.exe\" --service @ WS-07",
+      "severity": "High",
+      "mitreTechniques": ["T1543.003"],
+      "asset": "WS-07",
+      "path": "C:\\ProgramData\\AnyDesk\\AnyDesk.exe",
+      "sources": ["EVTX"]
+    },
+    {
+      "id": "rmm-e4",
+      "timestamp": "2026-07-11T03:15:40.000Z",
+      "description": "Sysmon Process Create (EID 1) - Image=C:\\Windows\\System32\\cmd.exe - CommandLine=cmd.exe /c echo ******** | C:\\ProgramData\\AnyDesk\\AnyDesk.exe --set-password @ WS-07",
+      "severity": "High",
+      "mitreTechniques": ["T1219"],
+      "asset": "WS-07",
+      "sources": ["Sysmon"]
+    },
+    {
+      "id": "rmm-e5",
+      "timestamp": "2026-07-11T03:20:00.000Z",
+      "description": "Prefetch: ANYDESK.EXE executed (run 4×)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1219"],
+      "asset": "WS-07",
+      "path": "\\VOLUME{01d2}\\PROGRAMDATA\\ANYDESK\\ANYDESK.EXE",
+      "sources": ["Prefetch"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "rmm-f1",
+        "severity": "High",
+        "confidence": 85,
+        "confidenceReason": "The silent install, the service and the unattended password are three records of one setup on WS-07.",
+        "title": "AnyDesk installed for unattended access on WS-07",
+        "description": "Minutes after an RDP logon from 203.0.113.77, svc_backup installed AnyDesk silently as a service and set an unattended-access password, giving persistent remote access.",
+        "relatedIocs": ["rmm-i1"],
+        "mitreTechniques": ["T1219", "T1543.003"],
+        "status": "open",
+        "relatedEventIds": ["rmm-e1", "rmm-e2", "rmm-e3", "rmm-e4"]
+      }
+    ],
+    "iocs": [
+      {
+        "id": "rmm-i1",
+        "type": "ip",
+        "value": "203.0.113.77"
+      }
+    ],
+    "mitreTechniques": [],
+    "attackerPath": "203.0.113.77 logged on to WS-07 over RDP as svc_backup and installed AnyDesk for unattended access.",
+    "narrativeTimeline": "",
+    "summary": "AnyDesk was set up as persistent remote access on WS-07. What was done through it is not in the evidence.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "rmm-n1",
+        "priority": "high",
+        "action": "Collect the AnyDesk ad_svc.trace and connection_trace.txt logs from WS-07",
+        "rationale": "They record the incoming AnyDesk sessions and their source IDs.",
+        "pointer": "WS-07 C:\\ProgramData\\AnyDesk",
+        "relatedFindingIds": ["rmm-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Activity performed over the AnyDesk sessions",
+        "status": "unknown",
+        "basis": "Only the install and setup are recorded.",
+        "gap": "No AnyDesk session log was collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "anydesk-persistence",
+        "requiredTerms": ["AnyDesk", "persistence|persistent|unattended|service|installed|password"],
+        "evidenceEventIds": ["rmm-e2"],
+        "confidence": {
+          "min": 55,
+          "max": 100
+        }
+      }
+    ],
+    "iocs": [
+      {
+        "type": "ip",
+        "value": "203.0.113.77"
+      }
+    ],
+    "forbiddenConclusions": [
+      {
+        "id": "ransomware-unsupported",
+        "terms": ["ransomware was deployed", "files were encrypted", "encrypted the files"],
+        "claim": "Ransomware was deployed or files were encrypted on WS-07."
+      }
+    ],
+    "uncertainties": [
+      {
+        "id": "session-activity",
+        "topicTerms": ["anydesk|remote session|sessions|operator"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "collect-anydesk-logs",
+        "requiredTerms": ["AnyDesk", "trace|log|logs|connection"]
+      }
+    ],
+    "expectAbstention": false
+  }
+}

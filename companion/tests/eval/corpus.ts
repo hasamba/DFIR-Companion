@@ -17,6 +17,7 @@ export const CORPUS_SCENARIOS = [
   "network",
   "clean",
   "web-server",
+  "remote-access",
 ] as const;
 
 export const CORPUS_TRAITS = [
