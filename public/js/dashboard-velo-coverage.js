@@ -18,9 +18,15 @@
 
 // One cut-short artifact. The cap keeps the FIRST rows in read order, not the incident window, so the
 // kept rows' time span is named when the job stored one (#1950) — anything outside it was never read.
+// A read re-read inside the incident window (#1969) says so, and whether every window row fit.
 function veloCutLine(t) {
   const span = t.earliest && t.latest ? `, dated ${esc(String(t.earliest))} to ${esc(String(t.latest))}` : "";
-  return `${esc(t.name)} (kept ${esc(String(t.kept))} rows${span}, there were more)`;
+  const n = esc(String(t.kept));
+  if (!t.windowStart && !t.windowEnd) return `${esc(t.name)} (kept ${n} rows${span}, there were more)`;
+  const from = esc(String(t.windowStart || "the beginning"));
+  const win = `the incident window ${from} to ${esc(String(t.windowEnd || "now"))}`;
+  const kept = t.windowFull ? `kept all ${n} rows inside ${win}` : `kept the first ${n} rows inside ${win}`;
+  return `${esc(t.name)} (${kept}${span}, rows outside it were not read)`;
 }
 
 /* exported veloCoverageHtml */
@@ -49,8 +55,11 @@ function veloCoverageHtml(job) {
       .map(veloCutLine)
       .join("<br>");
     html += box(
-      `&#9888; INCOMPLETE &mdash; ${names}<br>Findings past the cap were never read. Raise ` +
-        `DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
+      `&#9888; INCOMPLETE &mdash; ${names}<br>Findings past the cap were never read. ` +
+        (job.timeScope
+          ? "Raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again."
+          : "Run the bundle again and collect again with a time scope set to the incident window, " +
+            "or raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS."),
       "var(--sev-high)",
     );
   }

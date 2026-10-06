@@ -66,6 +66,24 @@ function veloWireOpenLibrary(el) {
   );
 }
 
+// Start the run form's time scope at the case scope window (#1969), so a collect is bounded at the
+// source and the row cap is spent inside the incident window. Returns true when it filled the form.
+// The inputs are read as UTC (see veloTimeScopeBody), so the ISO bounds are sliced, not localised.
+/* exported veloPrefillTimeScope */
+function veloPrefillTimeScope(form, scope) {
+  const utc = (v) => {
+    const ms = typeof v === "string" ? Date.parse(v) : NaN;
+    return Number.isNaN(ms) ? "" : new Date(ms).toISOString().slice(0, 16);
+  };
+  const start = utc(scope && scope.start);
+  if (!start) return false;
+  form.querySelector(".velo-timescope").value = "custom";
+  form.querySelector(".velo-ts-start").value = start;
+  form.querySelector(".velo-ts-end").value = utc(scope.end);
+  form.querySelector(".velo-ts-custom").style.display = "inline-flex";
+  return true;
+}
+
 function veloRunForm(id) {
   const forms = document.querySelectorAll(".velo-run-form");
   for (const f of forms) if (f.dataset.id === id) return f;
@@ -143,6 +161,8 @@ function toggleVeloRunForm(id) {
     veloTimeScopePreview(id, form);
   form.querySelector(".velo-ts-end").onchange = () =>
     veloTimeScopePreview(id, form);
+  const caseScope = window.DfirScope ? window.DfirScope.get() : null;
+  if (veloPrefillTimeScope(form, caseScope)) veloTimeScopePreview(id, form);
 }
 
 window.renderVeloRunList = renderVeloRunList;

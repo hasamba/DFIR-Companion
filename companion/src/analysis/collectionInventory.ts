@@ -7,7 +7,7 @@ import {
   type EvidenceClass,
 } from "./refutationGate.js";
 import type { ForensicEvent } from "./stateTypes.js";
-import type { VeloHuntJob } from "./veloHuntStore.js";
+import { keptRowsNote, type TruncatedArtifact, type VeloHuntJob } from "./veloHuntStore.js";
 
 type HuntReachedClient = NonNullable<VeloHuntJob["reachedClients"]>[number];
 
@@ -214,13 +214,20 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
           total?: unknown;
           earliest?: unknown;
           latest?: unknown;
+          windowStart?: unknown;
+          windowEnd?: unknown;
+          windowFull?: unknown;
         };
         const span = spanTime(t.earliest) && spanTime(t.latest);
+        const [ws, we] = [spanTime(t.windowStart), spanTime(t.windowEnd)]; // #1969
         return {
           name: t.name,
           kept: Number(t.kept) || 0,
           total: Number(t.total) || 0,
           ...(span ? { earliest: spanTime(t.earliest), latest: spanTime(t.latest) } : {}),
+          ...(ws ? { windowStart: ws } : {}),
+          ...(we ? { windowEnd: we } : {}),
+          ...(ws || we ? { windowFull: t.windowFull === true } : {}),
         };
       }),
       unreadArtifacts: named(j.unreadArtifacts).map((x) => ({
@@ -373,9 +380,16 @@ function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasInd
  * order, not the incident window, so the line names the kept span when it is known. It never prints
  * the read's total: that is the cap plus one, not how many rows the artifact really had.
  */
-function partialDetail(t: { kept: number; earliest?: string; latest?: string }): string {
+function partialDetail(t: TruncatedArtifact): string {
   const span = t.earliest && t.latest ? ` (dated ${t.earliest} to ${t.latest})` : "";
-  return `partial — first ${t.kept} rows kept${span}, later rows in read order NOT COLLECTED (row cap)`;
+  // #1969: a cut-short read re-read inside the incident window kept window rows, not the first rows.
+  const lost =
+    !t.windowStart && !t.windowEnd
+      ? "later rows in read order"
+      : t.windowFull
+        ? "rows outside the window"
+        : "rows outside the window and later window rows";
+  return `partial — ${keptRowsNote(t)}${span}, ${lost} NOT COLLECTED (row cap)`;
 }
 
 // A stored kept-span bound (#1950): an ISO time, or "". The job file is on disk and the value reaches
@@ -551,7 +565,13 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
       (j.skippedArtifacts ?? []).map((s) => s.name).sort(),
       // The kept span (#1950) only when present, so an older job keeps its old signature.
       (j.truncatedArtifacts ?? [])
-        .map((t) => `${t.name}:${t.kept}/${t.total}${t.earliest ? `:${t.earliest}-${t.latest}` : ""}`)
+        .map(
+          (t) =>
+            `${t.name}:${t.kept}/${t.total}${t.earliest ? `:${t.earliest}-${t.latest}` : ""}` +
+            (t.windowStart || t.windowEnd
+              ? `:w${t.windowStart ?? ""}-${t.windowEnd ?? ""}:${t.windowFull}`
+              : ""),
+        )
         .sort(),
       !!j.superTimelineOnly,
       // What decides fleet-wide and bounded (#1604) — a change there changes what the inventory says.

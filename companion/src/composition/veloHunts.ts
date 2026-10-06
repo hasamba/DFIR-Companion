@@ -34,6 +34,8 @@ import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPolle
 import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClients.js";
 import { inventorySignature } from "../analysis/collectionInventory.js";
 import { truncatedRecord } from "../analysis/veloKeptSpan.js";
+import { ScopeStore } from "../analysis/scope.js";
+import { incidentWindow, readInIncidentWindow } from "../integrations/velociraptor/veloWindowReread.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
@@ -280,15 +282,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // For a suggested fleet hunt the single Custom.Hunt artifact stores rows under named sources
       // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
       //
-      // STREAMED, not buffered: a bundle can carry dozens of artifacts, and this used to fetch every one
-      // into a single in-memory map, then JSON.stringify the whole thing at once before importing — on a
-      // large bundle that held the entire hunt's rows (plus a second, stringified copy) in the process's
-      // heap simultaneously, and took the whole server down with it (no crash trace, since V8 exiting on
-      // heap exhaustion happens before any of our own logging can run). So this loops `huntResults()`
-      // directly (not the client's huntResultsByArtifact() convenience wrapper, which returns everything
-      // as one map) and writes each artifact's rows to a scratch file the moment they arrive, dropping
-      // them from memory right after — at most one artifact's rows are ever live at once, both here and
-      // again in step 3 on the way back in.
+      // STREAMED, not buffered: fetching every artifact into one map and JSON.stringify-ing it held a
+      // big hunt's rows twice in the heap and took the server down with no crash trace. So this loops
+      // per artifact (not huntResultsByArtifact(), which returns one map) and writes each artifact's rows
+      // to a scratch file as they arrive — at most one artifact's rows are live at once, here and in step 3.
+      // A cut-short read is re-read once inside the incident window when one is known (#1969).
+      const caseScope = await new ScopeStore(store).load(caseId).catch(() => null);
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
       scratchDir = await mkdtemp(path.join(tmpdir(), "dfir-velo-hunt-"));
@@ -304,10 +303,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         try {
           // huntArtifactRows, not huntResults: a multi-source artifact's bare-name read is empty and
           // SILENT (see artifactRefs.ts), landing in `emptyArtifacts` as "found nothing on every host".
-          const srcs = sourcesByArtifact?.[name] ?? [];
-          const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name], true);
+          const [srcs, hunt] = [sourcesByArtifact?.[name] ?? [], job.huntId];
+          const read = (where?: string) => client.huntArtifactRows(hunt, name, srcs, where, true);
+          const win = incidentWindow(job.timeScope, caseScope, name); // hunt scope, else case scope
+          const res = await readInIncidentWindow(read, name, job.filters?.[name], win, logLine);
           rows = res.rows;
-          if (res.truncated) cutShort.push(truncatedRecord(name, rows, res.total)); // + kept span (#1950)
+          if (res.truncated || res.window) cutShort.push(truncatedRecord(name, rows, res.total, res)); // #1950
           if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
@@ -327,7 +328,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
         artifactFiles.push({ name, file, rows: rows.length });
       }
-      for (const w of collectWarnings(job.huntId, skipped, cutShort, unread)) logLine(w);
+      for (const w of collectWarnings(job.huntId, skipped, cutShort, unread, !!job.timeScope)) logLine(w);
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.

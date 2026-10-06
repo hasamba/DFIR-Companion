@@ -137,6 +137,17 @@ export interface TruncatedArtifact {
   // incident window, so anything outside this span was never collected. Absent on older jobs.
   earliest?: string;
   latest?: string;
+  // The incident window a cut-short read was re-read inside (#1969). Absent = the plain read was kept.
+  windowStart?: string;
+  windowEnd?: string;
+  windowFull?: boolean; // true = every row inside the window fit under the cap
+}
+
+/** Which rows a cut-short read kept, in words (#1969): the incident window, or the first rows in read order. */
+export function keptRowsNote(t: TruncatedArtifact): string {
+  if (!t.windowStart && !t.windowEnd) return `first ${t.kept} rows kept`;
+  const win = `the incident window ${t.windowStart ?? "the beginning"} to ${t.windowEnd ?? "now"}`;
+  return t.windowFull ? `all ${t.kept} rows inside ${win} kept` : `first ${t.kept} rows inside ${win} kept`;
 }
 
 /**
@@ -160,6 +171,7 @@ export function collectWarnings(
   skipped: readonly SkippedArtifact[],
   cut: readonly TruncatedArtifact[],
   unread: readonly UnreadArtifact[] = [],
+  timeScoped = false, // the hunt ran with a launch time scope, so "add a time scope" is no advice
 ): string[] {
   const out: string[] = [];
   if (skipped.length)
@@ -171,9 +183,12 @@ export function collectWarnings(
   if (cut.length)
     out.push(
       `[velociraptor] hunt ${huntId}: ${cut.length} artifact(s) hit the collection row cap — ` +
-        `${cut.map((t) => `${t.name} (kept ${t.kept}${t.earliest ? `, ${t.earliest} to ${t.latest}` : ""})`).join("; ")}. ` +
-        `Later rows in read order were NOT COLLECTED, so findings BEYOND the cap were never ` +
-        `read; raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
+        `${cut.map((t) => `${t.name} (${keptRowsNote(t)}${t.earliest ? `, ${t.earliest} to ${t.latest}` : ""})`).join("; ")}. ` +
+        `The other rows were NOT COLLECTED, so findings BEYOND the cap were never read; ` +
+        (timeScoped
+          ? "raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again."
+          : "collect again with a time scope set to the incident window, or raise " +
+            "DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again."),
     );
   if (unread.length)
     out.push(

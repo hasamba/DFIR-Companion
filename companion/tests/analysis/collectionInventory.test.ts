@@ -183,6 +183,62 @@ describe("collection inventory (#1588)", () => {
     expect(text).not.toContain("of 100001");
   });
 
+  // #1969 — a cut-short read re-read inside the incident window says WHICH rows it kept.
+  it("a partial line from a windowed re-read names the incident window it kept", () => {
+    const usn = "Windows.Forensics.Usn";
+    const t = {
+      name: usn,
+      kept: 40,
+      total: 40,
+      windowStart: "2026-09-20T00:00:00.000Z",
+      windowEnd: "2026-09-21T00:00:00.000Z",
+      windowFull: true,
+    };
+    const text = renderCollectionInventory(
+      buildCollectionInventory({ events: [], hunts: [job({ artifacts: [usn], truncatedArtifacts: [t] })] }),
+    );
+    expect(text).toContain(
+      "all 40 rows inside the incident window 2026-09-20T00:00:00.000Z to 2026-09-21T00:00:00.000Z kept",
+    );
+    expect(text).toContain("rows outside the window NOT COLLECTED");
+    expect(text).not.toContain("later rows in read order");
+    const partial = renderCollectionInventory(
+      buildCollectionInventory({
+        events: [],
+        hunts: [
+          job({ artifacts: [usn], truncatedArtifacts: [{ ...t, windowEnd: undefined, windowFull: false }] }),
+        ],
+      }),
+    );
+    expect(partial).toContain(
+      "first 40 rows inside the incident window 2026-09-20T00:00:00.000Z to now kept",
+    );
+    expect(partial).toContain("later window rows");
+  });
+
+  it("the sanitizer keeps an ISO window and drops a window bound that is not a timestamp", () => {
+    const [clean] = sanitizeHuntJobs([
+      job({
+        artifacts: ["A"],
+        truncatedArtifacts: [
+          {
+            name: "A",
+            kept: 1,
+            total: 1,
+            windowStart: "2026-09-20T00:00:00.000Z",
+            windowEnd: "evil",
+            windowFull: true,
+          },
+        ],
+      }),
+    ]);
+    expect(clean.truncatedArtifacts).toEqual([
+      { name: "A", kept: 1, total: 1, windowStart: "2026-09-20T00:00:00.000Z", windowFull: true },
+    ]);
+    const plain = job({ artifacts: ["A"], truncatedArtifacts: [{ name: "A", kept: 1, total: 1 }] });
+    expect(inventorySignature([plain])).not.toBe(inventorySignature([clean]));
+  });
+
   it("a partial line from an older job with no span still drops the misleading total", () => {
     const inv = buildCollectionInventory({
       events: [],

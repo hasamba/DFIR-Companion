@@ -44,4 +44,20 @@ describe("truncatedRecord", () => {
   it("omits the span fields when no kept row is dated", () => {
     expect(truncatedRecord("Custom.X", [{ x: 1 }], 2)).toEqual({ name: "Custom.X", kept: 1, total: 2 });
   });
+
+  // #1969 — a cut-short read re-read inside the incident window records which window it kept.
+  it("records the incident window a re-read kept, and whether every window row fit", () => {
+    const rows = [{ Timestamp: "2026-09-20T05:00:00Z" }];
+    const win = { start: "2026-09-20T00:00:00.000Z", end: "2026-09-21T00:00:00.000Z" };
+    expect(truncatedRecord("U", rows, 1, { window: win, truncated: false })).toMatchObject({
+      windowStart: win.start,
+      windowEnd: win.end,
+      windowFull: true,
+    });
+    expect(truncatedRecord("U", rows, 2, { window: { start: win.start }, truncated: true })).toMatchObject({
+      windowStart: win.start,
+      windowFull: false,
+    });
+    expect(truncatedRecord("U", rows, 2, { truncated: true })).not.toHaveProperty("windowStart");
+  });
 });
