@@ -207,6 +207,7 @@
     "buildTimeWindow.ts": "analysis/detect",
     "burstDetect.ts": "analysis/detect",
     "emulationAgentContext.ts": "analysis/detect",
+    "initialAccessCandidates.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
     "canonicalProvenanceCompact.ts": "shared",
     "canonicalProvenanceRestamp.ts": "shared",

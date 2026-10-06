@@ -9,6 +9,7 @@ import {
   type FalsePositiveMarker,
 } from "../falsePositive.js";
 import { buildEmulationAgentBlock } from "../emulationAgentContext.js";
+import { buildEntryCandidatesBlock } from "../initialAccessCandidates.js";
 import { corroborationLabel } from "../findingGrounding.js";
 import { textMentionsFindingId } from "../fpCascade.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
@@ -73,6 +74,8 @@ export interface SynthesisBlocks {
   falsePositiveBlock: string;
   authorizedContextBlock: string;
   emulationAgentBlock: string;
+  /** Launches before the first script-file write, per host, to weigh as entry candidates (#1968). */
+  entryCandidatesBlock: string;
   learnedPatternsBlock: string;
 }
 
@@ -155,6 +158,8 @@ export async function buildSynthesisBlocks(
     authorizedContextBlock: buildAuthorizedContextBlock(markers),
     // #1957: a Caldera sandcat agent in the SCOPED forensic timeline, stated as a fact to weigh.
     emulationAgentBlock: buildEmulationAgentBlock(scopedEvents),
+    // #1968: launches just before the first script write in the SCOPED forensic timeline, to weigh.
+    entryCandidatesBlock: buildEntryCandidatesBlock(scopedEvents),
     learnedPatternsBlock,
   };
 }
@@ -369,6 +374,7 @@ export function overheadSourceText(b: SynthesisBlocks, lastSummary: string): str
     b.falsePositiveBlock +
     b.authorizedContextBlock +
     b.emulationAgentBlock +
+    b.entryCandidatesBlock +
     b.learnedPatternsBlock +
     lastSummary
   );
@@ -395,6 +401,7 @@ export function assembleUserPrompt(b: SynthesisBlocks, t: TimelineSection): stri
     (b.falsePositiveBlock ? `${b.falsePositiveBlock}\n\n` : "") +
     (b.authorizedContextBlock ? `${b.authorizedContextBlock}\n\n` : "") +
     (b.emulationAgentBlock ? `${b.emulationAgentBlock}\n\n` : "") +
+    (b.entryCandidatesBlock ? `${b.entryCandidatesBlock}\n\n` : "") +
     (b.learnedPatternsBlock ? `${b.learnedPatternsBlock}\n\n` : "") +
     `Running notes: ${t.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`
   );
