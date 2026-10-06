@@ -21,7 +21,7 @@ import { parseReachedClients, reachedClientsVql, type HuntReachedClient } from "
 export type { HuntReachedClient } from "./huntReachedClients.js";
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
-import { cappedReadProgram, capNewest, sortedReadTimeout } from "./veloNewestRead.js";
+import { cappedReadProgram, sortNewest, sortedReadTimeout } from "./veloNewestRead.js";
 import type { NewestOrder, NewestRun } from "./veloNewestRead.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
@@ -865,7 +865,7 @@ export class VelociraptorClient {
     const program = cappedReadProgram(froms, sanitizeWhere(where), limit, order);
     const timeout = order ? sortedReadTimeout(this.config.timeoutMs) : this.config.timeoutMs; // sort = full read
     const { rows, reason } = await this.runRawLogged(program, this.collectCap(), timeout);
-    return order ? capNewest(rows, limit - 1, reason) : this.cap(rows, limit - 1);
+    return order ? sortNewest(rows, limit - 1, reason) : this.cap(rows, limit - 1); // cut after the merge
   }
 
   // Read one hunt artifact's rows, recovering the multi-source case — artifactRefs.ts explains what

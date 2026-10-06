@@ -100,7 +100,9 @@ export async function readHuntArtifactRows(
   max?: number, // row ceiling for the MERGED result — see capRun below
   ordered = false, // #1983: the reads carry a newest-first sort key — merge by it, then strip it
 ): Promise<HuntArtifactRead> {
-  const done = (run: HuntArtifactRead): HuntArtifactRead => (ordered ? finishNewest(run) : run);
+  // #1983: a newest-first read is cut ONCE, here — after the dedup and the merge by key, never before.
+  const done = (run: HuntArtifactRead): HuntArtifactRead =>
+    ordered ? finishNewest(cutNewest(run, max)) : run;
   if (sources.length || artifact.includes("/")) return done(await read(artifact, sources));
   const base = await read(artifact, []);
   let entry: { name: string; sources?: string[]; sourcesUnknown?: true } | undefined;
@@ -113,7 +115,8 @@ export async function readHuntArtifactRows(
   // empty bare read is "not read", never "empty" — a TaskScheduler empty would settle persistence.
   // The same when the definition cannot prove its source list complete (#1635 review).
   const named = entry?.sources ?? [];
-  const run = named.length ? capRun(mergeRuns(base, await read(artifact, named)), max, ordered) : base;
+  const merged = named.length ? mergeRuns(base, await read(artifact, named)) : base;
+  const run = named.length && !ordered ? capRun(merged, max) : merged;
   return done(!entry || entry.sourcesUnknown ? { ...run, sourcesUnknown: true } : run);
 }
 
@@ -136,13 +139,15 @@ export interface HuntArtifactRead extends VelociraptorRunResult {
  * `truncated: false` — over the ceiling, and with the incomplete-collection warning suppressed exactly
  * when it was most deserved.
  */
-// A newest-first merge (#1983) is re-sorted by key before the cut, so the cap keeps the newest rows of
-// BOTH reads, not the bare read's rows first.
-function capRun(run: HuntArtifactRead, max?: number, ordered = false): HuntArtifactRead {
-  if (ordered && max !== undefined)
-    return { ...run, rows: capNewest(run.rows, max).rows, truncated: run.truncated || run.rows.length > max };
+function capRun(run: HuntArtifactRead, max?: number): HuntArtifactRead {
   if (max === undefined || run.rows.length <= max) return run;
   return { rows: run.rows.slice(0, max), total: run.total, truncated: true };
+}
+
+/** A newest-first read (#1983), merged and de-duplicated: re-sorted by key, then held to the cap. */
+function cutNewest(run: HuntArtifactRead, max?: number): HuntArtifactRead {
+  const cut = capNewest(run.rows, max ?? run.rows.length);
+  return { ...run, rows: cut.rows, truncated: run.truncated || cut.truncated };
 }
 
 /** Concatenate two reads of the same artifact, dropping rows the second repeats from the first. */

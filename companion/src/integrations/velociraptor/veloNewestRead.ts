@@ -98,15 +98,25 @@ const keyOf = (row: unknown): number => {
   return typeof k === "number" && Number.isFinite(k) ? k : -1;
 };
 
-/** Sort keyed rows newest first and hold them to `max`. Stable: equal keys keep their read order. */
-export function capNewest(rows: unknown[], max: number, diagnostics = ""): NewestRun {
-  const sorted = [...rows].sort((a, b) => keyOf(b) - keyOf(a));
+/**
+ * Sort keyed rows newest first WITHOUT cutting them; `truncated` says whether they pass `max`. One
+ * sorted read returns every part's cap+1 rows: the cut waits until the bare and named reads are
+ * merged and de-duplicated (artifactRefs.ts), or duplicates could fill the cap and push out a newer
+ * distinct row. Stable: equal keys keep their read order.
+ */
+export function sortNewest(rows: unknown[], max: number, diagnostics = ""): NewestRun {
   return {
-    rows: sorted.length > max ? sorted.slice(0, max) : sorted,
+    rows: [...rows].sort((a, b) => keyOf(b) - keyOf(a)),
     total: rows.length,
     truncated: rows.length > max,
     ...(diagnostics ? { diagnostics } : {}),
   };
+}
+
+/** Sort keyed rows newest first and hold them to `max` — the ONE final cut of a newest-first read. */
+export function capNewest(rows: unknown[], max: number, diagnostics = ""): NewestRun {
+  const run = sortNewest(rows, max, diagnostics);
+  return run.rows.length > max ? { ...run, rows: run.rows.slice(0, max) } : run;
 }
 
 /** What a finished newest-first read kept: how many rows had a valid key, and the span of those keys. */

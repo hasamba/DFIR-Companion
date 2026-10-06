@@ -235,3 +235,53 @@ describe("readHuntArtifactRows — ordering survives the bare + named merge and 
     expect(res.newest?.keyed).toBe(2);
   });
 });
+
+describe("huntArtifactRows — the newest-first cap runs once, after the bare + named dedup", () => {
+  // Codex review of #1983: the named chain was cut to the cap BEFORE the merge dropped rows the bare
+  // read repeats, so duplicates filled the cap and a newer distinct row was lost.
+  it("overlapping bare and named sources keep the newest DISTINCT rows", async () => {
+    const at = (n: string, k: number) => ({ n, [NEWEST_KEY]: k });
+    const programs: string[] = [];
+    const runner: VqlRunner = async (s) => {
+      const p = s[0];
+      programs.push(p);
+      if (p.includes("artifact_definitions()"))
+        return {
+          rows: [{ name: MFT, type: "CLIENT", sources: [{ name: "One" }, { name: "Two" }] }],
+          raw: "",
+        };
+      if (p.includes("chain("))
+        return { rows: [at("A", 100), at("A", 100), at("B", 90), at("C", 80)], raw: "" };
+      return { rows: [at("A", 100), at("D", 50)], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows(
+      "H.ABC123",
+      MFT,
+      [],
+      undefined,
+      true,
+      newestOrder(MFT),
+    );
+    expect(programs.some((p) => p.includes("chain("))).toBe(true);
+    expect(res.rows).toEqual([{ n: "A" }, { n: "B" }]);
+    expect(res.truncated).toBe(true);
+    expect(res.newest).toMatchObject({ keyed: 2 });
+  });
+
+  it("a single sorted read is still held to the cap", async () => {
+    const runner: VqlRunner = async () => ({
+      rows: [3, 1, 2].map((k) => ({ k, [NEWEST_KEY]: k })),
+      raw: "",
+    });
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows(
+      "H.ABC123",
+      MFT,
+      ["Default"],
+      undefined,
+      true,
+      newestOrder(MFT),
+    );
+    expect(res.rows).toEqual([{ k: 3 }, { k: 2 }]);
+    expect(res.truncated).toBe(true);
+  });
+});
