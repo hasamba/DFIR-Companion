@@ -22,9 +22,11 @@ export function renderEventLine(e: ForensicEvent): string {
  * `[id] timestamp [severity] description <host:…> <proc:…> <net:…> <cmd:…> <build-time:…> …`.
  *
  * The same structured tags synthesis and the deep pass append (renderStructuredTags, the
- * deepPassRun shape), so the referee judges a disagreement with the facts both models saw. The host
- * rides in `<host:…>`, not a bare `<asset>`. A row with no asset and no structured fields renders
- * exactly as renderEventLine does.
+ * deepPassRun shape), so the referee judges a disagreement with the facts both models saw. With an
+ * asset, this line spells it `<host:…>` after the description, where renderEventLine puts `<asset>`
+ * before it. The two lines are identical exactly when renderStructuredTags(e) is empty: no asset,
+ * and no tag-producing fact, including facts read from the description or message text (a URL, an
+ * ip:port, a renamed-binary note).
  */
 export function renderTaggedEventLine(e: ForensicEvent): string {
   return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${lineDescription(e)}${renderStructuredTags(e)}`;

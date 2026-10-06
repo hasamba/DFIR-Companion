@@ -372,6 +372,62 @@ describe("simulation verdict from the summary (#1948)", () => {
     expect(summaryStatesSimulationVerdict(summary)).toBe(false);
   });
 
+  // #1979: a plain follow-up line about the exercise must not veto a stated verdict. A hedged
+  // exercise sentence fails closed: it passes only as a recognised follow-up with no verdict words.
+  const A = "The activity is strongly consistent with an authorized attack simulation.";
+  it.each([
+    "The investigation is consistent with a scripted simulation. Once the exercise wraps, the team may rerun detection rules to confirm coverage.",
+    `${A} After the exercise, the team could tune the Sigma rules.`,
+    `${A} Until the exercise ends, keep the lab hosts isolated.`,
+    `${A} If the exercise repeats, collect memory as well.`,
+    `${A} Pending the exercise debrief, retain the collected artifacts.`,
+    `${A} When the exercise ends, the team may reimage the lab hosts.`,
+    `${A} If the exercise went well, schedule the next exercise.`,
+    `${A} Until the exercise closes, archive the logs.`,
+  ])("keeps the verdict beside a soft follow-up line (#1979): %s", (summary) => {
+    expect(summaryStatesSimulationVerdict(summary)).toBe(true);
+    const { findings, events } = weakCase(30);
+    const out = byId(applySimulationVerdict(findings, events, { summary }));
+    expect(out.f1.severity).toBe("Medium");
+    expect(out.f1.simulation?.basis).toBe("summary");
+  });
+
+  it.each([
+    `${A} However, the owner has not confirmed a planned exercise.`,
+    `${A} Whether this is an authorized simulation remains unconfirmed.`,
+    `${A} It could also be a real attacker posing as a red-team exercise.`,
+    `${A} This may be a red-team exercise.`,
+    `${A} The exercise may not have been authorized.`,
+    `${A} Contact the owner to confirm the exercise.`,
+    `${A} If the exercise is confirmed, close the case.`,
+    `${A} Until the owner signs off, the exercise stays unverified.`,
+    `${A} Pending owner confirmation of the exercise, keep the findings open.`,
+    `${A} The exercise might have been used as cover by an attacker.`,
+    `${A} The penetration test may be authorized.`,
+    "The activity may be consistent with an authorized simulation.",
+    // A hedged exercise sentence fails closed: verdict words not on any list still refuse.
+    `${A} The simulation may actually be a cover for credential theft.`,
+    `${A} The exercise could represent an ongoing compromise.`,
+    `${A} Contact the SOC to confirm the exercise.`,
+    `${A} After the exercise, the SOC could tune the Sigma rules.`,
+    `${A} The exercise might well be hostile activity.`,
+    `${A} The exercise could indicate an intruder reusing lab credentials.`,
+    `${A} If this exercise was not authorized, escalate immediately.`,
+    `${A} Until the owner confirms it was planned, treat the exercise with caution.`,
+    `${A} Pending confirmation that it was authorized, the exercise findings stay open.`,
+    `${A} The simulation may in fact be staging for data theft.`,
+    `${A} The exercise might simply mask a breach.`,
+    `${A} If the exercise was a disguise, reimage the lab hosts.`,
+    `${A} The exercise may actually be real; reset the lab hosts.`,
+    `${A} Confirm the exercise with the system owner.`,
+  ])("still refuses a summary that contests or hedges the verdict (#1979): %s", (summary) => {
+    expect(summaryStatesSimulationVerdict(summary)).toBe(false);
+    const { findings, events } = weakCase(30);
+    const out = applySimulationVerdict(findings, events, { summary });
+    expect(out).toBe(findings);
+    expect(byId(out).f1.severity).toBe("Critical");
+  });
+
   it("keeps the 80+ path free of the summary basis", () => {
     const { findings, events } = labCase(85);
     const out = byId(applySimulationVerdict(findings, events, { summary: AFFIRMATIVE }));

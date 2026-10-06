@@ -84,11 +84,29 @@ export function isSimulationVerdictTitle(title: string): boolean {
 // prose: it accepts "It is likely a real intrusion rather than a simulation." So a summary sentence
 // must pass the title test AND carry no contrast or hedge, and no sentence about the exercise may
 // contest it. Rejecting is cheap: a miss only leaves the live-intrusion severities in place.
+// #1979: a contest word vetoes from any exercise sentence. A hedged exercise sentence ("may", "if",
+// "until", "confirm") fails closed: it vetoes unless it is a recognised plain follow-up (reset the lab
+// hosts, write the report, keep the logs) AND carries no verdict word. A list of verdict words alone
+// is never complete — "may actually be a cover for theft" slipped past one.
 export const SIMULATION_SUMMARY_MIN_CONFIDENCE = 25;
 export const SUMMARY_BASIS_LABEL = "verdict from summary";
-const SUMMARY_HEDGE =
-  /\b(but|however|although|though|rather than|whether|unconfirmed|unverified|not (yet )?(been )?confirmed|should confirm|must confirm|to confirm|until|unless|if|instead of|real intrusion|genuine|uncertain|unclear|possibly|may|might|could|pending|cannot|rul(e|es|ed)\b(\s+\S+){0,4}?\s+out)\b/i;
+const SUMMARY_CONTEST =
+  /\b(but|however|although|though|rather than|whether|unconfirmed|unverified|not (yet )?(been )?confirmed|should confirm|must confirm|unless|instead of|real intrusion|genuine|uncertain|unclear|possibly|cannot|rul(e|es|ed)\b(\s+\S+){0,4}?\s+out)\b/i;
+const SUMMARY_MODAL = /\b(may|might|could|would|maybe|perhaps|if|until|pending|confirm\w*)\b/i;
+// The only hedged lines allowed through: follow-ups that cannot be read as a verdict.
+const PLAIN_FOLLOW_UP =
+  /\b((reset|re-?image|revert|restore|rebuild|clean(\s+|-)?up)\b[^.;]*\blab\s+(hosts?|machines?|vms?|systems?)|keep\s+the\s+lab\s+(hosts?|machines?|vms?)\s+isolated|(write|document|brief|report)\b[^.;]*\b(report|findings|results|lessons learned|debrief)|schedule\s+the\s+next\s+(exercise|simulation)|(keep|retain|archive)\s+the\s+(collected\s+)?(logs|artifacts)|collect\s+memory|(rerun|re-run|tune)\s+(the\s+)?(detection|sigma)\s+rules)\b/i;
+// Verdict-challenge words that block even a recognised follow-up. "confirm coverage" (detection
+// coverage, the #1979 example) is the one use of "confirm" that does not ask about the verdict.
+const VERDICT_CHALLENGE =
+  /\b(real|genuine|actual(ly)?|in fact|compromise\w*|intru\w*|breach\w*|attackers?|adversar\w*|threat actor|malicious|theft|steal\w*|stole\w*|cover|disguise\w*|mask\w*|hostile|unauthori[sz]\w*|not authori[sz]ed|whether|soc|owners?|approv\w*|authori[sz]\w*|sanction\w*|confirm(?!\s+(detection\s+)?coverage\b)\w*|(may|might|could|would)\s+(\w+\s+){0,2}(be|been|represent|indicate|mean|suggest|reflect|hide))\b/i;
 const SENTENCE_SPLIT = /(?<=[.!?;])\s+|\n+/u;
+
+/** Whether a hedged exercise sentence is a plain follow-up, not a word about the verdict. */
+function isPlainFollowUp(s: string): boolean {
+  if (!PLAIN_FOLLOW_UP.test(s) || VERDICT_CHALLENGE.test(s)) return false;
+  return !VERDICT_MARKER.test(s) && !NEGATION.test(s);
+}
 
 /** Whether the case summary states the simulation verdict, strictly: affirmed and contested nowhere. */
 export function summaryStatesSimulationVerdict(summary: string | undefined): boolean {
@@ -96,7 +114,11 @@ export function summaryStatesSimulationVerdict(summary: string | undefined): boo
   for (const raw of (summary ?? "").split(SENTENCE_SPLIT)) {
     const s = raw.trim();
     if (!EXERCISE_NOUN.test(s)) continue;
-    if (SUMMARY_HEDGE.test(s) || HOSTILE_MARKER.test(s) || DENIAL.test(s)) return false;
+    if (SUMMARY_CONTEST.test(s) || HOSTILE_MARKER.test(s) || DENIAL.test(s)) return false;
+    if (SUMMARY_MODAL.test(s)) {
+      if (!isPlainFollowUp(s)) return false;
+      continue;
+    }
     if (isSimulationVerdictTitle(s)) affirmed = true;
   }
   return affirmed;
