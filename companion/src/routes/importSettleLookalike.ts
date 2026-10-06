@@ -1,7 +1,7 @@
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
-import { canonicalAccounts } from "../analysis/canonicalEvent.js";
 import {
+  caseAccountNames,
   caseLookalike,
   flagCaseLookalikeRow,
   lookalikeCandidateName,
@@ -30,7 +30,7 @@ export async function flagCaseLookalikesScoped(
   if (!candidates.size) return 0;
   const pool = new Set<string>();
   for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
-    for (const e of batch) for (const name of canonicalAccounts(e)) pool.add(name);
+    for (const e of batch) for (const name of caseAccountNames(e)) pool.add(name);
   }
   const hits = new Map<string, { name: string; match: string }>();
   for (const [id, name] of candidates) {

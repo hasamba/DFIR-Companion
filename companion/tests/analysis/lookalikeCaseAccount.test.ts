@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  caseAccountNames,
   caseLookalike,
   flagCaseLookalikeRow,
   lookalikeCandidateName,
@@ -91,6 +92,43 @@ describe("lookalikeCandidateName", () => {
     expect(
       lookalikeCandidateName(ev("Windows Security Successful logon (EID 4624) - CORP\\svc-backup")),
     ).toBe("");
+  });
+
+  // #1971 review: Hayabusa prints the channel inside the parentheses and the account as a detail field.
+  it("reads a Hayabusa row, whose event id carries the channel", () => {
+    expect(
+      lookalikeCandidateName(
+        ev("Hayabusa: Local User Created (EID 4720 Sec) — User=svc-backupl SID=S-1-5-21-1 @ H1"),
+      ),
+    ).toBe("svc-backupl");
+    expect(
+      lookalikeCandidateName(
+        ev(
+          "Hayabusa: Grp Add (EID 4728 Sec) — User=CN=svc-backupl,CN=Users,DC=example,DC=com Group=Backup Operators @ H1",
+        ),
+      ),
+    ).toBe("svc-backupl");
+    expect(lookalikeCandidateName(ev("Hayabusa: X (EID 47201 Sec) — User=svc-backupl @ H1"))).toBe("");
+  });
+
+  it("keeps a member DN whose name holds a space", () => {
+    expect(
+      lookalikeCandidateName(
+        ev(
+          "Windows Security Member added (EID 4728) - G - MemberName=CN=Svc Backupl,OU=Service Accounts,DC=x @ H1",
+        ),
+      ),
+    ).toBe("Svc Backupl");
+  });
+});
+
+describe("caseAccountNames", () => {
+  it("reads the account fields of a row that has no canonical accounts", () => {
+    expect(
+      caseAccountNames(
+        ev("Hayabusa: Explicit Logon (EID 4648 Sec) — TgtUser=svc-backup SrcUser=operator @ H1"),
+      ),
+    ).toEqual(["svc-backup", "operator"]);
   });
 });
 

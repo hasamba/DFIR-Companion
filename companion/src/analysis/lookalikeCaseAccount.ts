@@ -23,24 +23,63 @@ import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 
 export const LOOKALIKE_ACCOUNT_MARKER = "[look-alike account:";
 
-const ACCOUNT_CREATED = /\(EID 4720\)/;
-const GROUP_ADD = /\(EID (?:4728|4732|4756)\)/;
-// The member as the importer renders it: "- MemberName=CN=…,OU=… @ HOST". The value ends at the next
-// " - key=" field, the " @ host" suffix, or the end. memberCn stops at the DN's first unescaped comma.
-const MEMBER_NAME = /\bMemberName=(.*?)(?= - [A-Za-z]+=| @ |$)/;
+// The event id as each importer renders it. SIEM/EVTX and Chainsaw (both through mapWindows) print
+// "(EID 4720)". Hayabusa adds its channel: "(EID 4720 Sec)". Both forms match; "(EID 47201)" does not.
+const ACCOUNT_CREATED = /\(EID 4720(?: [^)]*)?\)/;
+const GROUP_ADD = /\(EID (?:4728|4732|4756)(?: [^)]*)?\)/;
+// One "Key=value" field of a row. mapWindows separates fields with " - " ("- MemberName=CN=…,OU=… @
+// HOST"). Hayabusa separates its detail fields with one space ("User=svc-x SID=S-1-… @ HOST"). A value
+// ends at the next field of either form, at the " @ host" suffix, or at the end. A DN part never ends
+// it: a key is letters and digits only, and a DN part follows a comma, not a space.
+const FIELD_END = String.raw`(?= - [A-Za-z]+=| [A-Za-z][A-Za-z0-9_]*=| @ |$)`;
+// The new account of a 4720 when the row has no canonical account (Hayabusa): the raw Windows field,
+// then Hayabusa's abbreviations of it.
+const CREATED_KEYS = ["TargetUserName", "TgtUser", "User"];
+// The member of a group add. Never TargetUserName or Group: on a group add, that field is the group.
+const MEMBER_KEYS = ["MemberName", "Member", "User"];
+// The account fields of a row that has no canonical accounts, for the case's name pool.
+const POOL_KEYS = ["TargetUserName", "TgtUser", "SubjectUserName", "SrcUser", "User", "MemberName"];
 // The same noise set as loginGraph.isNoiseAccount (machine "$", DWM-/UMFD- sessions, anonymous),
 // plus the built-in service principals. Not imported: loginGraph pulls in the whole SIEM importer.
 const NOISE_ACCOUNT =
   /\$$|^(?:dwm|umfd)-\d+$|^(?:anonymous logon|system|local service|network service|localsystem)$/i;
 
+/** The account in the row's `key=` field, a DN cut to its CN; "" when absent or a SID-only "-". */
+function detailAccount(description: string, key: string): string {
+  const m = new RegExp(String.raw`(?:^|\s)${key}=(.*?)${FIELD_END}`).exec(description);
+  return memberCn(m?.[1] ?? "");
+}
+
+function firstDetailAccount(description: string, keys: readonly string[]): string {
+  for (const key of keys) {
+    const name = detailAccount(description, key);
+    if (name) return name;
+  }
+  return "";
+}
+
 /** The new account of a 4720, or the member of a group add; "" for any other row. */
 export function lookalikeCandidateName(e: ForensicEvent): string {
   const description = e.description ?? "";
-  // winRoleBlocks puts the 4720's target (the new account) first, as the actor.
-  if (ACCOUNT_CREATED.test(description)) return canonicalAccounts(e)[0] ?? "";
+  // winRoleBlocks puts the 4720's target (the new account) first, as the actor. Hayabusa sets no
+  // account block, so its row falls back to the detail field.
+  if (ACCOUNT_CREATED.test(description)) {
+    return canonicalAccounts(e)[0] ?? firstDetailAccount(description, CREATED_KEYS);
+  }
   if (!GROUP_ADD.test(description)) return "";
   // A member named only by SID ("MemberName=-") cannot be named from the row alone.
-  return memberCn(MEMBER_NAME.exec(description)?.[1] ?? "");
+  return firstDetailAccount(description, MEMBER_KEYS);
+}
+
+/**
+ * The account names one forensic row adds to the case's pool: its canonical accounts, or, for a row
+ * with none (Hayabusa sets none), the account fields its description renders.
+ */
+export function caseAccountNames(e: ForensicEvent): string[] {
+  const canonical = canonicalAccounts(e);
+  if (canonical.length) return canonical;
+  const description = e.description ?? "";
+  return POOL_KEYS.map((key) => detailAccount(description, key)).filter(Boolean);
 }
 
 interface Keyed {
