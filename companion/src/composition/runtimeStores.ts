@@ -79,6 +79,7 @@ import { TagsStore } from "../analysis/tags.js";
 import { PinnedFindingsStore } from "../analysis/pinnedFindings.js";
 import { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import { FindingOutcomeStore } from "../analysis/findingOutcome.js";
+import { FindingSeverityRestoreStore } from "../analysis/findingSeverityRestore.js";
 import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
@@ -352,6 +353,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   );
   const findingWorkflowStore = new FindingWorkflowStore(store);
   const findingOutcomeStore = new FindingOutcomeStore(store);
+  const findingSeverityRestoreStore = new FindingSeverityRestoreStore(store); // #1973
   const remediationStore = new RemediationStore(store);
   const servedLocationStore = new ServedLocationStore(store);
   const sensitiveLocationStore = new SensitiveLocationStore(store);
@@ -504,6 +506,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     pinnedFindingsStore,
     findingWorkflowStore,
     findingOutcomeStore,
+    findingSeverityRestoreStore,
     remediationStore,
     servedLocationStore,
     sensitiveLocationStore,

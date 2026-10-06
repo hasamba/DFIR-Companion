@@ -44,6 +44,12 @@ import {
   LAB_SETUP_SEVERITY_CAP,
   type FindingLabSetup,
 } from "./labSetupTransfer.js";
+import {
+  addSeverityCap,
+  severityCapMark,
+  withoutSeverityMarks,
+  type SeverityCapGate,
+} from "./findingSeverityRestore.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -327,13 +333,21 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
 
     // Content-mismatch check: only worth running on High/Critical (the severities this exists to gate)
     // and only once the finding actually has cited evidence (an ungrounded finding is already capped above).
+    // #1973: every gate that lowers the severity goes through `lowerTo`, which names itself on the
+    // cap mark so the analyst can see — and lift — exactly what lowered it.
     let severity = f.severity;
+    const gates: SeverityCapGate[] = [];
+    const lowerTo = (to: Severity, gate: SeverityCapGate): void => {
+      if (SEV_ORDER[severity] >= SEV_ORDER[to]) return;
+      severity = to;
+      gates.push(gate);
+    };
     if (supporting.length > 0 && (f.severity === "Critical" || f.severity === "High")) {
       const mismatched = claimedIpsNotInEvidence(f, supporting);
       const images = claimedImagesNotInEvidence(f, supporting);
       if (mismatched.length || images.length) {
         contentMismatch = true;
-        severity = CONTENT_MISMATCH_SEVERITY_FLOOR;
+        lowerTo(CONTENT_MISMATCH_SEVERITY_FLOOR, "content-mismatch");
         if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP)
           confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
       }
@@ -359,7 +373,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       const unconfirmed = unconfirmedLateralDestinations(f, supporting, compromisedHosts);
       if (unconfirmed.length) {
         lateralUnconfirmed = true;
-        severity = LATERAL_UNCONFIRMED_SEVERITY_FLOOR;
+        lowerTo(LATERAL_UNCONFIRMED_SEVERITY_FLOOR, "lateral-unconfirmed");
         if ((confidence ?? 100) > LATERAL_UNCONFIRMED_CONFIDENCE_CAP)
           confidence = LATERAL_UNCONFIRMED_CONFIDENCE_CAP;
         confidenceReason = appendReason(
@@ -373,7 +387,8 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     // it. Runs with or without cited rows; records the flag at any severity and only ever lowers.
     const selfDisclaimer = selfDisclaimedPhrase(`${f.title}\n${f.description ?? ""}`);
     if (selfDisclaimer) {
-      if (severity === "Critical" || severity === "High") severity = SELF_DISCLAIMED_SEVERITY_FLOOR;
+      if (severity === "Critical" || severity === "High")
+        lowerTo(SELF_DISCLAIMED_SEVERITY_FLOOR, "self-disclaimed");
       confidenceReason = appendReason(
         confidenceReason,
         `capped: the finding's own text says its subject is not in the evidence ("${selfDisclaimer}") and guesses at it — an open question, not a finding`,
@@ -387,7 +402,8 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       const decoys = decoyOnlyEvidence(supporting);
       if (decoys.length) {
         decoyBinary = true;
-        if (severity === "Critical" || severity === "High") severity = DECOY_BINARY_SEVERITY_FLOOR;
+        if (severity === "Critical" || severity === "High")
+          lowerTo(DECOY_BINARY_SEVERITY_FLOOR, "decoy-binary");
         if ((confidence ?? 100) > DECOY_BINARY_CONFIDENCE_CAP) confidence = DECOY_BINARY_CONFIDENCE_CAP;
         confidenceReason = appendReason(
           confidenceReason,
@@ -400,7 +416,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     // that file. Floors only High/Critical; the rows keep their own severity.
     const echoOnly = echoOnlyEvidence(supporting);
     if (echoOnly && (severity === "Critical" || severity === "High")) {
-      severity = ECHO_ONLY_SEVERITY_CAP;
+      lowerTo(ECHO_ONLY_SEVERITY_CAP, "echo-only");
       confidenceReason = appendReason(confidenceReason, echoOnlyReason(echoOnly));
     }
 
@@ -408,7 +424,8 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     // Records the marker at any severity (like the decoy gate), floors only High/Critical, never raises.
     const tamperTiming = tamperCap.tamperTimingOf(f, supporting, burst);
     if (tamperTiming) {
-      if (severity === "Critical" || severity === "High") severity = tamperCap.TAMPER_CAP_SEVERITY;
+      if (severity === "Critical" || severity === "High")
+        lowerTo(tamperCap.TAMPER_CAP_SEVERITY, "tamper-timing");
       const note =
         tamperTiming === "date-unknown" ? tamperCap.DATE_UNKNOWN_REASON : tamperCap.BEFORE_INCIDENT_REASON;
       if (!(confidenceReason ?? "").includes(note)) confidenceReason = appendReason(confidenceReason, note);
@@ -417,7 +434,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     // Lab setup (#1946): every cited row is a file the operator copied in through a lab-setup folder.
     const labSetup = labSetupOnly(supporting);
     if (labSetup) {
-      if (severity === "Critical" || severity === "High") severity = LAB_SETUP_SEVERITY_CAP;
+      if (severity === "Critical" || severity === "High") lowerTo(LAB_SETUP_SEVERITY_CAP, "lab-setup");
       confidenceReason = appendReason(confidenceReason, LAB_SETUP_FINDING_REASON);
     }
 
@@ -431,8 +448,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     const build = buildTimeSupport(supporting);
     if (build.allBuild) {
       buildBaseline = true;
-      if (SEV_ORDER[severity] < SEV_ORDER[BUILD_BASELINE_SEVERITY_FLOOR])
-        severity = BUILD_BASELINE_SEVERITY_FLOOR;
+      lowerTo(BUILD_BASELINE_SEVERITY_FLOOR, "build-baseline");
       if ((confidence ?? 100) > BUILD_BASELINE_CONFIDENCE_CAP) confidence = BUILD_BASELINE_CONFIDENCE_CAP;
       confidenceReason = appendReason(
         confidenceReason,
@@ -457,10 +473,11 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       tamperTiming: _prevTt,
       labSetup: _prevLs,
       ...rest
-    } = f as Finding & tamperCap.FindingDefenderCap & FindingLabSetup;
+    } = withoutSeverityMarks(f) as Finding & tamperCap.FindingDefenderCap & FindingLabSetup;
     return {
       ...rest,
       severity,
+      ...severityCapMark(f, f.severity, severity, gates),
       firstSeen,
       relatedEventIds,
       corroboration,
@@ -546,7 +563,7 @@ export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
         ? "capped: rests on threat-intel names only — 2+ named origins, independence not established; no activity in this case backs it; verify before acting"
         : "capped: rests on uncorroborated single-provider threat-intel only — a lead, not a confirmed compromise; verify before acting";
     return {
-      ...f,
+      ...addSeverityCap(f, INTEL_ONLY_SEVERITY_FLOOR, "intel-only"),
       severity: INTEL_ONLY_SEVERITY_FLOOR,
       confidence: Math.min(f.confidence ?? INTEL_ONLY_CONFIDENCE_CAP, INTEL_ONLY_CONFIDENCE_CAP),
       confidenceReason: appendReason(f.confidenceReason, note),

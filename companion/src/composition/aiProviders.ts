@@ -61,6 +61,7 @@ import type { KevStore } from "../analysis/kevStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
+import { FindingSeverityRestoreStore } from "../analysis/findingSeverityRestore.js";
 import type { StateLock } from "../analysis/stateLock.js";
 import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
@@ -357,6 +358,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    findingSeverityRestoreStore: new FindingSeverityRestoreStore(params.store), // #1973
     veloHuntStore: new VeloHuntStore(params.store), // #1588 collection inventory
     analysisRunStore: params.analysisRunStore,
     operationalMetrics: params.operationalMetrics,

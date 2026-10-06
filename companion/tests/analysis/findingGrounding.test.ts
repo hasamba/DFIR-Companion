@@ -17,6 +17,10 @@ import {
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 import { capLabSetupRow, labSetupPaths } from "../../src/analysis/labSetupTransfer.js";
+import { severityCapOf } from "../../src/analysis/findingSeverityRestore.js";
+
+// #1973: every gate that lowers a severity records what it lowered and why.
+const cap = severityCapOf;
 
 function f(p: Partial<Finding>): Finding {
   return {
@@ -207,6 +211,7 @@ describe("groundAndScoreFindings — content-mismatch (veridia-deep-pass false p
     expect(out[0].severity).toBe(CONTENT_MISMATCH_SEVERITY_FLOOR);
     expect(out[0].confidence).toBe(CONTENT_MISMATCH_CONFIDENCE_CAP);
     expect(out[0].confidenceReason).toMatch(/45\.33\.32\.156/);
+    expect(cap(out[0])).toEqual({ from: "High", to: "Medium", gates: ["content-mismatch"] });
   });
 
   it("does not flag a High finding whose claimed IP DOES appear in its cited events", () => {
@@ -301,6 +306,7 @@ describe("groundAndScoreFindings — actor-provenance (lateral movement) gate", 
     expect(out[0].severity).toBe(LATERAL_UNCONFIRMED_SEVERITY_FLOOR);
     expect(out[0].confidence).toBe(LATERAL_UNCONFIRMED_CONFIDENCE_CAP);
     expect(out[0].confidenceReason).toMatch(/ws-17/i);
+    expect(cap(out[0])).toEqual({ from: "High", to: "Medium", gates: ["lateral-unconfirmed"] });
   });
 
   it("does NOT floor a pivot to a host that HAS its own confirmed High/Critical activity (real WS-12 spread)", () => {
@@ -569,6 +575,7 @@ describe("groundAndScoreFindings — decoy binary gate (#1502)", () => {
     expect(out[0].confidence).toBe(DECOY_BINARY_CONFIDENCE_CAP);
     expect(out[0].decoyBinary).toBe(true);
     expect(out[0].confidenceReason).toMatch(/mimikatz\.exe is a renamed Cmd\.Exe/);
+    expect(cap(out[0])).toEqual({ from: "Critical", to: "Medium", gates: ["decoy-binary"] });
     expect(out[0].execution).toBeUndefined();
   });
 
@@ -665,6 +672,7 @@ describe("groundAndScoreFindings — build baseline gate (#1529)", () => {
     expect(out[0].confidence).toBe(BUILD_BASELINE_CONFIDENCE_CAP);
     expect(out[0].buildBaseline).toBe(true);
     expect(out[0].confidenceReason).toMatch(/provisioning window/i);
+    expect(cap(out[0])).toEqual({ from: "Critical", to: "Low", gates: ["build-baseline"] });
   });
 
   it("keeps a mixed finding graded but dates it from the first row outside the build", () => {
@@ -751,6 +759,7 @@ describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => 
     expect(timing(out[0])).toBe("date-unknown");
     expect(out[0].confidenceReason).toMatch(/console history/i);
     expect(out[0].confidenceReason).toMatch(/no per-line time/i);
+    expect(cap(out[0])).toEqual({ from: "High", to: "Medium", gates: ["tamper-timing"] });
   });
 
   it("caps a tamper finding dated 5 days before the burst at Medium, marked before the incident", () => {
@@ -794,6 +803,7 @@ describe("groundAndScoreFindings — Defender-tamper timing cap (#1941)", () => 
     const twice = run(once, [history]);
     expect(twice[0].severity).toBe("Medium");
     expect(timing(twice[0])).toBe("date-unknown");
+    expect(cap(twice[0])).toEqual({ from: "High", to: "Medium", gates: ["tamper-timing"] });
     expect(twice[0].confidenceReason).toBe(once[0].confidenceReason);
   });
 
@@ -825,6 +835,7 @@ describe("groundAndScoreFindings — lab-setup gate (#1946)", () => {
     expect(out[0].severity).toBe("Medium");
     expect(flag(out[0])).toBe(true);
     expect(out[0].confidenceReason).toMatch(/lab-setup folder/);
+    expect(cap(out[0])).toEqual({ from: "High", to: "Medium", gates: ["lab-setup"] });
   });
 
   it("keeps the grade of a finding with mixed evidence", () => {
@@ -860,6 +871,7 @@ describe("groundAndScoreFindings — echo-only command gate (#1948)", () => {
     const out = run(rows);
     expect(out.severity).toBe(ECHO_ONLY_SEVERITY_CAP);
     expect(out.confidenceReason).toMatch(/echo only, no effect/);
+    expect(cap(out)).toEqual({ from: "High", to: "Medium", gates: ["echo-only"] });
     expect(rows.every((e) => e.severity === "High")).toBe(true);
   });
 

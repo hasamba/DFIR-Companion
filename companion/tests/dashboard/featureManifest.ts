@@ -870,8 +870,17 @@ export const FEATURES: Feature[] = [
       "setFindingControl",
       "findingSimulationChip",
       "setSimulationOverride",
+      "setSeverityRestore",
     ],
-    private: ["outcomeByFinding", "activeCase", "patchSeq", "EXECUTION_LABELS", "CONTROL_LABELS", "bound"],
+    private: [
+      "outcomeByFinding",
+      "activeCase",
+      "patchSeq",
+      "EXECUTION_LABELS",
+      "CONTROL_LABELS",
+      "CAP_GATE_LABELS",
+      "bound",
+    ],
   },
   {
     // Per-finding containment check (#1925): Jev answers + suggested steps, added to the Playbook
