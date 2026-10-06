@@ -64,6 +64,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "normal OS behaviour",
   "transfer tool staged",
   "lab-setup",
+  "look-alike account",
 ];
 
 /**

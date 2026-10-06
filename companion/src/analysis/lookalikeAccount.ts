@@ -4,7 +4,7 @@
 //   2. the account NAME is a look-alike of a built-in account (#1956): "administratr" or a
 //      Cyrillic "аdministrator" is how an attacker hides a backdoor admin in plain sight.
 // The look-alike check is per row, against a static built-in list. A look-alike of the case's own
-// service accounts ("svc-backupl") needs every name in the case and is not done here.
+// service accounts ("svc-backupl") needs every name in the case: lookalikeCaseAccount.ts (#1971).
 import { worstSeverity as worst, type Severity } from "./stateTypes.js";
 import { CONFUSABLES, levenshtein } from "./lookalikeDomains.js";
 
@@ -80,21 +80,26 @@ const LOCALIZED_BUILTINS = new Set(
 // Group names and plurals. "Administrators" is one edit from "administrator", but it is the group.
 const PLURALS = new Set(["administrators", "admins", "guests"]);
 
-const MIN_NAME_LENGTH = 5;
+export const MIN_NAME_LENGTH = 5;
 // A built-in name this long tolerates two edits; a shorter one only one.
 const LONG_NAME = 8;
 const DESCRIPTION_CAP = 600;
 
 // Strip a domain prefix or UPN suffix, lower-case, and normalise composed characters.
-function bareName(name: string): string {
+export function bareName(name: string): string {
   const afterSlash = name.trim().split("\\").pop() ?? "";
   return (afterSlash.split("@")[0] ?? "").toLowerCase().normalize("NFC");
 }
 
-function foldConfusables(s: string): string {
+export function foldConfusables(s: string): string {
   let out = "";
   for (const ch of s) out += CONFUSABLES[ch] ?? ch;
   return out;
+}
+
+/** The bare name without a trailing account number: "svc-backup_2" → "svc-backup". */
+export function accountBase(bare: string): string {
+  return bare.replace(/[._-]?\d+$/, "");
 }
 
 // "admin" is short and common inside real names ("sadmin", "radmin"), so it accepts one
@@ -116,7 +121,7 @@ export function lookalikeBuiltin(name: string): string | null {
   const raw = bareName(name);
   if (!raw || LOCALIZED_BUILTINS.has(raw) || PLURALS.has(raw)) return null;
   // Digits are stripped BEFORE the fold, which would read a trailing "1" as an "l".
-  const base = raw.replace(/[._-]?\d+$/, "");
+  const base = accountBase(raw);
   if (base.length < MIN_NAME_LENGTH || BUILTIN_ACCOUNTS.includes(base)) return null;
   const folded = foldConfusables(base);
   for (const builtin of BUILTIN_ACCOUNTS) {
