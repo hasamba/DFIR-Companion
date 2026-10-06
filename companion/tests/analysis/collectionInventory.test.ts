@@ -154,6 +154,76 @@ describe("collection inventory (#1588)", () => {
     ]);
   });
 
+  // #1982 — a super-only hunt shares DFIR_SUPERTIMELINE_MAX across its artifacts. An artifact the
+  // cap cut is NOT "in the archive only": the rows past the cap are not in the archive to search.
+  describe("an artifact the shared super-timeline cap cut (#1982)", () => {
+    const MFT = "Windows.NTFS.MFT";
+    const USN = "Windows.Forensics.Usn";
+    const PF = "Windows.Forensics.Prefetch";
+    const capped = job({
+      artifacts: [MFT, USN, PF],
+      superTimelineOnly: true,
+      superCappedArtifacts: [
+        { name: MFT, kept: 46000, total: 100000, rows: 90000, cap: 100000 },
+        { name: USN, kept: 0, total: 100000, rows: 100000, cap: 100000 },
+      ],
+    });
+
+    it("gets its own state with kept/total, and an uncut artifact stays in the archive only", () => {
+      const inv = buildCollectionInventory({ events: [], hunts: [capped] });
+      const by = Object.fromEntries(inv.hunts.map((h) => [h.artifact, h]));
+      expect(by[MFT].state).toBe("super-capped");
+      expect(by[MFT].detail).toContain("46000 of 100000 mapped events");
+      expect(by[MFT].detail).toContain("(from 90000 rows) in the super-timeline");
+      expect(by[MFT].detail).toContain("DFIR_SUPERTIMELINE_MAX");
+      expect(by[MFT].detail).not.toContain("in the archive only");
+      expect(by[USN].state).toBe("super-capped");
+      expect(by[USN].detail).toContain("0 of 100000 mapped events");
+      expect(by[PF].state).toBe("archive-only");
+      expect(by[PF].detail).toBe("in the archive only");
+    });
+
+    it("the rules tell the model to collect a cut artifact again, not to search the archive for it", () => {
+      const text = renderCollectionInventory(buildCollectionInventory({ events: [], hunts: [capped] }));
+      expect(text).toMatch(/super-timeline cap[^\n]*not in the archive[^\n]*collect/i);
+    });
+
+    it("the signature changes with the cut list, and a job without one keeps its old signature", () => {
+      const plain = job({ artifacts: [MFT, USN, PF], superTimelineOnly: true });
+      expect(inventorySignature([capped])).not.toBe(inventorySignature([plain]));
+      expect(inventorySignature([{ ...plain, superCappedArtifacts: [] }])).toBe(inventorySignature([plain]));
+    });
+
+    // Codex review: a big MFT read normally ALSO hits the collection row cap, and #1969 records a
+    // truncated line even when the incident window was read in full. Neither line may hide the other.
+    it("an artifact both cut short at collection and cut by the super-timeline cap shows both lines", () => {
+      for (const windowFull of [false, true]) {
+        const both = job({
+          artifacts: [MFT],
+          superTimelineOnly: true,
+          truncatedArtifacts: [
+            { name: MFT, kept: 100000, total: 100001, windowStart: "2026-09-01T00:00:00Z", windowFull },
+          ],
+          superCappedArtifacts: [{ name: MFT, kept: 46000, total: 100000, rows: 100000, cap: 100000 }],
+        });
+        const inv = buildCollectionInventory({ events: [], hunts: [both] });
+        expect(inv.hunts.map((h) => h.state).sort()).toEqual(["super-capped", "truncated"]);
+        const text = renderCollectionInventory(inv);
+        expect(text).toContain("DFIR_SUPERTIMELINE_MAX");
+        expect(text).toContain("46000 of 100000");
+      }
+    });
+
+    it("sanitizes a malformed cut list from an old velo-hunt.json", () => {
+      const raw = [
+        { ...capped, superCappedArtifacts: [null, "x", { name: 7 }, { name: MFT, kept: "9", total: "x" }] },
+      ];
+      const clean = sanitizeHuntJobs(raw);
+      expect(clean[0].superCappedArtifacts).toEqual([{ name: MFT, kept: 9, total: 0, rows: 0, cap: 0 }]);
+      expect(() => buildCollectionInventory({ events: [], hunts: clean })).not.toThrow();
+    });
+  });
+
   // #1950 — the cap keeps the FIRST rows in read order, not the incident window. The line names the
   // kept span and never prints "of N+1", which is the cap plus one, not the real total.
   it("a partial line names the kept time span and says later rows were not collected", () => {

@@ -146,7 +146,7 @@ const superBundleRunner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" }; // uploads read etc.
 };
 
-async function makeSuperBundleApp() {
+async function makeSuperBundleApp(runner: VqlRunner = superBundleRunner) {
   const root = await mkdtemp(join(tmpdir(), "dfir-super-bundle-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -160,7 +160,7 @@ async function makeSuperBundleApp() {
     pipeline,
     stateStore,
     importMetaStore,
-    velociraptorClient: new VelociraptorClient(superVeloCfg, superBundleRunner),
+    velociraptorClient: new VelociraptorClient(superVeloCfg, runner),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
@@ -518,6 +518,66 @@ describe("super-timeline promote route", () => {
       .send({ eventIds: ["x"] });
     expect(res.status).toBe(501);
   });
+});
+
+// #1982 — MFT is entry 1 of the bundle and used to spend the whole DFIR_SUPERTIMELINE_MAX before
+// USN (entry 23) was read. The cap is now shared by row count, smallest first.
+const fileRow = (dir: string, n: number) => ({
+  OSPath: `C:\\${dir}\\f${String.fromCharCode(97 + (n % 26))}${String.fromCharCode(97 + Math.floor(n / 26))}.txt`,
+  Created0x10: new Date(Date.UTC(2026, 5, 1, 0, n)).toISOString(),
+  FileName: `f${n}.txt`,
+});
+const shareRunner: VqlRunner = async (statements) => {
+  const p = statements[0];
+  if (p.includes("hunt(") && p.includes("artifacts=["))
+    return { rows: [{ Hunt: { HuntId: "H.SHARE1", state: "RUNNING" } }], raw: "" };
+  if (p.includes("hunt_results(") && p.includes("Windows.NTFS.MFT"))
+    return { rows: Array.from({ length: 20 }, (_, i) => fileRow("mft", i)), raw: "" };
+  if (p.includes("hunt_results(") && p.includes("Windows.Forensics.Usn"))
+    return { rows: Array.from({ length: 20 }, (_, i) => fileRow("usn", i)), raw: "" };
+  return { rows: [], raw: "" };
+};
+
+describe("super-only hunt: the shared super-timeline cap (#1982)", () => {
+  it(
+    "splits DFIR_SUPERTIMELINE_MAX across the artifacts and names each one the cap cut",
+    async () => {
+      const prev = process.env.DFIR_SUPERTIMELINE_MAX;
+      process.env.DFIR_SUPERTIMELINE_MAX = "10";
+      try {
+        const { app } = await makeSuperBundleApp(shareRunner);
+        expect(
+          (
+            await request(app)
+              .post("/cases/c1/velociraptor/run-bundle")
+              .send({ bundleId: "super-timeline-triage" })
+          ).status,
+        ).toBe(202);
+        expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+        const job = await pollFor("the super-only hunt to be imported", async () => {
+          const j = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
+          if (j?.status === "error") throw new Error(`collect errored: ${j.error}`);
+          return j?.status === "imported" && j.collectActive === false ? j : undefined;
+        });
+        const capped = job.superCappedArtifacts as { name: string; kept: number; total: number }[];
+        expect(capped.map((c) => c.name).sort()).toEqual(["Windows.Forensics.Usn", "Windows.NTFS.MFT"]);
+        for (const c of capped) {
+          expect(c.total).toBe(20); // one time per fixture row → one mapped event per row
+          expect((c as { rows?: number }).rows).toBe(20);
+          expect(c.kept).toBe(5); // 10 shared by two artifacts of 20 rows — MFT no longer takes it all
+        }
+        const all = await request(app).get("/cases/c1/super-timeline?limit=100");
+        expect(all.body.total).toBe(10);
+        const text = JSON.stringify(all.body);
+        expect(text).toContain("usn");
+        expect(text).toContain("mft");
+      } finally {
+        if (prev === undefined) delete process.env.DFIR_SUPERTIMELINE_MAX;
+        else process.env.DFIR_SUPERTIMELINE_MAX = prev;
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 });
 
 describe("superTimelineOnly bundle routing", () => {

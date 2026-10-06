@@ -37,6 +37,27 @@ describe("veloCoverageHtml", () => {
     expect(html).toContain("DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS");
   });
 
+  // #1982 — the shared super-timeline cap names every artifact it cut, with kept/total rows.
+  it("names each artifact the shared super-timeline cap cut, and the knob that lifts it", () => {
+    const html = cov.veloCoverageHtml(
+      imported({
+        superTimelineOnly: true,
+        superCappedArtifacts: [
+          { name: "Windows.NTFS.MFT", kept: 46000, total: 100000, rows: 90000, cap: 100000 },
+          { name: "<b>Usn</b>", kept: 0, total: 5, rows: 5, cap: 100000 },
+        ],
+      }),
+    );
+    expect(html).toContain("Windows.NTFS.MFT");
+    expect(html).toContain("46000 of 100000 mapped events");
+    expect(html).toContain("from 90000 rows");
+    expect(html).toContain("0 of 5 mapped events");
+    expect(html).toContain("&lt;b&gt;Usn&lt;/b&gt;");
+    expect(html).not.toContain("<b>Usn</b>");
+    expect(html).toContain("DFIR_SUPERTIMELINE_MAX");
+    expect(cov.veloCoverageHtml(imported())).not.toContain("DFIR_SUPERTIMELINE_MAX");
+  });
+
   // #1950 — the cap keeps the first rows in read order, so the line names the time span they cover.
   it("names the kept time span of a cut-short artifact, escaped, when the job stored one", () => {
     const t = { name: "Windows.Forensics.Usn", kept: 1000, total: 1001 };

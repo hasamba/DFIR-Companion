@@ -166,7 +166,10 @@ function coverageGap(
       partlyRead: partly,
     };
   const { artifact, logSource } = CLASS_COLLECTION[missing[0]];
-  const archiveOnly = inv.hunts.some((h) => h.state === "archive-only" && h.artifact === artifact);
+  // A super-only artifact the shared cap cut (#1982) is NOT all in the archive: collect it again.
+  const archiveOnly =
+    inv.hunts.some((h) => h.state === "archive-only" && h.artifact === artifact) &&
+    !inv.hunts.some((h) => h.state === "super-capped" && h.artifact === artifact);
   return { missing, uncoveredHosts, artifact, logSource, archiveOnly };
 }
 

@@ -103,6 +103,20 @@ export interface VeloHuntJob {
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
   unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
+  superCappedArtifacts?: SuperCappedArtifact[]; // super-only: the shared super-timeline cap cut these (#1982)
+}
+
+/**
+ * A super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982): `kept` of its `total`
+ * MAPPED EVENTS were offered to the super-timeline (a row can map to several events); the rest are
+ * stored as evidence only, NOT in the archive to search.
+ */
+export interface SuperCappedArtifact {
+  name: string;
+  kept: number; // mapped events offered to the super-timeline
+  total: number; // mapped events the artifact produced
+  rows: number; // source rows the artifact returned
+  cap: number; // the hunt's DFIR_SUPERTIMELINE_MAX
 }
 
 /**

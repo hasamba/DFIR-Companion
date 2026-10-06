@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Capped reads keep the incident window** — a Velociraptor read cut short by the row cap is re-read once inside the incident window, and the warning says to collect again with a time scope (closes #1969)
+- **Fair share of the super-timeline cap** — a super-only hunt splits the row cap across its artifacts, and the coverage note names what the cap cut (closes #1982)
 - **Collector note no longer hides a Critical row** — a Critical row that carries the collector note stays in the forensic timeline and can be promoted (closes #1977)
 - **Failed manual synthesis marks conclusions out of date** — a failed Re-synthesize, Generate hypotheses or replay keeps the AI status on out of date (closes #1976)
 - **No silent unmasked AI paths** — every outbound AI path now applies masking, stops with a clear reason, or asks before sending (closes #1952)
