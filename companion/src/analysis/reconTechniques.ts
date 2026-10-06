@@ -1,5 +1,6 @@
 import { techniqueName, unionEventTechniques } from "./attackTechniqueNames.js";
 import { commandCandidates } from "./commandNormalize.js";
+import { AD_RECON_TOOLS } from "./attackToolNames.js";
 // Re-exported so existing importers keep one entry point for technique naming.
 export { techniqueName, unionEventTechniques };
 
@@ -55,7 +56,10 @@ const RECON_RULES: ReconRule[] = [
   },
   // T1087.002 Account Discovery via AD-recon tooling (AdFind / BloodHound / PingCastle / ADRecon)
   {
-    re: /\badfind(?:\.exe)?\b|-sc\s+trustdmp\b|\bsharphound\b|\bbloodhound\b|\bping\s*castle\b|\bpingcastle\b|\badrecon\b|\bseatbelt\b|\b\[adsisearcher\]/i,
+    re: new RegExp(
+      String.raw`\b(?:${AD_RECON_TOOLS.join("|")})\b|-sc\s+trustdmp\b|\bping\s*castle\b|\b\[adsisearcher\]`,
+      "i",
+    ),
     ids: ["T1087.002"],
   },
   // T1046 Network Service Discovery (port/host scanners — Advanced IP Scanner, SoftPerfect, masscan…)

@@ -63,6 +63,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "own-child handle",
   "normal OS behaviour",
   "transfer tool staged",
+  "attack tool store",
   "lab-setup",
   "look-alike account",
 ];

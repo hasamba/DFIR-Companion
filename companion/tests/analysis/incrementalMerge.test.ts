@@ -313,6 +313,31 @@ describe("incremental importer merge — same result as the full merge", () => {
     expect(row("t3")?.severity).toBe("High");
   });
 
+  it("reads every tool-store row on every merge, so three tools split across imports form one lead (#1970)", async () => {
+    await importBoth(delta(batch("a", 20)));
+    const file = (id: string, s: number, name: string): Ev => ({
+      id,
+      timestamp: day(9, 4, 0, s),
+      description: `File created ${name}`,
+      severity: "Info",
+      path: `C:\\Users\\Public\\Music\\${name}`,
+      asset: "HOST-9",
+    });
+    expect(await importBoth(delta([file("k1", 0, "PsExec.exe")]))).toBe(true);
+    await expectSame();
+    expect(await importBoth(delta([file("k2", 10, "AdFind.exe")]))).toBe(true);
+    await expectSame();
+    expect(await importBoth(delta([file("k3", 20, "WinRAR.exe")]))).toBe(true);
+    const state = await expectSame();
+    for (const id of ["k1", "k2", "k3"]) {
+      const row = state.forensicTimeline.find((e) => e.id === id);
+      expect(row?.severity).toBe("Medium");
+      expect(row?.description).toContain("[attack tool store:");
+    }
+    expect(await importBoth(delta(batch("c", 10)))).toBe(true);
+    await expectSame();
+  });
+
   it("keeps order when every new row sorts before every stored one (the timeline is respaced)", async () => {
     await importBoth(delta(batch("a", 30)));
     for (let k = 0; k < 4; k++) {
