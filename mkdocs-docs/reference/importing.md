@@ -123,6 +123,13 @@ account, such as Administrator, krbtgt or Guest, the event is graded High. The d
 `admin2`, and names shorter than five characters are not flagged. A member logged only by its SID is
 not checked.
 
+An import also compares each new account and new group member with the accounts already in the case.
+A name one character away from an existing case account is graded High, with a note such as
+`[look-alike account: "svc-backupl" is one edit from case account "svc-backup"]`. Numbered accounts
+(`user1`/`user2`), names that differ only in the first letter (`asmith`/`bsmith`), machine accounts
+and names shorter than five characters are not flagged. The check looks back only: a real account
+that first appears in a later import does not re-check an earlier look-alike.
+
 ### Collecting Linux persistence artifacts
 
 The Companion reads the files that decide what a Linux host runs on its own: SSH authorized keys,

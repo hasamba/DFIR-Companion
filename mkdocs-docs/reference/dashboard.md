@@ -66,6 +66,8 @@ The top of the dashboard shows:
 
 **Background jobs chip** — the **⚙ jobs** chip in the toolbar is always shown. At rest it reads **⚙ 0 jobs**. Its tooltip and the popover header name the last synthesis, when it ran and its outcome. Click it to open the job list. Each row shows when the job started and ended and how long it ran. A drop-folder import row lists every file it covers under a fold (up to 500 names). See [Advanced → Restart-safe Background Jobs](advanced.md#restart-safe-background-jobs).
 
+If a synthesis you start with **Re-synthesize**, **Generate hypotheses** or a replay from the Analysis runs panel fails, the AI status shows *conclusions out of date* until a synthesis succeeds. A cancelled run, or a run held for a duplicate-host decision, does not change it.
+
 ---
 
 ## Executive Summary
