@@ -108,9 +108,11 @@ describe("readInIncidentWindow", () => {
     expect(calls[1]).toMatch(/^\(FileName =~ 'x'\) AND \(/);
   });
 
-  it("no window — no re-read", async () => {
+  // #1983: with NO window a cut-short read is re-read newest-first (veloNewestRead.test.ts); a hunt that
+  // applied its window at the source is the case that is read once only.
+  it("scoped at the source — no re-read", async () => {
     const { read, calls } = fakeRead(cut, inWindow);
-    const res = await readInIncidentWindow(read, USN, undefined, undefined);
+    const res = await readInIncidentWindow(read, USN, undefined, { kind: "scoped" });
     expect(calls).toHaveLength(1);
     expect(res.rows).toEqual(cut.rows);
     expect(res.window).toBeUndefined();

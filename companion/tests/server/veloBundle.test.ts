@@ -866,6 +866,72 @@ describe("Velociraptor triage bundles — routes", () => {
     POLL_TIMEOUT_MS * 2,
   );
 
+  // #1983 — no hunt time scope and no case scope window: a cut-short read is re-read ONCE, sorted
+  // newest-first by the artifact's own time, and the newest rows are kept. The helper key never lands.
+  it(
+    "collect re-reads a cut-short artifact newest-first when no incident window is known",
+    async () => {
+      const sorted: string[] = [];
+      const runner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("artifact_definitions()"))
+          return {
+            rows: [{ name: "Windows.Forensics.Usn", description: "USN", type: "CLIENT", sources: [{}] }],
+            raw: "",
+          };
+        if (p.includes("hunt(") && p.includes("artifacts="))
+          return { rows: [{ Hunt: { HuntId: "H.NEW1", state: "RUNNING" } }], raw: "" };
+        if (p.includes("hunt_results(") && p.includes("Usn")) {
+          if (p.includes("ORDER BY")) {
+            sorted.push(p);
+            const at = (iso: string) => ({
+              FileName: iso,
+              Timestamp: iso,
+              _DfirCompanionNewestKey: Date.parse(iso),
+            });
+            return {
+              rows: [at("2026-09-22T00:00:00Z"), at("2026-09-21T00:00:00Z"), at("2026-09-20T00:00:00Z")],
+              raw: "",
+            };
+          }
+          const rows = Array.from({ length: 3 }, (_, i) => ({
+            FileName: `old${i}`,
+            Timestamp: "2020-01-01T00:00:00Z",
+          }));
+          return { rows, raw: "" };
+        }
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(runner, { collectMaxRows: 2 });
+      await request(made.app)
+        .post("/bundles")
+        .send({ id: "best-practice", name: "Best Practice", artifacts: ["Windows.Forensics.Usn"] });
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      const job = await pollHuntJob<{ status: string; truncatedArtifacts?: Record<string, unknown>[] }>(
+        made.app,
+      );
+      expect(job.status).toBe("imported");
+      expect(sorted).toHaveLength(1);
+      expect(job.truncatedArtifacts).toEqual([
+        {
+          name: "Windows.Forensics.Usn",
+          kept: 2,
+          total: 3,
+          earliest: "2026-09-21T00:00:00.000Z",
+          latest: "2026-09-22T00:00:00.000Z",
+          order: "newest",
+        },
+      ]);
+      const evidence = JSON.stringify((await made.stateStore.load("c1")).forensicTimeline);
+      expect(evidence).not.toContain("_DfirCompanionNewestKey");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
   it("run-bundle is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
     const store = new CaseStore(root);

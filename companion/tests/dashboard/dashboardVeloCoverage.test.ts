@@ -96,6 +96,24 @@ describe("veloCoverageHtml", () => {
     expect(part).toContain("kept the first 40 rows inside the incident window");
   });
 
+  // #1983 — no incident window: the cut-short read was re-read newest-first by the artifact's own time.
+  it("says a cut-short artifact kept the newest rows, by the artifact's own time", () => {
+    const t = { name: "Windows.NTFS.MFT", kept: 40, total: 41, order: "newest" };
+    const html = cov.veloCoverageHtml(imported({ truncatedArtifacts: [t] }));
+    expect(html).toContain("kept the newest 40 rows by file creation time ($FN, else $SI)");
+    expect(html).toContain("newest across all hosts");
+    expect(html).toContain("undated rows sorted last");
+    expect(html).toContain("older rows were not kept");
+    const usn = cov.veloCoverageHtml(
+      imported({ truncatedArtifacts: [{ ...t, name: "Windows.Forensics.Usn" }] }),
+    );
+    expect(usn).toContain("kept the newest 40 records by change time");
+    const evtx = { ...t, name: "Windows.EventLogs.Evtx", orderPartial: true };
+    const ev = cov.veloCoverageHtml(imported({ truncatedArtifacts: [evtx] }));
+    expect(ev).toContain("kept the newest 40 events by event time");
+    expect(ev).toContain("named sources were not read");
+  });
+
   // The bug this module was extracted to fix: the old inline version only rendered for a bundle of
   // MORE than one artifact, so a single-artifact THOR hunt that was cut short showed a green job and
   // no warning at all.

@@ -17,6 +17,7 @@
 // Split out of velociraptorApi.ts (its own file-size ledger entry forbids growing it) and shaped so
 // both fixes live beside the explanation rather than in two distant call sites.
 import type { VelociraptorRunResult } from "./velociraptorApi.js";
+import { capNewest, finishNewest, type NewestSpan } from "./veloNewestRead.js";
 
 /** A bare ARTIFACT name — a dotted identifier. Every one of the 402 shipped artifacts fits this. */
 export const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;
@@ -92,13 +93,15 @@ export function artifactRefs(artifact: string, sources: string[]): string[] {
  * worse than the cost of the check.
  */
 export async function readHuntArtifactRows(
-  read: (artifact: string, sources: string[]) => Promise<VelociraptorRunResult>,
+  read: (artifact: string, sources: string[]) => Promise<HuntArtifactRead>,
   catalog: () => Promise<{ name: string; sources?: string[]; sourcesUnknown?: true }[]>,
   artifact: string,
   sources: string[] = [],
   max?: number, // row ceiling for the MERGED result — see capRun below
+  ordered = false, // #1983: the reads carry a newest-first sort key — merge by it, then strip it
 ): Promise<HuntArtifactRead> {
-  if (sources.length || artifact.includes("/")) return read(artifact, sources);
+  const done = (run: HuntArtifactRead): HuntArtifactRead => (ordered ? finishNewest(run) : run);
+  if (sources.length || artifact.includes("/")) return done(await read(artifact, sources));
   const base = await read(artifact, []);
   let entry: { name: string; sources?: string[]; sourcesUnknown?: true } | undefined;
   try {
@@ -110,8 +113,8 @@ export async function readHuntArtifactRows(
   // empty bare read is "not read", never "empty" — a TaskScheduler empty would settle persistence.
   // The same when the definition cannot prove its source list complete (#1635 review).
   const named = entry?.sources ?? [];
-  const run = named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
-  return !entry || entry.sourcesUnknown ? { ...run, sourcesUnknown: true } : run;
+  const run = named.length ? capRun(mergeRuns(base, await read(artifact, named)), max, ordered) : base;
+  return done(!entry || entry.sourcesUnknown ? { ...run, sourcesUnknown: true } : run);
 }
 
 /**
@@ -121,6 +124,8 @@ export async function readHuntArtifactRows(
  */
 export interface HuntArtifactRead extends VelociraptorRunResult {
   sourcesUnknown?: true;
+  diagnostics?: string; // a sorted read's VQL log errors (#1983) — the caller then keeps the plain read
+  newest?: NewestSpan; // a sorted read's valid-key count and key span (#1983)
 }
 
 /**
@@ -131,15 +136,21 @@ export interface HuntArtifactRead extends VelociraptorRunResult {
  * `truncated: false` — over the ceiling, and with the incomplete-collection warning suppressed exactly
  * when it was most deserved.
  */
-function capRun(run: VelociraptorRunResult, max?: number): VelociraptorRunResult {
+// A newest-first merge (#1983) is re-sorted by key before the cut, so the cap keeps the newest rows of
+// BOTH reads, not the bare read's rows first.
+function capRun(run: HuntArtifactRead, max?: number, ordered = false): HuntArtifactRead {
+  if (ordered && max !== undefined)
+    return { ...run, rows: capNewest(run.rows, max).rows, truncated: run.truncated || run.rows.length > max };
   if (max === undefined || run.rows.length <= max) return run;
   return { rows: run.rows.slice(0, max), total: run.total, truncated: true };
 }
 
 /** Concatenate two reads of the same artifact, dropping rows the second repeats from the first. */
-function mergeRuns(a: VelociraptorRunResult, b: VelociraptorRunResult): VelociraptorRunResult {
-  if (!a.rows.length) return b;
-  if (!b.rows.length) return a;
+function mergeRuns(a: HuntArtifactRead, b: HuntArtifactRead): HuntArtifactRead {
+  const diagnostics = [a.diagnostics, b.diagnostics].filter(Boolean).join("; ");
+  const diag = diagnostics ? { diagnostics } : {};
+  if (!a.rows.length) return { ...b, ...diag };
+  if (!b.rows.length) return { ...a, ...diag };
   const seen = new Set(a.rows.map((r) => JSON.stringify(r)));
   const fresh = b.rows.filter((r) => !seen.has(JSON.stringify(r)));
   return {
@@ -148,6 +159,7 @@ function mergeRuns(a: VelociraptorRunResult, b: VelociraptorRunResult): Velocira
     // means for a capped read.
     total: a.total + b.total - (b.rows.length - fresh.length),
     truncated: a.truncated || b.truncated,
+    ...diag,
   };
 }
 

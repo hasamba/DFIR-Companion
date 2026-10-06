@@ -21,6 +21,8 @@ import { parseReachedClients, reachedClientsVql, type HuntReachedClient } from "
 export type { HuntReachedClient } from "./huntReachedClients.js";
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
+import { cappedReadProgram, capNewest, sortedReadTimeout } from "./veloNewestRead.js";
+import type { NewestOrder, NewestRun } from "./veloNewestRead.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
 // Run the hunt-pivot queries the Companion generates against a Velociraptor server through its API.
@@ -585,8 +587,9 @@ export class VelociraptorClient {
   private async runRawLogged(
     program: string,
     maxOutputBytes: number = this.config.maxOutputBytes,
+    timeoutMs: number = this.config.timeoutMs,
   ): Promise<{ rows: unknown[]; reason: string }> {
-    const res = await this.runner([program], { timeoutMs: this.config.timeoutMs, maxOutputBytes });
+    const res = await this.runner([program], { timeoutMs, maxOutputBytes });
     return { rows: res.rows, reason: vqlLogErrors(res.stderr ?? "") };
   }
 
@@ -717,13 +720,10 @@ export class VelociraptorClient {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     const refs = artifactRefs(artifact, sources);
-    const w = sanitizeWhere(where);
-    const whereClause = w ? ` WHERE (${w})` : "";
     const limit = this.rowCap(collect) + 1; // +1 so cap() flags truncation
-    const program =
-      refs.length > 1
-        ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
-        : `SELECT * FROM source(client_id='${clientId}', flow_id='${flowId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
+    const at = `client_id='${clientId}', flow_id='${flowId}'`;
+    const froms = refs.map((ref) => `source(${at}, artifact='${ref}')`);
+    const program = cappedReadProgram(froms, sanitizeWhere(where), limit);
     return this.cap(await this.runRaw(program, this.collectCap()), limit - 1);
   }
 
@@ -852,21 +852,20 @@ export class VelociraptorClient {
     sources: string[] = [],
     where?: string,
     collect = false, // ingestion read: use the collection row cap, not the dashboard's view cap
-  ): Promise<VelociraptorRunResult> {
+    order?: NewestOrder, // #1983: sorted newest-first; rows keep the key column (veloNewestRead.ts)
+  ): Promise<NewestRun> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     // Named sources are addressed as `artifact/source` (the `source=` param does NOT match them).
     const refs = artifactRefs(artifact, sources);
     // Optional analyst WHERE filter applied BEFORE the LIMIT, so noisy rows are dropped at the source
     // and the kept rows are the relevant ones (not the first N pre-filter). LIMIT at the source so a huge
     // result set (e.g. Hayabusa across a fleet) can't blow the stdout cap; maxRows+1 so cap() flags truncation.
-    const w = sanitizeWhere(where);
-    const whereClause = w ? ` WHERE (${w})` : "";
     const limit = this.rowCap(collect) + 1;
-    const program =
-      refs.length > 1
-        ? `SELECT * FROM chain(${refs.map((ref, i) => `q${i}={ SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${ref}')${whereClause} LIMIT ${limit} }`).join(", ")})`
-        : `SELECT * FROM hunt_results(hunt_id='${huntId}', artifact='${refs[0]}')${whereClause} LIMIT ${limit}`;
-    return this.cap(await this.runRaw(program, this.collectCap()), limit - 1);
+    const froms = refs.map((ref) => `hunt_results(hunt_id='${huntId}', artifact='${ref}')`);
+    const program = cappedReadProgram(froms, sanitizeWhere(where), limit, order);
+    const timeout = order ? sortedReadTimeout(this.config.timeoutMs) : this.config.timeoutMs; // sort = full read
+    const { rows, reason } = await this.runRawLogged(program, this.collectCap(), timeout);
+    return order ? capNewest(rows, limit - 1, reason) : this.cap(rows, limit - 1);
   }
 
   // Read one hunt artifact's rows, recovering the multi-source case — artifactRefs.ts explains what
@@ -877,10 +876,11 @@ export class VelociraptorClient {
     sources: string[] = [],
     where?: string,
     collect = false,
+    order?: NewestOrder,
   ): ReturnType<typeof readHuntArtifactRows> {
-    const read = (name: string, srcs: string[]) => this.huntResults(huntId, name, srcs, where, collect);
+    const read = (n: string, s: string[]) => this.huntResults(huntId, n, s, where, collect, order);
     const cat = () => this.listClientArtifacts(); // the MERGED two-read result obeys the cap too
-    return readHuntArtifactRows(read, cat, artifact, sources, this.rowCap(collect));
+    return readHuntArtifactRows(read, cat, artifact, sources, this.rowCap(collect), !!order);
   }
 
   // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or

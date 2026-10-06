@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lab-setup file transfers capped** — files dropped through a hypervisor drag-and-drop folder are capped at Medium, with `DFIR_LAB_SETUP_PATHS` for more folders (closes #1946)
 - **Duplicate hunt import warning** — importing a hunt or flow already in the case imports nothing until the analyst chooses Re-import anyway (closes #1965)
 
+### Changed
+
+- **Newest rows kept when no incident window is known** — a Velociraptor read cut short by the row cap, with no time scope or case window, is re-read newest-first by the artifact's own time (closes #1983)
+
 ### Fixed
 
 - **Capped reads keep the incident window** — a Velociraptor read cut short by the row cap is re-read once inside the incident window, and the warning says to collect again with a time scope (closes #1969)

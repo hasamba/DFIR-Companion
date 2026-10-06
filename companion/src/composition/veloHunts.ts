@@ -40,7 +40,8 @@ import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClient
 import { inventorySignature } from "../analysis/collectionInventory.js";
 import { truncatedRecord } from "../analysis/veloKeptSpan.js";
 import { ScopeStore } from "../analysis/scope.js";
-import { incidentWindow, readInIncidentWindow } from "../integrations/velociraptor/veloWindowReread.js";
+import { readInIncidentWindow, readScope } from "../integrations/velociraptor/veloWindowReread.js";
+import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
@@ -289,7 +290,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // big hunt's rows twice in the heap and took the server down with no crash trace. So this loops
       // per artifact (not huntResultsByArtifact(), which returns one map) and writes each artifact's rows
       // to a scratch file as they arrive — at most one artifact's rows are live at once, here and in step 3.
-      // A cut-short read is re-read once inside the incident window when one is known (#1969).
+      // A cut-short read is re-read once inside the incident window when one is known (#1969), else
+      // newest-first by the artifact's own time (#1983).
       const caseScope = await new ScopeStore(store).load(caseId).catch(() => null);
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
@@ -307,11 +309,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           // huntArtifactRows, not huntResults: a multi-source artifact's bare-name read is empty and
           // SILENT (see artifactRefs.ts), landing in `emptyArtifacts` as "found nothing on every host".
           const [srcs, hunt] = [sourcesByArtifact?.[name] ?? [], job.huntId];
-          const read = (where?: string) => client.huntArtifactRows(hunt, name, srcs, where, true);
-          const win = incidentWindow(job.timeScope, caseScope, name); // hunt scope, else case scope
-          const res = await readInIncidentWindow(read, name, job.filters?.[name], win, logLine);
+          const read = (where?: string, order?: NewestOrder) =>
+            client.huntArtifactRows(hunt, name, srcs, where, true, order);
+          const scope = readScope(job.timeScope, caseScope, name); // scoped at source / window / none
+          const res = await readInIncidentWindow(read, name, job.filters?.[name], scope, logLine);
           rows = res.rows;
-          if (res.truncated || res.window) cutShort.push(truncatedRecord(name, rows, res.total, res)); // #1950
+          if (res.truncated || res.window || res.order)
+            cutShort.push(truncatedRecord(name, rows, res.total, res));
           if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
