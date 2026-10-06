@@ -79,6 +79,32 @@
       `<ul data-safe-style="margin:4px 0 0 18px;padding:0">${items}</ul></div>`
     );
   }
+  // #1972 — accepted decisions the primary model's new call contradicts; the server marks them.
+  // The decision stays applied until the analyst keeps or drops it.
+  function reopenedDeltas(rec) {
+    const deltas = rec && Array.isArray(rec.deltas) ? rec.deltas : [];
+    return deltas.filter((d) => d.status === "accepted" && d.reopened && !d.unapplied);
+  }
+  function reopenedWhat(d) {
+    const accepted = d.kind === "a_only" ? "you dismissed it" : `you accepted ${esc(d.bSeverity || "?")}`;
+    return `primary now says ${esc(d.reopened)}; ${accepted}`;
+  }
+  function reopenedBlock(list) {
+    if (list.length === 0) return "";
+    const items = list
+      .map(
+        (d) =>
+          `<li><span class="so-kind so-${esc(d.kind)}">${esc(SO_KIND_LABEL[d.kind] || d.kind)}</span> ${esc(d.title)} <span data-safe-style="color:var(--text-dim)">— ${reopenedWhat(d)}</span> ` +
+          `<button data-so-keep="${esc(d.id)}" title="Keep your decision. The primary model's new call becomes the call it overrules.">keep</button>` +
+          `<button data-so-drop="${esc(d.id)}" title="Drop your decision. The finding goes back to the primary model's call.">drop</button></li>`,
+      )
+      .join("");
+    return (
+      `<div class="so-reopened" data-safe-style="border:1px solid var(--sev-medium);border-radius:6px;padding:6px 8px;margin:6px 0">` +
+      `<div>↻ ${list.length} accepted decision${list.length === 1 ? "" : "s"} reopened — the primary model made a new call on new evidence. The case keeps your decision until you keep or drop it.</div>` +
+      `<ul data-safe-style="margin:4px 0 0 18px;padding:0">${items}</ul></div>`
+    );
+  }
   const SO_KIND_LABEL = {
     b_only: "only in B",
     a_only: "only in A",
@@ -102,6 +128,7 @@
     }
     el.style.display = "block";
     const unapplied = unappliedDeltas(rec);
+    const reopened = reopenedDeltas(rec);
     const toggle = `<button type="button" class="so-toggle" data-so-toggle title="${soCollapsed ? "Expand" : "Collapse"} the 2nd opinion panel">${soCollapsed ? "▸" : "▾"}</button>`;
     const head =
       `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · A: ${esc(rec.modelA || "model A")} vs B: ${esc(rec.modelB || "model B")}</span>` +
@@ -111,6 +138,9 @@
       refereeErrorLine(rec) +
       (unapplied.length
         ? `<span class="so-unapplied-count" data-safe-style="color:var(--badge-danger-text)" title="Accepted decisions that match no finding after the last synthesis">⚠ ${unapplied.length} not applied</span>`
+        : "") +
+      (reopened.length
+        ? `<span class="so-reopened-count" data-safe-style="color:var(--sev-medium)" title="Accepted decisions the primary model's new call contradicts">↻ ${reopened.length} reopened</span>`
         : "") +
       `<span class="so-agree">✓ ${rec.agreementCount | 0} agreed</span>` +
       `<span data-safe-style="color:var(--text-dim)">${esc(relTime(rec.generatedAt))}</span></div>`;
@@ -169,6 +199,8 @@
         let acts;
         if (d.status === "accepted" && d.unapplied)
           acts = `<span class="so-status" data-safe-style="color:var(--badge-danger-text)" title="${esc(SO_UNAPPLIED_WHY[d.unapplied] || "matches no finding")}">⚠ accepted · not applied</span>`;
+        else if (d.status === "accepted" && d.reopened)
+          acts = `<span class="so-status" data-safe-style="color:var(--sev-medium)" title="${reopenedWhat(d)}">↻ accepted · reopened (primary now says ${esc(d.reopened)})</span>`;
         else if (d.status === "accepted")
           acts = `<span class="so-status" data-safe-style="color:var(--sev-low)">✓ accepted${d.carriedFrom ? ` <span data-safe-style="color:var(--text-dim)" title="Accepted in the second opinion of ${esc(d.carriedFrom)}">· earlier run</span>` : ""}</span>`;
         else if (d.status === "rejected")
@@ -180,7 +212,7 @@
         return `<div class="so-delta so-${esc(d.status)}"><div class="so-body"><span class="so-kind so-${esc(d.kind)}">${esc(kindLabel)}</span><span class="so-title">${title}</span>${rationale}${suggest}</div><div class="so-acts">${acts}</div></div>`;
       })
       .join("");
-    el.innerHTML = head + summary + unappliedBlock(unapplied) + bulk + rows;
+    el.innerHTML = head + summary + unappliedBlock(unapplied) + reopenedBlock(reopened) + bulk + rows;
   }
   // A failed referee pass (#1587). Without this line the panel hides every empty referee field,
   // so a referee that crashed looks exactly like one that ran and made no call. It lives in the
@@ -231,17 +263,24 @@
     return n ? ` ${n} dismissal(s) marked ⚠ stay pending for you to decide one by one.` : "";
   }
   function applySecondOpinionDelta(caseId, deltaId, accept) {
-    fetch(`/cases/${caseId}/second-opinion/apply`, {
+    postSecondOpinionDecision(caseId, "apply", { deltaId, accept }, "Second-opinion apply");
+  }
+  // #1972 — Keep or Drop one reopened decision.
+  function resolveReopenedDelta(caseId, deltaId, keep) {
+    postSecondOpinionDecision(caseId, "reopened", { deltaId, keep }, "Second-opinion keep/drop");
+  }
+  function postSecondOpinionDecision(caseId, route, payload, label) {
+    fetch(`/cases/${caseId}/second-opinion/${route}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deltaId, accept }),
+      body: JSON.stringify(payload),
     })
       .then(async (r) => {
         const rec = await r.json();
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
           if (stillOpen(caseId))
-            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply");
+            document.getElementById("status").textContent = presidioHoldText(label);
           return null;
         }
         return rec;
@@ -471,6 +510,8 @@
           applySecondOpinionDelta(caseId, t.dataset.soAccept, true);
         else if (t.dataset.soReject)
           applySecondOpinionDelta(caseId, t.dataset.soReject, false);
+        else if (t.dataset.soKeep) resolveReopenedDelta(caseId, t.dataset.soKeep, true);
+        else if (t.dataset.soDrop) resolveReopenedDelta(caseId, t.dataset.soDrop, false);
         else if (t.dataset.soAll === "accept") {
           if (
             confirm(

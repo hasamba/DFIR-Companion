@@ -9,7 +9,9 @@ import {
   followRefereeStatus,
   type ReconcileResponse,
   type SecondOpinion,
+  type SecondOpinionDelta,
 } from "../secondOpinion.js";
+import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import {
   flagRefereeDismissals,
@@ -346,11 +348,42 @@ export async function applyAllSecondOpinion(
   });
 }
 
+/**
+ * Keep or Drop one reopened decision (#1972). Keep: the decision stands and the primary model's new
+ * call becomes the call it overrules. Drop: the decision is rejected and every finding it targeted
+ * goes back to the primary's call, with the analyst's severity restores (#1973) re-applied on top.
+ */
+export async function resolveReopenedSecondOpinion(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  deltaId: string,
+  keep: boolean,
+): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+  const findings = (await ctx.opts.stateStore.load(caseId)).findings;
+  const restores = keep ? [] : ((await ctx.opts.findingSeverityRestoreStore?.load(caseId)) ?? []);
+  let dropped: SecondOpinionDelta | undefined;
+  return updateSecondOpinion(
+    ctx,
+    caseId,
+    (current) => {
+      const d = current.deltas.find((x) => x.id === deltaId);
+      if (!d) throw new Error(`unknown second-opinion delta: ${deltaId}`);
+      if (keep) return keepReopenedDecision(current, deltaId, findings);
+      if (!reopenedCall(findings, d)) throw new Error(`second-opinion decision ${deltaId} is not reopened`);
+      dropped = d;
+      return setDeltaStatus(current, deltaId, "rejected");
+    },
+    (state) => (dropped ? dropToPrimaryCall(state, dropped, restores) : state),
+  );
+}
+
 /** Load → decide → save under the record lock, then apply the accepted set to the case. */
 async function updateSecondOpinion(
   ctx: SecondOpinionContext,
   caseId: string,
   decide: (current: SecondOpinion) => SecondOpinion,
+  // #1972: a change to the case itself, made before the accepted set is re-applied (Drop).
+  onCase: (state: InvestigationState) => InvestigationState = (state) => state,
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
   const store = ctx.opts.secondOpinionStore;
   if (!store) throw new Error("second-opinion store not configured");
@@ -373,7 +406,7 @@ async function updateSecondOpinion(
   );
   const write = async (): Promise<{ state: InvestigationState; changed: boolean }> => {
     const state = await ctx.opts.stateStore.load(caseId);
-    const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(state, record), {
+    const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(onCase(state), record), {
       treatAsReal: (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false,
       aliasIndex,
     });

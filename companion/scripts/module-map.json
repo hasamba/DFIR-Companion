@@ -734,6 +734,7 @@
     "secondLook.ts": "analysis/ai",
     "secondOpinion.ts": "analysis/ai",
     "secondOpinionStore.ts": "analysis/ai",
+    "secondOpinionReopen.ts": "analysis/ai",
     "secondOpinionTargets.ts": "analysis/ai",
     "secondOpinionGuard.ts": "analysis/ai",
     "secretSpillRules.ts": "analysis/privacy",

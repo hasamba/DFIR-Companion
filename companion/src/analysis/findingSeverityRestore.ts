@@ -215,7 +215,8 @@ function sameClaim(r: SeverityRestoreRecord, f: Finding): boolean {
 
 // The severity the finding has BEFORE the simulation step. When that step capped it, its stored
 // original is the value the step restores on its next pass, so the restore goes there instead.
-function setLiveSeverity(f: Finding, severity: Severity): Finding {
+// Exported for the second-opinion Drop (#1972), which writes the same live severity.
+export function setLiveSeverity(f: Finding, severity: Severity): Finding {
   const sim = f.simulation;
   if (sim && f.severity === sim.appliedSeverity)
     return { ...f, simulation: { ...sim, originalSeverity: severity } };

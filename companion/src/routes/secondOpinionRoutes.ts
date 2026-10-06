@@ -8,6 +8,7 @@ import type { RouteContext } from "./context.js";
 import type { SecondOpinion } from "../analysis/secondOpinion.js";
 import type { Finding } from "../analysis/stateTypes.js";
 import { freshDeltas, markUnappliedDecisions } from "../analysis/secondOpinionTargets.js";
+import { markReopenedDecisions } from "../analysis/secondOpinionReopen.js";
 import type { SynthesisSkipReason } from "../analysis/ai/synthesisSkip.js";
 
 const EMPTY_TIMELINE: SynthesisSkipReason = "empty-timeline";
@@ -30,7 +31,8 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
   async function marked(caseId: string, record: SecondOpinion | null, findings?: readonly Finding[]) {
     if (!record) return record;
     const current = findings ?? (await options.stateStore?.load(caseId))?.findings;
-    return current ? markUnappliedDecisions(record, current) : record;
+    // #1972 — and the accepted decisions the primary model's new call has reopened.
+    return current ? markReopenedDecisions(markUnappliedDecisions(record, current), current) : record;
   }
 
   // Second LLM opinion (issue #116): run a DIFFERENT model over the same case (independent
@@ -151,6 +153,40 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
         return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /unknown second-opinion delta/.test(msg) ? 404 : /no second opinion/.test(msg) ? 409 : 500;
+      return res.status(code).json({ error: msg });
+    }
+  });
+
+  // Keep or Drop ONE accepted decision the primary model has reopened (#1972). Keep: the decision
+  // stands and the primary's new call becomes the call it overrules. Drop: the decision is rejected
+  // and its finding goes back to the primary's call. 409 when the decision is not reopened.
+  // Body: { deltaId, keep }.
+  app.post("/cases/:id/second-opinion/reopened", async (req: Request, res: Response) => {
+    if (!options.pipeline || !options.secondOpinionStore)
+      return res.status(501).json({ error: "second opinion not configured" });
+    const deltaId = typeof req.body?.deltaId === "string" ? req.body.deltaId.trim() : "";
+    const keep = req.body?.keep === true;
+    if (!deltaId) return res.status(400).json({ error: "deltaId is required" });
+    try {
+      const { record, state } = await options.pipeline.resolveReopenedSecondOpinion(
+        req.params.id,
+        deltaId,
+        keep,
+      );
+      options.onSecondOpinion?.(req.params.id);
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai",
+        action: "second-opinion-reopened",
+        detail: `reopened delta ${deltaId} — ${keep ? "kept" : "dropped, primary call restored"}`,
+      });
+      return res.status(200).json(await marked(req.params.id, record, state.findings));
+    } catch (err) {
+      const msg = (err as Error).message;
+      const code = /unknown second-opinion delta/.test(msg)
+        ? 404
+        : /not reopened|no second opinion/.test(msg)
+          ? 409
+          : 500;
       return res.status(code).json({ error: msg });
     }
   });
