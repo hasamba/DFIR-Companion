@@ -11,6 +11,7 @@ import { emptyState, type ForensicEvent, type Severity } from "../../src/analysi
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import type { JevGradeSignals } from "../../src/analysis/ai/jev/jevGrader.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
+import { TOOL_TREE_SCRIPT_NOTE } from "../../src/analysis/veloDetectionNoise.js";
 
 // The WRITE half of the missed-evidence review (#1568).
 //
@@ -238,6 +239,27 @@ describe("promoting what the missed-evidence review found", () => {
     expect(landed).toEqual(["crit", "r2"]);
     await new Promise((r) => setTimeout(r, 20));
     expect(activity.join(" ")).toMatch(/collector's own footprint/);
+  });
+
+  // #1977. A Critical keeps the collector note but no origin (#1531), so the route lets it through.
+  // The merge's work-log guard then read the note as tool narration and dropped it, with only
+  // "refused by the promotion seam" to show for it.
+  it("lands a Critical row that carries the collector note and no structured fields", async () => {
+    const description = "Add-Type AdjPriv token manipulation" + TOOL_TREE_SCRIPT_NOTE;
+    const { app, stateStore } = await harness({
+      archive: [raw("crit", { severity: "Critical", description })],
+      reviewed: [tick("crit", "Critical")],
+    });
+
+    const res = await promote(app, ids("crit"));
+
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(1);
+    expect(res.body.skipped).toBe(0);
+    expect(res.body.reasons.join(" ")).not.toMatch(/refused/);
+    const [row] = (await stateStore.load("c1")).forensicTimeline;
+    expect(row?.id).toBe("crit");
+    expect(row?.severity).toBe("Critical");
   });
 
   it("reports a row the archive no longer holds rather than 404-ing the whole selection", async () => {

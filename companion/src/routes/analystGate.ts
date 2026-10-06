@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import { logActivity } from "../analysis/activityLog.js";
+import { warnLine } from "../logging/serverLogger.js";
 // Via RouteContext, NOT `composition/appOptions.js` directly: routes are Delivery and composition is
 // above them, so that import is a layer violation the boundary gate rejects (it caught this). Every
 // other route reads the same type the same way, through the ctx it is handed.
@@ -24,6 +25,29 @@ export interface SynthesisRouteFailureDeps {
   job?: { jobId: string; signal?: AbortSignal };
   /** Activity-log action name, e.g. "synthesis". Omit to skip logging entirely. */
   activityAction?: string;
+}
+
+/**
+ * #1976: a genuinely failed analyst-pressed run leaves the conclusions behind the evidence, the same
+ * as a failed background run (#1953, `settleSynthesisRejection`, same reason string). Without the
+ * marker, one later clean job turns the pill back to "up to date". Not a failure, so no mark: a run
+ * held at an analyst-decision gate, a cancelled or superseded run, or any run while a newer synthesis
+ * is active (it read its start revision before this mark, so it would keep the marker on success).
+ * Best-effort: never throws, because the route still has to answer.
+ */
+export async function markFailedSynthesisOutOfDate(
+  options: RouteContext["options"],
+  caseId: string,
+  err: unknown,
+  job?: { signal?: AbortSignal },
+): Promise<void> {
+  if (isAnalystDecisionGate(err) || job?.signal?.aborted === true) return;
+  if (options.jobManager?.hasActive(caseId, "synthesis")) return;
+  try {
+    await options.synthMetaStore?.markOutOfDate(caseId, "last synthesis failed");
+  } catch (markErr) {
+    warnLine(`[synthesis] ${caseId}: could not mark conclusions out of date: ${(markErr as Error).message}`);
+  }
 }
 
 /**
@@ -77,6 +101,8 @@ export async function sendSynthesisRouteFailure(
     return res.status(499).json({ error: "synthesis cancelled" });
   }
 
+  // Marked before the error push, so the pill refresh that push triggers already sees it.
+  await markFailedSynthesisOutOfDate(options, caseId, err, job);
   options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: message });
   note(message, "error");
   return sendPipelineError(res, err);

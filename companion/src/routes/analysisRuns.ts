@@ -13,6 +13,7 @@ import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from
 import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
+import { markFailedSynthesisOutOfDate } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
 import { activeRulesHash, importReceiptOfCase } from "./importRunRecorder.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
@@ -312,6 +313,7 @@ async function replaySynthesis(ctx: RouteContext, run: AnalysisRunManifest): Pro
     if (job) await options.jobManager?.finish(job.jobId);
   } catch (err) {
     if (job) await options.jobManager?.fail(job.jobId, err).catch(() => {});
+    await markFailedSynthesisOutOfDate(options, run.caseId, err, job); // #1976, like the route
     throw err;
   }
 }

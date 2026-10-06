@@ -12,6 +12,7 @@ import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { capBuildTimeScoped, capLabSetupScoped } from "./importSettleCap.js";
+import { flagCaseLookalikesScoped } from "./importSettleLookalike.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
   isForeignToImport,
@@ -207,6 +208,10 @@ export async function settleForensicImport(
   } else {
     debug(`dual-write skipped store=${deps.superTimelineStore ? "yes" : "no"} added=${added.length}`);
   }
+  // Case-account look-alikes (#1971): after the tagger, before the caps. Scans only when this import
+  // added a new account or group member.
+  const lookalikes = await lock(caseId, () => flagCaseLookalikesScoped(store, caseId, added));
+  changed ||= lookalikes > 0;
   // Merge-all → tagger → CAP → demote (#1529). The tagger has had its one promotion window above;
   // now the rows inside a corroborated provisioning window are capped at Low with a stated reason,
   // before demote decides what leaves the forensic timeline.

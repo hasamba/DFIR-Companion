@@ -582,6 +582,7 @@
     "logImport.ts": "analysis/ingest",
     "loginGraph.ts": "analysis/detect",
     "lookalikeAccount.ts": "analysis/detect",
+    "lookalikeCaseAccount.ts": "analysis/detect",
     "lookalikeDomains.ts": "analysis/detect",
     "m365Import.ts": "analysis/ingest",
     "mailboxChain.ts": "analysis/ingest",

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Look-alike of a case account flagged** — a new account or group member one edit from an account already in the case is graded High (closes #1971)
+- **Transfer-tool Amcache rows reach the AI** — rclone, restic and MEGA Amcache rows are graded Medium (T1567.002), as their Prefetch rows are (part of #1970)
 - **ClickFix download cradle graded High** — a PowerShell fetch from a bare-number or raw-IP host into a temp script or iex is graded High (closes #1947)
 - **Web-scanner detection** — sqlmap, dirsearch, xray, vulmap and WebLogicScan runs grade Medium as T1595.002, exploit modes High with T1190 (closes #1964)
 - **Emulation framework agent** — Caldera sandcat agents are tagged, and synthesis gets a context block to weigh exercise against real compromise (closes #1957)
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Collector note no longer hides a Critical row** — a Critical row that carries the collector note stays in the forensic timeline and can be promoted (closes #1977)
+- **Failed manual synthesis marks conclusions out of date** — a failed Re-synthesize, Generate hypotheses or replay keeps the AI status on out of date (closes #1976)
 - **No silent unmasked AI paths** — every outbound AI path now applies masking, stops with a clear reason, or asks before sending (closes #1952)
 - **Presidio fails fast** — an unreachable Presidio stops the AI call after one attempt, with Retry and Continue without Presidio for this case (closes #1945)
 - **Command line in the synthesis prompt** — a row whose 240-character cut hid the command line now carries the arguments as a capped tag (closes #1951)

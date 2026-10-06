@@ -187,6 +187,8 @@ Synthesis is told to give a confirmed staging→upload pairing its own dedicated
 
 **Transfer tool staged with its config.** Operators often drop a bulk-transfer tool and its config file side by side before an upload, for example `rclone.exe` and `rclone.conf` in `C:\Users\Public\Music`. When a known transfer tool (rclone, WinSCP, MEGAcmd, MEGAsync, megatools) and its config file appear in one folder on one host within 10 minutes of each other, both file rows are raised to Medium and tagged T1567.002. A Prefetch, Amcache or process-start record for the same tool path on that host is raised to High. Each raised row carries a `[transfer tool staged: …]` note that names the folder and the partner rows. This proves the kit was staged and recorded. It does not prove that data left the host.
 
+An Amcache entry for rclone, restic, MEGAsync or MEGAcmd is graded Medium (T1567.002), the same as its Prefetch entry, so the AI sees the tool even when Amcache is its only trace. The rule applies at import: re-import an older case to grade its rows. A custom tagger rules file does not get this rule.
+
 Import the file listing (MFT) and the execution artifacts (Prefetch / Amcache) in the same import, or the execution artifacts after the file listing. An Info Amcache row imported earlier is demoted before the pair exists.
 
 ---

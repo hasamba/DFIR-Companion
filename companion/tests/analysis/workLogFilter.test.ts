@@ -6,6 +6,7 @@ import {
   hasStructuredEvidence,
 } from "../../src/analysis/workLogFilter.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { TOOL_TREE_SCRIPT_NOTE } from "../../src/analysis/veloDetectionNoise.js";
 
 // Real lines the user reported as wrongly appearing in the forensic timeline.
 const WORK_LOG = [
@@ -165,5 +166,25 @@ describe("workLogFilter", () => {
       expect(keep).toHaveLength(2);
       expect(removed).toHaveLength(2);
     });
+  });
+});
+
+// #1977. Our own "[DFIR collector …]" note names Velociraptor right after "collector", which the
+// process-narration pattern read as tool-usage narration. A Critical script row keeps that note but
+// stays in the forensic timeline, so the guard silently dropped it. The note is prose the system
+// wrote; the guard must judge only the text around it.
+describe("the collector note is not narration (#1977)", () => {
+  const DEPLOYMENT_NOTE = " [DFIR collector deployment — Velociraptor client install]";
+
+  it("keeps a bare row whose only work-log match is the collector note", () => {
+    expect(isAnalystWorkLog("Add-Type AdjPriv token manipulation" + TOOL_TREE_SCRIPT_NOTE)).toBe(false);
+    expect(isAnalystWorkLog({ description: "Add-Type AdjPriv token manipulation" + DEPLOYMENT_NOTE })).toBe(
+      false,
+    );
+  });
+
+  it("still drops real tool narration, with or without the note", () => {
+    expect(isAnalystWorkLog("Velociraptor data collection continued")).toBe(true);
+    expect(isAnalystWorkLog("Performed data collection" + TOOL_TREE_SCRIPT_NOTE)).toBe(true);
   });
 });

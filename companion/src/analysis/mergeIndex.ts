@@ -104,6 +104,7 @@ const INERT_NOTES = new Set([
   "own-child handle",
   "normal OS behaviour",
   "transfer tool staged", // transferToolStaging: its rows are LOAD rows, read on every merge
+  "look-alike account", // lookalikeCaseAccount: written by the import settle, no chain pass reads it
 ]);
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const TRIGGER_NOTE = new RegExp(
