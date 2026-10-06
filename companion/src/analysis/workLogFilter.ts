@@ -1,4 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
+import { COLLECTOR_NOTE_PREFIX } from "./setAsideRows.js";
 
 // Phrases that describe the investigator OPERATING the DFIR tooling (Velociraptor
 // hunts, notebooks, VQL, "Response and Monitoring", EventLog searches) or narrating
@@ -124,7 +125,22 @@ export function hasStructuredEvidence(event: WorkLogEvent): boolean {
   );
 }
 
-function matchesWorkLogPattern(description: string): boolean {
+// Our own "[DFIR collector …]" note names Velociraptor right after "collector", so the
+// process-narration pattern read it as tool narration and dropped a Critical row that keeps
+// the note (#1977). The note is prose the system wrote, never narration; judge only the
+// text around it.
+function withoutCollectorNotes(description: string): string {
+  let out = description;
+  for (let at = out.indexOf(COLLECTOR_NOTE_PREFIX); at !== -1; at = out.indexOf(COLLECTOR_NOTE_PREFIX)) {
+    const close = out.indexOf("]", at + COLLECTOR_NOTE_PREFIX.length);
+    if (close === -1) break;
+    out = out.slice(0, at) + out.slice(close + 1);
+  }
+  return out;
+}
+
+function matchesWorkLogPattern(text: string): boolean {
+  const description = withoutCollectorNotes(text);
   return (
     TOOL_PATTERNS.some((re) => re.test(description)) ||
     PROCESS_NARRATION.some((re) => re.test(description)) ||
