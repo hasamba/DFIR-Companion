@@ -196,3 +196,59 @@ export function linkToolStoreFolders(events: ForensicEvent[]): ForensicEvent[] {
     return { ...e, severity, description: appendDerivedNote(base, TOOL_STORE_MARKER, words) };
   });
 }
+
+// Most folders the bulk collector tracks. Each holds at most one row per listed tool, so this bounds
+// its memory whatever the file size.
+const COLLECTOR_MAX_FOLDERS = 10_000;
+
+export interface ToolStoreCollector {
+  /** One batch, after the tagger and before the demote; `kept` holds the rows the batch wrote. */
+  observe(events: readonly ForensicEvent[], kept: ReadonlySet<ForensicEvent>): void;
+  /** After the last batch: the held rows this check raises that no batch wrote. */
+  release(): ForensicEvent[];
+}
+
+/**
+ * The same check for an import that writes in batches and demotes each batch before the next one
+ * arrives (ingest/velociraptorBulk.ts, #1970 review). Without it the Info file rows of a kit were
+ * demoted batch by batch and the check never saw them; the whole-file import merges every row first
+ * and does. The collector holds only candidate rows (a listed tool in a user-writable folder on a
+ * named host), and of those only the row that speaks for each tool in each folder, so it holds
+ * folders × tools rows, never the file. After the last batch it runs linkToolStoreFolders over what
+ * it holds and returns the rows that rule raised and no batch wrote. The notes are the whole-file
+ * notes, because the same rows speak for the same tools. Limits: it sees one import's rows, so a
+ * folder whose other tools came from an EARLIER import is decided at the final merge from the rows
+ * that survived that import's demote only; and a folder first seen after COLLECTOR_MAX_FOLDERS
+ * folders is not tracked.
+ */
+export function createToolStoreCollector(): ToolStoreCollector {
+  const folders = new Map<string, Map<string, Row>>();
+  const written = new Set<ForensicEvent>();
+  return {
+    observe(events, kept) {
+      for (const e of events) {
+        const r = rowOf(e);
+        if (!r) continue;
+        const key = `${r.host}|${r.folder}`;
+        let tools = folders.get(key);
+        if (!tools) {
+          if (folders.size >= COLLECTOR_MAX_FOLDERS) continue;
+          tools = new Map<string, Row>();
+          folders.set(key, tools);
+        }
+        const cur = tools.get(r.tool);
+        if (cur && !better(r, cur)) continue;
+        if (cur) written.delete(cur.event);
+        tools.set(r.tool, r);
+        if (kept.has(e)) written.add(e);
+      }
+    },
+    release() {
+      const held = [...folders.values()]
+        .filter((tools) => tools.size >= TOOL_STORE_MIN_TOOLS)
+        .flatMap((tools) => [...tools.values()].map((r) => r.event));
+      const raised = linkToolStoreFolders(held);
+      return raised.filter((e, i) => e !== held[i] && !written.has(held[i]));
+    },
+  };
+}
