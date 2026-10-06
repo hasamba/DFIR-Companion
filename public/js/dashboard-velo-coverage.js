@@ -27,9 +27,24 @@ function veloSuperCapLine(c) {
 // One cut-short artifact. The cap keeps the FIRST rows in read order, not the incident window, so the
 // kept rows' time span is named when the job stored one (#1950) — anything outside it was never read.
 // A read re-read inside the incident window (#1969) says so, and whether every window row fit.
+// A read re-read newest-first with no window (#1983) names the time it was sorted on.
+const VELO_NEWEST_WORDS = {
+  "Windows.NTFS.MFT": ["rows", "file creation time ($FN, else $SI)"],
+  "Windows.Forensics.Usn": ["records", "change time"],
+  "Windows.EventLogs.Evtx": ["events", "event time"],
+};
+function veloNewestLine(t, n, span) {
+  const [unit, by] = VELO_NEWEST_WORDS[t.name] || ["rows", "the artifact's own time"];
+  const partial = t.orderPartial ? "; named sources were not read, so only the rows read were sorted" : "";
+  return (
+    `${esc(t.name)} (kept the newest ${n} ${unit} by ${esc(by)}${span}, newest across all hosts — ` +
+    `some hosts may have no rows kept; undated rows sorted last${partial}; older rows were not kept)`
+  );
+}
 function veloCutLine(t) {
   const span = t.earliest && t.latest ? `, dated ${esc(String(t.earliest))} to ${esc(String(t.latest))}` : "";
   const n = esc(String(t.kept));
+  if (t.order === "newest") return veloNewestLine(t, n, span);
   if (!t.windowStart && !t.windowEnd) return `${esc(t.name)} (kept ${n} rows${span}, there were more)`;
   const from = esc(String(t.windowStart || "the beginning"));
   const win = `the incident window ${from} to ${esc(String(t.windowEnd || "now"))}`;

@@ -50,16 +50,39 @@ export interface WindowNote {
   windowFull?: boolean; // true = the windowed re-read was NOT cut short: every window row was kept
 }
 
+/** The newest-first part of a TruncatedArtifact (#1983): set only when a newest-first re-read was kept. */
+export interface OrderNote {
+  order?: "newest";
+  orderPartial?: boolean; // named sources were never read, so only the rows read were sorted
+}
+
+/** What a finished read says about how it was re-read. */
+interface ReadNote {
+  window?: { start?: string; end?: string };
+  truncated?: boolean;
+  order?: "newest";
+  newest?: { earliest?: string; latest?: string };
+  sourcesUnknown?: boolean;
+}
+
 /**
  * A TruncatedArtifact for one capped read: kept count, the read's total, and the kept span. `read`
  * carries the incident window a re-read was kept inside (#1969), and whether that re-read was cut too.
+ * A newest-first re-read (#1983) takes its span from the sort key it was ordered by, not pickTime.
  */
 export function truncatedRecord(
   name: string,
   rows: readonly unknown[],
   total: number,
-  read?: { window?: { start?: string; end?: string }; truncated?: boolean },
-): { name: string; kept: number; total: number; earliest?: string; latest?: string } & WindowNote {
+  read?: ReadNote,
+): { name: string; kept: number; total: number; earliest?: string; latest?: string } & WindowNote &
+  OrderNote {
+  if (read?.order === "newest") {
+    const n = read.newest;
+    const span = n?.earliest && n.latest ? { earliest: n.earliest, latest: n.latest } : {};
+    const partial = read.sourcesUnknown ? { orderPartial: true } : {};
+    return { name, kept: rows.length, total, ...span, order: "newest", ...partial };
+  }
   const w = read?.window;
   const note: WindowNote = w
     ? {

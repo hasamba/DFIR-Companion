@@ -229,6 +229,8 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
           windowStart?: unknown;
           windowEnd?: unknown;
           windowFull?: unknown;
+          order?: unknown;
+          orderPartial?: unknown;
         };
         const span = spanTime(t.earliest) && spanTime(t.latest);
         const [ws, we] = [spanTime(t.windowStart), spanTime(t.windowEnd)]; // #1969
@@ -240,6 +242,8 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
           ...(ws ? { windowStart: ws } : {}),
           ...(we ? { windowEnd: we } : {}),
           ...(ws || we ? { windowFull: t.windowFull === true } : {}),
+          ...(t.order === "newest" ? { order: "newest" as const } : {}), // #1983
+          ...(t.order === "newest" && t.orderPartial === true ? { orderPartial: true } : {}),
         };
       }),
       unreadArtifacts: named(j.unreadArtifacts).map((x) => ({
@@ -409,12 +413,15 @@ function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasInd
 function partialDetail(t: TruncatedArtifact): string {
   const span = t.earliest && t.latest ? ` (dated ${t.earliest} to ${t.latest})` : "";
   // #1969: a cut-short read re-read inside the incident window kept window rows, not the first rows.
+  // #1983: a re-read newest-first by the artifact's own time kept the newest rows; older ones were cut.
   const lost =
-    !t.windowStart && !t.windowEnd
-      ? "later rows in read order"
-      : t.windowFull
-        ? "rows outside the window"
-        : "rows outside the window and later window rows";
+    t.order === "newest"
+      ? "older rows"
+      : !t.windowStart && !t.windowEnd
+        ? "later rows in read order"
+        : t.windowFull
+          ? "rows outside the window"
+          : "rows outside the window and later window rows";
   return `partial — ${keptRowsNote(t)}${span}, ${lost} NOT COLLECTED (row cap)`;
 }
 
@@ -610,7 +617,8 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
             `${t.name}:${t.kept}/${t.total}${t.earliest ? `:${t.earliest}-${t.latest}` : ""}` +
             (t.windowStart || t.windowEnd
               ? `:w${t.windowStart ?? ""}-${t.windowEnd ?? ""}:${t.windowFull}`
-              : ""),
+              : "") +
+            (t.order ? `:o${t.order}${t.orderPartial ? "-partial" : ""}` : ""), // #1983
         )
         .sort(),
       !!j.superTimelineOnly,

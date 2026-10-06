@@ -155,10 +155,34 @@ export interface TruncatedArtifact {
   windowStart?: string;
   windowEnd?: string;
   windowFull?: boolean; // true = every row inside the window fit under the cap
+  // #1983: with no window known, the cut-short read was re-read newest-first by the artifact's own
+  // time. The kept span then comes from that sort key. Absent = rows in read order (or the window).
+  order?: "newest";
+  orderPartial?: boolean; // true = named sources were never read, so only the rows read were sorted
 }
 
-/** Which rows a cut-short read kept, in words (#1969): the incident window, or the first rows in read order. */
+/** The time a newest-first re-read sorts on, and what one row is called, per artifact (#1983). */
+const NEWEST_ORDER_WORDS: Readonly<Record<string, { unit: string; by: string }>> = {
+  "Windows.NTFS.MFT": { unit: "rows", by: "file creation time ($FN, else $SI)" },
+  "Windows.Forensics.Usn": { unit: "records", by: "change time" },
+  "Windows.EventLogs.Evtx": { unit: "events", by: "event time" },
+};
+
+/** "newest N <unit> by <time>" for a newest-first read, plus the caveats a reader must see (#1983). */
+export function newestKeptNote(t: TruncatedArtifact): { kept: string; caveat: string } {
+  const w = NEWEST_ORDER_WORDS[t.name] ?? { unit: "rows", by: "the artifact's own time" };
+  const caveats = ["newest across all hosts; some hosts may have no rows kept", "undated rows sorted last"];
+  if (t.orderPartial) caveats.push("named sources were not read, so only the rows read were sorted");
+  return { kept: `newest ${t.kept} ${w.unit} by ${w.by}`, caveat: caveats.join("; ") };
+}
+
+/** Which rows a cut-short read kept, in words (#1969): the incident window, the newest rows (#1983),
+ *  or the first rows in read order. */
 export function keptRowsNote(t: TruncatedArtifact): string {
+  if (t.order === "newest") {
+    const n = newestKeptNote(t);
+    return `${n.kept} kept (${n.caveat})`;
+  }
   if (!t.windowStart && !t.windowEnd) return `first ${t.kept} rows kept`;
   const win = `the incident window ${t.windowStart ?? "the beginning"} to ${t.windowEnd ?? "now"}`;
   return t.windowFull ? `all ${t.kept} rows inside ${win} kept` : `first ${t.kept} rows inside ${win} kept`;

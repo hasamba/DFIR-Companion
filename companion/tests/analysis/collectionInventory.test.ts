@@ -286,6 +286,50 @@ describe("collection inventory (#1588)", () => {
     expect(partial).toContain("later window rows");
   });
 
+  // #1983 — with no incident window, a cut-short read is re-read newest-first by the artifact's own time.
+  it("a partial line from a newest-first re-read names the order, per artifact, and the hunt caveat", () => {
+    const [MFT, USN] = ["Windows.NTFS.MFT", "Windows.Forensics.Usn"];
+    const line = (name: string, extra: Record<string, unknown> = {}) =>
+      renderCollectionInventory(
+        buildCollectionInventory({
+          events: [],
+          hunts: [
+            job({
+              artifacts: [name],
+              truncatedArtifacts: [{ name, kept: 100000, total: 100001, order: "newest", ...extra }],
+            }),
+          ],
+        }),
+      );
+    const mft = line(MFT);
+    expect(mft).toContain("newest 100000 rows by file creation time ($FN, else $SI) kept");
+    expect(mft).toContain("newest across all hosts; some hosts may have no rows kept");
+    expect(mft).toContain("undated rows sorted last");
+    expect(mft).toContain("older rows NOT COLLECTED");
+    expect(mft).not.toContain("later rows in read order");
+    expect(line(USN)).toContain("newest 100000 records by change time kept");
+    expect(line("Windows.EventLogs.Evtx")).toContain("newest 100000 events by event time kept");
+    expect(line(USN, { orderPartial: true })).toContain("named sources were not read");
+    expect(line(USN)).not.toContain("named sources were not read");
+  });
+
+  it("the sanitizer keeps the newest-first order and the signature changes with it", () => {
+    const USN = "Windows.Forensics.Usn";
+    const t = { name: USN, kept: 1, total: 2 };
+    const [clean] = sanitizeHuntJobs([
+      job({ artifacts: [USN], truncatedArtifacts: [{ ...t, order: "newest", orderPartial: true }] }),
+      job({ artifacts: [USN], truncatedArtifacts: [{ ...t, order: "evil" as never }] }),
+    ]);
+    expect(clean.truncatedArtifacts).toEqual([{ ...t, order: "newest", orderPartial: true }]);
+    const [, bad] = sanitizeHuntJobs([
+      job({ artifacts: [USN] }),
+      job({ artifacts: [USN], truncatedArtifacts: [{ ...t, order: "evil" as never }] }),
+    ]);
+    expect(bad.truncatedArtifacts).toEqual([t]);
+    const plain = job({ artifacts: [USN], truncatedArtifacts: [t] });
+    expect(inventorySignature([plain])).not.toBe(inventorySignature([clean]));
+  });
+
   it("the sanitizer keeps an ISO window and drops a window bound that is not a timestamp", () => {
     const [clean] = sanitizeHuntJobs([
       job({
