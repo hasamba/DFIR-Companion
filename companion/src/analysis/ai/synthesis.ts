@@ -39,6 +39,8 @@ import { stripAiExtractedFrom } from "../responseSchema.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
+import { applySeverityRestores, type FindingSeverityRestoreStore } from "../findingSeverityRestore.js";
+import { primaryCallSnapshot, stampPrimaryCalls } from "../secondOpinionReopen.js";
 import { effectiveTrustMap, type SourceTrustMap } from "../sourceTrust.js";
 import type { SourceTrustStore } from "../sourceTrustStore.js";
 import type { StateLock } from "../stateLock.js";
@@ -105,6 +107,7 @@ export interface SynthesisContext
       sourceTrustStore?: SourceTrustStore;
       clockSkewStore?: ClockSkewStore;
       secondOpinionStore?: SecondOpinionStore;
+      findingSeverityRestoreStore?: FindingSeverityRestoreStore; // #1973
       superTimelineStore?: SuperTimelineStore;
       synthMetaStore?: SynthMetaStore;
       veloHuntStore?: VeloHuntStore;
@@ -315,24 +318,30 @@ async function finalizeFindings(
     aliasIndex: HostAliasIndex;
   },
 ): Promise<InvestigationState> {
-  const withAccepted = ctx.opts.secondOpinionStore
-    ? applyAcceptedSecondOpinion(folded, await ctx.opts.secondOpinionStore.load(caseId))
-    : folded;
-  const graded = gradeFindings({
-    next: withAccepted,
+  const record = ctx.opts.secondOpinionStore ? await ctx.opts.secondOpinionStore.load(caseId) : null;
+  const withAccepted = applyAcceptedSecondOpinion(folded, record);
+  const gradeInput = {
     delta: input.delta,
     surviving: input.surviving,
     eligibleIds: input.eligibleIds,
     sourceTrust: input.sourceTrust,
     kevCatalog: await ctx.getKevCatalog(),
     aliasIndex: input.aliasIndex,
-  });
+  };
+  const graded = gradeFindings({ ...gradeInput, next: withAccepted });
+  // #1972: the primary model's own graded call, before the accepted decisions and the #1973 restores.
+  const primaryCalls = primaryCallSnapshot(record, () => gradeFindings({ ...gradeInput, next: folded }));
+  // #1973: the analyst's per-finding restores lift a grading cap. After grading, which records the
+  // cap, and before the simulation step, whose case-wide cap still applies on top.
+  const restoreStore = ctx.opts.findingSeverityRestoreStore;
+  const restored = restoreStore ? applySeverityRestores(graded, await restoreStore.load(caseId)) : graded;
   // #1595: after grading, which only lowers — the simulation verdict RAISES its own finding. It
   // judges the verdict on the model's own confidence, which grading may have capped.
   const modelConfidence = new Map(
     withAccepted.findings.flatMap((f) => (f.confidence !== undefined ? [[f.id, f.confidence] as const] : [])),
   );
-  return reconcileSimulation(ctx, caseId, graded, input.aliasIndex, modelConfidence);
+  const final = await reconcileSimulation(ctx, caseId, restored, input.aliasIndex, modelConfidence);
+  return stampPrimaryCalls(final, primaryCalls);
 }
 
 /** The simulation verdict (#1595) with the analyst's override read fresh. No store: never overridden. */

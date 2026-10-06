@@ -38,6 +38,7 @@ import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation
 import { registerFindingsRoutes } from "../routes/findings.js";
 import { registerEntityAnnotationRoutes } from "../routes/entityAnnotations.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
+import { registerFindingSeverityRestoreRoutes } from "../routes/findingSeverityRestore.js";
 import { registerRemediationRoutes } from "../routes/remediation.js";
 import { registerCampaignScopeRoutes } from "../routes/campaignScope.js";
 import { registerServedExposureRoutes } from "../routes/servedExposure.js";
@@ -159,6 +160,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerEntityAnnotationRoutes(app, ctx); // the comment + tag lists moved out of findings.ts (#1715)
   registerFindingsRoutes(app, ctx);
   registerFindingOutcomeRoutes(app, ctx);
+  registerFindingSeverityRestoreRoutes(app, ctx); // #1973
   registerRemediationRoutes(app, ctx);
   registerCampaignScopeRoutes(app, ctx);
   registerServedExposureRoutes(app, ctx);

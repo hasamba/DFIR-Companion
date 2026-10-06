@@ -223,6 +223,7 @@ describe("case permission buckets are chosen by route, not by path content", () 
       "/cases/c1/presidio-pending/suppress",
       "/cases/c1/second-opinion/apply",
       "/cases/c1/second-opinion/apply-all",
+      "/cases/c1/second-opinion/reopened",
       "/cases/c1/report-versions/v3/review/approve",
     ]) {
       expect(permission("POST", path), path).toBe("review");

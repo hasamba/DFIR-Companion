@@ -700,6 +700,14 @@ export class AnalysisPipeline {
   ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
+  // Keep or Drop an accepted decision the primary model now contradicts (#1972).
+  resolveReopenedSecondOpinion(
+    caseId: string,
+    deltaId: string,
+    keep: boolean,
+  ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
+    return secondOpinionRun.resolveReopenedSecondOpinion(this.aiCtx, caseId, deltaId, keep);
+  }
   rerunSecondOpinionReferee(caseId: string): Promise<{ record: SecondOpinion; failed: boolean }> {
     return secondOpinionRun.rerunSecondOpinionReferee(this.aiCtx, caseId); // #1587 — referee only
   }

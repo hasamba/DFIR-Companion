@@ -92,6 +92,7 @@ const TACTIC_RANK: Record<string, number> = {
   Discovery: 9,
   "Defense Evasion": 10,
   Execution: 11,
+  Reconnaissance: 12,
 };
 const UNSPECIFIED = "Unspecified";
 

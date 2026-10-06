@@ -5,6 +5,7 @@ import {
   SELF_DISCLAIMED_SEVERITY_FLOOR,
 } from "../../src/analysis/selfDisclaimedSubject.js";
 import { findingCautionLine } from "../../src/reports/findingCaution.js";
+import { severityCapOf } from "../../src/analysis/findingSeverityRestore.js";
 import type { Finding, ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // #1944: a finding whose own text says its subject is not in the evidence, and that guesses at it
@@ -113,6 +114,7 @@ describe("groundAndScoreFindings — self-disclaimed subject gate (#1944)", () =
     expect(out[0].severity).toBe("Medium");
     expect(out[0].selfDisclaimed).toBe(true);
     expect(out[0].confidenceReason).toMatch(/its subject is not in the evidence/i);
+    expect(severityCapOf(out[0])).toEqual({ from: "High", to: "Medium", gates: ["self-disclaimed"] });
   });
 
   it("caps a Critical finding with the same text at Medium", () => {

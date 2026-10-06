@@ -13,7 +13,7 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 // Re-exported so the inventory record/normalizer/matcher keep their long-standing import path.
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
-import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
+import { containedWhereOrThrow, MAX_READ_WHERE_LENGTH } from "../../analysis/vqlInput.js";
 import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
 import { parseHuntClientCounts, type HuntClientCounts } from "./huntClientCounts.js";
 export type { HuntClientCounts } from "./huntClientCounts.js";
@@ -504,7 +504,7 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
 // An analyst-authored VQL WHERE expression, inlined as `WHERE (${where})`: normalized, and REFUSED
 // unless it is one contained boolean expression — see analysis/vqlInput.ts (#843, #853).
 function sanitizeWhere(where?: string): string {
-  return where ? containedWhereOrThrow(String(where)) : "";
+  return where ? containedWhereOrThrow(String(where), undefined, MAX_READ_WHERE_LENGTH) : "";
 }
 
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.

@@ -40,6 +40,7 @@
   // degrades to the neutral colour.
   let evColorMode = "severity"; // "severity" | "killchain"
   const EV_KC_ORDER = [
+    "Reconnaissance",
     "Initial Access",
     "Execution",
     "Persistence",
@@ -54,6 +55,7 @@
     "Impact",
   ];
   const EV_KC_COLOR = {
+    Reconnaissance: "#a78bfa",
     "Initial Access": "#6aa9ff",
     Execution: "#38bdf8",
     Persistence: "#2dd4bf",

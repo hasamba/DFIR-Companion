@@ -49,6 +49,32 @@ describe("veloCoverageHtml", () => {
     expect(cov.veloCoverageHtml(imported({ truncatedArtifacts: [t] }))).not.toContain("dated");
   });
 
+  // #1969 — the cheap fix for a cut-short read is a time scope, so an unscoped hunt is told to use one.
+  it("tells an unscoped hunt that was cut short to collect again with a time scope", () => {
+    const t = { name: "Windows.Forensics.Usn", kept: 1000, total: 1001 };
+    const html = cov.veloCoverageHtml(imported({ truncatedArtifacts: [t] }));
+    expect(html).toContain("collect again with a time scope set to the incident window");
+    const scoped = cov.veloCoverageHtml(
+      imported({ truncatedArtifacts: [t], timeScope: { start: "2026-09-20T00:00:00Z" } }),
+    );
+    expect(scoped).not.toContain("with a time scope");
+    expect(scoped).toContain("DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS");
+  });
+
+  it("says a cut-short artifact kept the rows inside the incident window when it was re-read there", () => {
+    const t = {
+      name: "Windows.Forensics.Usn",
+      kept: 40,
+      total: 40,
+      windowStart: "2026-09-20T00:00:00.000Z",
+      windowFull: true,
+    };
+    const html = cov.veloCoverageHtml(imported({ truncatedArtifacts: [t] }));
+    expect(html).toContain("kept all 40 rows inside the incident window 2026-09-20T00:00:00.000Z to now");
+    const part = cov.veloCoverageHtml(imported({ truncatedArtifacts: [{ ...t, windowFull: false }] }));
+    expect(part).toContain("kept the first 40 rows inside the incident window");
+  });
+
   // The bug this module was extracted to fix: the old inline version only rendered for a bundle of
   // MORE than one artifact, so a single-artifact THOR hunt that was cut short showed a green job and
   // no warning at all.

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Restore a capped finding** — a finding lowered by a grading check shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis (closes #1973)
+- **Reopened second-opinion decisions** — when the main model makes a new call on a finding you already decided, the panel marks it reopened with Keep and Drop (closes #1972)
+- **Entry candidates for the AI** — synthesis gets the programs started just before the first script write on each host, plus console-history downloads marked time unknown (closes #1968)
+- **Attack-tool store folder** — three or more attack tools in one user-writable folder on one host raise each tool to Medium with a note naming the folder (closes #1970)
+- **Reconnaissance tactic** — recon rows such as web scanning show in a Reconnaissance stage, first in the kill chain, instead of Uncategorized (closes #1974)
 - **Look-alike of a case account flagged** — a new account or group member one edit from an account already in the case is graded High (closes #1971)
 - **Transfer-tool Amcache rows reach the AI** — rclone, restic and MEGA Amcache rows are graded Medium (T1567.002), as their Prefetch rows are (part of #1970)
 - **ClickFix download cradle graded High** — a PowerShell fetch from a bare-number or raw-IP host into a temp script or iex is graded High (closes #1947)
@@ -30,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Capped reads keep the incident window** — a Velociraptor read cut short by the row cap is re-read once inside the incident window, and the warning says to collect again with a time scope (closes #1969)
 - **Collector note no longer hides a Critical row** — a Critical row that carries the collector note stays in the forensic timeline and can be promoted (closes #1977)
 - **Failed manual synthesis marks conclusions out of date** — a failed Re-synthesize, Generate hypotheses or replay keeps the AI status on out of date (closes #1976)
 - **No silent unmasked AI paths** — every outbound AI path now applies masking, stops with a clear reason, or asks before sending (closes #1952)

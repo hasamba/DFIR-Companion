@@ -8,11 +8,14 @@ import type { Finding } from "../analysis/stateTypes.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
 import { findingTamperTiming } from "../analysis/defenderTamperCap.js";
 import { findingIsLabSetup } from "../analysis/labSetupTransfer.js";
+import { severityRestoredLine } from "../analysis/findingSeverityRestore.js";
 
 /** The markdown line under a finding heading, or "" when nothing qualifies it. */
 export function findingCautionLine(f: Finding): string {
   if (f.ungrounded)
     return `> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`;
+  const restored = severityRestoredLine(f); // #1973: the analyst lifted the cap; say who and over what
+  if (restored) return restored;
   if (f.buildBaseline)
     return `> \u26a0\ufe0f **Build baseline** \u2014 every cited event sits inside the host's own provisioning window (the image being built, not the incident). Severity floored and confidence capped.`;
   if (findingIsLabSetup(f))

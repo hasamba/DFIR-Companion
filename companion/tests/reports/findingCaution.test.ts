@@ -88,3 +88,28 @@ describe("findingCautionLine — Defender-tamper timing (#1941)", () => {
     );
   });
 });
+
+// #1973: an analyst restore replaces the cap badge with who restored it, over which gate.
+describe("findingCautionLine — severity restored by the analyst (#1973)", () => {
+  const restored = (p: Partial<Finding> = {}, gates = ["tamper-timing"]): Finding =>
+    ({
+      ...f(p),
+      tamperTiming: "date-unknown",
+      severityCap: { from: "High", to: "Medium", gates },
+      severityRestored: { by: "Alice", at: "2026-10-06T10:00:00.000Z" },
+    }) as Finding;
+  it("prints the restore badge instead of the cap badge", () => {
+    const line = findingCautionLine(restored());
+    expect(line).toMatch(/^> ℹ️ \*\*Severity restored by analyst\*\*/);
+    expect(line).toMatch(/Alice/);
+    expect(line).toMatch(/Defender-tamper timing/);
+    expect(line).not.toMatch(/Date unknown/);
+  });
+  it("keeps the no-evidence badge first", () => {
+    expect(findingCautionLine(restored({ ungrounded: true }))).toMatch(/No cited evidence/);
+  });
+  it("prints the cap badge when the finding is capped but not restored", () => {
+    const capped = { ...restored(), severityRestored: undefined } as Finding;
+    expect(findingCautionLine(capped)).toMatch(/Date unknown/);
+  });
+});

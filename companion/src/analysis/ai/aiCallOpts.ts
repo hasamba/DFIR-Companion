@@ -102,6 +102,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get secondOpinionStore() {
       return opts.secondOpinionStore;
     },
+    get findingSeverityRestoreStore() {
+      return opts.findingSeverityRestoreStore;
+    },
     get secondOpinionProvider() {
       return opts.secondOpinionProvider;
     },

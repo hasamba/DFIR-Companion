@@ -112,6 +112,48 @@ describe("renderVeloRunList", () => {
   });
 });
 
+// #1969 — the run form starts at the case scope window when one is set, so a collect is bounded to
+// the incident window at the source and the row cap is spent there.
+describe("veloPrefillTimeScope", () => {
+  function fakeForm() {
+    const el = (value = "") => ({ value, style: { display: "none" } });
+    const parts: Record<string, ReturnType<typeof el>> = {
+      ".velo-timescope": el(),
+      ".velo-ts-start": el(),
+      ".velo-ts-end": el(),
+      ".velo-ts-custom": el(),
+    };
+    return { parts, querySelector: (sel: string) => parts[sel] ?? null };
+  }
+
+  it("selects a custom range and fills the case scope window, in UTC", () => {
+    const form = fakeForm();
+    const done = collect.veloPrefillTimeScope(form, {
+      start: "2026-09-20T00:00:00.000Z",
+      end: "2026-09-21T12:30:00.000Z",
+    });
+    expect(done).toBe(true);
+    expect(form.parts[".velo-timescope"].value).toBe("custom");
+    expect(form.parts[".velo-ts-start"].value).toBe("2026-09-20T00:00");
+    expect(form.parts[".velo-ts-end"].value).toBe("2026-09-21T12:30");
+    expect(form.parts[".velo-ts-custom"].style.display).toBe("inline-flex");
+  });
+
+  it("leaves the form at All time with no case scope start", () => {
+    for (const scope of [null, { start: null, end: null }, { start: null, end: "2026-09-21T00:00:00Z" }]) {
+      const form = fakeForm();
+      expect(collect.veloPrefillTimeScope(form, scope)).toBe(false);
+      expect(form.parts[".velo-timescope"].value).toBe("");
+    }
+  });
+
+  it("ignores a bound that is not a date", () => {
+    const form = fakeForm();
+    expect(collect.veloPrefillTimeScope(form, { start: "nonsense", end: null })).toBe(false);
+    expect(form.parts[".velo-ts-start"].value).toBe("");
+  });
+});
+
 describe("the bundle load fans out", () => {
   it("renders the run list on the dashboard and the library in Settings from one fetch", async () => {
     triage.activeCaseId = "c1";

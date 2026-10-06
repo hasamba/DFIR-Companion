@@ -17,6 +17,7 @@ import {
 // Kill-chain order for the stage chips. Not the priority order mitreTactics.ts uses to pick ONE
 // tactic per event — that one puts impact first; here the analyst reads left to right in time.
 export const STORY_STAGE_ORDER: readonly IrisTactic[] = [
+  "Reconnaissance",
   "Initial Access",
   "Execution",
   "Persistence",
@@ -30,6 +31,9 @@ export const STORY_STAGE_ORDER: readonly IrisTactic[] = [
   "Exfiltration",
   "Impact",
 ];
+// Stages that get a card when present but never a "missing" placeholder. Reconnaissance (#1974)
+// mostly happens on the attacker's own hosts, so its absence from a victim case is not a lead.
+const OPTIONAL_STORY_STAGES: ReadonlySet<IrisTactic> = new Set<IrisTactic>(["Reconnaissance"]);
 // Ids a stage chip hands to the timeline id filter. eventCount still counts every event.
 export const STORY_STAGE_EVENT_LIMIT = 200;
 // The conclusion and attacker path are teasers — the full text lives in their own panels.
@@ -202,7 +206,7 @@ function storyStages(staged: readonly StagedEvent[], findings: readonly Finding[
 
 function missingStages(stages: readonly CockpitStoryStage[]): IrisTactic[] {
   const present = new Set(stages.map((stage) => stage.tactic));
-  return STORY_STAGE_ORDER.filter((tactic) => !present.has(tactic));
+  return STORY_STAGE_ORDER.filter((tactic) => !present.has(tactic) && !OPTIONAL_STORY_STAGES.has(tactic));
 }
 
 // Synthesis writes the attacker path as a Markdown list ("1. **Initial Access** — …"). A teaser

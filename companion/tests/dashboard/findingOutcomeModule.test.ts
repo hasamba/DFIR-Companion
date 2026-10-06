@@ -13,6 +13,7 @@ interface Api {
   setSimulationOverride(treatAsReal: boolean): void;
   setFindingControl(fid: string, value: string): void;
   setFindingExecution(fid: string, value: string): void;
+  setSeverityRestore(fid: string, restore: boolean): void;
 }
 
 interface Deferred {
@@ -22,17 +23,18 @@ interface Deferred {
 }
 
 function harness() {
-  const pending: (Deferred & { body?: string })[] = [];
+  const pending: (Deferred & { body?: string; method?: string })[] = [];
   const renders: number[] = [];
   const toasts: string[] = [];
   let caseInput = "";
   const globals = {
     document: { getElementById: () => ({ value: caseInput }), addEventListener: () => {} },
-    fetch: (url: string, init?: { body?: string }) =>
+    fetch: (url: string, init?: { body?: string; method?: string }) =>
       new Promise((res, rej) => {
         pending.push({
           url,
           body: init?.body,
+          method: init?.method,
           resolve: (body, init = {}) =>
             res({ ok: init.ok ?? true, status: init.status ?? 200, json: () => Promise.resolve(body) }),
           reject: rej,
@@ -208,5 +210,50 @@ describe("dashboard-finding-outcome ordering", () => {
       await tick();
       expect(h.toasts[0]).toMatch(/Simulation override not saved: disk full/);
     });
+  });
+});
+
+// #1973: a finding a grading gate capped carries a chip naming the cap and a one-click restore.
+describe("analyst severity restore", () => {
+  const cap = { from: "High", to: "Medium", gates: ["tamper-timing"] };
+  const capped = { id: "f1", severity: "Medium", severityCap: cap };
+  const restored = {
+    id: "f1",
+    severity: "High",
+    severityCap: cap,
+    severityRestored: { by: "Alice", at: "2026-10-06T10:00:00.000Z" },
+  };
+
+  it("renders the chip and the Restore control only on a capped finding", () => {
+    const h = harness();
+    const html = h.api.findingOutcomeControls("f1", capped);
+    expect(html).toMatch(/capped from High — Defender-tamper timing/);
+    expect(html).toMatch(
+      /class="fwf-btn fsev-btn" data-fsev="f1" data-fsev-restore="true"[^>]*>Restore High/,
+    );
+    expect(h.api.findingOutcomeControls("f2", { id: "f2", severity: "High" })).not.toMatch(/fsev-/);
+    expect(h.api.findingOutcomeControls("f3", { id: "f3", severity: "Medium" })).not.toMatch(/fsev-/);
+  });
+
+  it("a restored finding says so and offers the undo", () => {
+    const h = harness();
+    const html = h.api.findingOutcomeControls("f1", restored);
+    expect(html).toMatch(/severity restored by Alice/);
+    expect(html).toMatch(/data-fsev-restore="false"[^>]*>Undo restore/);
+  });
+
+  it("posts a restore, deletes an undo, and reports a failure on screen", async () => {
+    const h = harness();
+    h.setCase("A");
+    h.api.setSeverityRestore("f1", true);
+    const post = h.pending.shift()!;
+    expect(post.url).toBe("/cases/A/findings/f1/severity-restore");
+    expect(post.method).toBe("POST");
+    expect(JSON.parse(post.body!)).toEqual({ updatedBy: "Alice" });
+    post.resolve({ error: "disk full" }, { ok: false, status: 500 });
+    await tick();
+    expect(h.toasts[0]).toMatch(/Severity restore not saved: disk full/);
+    h.api.setSeverityRestore("f1", false);
+    expect(h.pending.shift()!.method).toBe("DELETE");
   });
 });

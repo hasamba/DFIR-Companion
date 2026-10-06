@@ -259,6 +259,8 @@ If the referee call fails, the panel header says so: *⚠ referee (name) failed:
 
 For each delta you can **Accept** (adopt the second model's view) or **Keep A** (keep the original). Accepted deltas survive future re-syntheses.
 
+After new evidence, the primary model can make a new call on a finding you already decided. When that call differs from both its first call and the call you accepted, the panel marks the decision **reopened** (↻) and shows what the primary model now says. Your decision stays applied until you press **Keep** or **Drop**. **Keep** records the new call as the one you overrule. **Drop** rejects your decision and puts the finding back on the primary model's call at once. A severity you restored over a grading cap still applies after **Drop**.
+
 !!! tip
     Use a model from a **different provider** for the second opinion. Same-provider models share training blind spots — cross-provider disagreements are the most informative.
 

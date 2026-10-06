@@ -1,7 +1,7 @@
 import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { parseLoginEvent } from "./loginGraph.js";
-import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
+import { KILL_CHAIN_ORDER, tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 
 // Attacker session / story reconstruction (#229). The raw forensic timeline is a flat
 // chronological stream of events across every host; an analyst reading it has to mentally
@@ -69,20 +69,7 @@ export function sessionEnvOptions(): Required<SessionOptions> {
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a session reads as the stage it leads with).
-const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access",
-  "Execution",
-  "Persistence",
-  "Privilege Escalation",
-  "Defense Evasion",
-  "Credential Access",
-  "Discovery",
-  "Lateral Movement",
-  "Collection",
-  "Command and Control",
-  "Exfiltration",
-  "Impact",
-];
+const CHAIN_ORDER = KILL_CHAIN_ORDER;
 
 // The most common ATT&CK tactic across the session's events, with ties broken toward the
 // earliest kill-chain stage (so the session reads as the stage it leads with). Returns

@@ -111,7 +111,7 @@ const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
 const CASE_REVIEW_PATTERNS = [
   /^\/cockpit\/review$/,
   /^\/presidio-pending\/(?:approve|suppress)$/,
-  /^\/second-opinion\/apply(?:-all)?$/,
+  /^\/second-opinion\/(?:apply(?:-all)?|reopened)$/, // reopened: Keep / Drop (#1972)
   // The whole report-version review workflow, not just approve: /review/annotations and
   // /review/request-changes are the reviewer's day job, and a reviewer holds "review" but NOT
   // "write" — so naming only approve here locks the assigned reviewer out of the other two with a

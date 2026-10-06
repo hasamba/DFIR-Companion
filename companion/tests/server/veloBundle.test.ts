@@ -807,6 +807,65 @@ describe("Velociraptor triage bundles — routes", () => {
     POLL_TIMEOUT_MS * 2,
   );
 
+  // #1969 — the cap keeps the FIRST rows in read order (on a USN journal, the oldest). With a case
+  // scope window set, a cut-short read is read ONCE more inside that window, and those rows are kept.
+  it(
+    "collect re-reads a cut-short artifact once inside the case scope window and keeps the window rows",
+    async () => {
+      const windowed: string[] = [];
+      const runner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("artifact_definitions()"))
+          return { rows: [{ name: "Windows.Forensics.Usn", description: "USN", type: "CLIENT" }], raw: "" };
+        if (p.includes("hunt(") && p.includes("artifacts="))
+          return { rows: [{ Hunt: { HuntId: "H.WIN1", state: "RUNNING" } }], raw: "" };
+        if (p.includes("hunt_results(") && p.includes("Usn")) {
+          if (p.includes("timestamp(epoch=Timestamp)")) {
+            windowed.push(p);
+            return { rows: [{ FileName: "evil.ps1", Timestamp: "2026-09-20T05:00:00Z" }], raw: "" };
+          }
+          const rows = Array.from({ length: 3 }, (_, i) => ({
+            FileName: `old${i}`,
+            Timestamp: "2020-01-01T00:00:00Z",
+          }));
+          return { rows, raw: "" };
+        }
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(runner, { collectMaxRows: 2 });
+      await request(made.app)
+        .post("/cases/c1/scope")
+        .send({ start: "2026-09-20T00:00:00Z", end: "2026-09-21T00:00:00Z" });
+      await request(made.app)
+        .post("/bundles")
+        .send({ id: "best-practice", name: "Best Practice", artifacts: ["Windows.Forensics.Usn"] });
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      const job = await pollHuntJob<{ status: string; truncatedArtifacts?: Record<string, unknown>[] }>(
+        made.app,
+      );
+      expect(job.status).toBe("imported");
+      expect(windowed).toHaveLength(1);
+      expect(windowed[0]).toContain("timestamp(epoch='2026-09-20T00:00:00.000Z')");
+      expect(job.truncatedArtifacts).toEqual([
+        {
+          name: "Windows.Forensics.Usn",
+          kept: 1,
+          total: 1,
+          earliest: "2026-09-20T05:00:00Z",
+          latest: "2026-09-20T05:00:00Z",
+          windowStart: "2026-09-20T00:00:00.000Z",
+          windowEnd: "2026-09-21T00:00:00.000Z",
+          windowFull: true,
+        },
+      ]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
   it("run-bundle is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
     const store = new CaseStore(root);

@@ -43,11 +43,30 @@ export function keptSpan(rows: readonly unknown[]): KeptSpan | undefined {
   return earliest ? { earliest, latest } : undefined;
 }
 
-/** A TruncatedArtifact for one capped read: kept count, the read's total, and the kept span. */
+/** The incident-window part of a TruncatedArtifact (#1969): set only when a windowed re-read was kept. */
+export interface WindowNote {
+  windowStart?: string;
+  windowEnd?: string;
+  windowFull?: boolean; // true = the windowed re-read was NOT cut short: every window row was kept
+}
+
+/**
+ * A TruncatedArtifact for one capped read: kept count, the read's total, and the kept span. `read`
+ * carries the incident window a re-read was kept inside (#1969), and whether that re-read was cut too.
+ */
 export function truncatedRecord(
   name: string,
   rows: readonly unknown[],
   total: number,
-): { name: string; kept: number; total: number; earliest?: string; latest?: string } {
-  return { name, kept: rows.length, total, ...keptSpan(rows) };
+  read?: { window?: { start?: string; end?: string }; truncated?: boolean },
+): { name: string; kept: number; total: number; earliest?: string; latest?: string } & WindowNote {
+  const w = read?.window;
+  const note: WindowNote = w
+    ? {
+        ...(w.start ? { windowStart: w.start } : {}),
+        ...(w.end ? { windowEnd: w.end } : {}),
+        windowFull: !read?.truncated,
+      }
+    : {};
+  return { name, kept: rows.length, total, ...keptSpan(rows), ...note };
 }

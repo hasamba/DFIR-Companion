@@ -31,6 +31,7 @@ import type { TagsStore } from "../analysis/tags.js";
 import type { PinnedFindingsStore } from "../analysis/pinnedFindings.js";
 import type { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import type { FindingOutcomeStore } from "../analysis/findingOutcome.js";
+import type { FindingSeverityRestoreStore } from "../analysis/findingSeverityRestore.js";
 import type { RemediationStore } from "../analysis/remediationBoundary.js";
 import type { ServedLocationStore } from "../analysis/servedLocation.js";
 import type { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
@@ -217,6 +218,9 @@ export interface AppOptions {
   // Analyst attack-outcome statements per finding (#930 item 8), same side-file pattern and the
   // same reason. onFindingOutcome pings dashboard clients to re-fetch on any change.
   findingOutcomeStore?: FindingOutcomeStore;
+  // The analyst's per-finding severity restores over a grading cap (#1973). Applied to the stored
+  // findings at once and re-applied after grading on every synthesis.
+  findingSeverityRestoreStore?: FindingSeverityRestoreStore;
   // Remediation boundaries, receipts and the analyst's residual-risk status (#969) — a side file
   // beside the state, never wiped by a re-synthesis.
   remediationStore?: RemediationStore;

@@ -88,6 +88,8 @@
     document.addEventListener("click", (e) => {
       const btn = e.target && e.target.closest && e.target.closest(".fsim-btn");
       if (btn) setSimulationOverride(btn.getAttribute("data-fsim-real") === "true");
+      const sev = e.target && e.target.closest && e.target.closest(".fsev-btn");
+      if (sev) setSeverityRestore(sev.getAttribute("data-fsev"), sev.getAttribute("data-fsev-restore") === "true");
     });
   }
   function findingOutcomeControls(fid, finding) {
@@ -97,6 +99,7 @@
       axisControl(fid, "exec", rec.execution || "", EXECUTION_LABELS, ICON_TARGET, "Execution outcome") +
       axisControl(fid, "ctl", rec.control || "", CONTROL_LABELS, ICON_FLAG, "Control disposition") +
       simulationButton(finding) +
+      severityRestoreControl(fid, finding) +
       `</span>`
     );
   }
@@ -164,6 +167,62 @@
           showToast(`Simulation override not saved: ${(err && err.message) || "network error"}`, "error");
       });
   }
+  // Analyst severity restore (#1973). A grading gate that lowered this finding's severity records
+  // the severity before it and its own name; the chip says so and the button lifts that one cap.
+  // The server applies it at once and broadcasts the new state — no synthesis runs. A case-wide
+  // simulation cap still applies after the restore and keeps its own switch.
+  const CAP_GATE_LABELS = {
+    "content-mismatch": "citation mismatch",
+    "lateral-unconfirmed": "unconfirmed lateral movement",
+    "self-disclaimed": "subject not in evidence",
+    "decoy-binary": "renamed shell",
+    "echo-only": "echo-only commands",
+    "tamper-timing": "Defender-tamper timing",
+    "lab-setup": "lab setup",
+    "build-baseline": "build baseline",
+    "intel-only": "threat-intel only",
+  };
+  function severityRestoreControl(fid, f) {
+    const cap = f && f.severityCap;
+    if (!cap || !cap.from) return "";
+    const gates = (Array.isArray(cap.gates) ? cap.gates : []).map((g) => CAP_GATE_LABELS[g] || g).join(", ");
+    const restored = f.severityRestored;
+    const chipText = restored
+      ? `severity restored by ${restored.by || "analyst"} · over the ${gates} cap`
+      : `capped from ${cap.from} — ${gates}`;
+    const chipTip = restored
+      ? `The analyst lifted the ${gates} cap, which had lowered this finding to ${cap.to}. The cap reason stays in the confidence note.`
+      : `A grading check lowered this finding from ${cap.from} to ${cap.to}: ${gates}. Restore it if the check is wrong for this finding.`;
+    const label = restored ? "Undo restore" : `Restore ${cap.from}`;
+    const btnTip = restored
+      ? `Put the ${gates} cap back: ${cap.to}`
+      : `Lift the ${gates} cap on this finding only. Later synthesis runs keep the restore.`;
+    return (
+      `<span class="rel-chip rel-sev-cap" title="${escAttr(chipTip)}">${esc(chipText)}</span>` +
+      `<button type="button" class="fwf-btn fsev-btn" data-fsev="${escAttr(String(fid))}" data-fsev-restore="${restored ? "false" : "true"}" title="${escAttr(btnTip)}">` +
+      `${esc(label)}</button>`
+    );
+  }
+  function setSeverityRestore(fid, restore) {
+    const caseId = document.getElementById("caseId").value.trim();
+    if (!caseId || !fid) return;
+    fetch(`/cases/${caseId}/findings/${encodeURIComponent(String(fid))}/severity-restore`, {
+      method: restore ? "POST" : "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ updatedBy: investigatorName() }),
+    })
+      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
+      .then(({ ok, status, data }) => {
+        if (!ok) throw new Error((data && data.error) || `server returned ${status}`);
+        // The server broadcasts the new state; the cards re-render from it.
+        if (typeof showToast === "function")
+          showToast(restore ? "Severity restored" : "Severity cap applied again", "success");
+      })
+      .catch((err) => {
+        if (typeof showToast === "function")
+          showToast(`Severity restore not saved: ${(err && err.message) || "network error"}`, "error");
+      });
+  }
   // PATCH one axis; the server drops the record when both axes and the note are empty.
   //
   // A native <select> shows the new value the instant it is chosen, before the server has said
@@ -215,4 +274,5 @@
   window.setFindingControl = setFindingControl;
   window.findingSimulationChip = findingSimulationChip;
   window.setSimulationOverride = setSimulationOverride;
+  window.setSeverityRestore = setSeverityRestore;
 })();

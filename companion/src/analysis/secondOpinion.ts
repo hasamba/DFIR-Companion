@@ -52,6 +52,8 @@ export interface SecondOpinionDelta {
   carriedFrom?: string;
   // #1590 — response-only, never stored: this accepted decision matches no finding right now.
   unapplied?: UnappliedReason;
+  // #1972 — response-only, never stored: the primary model's new call that reopened this decision.
+  reopened?: Severity;
   // #1596 — set only on a fresh, pending A-only delta the referee proposed to dismiss: why the
   // dismissal is left for the analyst. No bulk action accepts a delta that carries one.
   refereeFlags?: RefereeFlag[];

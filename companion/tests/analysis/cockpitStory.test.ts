@@ -73,7 +73,7 @@ describe("deriveCockpitStory — stage chain", () => {
       "Credential Access",
       "Exfiltration",
     ]);
-    expect(STORY_STAGE_ORDER[0]).toBe("Initial Access");
+    expect(STORY_STAGE_ORDER[0]).toBe("Reconnaissance"); // #1974
     expect(STORY_STAGE_ORDER[STORY_STAGE_ORDER.length - 1]).toBe("Impact");
   });
 
@@ -578,13 +578,15 @@ describe("deriveCockpitStory — missing stages (#1493)", () => {
       "Command and Control",
       "Impact",
     ]);
+    // Reconnaissance (#1974) gets a card when present but is never reported missing.
     expect([...story.stages.map((stage) => stage.tactic), ...story.missingStages]).toHaveLength(
-      STORY_STAGE_ORDER.length,
+      STORY_STAGE_ORDER.length - 1,
     );
   });
 
-  it("names all twelve stages when nothing is staged, and none when every stage has a card", () => {
+  it("names all twelve core stages when nothing is staged, and none when every stage has a card", () => {
     const techniques: Record<string, string> = {
+      Reconnaissance: "T1595.002",
       "Initial Access": "T1566",
       Execution: "T1059",
       Persistence: "T1547",
@@ -606,7 +608,9 @@ describe("deriveCockpitStory — missing stages (#1493)", () => {
       }),
     );
 
-    expect(deriveCockpitStory(state()).missingStages).toEqual([...STORY_STAGE_ORDER]);
+    expect(deriveCockpitStory(state()).missingStages).toEqual(
+      STORY_STAGE_ORDER.filter((tactic) => tactic !== "Reconnaissance"),
+    );
     expect(deriveCockpitStory(state()).missingStages).toHaveLength(12);
     expect(full.stages.map((stage) => stage.tactic)).toEqual([...STORY_STAGE_ORDER]);
     expect(full.missingStages).toEqual([]);

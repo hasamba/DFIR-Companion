@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { classifyVerdict, iocHasBehavioralEvent, isInternalAddress } from "../../src/analysis/iocAnchors.js";
 import { capIntelOnlyFindings } from "../../src/analysis/findingGrounding.js";
+import { severityCapOf } from "../../src/analysis/findingSeverityRestore.js";
 import type { Finding, ForensicEvent, IOC, IocEnrichment } from "../../src/analysis/stateTypes.js";
 
 const hostNames = new Set(["db-01"]);
@@ -278,6 +279,7 @@ describe("capIntelOnlyFindings — northpeak class", () => {
     expect(out[0].severity).toBe("Medium");
     expect(out[0].confidence).toBe(60);
     expect(out[0].confidenceReason).toMatch(/single-provider threat-intel/i);
+    expect(severityCapOf(out[0])).toEqual({ from: "High", to: "Medium", gates: ["intel-only"] });
   });
 
   it("floors a multi-origin-only High finding too — two names are not activity (#933 item 18)", () => {

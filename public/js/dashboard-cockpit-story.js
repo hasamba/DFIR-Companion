@@ -19,6 +19,7 @@
   // Kill-chain order, mirrored from the server's STORY_STAGE_ORDER so a missing-stage card can sit
   // in its slot among the real ones (#1493). cockpitStory.test.ts pins the two lists together.
   const STORY_STAGE_ORDER = [
+    "Reconnaissance",
     "Initial Access",
     "Execution",
     "Persistence",

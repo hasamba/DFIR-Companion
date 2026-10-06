@@ -248,11 +248,11 @@ describe("linkTransferToolStaging", () => {
   });
 });
 
-// The timeline layer may not import prefetchExecution.ts (analysis/ingest), so the tool names are
-// restated. Every bulk-transfer name the Prefetch grader knows must be one this pass knows.
+// Every bulk-transfer name the Prefetch grader knows (attackToolNames.ts DUAL_USE) must be one this
+// pass knows.
 describe("the restated tool names", () => {
-  it("cover every T1567.002 name in prefetchExecution.ts", () => {
-    const src = readFileSync(join(__dirname, "../../src/analysis/prefetchExecution.ts"), "utf8");
+  it("cover every T1567.002 name in attackToolNames.ts", () => {
+    const src = readFileSync(join(__dirname, "../../src/analysis/attackToolNames.ts"), "utf8");
     const names = [...src.matchAll(/"([a-z0-9_.-]+\.exe)":\s*\["T1567\.002"\]/g)].map((m) => m[1]);
     expect(names.length).toBeGreaterThanOrEqual(4);
     for (const n of names) expect(TRANSFER_TOOL_NAMES).toContain(n);

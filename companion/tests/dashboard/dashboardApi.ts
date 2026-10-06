@@ -554,8 +554,18 @@ export interface VeloCoverageApi {
     artifacts?: string[];
     skippedArtifacts?: { name: string; error: string }[];
     emptyArtifacts?: string[];
-    truncatedArtifacts?: { name: string; kept: number; total: number; earliest?: string; latest?: string }[];
+    truncatedArtifacts?: {
+      name: string;
+      kept: number;
+      total: number;
+      earliest?: string;
+      latest?: string;
+      windowStart?: string;
+      windowEnd?: string;
+      windowFull?: boolean;
+    }[];
     unreadArtifacts?: { name: string; rows: number }[];
+    timeScope?: { start: string; end?: string };
   }): string;
   veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
   veloReadGapsHtml(
@@ -595,6 +605,7 @@ export interface VeloTriageApi {
 // Run button (or the reason it is blocked), rendered from the triage module's cached bundles.
 export interface VeloCollectApi {
   renderVeloRunList(bundles: { id: string; name: string; artifacts: string[] }[]): void;
+  veloPrefillTimeScope(form: unknown, scope: { start?: string | null; end?: string | null } | null): boolean;
   activeCaseId: string | null;
   veloEnabled: boolean;
 }

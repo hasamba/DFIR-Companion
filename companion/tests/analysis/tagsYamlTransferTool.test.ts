@@ -109,9 +109,9 @@ describe("bundled data/tags.yaml — transfer tools in Amcache (#1970)", () => {
   });
 
   // The rule restates the Prefetch grader's T1567.002 names. Every one must match.
-  it("covers every T1567.002 name in prefetchExecution.ts", () => {
+  it("covers every T1567.002 name in attackToolNames.ts", () => {
     const src = readFileSync(
-      fileURLToPath(new URL("../../src/analysis/prefetchExecution.ts", import.meta.url)),
+      fileURLToPath(new URL("../../src/analysis/attackToolNames.ts", import.meta.url)),
       "utf8",
     );
     const names = [...src.matchAll(/"([a-z0-9_.-]+\.exe)":\s*\["T1567\.002"\]/g)].map((m) => m[1]);

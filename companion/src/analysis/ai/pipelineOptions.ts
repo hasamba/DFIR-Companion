@@ -36,6 +36,7 @@ import type { PresidioPendingStore } from "../presidioPending.js";
 import type { PlaybookStore } from "../playbookStore.js";
 import type { ScopeStore } from "../scope.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
+import type { FindingSeverityRestoreStore } from "../findingSeverityRestore.js";
 import type { RefereeModel } from "./providerRoster.js";
 import type { SourceTrustStore } from "../sourceTrustStore.js";
 import type { StateLock } from "../stateLock.js";
@@ -185,6 +186,8 @@ export interface PipelineOptions {
   // Persists the last second-opinion run (deltas + analyst accept/reject). Also read by synthesize()
   // so analyst-accepted deltas are re-applied after the wholesale findings rewrite (durability).
   secondOpinionStore?: SecondOpinionStore;
+  // #1973: the analyst's per-finding severity restores, re-applied after grading on every synthesis.
+  findingSeverityRestoreStore?: FindingSeverityRestoreStore;
   // Human-readable model labels for the second-opinion comparison header (e.g. "claude-opus-4-8"
   // vs "gpt-4o"). Fall back to the provider name when absent.
   synthesisModelLabel?: string;

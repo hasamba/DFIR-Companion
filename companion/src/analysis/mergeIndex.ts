@@ -25,6 +25,7 @@ import { readCloudRecord } from "./cloudBulkRead.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
 import { isTransferToolRow } from "./transferToolStaging.js";
+import { isToolStoreRow } from "./toolStoreFolder.js";
 
 /**
  * What the incremental importer merge keeps per forensic row (#1874), computed from the row exactly
@@ -104,6 +105,7 @@ const INERT_NOTES = new Set([
   "own-child handle",
   "normal OS behaviour",
   "transfer tool staged", // transferToolStaging: its rows are LOAD rows, read on every merge
+  "attack tool store", // toolStoreFolder: its rows are LOAD rows, read on every merge
   "look-alike account", // lookalikeCaseAccount: written by the import settle, no chain pass reads it
 ]);
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -170,7 +172,7 @@ export function mergeLoadAlways(e: ForensicEvent): boolean {
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;
   if (/^SRUM total:/.test(e.description ?? "")) return true;
-  if (isTransferToolRow(e)) return true;
+  if (isTransferToolRow(e) || isToolStoreRow(e)) return true;
   return mitre.some((t) => PRECURSOR_TECHNIQUES.has(t));
 }
 

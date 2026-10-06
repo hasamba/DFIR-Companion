@@ -189,7 +189,7 @@ export function carryAcceptedDecisions(prev: SecondOpinion | null, next: SecondO
   const carried = (prev?.deltas ?? [])
     .filter((d) => d.status === "accepted")
     // A flag holds a PENDING dismissal for the analyst (#1596); an accepted decision has settled it.
-    .map(({ unapplied: _u, refereeFlags: _f, ...d }) => ({
+    .map(({ unapplied: _u, reopened: _r, refereeFlags: _f, ...d }) => ({
       ...d,
       carriedFrom: d.carriedFrom || prev?.generatedAt || "",
     }));

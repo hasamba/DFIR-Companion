@@ -3,6 +3,7 @@ import type { ForensicEvent, InvestigationState, Severity } from "../stateTypes.
 import { demoteBelowSeverity } from "../forensicGate.js";
 import { downgradeFirstPartyEgress } from "../firstPartyEgress.js";
 import { downgradeGenericSysmonRegistry } from "../genericSysmonRegistry.js";
+import { createToolStoreCollector } from "../toolStoreFolder.js";
 import type { MappedEvent, SiemEvent } from "../siemImport.js";
 import { aggregateEvents } from "../eventAggregate.js";
 import type { SiemIoc } from "../iocSink.js";
@@ -380,6 +381,8 @@ export async function runVelociraptorBulk(
   const forensicBudget = mode === "forensic" ? (vr.maxEvents ?? Number.MAX_SAFE_INTEGER) : 0;
   const gate = mode === "forensic" ? await sink.forensicMinSeverity(caseId) : null;
   const tagger = await sink.openTagger(caseId, mode);
+  // The tool-folder check needs a kit's Info file rows, which each batch demotes (#1970 review).
+  const toolStores = mode === "forensic" && gate ? createToolStoreCollector() : null;
   const nextIndex = { n: 0 };
   const resolvedLinks = new Map<string, string>();
   const totals = {
@@ -426,6 +429,7 @@ export async function runVelociraptorBulk(
       const keep = room > 0 ? graded.slice(0, room) : [];
       totals.dropped += graded.length - keep.length;
       if (keep.length) kept = await sink.appendForensic(caseId, keep);
+      toolStores?.observe(events, new Set(keep));
     }
     let superAdded = 0;
     if (events.length) {
@@ -451,6 +455,17 @@ export async function runVelociraptorBulk(
     const estimate =
       offset > 0 ? Math.max(totals.rows, Math.round((totals.rows * text.length) / offset)) : totals.rows;
     opts.onProgress?.(totals.rows, estimate);
+  };
+
+  // After the last batch: the kit rows the tool-folder check raised, through the same gate and cap.
+  const releaseToolStores = async (raised: ForensicEvent[]): Promise<void> => {
+    const { kept: graded } = demoteBelowSeverity(raised, gate!);
+    const keep = graded.slice(0, Math.max(0, forensicBudget - totals.forensicKept));
+    totals.dropped += graded.length - keep.length;
+    totals.gateDemoted -= graded.length;
+    if (!keep.length) return;
+    totals.forensicKept += await sink.appendForensic(caseId, keep);
+    sink.log(`[import] ${caseId} ${opts.label}: tool-folder check kept ${keep.length} more row(s)`, caseId);
   };
 
   let batch: Row[] = [];
@@ -505,6 +520,7 @@ export async function runVelociraptorBulk(
       }
     }
     if (batch.length || tail.length) await flush(batch, text.length, tail);
+    if (toolStores && gate) await releaseToolStores(toolStores.release());
   } catch (err) {
     // The batch that failed is the one after the last that flushed; `batch` holds its rows so far.
     const from = totals.rows + 1;
