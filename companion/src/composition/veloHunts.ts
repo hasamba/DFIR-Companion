@@ -29,7 +29,12 @@ import type { ImportBase, RouteContext } from "../routes/context.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
 import type { AiControl } from "../analysis/aiControl.js";
-import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
+import {
+  collectWarnings,
+  superOnlyHunt,
+  type SuperCappedArtifact,
+  type VeloHuntJobView,
+} from "../analysis/veloHuntStore.js";
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
 import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClients.js";
 import { inventorySignature } from "../analysis/collectionInventory.js";
@@ -39,10 +44,7 @@ import { incidentWindow, readInIncidentWindow } from "../integrations/velocirapt
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
-import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
-import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
-import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { settleForensicImport } from "../routes/importSettle.js";
 import { describeImportSource } from "../analysis/importMeta.js";
@@ -64,12 +66,13 @@ import {
 import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
-import { logLine, getServerLogger } from "../logging/serverLogger.js";
+import { logLine } from "../logging/serverLogger.js";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
+import { createSuperShareLedger, importSuperOnlyArtifact, superTimelineCap } from "./veloSuperShare.js";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -395,9 +398,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       let eventBudgetRemaining = maxEventsDefault();
       let budgetBaseline = options.stateStore ? stateBefore : null;
       let budgetExhaustedLogged = false;
-      // Same for a super-only bundle: one DFIR_SUPERTIMELINE_MAX budget across the loop, not per artifact.
-      let superEventBudgetRemaining = Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000;
-      let superBudgetExhaustedLogged = false;
+      // A super-only bundle shares one DFIR_SUPERTIMELINE_MAX across its artifacts, by row count (#1982).
+      const superCap = superTimelineCap();
+      const superShare = createSuperShareLedger(
+        evidence.artifacts.map((a) => a.rows),
+        superCap,
+      );
+      const superCapped: SuperCappedArtifact[] = [];
       // Per-artifact progress on the import job (#1428), so a slow import and a stuck one no longer
       // look the same "running" in the popover: the job engine turns these into a rate and an ETA,
       // and the log line is the same signal for whoever is tailing the session log.
@@ -419,86 +426,31 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           at: importedAt,
           detail: `importing Velociraptor hunt ${job.huntId} artifact ${name}`,
         });
-        if (superOnly && superEventBudgetRemaining <= 0) {
-          // Hunt-wide super-timeline cap already spent by earlier artifacts. Rows are still persisted
-          // as evidence above (chain of custody intact) — only the super-timeline append is skipped.
-          if (!superBudgetExhaustedLogged) {
-            superBudgetExhaustedLogged = true;
-            logLine(
-              `[velociraptor] hunt ${job.huntId}: super-timeline event cap (${Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000}) reached — remaining artifacts' rows are persisted as evidence but not further appended to the super-timeline (raise DFIR_SUPERTIMELINE_MAX to lift it)`,
-            );
-          }
-        } else if (superOnly && bulkPathApplies(options.bulkImportSink, json)) {
-          // A large artifact takes the batched driver (#1439): the same super-only mapping, one batch
-          // at a time. The hunt-wide budget is charged with what landed; the store's own cap bounds the
-          // artifact that crosses it, and the next artifact sees the budget spent.
-          const res = await runVelociraptorBulk(
-            options.bulkImportSink,
-            caseId,
-            json,
+        if (superOnly) {
+          const r = await importSuperOnlyArtifact(
+            { ...options, superTimelineStore: options.superTimelineStore!, autoTagImported },
             {
-              label: storedName,
-              idPrefix: `${jobHuntId}-${name}`,
+              caseId,
+              huntId: jobHuntId,
+              name,
+              json,
+              rows: rowCount,
+              storedName,
               importedAt,
-              velociraptor: { artifact: name, partlyReadArtifact: partly },
               minSeverity,
               veloUrl,
+              partly,
+              limit: superShare.limit(index),
+              cap: superCap,
             },
-            "super-only",
           );
-          if (res) {
-            superTimelineAddedCount += res.superAppended;
-            superEventBudgetRemaining -= res.superAppended;
-            importedAny = true;
-          }
-        } else if (superOnly) {
-          // Parse WITHOUT merging into forensic; append the mapped events to the super-timeline only.
-          // The artifact-map carries the row's _Source, so `artifact` is just a filename fallback.
-          // Complete record: don't aggregate rows, lift the 2000-event cap to the (remaining) super
-          // store budget — shared across the whole hunt, not reset for each artifact (see above).
-          const parsed = parseVelociraptorJson(json, {
-            artifact: name,
-            aggregate: false,
-            maxEvents: superEventBudgetRemaining,
-            partlyReadArtifact: partly,
-          });
-          const floored = applySeverityFloor(parsed.events, minSeverity); // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
-          // Id by the HUNT id + ARTIFACT NAME, not a running index across the whole hunt: each artifact
-          // is now imported in its own pass, so a purely sequential counter would collide across
-          // artifacts (two artifacts' first row would both land on `-e1`, and the super-timeline's
-          // id-based dedup would silently drop the second). Namespacing by artifact name keeps ids
-          // unique across artifacts and STABLE across re-collects the same way the old scheme was — same
-          // rows in the same order (for that artifact) → same ids → deduped; a straggler that checks in
-          // later gets a higher index and appends.
-          const events: ForensicEvent[] = floored.map((e, i) => ({
-            id: `${jobHuntId}-${name}-e${i + 1}`,
-            timestamp: e.timestamp,
-            description: e.description,
-            severity: e.severity,
-            mitreTechniques: e.mitreTechniques ?? [],
-            relatedFindingIds: [],
-            sourceScreenshots: [storedName],
-            ...(e.artifactName ? { artifactName: e.artifactName } : {}),
-            ...(e.message ? { message: e.message } : {}),
-            ...(veloUrl ? { veloUrl } : {}),
-            ...(e.partlyReadArtifact ? { partlyReadArtifact: e.partlyReadArtifact } : {}),
-            sources: e.sources?.length ? e.sources : ["Velociraptor"],
-            ...(e.asset ? { asset: e.asset } : {}),
-            ...(e.path ? { path: e.path } : {}),
-            ...(e.sha256 ? { sha256: e.sha256 } : {}),
-            ...(e.md5 ? { md5: e.md5 } : {}),
-          }));
-          const appended = await options.superTimelineStore!.appendReporting(caseId, events);
-          const added = appended.retained;
-          superTimelineEvicted = mergeEvictions(superTimelineEvicted, appended.evicted);
-          superTimelineAddedCount += added;
-          superEventBudgetRemaining -= added;
-          getServerLogger().info(`[import] ${caseId} ${storedName}: done — super +${added} (super-only)`, {
-            caseId,
-          });
-          options.onSuperTimeline?.(caseId); // live dashboards refresh as super-only events stream in
-          await autoTagImported(caseId, events);
-          importedAny = true; // report success even though nothing hit the forensic timeline
+          superShare.charge(r.added);
+          superTimelineAddedCount += r.added;
+          superTimelineEvicted = r.evicted
+            ? mergeEvictions(superTimelineEvicted, r.evicted)
+            : superTimelineEvicted;
+          if (r.capped) superCapped.push(r.capped);
+          if (r.imported) importedAny = true; // success even though nothing hit the forensic timeline
         } else if (eventBudgetRemaining <= 0) {
           // Hunt-wide cap already spent by earlier artifacts. The rows are still persisted as evidence
           // above (chain of custody intact) — only the derived forensic-timeline import is skipped.
@@ -691,6 +643,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         truncatedArtifacts: cutShort.length ? cutShort : undefined,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
         unreadArtifacts: unread.length ? unread : undefined,
+        superCappedArtifacts: superCapped.length ? superCapped : undefined,
       };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);

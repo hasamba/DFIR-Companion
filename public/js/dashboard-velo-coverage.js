@@ -16,6 +16,12 @@
 // It is also why this renders for a SINGLE-artifact hunt, which the multi-artifact coverage line
 // deliberately skips — a one-artifact THOR hunt is exactly the case that showed no warning at all.
 
+// One super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982). The rows past its share
+// are stored as evidence only — not in the super-timeline — so searching there cannot find them.
+function veloSuperCapLine(c) {
+  return `${esc(c.name)} (${esc(String(c.kept))} of ${esc(String(c.total))} rows in the super-timeline)`;
+}
+
 // One cut-short artifact. The cap keeps the FIRST rows in read order, not the incident window, so the
 // kept rows' time span is named when the job stored one (#1950) — anything outside it was never read.
 // A read re-read inside the incident window (#1969) says so, and whether every window row fit.
@@ -35,8 +41,9 @@ function veloCoverageHtml(job) {
   const failed = job.skippedArtifacts || [];
   const empty = job.emptyArtifacts || [];
   const unread = job.unreadArtifacts || [];
+  const capped = Array.isArray(job.superCappedArtifacts) ? job.superCappedArtifacts : [];
   const total = (job.artifacts || []).length;
-  if (job.status !== "imported" || (total <= 1 && !cut.length && !unread.length)) return "";
+  if (job.status !== "imported" || (total <= 1 && !cut.length && !unread.length && !capped.length)) return "";
 
   const box = (body, color) =>
     `<div data-safe-style="font-size:12px;color:${color};margin-top:2px">${body}</div>`;
@@ -61,6 +68,14 @@ function veloCoverageHtml(job) {
           : "Run the bundle again and collect again with a time scope set to the incident window, " +
             "or raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS."),
       "var(--sev-high)",
+    );
+  }
+  if (capped.length) {
+    html += box(
+      `&#9888; SUPER-TIMELINE CAP &mdash; ${capped.map(veloSuperCapLine).join("<br>")}<br>` +
+        "The shared cap was used up; the rest is stored as evidence only, not in the super-timeline. " +
+        "Raise DFIR_SUPERTIMELINE_MAX and collect again.",
+      "#ff9f43",
     );
   }
   html += veloUnreadHtml(unread, "Collect again.");

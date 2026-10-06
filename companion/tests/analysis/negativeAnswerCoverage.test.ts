@@ -305,6 +305,24 @@ describe("applyNegativeAnswerCoverage — uncovered negative keyQuestion", () =>
     expect(out.nextSteps[0].collect).toBeUndefined();
   });
 
+  // #1982 — a super-only artifact the shared cap cut is NOT all in the archive: the rows past the
+  // cap were never added, so searching the archive cannot settle the question. Collect it again.
+  it("asks to collect again, not to search the archive, when the shared super-timeline cap cut the artifact", () => {
+    const events = incEvents();
+    const EVTX = "Windows.EventLogs.Evtx";
+    const hunt = job({
+      artifacts: [EVTX],
+      superTimelineOnly: true,
+      superCappedArtifacts: [{ name: EVTX, kept: 40, total: 100, cap: 50 }],
+    });
+    const inv = buildCollectionInventory({ events, hunts: [hunt] });
+    const out = applyNegativeAnswerCoverage(stateWith(events, [impactQ()]), inv);
+    expect(out.keyQuestions[0].status).toBe("partial");
+    expect(out.nextSteps).toHaveLength(1);
+    expect(out.nextSteps[0].action).not.toMatch(/Search the archive/);
+    expect(out.nextSteps[0].collect).toBeDefined();
+  });
+
   it("does not add a second step when one already collects the same host, artifact and log source", () => {
     const events = incEvents();
     const existing: NextStep = {

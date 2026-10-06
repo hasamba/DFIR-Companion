@@ -144,6 +144,8 @@ export interface BulkImportOpts {
   minSeverity?: Severity;
   veloUrl?: string;
   onProgress?: (done: number, total: number) => void;
+  /** Super-only mode: this artifact's share of the hunt's DFIR_SUPERTIMELINE_MAX (#1982). */
+  superMaxEvents?: number;
 }
 
 export interface BulkImportResult {
@@ -379,6 +381,9 @@ export async function runVelociraptorBulk(
   const vrCtx = vrBulkInternals.newVrCtx(vr);
   const maxIocs = vr.maxIocs ?? DEFAULT_MAX_IOCS;
   const forensicBudget = mode === "forensic" ? (vr.maxEvents ?? Number.MAX_SAFE_INTEGER) : 0;
+  // A super-only hunt shares one cap across its artifacts (#1982): offer no more than this one's share.
+  const superBudget = mode === "super-only" ? (opts.superMaxEvents ?? Number.MAX_SAFE_INTEGER) : Infinity;
+  let superOffered = 0;
   const gate = mode === "forensic" ? await sink.forensicMinSeverity(caseId) : null;
   const tagger = await sink.openTagger(caseId, mode);
   // The tool-folder check needs a kit's Info file rows, which each batch demotes (#1970 review).
@@ -432,8 +437,11 @@ export async function runVelociraptorBulk(
       toolStores?.observe(events, new Set(keep));
     }
     let superAdded = 0;
-    if (events.length) {
-      const appended = await sink.appendSuper(caseId, events);
+    const toSuper = events.slice(0, Math.max(0, superBudget - superOffered));
+    superOffered += toSuper.length;
+    totals.dropped += events.length - toSuper.length;
+    if (toSuper.length) {
+      const appended = await sink.appendSuper(caseId, toSuper);
       superAdded = appended.retained;
       totals.superEvicted = mergeEvictions(totals.superEvicted, appended.evicted);
       sink.onSuperTimeline?.(caseId);

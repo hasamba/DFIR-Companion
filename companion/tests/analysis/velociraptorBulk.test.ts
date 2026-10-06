@@ -345,6 +345,37 @@ describe("runVelociraptorBulk — super-only mode", () => {
     expect(again!.superAppended).toBe(0);
     expect(sink.superRows).toHaveLength(7);
   });
+
+  // #1982 — a super-only hunt shares DFIR_SUPERTIMELINE_MAX across its artifacts. The bulk driver
+  // had no super limit at all, so a big MFT on this path took the whole cap whatever its share was.
+  it("stops appending to the super-timeline at the artifact's share, across batches", async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => mftRow(i + 1));
+    const sink = memorySink({ batchRows: 3 });
+    const res = await runVelociraptorBulk(
+      sink,
+      "c1",
+      artifactMap(rows),
+      { ...baseOpts(), idPrefix: "F.ABC-Windows.NTFS.MFT", superMaxEvents: 4 },
+      "super-only",
+    );
+    expect(sink.superRows).toHaveLength(4);
+    expect(sink.superRows.map((e) => e.id)).toEqual([1, 2, 3, 4].map((n) => `F.ABC-Windows.NTFS.MFT-e${n}`));
+    expect(res!.superAppended).toBe(4);
+    expect(res!.rows).toBe(10); // every row was still read
+    expect(sink.forensic).toHaveLength(0);
+  });
+
+  it("a share of zero appends nothing", async () => {
+    const sink = memorySink({ batchRows: 3 });
+    await runVelociraptorBulk(
+      sink,
+      "c1",
+      artifactMap([mftRow(1), mftRow(2)]),
+      { ...baseOpts(), idPrefix: "F.ABC-Windows.NTFS.MFT", superMaxEvents: 0 },
+      "super-only",
+    );
+    expect(sink.superRows).toHaveLength(0);
+  });
 });
 
 describe("importVelociraptorBulk — the forensic entry", () => {

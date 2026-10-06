@@ -7,7 +7,12 @@ import {
   type EvidenceClass,
 } from "./refutationGate.js";
 import type { ForensicEvent } from "./stateTypes.js";
-import { keptRowsNote, type TruncatedArtifact, type VeloHuntJob } from "./veloHuntStore.js";
+import {
+  keptRowsNote,
+  type SuperCappedArtifact,
+  type TruncatedArtifact,
+  type VeloHuntJob,
+} from "./veloHuntStore.js";
 
 type HuntReachedClient = NonNullable<VeloHuntJob["reachedClients"]>[number];
 
@@ -82,7 +87,14 @@ export interface ClearedLog {
   count: number;
 }
 
-export type HuntArtifactState = "empty" | "truncated" | "failed" | "archive-only" | "running" | "unread";
+export type HuntArtifactState =
+  | "empty"
+  | "truncated"
+  | "failed"
+  | "archive-only"
+  | "super-capped" // super-only: the shared super-timeline cap cut it (#1982) — NOT all in the archive
+  | "running"
+  | "unread";
 
 export interface HuntArtifactLine {
   artifact: string;
@@ -234,6 +246,19 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
         name: x.name,
         rows: Number((x as { rows?: unknown }).rows) || 0,
       })),
+      ...(j.superCappedArtifacts === undefined
+        ? {}
+        : {
+            superCappedArtifacts: named(j.superCappedArtifacts).map((x) => {
+              const c = x as { name: string; kept?: unknown; total?: unknown; cap?: unknown };
+              return {
+                name: c.name,
+                kept: Number(c.kept) || 0,
+                total: Number(c.total) || 0,
+                cap: Number(c.cap) || 0,
+              };
+            }),
+          }),
     });
   }
   return out;
@@ -410,6 +435,14 @@ function unreadDetail(rows: number): string {
   return `${what}, but its source list could not be looked up, so rows it keeps under named sources were never read; not evidence of absence`;
 }
 
+/**
+ * The line for a super-only artifact the hunt's shared DFIR_SUPERTIMELINE_MAX cut (#1982). The rows
+ * past its share are stored as evidence only — not in the archive — so searching cannot find them.
+ */
+function superCappedDetail(c: SuperCappedArtifact): string {
+  return `${c.kept} of ${c.total} rows in the super-timeline — the shared cap was used up; the rest is NOT in the archive. Raise DFIR_SUPERTIMELINE_MAX and collect again`;
+}
+
 /** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
 function huntLines(
   jobs: readonly VeloHuntJob[],
@@ -443,6 +476,7 @@ function huntLines(
     const failed = new Set((job.skippedArtifacts ?? []).map((s) => s.name));
     const truncated = new Map((job.truncatedArtifacts ?? []).map((t) => [t.name, t]));
     const unread = new Map((job.unreadArtifacts ?? []).map((u) => [u.name, u.rows]));
+    const capped = new Map((job.superCappedArtifacts ?? []).map((c) => [c.name, c]));
     for (const a of job.artifacts) {
       const t = truncated.get(a);
       const u = unread.get(a);
@@ -454,6 +488,7 @@ function huntLines(
         const e = emptyLine(job, a, aliasIndex);
         put(a, "empty", e.detail, e.bounded, e.reached);
       } else if (t) put(a, "truncated", partialDetail(t));
+      else if (capped.has(a)) put(a, "super-capped", superCappedDetail(capped.get(a)!));
       else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
     }
   }
@@ -592,6 +627,14 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
       ...(Array.isArray(j.unreadArtifacts) && j.unreadArtifacts.length
         ? [JSON.stringify(j.unreadArtifacts)]
         : []),
+      // Appended only when present (#1982), for the same reason.
+      ...(Array.isArray(j.superCappedArtifacts) && j.superCappedArtifacts.length
+        ? [
+            JSON.stringify(
+              j.superCappedArtifacts.map((c) => `${c.name}:${c.kept}/${c.total}:${c.cap}`).sort(),
+            ),
+          ]
+        : []),
     ]);
   return hunts.map(one).sort().join("\n");
 }
@@ -656,6 +699,7 @@ export const NEGATIVE_ANSWER_RULES = [
   "- An answer, uncertainty or finding that says an activity was NOT observed must name the artifact that could have shown it.",
   '- If the inventory shows no raw collection for that evidence on the host in question (detections only, archive only, or a cleared log), the answer is not settled: set the question\'s status to "partial" and give a collect object naming the Velociraptor artifact above. At most ONE next step per missing artifact and host.',
   "- If the evidence is in the archive only, the step is to search the archive and promote the rows, not to collect again.",
+  "- An artifact the inventory lists as cut by the shared super-timeline cap is only partly in the archive: the rows past the cap are not in the archive. Do not send the analyst to search for them; the step is to raise DFIR_SUPERTIMELINE_MAX and collect that artifact again.",
   "- A class the inventory lists as partly read is not settled either: rows under the artifact's named sources were never read. The step is to collect that artifact again, not to search the archive.",
   "- Do not suggest collecting a log the inventory lists as cleared for the period before the clear; suggest a log that was not cleared.",
   '- No generic "collect more" steps: a collection step must serve a negative answer that depends on missing evidence, or a cleared log.',
