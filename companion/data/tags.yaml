@@ -322,6 +322,25 @@ staging_temp_executable:
   severity: Medium
   view: 'Temp-path executables'
 
+# A bulk-transfer tool listed in Amcache (#1970). Both importers grade Amcache rows Info, so an
+# rclone run seen only there was demoted and never reached the AI. Prefetch already grades these
+# names Medium (prefetchExecution.ts DUAL_USE, T1567.002); this is the same grade for the Amcache
+# row. The description anchor limits it to Amcache: `Amcache: ` is the EZ Tools CSV row, `Program file
+# present (Amcache)` the Velociraptor row. An MFT or USN row for the same file is left alone — a
+# tool on disk without its config is graded by analysis/transferToolStaging.ts, not here. Keep the
+# name list in step with DUAL_USE (tests/analysis/tagsYamlTransferTool.test.ts pins it).
+amcache_transfer_tool:
+  description: Bulk-transfer / cloud-sync tool listed in Amcache (rclone, restic, MEGAsync, MEGAcmd)
+  all:
+    - { field: path, regex: '(?:^|[\\/])(?:rclone|restic|megasync|megacmd)\.exe$', flags: 'i' }
+  any:
+    - { field: description, regex: '^Amcache: ', flags: 'i' }
+    - { field: description, regex: '^Velociraptor(?: \[[^\]]*\])?: Program file present \(Amcache\)', flags: 'i' }
+  tags: ['transfer-tool', 'exfiltration']
+  mitre: ['T1567.002']
+  severity: Medium
+  view: 'Transfer tools'
+
 # The CLR writes `<host>.exe.log` under UsageLogs the first time a process loads .NET. These hosts
 # never load .NET on their own, so a usage log named after one is the disk trace of Cobalt Strike
 # execute-assembly — in scenario 019 the ONLY trace of Seatbelt/SharpShares (#1559). dotnet.exe and
