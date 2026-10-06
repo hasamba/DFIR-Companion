@@ -15,12 +15,14 @@ next-decision questions before exposing the full panel inventory.
   order of first contact, and the accounts seen in the staged events;
 
 - **stage cards** — one card per kill-chain stage the case has evidence for, in attack order
-  (Initial Access → Execution → … → Impact). Each card shows when and where the stage was first
+  (Reconnaissance → Initial Access → Execution → … → Impact). Each card shows when and where the stage was first
   seen, its most severe event, and the top finding it backs; the card's top edge is coloured by the
   worst severity in the stage. Stages with no evidence are skipped; Info events do not count. Click
   the stage name or event count to filter the Forensic Timeline to that stage; click the finding to
   open it. A stage with no evidence gets a greyed card in its place — *no evidence yet* — linking to
-  the Evidence Gaps panel, so "did not happen" and "not collected" never look the same;
+  the Evidence Gaps panel, so "did not happen" and "not collected" never look the same.
+  Reconnaissance never gets a *no evidence yet* card, because recon usually runs on the
+  attacker's own hosts;
 - **Copy as brief** — copies the whole block as plain text (shape, numbered stages with time, host,
   headline event and finding, missing stages, conclusion) for a status update;
 - the synthesis **conclusion** and **attacker path**, each trimmed to two sentences, with links to
@@ -124,6 +126,7 @@ Your primary conclusions. Each finding has:
 - **Stale — re-synthesis queued** — marking a finding/IOC/event false positive immediately re-evaluates every key question, next step, and hypothesis that depended on it, badging the affected items instead of waiting for the next synthesis run.
 - **Attack outcome** — two dropdowns in the card's action row record what happened on two separate axes: **execution** (observed / not observed / unknown — was the malicious action itself seen?) and **control** (blocked before execution / remediated after execution / remediation failed / allowed by control / no control action seen / unknown — what did a security control do?). Both are analyst-set, kept in a side file that a re-synthesis cannot wipe, and printed in the report with each axis attributed. A blocked attack no longer has to be dismissed as a false positive or left open at High.
 - **Containment check** — when Jev is set up, a shield button in the finding's action row asks Jev eleven narrow questions about the finding's cited evidence (credentials exposed, persistence, data leaving, reach …) and suggests containment steps from a fixed rule. Each answer shows its probability or confidence. Tick the steps you accept and press **Add to Playbook**. Nothing runs on its own. See *Containment Check* in the advanced reference.
+- **Restore a capped severity** — when a grading check lowers a finding's severity, the card shows a chip such as *capped from High — Defender-tamper timing*. Click **Restore High** to lift that one cap on that one finding. The restore applies at once, is written to the activity log, and stays through later synthesis runs, but a lower severity from the model still wins. A case-wide simulation cap still applies after a restore. Use **Undo restore** to put the cap back. The checks are listed in [Advanced → Finding Severity Caps](advanced.md#finding-severity-caps).
 - **🚫 Mark False Positive** — exclude from analysis
 
 Findings sit in a dense table (severity / ID / confidence in real grid columns) with inline icon
@@ -184,7 +187,7 @@ Text that does not start with times keeps the plain prose layout. **✏ Edit** s
 
 ## Kill Chain
 
-Shows which **Cyber Kill Chain phases** are covered by the evidence: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objectives.
+Groups the forensic timeline by **MITRE ATT&CK tactic**, in kill-chain order. Reconnaissance (TA0043) is the first stage. Rows tagged with a reconnaissance technique, such as T1595.002 web-scanner activity, show in that stage. A row with no known tactic shows under **Uncategorized**, last.
 
 Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
 
@@ -358,6 +361,8 @@ A visual chart with:
 - **Y-axis:** compromised assets (hosts)
 - **X-axis:** time
 - **Color:** event severity
+
+In the tactic view, each lane is one ATT&CK tactic in kill-chain order, with Reconnaissance first and Uncategorized last.
 
 Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. Exports as SVG.
 
