@@ -84,11 +84,21 @@ export function isSimulationVerdictTitle(title: string): boolean {
 // prose: it accepts "It is likely a real intrusion rather than a simulation." So a summary sentence
 // must pass the title test AND carry no contrast or hedge, and no sentence about the exercise may
 // contest it. Rejecting is cheap: a miss only leaves the live-intrusion severities in place.
+// #1979: a contest word vetoes from any exercise sentence. A soft hedge ("may", "until", "if")
+// vetoes only when its sentence speaks to the verdict, so a next-step line cannot void it.
 export const SIMULATION_SUMMARY_MIN_CONFIDENCE = 25;
 export const SUMMARY_BASIS_LABEL = "verdict from summary";
-const SUMMARY_HEDGE =
-  /\b(but|however|although|though|rather than|whether|unconfirmed|unverified|not (yet )?(been )?confirmed|should confirm|must confirm|to confirm|until|unless|if|instead of|real intrusion|genuine|uncertain|unclear|possibly|may|might|could|pending|cannot|rul(e|es|ed)\b(\s+\S+){0,4}?\s+out)\b/i;
+const SUMMARY_CONTEST =
+  /\b(but|however|although|though|rather than|whether|unconfirmed|unverified|not (yet )?(been )?confirmed|should confirm|must confirm|unless|instead of|real intrusion|genuine|uncertain|unclear|possibly|cannot|rul(e|es|ed)\b(\s+\S+){0,4}?\s+out)\b/i;
+const SUMMARY_MODAL = /\b(may|might|could|if|until|pending|to confirm)\b/i;
+const VERDICT_TOPIC =
+  /\b((may|might|could)\s+(also\s+|still\s+|instead\s+)?(be|have been)|owner|authori[sz]\w*|sanction\w*|approv\w*|confirm(s|ed|ation)|confirm (that|whether|it|this)|real|genuine|attacker|adversary|threat actor|hostile|malicious)\b/i;
 const SENTENCE_SPLIT = /(?<=[.!?;])\s+|\n+/u;
+
+/** Whether a sentence is about the verdict itself, not a next step around the exercise. */
+function speaksToVerdict(s: string): boolean {
+  return VERDICT_MARKER.test(s) || NEGATION.test(s) || VERDICT_TOPIC.test(s);
+}
 
 /** Whether the case summary states the simulation verdict, strictly: affirmed and contested nowhere. */
 export function summaryStatesSimulationVerdict(summary: string | undefined): boolean {
@@ -96,7 +106,8 @@ export function summaryStatesSimulationVerdict(summary: string | undefined): boo
   for (const raw of (summary ?? "").split(SENTENCE_SPLIT)) {
     const s = raw.trim();
     if (!EXERCISE_NOUN.test(s)) continue;
-    if (SUMMARY_HEDGE.test(s) || HOSTILE_MARKER.test(s) || DENIAL.test(s)) return false;
+    if (SUMMARY_CONTEST.test(s) || HOSTILE_MARKER.test(s) || DENIAL.test(s)) return false;
+    if (SUMMARY_MODAL.test(s) && speaksToVerdict(s)) return false;
     if (isSimulationVerdictTitle(s)) affirmed = true;
   }
   return affirmed;
