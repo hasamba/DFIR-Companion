@@ -16,6 +16,7 @@ export const CORPUS_SCENARIOS = [
   "memory",
   "network",
   "clean",
+  "web-server",
 ] as const;
 
 export const CORPUS_TRAITS = [

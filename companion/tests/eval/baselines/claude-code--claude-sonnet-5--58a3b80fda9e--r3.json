@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "key": "claude-code/claude-sonnet-5/58a3b80fda9e8f177475978b645131df1d753f57e908a045504fb787d220a9d2/r3",
+  "identity": {
+    "provider": "claude-code",
+    "model": "claude-sonnet-5",
+    "promptHash": "58a3b80fda9e8f177475978b645131df1d753f57e908a045504fb787d220a9d2",
+    "sourceHash": "f74819fc235fca2e024604b22de26819a7a72e4550b378654d0536228a009ec5",
+    "corpusHash": "ca26405c45eaa55ff2f43278e7980e9b2953d7ae4ee92e1f84c375617bf04047",
+    "judge": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-5",
+      "contractHash": "8b1c2d9fabc544e77d1ee0a6cad76a4823194a458bb2c014db0f0b074ff70c13"
+    }
+  },
+  "recordedAt": "2026-10-06T10:50:05.251Z",
+  "summary": {
+    "claimPrecision": 0.9090909090909092,
+    "claimRecall": 1,
+    "eventPrecision": 0.6625,
+    "eventRecall": 1,
+    "iocPrecision": 0.29747474747474745,
+    "iocRecall": 0.9545454545454546,
+    "abstentionRate": 1,
+    "forbiddenConclusions": 0,
+    "danglingEvidenceRefs": 0,
+    "confidenceIssues": 0,
+    "confidenceBandMisses": 0,
+    "uncertaintyRecall": 0.7878787878787878,
+    "nextStepRecall": 0.6363636363636364,
+    "durationMs": 2211001.962216333,
+    "inputTokens": 68,
+    "outputTokens": 205734.66666666666,
+    "costUsd": 3.1399429333333333
+  },
+  "runs": 3,
+  "mode": "all"
+}

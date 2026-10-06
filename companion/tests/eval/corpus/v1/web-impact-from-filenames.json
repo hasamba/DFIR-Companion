@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "id": "web-impact-from-filenames",
+  "title": "Synthetic web shell with an impact claim resting only on file names",
+  "scenario": "web-server",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional IIS and $MFT name rows written for this corpus (#1967).",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-10-06"
+  },
+  "seedEvents": [
+    {
+      "id": "web-e1",
+      "timestamp": "2026-05-14T02:10:00.000Z",
+      "description": "IIS log on WEB-01 (shop.example.com): POST /uploads/img.aspx from 203.0.113.50 returned 200; img.aspx matched a web shell YARA rule",
+      "severity": "High",
+      "mitreTechniques": ["T1505.003"],
+      "asset": "WEB-01",
+      "srcIp": "203.0.113.50",
+      "sources": ["IIS", "YARA"]
+    },
+    {
+      "id": "web-e2",
+      "timestamp": "2026-05-14T02:30:00.000Z",
+      "description": "Directory listing of C:\\inetpub\\shop\\checkout on WEB-01 names payment.js, payment.js.bak and cardform.aspx; the listing records file names only, with no timestamps, sizes or hashes",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WEB-01",
+      "sources": ["Directory listing"]
+    },
+    {
+      "id": "web-e3",
+      "timestamp": "2026-05-14T02:30:00.000Z",
+      "description": "$MFT name hit: a file named skim.js exists under C:\\inetpub\\shop\\static\\js on WEB-01; no creation, modification or content record for it was collected",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "WEB-01",
+      "sources": ["$MFT"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "web-f1",
+        "severity": "High",
+        "confidence": 85,
+        "confidenceReason": "Two tools agree: the IIS POST succeeded and YARA matched img.aspx as a web shell.",
+        "title": "Web shell img.aspx used on WEB-01",
+        "description": "203.0.113.50 posted to the web shell /uploads/img.aspx on WEB-01 and the server returned 200.",
+        "relatedIocs": ["web-i1"],
+        "mitreTechniques": ["T1505.003"],
+        "status": "open",
+        "relatedEventIds": ["web-e1"]
+      }
+    ],
+    "iocs": [{ "id": "web-i1", "type": "ip", "value": "203.0.113.50" }],
+    "mitreTechniques": [],
+    "attackerPath": "203.0.113.50 used the web shell img.aspx on WEB-01.",
+    "narrativeTimeline": "",
+    "summary": "A web shell on WEB-01 was used. No file write or change on the checkout pages is in the evidence.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "web-n1",
+        "priority": "high",
+        "action": "Collect the content, hashes and $MFT timestamps of payment.js and skim.js on WEB-01",
+        "rationale": "Only file names are known; content and write times can confirm or refute tampering.",
+        "pointer": "WEB-01 C:\\inetpub\\shop",
+        "relatedFindingIds": ["web-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Checkout page tampering",
+        "status": "speculated",
+        "basis": "The evidence shows only the names payment.js, payment.js.bak and skim.js.",
+        "gap": "No write, modification or content record for these files was collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "web-shell-use",
+        "requiredTerms": ["img.aspx"],
+        "evidenceEventIds": ["web-e1"],
+        "confidence": { "min": 55, "max": 100 }
+      }
+    ],
+    "iocs": [{ "type": "ip", "value": "203.0.113.50" }],
+    "forbiddenConclusions": [
+      {
+        "id": "impact-from-filenames",
+        "terms": ["planted a card skimmer", "checkout pages were modified", "skimmer was planted"],
+        "claim": "The attacker modified the checkout pages or planted a card skimmer on WEB-01."
+      }
+    ],
+    "uncertainties": [
+      {
+        "id": "tampering-gap",
+        "topicTerms": ["skim|payment|checkout|tamper|modif|impact"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "collect-file-content",
+        "requiredTerms": ["skim.js|payment.js", "hash|content|timestamp|collect|acquire"]
+      }
+    ],
+    "expectAbstention": false
+  }
+}
