@@ -352,6 +352,8 @@ export async function applyAllSecondOpinion(
  * Keep or Drop one reopened decision (#1972). Keep: the decision stands and the primary model's new
  * call becomes the call it overrules. Drop: the decision is rejected and every finding it targeted
  * goes back to the primary's call, with the analyst's severity restores (#1973) re-applied on top.
+ * Neither re-applies the accepted set: that writes accepted severities back ungraded, past the cap
+ * synthesis gave them. Keep leaves the case as it is; Drop touches only its own findings.
  */
 export async function resolveReopenedSecondOpinion(
   ctx: SecondOpinionContext,
@@ -382,8 +384,12 @@ async function updateSecondOpinion(
   ctx: SecondOpinionContext,
   caseId: string,
   decide: (current: SecondOpinion) => SecondOpinion,
-  // #1972: a change to the case itself, made before the accepted set is re-applied (Drop).
-  onCase: (state: InvestigationState) => InvestigationState = (state) => state,
+  // The change to the case. By default the accepted set is re-applied; a reopened Keep or Drop
+  // (#1972) passes its own change instead, so it never writes an accepted severity back ungraded.
+  onCase: (
+    state: InvestigationState,
+    record: SecondOpinion,
+  ) => InvestigationState = applyAcceptedSecondOpinion,
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
   const store = ctx.opts.secondOpinionStore;
   if (!store) throw new Error("second-opinion store not configured");
@@ -406,7 +412,7 @@ async function updateSecondOpinion(
   );
   const write = async (): Promise<{ state: InvestigationState; changed: boolean }> => {
     const state = await ctx.opts.stateStore.load(caseId);
-    const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(onCase(state), record), {
+    const applied = reconcileSimulationVerdict(onCase(state, record), {
       treatAsReal: (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false,
       aliasIndex,
     });

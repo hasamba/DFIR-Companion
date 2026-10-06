@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
+import { FindingSeverityRestoreStore, type SeverityCap } from "../../src/analysis/findingSeverityRestore.js";
 import type { SecondOpinion } from "../../src/analysis/secondOpinion.js";
 import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
@@ -58,7 +59,14 @@ const RECORD: SecondOpinion = {
   ],
 };
 
-async function makeApp(primary: Finding["severity"]) {
+function makeApp(primary: Finding["severity"]) {
+  return setup(
+    [{ ...finding, primaryCall: { severity: primary, status: "open" } } as Finding],
+    RECORD.deltas,
+  );
+}
+
+async function setup(findings: Finding[], deltas: SecondOpinion["deltas"]) {
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-so-reopen-route-")));
   const stateStore = new StateStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
@@ -74,10 +82,10 @@ async function makeApp(primary: Finding["severity"]) {
   const app = createApp(store, { pipeline, stateStore, aiConfigured: true, secondOpinionStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   const state = emptyState("c1");
-  state.findings = [{ ...finding, primaryCall: { severity: primary, status: "open" } } as Finding];
+  state.findings = findings;
   await stateStore.save(state);
-  await secondOpinionStore.save("c1", RECORD);
-  return { app, stateStore, secondOpinionStore };
+  await secondOpinionStore.save("c1", { ...RECORD, deltas });
+  return { app, store, stateStore, secondOpinionStore };
 }
 
 describe("second-opinion reopened decisions over HTTP (#1972)", () => {
@@ -116,5 +124,90 @@ describe("second-opinion reopened decisions over HTTP (#1972)", () => {
     expect((await post({ deltaId: "severity:f1", keep: true })).status).toBe(409);
     expect((await post({ deltaId: "nope", keep: true })).status).toBe(404);
     expect((await post({ keep: true })).status).toBe(400);
+  });
+});
+
+// Code review on #1972: Keep and Drop must not re-apply accepted severities ungraded. A grading gate
+// capped the accepted call; writing the raw accepted severity back bypasses that cap.
+describe("second-opinion reopened decisions keep the graded state (#1972 review)", () => {
+  const cap = (from: Finding["severity"], to: Finding["severity"]): SeverityCap => ({
+    from,
+    to,
+    gates: ["lateral-unconfirmed"],
+  });
+  // f1: A said Critical, the analyst accepted High, a gate capped it to Medium. The primary now
+  // grades Low, which differs from both, so the decision is reopened.
+  const f1 = {
+    ...finding,
+    severity: "Medium",
+    severityCap: cap("High", "Medium"),
+    primaryCall: { severity: "Low", status: "open" },
+  } as Finding;
+  // f2: an unrelated accepted decision (A High, accepted Critical) that a gate capped to High.
+  const f2 = {
+    ...finding,
+    id: "f2",
+    title: "Mimikatz credential dump",
+    relatedEventIds: ["e2"],
+    severity: "High",
+    severityCap: cap("Critical", "High"),
+    primaryCall: { severity: "High", status: "open" },
+  } as Finding;
+  const delta = (
+    f: Finding,
+    a: Finding["severity"],
+    b: Finding["severity"],
+  ): SecondOpinion["deltas"][number] => ({
+    id: `severity:${f.id}`,
+    kind: "severity",
+    title: f.title,
+    aSeverity: a,
+    bSeverity: b,
+    finding: { ...f, severity: a },
+    rationale: "",
+    recommendation: "review",
+    status: "accepted",
+  });
+  const post = (app: Parameters<typeof request>[0], keep: boolean) =>
+    request(app).post("/cases/c1/second-opinion/reopened").send({ deltaId: "severity:f1", keep });
+  const byId = async (stateStore: StateStore, id: string) =>
+    (await stateStore.load("c1")).findings.find((f) => f.id === id);
+
+  it("Keep on a capped finding leaves its graded severity and cap unchanged", async () => {
+    const { app, stateStore } = await setup([f1], [delta(f1, "Critical", "High")]);
+    const before = JSON.stringify(await byId(stateStore, "f1"));
+    expect((await post(app, true)).status).toBe(200);
+    expect(JSON.stringify(await byId(stateStore, "f1"))).toBe(before);
+  });
+
+  it("Drop changes only its own finding; another accepted decision's finding stays byte-identical", async () => {
+    const { app, stateStore } = await setup(
+      [f1, f2],
+      [delta(f1, "Critical", "High"), delta(f2, "High", "Critical")],
+    );
+    const before = JSON.stringify(await byId(stateStore, "f2"));
+    expect((await post(app, false)).status).toBe(200);
+    expect(JSON.stringify(await byId(stateStore, "f2"))).toBe(before);
+    expect((await byId(stateStore, "f1"))?.severity).toBe("Low");
+  });
+
+  it("Drop on a capped primary call ends graded, and a severity restore (#1973) lifts the cap", async () => {
+    const capped = {
+      ...f1,
+      primaryCall: { severity: "Medium", status: "open", cap: cap("High", "Medium") },
+    } as Finding;
+    const graded = await setup([capped], [delta(capped, "Critical", "Low")]);
+    expect((await post(graded.app, false)).status).toBe(200);
+    const g = (await byId(graded.stateStore, "f1")) as Finding & { severityCap?: SeverityCap };
+    expect(g.severity).toBe("Medium");
+    expect(g.severityCap).toEqual(cap("High", "Medium"));
+
+    const restored = await setup([capped], [delta(capped, "Critical", "Low")]);
+    await new FindingSeverityRestoreStore(restored.store).restore("c1", "f1", {
+      semanticKey: "",
+      by: "analyst",
+    });
+    expect((await post(restored.app, false)).status).toBe(200);
+    expect((await byId(restored.stateStore, "f1"))?.severity).toBe("High");
   });
 });
