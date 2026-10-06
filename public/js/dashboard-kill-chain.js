@@ -20,6 +20,19 @@
   // Chain code. A banner is where a feature was written down, not where it lives.
   // Kill-chain tactic phase view — technique→tactic map replicated from mitreTactics.ts.
   const KC_TECHNIQUE_TACTIC = {
+    // Reconnaissance (TA0043, #1974) — every base technique ATT&CK v19 files under it.
+    T1595: "Reconnaissance",
+    T1589: "Reconnaissance",
+    T1590: "Reconnaissance",
+    T1591: "Reconnaissance",
+    T1592: "Reconnaissance",
+    T1593: "Reconnaissance",
+    T1594: "Reconnaissance",
+    T1596: "Reconnaissance",
+    T1597: "Reconnaissance",
+    T1598: "Reconnaissance",
+    T1681: "Reconnaissance",
+    T1682: "Reconnaissance",
     T1566: "Initial Access",
     T1190: "Initial Access",
     T1133: "Initial Access",
@@ -225,8 +238,10 @@
     "Discovery",
     "Defense Evasion",
     "Execution",
+    "Reconnaissance",
   ];
   const KC_CHAIN_ORDER = [
+    "Reconnaissance",
     "Initial Access",
     "Execution",
     "Persistence",

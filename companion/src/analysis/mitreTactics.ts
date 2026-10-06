@@ -23,6 +23,7 @@
 
 // IRIS event-category names = ATT&CK tactic names (exact spelling matters for the id lookup).
 export type IrisTactic =
+  | "Reconnaissance"
   | "Initial Access"
   | "Execution"
   | "Persistence"
@@ -38,6 +39,19 @@ export type IrisTactic =
 
 // Base technique id (sub-techniques are stripped to their parent) → tactic.
 const TECHNIQUE_TACTIC: Record<string, IrisTactic> = {
+  // Reconnaissance (TA0043, #1974) — every base technique ATT&CK v19 files under it.
+  T1595: "Reconnaissance",
+  T1589: "Reconnaissance",
+  T1590: "Reconnaissance",
+  T1591: "Reconnaissance",
+  T1592: "Reconnaissance",
+  T1593: "Reconnaissance",
+  T1594: "Reconnaissance",
+  T1596: "Reconnaissance",
+  T1597: "Reconnaissance",
+  T1598: "Reconnaissance",
+  T1681: "Reconnaissance",
+  T1682: "Reconnaissance",
   // Initial Access
   T1566: "Initial Access",
   T1190: "Initial Access",
@@ -194,6 +208,25 @@ const TECHNIQUE_TACTIC: Record<string, IrisTactic> = {
   T1657: "Impact",
 };
 
+// Kill-chain order, earliest stage first — the order an analyst reads an intrusion in time.
+// burstDetect, evidenceGraph and sessionSegmentation tie-break their dominant-tactic vote on it.
+// Reconnaissance (#1974) leads; the dashboard copies (KC_CHAIN_ORDER, EV_KC_ORDER) mirror it.
+export const KILL_CHAIN_ORDER: readonly IrisTactic[] = [
+  "Reconnaissance",
+  "Initial Access",
+  "Execution",
+  "Persistence",
+  "Privilege Escalation",
+  "Defense Evasion",
+  "Credential Access",
+  "Discovery",
+  "Lateral Movement",
+  "Collection",
+  "Command and Control",
+  "Exfiltration",
+  "Impact",
+];
+
 // When an event spans several tactics, the latest/worst stage wins.
 const TACTIC_PRIORITY: IrisTactic[] = [
   "Impact",
@@ -208,6 +241,7 @@ const TACTIC_PRIORITY: IrisTactic[] = [
   "Discovery",
   "Defense Evasion",
   "Execution",
+  "Reconnaissance",
 ];
 
 // Strong, specific keyword signals for events that carry no ATT&CK id (e.g. many THOR hits).

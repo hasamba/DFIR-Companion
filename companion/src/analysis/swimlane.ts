@@ -33,6 +33,7 @@ export interface SwimlaneData {
 const SEV_ORDER: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
 
 const TACTIC_ORDER = [
+  "Reconnaissance",
   "Initial Access",
   "Execution",
   "Persistence",

@@ -107,6 +107,8 @@ export function findingEvidenceHosts(f: Finding, events: readonly ForensicEvent[
 // Tactic-specific investigation focus, keyed by the finding's dominant ATT&CK tactic. Shared with
 // the IR-template phases in playbook.ts.
 export const TACTIC_FOCUS: Record<IrisTactic, string> = {
+  Reconnaissance:
+    "Review the scanning or probing in web and perimeter logs; identify the source and which exposed services it targeted.",
   "Initial Access":
     "Identify the delivery mechanism (phishing, exposed service, valid account) and confirm patient zero.",
   Execution:
@@ -142,6 +144,7 @@ export const PHASE_GUIDANCE = {
 // The imperative the fallback title opens with, per tactic. The finding's own title follows the
 // colon so the card still reads as the finding the analyst saw in the Findings panel.
 const TACTIC_IMPERATIVE: Record<IrisTactic, string> = {
+  Reconnaissance: "Confirm the scanning and what it targeted",
   "Initial Access": "Confirm the entry point and patient zero",
   Execution: "Confirm execution and trace the process chain",
   Persistence: "Enumerate and remove the persistence",

@@ -1,6 +1,6 @@
 import { worstSeverity, type InvestigationState, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { filterTimeline, type TimeWindow } from "./assetGraph.js";
-import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
+import { KILL_CHAIN_ORDER, tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
   canonicalAccounts,
   canonicalFile,
@@ -70,22 +70,9 @@ export interface EvidenceGraph {
 }
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
-// earliest stage represented wins a tie, so a node reads as the stage it leads with). Same order
-// as burstDetect.ts, kept local per the codebase's copy-the-order convention.
-const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access",
-  "Execution",
-  "Persistence",
-  "Privilege Escalation",
-  "Defense Evasion",
-  "Credential Access",
-  "Discovery",
-  "Lateral Movement",
-  "Collection",
-  "Command and Control",
-  "Exfiltration",
-  "Impact",
-];
+// earliest stage represented wins a tie, so a node reads as the stage it leads with). Shared with
+// burstDetect.ts and sessionSegmentation.ts through mitreTactics.ts.
+const CHAIN_ORDER = KILL_CHAIN_ORDER;
 
 // The dominant ATT&CK tactic across a node's backing events: each event resolves to a tactic via
 // the canonical technique/keyword mapping (reused from the kill-chain view + IRIS export), the most

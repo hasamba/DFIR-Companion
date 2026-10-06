@@ -567,7 +567,7 @@ describe("cockpit story — missing-stage cards (#1493)", () => {
     const missingStages = STORY_STAGE_ORDER.filter((t) => t !== "Discovery" && t !== "Initial Access");
     await h.render(snapshot({ story: story({ stages, missingStages }) }));
     expect(stageNames(h.body.innerHTML).map((n) => n[1])).toEqual([...STORY_STAGE_ORDER]);
-    expect(h.body.innerHTML.match(/now-stage-missing/g)).toHaveLength(10);
+    expect(h.body.innerHTML.match(/now-stage-missing/g)).toHaveLength(STORY_STAGE_ORDER.length - 2);
   });
 
   it("paints no missing card when there is no real stage at all", async () => {

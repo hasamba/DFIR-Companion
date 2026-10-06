@@ -1,6 +1,6 @@
 import { worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
-import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
+import { KILL_CHAIN_ORDER, tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 
 // Temporal burst / attack-phase detection. A real intrusion arrives in bursts: a dense cluster
 // of events within minutes (initial access), a gap, then another burst (persistence), and so on.
@@ -33,20 +33,7 @@ export const DEFAULT_GAP_SECONDS = 300;
 
 // Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
 // earliest stage represented wins a tie, so a phase reads as the stage it leads with).
-const CHAIN_ORDER: IrisTactic[] = [
-  "Initial Access",
-  "Execution",
-  "Persistence",
-  "Privilege Escalation",
-  "Defense Evasion",
-  "Credential Access",
-  "Discovery",
-  "Lateral Movement",
-  "Collection",
-  "Command and Control",
-  "Exfiltration",
-  "Impact",
-];
+const CHAIN_ORDER = KILL_CHAIN_ORDER;
 
 // Pick the phase label from the tactics of its events: the most frequent tactic wins; ties break
 // toward the earliest kill-chain stage. Undetermined (no event mapped to a tactic) → undefined.
