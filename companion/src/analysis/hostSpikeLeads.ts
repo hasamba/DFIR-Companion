@@ -38,21 +38,34 @@ function baselineText(a: TimelineAnomaly): string {
   return peer ? "the other hosts in that window" : "its own usual rate";
 }
 
-function spikeLine(a: TimelineAnomaly): string {
-  const day = a.bucketStart.slice(0, 10);
-  const window = `${day} ${hhmm(a.bucketStart)}–${hhmm(a.bucketEnd)} UTC`;
-  const cites = a.eventIds.slice(0, CITED_IDS).join(", ");
-  return `- ${a.asset} ${window}: ${a.eventCount} events, ${a.ratio}× ${baselineText(a)} [${cites}]`;
+function citation(a: TimelineAnomaly, shownIds?: ReadonlySet<string>): string {
+  const readable = shownIds ? a.eventIds.filter((id) => shownIds.has(id)) : a.eventIds;
+  if (!readable.length) return " (none of its rows is in the timeline below)";
+  return ` [${readable.slice(0, CITED_IDS).join(", ")}]`;
 }
 
-/** The lead block for the synthesis prompt, or "" when no host spikes. */
+function spikeLine(a: TimelineAnomaly, shownIds?: ReadonlySet<string>): string {
+  const day = a.bucketStart.slice(0, 10);
+  const window = `${day} ${hhmm(a.bucketStart)}–${hhmm(a.bucketEnd)} UTC`;
+  return `- ${a.asset} ${window}: ${a.eventCount} events, ${a.ratio}× ${baselineText(a)}${citation(a, shownIds)}`;
+}
+
+/**
+ * The lead block for the synthesis prompt, or "" when no host spikes.
+ *
+ * Spikes are detected over every event passed (the whole scoped forensic timeline), but the prompt
+ * shows only a budget-trimmed selection of it. `shownIds` — the rows the final prompt actually
+ * renders — limits the citations to rows the model can read; a spike none of whose rows made the cut
+ * says so instead of citing ids the model cannot find. Omitted, every row counts as shown.
+ */
 export function buildHostSpikeBlock(
   events: readonly ForensicEvent[],
   opts: AnomalyOptions = anomalyEnvOptions(),
+  shownIds?: ReadonlySet<string>,
 ): string {
   const spikes = detectTimelineAnomalies(events, opts).anomalies.filter((a) => a.asset !== UNKNOWN_ASSET);
   if (!spikes.length) return "";
-  const shown = spikes.slice(0, HOST_SPIKE_MAX_LINES).map(spikeLine);
+  const shown = spikes.slice(0, HOST_SPIKE_MAX_LINES).map((a) => spikeLine(a, shownIds));
   const more = spikes.length - shown.length;
   const tail = more > 0 ? `\n(${more} more spike${more === 1 ? "" : "s"} not listed)` : "";
   return `${HOST_SPIKE_BLOCK_HEADER}\n${shown.join("\n")}${tail}\n\n`;

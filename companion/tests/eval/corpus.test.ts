@@ -101,6 +101,10 @@ describe("versioned production golden corpus (#378)", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("12:30–12:45");
     expect(lines[0]).toMatch(/\bspk-b1\b/);
+    // Every row the lead cites is one the model can read in the same prompt's timeline.
+    const cited = (/\[([^\]]+)\]$/.exec(lines[0])?.[1] ?? "").split(", ");
+    const timeline = synthesis?.slice(synthesis.indexOf("FORENSIC TIMELINE")) ?? "";
+    for (const id of cited) expect(timeline, id).toContain(`[${id}]`);
   });
 
   // #1579: a real model run (claude-sonnet-5) got these three right in its own words and the literal

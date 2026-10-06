@@ -70,6 +70,25 @@ describe("buildHostSpikeBlock", () => {
     expect(line).not.toContain("peers");
   });
 
+  // The prompt shows a budget-trimmed selection of the timeline. A citation the model cannot find in
+  // that selection is a row it cannot read, so the citations are limited to the rows actually shown.
+  it("cites only rows the prompt actually shows", () => {
+    const shown = new Set(["burst5", "burst7", "WS-01-q0"]);
+    const line = buildHostSpikeBlock(burstCase(), undefined, shown)
+      .split("\n")
+      .find((l) => l.startsWith("- WS-02"));
+    expect(line).toMatch(/\[burst5, burst7\]$/);
+  });
+
+  it("says so when none of a spike's rows made it into the prompt", () => {
+    const line = buildHostSpikeBlock(burstCase(), undefined, new Set(["WS-01-q0"]))
+      .split("\n")
+      .find((l) => l.startsWith("- WS-02"));
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/\[[^\]]*burst/);
+    expect(line).toMatch(/none of its rows is in the timeline below/);
+  });
+
   it("returns '' when nothing spikes", () => {
     const flat = burstCase().filter((e) => !e.id.startsWith("burst"));
     expect(buildHostSpikeBlock(flat)).toBe("");
