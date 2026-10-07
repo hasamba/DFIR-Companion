@@ -21,7 +21,7 @@ import {
   MEMORY_NEXTSTEP_MAX_DEFAULT,
   type MemoryNextStep,
 } from "../memoryNextStep.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import { SHADOW_ARTIFACTS } from "../shadowArtifacts.js";
 import type { ForensicEvent } from "../stateTypes.js";
 import { MATCHABLE_FIELDS } from "../taggerRules.js";
@@ -64,7 +64,7 @@ export async function suggestMemoryNextSteps(ctx: AiCallContext, caseId: string)
   const renderEvent = (e: ForensicEvent) =>
     `[${e.severity}] ${promptDescription((e.description ?? "").replace(/\s+/g, " ").trim(), PROMPT_DESCRIPTION_WIDE_MAX)}`;
   const overhead = estimateTokens(getMemoryNextStepPrompt()) + estimateTokens(pluginsText) + 300;
-  const fit = fitItemsToBudget(memEvents, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+  const fit = fitItemsToBudget(memEvents, renderEvent, remainingBudget(overhead));
   const evidenceText = renderMemoryEvidence(memEvents, Math.max(1, fit));
 
   const userPrompt =

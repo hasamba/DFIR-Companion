@@ -7,7 +7,7 @@ import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "../scope.js";
 import { selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
@@ -221,7 +221,7 @@ export function fitTimelineEvents(
   overheadTokens: number,
 ): ForensicEvent[] {
   const events = selectSynthesisEvents(scopedEvents, maxPromptEvents());
-  const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overheadTokens));
+  const fit = fitItemsToBudget(events, renderEvent, remainingBudget(overheadTokens));
   return fit < events.length ? selectSynthesisEvents(scopedEvents, fit) : events;
 }
 
