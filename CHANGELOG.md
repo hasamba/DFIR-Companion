@@ -65,6 +65,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Failed synthesis marks conclusions out of date** — a failed background synthesis no longer lets the AI pill return to up to date (closes #1953)
 - **Graph panels CSP warning** — the graph panels no longer trigger a CSP style violation (closes #1961)
 - **Case box stops per-keystroke requests** — typing in the case box sends one saved-hunts request per case change (closes #1962)
+- **Rule-like folder names no longer hide a file** — a file under a folder named sigma, rules or signatures keeps its IOC and grades Low instead of Info (closes #1998)
+- **Lab-setup cap needs the real hypervisor folder** — a payload in a plain VMwareDnD folder is no longer capped to Medium (closes #2002)
+- **Hayabusa emergency level graded Critical** — the Velociraptor route grades emergency rows Critical, as the Hayabusa importer does (closes #1997)
+- **Flat rule grade honoured** — a Velociraptor row with RuleName and a top-level Criticality or Severity keeps that grade (closes #2005)
+- **Short Hayabusa channel names expanded** — Sysmon and Sec rows keep their act envelope and cross-parser dedup (closes #1996)
+- **RFC 5424 times without a zone** — a syslog time with no zone no longer shifts by the server's time zone (closes #2003)
+- **All-Info imports keep the newest rows** — a KAPE or Plaso import cut by the row cap keeps the newest groups, not the oldest (closes #1995)
+- **Changed re-read keeps its super-only rows** — a re-collect with a different window or order appends its rows instead of dropping them (closes #1993)
+- **Synthesis lists say what they cut** — hypotheses, assets, intel verdicts and IOC lists rank first and show a "showing X of Y" line (closes #1999)
+- **Finding detail keeps its tail** — a long finding description sent to synthesis keeps its end, not only its start (closes #2001)
+- **Findings echo ranks by severity** — the 150-finding echo lists the severest first and says when it is cut (closes #1994)
+- **Prompt trimming survives a tight budget** — a prompt whose fixed part exceeds the token budget still trims the timeline (closes #2000)
+- **Window re-read reason shown** — the collection inventory says why an incident-window re-read was not used (closes #1992)
+- **Blank-key restore record fails safe** — a Restore record with no key no longer lifts the cap on another finding (closes #1991)
+- **Reopened Keep reads fresh findings** — Keep on a reopened second opinion reads the findings inside the record lock (closes #1990)
+- **Unshown findings survive synthesis** — a finding past the 150-finding echo cap is kept, and replaced only when the model re-emits a match (closes #2006)
 
 ## [0.41.0] - 2026-10-02
 

@@ -8,7 +8,7 @@ import {
   sanitizeFindingTasks,
   type StoredFindingTask,
 } from "../findingTasks.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { Finding, ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { getFindingTaskPrompt } from "./prompts/index.js";
 import { callAiJson, type AiCallContext } from "./aiContext.js";
@@ -90,7 +90,7 @@ function renderFinding(state: InvestigationState, f: Finding): string {
 // One block per finding, fitted to the input budget so a case with many findings drops the
 // lowest-ranked ones rather than overflowing the model.
 export function buildFindingTaskPrompt(state: InvestigationState, candidates: readonly Finding[]): string {
-  const budget = Math.max(0, inputTokenBudget() - estimateTokens(getFindingTaskPrompt()) - 300);
+  const budget = remainingBudget(estimateTokens(getFindingTaskPrompt()) + 300);
   const blocks = candidates.map((f) => renderFinding(state, f));
   const keep = fitItemsToBudget(blocks, (b) => b, budget);
   return ["FINDINGS:", ...blocks.slice(0, keep)].join("\n\n");

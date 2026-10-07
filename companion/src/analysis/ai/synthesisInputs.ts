@@ -13,6 +13,7 @@ import type { ScopeWindow } from "../scope.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { loadHuntOutcomes, type HuntContext } from "./hunts.js";
 import { labIntelTag } from "../labIntel.js";
+import { capDisclosure, newestHypothesesFirst } from "../synthCaps.js";
 
 /**
  * The PURE INPUTS to a synthesis run, and the hash that decides whether it needs to happen at all
@@ -127,9 +128,11 @@ async function buildHypothesisBlocks(
   await applyHuntExhaustion(ctx, caseId);
 
   const all = await store.load(caseId);
-  const open = all
-    .filter((h) => h.status === "open" && !h.exhausted && (h.source === "analyst" || h.analystTouched))
-    .slice(0, MAX_OPEN_HYPOTHESES);
+  const allOpen = newestHypothesesFirst(
+    all.filter((h) => h.status === "open" && !h.exhausted && (h.source === "analyst" || h.analystTouched)),
+  );
+  const open = allOpen.slice(0, MAX_OPEN_HYPOTHESES);
+  const cut = capDisclosure(open.length, allOpen.length, "open analyst hypotheses");
   const analyst = open.length
     ? "ANALYST HYPOTHESES TO TEST (the investigator proposed these — actively look for evidence that " +
       "SUPPORTS or REFUTES each and surface it in findings/events; you may add a corroborating hypothesis, " +
@@ -137,6 +140,7 @@ async function buildHypothesisBlocks(
       open
         .map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`)
         .join("\n") +
+      (cut ? `\n${cut}` : "") +
       "\n\n"
     : "";
   return { analyst, refuted: renderRefutedHypothesesBlock(all) };

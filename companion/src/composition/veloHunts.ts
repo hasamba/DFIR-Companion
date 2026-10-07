@@ -73,7 +73,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
-import { createSuperShareLedger, importSuperOnlyArtifact, superTimelineCap } from "./veloSuperShare.js";
+import {
+  createSuperShareLedger,
+  importSuperOnlyArtifact,
+  scopeTagOf,
+  superTimelineCap,
+} from "./veloSuperShare.js";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -314,7 +319,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           const scope = readScope(job.timeScope, caseScope, name); // scoped at source / window / none
           const res = await readInIncidentWindow(read, name, job.filters?.[name], scope, logLine);
           rows = res.rows;
-          if (res.truncated || res.window || res.order)
+          if (res.truncated || res.window || res.order || res.rereadDeclined)
             cutShort.push(truncatedRecord(name, rows, res.total, res));
           if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
@@ -446,6 +451,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               partly,
               limit: superShare.limit(index),
               cap: superCap,
+              scopeTag: scopeTagOf(cutShort.find((c) => c.name === name)),
             },
           );
           superShare.charge(r.offered);

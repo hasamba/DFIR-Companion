@@ -8,6 +8,7 @@
 // Lives in analysis/ingest beside veloRowTime.ts, which dates the rows. veloHuntStore.ts (analysis/case)
 // owns the TruncatedArtifact shape and may not import this layer, so the record below is structural.
 import { pickTime } from "./veloRowTime.js";
+import { cleanRereadReason } from "./veloRereadReason.js";
 
 export interface KeptSpan {
   earliest: string;
@@ -56,6 +57,11 @@ export interface OrderNote {
   orderPartial?: boolean; // named sources were never read, so only the rows read were sorted
 }
 
+/** Why a cut-short read was kept as is, not re-read (#1992). Set only when a re-read was declined. */
+export interface DeclinedNote {
+  rereadDeclined?: string;
+}
+
 /** What a finished read says about how it was re-read. */
 interface ReadNote {
   window?: { start?: string; end?: string };
@@ -63,6 +69,7 @@ interface ReadNote {
   order?: "newest";
   newest?: { earliest?: string; latest?: string };
   sourcesUnknown?: boolean;
+  rereadDeclined?: string;
 }
 
 /**
@@ -76,7 +83,8 @@ export function truncatedRecord(
   total: number,
   read?: ReadNote,
 ): { name: string; kept: number; total: number; earliest?: string; latest?: string } & WindowNote &
-  OrderNote {
+  OrderNote &
+  DeclinedNote {
   if (read?.order === "newest") {
     const n = read.newest;
     const span = n?.earliest && n.latest ? { earliest: n.earliest, latest: n.latest } : {};
@@ -91,5 +99,13 @@ export function truncatedRecord(
         windowFull: !read?.truncated,
       }
     : {};
-  return { name, kept: rows.length, total, ...keptSpan(rows), ...note };
+  const why = cleanRereadReason(read?.rereadDeclined);
+  return {
+    name,
+    kept: rows.length,
+    total,
+    ...keptSpan(rows),
+    ...note,
+    ...(why ? { rereadDeclined: why } : {}),
+  };
 }

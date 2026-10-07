@@ -21,18 +21,20 @@ const VELOCIRAPTOR_SIGNATURE_EXT = /\.yms$/i;
 // inside detection tooling before anything is demoted.
 const SHARED_CONTENT_EXT = /\.(?:ya?ml|evtx|etl)$/i;
 
-// Where detection content actually lives, in the two forms a filesystem sweep reports it.
+// Where detection content actually lives, in the two forms a filesystem sweep reports it. The
+// markers split by whether an intruder can supply them (#1998).
 //
-//   the directory   Velociraptor unpacks a signature tree into
-//                   `\Program Files\Velociraptor\Tools\tmp*\signatures\sigma\…` for the duration of
-//                   a hunt; Hayabusa, Chainsaw and Sigma trees have their own equivalents.
-//   the ABSENCE of  …and Velociraptor deletes that tree when the hunt ends, so the MFT keeps the
-//   a directory     entries with no resolvable parent and reports them as `<Err>\<Parent N-M need K>`.
-//                   That placeholder is written by the MFT parser, not by anything on disk, so it
-//                   cannot be forged by naming a file — and on a real collection it was where every
-//                   single one of these rows landed.
-const DETECTION_CONTENT_LOCATION =
-  /<Err>|<Parent |\\Velociraptor\\Tools\\|\\signatures\\|\\sigma\\|\\rules\\|\\hayabusa\\|\\chainsaw\\|EVTX-ATTACK/i;
+//   UNFORGEABLE     the MFT parser's `<Err>\<Parent N-M need K>` placeholder, which Velociraptor
+//                   writes when it deletes its unpacked signature tree at the end of a hunt (on a
+//                   real collection every one of these rows landed there), and the collector's own
+//                   `\Velociraptor\Tools\` tree. Nothing on disk can forge either, so a hit here
+//                   may demote the row to Info AND drop its file IOC.
+//   CHOOSABLE       `\signatures\`, `\sigma\`, `\rules\`, `\hayabusa\`, `\chainsaw\`, EVTX-ATTACK.
+//                   Hayabusa, Chainsaw and Sigma trees use these names, but so can any intruder:
+//                   `C:\Users\Public\sigma\evil.evtx`. A hit here may lower the grade, never
+//                   delete the indicator, the same rule SAMPLE_CORPUS_DIR follows below (#720).
+const UNFORGEABLE_LOCATION = /<Err>|<Parent |\\Velociraptor\\Tools\\/i;
+const CHOOSABLE_LOCATION = /\\signatures\\|\\sigma\\|\\rules\\|\\hayabusa\\|\\chainsaw\\|EVTX-ATTACK/i;
 
 /**
  * A file whose CONTENT is detection logic or detection test data, matched by a rule pack that only
@@ -46,11 +48,25 @@ const DETECTION_CONTENT_LOCATION =
  * what a FILENAME MATCH proves, not a claim that these extensions are harmless — a `.yml` carrying
  * an attacker's configuration is still ingested, still timelined, and still graded by everything
  * that reads content rather than names.
+ *
+ * This is the BROAD test (unforgeable or choosable location). A caller that DELETES something on a
+ * match must use isUnforgeableContentPath; one that only lowers a grade uses isChoosableContentPath.
  */
 export function isDetectionContentPath(value: string): boolean {
+  return isUnforgeableContentPath(value) || isChoosableContentPath(value);
+}
+
+/** Rule content the intruder cannot have placed: safe to demote to Info and to drop its IOC (#1998). */
+export function isUnforgeableContentPath(value: string): boolean {
   const path = value.trim();
   if (VELOCIRAPTOR_SIGNATURE_EXT.test(path)) return true;
-  return SHARED_CONTENT_EXT.test(path) && DETECTION_CONTENT_LOCATION.test(path);
+  return SHARED_CONTENT_EXT.test(path) && UNFORGEABLE_LOCATION.test(path);
+}
+
+/** Rule-looking content under a folder name anyone can create: lower the grade, keep the IOC (#1998). */
+export function isChoosableContentPath(value: string): boolean {
+  const path = value.trim();
+  return SHARED_CONTENT_EXT.test(path) && CHOOSABLE_LOCATION.test(path) && !UNFORGEABLE_LOCATION.test(path);
 }
 
 // A file or process that lives inside the DETECTION TOOLING itself, matched regardless of extension.

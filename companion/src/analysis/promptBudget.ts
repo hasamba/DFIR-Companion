@@ -34,6 +34,13 @@ export function inputTokenBudget(ctx = contextTokens(), maxOut = maxOutputTokens
   return Math.max(0, ctx - maxOut - margin);
 }
 
+// Input tokens left after a fixed prompt overhead. Floors at 1, never 0: a budget <= 0 means
+// "disable trimming" to fitItemsToBudget/batchByBudget, so an overhead that exceeds the budget
+// must still trim (to the one-item minimum) instead of sending the whole timeline (#2000).
+export function remainingBudget(overheadTokens: number): number {
+  return Math.max(1, inputTokenBudget() - overheadTokens);
+}
+
 // How many items from the FRONT of an already-prioritized list fit within a token budget.
 // Always returns ≥1 (a single oversized item is still sent — the provider guard then trims
 // the output room or raises a clear error). budgetTokens ≤ 0 disables trimming (keep all).

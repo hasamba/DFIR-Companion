@@ -33,7 +33,7 @@ import {
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
   type PlaybookHuntSuggestion,
 } from "../playbookHunt.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import {
   queryTranslationResponseSchema,
   sanitizeQueryTranslations,
@@ -153,7 +153,7 @@ function renderHuntTimeline(
 ): string {
   let events = selectSynthesisEvents(scoped, max);
   const overhead = estimateTokens(systemPrompt) + estimateTokens(overheadText) + HUNT_OVERHEAD_SLACK_TOKENS;
-  const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+  const fit = fitItemsToBudget(events, renderEvent, remainingBudget(overhead));
   if (fit < events.length) events = selectSynthesisEvents(scoped, fit);
   return events.map(renderEvent).join("\n") || "(no events yet)";
 }

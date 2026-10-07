@@ -20,9 +20,22 @@ import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 import { isMentionedHash, mentionedHashNote } from "./iocMentionedHash.js";
 import { isMentionedIoc, mentionedNote } from "./iocMentioned.js";
 import { commandSeatCap, type CommandSeat } from "./ai/synthCommandSeats.js";
+import {
+  capDisclosure,
+  rankCompromisedAssets,
+  rankVerdictLines,
+  tieBreakByValue,
+  type VerdictRow,
+} from "./synthCaps.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
 const SEV_RANK: Record<string, number> = SEVERITY_RANK;
+
+// Caps on the context digest lists. Every one ranks before it cuts and discloses the cut (#1999).
+const MAX_COMPROMISED_ASSETS = 25;
+const MAX_INTEL_VERDICTS = 25;
+const MAX_RISK_IOCS = 15;
+const MAX_CONNECTIVE_ANCHORS = 12;
 
 // How many of the earliest events to always keep (initial-access context).
 const EARLIEST_KEEP = 15;
@@ -444,24 +457,25 @@ export function buildSynthesisContext(
   // otherwise trust at face value) needs a flag, not silent inclusion. See iocAnchors.ts.
   const hostNames = new Set(graph.assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
 
-  const assetLines = graph.assets
-    .filter((a) => a.compromised)
-    .slice(0, 25)
-    .map((a) => {
-      const iocs = a.iocIds
-        .map((id) => iocVal.get(id) || id)
-        .slice(0, 8)
-        .join(", ");
-      return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
-    });
+  // Ranked (most IOCs first, then name) before the cap, so the cut drops the least-connected hosts
+  // and the same set survives every run (#1999).
+  const compromised = rankCompromisedAssets(graph.assets.filter((a) => a.compromised));
+  const assetLines = compromised.slice(0, MAX_COMPROMISED_ASSETS).map((a) => {
+    const iocs = a.iocIds
+      .map((id) => iocVal.get(id) || id)
+      .slice(0, 8)
+      .join(", ");
+    return `- ${a.name} (${a.type})${iocs ? ` ← ${iocs}` : ""}`;
+  });
+  const assetCut = capDisclosure(assetLines.length, compromised.length, "compromised assets");
+  if (assetCut) assetLines.push(assetCut);
 
   // Threat-intel verdicts, classified by trust (investigation-guidance #7): a single stale provider
   // verdict on the case's OWN infra flowed unchecked into a Critical finding (northpeak). Each verdict
   // is tagged [corroborated] (2+ providers, or intel+behavioral evidence) vs [lone-intel] (single
   // provider — a LEAD, not a compromise), and CONFLICTED verdicts (own-host/internal address) are moved
   // to their own "do not treat as confirmed" block so the model can't read them as external C2.
-  const trustedVerdicts: string[] = [];
-  const conflictVerdicts: string[] = [];
+  const verdictRows: (VerdictRow & { conflict: boolean })[] = [];
   // WHEN each verdict applies (#933 item 19): the provider's own dated facts against the case
   // time, one bounded tag per IOC covering every bad-verdict provider. The chains are built only
   // when an IOC has such a hit, and only once.
@@ -492,15 +506,25 @@ export function buildSynthesisContext(
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
     const tag = cls === "conflicted" ? "" : originsTag(intelOrigins(i.enrichments), cls);
     const note = mentioned ? ` — ${mentionedHashNote(i, scopedEvents) || mentionedNote(i)}` : "";
-    if (cls === "conflicted") {
-      conflictVerdicts.push(
-        `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2${when ? ` ${when}` : ""}`,
-      );
-    } else {
-      trustedVerdicts.push(`- ${base} ${tag}${when ? ` ${when}` : ""}${note}`);
-    }
-    if (trustedVerdicts.length + conflictVerdicts.length >= 25) break;
+    const conflict = cls === "conflicted";
+    verdictRows.push({
+      value: i.value,
+      verdict: hit.verdict,
+      corroborated: cls === "corroborated",
+      conflict,
+      line: conflict
+        ? `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2${when ? ` ${when}` : ""}`
+        : `- ${base} ${tag}${when ? ` ${when}` : ""}${note}`,
+    });
   }
+  // Collect every verdict, rank, then cap (#1999): an early break kept the first 25 in store order
+  // and dropped malicious ones behind them.
+  const keptVerdicts = rankVerdictLines(verdictRows).slice(0, MAX_INTEL_VERDICTS);
+  const trustedVerdicts = keptVerdicts.filter((r) => !r.conflict).map((r) => r.line);
+  const conflictVerdicts = keptVerdicts.filter((r) => r.conflict).map((r) => r.line);
+  const verdictCut = capDisclosure(keptVerdicts.length, verdictRows.length, "threat-intel verdicts");
+  if (verdictCut && trustedVerdicts.length) trustedVerdicts.push(verdictCut);
+  else if (verdictCut) conflictVerdicts.push(verdictCut);
 
   // KEV correlation: scan the scoped events + IOC values for CVE ids and cross-reference
   // against the loaded catalog. Only fires when a catalog is provided (opt-in, store starts
@@ -517,7 +541,11 @@ export function buildSynthesisContext(
   // Connective indicators (#200): rank IOCs by cross-host / multi-tool reach so the model anchors
   // on the attack's backbone (a C2 seen on multiple hosts by multiple tools) instead of the flat
   // list. Leads the digest — it's the highest-signal context.
-  const connectiveBlock = buildConnectiveIocDigest(rankConnectiveIocs(state, scopedEvents, { aliasIndex }));
+  const connectiveAll = rankConnectiveIocs(state, scopedEvents, { aliasIndex, max: Infinity });
+  const connectiveBlock = buildConnectiveIocDigest(
+    connectiveAll.slice(0, MAX_CONNECTIVE_ANCHORS),
+    connectiveAll.length,
+  );
 
   // Signal concentration (#202): tell the model which host(s) carry the suspicious activity so an
   // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
@@ -532,12 +560,17 @@ export function buildSynthesisContext(
   const topRisk = state.iocs
     .map((i) => ({ i, r: iocRisk[i.id] }))
     .filter((x) => x.r && (x.r.score === "critical" || x.r.score === "high"))
-    .sort((a, b) => RISK_TIER_RANK[b.r.score] - RISK_TIER_RANK[a.r.score]);
+    .sort((a, b) => RISK_TIER_RANK[b.r.score] - RISK_TIER_RANK[a.r.score] || tieBreakByValue(a.i, b.i));
+  const riskCut = capDisclosure(
+    Math.min(topRisk.length, MAX_RISK_IOCS),
+    topRisk.length,
+    "high-risk indicators",
+  );
   const riskBlock = topRisk.length
     ? `HIGH-RISK INDICATORS (composite score — act on these first):\n${topRisk
-        .slice(0, 15)
+        .slice(0, MAX_RISK_IOCS)
         .map((x) => `- [${x.r.score}] ${x.i.value} (${x.i.type}) — ${x.r.factors.slice(0, 2).join("; ")}`)
-        .join("\n")}\n\n`
+        .join("\n")}\n${riskCut ? `${riskCut}\n` : ""}\n`
     : "";
 
   // The host's own provisioning (#1529) — first, because every other block below describes the

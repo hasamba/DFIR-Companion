@@ -614,6 +614,27 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(r.iocs.some((i) => i.type === "url" && i.value.includes("evil.test"))).toBe(true);
   });
 
+  describe("flat RuleName + top-level grade (#2005)", () => {
+    const sev = (extra: object): string =>
+      parseVelociraptorJson(JSON.stringify([{ RuleName: "Custom Rule Pack Hit", Line: "x", ...extra }]))
+        .events[0].severity;
+    it("honors a flat Criticality", () => {
+      expect(sev({ Criticality: "Critical" })).toBe("Critical");
+      expect(sev({ Criticality: "Low" })).toBe("Low");
+    });
+    it("honors a flat Severity", () => {
+      expect(sev({ Severity: "High" })).toBe("High");
+    });
+    it("a nested Detection grade still wins over a flat one", () => {
+      const row = { Detection: { Name: "Rule", Criticality: "Low" }, Criticality: "Critical" };
+      expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Low");
+    });
+    it("no grade stays Medium, and a top-level Level never demotes it", () => {
+      expect(sev({})).toBe("Medium");
+      expect(sev({ Level: "info" })).toBe("Medium");
+    });
+  });
+
   it("downgrades an 'IN DEVELOPMENT' rule to Low and keeps the rule regex out of the description", () => {
     const row = {
       Detection: {
@@ -3478,10 +3499,25 @@ describe("parseVelociraptorJson — a hit on detection content is not a hit on t
     Fqdn: "H1",
   });
 
-  it("demotes a hit on a .yml Sigma rule SOURCE file to Info", () => {
-    const r = parseVelociraptorJson(JSON.stringify([mftRow("C:\\rules\\win_alert_mimikatz_keywords.yml")]));
+  it("demotes a hit on a .yml Sigma rule file in the collector's tool tree to Info", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        mftRow("C:\\Program Files\\Velociraptor\\Tools\\tmp1\\rules\\win_alert_mimikatz_keywords.yml"),
+      ]),
+    );
     expect(r.events[0].severity).toBe("Info");
     expect(r.events[0].description).toContain("Mimikatz Tools");
+  });
+
+  // #1998: `\sigma\`, `\rules\` and friends are folder names an intruder can create.
+  it.each([
+    ["sigma", "C:\\Users\\Public\\sigma\\evil.evtx"],
+    ["rules", "C:\\rules\\win_alert_mimikatz_keywords.yml"],
+    ["EVTX-ATTACK", "C:\\Users\\v\\EVTX-ATTACK-SAMPLES\\evil.evtx"],
+  ])("keeps the file IOC and grades no lower than Low under a choosable %s folder", (_n, path) => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow(path)]));
+    expect(r.events[0].severity).toBe("Low");
+    expect(r.iocs.some((i) => i.type === "file" && i.value === path)).toBe(true);
   });
 
   it("demotes a hit on a .evtx sample-log filename to Info", () => {
@@ -3504,8 +3540,10 @@ describe("parseVelociraptorJson — a hit on detection content is not a hit on t
     expect(r.events[0].severity).toBe("Info");
   });
 
-  it("emits no file IOC for the detection-content path", () => {
-    const r = parseVelociraptorJson(JSON.stringify([mftRow("C:\\rules\\file_event_win_bloodhound.yml")]));
+  it("emits no file IOC for the collector-owned detection-content path", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([mftRow("\\\\.\\C:\\<Err>\\<Parent 99249-4 need 3>\\file_event_win_bloodhound.yml")]),
+    );
     expect(r.iocs.some((i) => i.type === "file")).toBe(false);
   });
 

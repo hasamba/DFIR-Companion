@@ -89,6 +89,29 @@ describe("capLabSetupRow (#1946)", () => {
   });
 });
 
+describe("bundled folders match only the hypervisor's own shape (#2002)", () => {
+  it("does not cap a payload in a bare VMwareDnD or VirtualBox Dropped Files folder", () => {
+    for (const path of [
+      "C:\\Users\\Public\\VMwareDnD\\payload.exe",
+      "C:\\ProgramData\\VirtualBox Dropped Files\\payload.exe",
+    ]) {
+      const row = ev({ path });
+      expect(capLabSetupRow(row, defaults), path).toBe(row);
+    }
+  });
+
+  it("still caps the real Temp vmware-user VMwareDnD and Temp VirtualBox shapes", () => {
+    expect(capLabSetupRow(ev({ path: DND }), defaults).severity).toBe("Medium");
+    expect(capLabSetupRow(ev({ path: VBOX }), defaults).severity).toBe("Medium");
+  });
+
+  it("keeps an operator extra as a plain substring", () => {
+    const paths = labSetupPaths({ DFIR_LAB_SETUP_PATHS: "\\LabShare\\" });
+    const out = capLabSetupRow(ev({ path: "D:\\LabShare\\x.ps1" }), paths);
+    expect(out.severity).toBe("Medium");
+  });
+});
+
 describe("DFIR_LAB_SETUP_PATHS (#1946)", () => {
   it("adds configured folders to the defaults, case-insensitive, either slash", () => {
     const paths = labSetupPaths({ DFIR_LAB_SETUP_PATHS: " \\LabShare\\ , /Provision/ " });

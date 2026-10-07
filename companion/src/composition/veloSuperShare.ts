@@ -15,6 +15,7 @@
 // events each artifact actually offered (slack flows on), and whether an artifact lost anything is
 // decided from its own mapping result, in events — a row of MFT can map to up to eight.
 
+import { createHash } from "node:crypto";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { runVelociraptorBulk, bulkPathApplies } from "../analysis/ingest/velociraptorBulk.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
@@ -98,6 +99,21 @@ export interface SuperOnlyArtifact {
   limit: number;
   /** The hunt's DFIR_SUPERTIMELINE_MAX, for the record. */
   cap: number;
+  /** Read-scope tag (#1993): a re-read that keeps different rows must not reuse the old ids. */
+  scopeTag?: string;
+}
+
+/**
+ * Short id tag for how a capped read chose its rows (#1993). Empty for a plain read, so existing ids
+ * and plain re-collects are unchanged; a window hashes its bounds; newest-first is "nw".
+ */
+export function scopeTagOf(
+  rec: { name?: string; windowStart?: string; windowEnd?: string; order?: string } | undefined,
+): string {
+  if (rec?.order === "newest") return "nw";
+  if (!rec?.windowStart && !rec?.windowEnd) return "";
+  const bounds = `${rec.windowStart ?? ""}|${rec.windowEnd ?? ""}`;
+  return createHash("sha256").update(bounds).digest("hex").slice(0, 8);
 }
 
 export interface SuperOnlyResult {
@@ -134,6 +150,7 @@ export async function importSuperOnlyArtifact(
   a: SuperOnlyArtifact,
 ): Promise<SuperOnlyResult> {
   const limit = Math.max(0, a.limit);
+  const idBase = `${a.huntId}-${a.name}${a.scopeTag ? `~${a.scopeTag}` : ""}`;
   if (bulkPathApplies(deps.bulkImportSink, a.json)) {
     // A large artifact takes the batched driver (#1439): the same mapping, one batch at a time,
     // stopped at this artifact's share (#1982). `events` counts every mapped event after the floor,
@@ -144,7 +161,7 @@ export async function importSuperOnlyArtifact(
       a.json,
       {
         label: a.storedName,
-        idPrefix: `${a.huntId}-${a.name}`,
+        idPrefix: idBase,
         importedAt: a.importedAt,
         velociraptor: { artifact: a.name, partlyReadArtifact: a.partly },
         minSeverity: a.minSeverity,
@@ -178,7 +195,7 @@ export async function importSuperOnlyArtifact(
   // Id by the HUNT id + ARTIFACT NAME: unique across artifacts and STABLE across re-collects — same
   // rows in the same order → same ids → deduped; a straggler that checks in later appends.
   const events: ForensicEvent[] = floored.map((e, i) => ({
-    id: `${a.huntId}-${a.name}-e${i + 1}`,
+    id: `${idBase}-e${i + 1}`,
     timestamp: e.timestamp,
     description: e.description,
     severity: e.severity,

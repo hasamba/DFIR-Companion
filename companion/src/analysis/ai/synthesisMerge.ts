@@ -303,7 +303,7 @@ function linkEventsToFindings(
  * event stays in state so un-marking restores it). Without this, an out-of-window finding backed
  * only by rejected events would survive every narrow run and reappear the moment the window widened.
  */
-function supportingEventIds(
+export function supportingEventIds(
   prior: InvestigationState,
   markers: FalsePositiveMarker[],
 ): Map<string, Set<string>> {

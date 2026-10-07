@@ -109,7 +109,7 @@ export function addSeverityCap<T extends Finding>(f: T, to: Severity, gate: Seve
 
 export const severityRestoreRecordSchema = z.object({
   findingId: z.string(),
-  // The finding's claim key when the analyst restored it. Empty only when it had none.
+  // The finding's claim key when the analyst restored it. Empty only when it had none; an empty key matches only a keyless finding.
   semanticKey: z.string().default("").catch(""),
   restoredBy: z.string().default("").catch(""),
   restoredAt: z.string().default("").catch(""),
@@ -210,7 +210,9 @@ export function applySeverityRestores(
 }
 
 function sameClaim(r: SeverityRestoreRecord, f: Finding): boolean {
-  return !r.semanticKey || r.semanticKey === (f.semanticKey || deriveSemanticKey(f));
+  // Strict: a blank record key matches only a finding whose key is also blank. A corrupt or
+  // hand-edited record then fails safe (the cap stays) instead of matching any finding with its id.
+  return (r.semanticKey || "") === (f.semanticKey || deriveSemanticKey(f));
 }
 
 // The severity the finding has BEFORE the simulation step. When that step capped it, its stored

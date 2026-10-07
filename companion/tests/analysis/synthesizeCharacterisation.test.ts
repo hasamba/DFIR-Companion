@@ -359,6 +359,34 @@ describe("synthesize — the delta merge", () => {
     expect(analyze).toHaveBeenCalledTimes(2);
     expect((await stateStore.load("c1")).findings).toHaveLength(1);
   });
+
+  it("dryRun keeps the findings past the echo cap so a second opinion is not told they vanished (#2006)", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(event("e1", "2026-01-01T00:00:00.000Z", "the analyzed event"));
+    const mk = (id: string, severity: string) =>
+      ({
+        id,
+        title: `finding ${id}`,
+        severity,
+        confidence: 50,
+        description: "d",
+        mitreTechniques: [],
+        relatedEventIds: [],
+      }) as never;
+    for (let i = 0; i < 150; i++) seeded.findings.push(mk(`f-h${i}`, "High"));
+    seeded.findings.push(mk("f-unshown", "Low"));
+    await stateStore.save(seeded);
+
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", delta()),
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    const dry = await pipeline.synthesize("c1", { dryRun: true });
+    expect(dry.findings.some((f) => f.id === "f-unshown")).toBe(true);
+    expect(dry.findings.some((f) => f.title === "synth finding")).toBe(true);
+  });
 });
 
 describe("synthesize — narrowing the scope (#751)", () => {

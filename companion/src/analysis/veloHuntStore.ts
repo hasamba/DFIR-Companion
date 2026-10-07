@@ -159,6 +159,9 @@ export interface TruncatedArtifact {
   // time. The kept span then comes from that sort key. Absent = rows in read order (or the window).
   order?: "newest";
   orderPartial?: boolean; // true = named sources were never read, so only the rows read were sorted
+  // #1992: why a cut-short read was NOT re-read (window or newest-first). One capped line; a server
+  // error string can ride in it, so it is cleaned on write and again on load. Absent = no decline.
+  rereadDeclined?: string;
 }
 
 /** The time a newest-first re-read sorts on, and what one row is called, per artifact (#1983). */

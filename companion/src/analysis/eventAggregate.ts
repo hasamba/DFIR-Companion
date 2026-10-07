@@ -189,15 +189,25 @@ export function createEventAggregator(
       const groups = events.length;
 
       // Most-severe first, then noisiest, then earliest — then cap.
-      events.sort(
-        (a, b) =>
-          SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-          (b.count ?? 1) - (a.count ?? 1) ||
-          (a.timestamp || "~").localeCompare(b.timestamp || "~") ||
-          firstOrdinal.get(a)! - firstOrdinal.get(b)!,
-      );
+      const byOrder = (a: SiemEvent, b: SiemEvent): number =>
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+        (b.count ?? 1) - (a.count ?? 1) ||
+        (a.timestamp || "~").localeCompare(b.timestamp || "~") ||
+        firstOrdinal.get(a)! - firstOrdinal.get(b)!;
+      if (events.length <= maxEvents) return { events: events.sort(byOrder), groups };
 
-      return { events: events.slice(0, maxEvents), groups };
+      // Over the cap: WHICH rows survive prefers the newest DATED Info rows, so an all-Info import
+      // keeps the incident window, not the oldest rows (#1995). An undated row keeps its old place:
+      // the importers' own summary rows (an overflow count, a skipped-file note) carry no time and
+      // must survive the cut. The kept rows are still returned in the order above.
+      const byKeep = (a: SiemEvent, b: SiemEvent): number =>
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+        (b.count ?? 1) - (a.count ?? 1) ||
+        (a.severity === "Info" && a.timestamp && b.timestamp
+          ? b.timestamp.localeCompare(a.timestamp)
+          : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
+        firstOrdinal.get(a)! - firstOrdinal.get(b)!;
+      return { events: events.sort(byKeep).slice(0, maxEvents).sort(byOrder), groups };
     },
   };
 }
