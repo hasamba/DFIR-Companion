@@ -1,0 +1,1308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFIR Companion Data Flow</title>
+<meta name="description" content="Interactive map of how evidence moves through DFIR Companion, from every import to every output.">
+<style>
+:root{
+  --bg:#E8ECF0; --grid:#C9D2DB; --band:rgba(255,255,255,.38);
+  --surface:#FFFFFF; --surface-2:#F5F7F9; --ink:#141D26; --muted:#56636F; --line:#B9C4CF;
+  --source:#4B5D70; --process:#0B7A84; --gate:#C98A06; --store:#2C59A3; --ai:#7448D0; --external:#7F8790; --output:#28804F;
+  --forbid:#C4352A; --tape-a:#F2B807; --tape-b:#1B1B1B;
+  --shadow:0 1px 0 rgba(20,29,38,.06), 0 4px 14px rgba(20,29,38,.08);
+  --focus:#0B7A84;
+  --f-display:"Bahnschrift","DIN Alternate","DIN Condensed","Barlow Semi Condensed","Roboto Condensed","Arial Narrow",sans-serif;
+  --f-body:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --f-mono:"Cascadia Mono","JetBrains Mono","SF Mono",Consolas,"Liberation Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0D1318; --grid:#1E2A34; --band:rgba(255,255,255,.025);
+    --surface:#151E26; --surface-2:#1B2630; --ink:#E3E9EF; --muted:#90A0AE; --line:#2E3C49;
+    --source:#8DA2B8; --process:#2EC4CF; --gate:#F2B807; --store:#6E9CF0; --ai:#A989F5; --external:#8E98A2; --output:#4FC984;
+    --forbid:#F0604F; --tape-b:#0A0A0A;
+    --shadow:0 1px 0 rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.35);
+    --focus:#2EC4CF;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0D1318; --grid:#1E2A34; --band:rgba(255,255,255,.025);
+  --surface:#151E26; --surface-2:#1B2630; --ink:#E3E9EF; --muted:#90A0AE; --line:#2E3C49;
+  --source:#8DA2B8; --process:#2EC4CF; --gate:#F2B807; --store:#6E9CF0; --ai:#A989F5; --external:#8E98A2; --output:#4FC984;
+  --forbid:#F0604F; --tape-b:#0A0A0A;
+  --shadow:0 1px 0 rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.35);
+  --focus:#2EC4CF;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--f-body);overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+/* ---------- top bar ---------- */
+.bar{position:fixed;inset:0 0 auto 0;z-index:30;display:flex;align-items:center;gap:14px;padding:10px 16px;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px;margin-right:auto;min-width:0}
+.brand h1{font:600 20px/1 var(--f-display);letter-spacing:.02em;margin:0;white-space:nowrap}
+.brand h1 b{color:var(--gate);font-weight:600}
+.brand span{font:11px var(--f-mono);color:var(--muted);white-space:nowrap}
+.tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.search{position:relative}
+.search input{width:220px;padding:7px 10px 7px 28px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:13px var(--f-body)}
+.search svg{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:14px;height:14px;stroke:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-size:13px;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+.menu{position:relative}
+.menu-pop{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:6px;min-width:260px;display:none}
+.menu-pop.open{display:block}
+.menu-pop button{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:none;border-radius:5px;cursor:pointer}
+.menu-pop button:hover,.menu-pop button:focus-visible{background:var(--surface-2)}
+.menu-pop small{display:block;color:var(--muted);font-size:12px}
+
+/* ---------- canvas ---------- */
+#viewport{position:fixed;inset:0;overflow:hidden;cursor:grab;touch-action:none;
+  background-image:radial-gradient(var(--grid) 1px,transparent 1.2px);background-size:22px 22px}
+#viewport.dragging{cursor:grabbing}
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+#world.ease{transition:transform .55s cubic-bezier(.2,.7,.2,1)}
+.band{position:absolute;top:0;border-radius:14px;background:var(--band)}
+.band-head{position:absolute;left:0;right:0;top:18px;text-align:center;pointer-events:none}
+.band-head .n{font:600 13px var(--f-mono);color:var(--gate);letter-spacing:.08em}
+.band-head .t{font:600 26px/1.1 var(--f-display);letter-spacing:.03em;text-transform:uppercase}
+.band-head .s{font-size:12.5px;color:var(--muted)}
+svg#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+
+.edge{fill:none;stroke-width:1.6;opacity:.55;transition:opacity .2s,stroke-width .2s}
+.edge.flow{stroke:var(--muted)}
+.edge.back{stroke:var(--store);stroke-dasharray:5 5}
+.edge.bounded{stroke:var(--gate);stroke-dasharray:9 5;stroke-width:2.2}
+.edge.ext{stroke:var(--external);stroke-dasharray:2 4}
+.edge.ai{stroke:var(--ai)}
+.edge.forbidden{stroke:url(#tape);stroke-width:9;opacity:.95}
+.edge.on{opacity:1;stroke-width:2.6}
+.edge.forbidden.on{stroke-width:11}
+.edge.dim{opacity:.07}
+.edge.forbidden.dim{opacity:.25}
+.elabel{font:600 11.5px var(--f-mono);fill:var(--ink);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;opacity:0;transition:opacity .2s}
+.elabel.on{opacity:1}
+.dot{opacity:.9}
+
+.node{position:absolute;width:var(--w);text-align:left;padding:10px 12px 10px 15px;border-radius:9px;border:1px solid var(--line);
+  background:var(--surface);box-shadow:var(--shadow);cursor:pointer;transition:opacity .2s,transform .2s,box-shadow .2s,border-color .2s}
+.node::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:4px;border-radius:0 3px 3px 0;background:var(--k)}
+.node:hover{transform:translateY(-1px)}
+.node .lb{display:block;font:600 16px/1.15 var(--f-display);letter-spacing:.01em}
+.node .sb{display:block;margin-top:4px;font:11px/1.35 var(--f-mono);color:var(--muted)}
+.node .kd{position:absolute;right:9px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--k)}
+.node.k-source{--k:var(--source)} .node.k-process{--k:var(--process)} .node.k-gate{--k:var(--gate)}
+.node.k-store{--k:var(--store)} .node.k-ai{--k:var(--ai)} .node.k-external{--k:var(--external)} .node.k-output{--k:var(--output)}
+.node.k-gate{border-color:color-mix(in srgb,var(--gate) 55%,var(--line))}
+.node.k-gate .kd{border-radius:1px;transform:rotate(45deg)}
+.node.k-external{border-style:dashed;background:var(--surface-2)}
+.node.hero{border:2px solid var(--k);padding:14px 14px 14px 17px;box-shadow:0 0 0 4px color-mix(in srgb,var(--k) 14%,transparent),var(--shadow)}
+.node.hero .lb{font-size:21px}
+.node.hero .ey{display:block;font:700 10px var(--f-mono);letter-spacing:.14em;color:var(--k);margin-bottom:4px}
+.node.dim{opacity:.18}
+.node.sel{box-shadow:0 0 0 3px var(--k),var(--shadow)}
+.node.hit{box-shadow:0 0 0 2px var(--k),var(--shadow)}
+.node.pulse{animation:pulse 1.4s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--k) 60%,transparent),var(--shadow)}100%{box-shadow:0 0 0 16px transparent,var(--shadow)}}
+
+/* ---------- drawer ---------- */
+.drawer{position:fixed;z-index:25;right:0;top:0;bottom:0;width:400px;max-width:100%;background:var(--surface);border-left:1px solid var(--line);
+  box-shadow:var(--shadow);transform:translateX(105%);transition:transform .3s cubic-bezier(.2,.7,.2,1);display:flex;flex-direction:column;padding-top:var(--barh,56px)}
+.drawer.open{transform:none}
+.drawer-in{overflow:auto;padding:20px 22px 40px}
+.drawer .x{position:absolute;right:12px;top:calc(var(--barh,56px) + 10px);border:0;background:none;cursor:pointer;padding:6px;border-radius:5px}
+.drawer .x svg{width:18px;height:18px;stroke:var(--muted);stroke-width:2}
+.eyebrow{display:flex;gap:8px;align-items:center;font:600 11px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;font:600 10.5px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;
+  background:color-mix(in srgb,var(--k) 16%,transparent);color:var(--k)}
+.drawer h2{font:600 30px/1.05 var(--f-display);margin:10px 0 4px;letter-spacing:.01em}
+.drawer .sub{font:12px var(--f-mono);color:var(--muted);margin-bottom:14px}
+.drawer p.plain{font-size:15px;line-height:1.55;margin:0 0 14px}
+.drawer h3{font:600 12px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:22px 0 8px;padding-top:14px;border-top:1px solid var(--line)}
+.drawer ul.pts{margin:0;padding-left:18px}
+.drawer .pts{margin:0;padding-left:18px}
+.drawer .pts li{margin:0 0 7px}
+.drawer ol.steps{padding-left:0;list-style:none;counter-reset:st}
+.drawer ol.steps li{counter-increment:st;position:relative;padding-left:30px}
+.drawer ol.steps li::before{content:counter(st);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:50%;
+  background:color-mix(in srgb,var(--ai) 18%,transparent);color:var(--ai);font:700 11px/20px var(--f-mono);text-align:center}
+.drawer p.intro{margin:0 0 10px;color:var(--muted);font-size:13.5px}
+.links{display:flex;flex-wrap:wrap;gap:6px}
+.links button{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12.5px;display:inline-flex;align-items:center;gap:6px}
+.links button i{width:7px;height:7px;border-radius:50%;background:var(--k);display:inline-block}
+.links button em{font-style:normal;color:var(--muted);font:11px var(--f-mono)}
+.links button:hover{border-color:var(--k)}
+.tech code{display:block;font:12px/1.5 var(--f-mono);padding:6px 9px;background:var(--surface-2);border-radius:5px;margin-bottom:4px;word-break:break-all;color:var(--ink)}
+.rule-card{border:1px solid var(--line);border-left:4px solid var(--gate);border-radius:7px;padding:10px 12px;margin-bottom:10px;cursor:pointer;background:var(--surface)}
+.rule-card:hover,.rule-card.on{border-color:var(--gate);background:var(--surface-2)}
+.rule-card.red{border-left-color:var(--forbid)}
+.rule-card b{display:block;font:600 16px/1.2 var(--f-display);margin-bottom:3px}
+.rule-card span{font-size:13px;color:var(--muted)}
+body.no-tech .tech-only{display:none}
+
+/* ---------- legend + zoom ---------- */
+.legend{position:fixed;left:16px;bottom:16px;z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px 12px;box-shadow:var(--shadow);font-size:12px;max-width:min(560px,calc(100% - 32px))}
+.legend .row{display:flex;flex-wrap:wrap;gap:4px 14px}
+.legend .row + .row{margin-top:7px;padding-top:7px;border-top:1px solid var(--line)}
+.legend .it{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid transparent;background:none;border-radius:5px;padding:2px 6px;margin:-2px -6px;cursor:pointer;font-size:12px}
+.legend .it:hover{border-color:var(--line);background:var(--surface-2)}
+.legend .it[aria-pressed="true"]{border-color:var(--ink);background:var(--surface-2);font-weight:600}
+.legend .lhint{font:11px var(--f-mono);color:var(--muted);margin:-2px 0 6px}
+.legend .sw{width:10px;height:10px;border-radius:2px;background:var(--k)}
+.legend svg{width:30px;height:10px}
+.legend .hide{position:absolute;right:6px;top:4px;border:0;background:none;cursor:pointer;color:var(--muted);font-size:16px;line-height:1}
+.legend.min .row{display:none}
+.legend.min{padding:6px 30px 6px 12px}
+.legend .ttl{display:none;font:600 12px var(--f-mono);letter-spacing:.08em;text-transform:uppercase}
+.legend.min .ttl{display:block}
+.zoom{position:fixed;right:16px;bottom:16px;z-index:20;display:flex;flex-direction:column;gap:4px}
+.zoom .btn{justify-content:center;width:36px;height:36px;padding:0}
+body.drawer-open .zoom{right:416px}
+
+/* ---------- tour ---------- */
+.tour{position:fixed;z-index:28;left:50%;bottom:20px;transform:translate(-50%,140%);transition:transform .35s cubic-bezier(.2,.7,.2,1);
+  width:min(560px,calc(100% - 32px));background:var(--ink);color:var(--bg);border-radius:12px;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.tour.open{transform:translate(-50%,0)}
+.tour .top{display:flex;justify-content:space-between;align-items:center;font:600 11px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.tour h4{font:600 20px/1.15 var(--f-display);margin:6px 0 4px}
+.tour p{margin:0 0 12px;font-size:14px;opacity:.9}
+.tour .nav{display:flex;gap:8px;align-items:center}
+.tour .nav button{border:1px solid color-mix(in srgb,var(--bg) 35%,transparent);background:none;color:var(--bg);border-radius:6px;padding:6px 12px;cursor:pointer}
+.tour .nav button.primary{background:var(--gate);border-color:var(--gate);color:#141D26;font-weight:600}
+.tour .nav button:disabled{opacity:.35;cursor:default}
+.tour .prog{flex:1;height:3px;background:color-mix(in srgb,var(--bg) 25%,transparent);border-radius:3px;overflow:hidden}
+.tour .prog i{display:block;height:100%;background:var(--gate);transition:width .3s}
+.tour .close{border:0;background:none;color:var(--bg);cursor:pointer;font-size:18px;opacity:.7}
+
+.hint{position:fixed;left:50%;top:calc(var(--barh,56px) + 12px);transform:translateX(-50%);z-index:19;font:12px var(--f-mono);color:var(--muted);background:var(--surface);border:1px solid var(--line);padding:5px 12px;border-radius:99px;pointer-events:none;transition:opacity .4s;white-space:nowrap}
+
+@media (max-width:760px){
+  .brand span{display:none}
+  .search input{width:150px}
+  .btn .lbl{display:none}
+  .drawer{top:auto;height:62vh;width:100%;border-left:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0;transform:translateY(105%);padding-top:0}
+  .drawer .x{top:10px}
+  body.drawer-open .zoom{right:16px;bottom:calc(62vh + 12px)}
+  .legend{display:none}
+  .hint{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body class="">
+
+<header class="bar" id="bar">
+  <div class="brand">
+    <h1>DFIR Companion <b>/</b> Data flow</h1>
+    <span id="stats"></span>
+  </div>
+  <div class="tools">
+    <label class="search" aria-label="Search the map">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search: tagger, VirusTotal, STIX…  ( / )" autocomplete="off">
+    </label>
+    <div class="menu">
+      <button class="btn" id="tourBtn" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg><span class="lbl">Follow the data</span></button>
+      <div class="menu-pop" id="tourMenu" role="menu"></div>
+    </div>
+    <button class="btn" id="rulesBtn"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg><span class="lbl">Rules</span></button>
+    <button class="btn" id="techBtn" aria-pressed="true" title="Show source files and routes in the detail panel"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg><span class="lbl">Technical</span></button>
+    <button class="btn" id="flowBtn" aria-pressed="true" title="Animate data moving along the connections"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg><span class="lbl">Flow</span></button>
+    <button class="btn" id="themeBtn" title="Switch light / dark"><svg viewBox="0 0 24 24"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg></button>
+  </div>
+</header>
+
+<div id="viewport" aria-label="Data flow map. Drag to pan, scroll to zoom.">
+  <div id="world">
+    <svg id="edges"></svg>
+  </div>
+</div>
+
+<div class="hint" id="hint">Click a box to trace where its data comes from and goes · drag to pan · scroll to zoom</div>
+
+<aside class="drawer" id="drawer" aria-live="polite">
+  <button class="x" id="drawerX" aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <div class="drawer-in" id="drawerIn"></div>
+</aside>
+
+<div class="legend" id="legend">
+  <button class="hide" id="legendHide" aria-label="Collapse legend">–</button>
+  <div class="ttl">Legend</div>
+  <div class="lhint row">Click an item to bring only that kind to the front</div>
+  <div class="row" id="legendKinds"></div>
+  <div class="row">
+    <button class="it" data-etype="flow"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:var(--muted)" stroke-width="2"/></svg>data flow</button>
+    <button class="it" data-etype="ai"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:var(--ai)" stroke-width="2"/></svg>AI call</button>
+    <button class="it" data-etype="back"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:var(--store)" stroke-width="2" stroke-dasharray="5 4"/></svg>writes back</button>
+    <button class="it" data-etype="bounded"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:var(--gate)" stroke-width="2.4" stroke-dasharray="8 4"/></svg>analyst-pressed, bounded</button>
+    <button class="it" data-etype="ext"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:var(--external)" stroke-width="2" stroke-dasharray="2 3"/></svg>external service</button>
+    <button class="it" data-etype="forbidden"><svg viewBox="0 0 30 10"><path d="M0 5h30" style="stroke:url(#tape)" stroke-width="8"/></svg>never allowed</button>
+  </div>
+</div>
+
+<div class="zoom">
+  <button class="btn" id="zin" aria-label="Zoom in">+</button>
+  <button class="btn" id="zout" aria-label="Zoom out">−</button>
+  <button class="btn" id="zfit" aria-label="Fit whole map" title="Fit (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+</div>
+
+<div class="tour" id="tour" role="dialog" aria-label="Guided walkthrough">
+  <div class="top"><span id="tourName"></span><button class="close" id="tourClose" aria-label="End walkthrough">×</button></div>
+  <h4 id="tourTitle"></h4>
+  <p id="tourText"></p>
+  <div class="nav">
+    <button id="tourPrev">Back</button>
+    <div class="prog"><i id="tourProg"></i></div>
+    <span id="tourCount" style="font:12px var(--f-mono);opacity:.7"></span>
+    <button id="tourNext" class="primary">Next</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   DATA — every stage, box and connection in the map.
+   src/ = companion/src   public/ = dashboard   ext/ = extension/src
+   ===================================================================== */
+const STAGES = [
+  { t: "Sources",       s: "Where evidence enters" },
+  { t: "Intake",        s: "Saved first, then read" },
+  { t: "Merge",         s: "One record, correlated" },
+  { t: "Grading seam",  s: "Copy, raise, cap, then cut" },
+  { t: "Case record",   s: "What the case knows" },
+  { t: "Analysis",      s: "AI and deterministic passes" },
+  { t: "Output safety", s: "Filtered and escaped" },
+  { t: "Outputs",       s: "What leaves the tool" },
+];
+
+const KINDS = {
+  source:   "Source",
+  process:  "Processing",
+  gate:     "Gate / rule enforced",
+  store:    "Stored record",
+  ai:       "AI step",
+  external: "External service",
+  output:   "Output",
+};
+
+const NODES = [
+  /* ---------------- 0 · Sources ---------------- */
+  { id:"ext-capture", col:0, kind:"source", label:"Browser screenshots", sub:"extension · timer, click, manual",
+    plain:"The browser extension photographs what you are looking at — Velociraptor, VirusTotal, a SIEM — and sends each screenshot to the companion as evidence. If the companion is offline, captures queue up and send later.",
+    pts:["Triggers: timer, page navigation, tab switch, click, or the capture button","Offline queue so nothing is lost while the server is down","Each capture carries the page URL, tab title and time"],
+    tech:["ext/captureController.ts","ext/captureQueue.ts","ext/companionClient.ts","POST /captures"] },
+  { id:"ext-push", col:0, kind:"source", label:"Console data push", sub:"Splunk · Elastic · CrowdStrike +4",
+    plain:"When you are looking at results inside a security console, the extension can read the table you see and send the rows straight in — no export, no file.",
+    pts:["Adapters: Splunk, Velociraptor, Security Onion, SO-CRATES, Elastic, CrowdStrike, VolWeb","Right-click a selection or link to push just that","Goes through the same auto-detect import as a file"],
+    tech:["ext/pageHook.ts","ext/adapters/registry.ts","ext/contextMenuCapture.ts","POST /cases/:id/import"] },
+  { id:"upload", col:0, kind:"source", label:"Artifact upload", sub:"60+ formats · auto-detected",
+    plain:"The Import button. Drop in any supported artifact and the companion works out what it is. Each format has its own reader, so fields land in the right place instead of being guessed.",
+    pts:["Endpoint: Velociraptor, KAPE, Hayabusa, Chainsaw, THOR, EVTX (XML), Plaso, osquery, memory (Volatility, MemProcFS), YARA, sandbox reports, mobile (iLEAPP/ALEAPP), browser history, macOS & Linux persistence","Logs & SIEM: Security Onion, Wazuh, TheHive, auditd, journald, syslog, web access logs, Cisco ASA, Snort, generic CSV/log","Cloud: Microsoft 365, Okta, Google Workspace, AWS CloudTrail, Azure/GCP activity, flow logs, Kubernetes","Network: Zeek, Suricata, nfdump · Email: messages and Exchange audit"],
+    tech:["POST /cases/:id/import  (auto-detect)","POST /cases/:id/import-<kind>  (25 dedicated routes)","src/routes/import.ts","src/analysis/importerSpec.ts → IMPORT_KINDS"] },
+  { id:"drop", col:0, kind:"source", label:"Drop folder", sub:"cases/<case>/drop/ · polled",
+    plain:"An inbox folder per case. Anything copied into it is picked up automatically: images go down the screenshot path, artifacts down the import path. Processed files move to _processed, rejects to _failed.",
+    pts:["Polled on a timer (no file-system watch)","Status shown on the dashboard"],
+    tech:["src/composition/dropFolder.ts","src/analysis/dropScan.ts","src/analysis/dropStatus.ts"] },
+  { id:"velo", col:0, kind:"source", label:"Velociraptor live", sub:"collect · hunt · monitors",
+    plain:"Talks to your Velociraptor server directly: run collections and hunts, pull hunt results, paste a GUI link to import it, and keep live client-event monitors polling into the case.",
+    pts:["Live CLIENT_EVENT monitors per case","Hunt status poller","Bulk result import with a fair cap across artifacts"],
+    tech:["src/integrations/velociraptor/velociraptorApi.ts","src/composition/veloMonitors.ts","src/composition/veloExternalIngest.ts","src/routes/velociraptor*.ts"] },
+  { id:"tools", col:0, kind:"source", label:"Local tools", sub:"Hayabusa · Chainsaw · YARA · Suricata",
+    plain:"Runs forensic tools installed on this machine against case evidence and feeds their output to the matching reader. Tools are started directly, never through a shell.",
+    pts:["Hayabusa, Chainsaw, Suricata, Snort, YARA, SO-CRATES","Custom tools can be added"],
+    tech:["src/integrations/tools/toolRunner.ts","src/integrations/tools/runToolImport.ts","/cases/:id/tools/:toolId/run"] },
+  { id:"mcp", col:0, kind:"source", label:"MCP via Claude Code", sub:"preview, then import",
+    plain:"Asks Claude Code (with your MCP servers) to fetch data from other systems. You see a preview first; only what you accept is imported.",
+    pts:["The companion starts claude -p; it does not speak MCP itself"],
+    tech:["src/integrations/mcp/mcpBridge.ts","src/integrations/mcp/mcpAgentRunner.ts","/cases/:id/mcp/*"] },
+  { id:"iris-in", col:0, kind:"source", label:"DFIR-IRIS import", sub:"pull an IRIS case",
+    plain:"Pulls the assets, IOCs and timeline of an existing DFIR-IRIS case into this one.",
+    pts:[], tech:["src/integrations/iris/irisImportFetch.ts","src/analysis/irisImport.ts","POST /cases/:id/iris-import"] },
+  { id:"push-in", col:0, kind:"source", label:"Push webhook", sub:"SIEM rules · scripts · X-DFIR-Key",
+    plain:"Lets a SIEM alert or a script send events into a case automatically. Every call must carry the case's (or the global) push key.",
+    pts:["Rejected without a valid key"],
+    tech:["POST /cases/:id/push","src/routes/pushNotify.ts","src/analysis/pushAuth.ts"] },
+  { id:"analyst", col:0, kind:"source", label:"Analyst input", sub:"manual events · notes · decisions",
+    plain:"Everything you type or decide on the dashboard: hand-entered events and IOCs, notebook entries, hypotheses, comments, scope windows, false-positive marks, promotions from the super-timeline.",
+    pts:["Manual events/IOCs enter the same merge as imports","Decisions are kept in their own files so AI never overwrites them"],
+    tech:["src/analysis/manualEntry.ts","POST /cases/:id/events · /iocs","src/routes/timeline.ts (label, promote)"] },
+  { id:"chat", col:0, kind:"source", label:"Chat commands", sub:"Slack · Teams · Telegram",
+    plain:"Slash commands from your team chat — ask for status, findings or IOCs without opening the dashboard. Replies go back to the same chat.",
+    pts:[], tech:["src/analysis/slashCommand.ts","src/analysis/slackSocketMode.ts","src/analysis/telegramPoller.ts"] },
+  { id:"casefile", col:0, kind:"source", label:"Whole-case import", sub:".zip · encrypted .dfircase · restore",
+    plain:"Brings in an entire case at once: an archive from another companion, an encrypted .dfircase hand-off, or a restore from backup. The demo seeder uses this path too.",
+    pts:["Encrypted cases use AES-GCM with a passphrase"],
+    tech:["src/analysis/caseZipImport.ts","src/analysis/caseEncryption.ts","src/analysis/caseRestore.ts","POST /cases/import/zip · /import/encrypted"] },
+  { id:"refdata", col:0, kind:"source", label:"Reference data", sub:"KEV · NSRL · whitelist · tag rules",
+    plain:"Lists the companion checks evidence against: CISA Known Exploited Vulnerabilities, NSRL known-good hashes, your IOC whitelist, your tagging rules, and any custom importers you defined. Shared across all cases.",
+    pts:["Bundled: MITRE ATT&CK, D3FEND, adversary groups, compliance maps"],
+    tech:["src/analysis/kevStore.ts","src/analysis/nsrlStore.ts","src/analysis/iocWhitelistStore.ts","<root>/tagger/tags.yaml","<root>/importers/ (declarative importers)"] },
+  { id:"settings", col:0, kind:"source", label:"Settings & keys", sub:"companion/.env · Settings page",
+    plain:"Every DFIR_* setting: which AI models to use, provider API keys, the severity threshold, caps. Edited from the dashboard's Settings page; loaded once when the server starts.",
+    pts:["Restart the server after changing it"],
+    tech:["companion/.env (template: .env.example)","src/settings/envManager.ts","GET/POST /settings/env"] },
+
+  /* ---------------- 1 · Intake ---------------- */
+  { id:"capture-ingest", col:1, kind:"process", label:"Screenshot intake", sub:"validate · de-duplicate",
+    plain:"Checks each screenshot is a real image, drops exact duplicates, then hands it to evidence-first storage before anything reads it.",
+    pts:["Duplicates detected by content hash"],
+    tech:["src/ingest/captureIngest.ts","src/dedup/contentHash.ts"] },
+  { id:"evidence-first", col:1, kind:"gate", label:"Evidence-first save", sub:"verbatim copy + custody hash",
+    plain:"The original file is written to disk untouched and its hash is recorded in the chain of custody — before any parsing or AI. If a later step fails, the evidence is still there.",
+    pts:["Append-only: never rewritten","Case locks and a pre-import snapshot are taken here","Custody is re-verified on a timer"],
+    tech:["src/routes/importCommit.ts → persistImportEvidence","src/analysis/custody.ts","src/storage/backupManager.ts"] },
+  { id:"detect", col:1, kind:"process", label:"Format detection", sub:"most specific signature wins",
+    plain:"Looks at the file's content (not its name) and decides which reader to use. Specific formats are tried before generic ones so a Velociraptor CSV is not read as plain CSV.",
+    pts:["Unknown formats fall back to AI extraction","Custom importers are checked too"],
+    tech:["src/analysis/importDetect.ts","src/analysis/importDetectSources.ts","src/composition/importIngest.ts"] },
+  { id:"parse", col:1, kind:"process", label:"Parse & normalize", sub:"one reader per format",
+    plain:"The format's reader turns every row into a standard forensic event — time, host, user, process, what happened — and records where it came from.",
+    pts:["Optional minimum severity applied here","Command lines are decoded (base64, obfuscation)"],
+    tech:["src/analysis/*Import.ts","src/analysis/ingest/*.ts","src/analysis/canonicalEvent.ts","src/analysis/responseSchema.ts (delta schema)"] },
+  { id:"ai-extract", col:1, kind:"ai", label:"AI extraction", sub:"screenshots · unknown formats",
+    plain:"For things no reader understands — screenshots and unfamiliar CSVs or logs — an AI model extracts events and IOCs. Screenshots are batched about four at a time. Output has the same shape as a normal import.",
+    pts:["Goes through the AI privacy gate like every model call"],
+    tech:["src/analysis/ai/extraction.ts","src/composition/captureAnalysis.ts"] },
+  { id:"ocr", col:1, kind:"process", label:"OCR index", sub:"local Tesseract · background",
+    plain:"Reads the text in every screenshot so you can search inside images. Runs in the background and never slows down capture.",
+    pts:[], tech:["src/composition/ocrIndexer.ts","src/analysis/ocrSearch.ts","metadata/ocr.json"] },
+
+  /* ---------------- 2 · Merge ---------------- */
+  { id:"ioc-extract", col:2, kind:"process", label:"IOC extraction", sub:"hashes · IPs · domains · paths",
+    plain:"Pulls indicators out of the rows, removes duplicates, and remembers which events each IOC came from so you can trace it back.",
+    pts:["Exclude rules stop removed values coming back"],
+    tech:["src/analysis/iocSink.ts","src/analysis/veloTextIocs.ts","src/analysis/iocRepair.ts"] },
+  { id:"merge", col:2, kind:"process", label:"Merge-all", sub:"everything in · Info included",
+    plain:"All incoming events join the case — including low-value Info rows. Nothing is filtered here on purpose: the tagger later needs to see everything so it can raise what matters.",
+    pts:["An AI response can never invent a finding ID","Results go to the case SQLite database"],
+    tech:["src/analysis/stateMerge.ts → mergeDelta","src/analysis/caseMerge.ts","src/analysis/caseSqliteWorker*.ts"] },
+  { id:"correlate", col:2, kind:"process", label:"Correlation chain", sub:"~20 deterministic linkers",
+    plain:"Rule-based checks that connect events into stories: download then execution, archive then exfiltration, timestomping, process parentage, injection, ransomware precursors, cloud key-then-read and more. They only ever raise severity or add notes.",
+    pts:["Email → initial access · archive → exfil · download → execution","Timestomp corroboration · SMB execution · Defender episodes","Ransomware precursors · certutil transfer · container escape","Cloud: metadata access, bulk reads, Azure key→read, AWS flow joins"],
+    tech:["src/analysis/stateMerge.ts → runTimelineChain","src/analysis/correlate.ts","src/analysis/eventAliases.ts"] },
+
+  /* ---------------- 3 · Grading seam ---------------- */
+  { id:"egress", col:3, kind:"gate", label:"First-party egress", sub:"lower to Info",
+    plain:"Traffic to the organisation's own known services is lowered to Info first, so normal business noise does not crowd the forensic timeline.",
+    pts:[], tech:["src/analysis/firstPartyEgress.ts"] },
+  { id:"dualwrite", col:3, kind:"gate", label:"Copy to super-timeline", sub:"every row, before the cut",
+    plain:"Before anything is removed, every row is copied to the super-timeline. That is why you can always search the full raw record, even for rows that never reach the forensic timeline.",
+    pts:["Capped at 100,000 rows; starred or tagged rows are never evicted"],
+    tech:["src/routes/importSettle.ts → settleForensicImport","src/analysis/superTimelineStore.ts → appendReporting","DFIR_SUPERTIMELINE_MAX"] },
+  { id:"tagger", col:3, kind:"gate", label:"Content tagger", sub:"raises by rule · tags.yaml",
+    plain:"Deterministic rules that recognise high-value telemetry — NTDS.dit access, PowerShell in Windows\\Temp — and raise it from Info to High or Medium. This is why events have severity even with AI turned off.",
+    pts:["Only raises, never lowers","Can only rescue a row during the import that brought it in"],
+    tech:["src/analysis/taggerAuto.ts","src/analysis/taggerRules.ts","<root>/tagger/tags.yaml"] },
+  { id:"caps", col:3, kind:"gate", label:"Context caps", sub:"build window · lab setup",
+    plain:"Activity during a known build window is capped at Low, and lab-setup transfers at Medium, so expected setup work is not reported as an attack. Case-account look-alikes are flagged here too.",
+    pts:[], tech:["src/analysis/buildTimeWindow.ts","src/analysis/labSetupTransfer.ts","src/analysis/lookalikeCaseAccount.ts"] },
+  { id:"demote", col:3, kind:"gate", label:"Severity gate", sub:"below Low stays out",
+    plain:"The cut. Rows below the threshold (Low by default, adjustable per case) leave the forensic timeline — they remain only in the super-timeline. Rows you promoted by hand are always kept.",
+    pts:["Threshold: per-case setting → DFIR_FORENSIC_MIN_SEVERITY → Low","Info never reaches the forensic timeline"],
+    tech:["src/composition/importDemote.ts","src/analysis/forensicGate.ts → demoteBelowSeverity"] },
+  { id:"postpass", col:3, kind:"process", label:"After-import passes", sub:"whitelist · NSRL · FP spread · undo",
+    plain:"Marks whitelisted and NSRL-known-good items, spreads your false-positive decisions to matching rows, and records an undo point and import receipt.",
+    pts:[], tech:["src/analysis/iocWhitelist.ts","src/analysis/nsrl.ts","src/analysis/fpPropagation.ts","src/analysis/importUndo.ts"] },
+
+  /* ---------------- 4 · Record ---------------- */
+  { id:"forensic", col:4, kind:"store", hero:true, eyebrow:"THE PRODUCT", label:"Forensic timeline", sub:"Low and above · uncapped · AI reads this",
+    plain:"The curated record of what happened. Everything the AI analyses, and almost everything the reports show, comes from here. It is uncapped — nothing is dropped for size.",
+    pts:["Only graded events (Low+) or events you promoted","Every event keeps its source and provenance"],
+    tech:["state/investigation.sqlite (kind: forensicTimeline)","src/analysis/stateTypes.ts"] },
+  { id:"super", col:4, kind:"store", label:"Super-timeline", sub:"every row · analyst only",
+    plain:"The full raw record, Info included — a built-in replacement for Timesketch. You search, label, star and promote from it. AI analysis does not read it — the two exceptions are View summary (capped at 500 rows) and Jev review (2,000 rows by default, or all if you choose), both started by you.",
+    pts:["Capped at 100,000; ordinary rows evicted first, protected never","Promote a row to move it into the forensic timeline"],
+    tech:["state/investigation.sqlite (kind: superTimeline)","src/analysis/superTimeline.ts","GET /cases/:id/super-timeline"] },
+  { id:"state", col:4, kind:"store", label:"Investigation state", sub:"findings · IOCs · MITRE · questions",
+    plain:"The case's current understanding: findings, IOCs with their verdicts, MITRE techniques, open questions, next steps, the attacker path and the narrative.",
+    pts:["Built by imports, then rewritten by synthesis","Backups taken before every synthesis and import"],
+    tech:["src/analysis/stateStore.ts","src/analysis/stateTypes.ts → InvestigationState","src/analysis/eventTechniques.ts (MITRE)"] },
+  { id:"decisions", col:4, kind:"store", label:"Analyst decisions", sub:"scope · FP · notebook · hypotheses",
+    plain:"Your judgement, kept separate from machine output: scope windows, false positives, host scope, notebook, hypotheses, comments, pinned findings, report details.",
+    pts:["AI reads these as context but never overwrites them"],
+    tech:["state/*.json (scope, false-positive, notebook, hypotheses…)","src/analysis/investigationStateFiles.ts"] },
+  { id:"disk", col:4, kind:"store", label:"Case folder", sub:"screenshots · imports · custody · logs",
+    plain:"Everything for one case on disk: original screenshots and uploads, the custody log, the activity log, the SQLite database, backups and generated reports.",
+    pts:["screenshots/ and imports/ are append-only evidence","metadata/custody.jsonl is the chain of custody"],
+    tech:["cases/<id>/screenshots · imports · metadata · state · reports · logs","src/storage/caseStore.ts"] },
+
+  /* ---------------- 5 · Analysis ---------------- */
+  { id:"intel", col:5, kind:"external", label:"Threat-intel services", sub:"VirusTotal · MISP · AbuseIPDB +11",
+    plain:"Outside services that know about IOCs: VirusTotal, MalwareBazaar, CrowdStrike, AbuseIPDB, MISP, YETI, OpenCTI, CIRCL hashlookup, Shodan, LeakCheck, plus local reverse-DNS, RDAP, GeoIP and look-alike domain checks.",
+    pts:["Only the IOC value is sent, never case data"],
+    tech:["src/composition/enrichmentProviders.ts","src/enrichment/*.ts"] },
+  { id:"enrich", col:5, kind:"process", label:"Enrichment", sub:"opt-in per case · local by default",
+    plain:"Looks up each IOC with the services you allowed for this case and stores the verdicts. For operational security the default is local checks only. Already-checked IOCs are skipped.",
+    pts:["Resumes automatically if a provider was down","Feeds IOC risk score, KEV matches and corroboration"],
+    tech:["src/enrichment/enrichService.ts","src/enrichment/enrichControl.ts","src/analysis/iocRiskScore.ts"] },
+  { id:"ai-gate", col:5, kind:"gate", label:"AI privacy gate", sub:"mask · redact · approve · restore",
+    plain:"Every call to an AI model passes through here. Names, hosts and other sensitive values are swapped for placeholders, text in images is redacted, Presidio may ask you to approve, and real values are put back only in the answer. Cost is recorded.",
+    pts:["Applies to every AI feature, Jev included","Analysis reads the forensic timeline, never the super-timeline — except View summary and Jev review, which you start yourself"],
+    tech:["src/analysis/ai/providerCall.ts → analyzeRestored","src/analysis/anonymize.ts","src/analysis/presidio.ts","src/analysis/aiCost.ts"] },
+  { id:"ai-models", col:5, kind:"external", label:"AI models", sub:"Anthropic · OpenAI · Gemini · Ollama +4",
+    plain:"The model behind each AI role. Separate models can be set for vision, synthesis, fallback, second opinion and Velociraptor work. Ollama keeps everything on this machine.",
+    pts:["Also: OpenRouter, LiteLLM, Claude Code CLI, Codex CLI, Jev decision model"],
+    tech:["src/providers/*.ts","src/composition/aiProviders.ts","DFIR_VISION_* · DFIR_AI_SYNTH_* · DFIR_AI_SECOND_OPINION_*"] },
+  { id:"synth", col:5, kind:"ai", hero:true, eyebrow:"THE MAIN AI PASS", label:"Synthesis", sub:"findings · narrative · next steps",
+    plain:"The main AI pass. It reads a selected sample of the forensic timeline (up to 600 rows) with your findings, IOCs, scope, notebook and hypotheses, and rewrites the findings, MITRE techniques, key questions, next steps, attacker path and narrative.",
+    pts:["Runs when AI is turned on, on Re-synthesize, or after an import with AI on","Other changes just mark conclusions as out of date","Followed by a per-finding task pass"],
+    sections:[
+      { h:"Which events it is given", ol:true, intro:"Steps 1–3 always run. If what is left fits in the cap (600 rows by default), every row is sent and steps 4–8 are skipped. Only when it does not fit are rows chosen, in this order:", items:[
+        "Start from the forensic timeline (Low and above). Remove events outside the case scope window and events you marked false positive or legitimate.",
+        "Drop Info rows. Anything important was already raised out of Info by the tagger. They stay in the case; they just get no seat.",
+        "Collapse repeats. A detection that fires 4 or more times (with less than 1 hour between hits) becomes one row with a count, host spread and time span, so each distinct detection gets a seat.",
+        "Rows you promoted since the last run go in first, pinned so they cannot be squeezed out: up to 60, or half the cap if that is smaller.",
+        "Every Critical and High event. If those alone do not fit, the severest and rarest are kept, and 15 seats (or 20% of the cap, whichever is smaller) go to the earliest events so the story still has a beginning. The quiet-command seats from step 7 are still kept; the shared seats in step 8 are not offered in that case.",
+        "The 15 earliest events, for initial access.",
+        "Quiet commands from attacker sessions: 10% of the cap, never fewer than 1 or more than 40 seats (40 at the default 600 cap).",
+        "The seats still free are offered in a fixed order, each class taking at most its share: 40% to context around each High/Critical (same host, ±15 minutes, up to 6 per anchor), 25% to events seen by more than one source, 15% to MITRE-tagged events, 15% to rare one-off activity. Any seats left over are spread evenly across the time range.",
+        "For all paths: put the chosen rows in time order and render each one with its host, process lineage and source → destination, plus a 'common' or 'rare' tag. Context rows are marked ~ so the model treats them as background.",
+        "If the prompt is still too large for the model, select again for fewer rows, up to 4 times.",
+      ]},
+      { h:"How much fits", items:[
+        "Events: 600 rows by default (DFIR_AI_SYNTH_MAX_EVENTS). On a typical Velociraptor + Sigma/YARA case, 1,089 events collapse to about 546 rows, so every non-Info event gets in.",
+        "Tokens: a 128k context, minus 16k kept for the answer and a 5% margin, leaves about 105k input tokens. Everything below shares that budget, and the events get whatever is left.",
+        "Nothing severe is lost: any Critical or High event that did not get a seat still becomes a finding through the rule-based backfill, without AI.",
+        "Settings you can change: the 600-row cap (DFIR_AI_SYNTH_MAX_EVENTS), sending Info rows (DFIR_SYNTH_INCLUDE_INFO), repeat grouping on/off, its 1-hour gap and 4-repeat minimum (DFIR_SYNTH_GROUP, _GAP_SECONDS, _MIN_REPEATS), the model context size (DFIR_AI_CONTEXT_TOKENS) and the answer reserve (DFIR_AI_MAX_TOKENS).",
+        "Fixed in the code, with no setting: the ±15-minute context window and 6 rows per anchor, the 15 earliest events, the 40/25/15/15 shares, the 10% command share and its 40-seat ceiling, the 60-row pin ceiling, the 150 findings shown, and the 4 re-fit passes. The shares are fixed, but the seat counts they produce follow the 600-row cap.",
+      ]},
+      { h:"What else it is given", items:[
+        "Existing findings: up to 150. On the first run these are the findings the importers and correlation rules created; the most severe come with detail, the rest by title only.",
+        "Case context: compromised assets, threat-intel verdicts on IOCs, CISA KEV matches.",
+        "Rule-built structure: the attack graph (process spawns, file lineage, lateral movement, network), beacon candidates, host activity spikes, attack phases.",
+        "Gaps: silent periods, ATT&CK phases with no evidence, what the collection and cloud logs can and cannot answer.",
+        "Your input: scope window, false-positive and authorised-test markers, notebook, hypotheses (up to 15 open, plus the refuted ones), finished hunts and playbook tasks, the incident type, pinned findings, open threads, patterns you dismissed before.",
+        "Running notes: the summary from the previous run. On the first run there is none.",
+      ]},
+      { h:"First run vs later runs", items:[
+        "First run: findings are only the rule-made ones, there are no running notes, and nothing has been promoted since a previous run.",
+        "Later runs: the same event selection, plus the AI findings and running notes from the last run, and any newly promoted rows pinned in.",
+        "If nothing synthesis reads has changed since the last successful run, it is skipped with no AI call. That covers the scoped events, IOC verdicts, scope, false-positive marks, notebook, hypotheses, hunts, playbook, incident type, deep-pass notes and promotions.","If the forensic timeline is empty, nothing is sent at all.",
+      ]},
+    ],
+    tech:["src/analysis/ai/synthesis.ts (scope + false-positive filter)","src/analysis/ai/synthesisPromptEvents.ts (who gets a seat)","src/analysis/synthSelect.ts (stratified selection)","src/analysis/synthGroup.ts (burst collapsing, 600 cap)","src/analysis/ai/synthesisPromptBlocks.ts (context blocks)","src/analysis/promptBudget.ts (token budget)","src/analysis/ai/synthesisInputs.ts (skip hash)","DFIR_AI_SYNTH_MAX_EVENTS · DFIR_SYNTH_INCLUDE_INFO · DFIR_SYNTH_GROUP* · DFIR_AI_CONTEXT_TOKENS · DFIR_AI_MAX_TOKENS"] },
+  { id:"deep", col:5, kind:"ai", label:"Deep pass & second opinion", sub:"analyst-pressed",
+    plain:"Deep pass reads the whole graded forensic timeline in batches, then re-synthesises. Second opinion asks a different model and shows where the two disagree; you choose what to apply.",
+    pts:["Both stay inside the forensic timeline"],
+    tech:["src/analysis/ai/deepPassRun.ts","src/analysis/ai/secondOpinionRun.ts"] },
+  { id:"second-look", col:5, kind:"ai", label:"Second look", sub:"button · search raw, promote, re-run",
+    plain:"Takes the open questions, searches the raw record for matching terms, promotes the hits into the forensic timeline with a note on why, then re-synthesises. Only when you press it.",
+    pts:["Promotes first, so the AI still only reads the forensic timeline"],
+    tech:["src/analysis/ai/secondLookRun.ts","src/analysis/secondLook.ts"] },
+  { id:"pressed", col:5, kind:"ai", label:"Explain · Starred · View summary", sub:"three buttons that touch raw rows",
+    plain:"Explain this event and Starred report first promote the rows into the forensic timeline, then ask the AI. View summary is an exception: it summarises your filtered super-timeline view directly, capped at 500 rows, and tells you if it was cut short. Nothing is saved.",
+    pts:["Always started by you","View summary: ephemeral, ≤ 500 rows, truncation shown to you"],
+    tech:["src/analysis/ai/viewReports.ts","POST /cases/:id/events/:eid/explain","tests/analysis/forensicBoundary.test.ts"] },
+  { id:"askhunt", col:5, kind:"ai", label:"Ask · hunts · AI reports", sub:"Q&A · VQL/SIEM queries · write-ups",
+    plain:"Ask a question about the case, get suggested hunts (VQL, SIEM queries), and AI-written report pieces: executive summary, narrative, remediation plan and hypothesis review.",
+    pts:["Ask changes nothing in the case"],
+    tech:["src/routes/askCase.ts","src/analysis/ai/hunts.ts","src/analysis/ai/caseReports.ts"] },
+  { id:"jev", col:5, kind:"ai", label:"Jev review", sub:"grades left-behind Info rows",
+    plain:"A second chance for rows the gate left out. Jev reads them straight from the super-timeline — 2,000 by default, or every row if you choose to read all — grades them and suggests which might matter. It tells you how many rows it did not read. Nothing moves until you promote it, and a promotion can only raise severity.",
+    pts:["A bounded exception to the AI boundary, like View summary: started by you, promotes nothing","Also: per-finding containment check"],
+    tech:["src/analysis/ai/jev/jevClient.ts","src/routes/jevReview.ts","src/routes/jevPromote.ts"] },
+  { id:"detectors", col:5, kind:"process", label:"Detectors & analytics", sub:"no AI needed",
+    plain:"Deterministic analysis that works with AI off: beacons, SSH brute force, password spray, RDP lateral movement, Kerberoasting, ransomware, attacker sessions, log gaps, spikes, clock skew, host ranking, kill chain, playbooks.",
+    pts:["Graphs: assets ↔ IOCs, evidence, TLS","Cross-case IOC index, geo map, compliance, D3FEND"],
+    tech:["src/analysis/beaconDetect.ts · rdpLateralDetect.ts · kerberoastChain.ts","src/analysis/sessionSegmentation.ts · gapDetect.ts","src/analysis/hostRanking.ts · playbook.ts"] },
+  { id:"login-graph", col:5, kind:"process", label:"Login graph", sub:"deterministic · reads super-timeline",
+    plain:"Who logged on where, from Windows logon events (4624/4625). It reads the full super-timeline because it is pure rules — no AI involved.",
+    pts:["Changing an event's description wording can empty this graph"],
+    tech:["src/analysis/loginGraph.ts","src/routes/analysisGraph.ts"] },
+
+  /* ---------------- 6 · Output safety ---------------- */
+  { id:"filters", col:6, kind:"gate", label:"Report filters", sub:"scope · false positives · host scope",
+    plain:"Applies your decisions to what leaves the tool: out-of-scope time, false positives and excluded hosts are left out of reports and exports.",
+    pts:[], tech:["src/reports/filteredState.ts","src/analysis/scope.ts","src/analysis/falsePositive.ts"] },
+  { id:"safety", col:6, kind:"gate", label:"Escape & defang", sub:"CSV · Markdown · HTML",
+    plain:"Attacker-controlled text ends up in your reports, so every format is escaped: spreadsheet formula injection blocked, Markdown tables kept intact, HTML escaped, URLs and IPs defanged where they could be clicked.",
+    pts:["Exports are scanned for evidence safety"],
+    tech:["src/reports/csv.ts","src/reports/mdText.ts","src/reports/escapeHtml.ts","src/reports/defang.ts","src/reports/evidenceSafety.ts"] },
+
+  /* ---------------- 7 · Outputs ---------------- */
+  { id:"dashboard", col:7, kind:"output", label:"Dashboard", sub:"65 panels · 8 built-in views",
+    plain:"The analyst workspace. Views: Now, Analyst, Lead, Executive, Triage, Report, Deep-Dive, Hunt-Prep. Also mobile, presentation and admin pages.",
+    pts:["Panels include: findings, attack path, timeline, super-timeline, login graph, IOCs, MITRE, hypotheses, notebook, custody, beacons, gaps, swimlane, geo map"],
+    tech:["public/dashboard.html","public/js/dashboard-*.js","src/analysis/dashboardViews.ts → DASHBOARD_SECTION_IDS"] },
+  { id:"live", col:7, kind:"output", label:"Live updates", sub:"WebSocket push",
+    plain:"The dashboard refreshes itself as imports finish, AI runs progress and jobs change — no reload needed.",
+    pts:[], tech:["/ws","src/live/hub.ts","src/composition/stateBroadcast.ts"] },
+  { id:"reports", col:7, kind:"output", label:"Reports", sub:"MD · HTML · DOCX · CSV · JSON",
+    plain:"Generated as a set: Markdown, HTML, Word, findings/IOCs/timeline CSVs, full JSON state and an AI-run provenance file. Plus a self-contained interactive HTML report. Templates choose sections; versions can be reviewed, approved and released.",
+    pts:["Sections: title page, executive summary, business impact, limitations, timeline, investigation, conclusions, hypotheses, D3FEND, compliance, chain of custody…"],
+    tech:["POST /cases/:id/report","src/reports/reportGeneration.ts","src/reports/interactiveHtml.ts","src/reports/reportTemplate.ts → REPORT_SECTION_DEFS"] },
+  { id:"exports", col:7, kind:"output", label:"Exports", sub:"STIX · Navigator · blocklist · redacted",
+    plain:"Machine-readable and shareable outputs: STIX 2.1, ATT&CK Navigator layer, IOC blocklist, a redacted ZIP (names masked, EXIF stripped, PII blurred), an encrypted .dfircase, a full archive, and JSONL/CSV timelines.",
+    pts:[], tech:["src/reports/stix.ts","src/reports/attackLayer.ts","src/reports/iocBlocklist.ts","src/reports/redactedExportBuilder.ts"] },
+  { id:"deck", col:7, kind:"output", label:"Deck & handoff", sub:"defanged slides · shift handoff",
+    plain:"A presentation of the case for briefings (defanged) and a handoff brief for the next analyst on shift.",
+    pts:[], tech:["GET /cases/:id/present","src/reports/presentationExport.ts","src/reports/handoffMarkdown.ts"] },
+  { id:"push-out", col:7, kind:"output", label:"Platform push", sub:"Timesketch · IRIS · MISP · Jira +3",
+    plain:"Sends the case to the systems your team already uses: Timesketch (forensic or full super-timeline), DFIR-IRIS, MISP, Jira, ServiceNow, Notion, ClickUp.",
+    pts:[], tech:["src/routes/casePush.ts","src/integrations/{timesketch,iris,misp,jira,servicenow,notion,clickup}/"] },
+  { id:"velo-out", col:7, kind:"output", label:"Velociraptor deploy", sub:"hunts · collections · monitors",
+    plain:"Sends suggested hunts and collections back out to Velociraptor. Their results come back in as new evidence — the loop closes.",
+    pts:[], tech:["src/integrations/velociraptor/velociraptorApi.ts"] },
+  { id:"notify", col:7, kind:"output", label:"Notifications", sub:"Slack · Teams · email · webhook",
+    plain:"Alerts your team when something important happens in a case. Channels: Slack, Teams, Discord, Mattermost, Telegram, email, generic webhook. Also replies to chat commands.",
+    pts:[], tech:["src/composition/caseNotifier.ts","src/integrations/notify/*"] },
+  { id:"audit", col:7, kind:"output", label:"Audit forwarding", sub:"Splunk HEC · Elastic · syslog",
+    plain:"Forwards the activity log — who did what in which case — to your SIEM.",
+    pts:[], tech:["src/integrations/audit/*"] },
+  { id:"api", col:7, kind:"output", label:"REST API", sub:"~490 routes",
+    plain:"Everything the dashboard shows is also available over the local API for scripts and other tools.",
+    pts:[], tech:["src/composition/routeRegistry.ts","src/routes/*.ts"] },
+];
+
+/* [from, to, type, label]   types: flow · back · bounded · ext · ai · forbidden */
+const EDGES = [
+  ["ext-capture","capture-ingest","flow","screenshot"],
+  ["drop","capture-ingest","flow","images"],
+  ["capture-ingest","evidence-first","flow","saved first"],
+  ["capture-ingest","ocr","flow","text in images"],
+  ["capture-ingest","ai-extract","ai","batches of ~4"],
+  ["ext-push","evidence-first","flow","rows"],
+  ["upload","evidence-first","flow","file"],
+  ["drop","evidence-first","flow","artifacts"],
+  ["velo","evidence-first","flow","results"],
+  ["tools","evidence-first","flow","tool output"],
+  ["mcp","evidence-first","flow","accepted preview"],
+  ["iris-in","evidence-first","flow","IRIS case"],
+  ["push-in","evidence-first","flow","pushed events"],
+  ["evidence-first","disk","flow","original + hash"],
+  ["evidence-first","detect","flow","file text"],
+  ["detect","parse","flow","format chosen"],
+  ["detect","ai-extract","ai","unknown format"],
+  ["refdata","detect","flow","custom importers"],
+  ["parse","ioc-extract","flow","rows"],
+  ["parse","merge","flow","events"],
+  ["ai-extract","merge","flow","events + IOCs"],
+  ["ioc-extract","merge","flow","IOCs"],
+  ["analyst","merge","flow","manual events"],
+  ["merge","correlate","flow","all events"],
+  ["correlate","egress","flow","linked events"],
+  ["egress","dualwrite","flow",""],
+  ["dualwrite","super","flow","every row"],
+  ["dualwrite","tagger","flow",""],
+  ["refdata","tagger","flow","tag rules"],
+  ["tagger","caps","flow","raised rows"],
+  ["caps","demote","flow",""],
+  ["settings","demote","flow","threshold"],
+  ["demote","forensic","flow","Low and above"],
+  ["demote","postpass","flow",""],
+  ["refdata","postpass","flow","NSRL · whitelist"],
+  ["postpass","state","flow","marks + undo point"],
+  ["merge","state","flow","findings · IOCs"],
+  ["casefile","disk","flow","whole case"],
+  ["analyst","decisions","flow","your decisions"],
+  ["chat","analyst","flow","commands"],
+  ["super","forensic","back","promote (you)"],
+  ["forensic","state","flow",""],
+  ["state","enrich","flow","IOCs"],
+  ["intel","enrich","ext","verdicts"],
+  ["settings","enrich","flow","keys · opt-in"],
+  ["enrich","state","back","verdicts saved"],
+  ["forensic","ai-gate","flow","≤ 600 selected events"],
+  ["state","ai-gate","flow","findings · IOCs"],
+  ["decisions","ai-gate","flow","scope · notes"],
+  ["super","ai-gate","forbidden","AI never reads"],
+  ["settings","ai-gate","flow","models · keys"],
+  ["ai-gate","ai-models","ext","masked prompt ⇄ answer"],
+  ["ai-gate","synth","ai",""],
+  ["ai-gate","deep","ai",""],
+  ["ai-gate","askhunt","ai",""],
+  ["ai-gate","pressed","ai",""],
+  ["ai-gate","jev","ai",""],
+  ["synth","state","back","rewrites findings"],
+  ["deep","state","back","re-synthesis"],
+  ["super","second-look","bounded","search terms"],
+  ["second-look","forensic","back","promote matches"],
+  ["second-look","synth","ai","re-run"],
+  ["super","pressed","bounded","≤ 500 rows (view summary)"],
+  ["pressed","forensic","back","promote first"],
+  ["super","jev","bounded","Info rows (2,000 default, or all)"],
+  ["jev","forensic","back","you promote · raise only"],
+  ["forensic","detectors","flow","events"],
+  ["state","detectors","flow",""],
+  ["super","login-graph","flow","logon events"],
+  ["state","filters","flow","state"],
+  ["decisions","filters","flow","scope · FP"],
+  ["filters","safety","flow",""],
+  ["askhunt","safety","flow","AI write-ups"],
+  ["safety","reports","flow",""],
+  ["safety","exports","flow",""],
+  ["safety","deck","flow",""],
+  ["forensic","dashboard","flow",""],
+  ["super","dashboard","flow","search · label · star"],
+  ["state","dashboard","flow",""],
+  ["detectors","dashboard","flow","panels"],
+  ["login-graph","dashboard","flow","graph"],
+  ["deep","dashboard","flow","disagreements"],
+  ["ocr","dashboard","flow","OCR search"],
+  ["state","live","flow","changes"],
+  ["live","dashboard","flow","refresh"],
+  ["state","push-out","flow","case"],
+  ["super","push-out","flow","Timesketch (full)"],
+  ["askhunt","velo-out","flow","suggested hunts"],
+  ["velo-out","velo","back","results return"],
+  ["state","notify","flow","alerts"],
+  ["chat","notify","flow","replies"],
+  ["disk","audit","flow","activity log"],
+  ["state","api","flow",""],
+  ["disk","reports","flow","custody · screenshots"],
+];
+
+const RULES = [
+  { red:true, t:"The AI never reads the super-timeline", d:"Synthesis, Deep pass, Ask and hunts read only the forensic timeline: the raw record is too big, its noise pushes real detections out of the prompt, and every finding must point to reviewed evidence. The striped tape on the map marks the line. Two documented exceptions, both started by you and both promoting nothing: View summary (not saved, ≤ 500 rows, tells you if it was truncated) and Jev review (grades left-behind Info rows — 2,000 by default, or every row if you choose to read all — and reports how many it did not read). Explain and Starred report promote first, so they do not break the rule.", n:["super","ai-gate","forensic","pressed","jev"], e:[["super","ai-gate"]] },
+  { t:"Info never reaches the forensic timeline", d:"Info rows are cut at the severity gate, so the AI can only see one if the tagger raised it or you promoted it.", n:["tagger","demote","forensic","super"] },
+  { t:"Order at the seam is fixed", d:"Merge everything → lower first-party traffic → copy to super-timeline → tagger raises → caps → cut. Filtering Info earlier was tried and reverted: it hid exactly what the tagger would have raised.", n:["merge","egress","dualwrite","tagger","caps","demote"] },
+  { t:"Three buttons may touch raw rows", d:"Explain and Starred report promote first. View summary reads directly — started by you, not saved, ≤ 500 rows, truncation shown to you.", n:["pressed","super","forensic"] },
+  { t:"Second look and Jev only act when you press", d:"Second look promotes with a note before re-synthesising. Jev grades but promotes nothing; your promotion can only raise severity.", n:["second-look","jev","super","forensic"] },
+  { t:"Evidence first, append-only", d:"The original file or screenshot and its custody hash are written before any parsing or AI, and never rewritten.", n:["evidence-first","capture-ingest","disk"] },
+  { t:"Every AI call is masked first", d:"Sensitive values are replaced before the prompt leaves the machine and restored only in the answer.", n:["ai-gate","ai-models"] },
+  { t:"Enrichment is opt-in per case", d:"Local checks by default. Already-checked IOCs are skipped, so a new enrichment field needs a forced re-check.", n:["enrich","intel"] },
+  { t:"Escaping is a correctness rule", d:"Attacker text reaches reports: CSV formula injection, Markdown structure and HTML are all escaped; links are defanged.", n:["safety","reports","exports","deck"] },
+  { t:"Super-timeline is capped, forensic is not", d:"100,000 rows; ordinary rows evicted first, starred or tagged rows never. The forensic timeline keeps everything.", n:["super","forensic","dualwrite"] },
+  { t:"Rules-only views may read the raw record", d:"The login graph reads the super-timeline because no AI is involved.", n:["login-graph","super"] },
+  { t:"Synthesis runs only when asked", d:"AI on, Re-synthesize, or an import finishing with AI on. Anything else just marks conclusions out of date. Detectors work with AI off.", n:["synth","detectors"] },
+];
+
+const TOURS = [
+  { name:"Follow a file import", hint:"Upload → report, every step", steps:[
+    ["upload","You import an artifact","Say a Velociraptor collection ZIP or a Hayabusa CSV, through the Import button."],
+    ["evidence-first","The original is saved first","Written to disk untouched, hashed into the chain of custody. Nothing has read it yet."],
+    ["detect","The format is recognised","The content, not the file name, decides which reader runs."],
+    ["parse","Rows become forensic events","Each row is normalised into time, host, user, process and action, with its source recorded."],
+    ["ioc-extract","Indicators are pulled out","Hashes, IPs, domains, paths — de-duplicated and linked back to their events."],
+    ["merge","Everything joins the case","Info rows too. Filtering here would hide what the tagger is about to rescue."],
+    ["correlate","Events are linked","Rules connect download → execution, archive → exfil and so on, raising severity where they match."],
+    ["dualwrite","A full copy goes to the super-timeline","Before anything is cut, every row is preserved for searching."],
+    ["tagger","High-value rows are raised","Deterministic rules lift e.g. NTDS.dit access from Info to High."],
+    ["demote","The cut","Below-Low rows leave the forensic timeline. They still live in the super-timeline."],
+    ["forensic","The forensic timeline","The curated record. This is what the AI and the reports work from."],
+    ["ai-gate","Masked before the AI sees it","Sensitive values are swapped for placeholders; synthesis never includes the super-timeline."],
+    ["synth","Synthesis","The AI rewrites findings, MITRE techniques, questions, next steps and the narrative."],
+    ["state","The case understanding is updated","Findings and IOCs are saved; the dashboard refreshes live."],
+    ["filters","Your decisions are applied","Out-of-scope time and false positives are left out."],
+    ["safety","Escaped for every format","Attacker text cannot break a CSV, Markdown table or HTML page."],
+    ["reports","The report","Markdown, HTML, Word, CSVs and JSON — generated as a set."],
+  ]},
+  { name:"Follow a screenshot", hint:"Extension → dashboard", steps:[
+    ["ext-capture","The extension captures your screen","Timer, navigation, click, or you press capture."],
+    ["capture-ingest","Checked and de-duplicated","Exact duplicates are dropped by content hash."],
+    ["evidence-first","Saved as evidence","The image is written and logged before anything reads it."],
+    ["ocr","Text is indexed","Local OCR makes the screenshot searchable."],
+    ["ai-extract","AI reads the screenshots","About four at a time, a vision model extracts events and IOCs."],
+    ["merge","Joined into the case","Same path as any import from here on."],
+    ["demote","Graded and cut","Tagger raises, gate cuts below Low."],
+    ["forensic","On the forensic timeline","Now visible to synthesis and reports."],
+    ["dashboard","On your dashboard","Live, with OCR search across every capture."],
+  ]},
+  { name:"Where does an Info row go?", hint:"The two timelines", steps:[
+    ["parse","An Info-level row is imported","Say a routine process start with nothing suspicious about it."],
+    ["merge","It is merged in","Every row is merged, Info included."],
+    ["dualwrite","Copied to the super-timeline","Preserved in the full raw record."],
+    ["tagger","The tagger looks at it","If a rule matches, it is raised to Medium or High and survives the cut."],
+    ["demote","If still Info, it is cut","It leaves the forensic timeline. The AI will not see it."],
+    ["super","It lives in the super-timeline","You can search, label and star it."],
+    ["jev","Jev can flag it","Jev grades left-behind Info rows and suggests promotions."],
+    ["pressed","Or you can ask about it","Explain promotes it first; View summary reads your view directly, capped."],
+    ["forensic","Promoted rows rejoin the record","Promotion moves it into the forensic timeline, and it is never demoted again."],
+  ]},
+  { name:"What the AI can and cannot read", hint:"The boundary", steps:[
+    ["forensic","The AI reads the forensic timeline","Plus findings, IOCs and your notes."],
+    ["decisions","…and your decisions as context","Scope, false positives, notebook and hypotheses guide it; it never overwrites them."],
+    ["ai-gate","Through the privacy gate","Every call is masked, redacted and costed."],
+    ["super","Analysis never reads the super-timeline","The striped tape on the map. Promotion is the normal way in — with two bounded exceptions, shown next."],
+    ["second-look","Second look promotes first","It searches raw rows, promotes matches with a reason, then re-synthesises."],
+    ["pressed","Exception 1: View summary","Started by you, not saved, at most 500 rows, and it says if it was truncated."],
+    ["jev","Exception 2: Jev review","Started by you. It grades left-behind Info rows — 2,000 by default, or every row if you choose — says how many it did not read, and promotes nothing."],
+    ["login-graph","Rules-only views may read raw rows","The login graph does — there is no AI in it."],
+  ]},
+];
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+const NODE_W = 228, COL_GAP = 120, PAD_X = 60, PAD_TOP = 130, V_GAP = 16;
+const BY_ID = Object.fromEntries(NODES.map(n => [n.id, n]));
+const world = document.getElementById("world");
+const svg = document.getElementById("edges");
+const viewport = document.getElementById("viewport");
+const SVGNS = "http://www.w3.org/2000/svg";
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+EDGES.forEach(([a,b]) => { if (!BY_ID[a] || !BY_ID[b]) console.error("Edge references unknown node:", a, b); });
+
+const IN = {}, OUT = {};
+NODES.forEach(n => { IN[n.id] = []; OUT[n.id] = []; });
+const EDGE_OBJS = EDGES.filter(([a,b]) => BY_ID[a] && BY_ID[b]).map(([from,to,type,label], i) => {
+  const e = { i, from, to, type, label };
+  OUT[from].push(e); IN[to].push(e);
+  return e;
+});
+
+document.getElementById("stats").textContent =
+  `${STAGES.length} stages · ${NODES.length} components · ${EDGE_OBJS.length} connections`;
+
+function el(tag, cls, html) { const d = document.createElement(tag); if (cls) d.className = cls; if (html != null) d.innerHTML = html; return d; }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+/* legend kinds */
+const legendKinds = document.getElementById("legendKinds");
+Object.entries(KINDS).forEach(([k, name]) => {
+  const s = el("button", "it"); s.style.setProperty("--k", `var(--${k})`);
+  s.dataset.kind = k; s.setAttribute("aria-pressed", "false");
+  s.innerHTML = `<i class="sw"></i>${esc(name)}`; legendKinds.appendChild(s);
+});
+
+/* nodes */
+NODES.forEach(n => {
+  const b = el("button", `node k-${n.kind}${n.hero ? " hero" : ""}`);
+  b.style.setProperty("--w", NODE_W + "px");
+  b.dataset.id = n.id;
+  b.setAttribute("aria-label", `${n.label}: ${n.sub}`);
+  b.innerHTML = `${n.eyebrow ? `<span class="ey">${esc(n.eyebrow)}</span>` : ""}<span class="kd"></span><span class="lb">${esc(n.label)}</span><span class="sb">${esc(n.sub)}</span>`;
+  world.appendChild(b);
+  n.el = b;
+});
+
+/* layout */
+function colX(c) { return PAD_X + c * (NODE_W + COL_GAP); }
+let WORLD_W = 0, WORLD_H = 0;
+function layout() {
+  const cols = STAGES.map((_, c) => NODES.filter(n => n.col === c));
+  cols.forEach(list => list.forEach(n => { n.w = NODE_W; n.h = n.el.offsetHeight; }));
+  const colH = cols.map(list => list.reduce((s, n) => s + n.h, 0) + V_GAP * (list.length - 1));
+  const maxH = Math.max(...colH);
+  cols.forEach((list, c) => {
+    let y = PAD_TOP + (maxH - colH[c]) / 2;
+    const x = colX(c);
+    list.forEach(n => { n.x = x; n.y = y; n.el.style.left = x + "px"; n.el.style.top = y + "px"; y += n.h + V_GAP; });
+  });
+  WORLD_W = colX(STAGES.length - 1) + NODE_W + PAD_X;
+  WORLD_H = PAD_TOP + maxH + 80;
+  world.style.width = WORLD_W + "px"; world.style.height = WORLD_H + "px";
+  svg.setAttribute("width", WORLD_W); svg.setAttribute("height", WORLD_H);
+
+  world.querySelectorAll(".band").forEach(b => b.remove());
+  STAGES.forEach((s, c) => {
+    const band = el("div", "band");
+    const x = colX(c) - 22;
+    band.style.left = x + "px"; band.style.width = (NODE_W + 44) + "px"; band.style.height = WORLD_H - 20 + "px"; band.style.top = "10px";
+    band.innerHTML = `<div class="band-head"><div class="n">${String(c + 1).padStart(2, "0")}</div><div class="t">${esc(s.t)}</div><div class="s">${esc(s.s)}</div></div>`;
+    world.insertBefore(band, svg);
+  });
+}
+
+/* edges */
+function sides(e) {
+  const a = BY_ID[e.from], b = BY_ID[e.to];
+  if (b.col > a.col) return ["r", "l"];
+  if (b.col < a.col) return ["l", "r"];
+  return ["r", "r"];
+}
+function buildEdges() {
+  svg.innerHTML = `
+  <defs>
+    <pattern id="tape" patternUnits="userSpaceOnUse" width="14" height="14" patternTransform="rotate(45)">
+      <rect width="14" height="14" style="fill:var(--tape-a)"/><rect width="7" height="14" style="fill:var(--tape-b)"/>
+    </pattern>
+    ${["flow","back","bounded","ext","ai"].map(t => `<marker id="m-${t}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--${({flow:"muted",back:"store",bounded:"gate",ext:"external",ai:"ai"})[t]})"/></marker>`).join("")}
+  </defs>`;
+  // distribute anchor slots along each node side, ordered by the other end's y
+  const slots = {};
+  EDGE_OBJS.forEach(e => {
+    const [sa, sb] = sides(e);
+    (slots[e.from + sa] ||= []).push({ e, end: "s", oy: BY_ID[e.to].y + BY_ID[e.to].h / 2 });
+    (slots[e.to + sb] ||= []).push({ e, end: "t", oy: BY_ID[e.from].y + BY_ID[e.from].h / 2 });
+  });
+  Object.entries(slots).forEach(([key, list]) => {
+    list.sort((p, q) => p.oy - q.oy);
+    list.forEach((s, i) => {
+      const n = BY_ID[s.e[s.end === "s" ? "from" : "to"]];
+      const pad = Math.min(14, n.h * .2);
+      const y = n.y + pad + (n.h - 2 * pad) * (i + 1) / (list.length + 1);
+      s.e[s.end + "y"] = y;
+    });
+  });
+  const gEdges = document.createElementNS(SVGNS, "g");
+  const gLabels = document.createElementNS(SVGNS, "g");
+  const gDots = document.createElementNS(SVGNS, "g");
+  EDGE_OBJS.forEach(e => {
+    const a = BY_ID[e.from], b = BY_ID[e.to];
+    const [sa, sb] = sides(e);
+    const x1 = sa === "r" ? a.x + a.w : a.x, x2 = sb === "r" ? b.x + b.w : b.x;
+    const y1 = e.sy, y2 = e.ty;
+    let d;
+    if (sa === "r" && sb === "l") { const dx = Math.max(50, (x2 - x1) * .45); d = `M${x1} ${y1}C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`; }
+    else if (sa === "l" && sb === "r") { const dx = Math.max(50, (x1 - x2) * .45); d = `M${x1} ${y1}C${x1 - dx} ${y1} ${x2 + dx} ${y2} ${x2} ${y2}`; }
+    else { const bulge = 46 + Math.min(60, Math.abs(y2 - y1) * .12); d = `M${x1} ${y1}C${x1 + bulge} ${y1} ${x2 + bulge} ${y2} ${x2} ${y2}`; }
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d);
+    p.setAttribute("class", `edge ${e.type}`);
+    if (e.type !== "forbidden") p.setAttribute("marker-end", `url(#m-${e.type})`);
+    gEdges.appendChild(p);
+    e.path = p; e.len = p.getTotalLength();
+    if (e.label) {
+      const m = p.getPointAtLength(e.len / 2);
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", m.x); t.setAttribute("y", m.y - 6); t.setAttribute("text-anchor", "middle");
+      t.setAttribute("class", "elabel"); t.textContent = e.label;
+      gLabels.appendChild(t); e.labelEl = t;
+    }
+    if (e.type === "forbidden") {
+      const m = p.getPointAtLength(e.len * .55);
+      const g = document.createElementNS(SVGNS, "g");
+      g.setAttribute("class", "blocker");
+      g.innerHTML = `<circle cx="${m.x}" cy="${m.y}" r="15" style="fill:var(--surface);stroke:var(--forbid)" stroke-width="3"/>
+        <path d="M${m.x - 9} ${m.y + 9}L${m.x + 9} ${m.y - 9}" style="stroke:var(--forbid)" stroke-width="3"/>
+`;
+      gLabels.appendChild(g); e.blocker = g;
+      if (e.labelEl) { e.labelEl.remove(); e.labelEl = null; }
+    }
+    const dot = document.createElementNS(SVGNS, "circle");
+    dot.setAttribute("r", e.type === "forbidden" ? 5 : 3.4);
+    dot.setAttribute("class", "dot");
+    dot.style.fill = (`var(--${({flow:"process",back:"store",bounded:"gate",ext:"external",ai:"ai",forbidden:"forbid"})[e.type]})`);
+    gDots.appendChild(dot);
+    e.dot = dot; e.t = Math.random();
+  });
+  svg.append(gEdges, gDots, gLabels);
+}
+
+/* =====================================================================
+   VIEW — pan / zoom
+   ===================================================================== */
+const view = { x: 0, y: 0, k: 1 };
+function applyView(ease) {
+  world.classList.toggle("ease", !!ease);
+  world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`;
+}
+function availRect() {
+  const barH = document.getElementById("bar").offsetHeight;
+  const drawerOpen = document.body.classList.contains("drawer-open");
+  const mobile = innerWidth <= 760;
+  const w = innerWidth - (drawerOpen && !mobile ? 400 : 0);
+  const h = innerHeight - barH - (drawerOpen && mobile ? innerHeight * .62 : 0);
+  return { x: 0, y: barH, w, h };
+}
+function fit(ease = true) {
+  const r = availRect();
+  if (innerWidth <= 760) {            // phone: fit the height, pan sideways through the stages
+    view.k = Math.max(.3, Math.min(1, r.h / WORLD_H * .97));
+    view.x = 0;
+    view.y = r.y + (r.h - WORLD_H * view.k) / 2;
+    applyView(ease); return;
+  }
+  const legendH = legend.classList.contains("min") ? 0 : legend.offsetHeight + 16;
+  const h = r.h - legendH;
+  const k = Math.min(r.w / WORLD_W, h / WORLD_H) * .97;
+  view.k = Math.max(.15, Math.min(1.4, k));
+  view.x = r.x + (r.w - WORLD_W * view.k) / 2;
+  view.y = r.y + (h - WORLD_H * view.k) / 2;
+  applyView(ease);
+}
+function centerOn(ids, ease = true) {
+  const ns = ids.map(id => BY_ID[id]).filter(Boolean);
+  if (!ns.length) return;
+  const r = availRect();
+  const minX = Math.min(...ns.map(n => n.x)), maxX = Math.max(...ns.map(n => n.x + n.w));
+  const minY = Math.min(...ns.map(n => n.y)), maxY = Math.max(...ns.map(n => n.y + n.h));
+  const k = Math.min(1.1, Math.max(view.k, .55), r.w / (maxX - minX + 240), r.h / (maxY - minY + 200));
+  view.k = Math.max(.2, k);
+  view.x = r.x + r.w / 2 - ((minX + maxX) / 2) * view.k;
+  view.y = r.y + r.h / 2 - ((minY + maxY) / 2) * view.k;
+  applyView(ease);
+}
+function zoomAt(f, cx, cy) {
+  const k = Math.max(.15, Math.min(2.5, view.k * f));
+  const wx = (cx - view.x) / view.k, wy = (cy - view.y) / view.k;
+  view.k = k; view.x = cx - wx * k; view.y = cy - wy * k;
+  applyView(false);
+}
+viewport.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.ctrlKey || Math.abs(e.deltaY) >= Math.abs(e.deltaX)) zoomAt(Math.exp(-e.deltaY * .0016), e.clientX, e.clientY);
+  else { view.x -= e.deltaX; applyView(false); }
+}, { passive: false });
+
+const pointers = new Map();
+let drag = null, moved = false, pinch = null;
+viewport.addEventListener("pointerdown", e => {
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), k: view.k };
+    drag = null; return;
+  }
+  drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; moved = false;
+});
+addEventListener("pointermove", e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    zoomAt((pinch.k * d / pinch.d) / view.k, (p.x + q.x) / 2, (p.y + q.y) / 2);
+    return;
+  }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!moved && Math.hypot(dx, dy) > 4) { moved = true; viewport.classList.add("dragging"); viewport.setPointerCapture?.(e.pointerId); }
+  if (moved) { view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(false); }
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  viewport.classList.remove("dragging");
+  const wasClickOnBg = drag && !moved && !e.target.closest?.(".node");
+  drag = null;
+  if (wasClickOnBg && e.type === "pointerup") { clearSelection(); }
+}
+addEventListener("pointerup", endPointer);
+addEventListener("pointercancel", endPointer);
+
+/* =====================================================================
+   STATE — selection, hover, search, rules, tours
+   ===================================================================== */
+const S = { sel: null, hover: null, query: "", rule: null, tour: null, step: 0, filter: null };
+
+function lineage(id) {
+  const nodes = new Set([id]), edges = new Set();
+  const walk = (start, dir) => {
+    const stack = [start], seen = new Set([start]);
+    while (stack.length) {
+      const cur = stack.pop();
+      for (const e of (dir === "down" ? OUT[cur] : IN[cur])) {
+        if (e.type === "forbidden") continue;
+        if (e.type === "back" && cur !== id) continue; // follow write-backs only one hop
+        edges.add(e);
+        const nxt = dir === "down" ? e.to : e.from;
+        nodes.add(nxt);
+        if (!seen.has(nxt) && e.type !== "back") { seen.add(nxt); stack.push(nxt); }
+      }
+    }
+  };
+  walk(id, "down"); walk(id, "up");
+  // always show the forbidden edge touching this node, so the boundary is visible
+  [...IN[id], ...OUT[id]].forEach(e => { if (e.type === "forbidden") { edges.add(e); nodes.add(e.from); nodes.add(e.to); } });
+  return { nodes, edges };
+}
+function neighbours(id) {
+  const nodes = new Set([id]), edges = new Set();
+  [...IN[id], ...OUT[id]].forEach(e => { edges.add(e); nodes.add(e.from); nodes.add(e.to); });
+  return { nodes, edges };
+}
+function matches(q) {
+  const s = q.toLowerCase();
+  return NODES.filter(n => [n.label, n.sub, n.plain, ...(n.pts || []), ...(n.tech || [])].join(" ").toLowerCase().includes(s));
+}
+
+function activeSet() {
+  if (S.tour) {
+    const steps = TOURS[S.tour.i].steps;
+    const nodes = new Set(steps.slice(0, S.step + 1).map(s => s[0]));
+    const edges = new Set();
+    for (let i = 1; i <= S.step; i++) {
+      const a = steps[i - 1][0], b = steps[i][0];
+      EDGE_OBJS.forEach(e => { if ((e.from === a && e.to === b) || (e.from === b && e.to === a)) edges.add(e); });
+    }
+    const cur = steps[S.step][0];
+    neighbours(cur).edges.forEach(e => { if (nodes.has(e.from) && nodes.has(e.to)) edges.add(e); });
+    return { nodes, edges, focus: cur };
+  }
+  if (S.rule != null) {
+    const r = RULES[S.rule];
+    const nodes = new Set(r.n), edges = new Set();
+    EDGE_OBJS.forEach(e => { if (nodes.has(e.from) && nodes.has(e.to)) edges.add(e); });
+    return { nodes, edges };
+  }
+  if (S.hover && S.hover !== S.sel) return neighbours(S.hover);
+  if (S.filter) return legendSet(S.filter);
+  if (S.sel) return lineage(S.sel);
+  if (S.query) {
+    const nodes = new Set(matches(S.query).map(n => n.id));
+    return { nodes, edges: new Set(), search: true };
+  }
+  return null;
+}
+
+function render() {
+  const a = activeSet();
+  NODES.forEach(n => {
+    const on = !a || a.nodes.has(n.id);
+    n.el.classList.toggle("dim", !on);
+    n.el.classList.toggle("sel", n.id === S.sel || (a && a.focus === n.id));
+    n.el.classList.toggle("hit", !!(a && a.search && on));
+    n.el.classList.toggle("pulse", !!(a && a.focus === n.id));
+  });
+  EDGE_OBJS.forEach(e => {
+    const on = a && a.edges.has(e);
+    e.path.classList.toggle("on", !!on);
+    e.path.classList.toggle("dim", !!a && !on);
+    if (e.labelEl) e.labelEl.classList.toggle("on", !!on);
+    e.active = !a || on;
+    e.dot.style.display = flowOn && e.active && !(a && a.search) ? "" : "none";
+  });
+}
+
+/* =====================================================================
+   DRAWER
+   ===================================================================== */
+const drawer = document.getElementById("drawer"), drawerIn = document.getElementById("drawerIn");
+function openDrawer(html) {
+  drawerIn.innerHTML = html; drawerIn.scrollTop = 0;
+  drawer.classList.add("open"); document.body.classList.add("drawer-open");
+}
+function closeDrawer() { drawer.classList.remove("open"); document.body.classList.remove("drawer-open"); }
+
+function linkList(edges, dirKey) {
+  if (!edges.length) return `<p style="color:var(--muted);margin:0">—</p>`;
+  return `<div class="links">${edges.map(e => {
+    const n = BY_ID[e[dirKey]];
+    const note = e.type === "forbidden" ? "never" : e.label;
+    return `<button data-go="${n.id}" style="--k:var(--${n.kind})"><i></i>${esc(n.label)}${note ? ` <em>${esc(note)}</em>` : ""}</button>`;
+  }).join("")}</div>`;
+}
+function showNode(id) {
+  const n = BY_ID[id];
+  const stage = STAGES[n.col];
+  const rules = RULES.map((r, i) => ({ r, i })).filter(x => x.r.n.includes(id));
+  openDrawer(`
+    <div class="eyebrow" style="--k:var(--${n.kind})">${String(n.col + 1).padStart(2, "0")} · ${esc(stage.t)} <span class="chip">${esc(KINDS[n.kind])}</span></div>
+    <h2>${esc(n.label)}</h2>
+    <div class="sub">${esc(n.sub)}</div>
+    <p class="plain">${esc(n.plain)}</p>
+    ${n.pts && n.pts.length ? `<ul class="pts">${n.pts.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+    ${(n.sections || []).map(sec => `<h3>${esc(sec.h)}</h3>${sec.intro ? `<p class="intro">${esc(sec.intro)}</p>` : ""}<${sec.ol ? "ol" : "ul"} class="pts${sec.ol ? " steps" : ""}">${sec.items.map(i => `<li>${esc(i)}</li>`).join("")}</${sec.ol ? "ol" : "ul"}>`).join("")}
+    <h3>Data comes from</h3>${linkList(IN[id], "from")}
+    <h3>Data goes to</h3>${linkList(OUT[id], "to")}
+    ${rules.length ? `<h3>Rules that apply here</h3>${rules.map(x => `<div class="rule-card${x.r.red ? " red" : ""}" data-rule="${x.i}"><b>${esc(x.r.t)}</b><span>${esc(x.r.d)}</span></div>`).join("")}` : ""}
+    ${n.tech && n.tech.length ? `<div class="tech-only"><h3>In the code</h3><div class="tech">${n.tech.map(t => `<code>${esc(t)}</code>`).join("")}</div>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px">src/ = companion/src · ext/ = extension/src</p></div>` : ""}
+  `);
+}
+function showRules() {
+  openDrawer(`
+    <div class="eyebrow">Boundaries</div>
+    <h2>Rules the flow obeys</h2>
+    <p class="plain">These are the lines the code is built not to cross. Click one to light up the part of the map it governs.</p>
+    ${RULES.map((r, i) => `<div class="rule-card${r.red ? " red" : ""}${S.rule === i ? " on" : ""}" data-rule="${i}" tabindex="0"><b>${esc(r.t)}</b><span>${esc(r.d)}</span></div>`).join("")}
+  `);
+}
+drawerIn.addEventListener("click", e => {
+  const go = e.target.closest("[data-go]");
+  if (go) { select(go.dataset.go, true); return; }
+  const rc = e.target.closest("[data-rule]");
+  if (rc) { const i = +rc.dataset.rule; S.rule = S.rule === i ? null : i; S.sel = null; showRules(); render(); if (S.rule != null) centerOn(RULES[i].n); }
+});
+drawerIn.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("[data-rule]")) e.target.click(); });
+document.getElementById("drawerX").addEventListener("click", clearSelection);
+
+/* =====================================================================
+   ACTIONS
+   ===================================================================== */
+function select(id, pan) {
+  endTour(true);
+  S.sel = id; S.rule = null; S.hover = null; setFilter(null);
+  showNode(id); render();
+  if (pan) centerOn([...lineage(id).nodes].length > 18 ? [id] : [...neighbours(id).nodes]);
+  hideHint();
+}
+function clearSelection() {
+  S.sel = null; S.rule = null; setFilter(null); closeDrawer(); render();
+}
+
+/* legend filter: one box kind, or one line style, in the foreground */
+function legendSet(f) {
+  if (f.kind) {
+    const nodes = new Set(NODES.filter(n => n.kind === f.kind).map(n => n.id));
+    const edges = new Set(EDGE_OBJS.filter(e => nodes.has(e.from) && nodes.has(e.to)));
+    return { nodes, edges };
+  }
+  const edges = new Set(EDGE_OBJS.filter(e => e.type === f.etype));
+  const nodes = new Set([...edges].flatMap(e => [e.from, e.to]));
+  return { nodes, edges };
+}
+function setFilter(f) {
+  S.filter = f;
+  legend.querySelectorAll(".it").forEach(b => b.setAttribute("aria-pressed",
+    !!f && ((f.kind && b.dataset.kind === f.kind) || (f.etype && b.dataset.etype === f.etype))));
+}
+document.getElementById("legend").addEventListener("click", e => {
+  const b = e.target.closest(".it"); if (!b) return;
+  const f = b.dataset.kind ? { kind: b.dataset.kind } : { etype: b.dataset.etype };
+  const same = S.filter && S.filter.kind === f.kind && S.filter.etype === f.etype;
+  endTour(true);
+  S.sel = null; S.rule = null; S.query = ""; q.value = ""; closeDrawer();
+  setFilter(same ? null : f); render(); hideHint();
+});
+
+world.addEventListener("click", e => {
+  const b = e.target.closest(".node"); if (!b || moved) return;
+  const id = b.dataset.id;
+  if (S.sel === id) clearSelection(); else select(id, false);
+});
+world.addEventListener("pointerover", e => { const b = e.target.closest(".node"); if (b && !S.tour) { S.hover = b.dataset.id; render(); } });
+world.addEventListener("pointerout", e => { const b = e.target.closest(".node"); if (b && S.hover) { S.hover = null; render(); } });
+world.addEventListener("focusin", e => { const b = e.target.closest(".node"); if (b && !S.tour) { S.hover = b.dataset.id; render(); } });
+world.addEventListener("focusout", () => { if (S.hover) { S.hover = null; render(); } });
+
+/* search */
+const q = document.getElementById("q");
+q.addEventListener("input", () => {
+  S.query = q.value.trim(); if (S.query) { S.sel = null; S.rule = null; setFilter(null); closeDrawer(); }
+  render();
+  const m = S.query ? matches(S.query) : [];
+  if (m.length && m.length <= 10) centerOn(m.map(n => n.id));
+});
+q.addEventListener("keydown", e => {
+  if (e.key === "Enter") { const m = matches(q.value.trim()); if (m[0]) { S.query = ""; select(m[0].id, true); } }
+  if (e.key === "Escape") { q.value = ""; S.query = ""; render(); q.blur(); }
+});
+
+/* toggles */
+const techBtn = document.getElementById("techBtn");
+techBtn.addEventListener("click", () => {
+  const on = techBtn.getAttribute("aria-pressed") !== "true";
+  techBtn.setAttribute("aria-pressed", on); document.body.classList.toggle("no-tech", !on);
+  try { localStorage.setItem("dfmap-tech", on ? "1" : "0"); } catch (_) {}
+});
+let flowOn = !reduceMotion;
+const flowBtn = document.getElementById("flowBtn");
+flowBtn.setAttribute("aria-pressed", flowOn);
+flowBtn.addEventListener("click", () => { flowOn = !flowOn; flowBtn.setAttribute("aria-pressed", flowOn); render(); });
+
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const root = document.documentElement;
+  const cur = root.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  root.dataset.theme = cur === "dark" ? "light" : "dark";
+  try { localStorage.setItem("dfmap-theme", root.dataset.theme); } catch (_) {}
+});
+try {
+  const t = localStorage.getItem("dfmap-theme"); if (t) document.documentElement.dataset.theme = t;
+  if (localStorage.getItem("dfmap-tech") === "0") { techBtn.setAttribute("aria-pressed", "false"); document.body.classList.add("no-tech"); }
+} catch (_) {}
+
+document.getElementById("rulesBtn").addEventListener("click", () => {
+  endTour(true);
+  if (drawer.classList.contains("open") && !S.sel) { S.rule = null; closeDrawer(); render(); return; }
+  S.sel = null; setFilter(null); showRules(); render();
+});
+
+document.getElementById("zin").addEventListener("click", () => zoomAt(1.25, innerWidth / 2, innerHeight / 2));
+document.getElementById("zout").addEventListener("click", () => zoomAt(.8, innerWidth / 2, innerHeight / 2));
+document.getElementById("zfit").addEventListener("click", () => fit());
+
+const legend = document.getElementById("legend");
+document.getElementById("legendHide").addEventListener("click", e => {
+  legend.classList.toggle("min"); e.currentTarget.textContent = legend.classList.contains("min") ? "+" : "–";
+});
+
+/* tours */
+const tourMenu = document.getElementById("tourMenu"), tourBtn = document.getElementById("tourBtn");
+TOURS.forEach((t, i) => {
+  const b = el("button", null, `${esc(t.name)}<small>${esc(t.hint)} · ${t.steps.length} steps</small>`);
+  b.setAttribute("role", "menuitem");
+  b.addEventListener("click", () => { toggleMenu(false); startTour(i); });
+  tourMenu.appendChild(b);
+});
+function toggleMenu(open) { tourMenu.classList.toggle("open", open); tourBtn.setAttribute("aria-expanded", open); }
+tourBtn.addEventListener("click", e => { e.stopPropagation(); toggleMenu(!tourMenu.classList.contains("open")); });
+document.addEventListener("click", e => { if (!e.target.closest(".menu")) toggleMenu(false); });
+
+const tourEl = document.getElementById("tour");
+function startTour(i) {
+  S.sel = null; S.rule = null; S.hover = null; S.query = ""; q.value = ""; setFilter(null); closeDrawer();
+  S.tour = { i }; S.step = 0; tourEl.classList.add("open"); showStep(); hideHint();
+}
+function showStep() {
+  const t = TOURS[S.tour.i], [id, title, text] = t.steps[S.step];
+  document.getElementById("tourName").textContent = t.name;
+  document.getElementById("tourTitle").textContent = title;
+  document.getElementById("tourText").textContent = text;
+  document.getElementById("tourCount").textContent = `${S.step + 1} / ${t.steps.length}`;
+  document.getElementById("tourProg").style.width = ((S.step + 1) / t.steps.length * 100) + "%";
+  document.getElementById("tourPrev").disabled = S.step === 0;
+  document.getElementById("tourNext").textContent = S.step === t.steps.length - 1 ? "Finish" : "Next";
+  render();
+  const prev = S.step > 0 ? [t.steps[S.step - 1][0]] : [];
+  centerOn([id, ...prev]);
+}
+function endTour(silent) {
+  if (!S.tour) return;
+  S.tour = null; tourEl.classList.remove("open");
+  if (!silent) render();
+}
+document.getElementById("tourNext").addEventListener("click", () => {
+  const t = TOURS[S.tour.i];
+  if (S.step < t.steps.length - 1) { S.step++; showStep(); } else { endTour(); fit(); }
+});
+document.getElementById("tourPrev").addEventListener("click", () => { if (S.step > 0) { S.step--; showStep(); } });
+document.getElementById("tourClose").addEventListener("click", () => { endTour(); fit(); });
+
+/* keyboard */
+addEventListener("keydown", e => {
+  if (e.target.matches("input")) return;
+  if (e.key === "/") { e.preventDefault(); q.focus(); }
+  else if (e.key === "Escape") { if (S.tour) { endTour(); fit(); } else { toggleMenu(false); clearSelection(); } }
+  else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey) fit();
+  else if (S.tour && e.key === "ArrowRight") document.getElementById("tourNext").click();
+  else if (S.tour && e.key === "ArrowLeft") document.getElementById("tourPrev").click();
+});
+
+/* hint */
+const hint = document.getElementById("hint");
+function hideHint() { hint.style.opacity = "0"; }
+setTimeout(hideHint, 7000);
+
+/* =====================================================================
+   FLOW ANIMATION — evidence packets moving along each connection
+   ===================================================================== */
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (flowOn) {
+    for (const e of EDGE_OBJS) {
+      if (!e.active || e.dot.style.display === "none") continue;
+      const speed = e.type === "forbidden" ? 70 : 110;
+      e.t = (e.t + dt * speed / e.len) % 1;
+      let t = e.t, op = 1;
+      if (e.type === "forbidden") {         // the packet reaches the barrier and is stopped
+        const stopAt = .55;
+        if (t > stopAt) { op = Math.max(0, 1 - (t - stopAt) / .12); t = stopAt; }
+      } else {
+        op = Math.min(1, t * 8, (1 - t) * 8);
+      }
+      const p = e.path.getPointAtLength(t * e.len);
+      e.dot.setAttribute("cx", p.x); e.dot.setAttribute("cy", p.y);
+      e.dot.setAttribute("opacity", op);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+/* boot */
+function boot() {
+  document.documentElement.style.setProperty("--barh", document.getElementById("bar").offsetHeight + "px");
+  layout(); buildEdges(); render(); fit(false);
+}
+boot();
+let rz;
+addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { document.documentElement.style.setProperty("--barh", document.getElementById("bar").offsetHeight + "px"); fit(false); }, 120); });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layout(); buildEdges(); render(); fit(false); });
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
