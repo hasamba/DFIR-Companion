@@ -800,6 +800,7 @@
     "superTimelineStore.ts": "analysis/timeline",
     "supportBundle.ts": "analysis/case",
     "swimlane.ts": "analysis/detect",
+    "synthCaps.ts": "shared",
     "synthEvidence.ts": "analysis/ai",
     "synthGroup.ts": "analysis/ai",
     "synthGroupMembers.ts": "analysis/ai",

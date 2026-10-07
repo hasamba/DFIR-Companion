@@ -15,6 +15,7 @@ import { deriveIocSources } from "./iocCorroboration.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import { intelOrigins, type LineageInput } from "./intelLineage.js";
 import { MENTIONED_NOTE } from "./iocMentioned.js";
+import { capDisclosure } from "./synthCaps.js";
 
 export interface IocAnchor {
   value: string;
@@ -205,7 +206,7 @@ export function rankConnectiveIocs(
 }
 
 // Compact prompt digest of the top connective indicators, for buildSynthesisContext.
-export function buildConnectiveIocDigest(anchors: IocAnchor[]): string {
+export function buildConnectiveIocDigest(anchors: IocAnchor[], total: number = anchors.length): string {
   if (!anchors.length) return "";
   const lines = anchors.map((a) => {
     const parts: string[] = [];
@@ -224,5 +225,6 @@ export function buildConnectiveIocDigest(anchors: IocAnchor[]): string {
     const ref = a.mentioned ? ` — ${MENTIONED_NOTE}` : "";
     return `- ${a.value}${parts.length ? ` [${parts.join(" | ")}]` : ""}${flags ? ` ⚠ ${flags}` : ""}${ref}${conflict}`;
   });
-  return `CONNECTIVE INDICATORS (cross-host / multi-tool — likely the attack backbone, weigh heavily):\n${lines.join("\n")}\n\n`;
+  const cut = capDisclosure(anchors.length, total, "connective indicators");
+  return `CONNECTIVE INDICATORS (cross-host / multi-tool — likely the attack backbone, weigh heavily):\n${lines.join("\n")}\n${cut ? `${cut}\n` : ""}\n`;
 }
