@@ -15,7 +15,7 @@ const finding = (id: string, title: string): Finding =>
 const event = (id: string, related: string[]): ForensicEvent =>
   ({ id, relatedFindingIds: related }) as unknown as ForensicEvent;
 const state = (findings: Finding[], events: ForensicEvent[] = []): InvestigationState =>
-  ({ findings, forensicTimeline: events }) as unknown as InvestigationState;
+  ({ findings, forensicTimeline: events, iocs: [] }) as unknown as InvestigationState;
 
 describe("carryUnshownFindings (#2006)", () => {
   it("keeps an unshown finding the model did not re-emit, with its id and event link", () => {
@@ -57,5 +57,35 @@ describe("carryUnshownFindings (#2006)", () => {
     const r = carryUnshownFindings(next, { prior, echoedIds: new Set(), markers: [] });
     expect(r.state.findings).toHaveLength(1);
     expect(r.state.findings[0].title).toBe("New title");
+  });
+
+  const rejected = (ref: string) =>
+    ({
+      id: `event:${ref}`,
+      kind: "event",
+      ref,
+      reason: "other",
+      note: "",
+      markedAt: "",
+      markedBy: "t",
+    }) as never;
+
+  it("does not carry a finding whose every cited event the analyst rejected", () => {
+    const prior = state([finding("f-9", "Zulu rare thing")], [event("e1", ["f-9"])]);
+    const next = state([], [event("e1", [])]);
+    const r = carryUnshownFindings(next, { prior, echoedIds: new Set(), markers: [rejected("e1")] });
+    expect(r.carriedCount).toBe(0);
+    expect(r.state.findings).toEqual([]);
+  });
+
+  it("carries a mixed-support finding and strips the rejected citation", () => {
+    const f = { ...finding("f-9", "Zulu rare thing"), relatedEventIds: ["e1", "e2"] } as Finding;
+    const prior = state([f], [event("e1", ["f-9"]), event("e2", ["f-9"])]);
+    const next = state([], [event("e1", []), event("e2", [])]);
+    const r = carryUnshownFindings(next, { prior, echoedIds: new Set(), markers: [rejected("e1")] });
+    expect(r.carriedCount).toBe(1);
+    expect(r.state.findings[0].relatedEventIds).toEqual(["e2"]);
+    expect(r.state.forensicTimeline.find((e) => e.id === "e1")?.relatedFindingIds).toEqual([]);
+    expect(r.state.forensicTimeline.find((e) => e.id === "e2")?.relatedFindingIds).toEqual(["f-9"]);
   });
 });

@@ -1,4 +1,4 @@
-import { applyFalsePositive, type FalsePositiveMarker } from "../falsePositive.js";
+import { applyFalsePositive, falsePositiveEventIds, type FalsePositiveMarker } from "../falsePositive.js";
 import { deriveSemanticKey } from "../semanticKey.js";
 import type { Finding, InvestigationState } from "../stateTypes.js";
 import { supportingEventIds } from "./synthesisMerge.js";
@@ -13,6 +13,9 @@ import { supportingEventIds } from "./synthesisMerge.js";
  *   - The run already has a finding with the same id. The run's version wins.
  *   - The run has a NEW finding with the same semantic key or the same title. The model wrote that
  *     one this run, so the old unshown copy would only be a duplicate.
+ *
+ * A finding whose every cited event the analyst rejected is not carried, and a carried finding never
+ * keeps a citation to a rejected event: the run could no longer substantiate it.
  *
  * A finding the model WAS shown and dropped stays dropped: synthesis replacing its own conclusions
  * is the invariant. With no more than FINDINGS_ECHO_CAP findings, nothing is unshown and this is a
@@ -51,10 +54,21 @@ export function carryUnshownFindings(
   });
   if (candidates.length === 0) return { state: next, carriedCount: 0 };
 
-  const carried = applyFalsePositive({ ...prior, findings: candidates }, markers).findings;
+  const backing = supportingEventIds(prior, markers);
+  const benign = falsePositiveEventIds(markers);
+  const isBenign = (eid: string): boolean => benign.has(eid.trim().toLowerCase());
+  const everCited = (f: Finding): boolean =>
+    (f.relatedEventIds ?? []).length > 0 ||
+    prior.forensicTimeline.some((e) => e.relatedFindingIds.includes(f.id));
+  const carried = applyFalsePositive({ ...prior, findings: candidates }, markers)
+    .findings.filter((f) => !everCited(f) || (backing.get(f.id)?.size ?? 0) > 0)
+    .map((f) =>
+      (f.relatedEventIds ?? []).some(isBenign)
+        ? { ...f, relatedEventIds: (f.relatedEventIds ?? []).filter((eid) => !isBenign(eid)) }
+        : f,
+    );
   if (carried.length === 0) return { state: next, carriedCount: 0 };
 
-  const backing = supportingEventIds(prior, markers);
   const relink = new Map<string, string[]>();
   for (const f of carried)
     for (const eid of backing.get(f.id) ?? []) relink.set(eid, [...(relink.get(eid) ?? []), f.id]);
