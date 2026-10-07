@@ -136,13 +136,13 @@ export interface VelociraptorParseResult {
 }
 
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-// A field whose NAME marks its value as a software / assembly / schema version, not a network
-// address. `FileVersion:"11.0.49.0"` and `ProductVersion:"8.0.0.1"` are valid dotted quads, so octet
-// validation alone cannot reject them — the key is the only signal that they are not IOCs.
+// A field NAME that marks its value as a software version, not an address: `FileVersion:"11.0.49.0"` is a valid quad.
 const VERSION_KEY = /version|\bbuild\b|revision|assembly/i;
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 
 const SIGMA_LEVEL: Record<string, Severity> = {
+  emergency: "Critical",
+  emer: "Critical",
   critical: "Critical",
   crit: "Critical",
   high: "High",
