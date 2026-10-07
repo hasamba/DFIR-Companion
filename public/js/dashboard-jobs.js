@@ -284,10 +284,9 @@
     const prog = document.getElementById("deepPassProgress");
     const job = deepPassJob();
     if (prog && job) {
-      const p = job.progress
-        ? ` (${job.progress.done}/${job.progress.total})`
-        : "";
-      prog.textContent = (job.detail || "running") + p;
+      // The detail already names the batch ("reading batch 2 of 3"); a done/total count beside
+      // it differs by one and reads as a second, conflicting number.
+      prog.textContent = job.detail || "running";
     }
     if (synth && !dp) {
       const run = document.getElementById("deepPassRun");
