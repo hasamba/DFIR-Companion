@@ -25,10 +25,12 @@
 //                  MAX_MARKER_SPAN_MS in total. A cluster that runs longer than that is not a build
 //                  and is discarded rather than grown, so growth cannot walk across a busy host.
 //   3. CORROBORATION — a cluster becomes a window only when it holds at least one PROVISIONER marker
-//                  (not just servicing), AND either an observed rename bound falls inside it or it
-//                  holds at least MIN_MARKERS rows naming at least two different provisioners.
-//                  Windows Update and servicing run on every live host, so they add to a window but
-//                  never open one (#1695). One stray `\Windows\Installer\` row never opens a window.
+//                  (not just servicing) AND an observed rename bound of THIS host falls inside it
+//                  (padded by WINDOW_MARGIN_MS). Marker text is written by whoever ran the commands,
+//                  so no amount of it opens a window by itself (#2004). Windows Update and servicing
+//                  run on every live host, so they add to a window but never open one (#1695). One
+//                  stray `\Windows\Installer\` row never opens a window. A forged marker beside a
+//                  genuine rename bound still corroborates; the data carries no stronger proof.
 //   4. VETO      — a window holding a hard attacker signal (NTDS.dit, an LSASS dump, recovery
 //                  inhibition, coercion tooling, a ransomware signal, an analyst-promoted row) is
 //                  dropped whole, the same way gapHostHistory.ts leaves a host whole when its
@@ -76,14 +78,12 @@ const MAX_MARKER_SPAN_MS = 6 * 60 * MINUTE;
 // is NOT a build (a cluster over MAX_MARKER_SPAN_MS is discarded). A caller that reads only part of the
 // record reads this far around the rows it asks about (#1700).
 export const BUILD_WINDOW_REACH_MS = 2 * MAX_MARKER_SPAN_MS + WINDOW_MARGIN_MS;
-// Markers needed to corroborate a cluster that contains no rename bound.
-const MIN_MARKERS = 3;
-const MIN_MARKER_KINDS = 2;
 
 // ───────────────────────────── markers ─────────────────────────────
 
-// Deliberately narrow and anchored on names a build writes and an intruder gains nothing by faking:
-// the provisioner's own tool tree and the servicing stack. gapEdgeClass.provisioningReason is NOT
+// Deliberately narrow and anchored on names a build writes: the provisioner's own tool tree and the
+// servicing stack. An intruder CAN write these names, so a marker only locates a burst; the rename
+// bound is what proves the host was being built (#2004). gapEdgeClass.provisioningReason is NOT
 // reused — it refuses any row graded above Low, and recognising a Medium Chocolatey script block as
 // a build marker is exactly what this needs.
 const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
@@ -274,8 +274,7 @@ export function buildTimeWindows(
     const hasBound = (bounds.get(c.chain.host) ?? []).some((ms) => ms >= start && ms <= end);
     const provisioners = new Map([...c.kinds].filter(([kind]) => !SERVICING_KINDS.has(kind)));
     if (provisioners.size === 0) continue;
-    const dense = count >= MIN_MARKERS && provisioners.size >= MIN_MARKER_KINDS;
-    if (!hasBound && !dense) continue;
+    if (!hasBound) continue;
     windows.push({
       host: c.chain.host,
       names: [...c.chain.names],
