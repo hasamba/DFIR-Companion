@@ -56,6 +56,24 @@ describe("parseSyslogLine", () => {
     expect(p.app).toBe("sshd");
     expect(p.message).toContain("Failed password");
   });
+  // #2003 — an offset-less RFC 5424 stamp is wall-clock text; it must not shift by the server zone.
+  it("keeps an offset-less RFC 5424 timestamp unshifted under a non-UTC server TZ (#2003)", () => {
+    const prev = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const naive = "<30>1 2026-05-14T12:00:48 host1 app - - - hello";
+      expect(parseSyslogLine(naive, 2026)!.timestamp).toBe("2026-05-14T12:00:48.000Z");
+      expect(parseSyslogLine(naive.replace("12:00:48", "12:00:48Z"), 2026)!.timestamp).toBe(
+        "2026-05-14T12:00:48.000Z",
+      );
+      expect(parseSyslogLine(naive.replace("12:00:48", "12:00:48+02:00"), 2026)!.timestamp).toBe(
+        "2026-05-14T10:00:48.000Z",
+      );
+    } finally {
+      if (prev === undefined) delete process.env.TZ;
+      else process.env.TZ = prev;
+    }
+  });
   it("returns null for a non-syslog line", () => {
     expect(parseSyslogLine("just some prose without framing", 2024)).toBeNull();
   });

@@ -60,3 +60,48 @@ describe("buildFindingsEcho — prior severity", () => {
     expect(buildFindingsEcho(withFindings([]))).toBe("(none yet)");
   });
 });
+
+describe("buildFindingsEcho — long finding detail (#2001)", () => {
+  it("keeps the tail of a long description, where the late detail sits", () => {
+    const description = `${"lateral movement observed ".repeat(30)}then ran C:\\Windows\\Temp\\evil.ps1`;
+    const echo = buildFindingsEcho(withFindings([finding("f1", "High", { description })]));
+    expect(echo).toContain("evil.ps1");
+    expect(echo).toContain(" … ");
+  });
+
+  it("leaves a short description untouched", () => {
+    const echo = buildFindingsEcho(withFindings([finding("f1", "High", { description: "short text" })]));
+    expect(echo).toContain("said: short text");
+    expect(echo).not.toContain(" … ");
+  });
+});
+
+describe("buildFindingsEcho — 150 cap (#1994)", () => {
+  const headLines = (echo: string): string[] => echo.split("\n").filter((l) => l.startsWith("["));
+
+  it("keeps the severest findings and discloses the cut", () => {
+    const rows = [
+      finding("model-low", "Low"),
+      ...Array.from({ length: 160 }, (_, i) => finding(`h${i}`, "High")),
+      ...Array.from({ length: 39 }, (_, i) => finding(`m${i}`, "Medium")),
+    ];
+    const state = withFindings(rows);
+    const echo = buildFindingsEcho(state);
+    expect(headLines(echo)).toHaveLength(150);
+    expect(echo).toContain("(showing 150 of 200 findings, severest first)");
+    expect(echo).not.toContain("[model-low]");
+    expect(echo).toContain("[h149]");
+    expect(state.findings[0].id).toBe("model-low");
+  });
+
+  it("adds no notice at exactly 150", () => {
+    const rows = Array.from({ length: 150 }, (_, i) => finding(`f${i}`, "High"));
+    expect(buildFindingsEcho(withFindings(rows))).not.toContain("showing");
+  });
+
+  it("keeps insertion order among equal severities", () => {
+    const rows = Array.from({ length: 151 }, (_, i) => finding(`f${i}`, "High"));
+    const ids = headLines(buildFindingsEcho(withFindings(rows))).map((l) => /^\[([^\]]+)\]/.exec(l)![1]);
+    expect(ids).toEqual(rows.slice(0, 150).map((f) => f.id));
+  });
+});

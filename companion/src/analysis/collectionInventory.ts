@@ -1,3 +1,4 @@
+import { cleanRereadReason } from "./veloRereadReason.js";
 import { canonicalHostName, resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import {
   DETECTION_FEED_RE,
@@ -231,7 +232,9 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
           windowFull?: unknown;
           order?: unknown;
           orderPartial?: unknown;
+          rereadDeclined?: unknown;
         };
+        const declinedWhy = cleanRereadReason(t.rereadDeclined); // #1992
         const span = spanTime(t.earliest) && spanTime(t.latest);
         const [ws, we] = [spanTime(t.windowStart), spanTime(t.windowEnd)]; // #1969
         return {
@@ -244,6 +247,7 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
           ...(ws || we ? { windowFull: t.windowFull === true } : {}),
           ...(t.order === "newest" ? { order: "newest" as const } : {}), // #1983
           ...(t.order === "newest" && t.orderPartial === true ? { orderPartial: true } : {}),
+          ...(declinedWhy ? { rereadDeclined: declinedWhy } : {}),
         };
       }),
       unreadArtifacts: named(j.unreadArtifacts).map((x) => ({
@@ -422,7 +426,10 @@ function partialDetail(t: TruncatedArtifact): string {
         : t.windowFull
           ? "rows outside the window"
           : "rows outside the window and later window rows";
-  return `partial — ${keptRowsNote(t)}${span}, ${lost} NOT COLLECTED (row cap)`;
+  // #1992: say why the plain read was kept. The reason is cleaned again here: it reaches the prompt.
+  const why = cleanRereadReason(t.rereadDeclined);
+  const tried = t.windowStart || t.windowEnd || t.order ? "" : why ? ` — re-read not used: ${why}` : "";
+  return `partial — ${keptRowsNote(t)}${span}, ${lost} NOT COLLECTED (row cap)${tried}`;
 }
 
 // A stored kept-span bound (#1950): an ISO time, or "". The job file is on disk and the value reaches
@@ -618,7 +625,8 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
             (t.windowStart || t.windowEnd
               ? `:w${t.windowStart ?? ""}-${t.windowEnd ?? ""}:${t.windowFull}`
               : "") +
-            (t.order ? `:o${t.order}${t.orderPartial ? "-partial" : ""}` : ""), // #1983
+            (t.order ? `:o${t.order}${t.orderPartial ? "-partial" : ""}` : "") + // #1983
+            (t.rereadDeclined ? `:d${t.rereadDeclined}` : ""), // #1992
         )
         .sort(),
       !!j.superTimelineOnly,

@@ -4,7 +4,7 @@ import { chunkToCsvText, parseCsv } from "../csvImport.js";
 import { lastImportEventSequence } from "../importResume.js";
 import { aggregateLogLines, type AggregateStats } from "../logAggregate.js";
 import { parseLogLines } from "../logImport.js";
-import { batchByBudget, estimateTokens, inputTokenBudget } from "../promptBudget.js";
+import { batchByBudget, estimateTokens, remainingBudget } from "../promptBudget.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
@@ -389,7 +389,7 @@ export async function analyzeCsv(
         estimateTokens(buildStateSummary(state)) +
         estimateTokens(chunkToCsvText(headers, [])) +
         64;
-      const budget = Math.max(0, inputTokenBudget() - overhead);
+      const budget = remainingBudget(overhead);
       return batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), budget);
     },
     buildPrompt: (state, batch, index, total) =>
@@ -440,7 +440,7 @@ export async function analyzeLog(
       const render = (t: (typeof templates)[number]) =>
         `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
       const overhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
-      const budget = Math.max(0, inputTokenBudget() - overhead);
+      const budget = remainingBudget(overhead);
       return batchByBudget(templates, opts.patternsPerBatch ?? 120, render, budget);
     },
     buildPrompt: (state, batch, index, total) =>

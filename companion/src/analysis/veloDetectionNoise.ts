@@ -16,6 +16,7 @@
 // ones that read a Velociraptor ROW stay here. That line is where the layering falls: a path test
 // needs nothing, a row test needs the importer.
 
+import { isChoosableContentPath, isUnforgeableContentPath } from "./detectionStackPaths.js";
 import { getCI, getPath, isObject, str, type MappedEvent } from "./siemImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 
@@ -25,6 +26,8 @@ type Row = Record<string, unknown>;
 // import this module. Re-exported here so every caller and the reasoning above stay put.
 export {
   isDetectionContentPath,
+  isUnforgeableContentPath,
+  isChoosableContentPath,
   isDetectionToolLocation,
   isCollectorOwnedLocation,
   isCollectorToolTreePath,
@@ -457,4 +460,18 @@ export function scriptHostPid(row: Row): number | undefined {
     }
   }
   return undefined;
+}
+
+const GRADE_ORDER = ["Info", "Low", "Medium", "High", "Critical"] as const;
+type Grade = (typeof GRADE_ORDER)[number];
+
+/**
+ * Grade a keyword hit by WHERE the matched file sits (#1998). Rule content in a location an intruder
+ * cannot forge is Info. Rule-looking content under a name anyone can create is capped at Low: it may
+ * be a real Sigma tree, but a payload parked in `\sigma\` must still reach the forensic timeline.
+ */
+export function gradeByContentLocation(path: string, severity: Grade): Grade {
+  if (isUnforgeableContentPath(path)) return "Info";
+  if (isChoosableContentPath(path) && GRADE_ORDER.indexOf(severity) > 1) return "Low";
+  return severity;
 }

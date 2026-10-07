@@ -5,6 +5,7 @@ import {
   inputTokenBudget,
   fitItemsToBudget,
   batchByBudget,
+  remainingBudget,
   DEFAULT_CONTEXT_TOKENS,
 } from "../../src/analysis/promptBudget.js";
 
@@ -63,5 +64,21 @@ describe("promptBudget", () => {
     // An item larger than the whole budget still becomes its own batch (never dropped).
     const huge = batchByBudget(["q".repeat(1000)], 50, (s) => s, 10);
     expect(huge).toEqual([["q".repeat(1000)]]);
+  });
+  it("remainingBudget never returns a non-positive number when overhead exceeds the budget (#2000)", () => {
+    process.env.DFIR_AI_CONTEXT_TOKENS = "200000";
+    delete process.env.DFIR_AI_MAX_TOKENS;
+    expect(remainingBudget(10)).toBe(inputTokenBudget() - 10);
+    expect(remainingBudget(inputTokenBudget() + 50_000)).toBe(1);
+    // ctx <= maxOut + margin makes inputTokenBudget 0; still floors at 1
+    process.env.DFIR_AI_CONTEXT_TOKENS = "5000";
+    expect(inputTokenBudget()).toBe(0);
+    expect(remainingBudget(0)).toBe(1);
+  });
+
+  it("an overhead-exceeded budget trims to one item instead of keeping all (#2000)", () => {
+    process.env.DFIR_AI_CONTEXT_TOKENS = "5000";
+    const items = Array.from({ length: 50 }, () => "x".repeat(400));
+    expect(fitItemsToBudget(items, (t) => t, remainingBudget(100))).toBe(1);
   });
 });

@@ -60,6 +60,19 @@ describe("applySeverityRestores", () => {
     expect(severityRestoredOf(out)).toBeUndefined();
   });
 
+  it("does not let a blank-key record restore a finding that has a claim key (#1991)", () => {
+    const out = applySeverityRestores(withFindings([f()]), [rec({ semanticKey: "" })]).findings[0];
+    expect(out.severity).toBe("Medium");
+    expect(severityRestoredOf(out)).toBeUndefined();
+  });
+
+  it("still lets a blank-key record restore a finding whose key is also blank (#1991)", () => {
+    const keyless = f({ semanticKey: "", title: "!!!", mitreTechniques: [] });
+    const out = applySeverityRestores(withFindings([keyless]), [rec({ semanticKey: "" })]).findings[0];
+    expect(out.severity).toBe("High");
+    expect(severityRestoredOf(out)).toBeDefined();
+  });
+
   it("does nothing to a finding with no cap", () => {
     const plain = f({ severityCap: undefined, severity: "High" });
     const state = withFindings([plain]);

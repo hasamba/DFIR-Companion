@@ -223,3 +223,45 @@ describe("readInIncidentWindow — a near-limit analyst filter", () => {
     );
   });
 });
+
+// #1992 — a re-read that was not used says why, so the inventory can tell the analyst.
+describe("readInIncidentWindow — rereadDeclined", () => {
+  const PSTREE = "Generic.System.Pstree";
+
+  it("names the reason for each window fallback", async () => {
+    const noClause = await readInIncidentWindow(fakeRead(cut, inWindow).read, PSTREE, undefined, WIN);
+    expect(noClause.rereadDeclined).toMatch(/no time column/);
+    const empty = await readInIncidentWindow(fakeRead(cut).read, USN, undefined, WIN);
+    expect(empty.rereadDeclined).toMatch(/no rows/);
+    const failed = await readInIncidentWindow(fakeRead(cut, new Error("boom")).read, USN, undefined, WIN);
+    expect(failed.rereadDeclined).toContain("boom");
+  });
+
+  it("is absent when the re-read was used, the read was whole, or it was scoped at the source", async () => {
+    const used = await readInIncidentWindow(fakeRead(cut, inWindow).read, USN, undefined, WIN);
+    expect(used.rereadDeclined).toBeUndefined();
+    const whole = await readInIncidentWindow(
+      fakeRead({ ...cut, truncated: false }).read,
+      USN,
+      undefined,
+      WIN,
+    );
+    expect(whole.rereadDeclined).toBeUndefined();
+    const scoped = await readInIncidentWindow(fakeRead(cut, inWindow).read, USN, undefined, {
+      kind: "scoped",
+    });
+    expect(scoped.rereadDeclined).toBeUndefined();
+  });
+
+  it("newest-first fallbacks name the reason", async () => {
+    const failed = await readInIncidentWindow(
+      fakeRead(cut, new Error("sort failed")).read,
+      USN,
+      undefined,
+      undefined,
+    );
+    expect(failed.rereadDeclined).toContain("sort failed");
+    const none = await readInIncidentWindow(fakeRead(cut).read, PSTREE, undefined, undefined);
+    expect(none.rereadDeclined).toMatch(/no time column/);
+  });
+});

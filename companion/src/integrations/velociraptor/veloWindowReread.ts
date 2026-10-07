@@ -13,6 +13,7 @@
 // With NO window known, a cut-short read is re-read newest-first instead (#1983, veloNewestRead.ts).
 //
 // Lives here, not in velociraptorApi.ts or composition/veloHunts.ts: both sit at their size ceiling.
+import { cleanRereadReason } from "../../analysis/veloRereadReason.js";
 import { containedWhereOrThrow, MAX_READ_WHERE_LENGTH } from "../../analysis/vqlInput.js";
 import { hasReservedColumn, newestOrder, type NewestOrder, type NewestSpan } from "./veloNewestRead.js";
 
@@ -106,8 +107,21 @@ export interface CappedRead {
   newest?: NewestSpan; // set on a sorted read: how many rows had a valid key, and their span
 }
 
-/** A read result, plus the window it was re-read inside, or `order` when it was re-read newest-first. */
-export type WindowedResult<R extends CappedRead> = R & { window?: ReadWindow; order?: "newest" };
+/**
+ * A read result, plus the window it was re-read inside, or `order` when it was re-read newest-first.
+ * `rereadDeclined` says why a cut-short read was kept as is (#1992); it is set only then.
+ */
+export type WindowedResult<R extends CappedRead> = R & {
+  window?: ReadWindow;
+  order?: "newest";
+  rereadDeclined?: string;
+};
+
+/** The plain read, kept as is, with the cleaned reason a re-read was not used (#1992). */
+const declined = <R extends CappedRead>(plain: R, why: string): WindowedResult<R> => {
+  const rereadDeclined = cleanRereadReason(why);
+  return rereadDeclined ? { ...plain, rereadDeclined } : plain;
+};
 
 type Read<R> = (where?: string, order?: NewestOrder) => Promise<R>;
 
@@ -141,17 +155,19 @@ export async function readInIncidentWindow<R extends CappedRead>(
     // Built inside the fallback: a failure here must not lose the rows the plain read holds. The
     // generated clause is checked for containment but never cut to the analyst cap (review, #1969).
     const clause = windowWhere(artifact, window);
-    if (!clause) return plain;
+    if (!clause) return declined(plain, "the artifact has no time column to window on");
     const combined = base ? `(${base}) AND ${clause}` : clause;
     const where = containedWhereOrThrow(combined, undefined, MAX_READ_WHERE_LENGTH);
     if (where !== combined) throw new Error("the window filter does not fit the read's WHERE limit");
     const windowed = await read(where);
-    return windowed.rows.length ? { ...windowed, window } : plain;
+    return windowed.rows.length
+      ? { ...windowed, window }
+      : declined(plain, "the window re-read returned no rows (time column may be absent on this server)");
   } catch (e) {
     log?.(
       `[velociraptor] ${artifact}: incident-window re-read failed, kept the plain read — ${(e as Error).message}`,
     );
-    return plain;
+    return declined(plain, `the window re-read failed: ${(e as Error).message}`);
   }
 }
 
@@ -167,10 +183,10 @@ async function readNewest<R extends CappedRead>(
   log?: (line: string) => void,
 ): Promise<WindowedResult<R>> {
   const order = newestOrder(artifact);
-  if (!order) return plain;
-  const keep = (why: string): R => {
+  if (!order) return declined(plain, "the artifact has no time column to sort on");
+  const keep = (why: string): WindowedResult<R> => {
     log?.(`[velociraptor] ${artifact}: newest-first re-read not used, kept the plain read — ${why}`);
-    return plain;
+    return declined(plain, `the newest-first re-read was not used: ${why}`);
   };
   if (hasReservedColumn(plain.rows)) return keep("a row already carries the reserved sort column");
   try {

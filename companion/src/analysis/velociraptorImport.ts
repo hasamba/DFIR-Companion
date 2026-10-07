@@ -67,7 +67,8 @@ import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 import {
-  isDetectionContentPath,
+  gradeByContentLocation,
+  isUnforgeableContentPath,
   isGeneratedModuleScript,
   isDetectionToolLocation,
 } from "./veloDetectionNoise.js";
@@ -135,13 +136,13 @@ export interface VelociraptorParseResult {
 }
 
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-// A field whose NAME marks its value as a software / assembly / schema version, not a network
-// address. `FileVersion:"11.0.49.0"` and `ProductVersion:"8.0.0.1"` are valid dotted quads, so octet
-// validation alone cannot reject them — the key is the only signal that they are not IOCs.
+// A field NAME that marks its value as a software version, not an address: `FileVersion:"11.0.49.0"` is a valid quad.
 const VERSION_KEY = /version|\bbuild\b|revision|assembly/i;
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 
 const SIGMA_LEVEL: Record<string, Severity> = {
+  emergency: "Critical",
+  emer: "Critical",
   critical: "Critical",
   crit: "Critical",
   high: "High",
@@ -219,9 +220,8 @@ function msgFingerprint(msg: string): string {
 
 // Many Velociraptor "*.Detection.*" artifacts (DetectRaptor et al.) carry their VERDICT in a
 // `Detection` field — a bare string ("Cobalt Strike: trick_ryuk.profile") or an object with a
-// rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID`. Per the
-// post-detection principle we consume that verdict (we don't re-evaluate the rule): its text
-// leads the description, its own criticality drives severity, and any Txxxx ids become MITRE.
+// rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID` (flat grade too).
+// We consume that verdict, not re-run the rule: text leads the description, grade drives severity.
 interface Verdict {
   title: string;
   critWord: string;
@@ -245,6 +245,7 @@ function rowVerdict(row: Row): Verdict | null {
   }
   if (!title) title = firstStr(row, ["RuleName", "RuleID"]).trim();
   if (!title) return null;
+  critWord ||= firstStr(row, ["Criticality", "Severity"]).trim().toLowerCase(); // flat grade; never `Level`
   const mitre = mitreFromText(
     title,
     firstStr(row, ["RuleName"]),
@@ -315,7 +316,7 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   genericIocs(
-    pairs.filter(([, v]) => !isDetectionContentPath(v)),
+    pairs.filter(([, v]) => !isUnforgeableContentPath(v)),
     sink,
   );
   const { sha256, md5 } = vrHashes(row);
@@ -519,7 +520,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
 
   // A real IOC unless it is the collector's OWN tooling, rule content, or a volatile container. Keyed
   // on toolOwned, not the grade — a corpus folder is attacker-choosable, so it must not delete (#720).
-  if (path && !isDetectionContentPath(path) && !grade.toolOwned && !grade.volatile)
+  if (path && !isUnforgeableContentPath(path) && !grade.toolOwned && !grade.volatile)
     addIoc(sink, "file", path);
   if (procName && !grade.toolOwned) addIoc(sink, "process", baseName(procName));
 
@@ -680,8 +681,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ]) ||
     str(getPath(row, "FileInfo.OSPath")).trim() ||
     str(getPath(row, "Detection.PathName"));
-  // A rule file / sample attack log: the hit is a keyword in the rule's own text, not host content — Info (#720).
-  if (isDetectionContentPath(path)) severity = "Info";
+  severity = gradeByContentLocation(path, severity); // rule-file keyword hit: Info, or Low if choosable (#1998)
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
   // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
@@ -711,7 +711,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
-  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
+  if (path && !isUnforgeableContentPath(path)) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
@@ -739,7 +739,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    titleTag = processName || pipe || (path && !isDetectionContentPath(path) ? baseName(path) : "");
+    titleTag = processName || pipe || (path && !isUnforgeableContentPath(path) ? baseName(path) : "");
     subject = parts.join(" - ");
   }
 

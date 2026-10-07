@@ -1,6 +1,6 @@
 import type { FalsePositiveMarker } from "../falsePositive.js";
 import type { HostAliasIndex } from "../hostAlias.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { ScopeWindow } from "../scope.js";
 import type { CollectionInventory } from "../collectionInventory.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
@@ -114,7 +114,7 @@ function trimTimelineToBudget(
     estimateTokens(overheadSourceText(blocks, lastSummary)) +
     estimateTokens(renderNewPromotedBlock(timeline.shownNew(), timeline.newLeftOut())) +
     OVERHEAD_SLACK_TOKENS;
-  const budget = Math.max(0, inputTokenBudget() - overhead);
+  const budget = remainingBudget(overhead);
   // Re-measure after each re-selection: fitTo picks a DIFFERENT set of that size (pinned promoted
   // rows first, #1586), so one measurement of the old set does not prove the new one fits.
   for (let pass = 0; pass < MAX_FIT_PASSES; pass++) {

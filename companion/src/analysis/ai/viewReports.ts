@@ -2,7 +2,7 @@ import type { PromotionIntent } from "../ingest/timelineImports.js";
 import type { AIProvider } from "../../providers/provider.js";
 import { z } from "zod";
 import { sortByEventTime } from "../forensicSort.js";
-import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
+import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import { segmentSessions, sessionEnvOptions } from "../sessionSegmentation.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperQuery, SuperLabelMap } from "../superTimeline.js";
@@ -78,7 +78,7 @@ function fitViewEvents(
     (e.srcIp || e.dstIp ? ` | net: ${[e.srcIp, e.dstIp].filter(Boolean).join(" → ")}` : "");
   const max = maxPromptEvents();
   let events = selectSynthesisEvents(all, max);
-  const fit = fitItemsToBudget(events, render, Math.max(0, inputTokenBudget() - overheadTokens));
+  const fit = fitItemsToBudget(events, render, remainingBudget(overheadTokens));
   if (fit < events.length) events = selectSynthesisEvents(all, fit);
   return { events: sortByEventTime(events), render };
 }
