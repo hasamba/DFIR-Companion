@@ -72,9 +72,25 @@ export function setFieldPickSink(sink: FieldPickSink | undefined): void {
   pickSink = sink;
 }
 
-/** A Windows record's EventData, under any of its three spellings. */
+/**
+ * A Windows record's EventData, under any of its three spellings — or the record itself when it is
+ * FLAT (#2023). NXLog's JSON output (and every OTRF/Mordor dataset built on it) writes Image,
+ * CommandLine, TargetUserName… at the top level beside EventID/Channel, with no nested object.
+ * Returning nothing there blanked every subject, account and process, so all events of one EID on a
+ * host collapsed into a single aggregated row and the tagger never saw an image path. Readers of
+ * EventData only look up named Windows fields, so the record's own envelope keys are inert here.
+ */
 export function windowsEventDataRaw(rec: Row): unknown {
-  return getCI(rec, "event_data") ?? getPath(rec, "winlog.event_data") ?? getCI(rec, "EventData");
+  return (
+    getCI(rec, "event_data") ??
+    getPath(rec, "winlog.event_data") ??
+    getCI(rec, "EventData") ??
+    (isFlatWindowsRecord(rec) ? rec : undefined)
+  );
+}
+
+function isFlatWindowsRecord(rec: Row): boolean {
+  return getCI(rec, "EventID") !== undefined && typeof getCI(rec, "Channel") === "string";
 }
 
 // The event's own time, and the key it came from. For Sysmon prefer the structured UtcTime (the
