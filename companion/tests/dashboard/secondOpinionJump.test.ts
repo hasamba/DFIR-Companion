@@ -12,14 +12,24 @@ const REC = {
   modelA: "a",
   modelB: "b",
   agreementCount: 3,
-  deltas: [{ id: "d1", kind: "severity", title: "T", status: "pending", aSeverity: "Low", bSeverity: "High" }],
+  deltas: [
+    { id: "d1", kind: "severity", title: "T", status: "pending", aSeverity: "Low", bSeverity: "High" },
+  ],
 };
 
 function harness(doc: { hidden?: boolean; activeElement?: { tagName: string } | null } = {}) {
   const els = new Map<string, Record<string, unknown>>();
   const el = (id: string) => {
     if (!els.has(id))
-      els.set(id, { value: "", textContent: "", innerHTML: "", disabled: false, checked: false, style: {}, scrollIntoView: vi.fn() });
+      els.set(id, {
+        value: "",
+        textContent: "",
+        innerHTML: "",
+        disabled: false,
+        checked: false,
+        style: {},
+        scrollIntoView: vi.fn(),
+      });
     return els.get(id)!;
   };
   const listeners: Array<() => void> = [];
