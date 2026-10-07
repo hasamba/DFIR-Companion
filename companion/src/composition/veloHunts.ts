@@ -319,7 +319,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           const scope = readScope(job.timeScope, caseScope, name); // scoped at source / window / none
           const res = await readInIncidentWindow(read, name, job.filters?.[name], scope, logLine);
           rows = res.rows;
-          if (res.truncated || res.window || res.order)
+          if (res.truncated || res.window || res.order || res.rereadDeclined)
             cutShort.push(truncatedRecord(name, rows, res.total, res));
           if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
