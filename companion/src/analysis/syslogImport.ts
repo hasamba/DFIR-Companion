@@ -16,7 +16,7 @@
 // path, which silently drops the rare high-signal line on a large, mostly-benign real log (a secret
 // spilled into a one-off `app: loaded shared secret …` line is precisely what gets outvoted).
 //
-// The RFC 5424 timestamp is a full RFC 3339 value (year + timezone) — no guessing. The RFC 3164
+// The RFC 5424 timestamp carries a year and normally a timezone (an offset-less one is kept as UTC, unshifted). The RFC 3164
 // timestamp carries NO YEAR (`MMM DD HH:MM:SS`); like ASA/Snort an assumed year is stamped and the
 // `mergeDelta` year-clamp re-anchors it once dated evidence lands. The host in the syslog line is
 // carried through as the event's `asset`. Public IPs and http(s) URLs in the message become IOCs
@@ -29,6 +29,7 @@
 import type { Severity } from "./stateTypes.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
 import { createSiemDebugTally } from "./siemImportDebug.js";
+import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 import {
   createEventAggregator,
   addIoc,
@@ -93,9 +94,10 @@ function stripStructuredData(rest: string): string {
   return s;
 }
 
-// Parse the RFC 5424 RFC-3339 timestamp (year + tz present) to a normalized ISO string. "" if bad.
+// Parse the RFC 5424 timestamp to a normalized ISO string. "" if bad. RFC 5424 requires an offset, but
+// real devices omit it; an offset-less stamp is tagged UTC lexically so the server zone cannot shift it (#2003).
 function parse5424Time(ts: string): string {
-  const t = Date.parse(ts.trim());
+  const t = Date.parse(tagNaiveAsUtc(ts.trim()));
   return Number.isNaN(t) ? "" : new Date(t).toISOString();
 }
 
