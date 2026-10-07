@@ -27,7 +27,8 @@ describe("parseAuditdLog — execution (SYSCALL + EXECVE + PATH + PROCTITLE)", (
   it("bumps to Medium + T1003.008 because the command reads /etc/shadow", () => {
     const e = parseAuditdLog(log).events[0];
     expect(e.severity).toBe("Medium");
-    expect(e.mitreTechniques).toContain("T1059");
+    // `cat` is not an interpreter, so the run alone earns no T1059; the shadow read still earns its own.
+    expect(e.mitreTechniques).not.toContain("T1059");
     expect(e.mitreTechniques).toContain("T1003.008");
   });
 
@@ -132,5 +133,35 @@ describe("parseAuditdLog — edges", () => {
     const r = parseAuditdLog([mk(1, 1490451000), mk(2, 1490451001)].join("\n"));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
+  });
+});
+
+describe("parseAuditdLog — T1059 only for interpreters", () => {
+  const exec = (exe: string, args: string[]) =>
+    [
+      `type=SYSCALL msg=audit(1490451300.100:300): arch=c000003e syscall=59 success=yes exit=0 ppid=1 pid=2 auid=1000 uid=1000 gid=1000 tty=pts0 ses=3 comm="x" exe="${exe}" key="exec"`,
+      `type=EXECVE msg=audit(1490451300.100:300): argc=${args.length} ${args.map((a, i) => `a${i}="${a}"`).join(" ")}`,
+    ].join("\n");
+
+  it("tags a shell or script interpreter run with T1059", () => {
+    for (const [exe, args] of [
+      ["/bin/bash", ["bash", "-c", "id"]],
+      ["/usr/bin/python3.11", ["python3.11", "script.py"]],
+      ["/usr/bin/perl", ["perl", "-e", "1"]],
+    ] as const) {
+      const e = parseAuditdLog(exec(exe, [...args])).events[0];
+      expect(e.mitreTechniques, exe).toContain("T1059");
+    }
+  });
+
+  it("does not tag an ordinary program run", () => {
+    for (const [exe, args] of [
+      ["/usr/bin/ls", ["ls", "-l"]],
+      ["/usr/bin/cat", ["cat", "notes.txt"]],
+      ["/usr/sbin/cron", ["cron"]],
+    ] as const) {
+      const e = parseAuditdLog(exec(exe, [...args])).events[0];
+      expect(e.mitreTechniques, exe).not.toContain("T1059");
+    }
   });
 });
