@@ -679,6 +679,7 @@
     "presidioPending.ts": "analysis/privacy",
     "presidioPersonFilter.ts": "analysis/privacy",
     "prevalence.ts": "analysis/detect",
+    "processInterpreter.ts": "analysis/ingest",
     "priorWork.ts": "analysis/workflow",
     "processLifetime.ts": "analysis/timeline",
     "promotionMerge.ts": "analysis/timeline",
