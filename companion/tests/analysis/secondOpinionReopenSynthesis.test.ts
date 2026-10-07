@@ -167,6 +167,25 @@ describe("reopen through a real synthesis (#1972)", () => {
     expect((await h.panel()).reopened).toBeUndefined();
   });
 
+  it("Keep reads the findings inside the record lock, not before it (#1990)", async () => {
+    const h = await setup(PLAIN, decision(PLAIN, "Medium", "Low"));
+    h.provider.severity = "Critical";
+    await h.pipeline.synthesize("c1", { force: true });
+    // A synthesis lands after the route started, just as the record lock is taken.
+    const realLoad = h.soStore.load.bind(h.soStore);
+    let fired = false;
+    h.soStore.load = async (id: string) => {
+      if (!fired) {
+        fired = true;
+        h.provider.severity = "High";
+        await h.pipeline.synthesize("c1", { force: true });
+      }
+      return realLoad(id);
+    };
+    const { record } = await h.pipeline.resolveReopenedSecondOpinion("c1", "severity:f1", true);
+    expect(record.deltas[0]).toMatchObject({ status: "accepted", aSeverity: "High" });
+  });
+
   it("Drop rejects the decision and restores the primary's call, durably", async () => {
     const h = await setup(PLAIN, decision(PLAIN, "High", "Medium"));
     h.provider.severity = "Critical";

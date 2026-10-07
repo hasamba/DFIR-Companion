@@ -361,15 +361,17 @@ export async function resolveReopenedSecondOpinion(
   deltaId: string,
   keep: boolean,
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  const findings = (await ctx.opts.stateStore.load(caseId)).findings;
   const restores = keep ? [] : ((await ctx.opts.findingSeverityRestoreStore?.load(caseId)) ?? []);
   let dropped: SecondOpinionDelta | undefined;
   return updateSecondOpinion(
     ctx,
     caseId,
-    (current) => {
+    async (current) => {
       const d = current.deltas.find((x) => x.id === deltaId);
       if (!d) throw new Error(`unknown second-opinion delta: ${deltaId}`);
+      // #1990: read the findings inside the record lock, so a synthesis that saved since the route
+      // looked is seen; a snapshot taken before the lock could Keep an already-replaced call.
+      const findings = (await ctx.opts.stateStore.load(caseId)).findings;
       if (keep) return keepReopenedDecision(current, deltaId, findings);
       if (!reopenedCall(findings, d)) throw new Error(`second-opinion decision ${deltaId} is not reopened`);
       dropped = d;
@@ -383,7 +385,7 @@ export async function resolveReopenedSecondOpinion(
 async function updateSecondOpinion(
   ctx: SecondOpinionContext,
   caseId: string,
-  decide: (current: SecondOpinion) => SecondOpinion,
+  decide: (current: SecondOpinion) => SecondOpinion | Promise<SecondOpinion>,
   // The change to the case. By default the accepted set is re-applied; a reopened Keep or Drop
   // (#1972) passes its own change instead, so it never writes an accepted severity back ungraded.
   onCase: (
@@ -396,7 +398,7 @@ async function updateSecondOpinion(
   const record = await recordLock.runExclusive(caseId, async () => {
     const current = await store.load(caseId);
     if (!current) throw new Error("no second opinion to act on — run a second opinion first");
-    const next = decide(current);
+    const next = await decide(current);
     await store.save(caseId, next);
     return next;
   });
