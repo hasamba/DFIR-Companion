@@ -188,12 +188,17 @@ export function createEventAggregator(
       for (const e of events) if ((e.count ?? 1) > 1) delete e.sourceRecordId;
       const groups = events.length;
 
-      // Most-severe first, then noisiest, then earliest — then cap.
+      // Most-severe first, then noisiest, then earliest — then cap. Info ties go NEWEST first
+      // (undated last) so an all-Info import keeps the incident window, not the oldest rows (#1995).
       events.sort(
         (a, b) =>
           SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
           (b.count ?? 1) - (a.count ?? 1) ||
-          (a.timestamp || "~").localeCompare(b.timestamp || "~") ||
+          (a.severity === "Info" && a.timestamp && b.timestamp
+            ? b.timestamp.localeCompare(a.timestamp)
+            : a.severity === "Info" && !!a.timestamp !== !!b.timestamp
+              ? (a.timestamp ? -1 : 1)
+              : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
           firstOrdinal.get(a)! - firstOrdinal.get(b)!,
       );
 
