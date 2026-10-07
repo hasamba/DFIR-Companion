@@ -117,6 +117,19 @@
   const SO_COLLAPSE_KEY = "dfir.soCollapsed";
   let soCollapsed = false;
   let lastSecondOpinionRec = null;
+  // A run that just finished leaves a note at the top of the panel until the analyst dismisses it, so
+  // a result that landed while they were elsewhere (typing, another tab) is still findable.
+  let soDoneNote = null; // { caseId, at, n, agreed }
+  function doneNoteLine() {
+    if (!soDoneNote || soDoneNote.caseId !== currentCaseId()) return "";
+    const n = soDoneNote.n;
+    const time = new Date(soDoneNote.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return (
+      `<div class="so-done" data-safe-style="border:1px solid var(--sev-low);border-radius:6px;padding:4px 8px;margin:0 0 6px">` +
+      `✓ Run finished ${esc(time)} — ${n} disagreement${n === 1 ? "" : "s"}, ${soDoneNote.agreed} agreed. ` +
+      `<button type="button" data-so-note-dismiss title="Hide this note">dismiss</button></div>`
+    );
+  }
   function renderSecondOpinion(rec) {
     const el = document.getElementById("secondOpinionPanel");
     if (!el) return;
@@ -131,6 +144,7 @@
     const reopened = reopenedDeltas(rec);
     const toggle = `<button type="button" class="so-toggle" data-so-toggle title="${soCollapsed ? "Expand" : "Collapse"} the 2nd opinion panel">${soCollapsed ? "▸" : "▾"}</button>`;
     const head =
+      doneNoteLine() +
       `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · A: ${esc(rec.modelA || "model A")} vs B: ${esc(rec.modelB || "model B")}</span>` +
       (typeof rec.referee === "string" && rec.referee
         ? `<span data-safe-style="color:var(--text-dim)" title="The model that wrote the 'referee suggests' line on each disagreement">· referee: ${esc(rec.referee)}</span>`
@@ -408,6 +422,44 @@
         setRefereeRerunDisabled(false);
       });
   }
+  function jumpToSecondOpinion() {
+    if (typeof revealSection === "function") revealSection("sec-findings");
+    const panel = document.getElementById("secondOpinionPanel");
+    if (panel && typeof panel.scrollIntoView === "function")
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  // A jump must not pull the analyst out of what they are doing: a hidden tab or a focused text
+  // field means they are busy.
+  function analystIsBusy() {
+    if (document.hidden) return true;
+    const a = document.activeElement;
+    if (!a) return false;
+    const tag = String(a.tagName || "").toUpperCase();
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || a.isContentEditable === true;
+  }
+  // The run finished: show the result. A busy analyst gets a toast and the panel note instead of a
+  // jump; a hidden tab jumps when the analyst comes back to it.
+  function announceSecondOpinionDone(caseId, n, agreed) {
+    soDoneNote = { caseId, at: Date.now(), n, agreed };
+    soCollapsed = false; // open for this run only; the saved preference is untouched
+    renderSecondOpinion(lastSecondOpinionRec);
+    const text = `Second opinion finished — ${n} disagreement${n === 1 ? "" : "s"} (${agreed} agreed)`;
+    if (!analystIsBusy()) {
+      jumpToSecondOpinion();
+      if (typeof showToast === "function") showToast(text);
+      return;
+    }
+    if (typeof showToast === "function")
+      showToast(text + ". See Findings → 2nd opinion.", "warn");
+    if (document.hidden && typeof document.addEventListener === "function") {
+      const onShow = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onShow);
+        if (stillOpen(caseId)) jumpToSecondOpinion();
+      };
+      document.addEventListener("visibilitychange", onShow);
+    }
+  }
   function runSecondOpinion() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -460,6 +512,7 @@
         document.getElementById("status").textContent =
           `second opinion: ${n} disagreement${n === 1 ? "" : "s"} (${rec.agreementCount | 0} agreed)`;
         renderSecondOpinion(rec);
+        announceSecondOpinionDone(caseId, n, rec.agreementCount | 0);
       })
       .catch((e) => {
         if (btn) btn.disabled = false;
@@ -499,6 +552,11 @@
           try {
             localStorage.setItem(SO_COLLAPSE_KEY, soCollapsed ? "1" : "0");
           } catch {}
+          renderSecondOpinion(lastSecondOpinionRec);
+          return;
+        }
+        if (t.dataset.soNoteDismiss !== undefined) {
+          soDoneNote = null;
           renderSecondOpinion(lastSecondOpinionRec);
           return;
         }
