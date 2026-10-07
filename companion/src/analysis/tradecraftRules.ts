@@ -204,8 +204,9 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   { re: /specialaccounts\\userlist/i, weight: "strong", ids: ["T1564.002"] },
   // Adding an account to a privileged AD group — a distinct, high-confidence escalation signal not
   // covered by the bare `/add` (account creation) or `net group ... /domain` (enumeration) rules.
+  // Matches the forms Sysmon records: quoted "net", net.exe, net1, and a full-path prefix.
   {
-    re: /\bnet\s+(?:group|localgroup)\b[^\n]*"?(?:domain admins|enterprise admins|schema admins|administrators)"?[^\n]*\/add\b/i,
+    re: /(?<![\w.-])net1?(?:\.exe)?"?\s+(?:group|localgroup)\b[^\n]*"?(?:domain admins|enterprise admins|schema admins|administrators)"?[^\n]*\/add\b/i,
     weight: "strong",
     ids: ["T1098.007"],
   },
