@@ -21,6 +21,7 @@ import { hasScope, type ScopeWindow } from "../scope.js";
 import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationState } from "../stateTypes.js";
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
+import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
 import {
   adversaryHintBlock,
@@ -186,18 +187,24 @@ function buildScopeNote(scope: ScopeWindow): string {
  * re-guess it from the title every run and drift the grade. Exported for tests.
  */
 export function buildFindingsEcho(state: InvestigationState): string {
-  const echoed = state.findings.slice(0, 150);
+  // #1994: rank before the cut so detection backfill cannot push the model's own findings out by
+  // store order. Array.sort is stable, so equal severities keep insertion order.
+  const ranked = [...state.findings].sort((a, b) => SEVERITY_RANK[echoRank(a)] - SEVERITY_RANK[echoRank(b)]);
+  const echoed = ranked.slice(0, FINDINGS_ECHO_CAP);
   const detailed = detailedFindingIds(echoed);
-  return (
+  const cut = capDisclosure(echoed.length, state.findings.length, "findings, severest first");
+  const lines =
     echoed
       .map((f) => {
         const corr = corroborationLabel(f);
         const head = `[${f.id}] (severity: ${echoRank(f)}) ${f.title}${corr ? ` — ${corr}` : ""}`;
         return detailed.has(f.id) ? head + findingDetail(f) : head;
       })
-      .join("\n") || "(none yet)"
-  );
+      .join("\n") || "(none yet)";
+  return cut ? `${cut}\n${lines}` : lines;
 }
+
+const FINDINGS_ECHO_CAP = 150;
 
 /**
  * What each finding said last run (#1586). Findings are rewritten wholesale every synthesis, and the

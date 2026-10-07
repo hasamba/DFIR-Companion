@@ -75,3 +75,33 @@ describe("buildFindingsEcho — long finding detail (#2001)", () => {
     expect(echo).not.toContain(" … ");
   });
 });
+
+describe("buildFindingsEcho — 150 cap (#1994)", () => {
+  const headLines = (echo: string): string[] => echo.split("\n").filter((l) => l.startsWith("["));
+
+  it("keeps the severest findings and discloses the cut", () => {
+    const rows = [
+      finding("model-low", "Low"),
+      ...Array.from({ length: 160 }, (_, i) => finding(`h${i}`, "High")),
+      ...Array.from({ length: 39 }, (_, i) => finding(`m${i}`, "Medium")),
+    ];
+    const state = withFindings(rows);
+    const echo = buildFindingsEcho(state);
+    expect(headLines(echo)).toHaveLength(150);
+    expect(echo).toContain("(showing 150 of 200 findings, severest first)");
+    expect(echo).not.toContain("[model-low]");
+    expect(echo).toContain("[h149]");
+    expect(state.findings[0]!.id).toBe("model-low");
+  });
+
+  it("adds no notice at exactly 150", () => {
+    const rows = Array.from({ length: 150 }, (_, i) => finding(`f${i}`, "High"));
+    expect(buildFindingsEcho(withFindings(rows))).not.toContain("showing");
+  });
+
+  it("keeps insertion order among equal severities", () => {
+    const rows = Array.from({ length: 151 }, (_, i) => finding(`f${i}`, "High"));
+    const ids = headLines(buildFindingsEcho(withFindings(rows))).map((l) => /^\[([^\]]+)\]/.exec(l)![1]);
+    expect(ids).toEqual(rows.slice(0, 150).map((f) => f.id));
+  });
+});
