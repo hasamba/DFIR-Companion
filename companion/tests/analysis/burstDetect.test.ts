@@ -115,6 +115,48 @@ describe("buildAttackPhases", () => {
     expect(phases[0].endTimestamp).toBe("2026-05-20T14:05:00Z");
   });
 
+  it("does not let an aggregated row bridge a silence its occurrences never covered", () => {
+    // 29 merged connections spread over six days: activity at the first and last occurrence only.
+    // The old code read the whole span as continuous, so every later event looked "within the gap"
+    // and a week of a case became one phase.
+    const phases = buildAttackPhases([
+      ev("agg", "2026-03-20T15:27:00Z", { count: 29, endTimestamp: "2026-03-26T05:22:00Z" }),
+      ev("a", "2026-03-20T15:30:00Z"),
+      ev("b", "2026-03-21T09:00:00Z"),
+      ev("c", "2026-03-24T12:00:00Z"),
+    ]);
+    expect(phases.map((p) => p.eventIds)).toEqual([["agg", "a"], ["b"], ["c"]]);
+    expect(phases[0].endTimestamp).toBe("2026-03-20T15:30:00Z");
+    expect(phases[0].eventCount).toBe(30);
+  });
+
+  it("drops a cluster that holds only an aggregate's end point", () => {
+    const phases = buildAttackPhases([
+      ev("agg", "2026-03-20T10:00:00Z", { count: 5, endTimestamp: "2026-03-22T10:00:00Z" }),
+    ]);
+    expect(phases).toHaveLength(1);
+    expect(phases[0].eventIds).toEqual(["agg"]);
+    expect(phases[0].startTimestamp).toBe("2026-03-20T10:00:00Z");
+  });
+
+  it("still joins events to a dense aggregate's end, so a brute force stays one burst", () => {
+    const phases = buildAttackPhases([
+      ev("agg", "2026-05-20T14:00:00Z", { count: 20, endTimestamp: "2026-05-20T14:04:00Z" }),
+      ev("next", "2026-05-20T14:08:00Z"),
+    ]);
+    expect(phases).toHaveLength(1);
+    expect(phases[0].eventIds).toEqual(["agg", "next"]);
+  });
+
+  it("keeps a span with no count continuous, as a tool-reported duration", () => {
+    const phases = buildAttackPhases([
+      ev("span", "2026-05-20T10:00:00Z", { endTimestamp: "2026-05-20T12:00:00Z" }),
+      ev("inside", "2026-05-20T11:30:00Z"),
+    ]);
+    expect(phases).toHaveLength(1);
+    expect(phases[0].endTimestamp).toBe("2026-05-20T12:00:00Z");
+  });
+
   it("defaults the gap threshold to 5 minutes", () => {
     expect(DEFAULT_GAP_SECONDS).toBe(300);
   });

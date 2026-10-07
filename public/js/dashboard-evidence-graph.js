@@ -202,6 +202,30 @@
         "target-arrow-color": "#ff8a5c",
       },
     },
+    // Highlight (#92): the chain's hops as thick numbered arrows, and its hosts as bold gold labels.
+    {
+      selector: "edge.ev-hop-arrow",
+      style: {
+        width: 4,
+        "line-style": "solid",
+        "line-color": "#ffd93b",
+        "target-arrow-color": "#ffd93b",
+        "arrow-scale": 1.4,
+        "curve-style": "bezier",
+        label: "data(hopNo)",
+        color: "#0f1115",
+        "font-size": "12px",
+        "font-weight": "bold",
+        "text-background-color": "#ffd93b",
+        "text-background-opacity": 1,
+        "text-background-padding": "3px",
+        "z-index": 99,
+      },
+    },
+    {
+      selector: "node.ev-hop-node",
+      style: { label: "data(hopLabel)", color: "#ffd93b", "font-weight": "bold" },
+    },
     {
       selector: 'edge[etype = "ran_on"]',
       style: {
@@ -351,8 +375,35 @@
   const evPathBtnStyle =
     "background:none;border:1px solid var(--text-faint);border-radius:3px;cursor:pointer;padding:0 5px;color:var(--text-primary);font-size:10px";
 
+  // The server returns one chain per ORDER in which the same hosts can be strung together. When
+  // every host ran the same installer, five hosts give a dozen chains that differ only in order.
+  // One row per host SET and shared file keeps the list readable: the file (a binary the hosts
+  // share) is what ties them, and a chain with no shared file is keyed by its accounts instead.
+  // Pure. Returns [{ key, members: [indexes into `paths`], rep }], in first-seen order.
+  function lateralPathGroups(paths) {
+    const groups = new Map();
+    (paths || []).forEach((p, i) => {
+      const lower = (v) => String(v).trim().toLowerCase();
+      const hosts = [...new Set((p.hostIds || []).map(lower))].sort().join(">>");
+      const named = (kind) => [
+        ...new Set(
+          (p.hops || []).filter((h) => h.actorKind === kind && h.actor).map((h) => lower(h.actor)),
+        ),
+      ].sort();
+      const files = named("binary");
+      const tie = files.length ? "file:" + files.join(",") : "account:" + named("account").join(",");
+      const key = hosts + "|" + tie;
+      const group = groups.get(key);
+      if (group) group.members.push(i);
+      else groups.set(key, { key, members: [i], rep: i });
+    });
+    return [...groups.values()];
+  }
+
   function renderEvidencePaths() {
     const el = document.getElementById("evPathsList");
+    const staleNote = document.getElementById("evPathNote");
+    if (staleNote) staleNote.textContent = "";
     const toggle = evPathsShowDismissed
       ? `<button type="button" id="evPathsHideDismissed" data-safe-style="${evPathBtnStyle}">Hide dismissed</button>`
       : `<button type="button" id="evPathsShowDismissed" data-safe-style="${evPathBtnStyle}">Show dismissed</button>`;
@@ -369,40 +420,59 @@
         : c === "medium"
           ? "ev-leg-med"
           : "ev-leg-ran";
+    const nameOf = (id) =>
+      esc((evGraphData?.nodes || []).find((n) => n.id === id)?.label || id);
+    const routeOf = (p) => p.hostIds.map(nameOf).join(" → ");
+    const viaOf = (paths) => {
+      // WHO/WHAT actually moved — the route alone doesn't say. Read from the hop's structured
+      // `actor` field (never parsed out of `basis`), de-duplicated across the chains.
+      const actors = [
+        ...new Set(paths.flatMap((p) => (p.hops || []).map((h) => h.actor)).filter(Boolean)),
+      ];
+      return actors.length
+        ? ` <span class="ev-sub">via <b>${actors.map(esc).join("</b>, <b>")}</b></span>`
+        : "";
+    };
+    const stamp = (ts) => Date.parse(ts) || 0;
     el.innerHTML =
-      evPathsData
-        .map((p, i) => {
-          const route = p.hostIds
-            .map((id) =>
-              esc(
-                (evGraphData?.nodes || []).find((n) => n.id === id)?.label ||
-                  id,
-              ),
-            )
-            .join(" → ");
-          // WHO/WHAT actually moved — the route alone doesn't say. Read from the hop's structured
-          // `actor` field (never parsed out of `basis`), de-duplicated across the chain.
-          const actors = [
-            ...new Set((p.hops || []).map((h) => h.actor).filter(Boolean)),
-          ];
-          const via = actors.length
-            ? ` <span class="ev-sub">via <b>${actors.map(esc).join("</b>, <b>")}</b></span>`
-            : "";
+      lateralPathGroups(evPathsData)
+        .map((g) => {
+          const paths = g.members.map((i) => evPathsData[i]);
+          const rep = evPathsData[g.rep];
+          const dismissed = paths.every((p) => p.dismissed);
+          // A group's window spans every ordering in it.
+          const starts = paths.filter((p) => p.startTime);
+          const first = starts.reduce((a, p) => (stamp(p.startTime) < stamp(a.startTime) ? p : a), starts[0]);
+          const last = starts.reduce((a, p) => (stamp(p.endTime) > stamp(a.endTime) ? p : a), starts[0]);
+          const idxs = g.members.join(",");
           // A dismissed row is shown struck-through and dimmed, with Restore in place of Dismiss.
-          const action = p.dismissed
-            ? `<button type="button" class="ev-path-restore" data-path-idx="${i}" data-safe-style="${evPathBtnStyle}">Restore</button>`
-            : `<button type="button" class="ev-path-dismiss" data-path-idx="${i}" data-safe-style="${evPathBtnStyle}" title="Reject this chain as a wrong conclusion. The underlying evidence stays in the case.">Dismiss</button>`;
+          const action = dismissed
+            ? `<button type="button" class="ev-path-restore" data-path-idxs="${idxs}" data-safe-style="${evPathBtnStyle}">Restore</button>`
+            : `<button type="button" class="ev-path-dismiss" data-path-idxs="${idxs}" data-safe-style="${evPathBtnStyle}" title="Reject ${paths.length > 1 ? "these chains" : "this chain"} as a wrong conclusion. The underlying evidence stays in the case.">Dismiss</button>`;
+          const others = g.members.slice(1);
+          const orders = others.length
+            ? `<details class="ev-path-orders"><summary class="ev-sub">+${others.length} other ordering${others.length === 1 ? "" : "s"} of the same hosts</summary>` +
+              others
+                .map(
+                  (i) =>
+                    `<div data-safe-style="margin:2px 0 2px 14px">${routeOf(evPathsData[i])} ` +
+                    `<button type="button" class="ev-path-highlight" data-path-idx="${i}" data-safe-style="${evPathBtnStyle}">Highlight</button></div>`,
+                )
+                .join("") +
+              `</details>`
+            : "";
           return (
-            `<div class="ev-path-row" data-safe-style="margin-bottom:4px${p.dismissed ? ";opacity:.55" : ""}">` +
-            `<span class="ev-leg-line ${confClass(p.confidence)}"></span>` +
-            `<b${p.dismissed ? " data-safe-style='text-decoration:line-through'" : ""}>${route}</b>${via} <span class="ev-sub">${esc(p.confidence)} confidence, ${p.hops.length} hop(s)` +
-            (p.startTime ? `, ${esc(p.startTime)} → ${esc(p.endTime)}` : "") +
-            (p.dismissed
-              ? ` — dismissed${p.dismissalNote ? ": " + esc(p.dismissalNote) : ""}`
+            `<div class="ev-path-row" data-safe-style="margin-bottom:4px${dismissed ? ";opacity:.55" : ""}">` +
+            `<span class="ev-leg-line ${confClass(rep.confidence)}"></span>` +
+            `<b${dismissed ? " data-safe-style='text-decoration:line-through'" : ""}>${routeOf(rep)}</b>${viaOf(paths)} <span class="ev-sub">${esc(rep.confidence)} confidence, ${rep.hops.length} hop(s)` +
+            (first ? `, ${esc(first.startTime)} → ${esc(last.endTime)}` : "") +
+            (dismissed
+              ? ` — dismissed${rep.dismissalNote ? ": " + esc(rep.dismissalNote) : ""}`
               : "") +
             `</span> ` +
-            `<button type="button" class="ev-path-highlight" data-path-idx="${i}" data-safe-style="${evPathBtnStyle}">Highlight</button> ` +
+            `<button type="button" class="ev-path-highlight" data-path-idx="${g.rep}" data-safe-style="${evPathBtnStyle}">Highlight</button> ` +
             action +
+            orders +
             `</div>`
           );
         })
@@ -492,35 +562,42 @@
         }
         const dismissBtn = e.target.closest(".ev-path-dismiss");
         if (dismissBtn && evPathsData && caseId) {
-          const path = evPathsData[Number(dismissBtn.dataset.pathIdx)];
-          if (!path) return;
+          // A row may stand for several orderings of the same hosts; dismiss each one.
+          const paths = pathsOfButton(dismissBtn).filter((path) => !path.dismissed);
+          if (!paths.length) return;
           const note = prompt("Why is this chain wrong? (optional)") ?? "";
-          const res = await fetch(`/cases/${caseId}/lateral-path-dismissals`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hostIds: path.hostIds, note }),
-          }).catch(() => null);
-          if (res && res.ok) await loadLateralPaths(caseId);
+          let ok = true;
+          for (const path of paths) {
+            const res = await fetch(`/cases/${caseId}/lateral-path-dismissals`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ hostIds: path.hostIds, note }),
+            }).catch(() => null);
+            if (!res || !res.ok) ok = false;
+          }
+          if (ok) await loadLateralPaths(caseId);
           return;
         }
         const restoreBtn = e.target.closest(".ev-path-restore");
         if (restoreBtn && evPathsData && caseId) {
-          const path = evPathsData[Number(restoreBtn.dataset.pathIdx)];
-          if (!path) return;
-          const key = path.hostIds
-            .map((h) => String(h).trim().toLowerCase())
-            .join(">");
-          const res = await fetch(
-            `/cases/${caseId}/lateral-path-dismissals/${encodeURIComponent(key)}`,
-            { method: "DELETE" },
-          ).catch(() => null);
-          if (res && res.ok) await loadLateralPaths(caseId);
+          const paths = pathsOfButton(restoreBtn).filter((path) => path.dismissed);
+          let ok = true;
+          for (const path of paths) {
+            const key = path.hostIds.map((h) => String(h).trim().toLowerCase()).join(">");
+            const res = await fetch(
+              `/cases/${caseId}/lateral-path-dismissals/${encodeURIComponent(key)}`,
+              { method: "DELETE" },
+            ).catch(() => null);
+            if (!res || !res.ok) ok = false;
+          }
+          if (ok) await loadLateralPaths(caseId);
           return;
         }
       });
     // Highlight a reconstructed lateral-movement path (#92) in the evidence graph: switch on the
-    // lateral_move layer (off by default) if needed, re-render, then dim everything except this
-    // chain's hosts and their immediate neighborhood.
+    // lateral_move layer (off by default) if needed, re-render, draw the chain as numbered arrows in
+    // the order it ran, dim everything but its hosts, and scroll the graph into view. The graph sits
+    // above this list and is often off-screen, so without the scroll the button looked dead.
     document.getElementById("evPathsList").addEventListener("click", (e) => {
       const btn = e.target.closest(".ev-path-highlight");
       if (!btn || !evPathsData) return;
@@ -536,13 +613,63 @@
       }
       const gv = evEnsureGV();
       if (!gv || !gv.cy) return;
-      let coll = gv.cy.collection();
-      for (const id of path.hostIds)
-        coll = coll.union(gv.cy.getElementById(id));
+      const cy = gv.cy;
+      // Drop the last highlight's numbered arrows and labels before drawing this one.
+      cy.remove(".ev-hop-arrow");
+      cy.nodes(".ev-hop-node").removeClass("ev-hop-node").removeData("hopLabel");
+      const present = path.hostIds.filter((id) => cy.getElementById(id).nonempty());
+      let coll = cy.collection();
+      path.hostIds.forEach((id, i) => {
+        const node = cy.getElementById(id);
+        if (node.empty()) return;
+        const role = i === 0 ? " (start)" : i === path.hostIds.length - 1 ? " (end)" : "";
+        node.data("hopLabel", `${node.data("name")}${role}`);
+        node.addClass("ev-hop-node");
+        coll = coll.union(node);
+      });
+      path.hostIds.slice(1).forEach((to, i) => {
+        const from = path.hostIds[i];
+        if (cy.getElementById(from).empty() || cy.getElementById(to).empty()) return;
+        const arrow = cy.add({
+          group: "edges",
+          data: { id: `hop:${i}:${from}|${to}`, source: from, target: to, hopNo: String(i + 1) },
+          classes: "ev-hop-arrow",
+        });
+        coll = coll.union(arrow);
+      });
       gv.dimExcept(coll);
+      evPathNoteText(path, present.length);
+      const graphEl = document.getElementById("evGraph");
+      if (graphEl && graphEl.scrollIntoView) graphEl.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }
 
+  // The words under the graph after Highlight. When the chain touches every host in the graph there
+  // is nothing to dim, and a bare "no change" read as a broken button.
+  function evPathNoteText(path, shown) {
+    const note = document.getElementById("evPathNote");
+    if (!note) return;
+    const hostsInGraph = (evGraphData?.nodes || []).filter((n) => n.kind === "host").length;
+    const hops = path.hostIds.length - 1;
+    const missing = path.hostIds.length - shown;
+    let text = `Highlighted ${hops} hop${hops === 1 ? "" : "s"}, numbered in the order they ran.`;
+    if (hostsInGraph && path.hostIds.length >= hostsInGraph)
+      text += ` This chain covers all ${hostsInGraph} hosts in the graph, so no host is dimmed; follow the numbers.`;
+    if (missing > 0)
+      text += ` ${missing} host${missing === 1 ? " is" : "s are"} not in the graph (hidden by a filter).`;
+    note.textContent = text;
+  }
+
+  // The paths a row's buttons stand for: one path (data-path-idx) or a group (data-path-idxs).
+  function pathsOfButton(btn) {
+    const list = btn.dataset.pathIdxs ?? btn.dataset.pathIdx ?? "";
+    return String(list)
+      .split(",")
+      .map((n) => evPathsData[Number(n)])
+      .filter(Boolean);
+  }
+
+  window.lateralPathGroups = lateralPathGroups;
   window.loadEvidenceGraph = loadEvidenceGraph;
   window.scheduleEvidenceGraphReload = scheduleEvidenceGraphReload;
   window.hasEvidenceGraph = hasEvidenceGraph;

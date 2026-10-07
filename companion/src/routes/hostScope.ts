@@ -45,6 +45,7 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
         decisions: options.hostScopeStore!,
         scope: scopeStore,
         ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+        ...(options.hostDuplicateDismissalStore ? { dismissals: options.hostDuplicateDismissalStore } : {}),
         ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
       },
       caseId,

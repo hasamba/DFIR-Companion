@@ -78,8 +78,10 @@ describe("dashboard.html", () => {
     // Read from the hop's STRUCTURED actor field — never parsed back out of the `basis` prose.
     expect(html).toMatch(/p\.hops \|\| \[\]\)\.map\(\(h\) => h\.actor\)/);
     expect(html).toContain("via <b>");
-    // De-duplicated: one account carrying every hop is listed once, not once per hop.
-    expect(html).toMatch(/new Set\(\(p\.hops \|\| \[\]\)\.map\(\(h\) => h\.actor\)/);
+    // De-duplicated: one account carrying every hop, or every ordering in a grouped row, is listed once.
+    expect(html).toMatch(
+      /new Set\(paths\.flatMap\(\(p\) => \(p\.hops \|\| \[\]\)\.map\(\(h\) => h\.actor\)\)/,
+    );
   });
 
   it("expands Host & Account Ranking rows to show contributing events + IOCs (#237)", async () => {

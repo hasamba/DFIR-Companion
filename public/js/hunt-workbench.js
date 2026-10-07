@@ -114,6 +114,13 @@ function csvCell(value) {
     : text;
 }
 
+// Where a row's pivot button goes. An IOC row is a four-column grid with its own actions cell: a
+// button appended to the row itself becomes a fifth grid child and starts a new line. Every other
+// row takes the button as its last child.
+export function pivotButtonHost(row) {
+  return (row.classList.contains("ioc-row") && row.querySelector(".ioc-actions-cell")) || row;
+}
+
 export function csvFromRows(columns, rows) {
   return [
     columns.map(csvCell).join(","),
@@ -716,7 +723,7 @@ function initialize() {
         ".ev-row[data-evid],.ioc-row[data-iocid],.finding[data-fid],.asset-chip",
       )
       .forEach((row) => {
-        if (row.querySelector(":scope > .hq-pivot")) return;
+        if (row.querySelector(".hq-pivot")) return;
         let kind;
         let value;
         let pivotDataset;
@@ -743,14 +750,14 @@ function initialize() {
         if (!value) return;
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "hq-pivot";
+        button.className = "hq-pivot hunt-add";
         button.textContent = "⌕";
         button.title = "Pivot this entity into Hunt Workbench";
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           pivot(kind, value, pivotDataset);
         });
-        row.appendChild(button);
+        pivotButtonHost(row).appendChild(button);
       });
   }
 

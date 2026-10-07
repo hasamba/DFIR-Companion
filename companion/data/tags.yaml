@@ -40,8 +40,11 @@ win_service_install:
   # Hayabusa rows keep their text in `description` and carry no `message`, so both are read. The
   # description side anchors on "(EID nnnn" — a bare '7045' would also hit a PID or a byte count in
   # a detail field — and leaves out 'Service Control Manager', which names every 7036 state change.
+  # The message side names the id through its key (`EventID: 7045`, `EID 4697`). A bare '7045' or
+  # '4697' also sits inside a SHA256, MD5 or PID, and graded an AVG installer launch as persistence.
   any:
-    - { field: message, contains: ['7045', '4697', 'A new service was installed', 'Service Control Manager'] }
+    - { field: message, contains: ['A new service was installed', 'Service Control Manager'] }
+    - { field: message, regex: '(?:event_?id|eid)\W{0,4}(?:7045|4697)(?!\d)', flags: 'i' }
     - { field: description, contains: ['(EID 7045', '(EID 4697', 'A new service was installed'] }
   none:
     - { field: message, contains: ['svchost.exe -k'] }   # routine OS service hosting
@@ -55,8 +58,11 @@ win_scheduled_task:
   description: Scheduled task created / updated (Security 4698/4702, TaskScheduler 106/140)
   # Hayabusa rows carry no `message`; see win_service_install. The description side names 106/140
   # only under a TaskScheduler channel, because a bare 'TaskScheduler' would match every task run.
+  # The message side names 4698/4702 through the id key (`EventID: 4698`, `EID 4702`). A bare '4698'
+  # also sits inside a GUID or hash, and graded a McAfee msiexec /X uninstall as persistence.
   any:
-    - { field: message, contains: ['4698', '4702', 'A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+    - { field: message, contains: ['A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+    - { field: message, regex: '(?:event_?id|eid)\W{0,4}(?:4698|4702)(?!\d)', flags: 'i' }
     - { field: description, contains: ['(EID 4698', '(EID 4702', 'A scheduled task was created', 'A scheduled task was updated'] }
     - { field: description, regex: '\(EID (?:106|140) [^)]*TaskSch', flags: 'i' }
   tags: ['win-scheduled-task', 'persistence']
@@ -165,6 +171,21 @@ win_remote_logon:
   all:
     - { field: description, contains: ['(EID 4624)'] }
     - { field: description, regex: 'LogonType=(?:3|10)\b', flags: 'i' }
+  tags: ['remote-logon']
+  severity: Low
+  view: 'Remote logons'
+
+# A network logon alone is routine (shares, printers, service and machine accounts). It becomes a
+# lateral-movement lead in two cases. RDP (type 10) from a non-loopback address. Or a network logon
+# (type 3) by a named account, not ANONYMOUS LOGON and not a machine account (`NAME$`), that shows a
+# source: a non-loopback IpAddress, or a WorkstationName when no address was logged.
+win_lateral_logon:
+  description: Remote logon from another host (RDP, or network logon by a named user account)
+  all:
+    - { field: description, contains: ['(EID 4624)'] }
+  any:
+    - { field: description, regex: 'LogonType=10\b - IpAddress=(?!-|::1|127\.)\S', flags: 'i' }
+    - { field: description, regex: '\(EID 4624\) - (?!NT AUTHORITY\\)(?:[^\s$\\]+\\)?[^$\\,]+? - LogonType=3\b(?: - IpAddress=(?!-|::1|127\.)\S| - WorkstationName=\S)', flags: 'i' }
   tags: ['remote-logon', 'lateral-movement']
   mitre: ['T1021']
   severity: Low
@@ -195,8 +216,8 @@ win_smb_admin_share:
 win_powershell_encoded:
   description: PowerShell with an encoded command (base64) — obfuscated execution
   any:
-    - { field: message, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
-    - { field: description, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: message, regex: '(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: description, regex: '(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
   tags: ['powershell-encoded', 'execution', 'defense-evasion']
   mitre: ['T1059.001', 'T1027']
   severity: Medium
@@ -361,8 +382,7 @@ staging_temp_executable:
   description: Executable written to a world-writable / temp staging path
   any:
     - { field: path, regex: '\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*\.(?:exe|dll|scr|ps1|bat|hta|js|vbs)$', flags: 'i' }
-  tags: ['temp-staging', 'defense-evasion']
-  mitre: ['T1036']
+  tags: ['temp-staging']
   severity: Medium
   view: 'Temp-path executables'
 

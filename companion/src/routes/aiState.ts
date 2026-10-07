@@ -40,6 +40,7 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
           assetOverrides: assetOverridesStore,
           dismissals: hostDuplicateDismissalStore,
           ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+          ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
         },
         caseId,
       );

@@ -71,7 +71,7 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
 
   // 2. With a fully populated case, which is what an investigator actually looks at.
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
-  await expect(page.locator("#swimlaneTableAlt tbody tr").first()).toBeAttached({ timeout: 30_000 });
+  await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
   // Wait for the cockpit to stop rendering lead cards before scanning. Each card contributes its
   // own contrast violations, so scanning mid-render makes the count depend on machine speed — the
   // ledger drifted by four nodes purely between an isolated run and a loaded one.
