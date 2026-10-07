@@ -1,6 +1,7 @@
 import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
 import { buildTimeContextBlock } from "./buildTimeWindow.js";
 import { byEventTime } from "./forensicSort.js";
+import { emptyCounts, type SelectionClass } from "./ai/synthSelectClass.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import type { HostAliasIndex } from "./hostAlias.js";
@@ -61,31 +62,13 @@ const BUDGET_TECHNIQUE = 0.15;
 const BUDGET_RARE = 0.15; // prevalence #15: reserved seats for RARE (low-prevalence) events
 const RARE_SCORE_MIN = 0.34; // rarityOf(e) ≥ this counts as rare (≈ ≤2 occurrences via 1/count)
 
-// Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
-// context; "command" = a reserved seat for a quiet session command (#1622); the rest are the
-// behavioral fills. Exposed (via the annotated selection) so the dashboard
-// can show the analyst what CLASSES of evidence the model actually saw.
-export type SelectionClass =
-  "anchor" | "earliest" | "command" | "anchor_context" | "corroborated" | "technique" | "rare" | "spread";
+export type { SelectionClass };
 
 export interface AnnotatedSelection {
   events: ForensicEvent[]; // chosen events, CHRONOLOGICAL (the model reads a story)
   classOf: Map<string, SelectionClass>; // event id → the class that claimed it (strongest wins)
   counts: Record<SelectionClass, number>; // per-class tally of the final selection
   omitted: number; // scoped events NOT selected (still in the case)
-}
-
-function emptyCounts(): Record<SelectionClass, number> {
-  return {
-    anchor: 0,
-    earliest: 0,
-    command: 0,
-    anchor_context: 0,
-    corroborated: 0,
-    technique: 0,
-    rare: 0,
-    spread: 0,
-  };
 }
 
 function eventMs(e: ForensicEvent): number | null {

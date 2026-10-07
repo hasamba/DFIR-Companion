@@ -193,6 +193,34 @@ describe("tradecraftRules — Huntress Rapid Response corpus additions", () => {
     ).toContain("T1070.001");
   });
 
+  it("flags a privileged-group add in the quoted, .exe, net1 and full-path forms Sysmon records", () => {
+    for (const cmd of [
+      'net group "Domain Admins" newadmin /add /domain',
+      '"net" group "Domain Admins" newadmin /add /domain',
+      'net.exe group "Domain Admins" newadmin /add /domain',
+      'net1 group "Domain Admins" newadmin /add /domain',
+      'C:\\Windows\\system32\\net1 group "Domain Admins" newadmin /add /domain',
+      "net1.exe localgroup Administrators newadmin /add",
+      '"C:\\Windows\\System32\\net.exe" group "Domain Admins" newadmin /add /domain',
+    ]) {
+      const s = sig(cmd);
+      expect(s?.weight, cmd).toBe("strong");
+      expect(s?.mitre, cmd).toContain("T1098.007");
+    }
+  });
+
+  it("does not flag group enumeration, account creation, or commands that merely start with net", () => {
+    for (const cmd of [
+      'net group "Domain Admins" /domain',
+      'net1 group "Domain Admins" /domain',
+      "net user newadmin newpass /domain /add",
+      'netsh advfirewall set allprofiles state off & echo "Domain Admins" /add',
+      'network group "Domain Admins" newadmin /add',
+    ]) {
+      expect(sig(cmd)?.mitre ?? [], cmd).not.toContain("T1098.007");
+    }
+  });
+
   it("flags the QEMU SSH-backdoor persistence/tunnel primitive", () => {
     expect(sig("qemu-system-x86_64.exe -m 512 -nic user,hostfwd=tcp::22022-:22")?.mitre).toContain("T1572");
   });
