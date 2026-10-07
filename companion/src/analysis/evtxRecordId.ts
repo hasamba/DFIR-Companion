@@ -15,6 +15,8 @@
 // Pure, and deliberately strict: a value is minted only when BOTH parts are present and the record
 // id is a plain positive integer. A half-identity would correlate records that are not the same.
 
+import { canonicalChannel } from "./evtxChannel.js";
+
 /** The canonical prefix, so a future non-EVTX record identity cannot collide with these. */
 const EVTX_PREFIX = "evtx";
 
@@ -24,9 +26,7 @@ const EVTX_PREFIX = "evtx";
  * is kept verbatim after the digits check.
  */
 export function evtxRecordIdentity(channel: unknown, recordId: unknown): string | undefined {
-  const ch = String(channel ?? "")
-    .trim()
-    .toLowerCase();
+  const ch = canonicalChannel(String(channel ?? "")).toLowerCase();
   const id = String(recordId ?? "").trim();
   if (!ch) return undefined;
   if (!/^\d{1,20}$/.test(id)) return undefined;

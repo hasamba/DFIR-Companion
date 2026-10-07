@@ -1,4 +1,5 @@
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
+import { canonicalChannel } from "./evtxChannel.js";
 
 // The act a native Hayabusa row records, stated on its envelope (#1557).
 //
@@ -18,9 +19,11 @@ const SYSMON_CHANNEL = /^microsoft-windows-sysmon\/operational$/i;
 
 export type HayabusaAct = "file-write" | "process-start";
 
-export function hayabusaAct(eid: string, channel: string): HayabusaAct | undefined {
+export function hayabusaAct(eid: string, rawChannel: string): HayabusaAct | undefined {
   const id = Number(eid);
-  if (SYSMON_CHANNEL.test(channel.trim())) {
+  // Hayabusa abbreviates channels ("Sysmon", "Sec"); compare on the long name (#1996).
+  const channel = canonicalChannel(rawChannel);
+  if (SYSMON_CHANNEL.test(channel)) {
     if (id === 11) return "file-write";
     if (id === 1) return "process-start";
     return undefined;
