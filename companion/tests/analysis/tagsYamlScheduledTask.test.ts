@@ -71,4 +71,28 @@ describe("win_scheduled_task", () => {
   it("matches the Windows task-created text", () => {
     expect(ruleIds({ message: "A scheduled task was created." })).toContain("win_scheduled_task");
   });
+
+  it("does not tag a task start or completion that only carries the channel name", () => {
+    expect(
+      ruleIds({
+        message:
+          'Microsoft-Windows-TaskScheduler/Operational: Task Scheduler successfully completed task "\\Backup" , instance "{1}" , action "C:\\x.exe" with return code 0.',
+      }),
+    ).not.toContain("win_scheduled_task");
+    expect(
+      ruleIds({
+        message:
+          'Microsoft-Windows-TaskScheduler/Operational EID 100: Task Scheduler started "{1}" instance of the "\\Backup" task for user "SYSTEM".',
+      }),
+    ).not.toContain("win_scheduled_task");
+  });
+
+  it("tags the register and update messages of events 106 and 140", () => {
+    expect(ruleIds({ message: 'User "CORP\\alice" registered Task Scheduler task "\\Updater"' })).toContain(
+      "win_scheduled_task",
+    );
+    expect(ruleIds({ message: 'User "CORP\\alice" updated Task Scheduler task "\\Updater"' })).toContain(
+      "win_scheduled_task",
+    );
+  });
 });
