@@ -175,6 +175,7 @@
         anchor: "anchors",
         earliest: "earliest",
         command: "session commands",
+        account: "account logons",
         anchor_context: "context",
         corroborated: "corroborated",
         technique: "technique",

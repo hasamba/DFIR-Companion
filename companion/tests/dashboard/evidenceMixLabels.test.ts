@@ -41,4 +41,10 @@ describe("evidence mix labels (#1586)", () => {
       "24 anchors · 3 session commands · 60 context",
     );
   });
+
+  it("names the reserved account-logon seats (#2014)", async () => {
+    expect(mix(await labels(), { anchor: 24, command: 3, account: 8 })).toBe(
+      "24 anchors · 3 session commands · 8 account logons",
+    );
+  });
 });

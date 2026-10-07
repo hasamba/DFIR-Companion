@@ -25,6 +25,7 @@ import {
   sessionCommandSeats,
   type CommandSeat,
 } from "./synthCommandSeats.js";
+import { accountLogonSeats, accountSeatCap } from "./synthAccountSeats.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -113,16 +114,36 @@ export function createTimelineSelection(
   // (investigation-guidance #4) exposes which CLASS claimed each event. The deterministic
   // high-severity backfill still creates findings for any Critical/High event NOT shown here, so
   // capping the prompt never loses a severe detection.
-  const commandSeats = commandSeatRows(state, scopedEvents, grouping, pinnedIds, aliasIndex);
+  const commandSeatList = commandSeatRows(state, scopedEvents, grouping, pinnedIds, aliasIndex);
+  // Account seats (#2014) ride the same reserve with their OWN cap, recomputed per count: the account
+  // list is sliced to accountSeatCap inside choose, so many accounts can neither pass their ceiling
+  // nor starve the command seats. They are deliberately NOT limited to an attack session: in the
+  // motivating case the only Critical/High rows are two unrelated installs, so an anchor-based
+  // restriction would exclude the attack itself, and the hard cap bounds the noise.
+  const accountSeats = accountSeatRows(scopedEvents, grouping, pinnedIds, aliasIndex);
   const choose = (count: number) => {
     const pins = pinned.slice(0, count);
+    const accounts = accountSeats.slice(0, accountSeatCap(count));
     // The reserve is sized from the whole prompt count, not what the pins leave, and a pinned
     // Critical/High row already satisfies the one-anchor guarantee (#1622).
-    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf, commandSeats, {
-      cap: commandSeatCap(count),
-      anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
-    });
-    return { chosen, pins, events: [...chosen.events, ...pins].sort(byEventTime) };
+    const chosen = selectOrNone(
+      collapsedEvents,
+      count - pins.length,
+      rarityOf,
+      [...accounts, ...commandSeatList],
+      {
+        cap: commandSeatCap(count) + accounts.length,
+        anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
+      },
+    );
+    return {
+      chosen: relabelAccountSeats(
+        chosen,
+        accounts.map((s) => s.event.id),
+      ),
+      pins,
+      events: [...chosen.events, ...pins].sort(byEventTime),
+    };
   };
   let current = choose(maxEvents);
   let selection = current.chosen;
@@ -154,6 +175,25 @@ export function createTimelineSelection(
     newLeftOut: () => newPromotedIds.size - promptEvents.filter((e) => newPromotedIds.has(e.id)).length,
     pinnedCount: () => current.pins.length,
   };
+}
+
+/**
+ * Account seats ride the command-seat machinery, so the selector classes them "command". Relabel them
+ * "account" so the analyst is not told a logon was a session command. Returns a copy.
+ */
+function relabelAccountSeats(
+  selection: ReturnType<typeof selectSynthesisEventsAnnotated>,
+  accountIds: readonly string[],
+): ReturnType<typeof selectSynthesisEventsAnnotated> {
+  const classOf = new Map(selection.classOf);
+  const counts = { ...selection.counts };
+  for (const id of accountIds) {
+    if (classOf.get(id) !== "command") continue;
+    classOf.set(id, "account");
+    counts.command--;
+    counts.account++;
+  }
+  return { ...selection, classOf, counts };
 }
 
 /**
@@ -208,6 +248,31 @@ function commandSeatRows(
     if (!row || seen.has(row.id)) continue;
     seen.add(row.id);
     out.push({ event: row, shadowedBy: shadowedBy.map(rowOf) });
+  }
+  return out;
+}
+
+/** Reserved seats for the accounts an attacker used (#2014), as rows of the collapsed prompt pool. */
+function accountSeatRows(
+  scopedEvents: readonly ForensicEvent[],
+  grouping: CollapsedPrompt,
+  pinnedIds: ReadonlySet<string>,
+  aliasIndex?: HostAliasIndex,
+): CommandSeat[] {
+  const hostOf = (raw: string): string =>
+    aliasIndex ? resolveHost(aliasIndex, raw) : raw.trim().toLowerCase();
+  const pool = new Map(grouping.events.map((e) => [e.id, e] as const));
+  const representativeOf = new Map<string, string>();
+  for (const [rep, members] of grouping.memberIdsByRepresentative)
+    for (const id of members) representativeOf.set(id, rep);
+  const out: CommandSeat[] = [];
+  const seen = new Set<string>();
+  for (const { event } of accountLogonSeats({ events: scopedEvents, hostOf })) {
+    if (pinnedIds.has(event.id)) continue;
+    const row = pool.get(representativeOf.get(event.id) ?? event.id);
+    if (!row || seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push({ event: row, shadowedBy: [] });
   }
   return out;
 }
