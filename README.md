@@ -31,6 +31,8 @@ Hands-on lab: https://killercoda.com/dfir-companion/scenario/killercoda
 
 User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
+Data Flow Map: https://hasamba.github.io/DFIR-Companion/data-flow.html
+
 ## Table of contents
 
 - [Quick start](#quick-start)
