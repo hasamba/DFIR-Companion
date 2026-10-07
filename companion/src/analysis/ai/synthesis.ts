@@ -662,7 +662,15 @@ export async function synthesize(
       },
     );
   let next = folded;
-  if (opts.dryRun) return next;
+  const carryUnshown = (st: InvestigationState) =>
+    carryUnshownFindings(st, {
+      prior: state,
+      echoedIds: new Set(echoedFindings(state).map((f) => f.id)),
+      markers,
+    });
+  // A dry run (second-opinion model B) skips grading, so it carries here: a finding past the echo
+  // cap is not a model disagreement (#2006).
+  if (opts.dryRun) return carryUnshown(next).state;
 
   next = await finalizeFindings(ctx, caseId, next, {
     delta: foldedDelta,
@@ -683,11 +691,7 @@ export async function synthesize(
   // a carried finding keeps the confidence it was stored with; a no-op when no scope is set.
   next = carryOutOfWindowFindings(next, { prior: state, inWindowEvents: run.inWindowEvents, markers });
   // #2006: the model saw only the echoed findings, so it could not re-emit the rest; keep those.
-  const unshown = carryUnshownFindings(next, {
-    prior: state,
-    echoedIds: new Set(echoedFindings(state).map((f) => f.id)),
-    markers,
-  });
+  const unshown = carryUnshown(next);
   next = unshown.state;
 
   // Every collection request this run is about to persist — the model's, and the corroboration steps
