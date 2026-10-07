@@ -60,3 +60,18 @@ describe("buildFindingsEcho — prior severity", () => {
     expect(buildFindingsEcho(withFindings([]))).toBe("(none yet)");
   });
 });
+
+describe("buildFindingsEcho — long finding detail (#2001)", () => {
+  it("keeps the tail of a long description, where the late detail sits", () => {
+    const description = `${"lateral movement observed ".repeat(30)}then ran C:\\Windows\\Temp\\evil.ps1`;
+    const echo = buildFindingsEcho(withFindings([finding("f1", "High", { description })]));
+    expect(echo).toContain("evil.ps1");
+    expect(echo).toContain(" … ");
+  });
+
+  it("leaves a short description untouched", () => {
+    const echo = buildFindingsEcho(withFindings([finding("f1", "High", { description: "short text" })]));
+    expect(echo).toContain("said: short text");
+    expect(echo).not.toContain(" … ");
+  });
+});

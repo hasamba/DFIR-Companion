@@ -21,6 +21,7 @@ import { hasScope, type ScopeWindow } from "../scope.js";
 import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationState } from "../stateTypes.js";
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
+import { promptDescription } from "./promptDescription.js";
 import {
   adversaryHintBlock,
   cloudCoverageBlock,
@@ -235,9 +236,7 @@ function findingDetail(f: Finding): string {
   // techniques from the title and dropped ones the unchanged evidence still supported.
   const tags = f.mitreTechniques ?? [];
   return (
-    (said
-      ? `\n    said: ${said.length > FINDING_DETAIL_CHARS ? `${said.slice(0, FINDING_DETAIL_CHARS)}…` : said}`
-      : "") +
+    (said ? `\n    said: ${promptDescription(said, FINDING_DETAIL_CHARS)}` : "") +
     (cited.length ? `\n    cites: ${cited.join(", ")}` : "") +
     (tags.length ? `\n    tags: ${tags.join(", ")}` : "")
   );
