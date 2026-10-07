@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Domain Admins add graded High in every form** — the privileged-group add is now matched when Sysmon logs it as `"net"`, `net.exe` or `net1`, so the event no longer stays Medium (closes #2016)
+- **Second attacker account reaches the AI** — a few prompt seats now go to explicit-credential logons of distinct accounts, so an account the attacker used is no longer dropped from the sample (closes #2014)
 - **Build window needs a real rename** — three build-looking command lines no longer open a "routine build" window that lowers attacker rows to Low; a window opens only when this host's own rename sits inside the burst (closes #2004)
 - **Plain follow-up lines no longer block a simulation verdict** — a line such as "if the exercise repeats, collect memory" beside a stated simulation summary no longer vetoes the verdict; any other hedged exercise line still does (closes #1979)
 - **Referee tagged-line contract stated correctly** — the code comment now matches what the tagged event line does, pinned by a test (closes #1980)
