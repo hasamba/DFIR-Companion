@@ -36,6 +36,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import { interpreterTechniques } from "./processInterpreter.js";
 
 type Fields = Record<string, string>;
 
@@ -72,8 +73,8 @@ interface AuditTypeDef {
 // auditd record types worth surfacing. Anything else falls back to a generic Info event.
 const AUDIT_TYPES: Record<string, AuditTypeDef> = {
   // Execution
-  EXECVE: { label: "Command executed", severity: "Low", mitre: ["T1059"] },
-  ANOM_EXEC: { label: "Anomalous program execution", severity: "High", mitre: ["T1059"] },
+  EXECVE: { label: "Command executed", severity: "Low" },
+  ANOM_EXEC: { label: "Anomalous program execution", severity: "High" },
   // Authentication / sessions
   USER_LOGIN: { label: "User login", severity: "Low", mitre: ["T1078"] },
   USER_AUTH: { label: "User authentication", severity: "Low" },
@@ -337,6 +338,12 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
 
   let severity = def.severity;
   const mitre = [...(def.mitre ?? [])];
+
+  // T1059 only when the program that ran is a shell or script interpreter. EXECVE and ANOM_EXEC
+  // used to carry it for every program, which made every executed command read as scripting.
+  if (ptype === "EXECVE" || ptype === "ANOM_EXEC") {
+    for (const t of interpreterTechniques(exe || ev.argv[0] || comm)) if (!mitre.includes(t)) mitre.push(t);
+  }
 
   // Failed authentication → brute-force signal.
   if (failed && (ptype === "USER_LOGIN" || ptype === "USER_AUTH" || ptype === "USER_ACCT")) {

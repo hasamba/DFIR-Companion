@@ -17,6 +17,11 @@ describe("interpreterTechniques", () => {
       "C:\\Python312\\python.exe",
       "C:\\Program Files\\nodejs\\node.exe",
       "/usr/bin/BASH.EXE",
+      "/bin/bash",
+      "/bin/dash",
+      "/usr/bin/zsh",
+      "/usr/bin/python3.11",
+      "/usr/bin/nodejs",
     ]) {
       expect(interpreterTechniques(image), image).toEqual(["T1059"]);
     }
@@ -29,6 +34,9 @@ describe("interpreterTechniques", () => {
       "C:\\Windows\\System32\\msiexec.exe",
       "C:\\Windows\\explorer.exe",
       "C:\\Tools\\mycmd.exe",
+      "/usr/bin/cat",
+      "/usr/bin/pythonista",
+      "/usr/bin/shred",
       "",
     ]) {
       expect(interpreterTechniques(image), image).toEqual([]);
