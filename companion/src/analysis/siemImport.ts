@@ -56,6 +56,7 @@ import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import { joinSubjectParts, renderSubjectField, subjectBudget } from "./renderCommandLine.js";
+import { interpreterTechniques } from "./processInterpreter.js";
 import { regWriteIdentity, regWritePath, regWriteKeys } from "./securityRegistryWrite.js";
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
@@ -676,6 +677,8 @@ export function mapWindows(
   if (def.kind === "process") {
     const image = str(getCI(ed, "Image")) || str(getCI(ed, "NewProcessName"));
     const cmd = str(getCI(ed, "CommandLine"));
+    // T1059 only when the process is itself an interpreter (processInterpreter.ts).
+    for (const t of interpreterTechniques(image)) if (!mitre.includes(t)) mitre.push(t);
     const susp = isSuspiciousCmd(image, cmd);
     if (susp === "strong") {
       severity = worst(severity, "High");

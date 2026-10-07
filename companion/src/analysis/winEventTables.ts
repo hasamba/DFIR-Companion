@@ -56,7 +56,7 @@ export const WIN_EVENTS: Record<number, WinEventDef> = {
   4699: { label: "Scheduled task deleted", severity: "Medium", mitre: ["T1053.005"] },
   4700: { label: "Scheduled task enabled", severity: "Low", mitre: ["T1053.005"] },
   4702: { label: "Scheduled task updated", severity: "Medium", mitre: ["T1053.005"] },
-  4688: { label: "Process created", severity: "Low", kind: "process", mitre: ["T1059"] },
+  4688: { label: "Process created", severity: "Low", kind: "process" },
   4689: { label: "Process exited", severity: "Info" },
   // Object / share / policy
   4663: { label: "Object access attempt", severity: "Low" },
@@ -101,7 +101,7 @@ export const POWERSHELL_EVENTS: Record<number, WinEventDef> = {
 // Sysmon (Microsoft-Windows-Sysmon/Operational) events — keyed separately because the
 // EID numbering overlaps the Security channel (Sysmon 1 ≠ Security 1).
 export const SYSMON_EVENTS: Record<number, WinEventDef> = {
-  1: { label: "Process create", severity: "Low", kind: "process", mitre: ["T1059"] },
+  1: { label: "Process create", severity: "Low", kind: "process" },
   2: { label: "File creation time changed (timestomp)", severity: "Medium", mitre: ["T1070.006"] },
   3: { label: "Network connection", severity: "Low", kind: "network" },
   4: { label: "Sysmon service state changed", severity: "Info" },
