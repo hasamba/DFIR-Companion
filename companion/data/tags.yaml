@@ -58,10 +58,13 @@ win_scheduled_task:
   description: Scheduled task created / updated (Security 4698/4702, TaskScheduler 106/140)
   # Hayabusa rows carry no `message`; see win_service_install. The description side names 106/140
   # only under a TaskScheduler channel, because a bare 'TaskScheduler' would match every task run.
+  # The message side follows the same rule: it names the REGISTER / UPDATE text of events 106 and 140
+  # (`registered Task Scheduler task`, `updated Task Scheduler task`), never the channel name, which
+  # every task start (100) and completion (200, 201) message also carries.
   # The message side names 4698/4702 through the id key (`EventID: 4698`, `EID 4702`). A bare '4698'
   # also sits inside a GUID or hash, and graded a McAfee msiexec /X uninstall as persistence.
   any:
-    - { field: message, contains: ['A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+    - { field: message, contains: ['A scheduled task was created', 'A scheduled task was updated', 'registered Task Scheduler task', 'updated Task Scheduler task'] }
     - { field: message, regex: '(?:event_?id|eid)\W{0,4}(?:4698|4702)(?!\d)', flags: 'i' }
     - { field: description, contains: ['(EID 4698', '(EID 4702', 'A scheduled task was created', 'A scheduled task was updated'] }
     - { field: description, regex: '\(EID (?:106|140) [^)]*TaskSch', flags: 'i' }
