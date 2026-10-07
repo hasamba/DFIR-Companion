@@ -268,7 +268,13 @@ const KEYWORD_TACTIC: Array<[RegExp, IrisTactic]> = [
     "Persistence",
   ],
   [
-    /\b(defender\s+tamper\w*|disable\s+(defender|antivirus|amsi)|amsi\s+bypass|clear(ed)?\s+event\s+log|wevtutil\s+cl|obfuscat\w+|process\s+(injection|hollow\w*)|rundll32|mshta|regsvr32)\b/i,
+    /\b(defender\s+tamper\w*|disable\s+(defender|antivirus|amsi)|amsi\s+bypass|clear(ed)?\s+event\s+log|wevtutil\s+cl|obfuscat\w+|process\s+(injection|hollow\w*))\b/i,
+    "Defense Evasion",
+  ],
+  // The proxy-execution binaries by name alone say nothing: every installer runs `regsvr32 /s` and
+  // `rundll32`. They count only in the forms that fetch or run a script (squiblydoo and its kin).
+  [
+    /\b(regsvr32\b[^\n]*(\/i:|scrobj)|mshta\b[^\n]*(https?:|javascript:|vbscript:)|rundll32\b[^\n]*(javascript:|vbscript:))/i,
     "Defense Evasion",
   ],
   [
