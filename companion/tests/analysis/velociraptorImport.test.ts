@@ -614,6 +614,27 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     expect(r.iocs.some((i) => i.type === "url" && i.value.includes("evil.test"))).toBe(true);
   });
 
+  describe("flat RuleName + top-level grade (#2005)", () => {
+    const sev = (extra: object): string =>
+      parseVelociraptorJson(JSON.stringify([{ RuleName: "Custom Rule Pack Hit", Line: "x", ...extra }]))
+        .events[0].severity;
+    it("honors a flat Criticality", () => {
+      expect(sev({ Criticality: "Critical" })).toBe("Critical");
+      expect(sev({ Criticality: "Low" })).toBe("Low");
+    });
+    it("honors a flat Severity", () => {
+      expect(sev({ Severity: "High" })).toBe("High");
+    });
+    it("a nested Detection grade still wins over a flat one", () => {
+      const row = { Detection: { Name: "Rule", Criticality: "Low" }, Criticality: "Critical" };
+      expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Low");
+    });
+    it("no grade stays Medium, and a top-level Level never demotes it", () => {
+      expect(sev({})).toBe("Medium");
+      expect(sev({ Level: "info" })).toBe("Medium");
+    });
+  });
+
   it("downgrades an 'IN DEVELOPMENT' rule to Low and keeps the rule regex out of the description", () => {
     const row = {
       Detection: {

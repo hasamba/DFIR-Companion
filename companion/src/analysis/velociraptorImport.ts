@@ -220,9 +220,8 @@ function msgFingerprint(msg: string): string {
 
 // Many Velociraptor "*.Detection.*" artifacts (DetectRaptor et al.) carry their VERDICT in a
 // `Detection` field — a bare string ("Cobalt Strike: trick_ryuk.profile") or an object with a
-// rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID`. Per the
-// post-detection principle we consume that verdict (we don't re-evaluate the rule): its text
-// leads the description, its own criticality drives severity, and any Txxxx ids become MITRE.
+// rule `Name` (+ optional `Criticality`/`Severity`) — or in `RuleName`/`RuleID` (flat grade too).
+// We consume that verdict, not re-run the rule: text leads the description, grade drives severity.
 interface Verdict {
   title: string;
   critWord: string;
@@ -246,6 +245,7 @@ function rowVerdict(row: Row): Verdict | null {
   }
   if (!title) title = firstStr(row, ["RuleName", "RuleID"]).trim();
   if (!title) return null;
+  critWord ||= firstStr(row, ["Criticality", "Severity"]).trim().toLowerCase(); // flat grade; never `Level`
   const mitre = mitreFromText(
     title,
     firstStr(row, ["RuleName"]),
