@@ -44,24 +44,24 @@ describe("hunt workbench UI helpers", () => {
   // The pivot button was appended to the IOC row itself. That row is a four-column grid, so the
   // button became a fifth child and sat alone on a second line under the indicator.
   describe("pivot button placement", () => {
-    const fakeRow = (selector: string, actionsCell: object | null) => ({
-      matches: (sel: string) => sel === selector,
+    const fakeRow = (rowClass: string, actionsCell: object | null) => ({
+      classList: { contains: (name: string) => name === rowClass },
       querySelector: (sel: string) => (sel === ".ioc-actions-cell" ? actionsCell : null),
     });
 
     it("puts an IOC row's button in its actions cell, with the other row buttons", () => {
       const cell = { id: "actions" };
-      const row = fakeRow(".ioc-row", cell);
+      const row = fakeRow("ioc-row", cell);
       expect(pivotButtonHost(row as unknown as Element)).toBe(cell);
     });
 
     it("falls back to the row when an IOC row has no actions cell", () => {
-      const row = fakeRow(".ioc-row", null);
+      const row = fakeRow("ioc-row", null);
       expect(pivotButtonHost(row as unknown as Element)).toBe(row);
     });
 
     it("leaves event, finding and asset rows as they were", () => {
-      const row = fakeRow(".ev-row", { id: "actions" });
+      const row = fakeRow("ev-row", { id: "actions" });
       expect(pivotButtonHost(row as unknown as Element)).toBe(row);
     });
   });

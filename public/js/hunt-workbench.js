@@ -118,7 +118,7 @@ function csvCell(value) {
 // button appended to the row itself becomes a fifth grid child and starts a new line. Every other
 // row takes the button as its last child.
 export function pivotButtonHost(row) {
-  return (row.matches(".ioc-row") && row.querySelector(".ioc-actions-cell")) || row;
+  return (row.classList.contains("ioc-row") && row.querySelector(".ioc-actions-cell")) || row;
 }
 
 export function csvFromRows(columns, rows) {
