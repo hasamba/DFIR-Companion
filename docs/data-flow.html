@@ -117,7 +117,7 @@ svg#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
   box-shadow:var(--shadow);transform:translateX(105%);transition:transform .3s cubic-bezier(.2,.7,.2,1);display:flex;flex-direction:column;padding-top:var(--barh,56px)}
 .drawer.open{transform:none}
 .drawer-in{overflow:auto;padding:20px 22px 40px}
-.drawer .x{position:absolute;right:12px;top:calc(var(--barh,56px) + 10px);border:0;background:none;cursor:pointer;padding:6px;border-radius:5px}
+.drawer .x{position:absolute;z-index:2;right:12px;top:calc(var(--barh,56px) + 10px);border:1px solid var(--line);background:var(--surface);cursor:pointer;padding:6px;border-radius:6px;line-height:0}
 .drawer .x svg{width:18px;height:18px;stroke:var(--muted);stroke-width:2}
 .eyebrow{display:flex;gap:8px;align-items:center;font:600 11px var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;font:600 10.5px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;
@@ -133,6 +133,19 @@ svg#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .drawer ol.steps li{counter-increment:st;position:relative;padding-left:30px}
 .drawer ol.steps li::before{content:counter(st);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:50%;
   background:color-mix(in srgb,var(--ai) 18%,transparent);color:var(--ai);font:700 11px/20px var(--f-mono);text-align:center}
+.pgroup{border:1px solid var(--line);border-radius:7px;margin-bottom:8px;background:var(--surface)}
+.pgroup summary{cursor:pointer;padding:9px 12px;font:600 16px/1.2 var(--f-display);list-style:none;display:flex;justify-content:space-between;align-items:center}
+.pgroup summary::-webkit-details-marker{display:none}
+.pgroup summary::after{content:"+";font:600 16px var(--f-mono);color:var(--muted);margin-left:8px}
+.pgroup[open] summary::after{content:"–"}
+.pgroup summary em{font:600 11px var(--f-mono);font-style:normal;color:var(--muted);margin-left:auto}
+.pgroup[open] summary{border-bottom:1px solid var(--line)}
+.panels{list-style:none;margin:0;padding:4px 12px 6px}
+.panels li{padding:8px 0;border-bottom:1px dashed var(--line)}
+.panels li:last-child{border-bottom:0}
+.panels b{display:block;font-size:14px}
+.panels span{display:block;font-size:13px;color:var(--muted);margin:2px 0 6px}
+.panels .links button{font-size:11.5px;padding:2px 7px}
 .drawer p.intro{margin:0 0 10px;color:var(--muted);font-size:13.5px}
 .links{display:flex;flex-wrap:wrap;gap:6px}
 .links button{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12.5px;display:inline-flex;align-items:center;gap:6px}
@@ -531,8 +544,8 @@ const NODES = [
 
   /* ---------------- 7 · Outputs ---------------- */
   { id:"dashboard", col:7, kind:"output", label:"Dashboard", sub:"65 panels · 8 built-in views",
-    plain:"The analyst workspace. Views: Now, Analyst, Lead, Executive, Triage, Report, Deep-Dive, Hunt-Prep. Also mobile, presentation and admin pages.",
-    pts:["Panels include: findings, attack path, timeline, super-timeline, login graph, IOCs, MITRE, hypotheses, notebook, custody, beacons, gaps, swimlane, geo map"],
+    plain:"The analyst workspace: 65 panels, shown or hidden by eight built-in views — Now, Analyst, Lead, Executive, Triage, Report, Deep-Dive, Hunt-Prep. Also mobile, presentation and admin pages. Every panel is listed below with the box that feeds it.",
+    pts:[],
     tech:["public/dashboard.html","public/js/dashboard-*.js","src/analysis/dashboardViews.ts → DASHBOARD_SECTION_IDS"] },
   { id:"live", col:7, kind:"output", label:"Live updates", sub:"WebSocket push",
     plain:"The dashboard refreshes itself as imports finish, AI runs progress and jobs change — no reload needed.",
@@ -661,6 +674,95 @@ const EDGES = [
   ["state","api","flow",""],
   ["disk","reports","flow","custody · screenshots"],
 ];
+
+/* Dashboard panels, grouped by purpose. Names match SECTION_DEFS in public/dashboard.html.
+   [panel name, one-line description, ids of the map boxes that feed it] */
+const PANEL_GROUPS = [
+  { name:"Now & triage", panels:[
+    ["Now — Decision Cockpit","The next investigative decisions for this case, with a 'reviewed' mark kept per investigator.",["state","detectors"]],
+    ["Executive Summary","A management summary written by AI, which you review before it goes into the report.",["askhunt"]],
+    ["Handoff Brief","What the case holds, what is open and what to check next, plus the outgoing analyst's own note.",["state","decisions"]],
+    ["Memory Next Steps","Appears only when memory evidence exists: AI reads the Volatility/Rekall rows and proposes the next command to run.",["askhunt","forensic"]],
+  ]},
+  { name:"Ask & query", panels:[
+    ["Ask the LLM","Ask a question about the case. Answers come from the forensic timeline, findings, IOCs and your decisions; nothing is changed.",["askhunt"]],
+    ["Query Translator","Describe what to hunt in plain English and get VQL, KQL, ES|QL, SPL, Sigma, YARA or Suricata.",["askhunt"]],
+    ["MCP Analysis","Describe the investigation and your MCP app picks the tools; results import into the case.",["mcp"]],
+  ]},
+  { name:"Findings & the story", panels:[
+    ["Findings","Every finding with severity, confidence and sources; pin, tag, filter and act on them in bulk.",["state"]],
+    ["Attack Path","The attacker's route through the environment, as concluded by synthesis.",["synth"]],
+    ["Narrative Timeline","The attack path rewritten as client-readable prose on demand, editable before it goes into the report.",["askhunt"]],
+    ["Kill Chain","Events grouped by their ATT&CK tactic — a categorisation, not a confirmed stage. No AI.",["detectors"]],
+    ["Attack Phases","Bursts of activity grouped by time gap and labelled by their main tactic. No AI.",["detectors"]],
+    ["Attacker Sessions","The timeline split into per-host chapters — continuous runs of activity on one host. No AI.",["detectors"]],
+    ["Key Investigative Questions","Open questions the AI is tracking, answered automatically once the evidence supports them.",["synth"]],
+    ["Uncertainty Ledger","What the analysis knows, infers or only speculates — anything below Confirmed is provisional.",["synth"]],
+    ["Investigation Threads","Open leads the AI carries across synthesis runs, closed once the evidence resolves them.",["synth"]],
+    ["Hypotheses","Testable explanations tracked from open to supported, refuted or unknown — generated by synthesis and written by you.",["synth","decisions"]],
+    ["Deep Pass","Reads every graded event above a floor you choose, in batches, then re-synthesises. Measures the cost first.",["deep"]],
+    ["Second Look","Searches the raw record for the case's open questions and promotes what it finds. Measures first, runs only when pressed.",["second-look"]],
+    ["Missed Evidence Review","Jev re-grades the Info rows the AI never sees and ranks them; nothing changes until you promote.",["jev"]],
+  ]},
+  { name:"Timelines", panels:[
+    ["Forensic Timeline","The curated record — Low and above, plus anything you promoted. Filter, star and mark false positives.",["forensic"]],
+    ["Super-Timeline","Every imported row, before any filtering. Search, label and star, then promote what matters.",["super"]],
+    ["Timeline Swimlane","Hosts against time, coloured by severity. Select dots to inspect them or mark them false positive.",["forensic"]],
+    ["Timeline Gaps","Suspicious silent periods. A total blackout counts as High only next to attack activity or a log clear. No AI.",["detectors"]],
+    ["Timeline Anomalies","Hosts whose event rate spikes compared with other hosts or with their own baseline. A lead, not a verdict.",["detectors"]],
+    ["Hunt Workbench","Typed field queries over the forensic timeline or the super-timeline — indexed and paged. No AI.",["forensic","super"]],
+  ]},
+  { name:"Hosts, accounts & scope", panels:[
+    ["Host & Account Ranking","Which hosts and accounts carry the attack, scored by signal rather than volume. No AI.",["detectors"]],
+    ["Scope & Clearance","What is affected, what was never collected, and what you have cleared. Cleared means no evidence found, not clean.",["decisions","state"]],
+    ["Duplicate Hosts","Hosts seen under more than one name; analysis waits until you confirm each pair as one machine or two.",["detectors"]],
+    ["Collection Generation Diff","What changed between two collections of the same host's persistence, or two backups of the same device.",["detectors"]],
+    ["Login Graph","Who logged on where — accounts to hosts, from the Windows logon events in the super-timeline.",["login-graph"]],
+    ["Compromised Assets & IoC Graph","Assets and IOCs from the findings and timeline, plus any you add, with the links between them.",["state"]],
+    ["Evidence Chain","Causal links: process trees, lateral movement, file lineage and network flows. No AI.",["detectors"]],
+    ["Kerberoast Chain","Per service account: the ticket requests, the baseline before the first RC4 request, and what the account did after.",["detectors"]],
+    ["Sensitive Access","For files and folders you declare as sensitive: what the access rows show about who read them.",["detectors","decisions"]],
+    ["Campaign Scope","Per imported email: who it was addressed to, which mailbox a header points at, and what each host's rows show.",["detectors"]],
+    ["Served Exposure","For a URL path you declare: what the file rows and access log show was served from it.",["detectors","decisions"]],
+  ]},
+  { name:"IOCs & intel", panels:[
+    ["IOCs","Every indicator with its threat-intel verdicts, risk and sources; filter to signal only or flagged only.",["state","enrich"]],
+    ["Beacon Candidates","Outbound connections too regular to be human. A hunting lead, not a verdict.",["detectors"]],
+    ["GeoIP Map","Imported IPs placed on a map from GeoIP enrichment, coloured by severity.",["enrich"]],
+    ["TLS Relationships","Certificates, names, clients and times across every upload — clusters are leads, never conclusions.",["detectors"]],
+    ["Related Cases","Other investigations that share indicators with this one. Hidden by default.",["state"]],
+    ["Customer Exposure","Breach and leak check of the customer's own domains and emails. Sends them to third-party services.",["intel"]],
+    ["Intel Retirement Review","Findings whose threat-intel backing is no longer current, listed for you to review.",["enrich","state"]],
+    ["Source Trust","How much each tool's evidence is weighted, with a per-case override.",["decisions"]],
+  ]},
+  { name:"ATT&CK & defence", panels:[
+    ["MITRE ATT&CK","The case's techniques on the ATT&CK matrix or as a list, per platform.",["state"]],
+    ["Adversary Hints","Known ATT&CK groups that overlap these techniques and their likely next moves — ideas, not attribution.",["detectors"]],
+    ["Playbook Match","Whether the techniques happened in the order a published ransomware playbook describes.",["detectors"]],
+    ["Mitigation & Defensive Countermeasures","ATT&CK mitigations and D3FEND defences for this incident's techniques. Offline.",["state"]],
+    ["Compliance Impact","Control failures and regulatory obligations for confirmed findings. Offline, not legal advice.",["state"]],
+    ["Remediation Checks","Declare what was fixed on a host and check what the case holds for it afterwards — facts, never a verdict.",["detectors","decisions"]],
+  ]},
+  { name:"Collection & hunting", panels:[
+    ["Collection Plan","The evidence this incident type calls for, in order, ticked off from what the case already holds.",["detectors"]],
+    ["Evidence Gaps","What the case is missing: uncovered phases with where to collect, silent windows, likely next moves.",["detectors"]],
+    ["Cloud Coverage","What each cloud log upload can and cannot answer, per account, project or tenant.",["detectors"]],
+    ["Hunting Profile","What has been hunted in this case and whether it found anything.",["decisions"]],
+    ["Fleet Collection","Run a Velociraptor collection, pull a hunt from the Velociraptor GUI, or stream live client events into the case.",["velo"]],
+    ["Suggested Fleet Hunts","AI-proposed Velociraptor hunts that sweep the fleet for the same tradecraft.",["askhunt"]],
+    ["Playbook","An action checklist built from next steps and Critical/High findings; your status, owner and due dates survive synthesis.",["synth","decisions"]],
+    ["Recommended Next Steps","The AI's suggested next actions. Hidden by default — the Playbook replaces it.",["synth"]],
+  ]},
+  { name:"Your work & the record", panels:[
+    ["False Positives","Everything you excluded from analysis, with the reason, plus patterns learned from repeated dismissals.",["decisions"]],
+    ["Analyst Notebook","Free-form notes that survive synthesis, optionally shared with the AI.",["decisions"]],
+    ["Investigation Log","Imports, AI notes and your quick actions, in time order.",["disk"]],
+    ["Activity Log","Every security-relevant action taken on the case.",["disk"]],
+    ["Chain of Custody","Every stored artifact, its hash and each event that touched it; verify and export a signed manifest.",["disk"]],
+    ["Case Details","The human-written sections of the report — merged in when you generate it.",["decisions"]],
+  ]},
+];
+const PANEL_COUNT = PANEL_GROUPS.reduce((n, g) => n + g.panels.length, 0);
 
 const RULES = [
   { red:true, t:"The AI never reads the super-timeline", d:"Synthesis, Deep pass, Ask and hunts read only the forensic timeline: the raw record is too big, its noise pushes real detections out of the prompt, and every finding must point to reviewed evidence. The striped tape on the map marks the line. Two documented exceptions, both started by you and both promoting nothing: View summary (not saved, ≤ 500 rows, tells you if it was truncated) and Jev review (grades left-behind Info rows — 2,000 by default, or every row if you choose to read all — and reports how many it did not read). Explain and Starred report promote first, so they do not break the rule.", n:["super","ai-gate","forensic","pressed","jev"], e:[["super","ai-gate"]] },
@@ -1006,7 +1108,7 @@ function neighbours(id) {
 }
 function matches(q) {
   const s = q.toLowerCase();
-  return NODES.filter(n => [n.label, n.sub, n.plain, ...(n.pts || []), ...(n.tech || [])].join(" ").toLowerCase().includes(s));
+  return NODES.filter(n => [n.label, n.sub, n.plain, ...(n.pts || []), ...(n.tech || []), ...(n.id === "dashboard" ? PANEL_GROUPS.flatMap(g => g.panels.flatMap(p => [p[0], p[1]])) : [])].join(" ").toLowerCase().includes(s));
 }
 
 function activeSet() {
@@ -1086,12 +1188,21 @@ function showNode(id) {
     <p class="plain">${esc(n.plain)}</p>
     ${n.pts && n.pts.length ? `<ul class="pts">${n.pts.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
     ${(n.sections || []).map(sec => `<h3>${esc(sec.h)}</h3>${sec.intro ? `<p class="intro">${esc(sec.intro)}</p>` : ""}<${sec.ol ? "ol" : "ul"} class="pts${sec.ol ? " steps" : ""}">${sec.items.map(i => `<li>${esc(i)}</li>`).join("")}</${sec.ol ? "ol" : "ul"}>`).join("")}
+${id === "dashboard" ? panelGuide() : ""}
     <h3>Data comes from</h3>${linkList(IN[id], "from")}
     <h3>Data goes to</h3>${linkList(OUT[id], "to")}
     ${rules.length ? `<h3>Rules that apply here</h3>${rules.map(x => `<div class="rule-card${x.r.red ? " red" : ""}" data-rule="${x.i}"><b>${esc(x.r.t)}</b><span>${esc(x.r.d)}</span></div>`).join("")}` : ""}
     ${n.tech && n.tech.length ? `<div class="tech-only"><h3>In the code</h3><div class="tech">${n.tech.map(t => `<code>${esc(t)}</code>`).join("")}</div>
       <p style="font-size:12px;color:var(--muted);margin-top:8px">src/ = companion/src · ext/ = extension/src</p></div>` : ""}
   `);
+}
+function panelGuide() {
+  const tag = id => { const n = BY_ID[id]; return `<button data-go="${id}" style="--k:var(--${n.kind})"><i></i>${esc(n.label)}</button>`; };
+  return `<h3>The ${PANEL_COUNT} panels, by purpose</h3>
+    <p class="intro">Each tag shows the box on the map that feeds the panel — click it to jump there.</p>
+    ${PANEL_GROUPS.map(g => `<details class="pgroup"><summary>${esc(g.name)} <em>${g.panels.length}</em></summary>
+      <ul class="panels">${g.panels.map(([name, desc, src]) => `<li><b>${esc(name)}</b><span>${esc(desc)}</span><div class="links">${src.map(tag).join("")}</div></li>`).join("")}</ul>
+    </details>`).join("")}`;
 }
 function showRules() {
   openDrawer(`
