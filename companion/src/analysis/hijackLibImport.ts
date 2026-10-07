@@ -20,7 +20,7 @@ import {
 } from "./siemImport.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
-import { isDetectionContentPath } from "./veloDetectionNoise.js";
+import { isUnforgeableContentPath } from "./veloDetectionNoise.js";
 import { boundedAggKey } from "./aggKey.js";
 import type { Severity } from "./stateTypes.js";
 
@@ -62,7 +62,7 @@ export function mapHijackLib(
     ? "in its vendor location (likely legitimate)"
     : "OUTSIDE its expected vendor location — DLL side-load candidate";
   const sha = str(getCI(infoObj, "ExecutableSHA256")).toLowerCase();
-  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
+  if (path && !isUnforgeableContentPath(path)) addIoc(sink, "file", path);
 
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: hijackable DLL ${dll}${
     vendor ? ` (${vendor})` : ""

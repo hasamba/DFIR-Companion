@@ -67,7 +67,8 @@ import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
 import {
-  isDetectionContentPath,
+  gradeByContentLocation,
+  isUnforgeableContentPath,
   isGeneratedModuleScript,
   isDetectionToolLocation,
 } from "./veloDetectionNoise.js";
@@ -315,7 +316,7 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
   const pairs: [string, string][] = [];
   flatten(row, pairs);
   genericIocs(
-    pairs.filter(([, v]) => !isDetectionContentPath(v)),
+    pairs.filter(([, v]) => !isUnforgeableContentPath(v)),
     sink,
   );
   const { sha256, md5 } = vrHashes(row);
@@ -519,7 +520,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
 
   // A real IOC unless it is the collector's OWN tooling, rule content, or a volatile container. Keyed
   // on toolOwned, not the grade — a corpus folder is attacker-choosable, so it must not delete (#720).
-  if (path && !isDetectionContentPath(path) && !grade.toolOwned && !grade.volatile)
+  if (path && !isUnforgeableContentPath(path) && !grade.toolOwned && !grade.volatile)
     addIoc(sink, "file", path);
   if (procName && !grade.toolOwned) addIoc(sink, "process", baseName(procName));
 
@@ -680,8 +681,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ]) ||
     str(getPath(row, "FileInfo.OSPath")).trim() ||
     str(getPath(row, "Detection.PathName"));
-  // A rule file / sample attack log: the hit is a keyword in the rule's own text, not host content — Info (#720).
-  if (isDetectionContentPath(path)) severity = "Info";
+  severity = gradeByContentLocation(path, severity); // rule-file keyword hit: Info, or Low if choosable (#1998)
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
   // it can be shown as a label (Line: / Content: / CommandLine: / etc.). NOT Detection.Regex /
@@ -711,7 +711,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
   if (processName) addIoc(sink, "process", processName);
-  if (path && !isDetectionContentPath(path)) addIoc(sink, "file", path);
+  if (path && !isUnforgeableContentPath(path)) addIoc(sink, "file", path);
 
   // Subject priority: the rendered event's high-signal fields (the actual LOLBIN/command line) win
   // over structured process/path, which win over the matched content/line. Every field is labeled
@@ -739,7 +739,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       // main signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
-    titleTag = processName || pipe || (path && !isDetectionContentPath(path) ? baseName(path) : "");
+    titleTag = processName || pipe || (path && !isUnforgeableContentPath(path) ? baseName(path) : "");
     subject = parts.join(" - ");
   }
 
