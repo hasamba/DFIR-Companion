@@ -40,6 +40,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
         assetOverrides: options.assetOverridesStore!,
         dismissals: options.hostDuplicateDismissalStore!,
         ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
       },
       caseId,
     );

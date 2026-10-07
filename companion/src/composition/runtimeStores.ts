@@ -419,6 +419,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
           scope: new ScopeStore(store),
           assetOverrides: assetOverridesStore,
           fleet: velociraptorClientStore,
+          dismissals: hostDuplicateDismissalStore,
         },
         caseId,
       ),

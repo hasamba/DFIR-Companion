@@ -71,7 +71,7 @@ test("narrow screen: the page does not scroll sideways at 380px", async ({ page,
   // Measure only once the case content has actually rendered. Measuring at load reported no
   // overflow purely because the wide content had not arrived yet — a green result that proved
   // nothing, which is worse than the red one it replaced.
-  await expect(page.locator("#swimlaneTableAlt tbody tr").first()).toBeAttached({ timeout: 30_000 });
+  await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
   await page.waitForLoadState("networkidle");
 
   const overflow = await page.evaluate(() => {

@@ -27,12 +27,8 @@ import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
 import { resolveHost, type HostAliasIndex } from "../hostAlias.js";
-import { loadHostAliasIndex } from "../hostScopeLoad.js";
-import {
-  HostMergeDecisionRequired,
-  hostNamesFromState,
-  pendingNearDuplicates,
-} from "../hostDuplicateGate.js";
+import { loadDuplicateCheckHostNames, loadHostAliasIndex } from "../hostScopeLoad.js";
+import { HostMergeDecisionRequired, pendingNearDuplicates } from "../hostDuplicateGate.js";
 import { autoGenerateHypotheses } from "./synthesisHypotheses.js";
 import type { PlaybookTask } from "../playbook.js";
 import { stripAiExtractedFrom } from "../responseSchema.js";
@@ -534,11 +530,16 @@ async function resolveHostsOrThrow(
   );
   const dismissalStore = ctx.opts.hostDuplicateDismissalStore;
   if (!dismissalStore) return aliasIndex;
-  const pending = pendingNearDuplicates(
-    hostNamesFromState(state),
+  // The same host list the Scope & Clearance banner and the merge panel read (hostScopeLoad.ts).
+  const hostNames = await loadDuplicateCheckHostNames(
+    {
+      state: { load: async () => state },
+      ...(ctx.opts.superTimelineStore ? { superTimeline: ctx.opts.superTimelineStore } : {}),
+    },
+    caseId,
     aliasIndex,
-    await dismissalStore.load(caseId),
   );
+  const pending = pendingNearDuplicates(hostNames, aliasIndex, await dismissalStore.load(caseId));
   if (pending.length) throw new HostMergeDecisionRequired(pending);
   return aliasIndex;
 }

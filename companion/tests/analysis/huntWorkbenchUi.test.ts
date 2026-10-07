@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { autocompleteFor, buildPivotQuery, csvFromRows } from "../../../public/js/hunt-workbench.js";
+import {
+  autocompleteFor,
+  buildPivotQuery,
+  csvFromRows,
+  pivotButtonHost,
+} from "../../../public/js/hunt-workbench.js";
 
 describe("hunt workbench UI helpers", () => {
   it("builds escaped, typed pivots for core entities", () => {
@@ -34,5 +39,30 @@ describe("hunt workbench UI helpers", () => {
     expect(dashboard).toContain('<script type="module" src="/js/hunt-workbench.js"></script>');
     expect(dashboard).toContain('id="sec-hunt-workbench"');
     expect(dashboard).toContain('{ id: "sec-hunt-workbench", label: "Hunt Workbench" }');
+  });
+
+  // The pivot button was appended to the IOC row itself. That row is a four-column grid, so the
+  // button became a fifth child and sat alone on a second line under the indicator.
+  describe("pivot button placement", () => {
+    const fakeRow = (selector: string, actionsCell: object | null) => ({
+      matches: (sel: string) => sel === selector,
+      querySelector: (sel: string) => (sel === ".ioc-actions-cell" ? actionsCell : null),
+    });
+
+    it("puts an IOC row's button in its actions cell, with the other row buttons", () => {
+      const cell = { id: "actions" };
+      const row = fakeRow(".ioc-row", cell);
+      expect(pivotButtonHost(row as unknown as Element)).toBe(cell);
+    });
+
+    it("falls back to the row when an IOC row has no actions cell", () => {
+      const row = fakeRow(".ioc-row", null);
+      expect(pivotButtonHost(row as unknown as Element)).toBe(row);
+    });
+
+    it("leaves event, finding and asset rows as they were", () => {
+      const row = fakeRow(".ev-row", { id: "actions" });
+      expect(pivotButtonHost(row as unknown as Element)).toBe(row);
+    });
   });
 });

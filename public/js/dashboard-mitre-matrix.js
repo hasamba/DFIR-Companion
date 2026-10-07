@@ -490,7 +490,8 @@
     if (section && pop) {
       const b = button.getBoundingClientRect();
       const s = section.getBoundingClientRect();
-      const left = Math.max(0, Math.min(b.left - s.left, s.width - 340));
+      // Place it by its real width: the CSS width shrinks on a narrow section.
+      const left = Math.max(0, Math.min(b.left - s.left, s.width - (pop.offsetWidth || 640)));
       pop.style.top = `${Math.round(b.bottom - s.top + 4)}px`;
       pop.style.left = `${Math.round(left)}px`;
     }

@@ -185,6 +185,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
           assetOverrides: assetOverridesStore,
           dismissals: hostDuplicateDismissalStore,
           ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+          ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
         },
         caseId,
       );
@@ -511,6 +512,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
           assetOverrides: options.assetOverridesStore,
           dismissals: dismissalStore,
           ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+          ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
         },
         caseId,
       );

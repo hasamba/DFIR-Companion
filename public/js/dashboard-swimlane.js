@@ -195,8 +195,6 @@
         ctx.beginPath(); ctx.moveTo(bx0 + .5, 0); ctx.lineTo(bx0 + .5, axY); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(bx1 + .5, 0); ctx.lineTo(bx1 + .5, axY); ctx.stroke();
       }
-      // The canvas above reaches no screen reader; see js/a11y/describe-as-table.js (#386).
-      if (window.DfirChartTable) window.DfirChartTable.renderSwimlaneTable(swLanes);
     }
 
     function swHitTest(canvas, cx, cy) {
@@ -296,7 +294,8 @@
     function swExportPng() {
       const canvas = document.getElementById("swimlaneCanvas");
       if (!canvas || !swLanes.length) return;
-      const labelW = 160;
+      const labelsEl = document.getElementById("swimlaneLabels");
+      const labelW = Math.max(160, Math.round((labelsEl && labelsEl.offsetWidth) || 160));
       const off = document.createElement("canvas");
       off.width = labelW + canvas.width;
       off.height = canvas.height;
@@ -305,7 +304,8 @@
       o.textBaseline = "middle"; o.font = "12px system-ui,sans-serif";
       swLanes.forEach((l, i) => {
         o.fillStyle = themeColor(SW_LABEL_TOKEN[l.type] || "--text-primary");
-        const name = l.label.length > 22 ? l.label.slice(0, 21) + "…" : l.label;
+        let name = l.label;
+        while (name.length > 1 && o.measureText(name).width > labelW - 16) name = name.slice(0, -2) + "…";
         o.fillText(name, 8, i * SW_LANE_H + SW_LANE_H / 2);
       });
       o.strokeStyle = themeColor("--border-color"); o.beginPath(); o.moveTo(labelW - .5, 0); o.lineTo(labelW - .5, canvas.height); o.stroke();
