@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Build window needs a real rename** — three build-looking command lines no longer open a "routine build" window that lowers attacker rows to Low; a window opens only when this host's own rename sits inside the burst (closes #2004)
 - **Plain follow-up lines no longer block a simulation verdict** — a line such as "if the exercise repeats, collect memory" beside a stated simulation summary no longer vetoes the verdict; any other hedged exercise line still does (closes #1979)
 - **Referee tagged-line contract stated correctly** — the code comment now matches what the tagged event line does, pinned by a test (closes #1980)
 - **Capped reads keep the incident window** — a Velociraptor read cut short by the row cap is re-read once inside the incident window, and the warning says to collect again with a time scope (closes #1969)

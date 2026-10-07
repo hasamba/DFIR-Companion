@@ -365,8 +365,8 @@ describe("the adversarial cases a code review found (#1529)", () => {
       ev("o1", "2026-08-26T13:50:00Z", {
         severity: "High",
         asset: "FILE-SRV-02",
-        path: "C:\\Windows\\Installer\\msi9f21.tmp",
-        description: "Installer artifact",
+        path: "C:\\ProgramData\\chocolatey\\lib\\git\\tools\\x.ps1",
+        description: "Provisioner artifact",
       }),
     ];
     expect(buildTimeWindows(lone, other)).toEqual([]);
@@ -385,8 +385,8 @@ describe("the adversarial cases a code review found (#1529)", () => {
     const lone = [
       ev("p1", "2027-05-02T10:01:00Z", {
         severity: "High",
-        path: "C:\\Windows\\WinSxS\\amd64_x\\f.dll",
-        description: "Servicing artifact",
+        path: "C:\\ProgramData\\chocolatey\\lib\\git\\tools\\x.ps1",
+        description: "Provisioner artifact",
       }),
     ];
     expect(buildTimeWindows(lone, declared)).toEqual([]);
@@ -516,7 +516,9 @@ describe("a user session is not a build (#1695)", () => {
     expect(buildTimeWindows(lateChoco, renames)).toEqual([]);
   });
 
-  it("still opens an unbounded window from two different provisioners, labelled by the provisioner", () => {
+  it("opens no window from two different provisioners when no rename bound sits near them (#2004)", () => {
+    // Marker text is written by whoever ran the commands, so density alone proves nothing: only an
+    // observed rename of this host inside the burst opens a window.
     const build = [
       ev("b1", "2027-02-01T10:00:00Z", { path: "C:\\ProgramData\\chocolatey\\tools\\7z.exe" }),
       ev("b2", "2027-02-01T10:05:00Z", { path: "C:\\Windows\\Temp\\packer\\Autounattend.ps1" }),
@@ -526,9 +528,7 @@ describe("a user session is not a build (#1695)", () => {
         }),
       ),
     ];
-    const windows = buildTimeWindows(build, renames);
-    expect(windows).toHaveLength(1);
-    expect(["chocolatey", "packer"]).toContain(windows[0].marker);
+    expect(buildTimeWindows(build, renames)).toEqual([]);
   });
 });
 
@@ -624,5 +624,69 @@ describe("the synthesis-time repair never lifts a cap (#1698)", () => {
     expect(row.severity).toBe("Low");
     expect(row.buildTime?.cappedFrom).toBe("High");
     expect(repairBuildTimeRows(state).changed).toBe(0);
+  });
+});
+
+// #2004: a window used to open from build-looking text alone (3 markers of 2 kinds). Anyone can type
+// that text, so a forged burst lowered real attacker rows to Low. A window now needs an observed rename
+// of THIS host inside the burst (its padded span). A rename that sits near a forged marker still
+// corroborates it; closing that needs evidence the data does not carry.
+describe("no window without an observed rename bound (#2004)", () => {
+  const T0 = "2027-02-01T10:00:00Z";
+  const forged = (): ForensicEvent[] => [
+    ev("f1", "2027-02-01T10:00:00Z", { path: "C:\\ProgramData\\chocolatey\\lib\\a\\x.ps1" }),
+    ev("f2", "2027-02-01T10:02:00Z", { commandLine: "choco install git -y" }),
+    ev("f3", "2027-02-01T10:04:00Z", { path: "C:\\Users\\Public\\unattend.xml" }),
+  ];
+  const bound = (until: string): HostRenameRecord[] => [
+    ...renames,
+    { formerName: "WIN-0NNTB2RTNB1", currentName: HOST, until, basis: "collector" },
+  ];
+
+  it("keeps a real attack row High beside forged markers, with no baseline note", () => {
+    const attack = ev("atk", "2027-02-01T10:03:00Z", {
+      severity: "High",
+      description: "Cobalt Strike beacon: rundll32.exe connecting to 203.0.113.10:443",
+    });
+    const state = stateWith([...forged(), attack]);
+    expect(buildTimeWindows(state.forensicTimeline, renames)).toEqual([]);
+    const row = capBuildTimeRows(state).state.forensicTimeline.find((e) => e.id === "atk")!;
+    expect(row.severity).toBe("High");
+    expect(row.buildTime).toBeUndefined();
+    expect(row.description).not.toContain(BUILD_TIME_MARKER);
+  });
+
+  it("opens a window from one provisioner marker when this host's own rename sits inside the burst", () => {
+    const one = [forged()[0]];
+    const windows = buildTimeWindows(one, bound("2027-02-01T10:03:00.000Z"));
+    expect(windows).toHaveLength(1);
+    expect(windows[0].marker).toBe("chocolatey");
+  });
+
+  it("counts a bound up to the padding before the burst and not one minute further", () => {
+    const one = [forged()[0]];
+    const at = (offsetMin: number): string => new Date(Date.parse(T0) + offsetMin * 60_000).toISOString();
+    expect(buildTimeWindows(one, bound(at(-30)))).toHaveLength(1);
+    expect(buildTimeWindows(one, bound(at(-31)))).toEqual([]);
+    expect(buildTimeWindows(one, bound(at(30)))).toHaveLength(1);
+    expect(buildTimeWindows(one, bound(at(31)))).toEqual([]);
+  });
+
+  it("lifts a stored cap from a density-only window the next time the caps are recomputed", () => {
+    const stale = ev("atk", "2027-02-01T10:03:00Z", {
+      severity: "Low",
+      description: `Cobalt Strike beacon [build-time: chocolatey, 2027-02-01T09:30Z–10:34Z]`,
+      buildTime: {
+        marker: "chocolatey",
+        window: "2027-02-01T09:30:00.000Z/2027-02-01T10:34:00.000Z",
+        cappedFrom: "High",
+      },
+    });
+    const { state, changed } = capBuildTimeRows(stateWith([...forged(), stale]));
+    const row = state.forensicTimeline.find((e) => e.id === "atk")!;
+    expect(changed).toBeGreaterThan(0);
+    expect(row.severity).toBe("High");
+    expect(row.buildTime).toBeUndefined();
+    expect(row.description).not.toContain(BUILD_TIME_MARKER);
   });
 });
