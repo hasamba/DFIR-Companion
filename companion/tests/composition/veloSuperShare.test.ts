@@ -5,6 +5,7 @@ import type { SuperTimelineStore } from "../../src/analysis/superTimelineStore.j
 import {
   createSuperShareLedger,
   importSuperOnlyArtifact,
+  scopeTagOf,
   superTimelineCap,
   superTimelineShares,
 } from "../../src/composition/veloSuperShare.js";
@@ -169,5 +170,68 @@ describe("importSuperOnlyArtifact — the cut is measured in mapped events, on b
     const r = await importSuperOnlyArtifact(deps(store), { ...base, limit: 0 });
     expect(store.rows).toHaveLength(0);
     expect(r.capped).toMatchObject({ kept: 0, total: 40, rows: 10 });
+  });
+});
+
+// #1993 — ids were {huntId}-{name}-e{n}, so a re-collect that kept a different row set (window or
+// newest-first) reused the old ids and the store's id dedup dropped the new rows.
+describe("importSuperOnlyArtifact — ids carry the read scope (#1993)", () => {
+  const NAME = "Windows.NTFS.MFT";
+  const row = (n: number) => ({
+    EntryNumber: n,
+    InUse: true,
+    OSPath: `\\\\.\\C:\\f${n}.txt`,
+    FileName: `f${n}.txt`,
+    FileSize: 1,
+    IsDir: false,
+    Created0x10: new Date(Date.UTC(2026, 0, 1, 0, n, 1)).toISOString(),
+  });
+  const json = JSON.stringify({ [NAME]: [row(1), row(2), row(3)] });
+  const base = {
+    caseId: "c1",
+    huntId: "H.1",
+    name: NAME,
+    json,
+    rows: 3,
+    storedName: "velo-hunt_H.1.json",
+    importedAt: "2026-01-02T00:00:00.000Z",
+    cap: 100,
+    limit: 100,
+  };
+  const NO_EVICTION = { count: 0, setAside: 0, from: "", to: "" };
+  const ids = async (scopeTag?: string) => {
+    const rows: ForensicEvent[] = [];
+    const store = {
+      async appendReporting(_c: string, events: ForensicEvent[]) {
+        rows.push(...events);
+        return { retained: events.length, evicted: NO_EVICTION };
+      },
+    };
+    await importSuperOnlyArtifact(
+      { superTimelineStore: store as unknown as SuperTimelineStore, autoTagImported: async () => {} },
+      { ...base, ...(scopeTag ? { scopeTag } : {}) },
+    );
+    return rows.map((e) => e.id);
+  };
+
+  it("an unscoped read keeps the old id scheme", async () => {
+    expect((await ids())[0]).toBe(`H.1-${NAME}-e1`);
+  });
+
+  it("a scoped re-read gets ids that cannot collide with the unscoped ones, and is stable", async () => {
+    const plain = await ids();
+    const win = await ids("abc123");
+    expect(win.some((i) => plain.includes(i))).toBe(false);
+    expect(await ids("abc123")).toEqual(win);
+  });
+
+  it("scopeTagOf: empty for a plain read, deterministic per window, nw for newest-first", () => {
+    expect(scopeTagOf(undefined)).toBe("");
+    expect(scopeTagOf({ name: NAME })).toBe("");
+    const a = scopeTagOf({ name: NAME, windowStart: "2026-01-01", windowEnd: "2026-01-02" });
+    expect(a).toMatch(/^[0-9a-f]{8}$/);
+    expect(scopeTagOf({ name: NAME, windowStart: "2026-01-01", windowEnd: "2026-01-02" })).toBe(a);
+    expect(scopeTagOf({ name: NAME, windowStart: "2026-01-01", windowEnd: "2026-01-03" })).not.toBe(a);
+    expect(scopeTagOf({ name: NAME, order: "newest" })).toBe("nw");
   });
 });
