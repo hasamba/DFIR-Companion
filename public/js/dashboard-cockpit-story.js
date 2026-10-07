@@ -214,15 +214,16 @@
   function storyTextHtml(story) {
     if (!story.synthesizedAt)
       return `<div class="now-empty">${esc(STORY_EMPTY_TEXT)}</div>`;
+    // Each line is clipped server-side, so each carries its own link to the full text.
+    const link = (panel, label) =>
+      `<button data-act="cockpitStoryOpen" data-panel="${panel}">${label} ↗</button>`;
     const conclusion = story.conclusion
-      ? `<p>${esc(story.conclusion)}</p>`
+      ? `<p>${esc(story.conclusion)} ${link("summary", "Full summary")}</p>`
       : "";
-    const path = story.attackerPath ? `${esc(story.attackerPath)} ` : "";
-    return (
-      `<div class="now-story-text">${conclusion}<p>${path}` +
-      `<button data-act="cockpitStoryOpen" data-panel="attack-path">Full path ↗</button> ` +
-      `<button data-act="cockpitStoryOpen" data-panel="summary">Executive summary ↗</button></p></div>`
-    );
+    const path = story.attackerPath
+      ? `<p>${esc(story.attackerPath)} ${link("attack-path", "Full path")}</p>`
+      : "";
+    return `<div class="now-story-text">${conclusion}${path}</div>`;
   }
 
   // Empty string on an old server whose snapshot has no `story`, so the rest of the cockpit still

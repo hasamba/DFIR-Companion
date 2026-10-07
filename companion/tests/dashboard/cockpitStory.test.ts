@@ -325,7 +325,7 @@ describe("cockpit story — freshness and text", () => {
     expect(html).toContain('<span class="now-story-fresh">synthesis 14m ago</span>');
     expect(html).not.toContain("now-story-stale");
     expect(html).toContain(
-      "<p>The host was compromised through a phishing macro. The actor moved to the DC.</p>",
+      "<p>The host was compromised through a phishing macro. The actor moved to the DC. <button",
     );
     expect(html).toContain("Macro launched PowerShell. PowerShell staged a beacon.");
     expect(html).toContain('data-act="cockpitStoryOpen" data-panel="attack-path"');
