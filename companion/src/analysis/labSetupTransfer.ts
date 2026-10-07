@@ -55,6 +55,19 @@ function norm(p: string): string {
   return p.trim().replace(/\//g, "\\").toLowerCase();
 }
 
+// A bundled folder counts only in the shape the hypervisor writes, under a Temp folder. The bare name
+// (`\VMwareDnD\`) is attacker-choosable, so it alone must not cap a staged payload (#2002).
+// DFIR_LAB_SETUP_PATHS extras stay plain substrings: the operator owns them.
+const DEFAULT_SHAPES: ReadonlyMap<string, RegExp> = new Map([
+  [norm(DEFAULT_LAB_SETUP_PATHS[0]!), /\\temp\\vmware-[^\\]+\\vmwarednd\\/u],
+  [norm(DEFAULT_LAB_SETUP_PATHS[1]!), /\\temp\\virtualbox dropped files\\/u],
+]);
+
+function pathMatches(p: string, entry: string): boolean {
+  const shape = DEFAULT_SHAPES.get(entry);
+  return shape ? shape.test(p) : p.includes(entry);
+}
+
 /** Bundled folders plus DFIR_LAB_SETUP_PATHS (comma-separated substrings), read at call time. */
 export function labSetupPaths(env: NodeJS.ProcessEnv = process.env): string[] {
   const extra = (env[LAB_SETUP_PATHS_ENV] ?? "").split(",").map(norm).filter(Boolean);
@@ -85,7 +98,7 @@ export function isExecutionRecord(e: ForensicEvent): boolean {
 export function labSetupFolder(e: ForensicEvent, paths: readonly string[]): string | null {
   if (!e.path || isExecutionRecord(e)) return null;
   const p = norm(e.path);
-  const hit = paths.find((x) => p.includes(x));
+  const hit = paths.find((x) => pathMatches(p, x));
   if (!hit) return null;
   if (e.commandLine && norm(e.commandLine).includes(hit)) return null;
   return hit;
