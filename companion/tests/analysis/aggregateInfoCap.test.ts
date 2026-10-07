@@ -17,9 +17,11 @@ describe("aggregate cap tie-break (#1995)", () => {
     ];
     const out = aggregateEvents(rows, { maxEvents: 2 });
     expect(out.groups).toBe(4);
-    expect(out.events.map((e) => e.description)).toEqual(["row 2", "row 4"]);
+    // The two newest survive, listed in the usual earliest-first order.
+    expect(out.events.map((e) => e.description)).toEqual(["row 4", "row 2"]);
+    // Under the cap nothing is cut, and the order is the usual one.
     const all = aggregateEvents(rows, { maxEvents: 10 });
-    expect(all.events.at(-1)!.description).toBe("row 3");
+    expect(all.events.map((e) => e.description)).toEqual(["row 3", "row 1", "row 4", "row 2"]);
   });
 
   it("keeps earliest-first for graded rows", () => {

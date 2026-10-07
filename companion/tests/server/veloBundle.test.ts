@@ -801,6 +801,8 @@ describe("Velociraptor triage bundles — routes", () => {
           total: 3,
           earliest: "2026-06-01T10:00:00Z",
           latest: "2026-06-01T10:00:00Z",
+          // #1992 — the capped read could not be re-read newest-first, and the record says why.
+          rereadDeclined: "the artifact has no time column to sort on",
         },
       ]);
     },
