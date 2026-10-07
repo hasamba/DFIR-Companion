@@ -511,3 +511,312 @@ emulation_framework_agent:
     - { field: commandLine, regex: '\b(?:platform|file)[\\"'']{0,2}\s*[:=,][^\n]{0,300}/file/download', flags: 'i' }
   tags: ['emulation-framework-agent']
   view: 'Emulation framework agents'
+
+# ─────────────────────────── M365 / Entra audit — timesketch rule parity ───────────────────────────
+# Ported from the community Timesketch tagger gist (FlorianGross, M365 UAL + Entra audit_log). The
+# source rules set TAGS only — no severity, no MITRE — and Companion's schema has no emojis /
+# save_search / search_name / query_string, so only the tag intent is kept. Every rule reads the
+# importer's structured operation, rendered verbatim into `description`:
+#   UAL      `M365 <Workload>: <Operation> by …`  (m365Import.ts mapUal; Exchange rows render as
+#                                                   `M365 Exchange: <Operation> …`, exchangeAuditImport.ts)
+#   Entra    `Entra audit: <activityDisplayName> …` (entraAuditImport.ts head)
+# The `description` is the operation's own literal, so anchoring on the operation text is the faithful
+# port — the importer ALREADY grades each high-signal operation, so these rules add searchable tags,
+# not a second grade. The AuditData details the source queried (`ForwardTo`, `HiddenFromUI`,
+# `Exclusion`, `ReadWrite.All`, `LegacyAuth`, risk…) are NOT rendered for the UAL/Entra paths, so the
+# detail-conditional source rules are approximated to the operation itself and the misses are noted.
+
+# ── Azure AD / Entra role assignments ──
+ts_m365_role_assignment:
+  description: M365 role membership changed — add/remove member to role (Timesketch privilege_change)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add|Add eligible|Remove) member (?:to|from) role\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: (?:Add|Remove) member to (?:directory )?role\b', flags: 'i' }
+  tags: ['privilege_change', 'role_assignment']
+  view: 'M365 role changes'
+
+ts_m365_aad_role_change:
+  description: Azure AD directory role membership changed (Timesketch aad role_change)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: (?:Add|Remove) member (?:to|from) role\b', flags: 'i' }
+  tags: ['aad', 'role_change']
+  view: 'M365 role changes'
+
+ts_m365_privileged_role_assignment:
+  description: Privileged / directory role assigned (Timesketch privilege_escalation, global_admin)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add|Add eligible) member to role\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Add member to (?:directory )?role\b', flags: 'i' }
+  tags: ['privilege_role_assignment', 'persistence']
+  view: 'M365 role changes'
+
+ts_m365_directory_role_removed:
+  description: Entra directory role removed from a user (Timesketch admin_activity role_change)
+  any:
+    - { field: description, regex: '^Entra audit: Remove member from (?:directory )?role\b', flags: 'i' }
+  tags: ['admin_activity', 'role_change']
+  view: 'M365 role changes'
+
+# ── App roles, OAuth consent, service principals (OAuth persistence) ──
+ts_m365_app_role_assignment:
+  description: App role assignment granted to a user (Timesketch app_role_assignment)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Add app role assignment grant to user\b', flags: 'i' }
+  tags: ['app_role_assignment', 'delegation']
+  view: 'M365 OAuth / app consent'
+
+ts_m365_oauth_consent:
+  description: OAuth/application consent granted (Timesketch persistence oauth)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Consent to application\b', flags: 'i' }
+  tags: ['persistence', 'oauth']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_oauth_consent_granted:
+  description: Entra consent granted to an application (Timesketch oauth_abuse consent_grant)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Grant consent to application|Consent to application)\b', flags: 'i' }
+  tags: ['persistence', 'oauth_abuse', 'consent_grant']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_app_registration:
+  description: Application registered in Entra ID (Timesketch persistence app_registration)
+  any:
+    - { field: description, regex: '^Entra audit: Add application\b', flags: 'i' }
+  tags: ['persistence', 'app_registration']
+  view: 'M365 OAuth / app consent'
+
+ts_m365_app_registration:
+  description: Azure AD application added (Timesketch persistence aad_app)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: Add application\b', flags: 'i' }
+  tags: ['persistence', 'aad_app']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_service_principal_created:
+  description: Entra service principal added (Timesketch attack service_principal)
+  any:
+    - { field: description, regex: '^Entra audit: Add service principal\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add service principal\b', flags: 'i' }
+  tags: ['attack', 'service_principal']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_app_secret_added:
+  description: Client secret / certificate credential added to an application (Timesketch credential_injection)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Add|Update) application (?:password|keyCredential)\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add service principal credentials\b', flags: 'i' }
+  tags: ['persistence', 'app_secret', 'credential_injection']
+  view: 'M365 OAuth / app consent'
+
+# ── Exchange Online: inbox rules, forwarding, transport, mailbox perms ──
+ts_m365_inbox_rule:
+  description: Inbox rule created / modified (Timesketch persistence inbox_rule)
+  any:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set|Update|Remove)-?InboxRule\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: (?:New-InboxRule|Set-InboxRule|UpdateInboxRules)\b', flags: 'i' }
+  tags: ['exchange', 'inbox_rule', 'persistence']
+  view: 'M365 Exchange'
+
+ts_m365_mailbox_forwarding:
+  description: Inbox forwarding / redirect rule configured (Timesketch mailbox_forwarding)
+  all:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set|Update)-?InboxRule\b', flags: 'i' }
+    - { field: description, regex: 'forwards? (?:as attachment )?to |redirects? to ', flags: 'i' }
+  tags: ['exchange', 'mailbox_forwarding', 'persistence']
+  view: 'M365 Exchange'
+
+ts_m365_transport_rule:
+  description: Exchange transport rule created / modified (Timesketch transport_rule)
+  any:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set)-?TransportRule\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: (?:New-TransportRule|Set-TransportRule)\b', flags: 'i' }
+  tags: ['exchange', 'transport_rule']
+  view: 'M365 Exchange'
+
+ts_m365_mailbox_permission:
+  description: Mailbox permission granted (Timesketch exchange mailbox_permission)
+  any:
+    - { field: description, regex: '^M365 Exchange: Add-?Mailbox(?:Folder)?Permission\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add-?Mailbox(?:Folder)?Permission\b', flags: 'i' }
+  tags: ['exchange', 'mailbox_permission']
+  view: 'M365 Exchange'
+
+ts_m365_set_mailbox:
+  description: Mailbox configuration changed, incl. audit settings (Timesketch exchange audit)
+  any:
+    - { field: description, regex: '^M365 Exchange: Set-?Mailbox\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Set-Mailbox\b', flags: 'i' }
+  tags: ['exchange', 'mailbox_config']
+  view: 'M365 Exchange'
+
+# ── User identity & account changes ──
+ts_m365_user_added:
+  description: New user / guest created (Timesketch user_created guest_user)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Add user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: (?:Add user|Invite external user)\b', flags: 'i' }
+  tags: ['user_created', 'identity']
+  view: 'M365 identity changes'
+
+ts_m365_user_deleted:
+  description: User removed (Timesketch user_deleted)
+  # The UAL spells this `Delete user.` in current tenants and `Remove user` in older exports, so both.
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Remove|Delete) user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Delete user\b', flags: 'i' }
+  tags: ['user_deleted']
+  view: 'M365 identity changes'
+
+ts_m365_user_updated:
+  description: User object modified (Timesketch user_modified)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Set|Update) user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Update user\b', flags: 'i' }
+  tags: ['user_modified', 'identity']
+  view: 'M365 identity changes'
+
+ts_m365_password_reset:
+  description: User password reset (Timesketch password_reset)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Reset|Change) user password\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Password reset\b', flags: 'i' }
+  tags: ['password_reset', 'user_security']
+  view: 'M365 identity changes'
+
+# ── Sign-ins & anomalies ──
+ts_m365_signin_success:
+  description: Successful user sign-in (Timesketch signin success)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: UserLoggedIn\b', flags: 'i' }
+  tags: ['signin', 'success']
+  view: 'M365 sign-ins'
+
+ts_m365_signin_failed:
+  description: Failed user sign-in (Timesketch signin failed)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: UserLoginFailed\b', flags: 'i' }
+  tags: ['signin', 'failed']
+  view: 'M365 sign-ins'
+
+ts_entra_token_issuance:
+  description: Token issued at sign-in (Timesketch signin token)
+  any:
+    - { field: description, regex: '^Entra sign-in: application \b', flags: 'i' }
+  tags: ['signin', 'token']
+  view: 'M365 sign-ins'
+
+ts_entra_legacy_auth:
+  description: Legacy-auth (ROPC) sign-in — no interactive MFA prompt (Timesketch legacy_auth)
+  any:
+    - { field: description, regex: '\[legacy-auth ROPC', flags: 'i' }
+  tags: ['signin', 'legacy_auth']
+  view: 'M365 sign-ins'
+
+ts_entra_signin_risk:
+  description: Sign-in carrying a risk signal (Timesketch anomalous / impossible-travel — risk only)
+  any:
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none)\S', flags: 'i' }
+  tags: ['signin', 'risk']
+  view: 'M365 sign-ins'
+
+# ── Defender / Intune / SharePoint / OneDrive / Teams ──
+ts_m365_defender_action:
+  description: Defender response action — alert, isolation, quarantine (Timesketch defender_*)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:AlertTriggered|DeviceIsolated|QuarantineFile|FileMalwareDetected)\b', flags: 'i' }
+  tags: ['defender_action', 'security']
+  view: 'M365 Defender / Intune'
+
+ts_m365_defender_bypass:
+  description: Defender exclusion / preference changed via cloud (Timesketch defender_bypass)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add-MpPreference|Set-MpPreference)\b', flags: 'i' }
+  tags: ['persistence', 'defender_bypass']
+  view: 'M365 Defender / Intune'
+
+ts_m365_intune_policy:
+  description: Intune device / policy management change (Timesketch intune_policy)
+  any:
+    - { field: description, regex: '^M365 Intune: (?:Register device|RemoteWipeInitiated|Update policy)\b', flags: 'i' }
+  tags: ['intune_policy', 'configuration_change']
+  view: 'M365 Defender / Intune'
+
+ts_m365_file_download:
+  description: File accessed / downloaded from SharePoint or OneDrive (Timesketch file_access)
+  any:
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileAccessed|FileSyncedDownloadedFull)\b', flags: 'i' }
+  tags: ['file_access', 'file_download']
+  view: 'M365 file access'
+
+ts_m365_anonymous_sharing:
+  description: Anonymous / external sharing link created (Timesketch anonymous_sharing)
+  any:
+    - { field: description, regex: '^M365 [^:]+: AnonymousLinkCreated\b', flags: 'i' }
+  tags: ['anonymous_sharing', 'external_sharing']
+  view: 'M365 file access'
+
+ts_m365_mass_download:
+  description: Bulk file-download operation (Timesketch mass_download — count when aggregated)
+  any:
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileSyncedDownloadedFull)\b', flags: 'i' }
+  tags: ['mass_download', 'exfil']
+  view: 'M365 file access'
+
+# ── Entra governance: conditional access, policy, audit-logging ──
+ts_entra_policy_change:
+  description: Entra conditional-access / authentication / token-lifetime policy changed (Timesketch policy_*)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Create|Update|Delete) (?:conditional access|token lifetime) policy\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Update authentication methods policy\b', flags: 'i' }
+  tags: ['entra', 'policy', 'conditional_access']
+  view: 'Entra governance'
+
+ts_entra_audit_policy_changed:
+  description: Entra audit-log settings changed (Timesketch audit_policy logging)
+  any:
+    - { field: description, regex: '^Entra audit: Update auditLogSettings\b', flags: 'i' }
+  tags: ['audit_policy', 'logging', 'modified']
+  view: 'Entra governance'
+
+ts_entra_pim:
+  description: Entra PIM role activation / approval / denial (Timesketch pim)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Activate eligible role assignment|Approve eligible role assignment request|Deny eligible role assignment request|Eligible role assignment expired)\b', flags: 'i' }
+  tags: ['pim', 'role_activation']
+  view: 'Entra governance'
+
+ts_entra_group_change:
+  description: Entra group created or membership changed (Timesketch group)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Create group|Add member to group|Remove member from group)\b', flags: 'i' }
+  tags: ['group', 'membership']
+  view: 'Entra governance'
+
+ts_entra_risky_user_action:
+  description: Risky-user / risk-policy action — dismissal or policy change (Timesketch evasion)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Dismiss risky user|Update risk policy)\b', flags: 'i' }
+  tags: ['evasion', 'risk_dismissal']
+  view: 'Entra governance'
+
+# NOT PORTED (the source rule's distinguishing data is not in the rendered description):
+#   m365_admin_role_assigned / m365_privileged_role_assignment (the specific role) — the role name
+#     lives in AuditData, not the UAL `description`; ts_m365_privileged_role_assignment covers the
+#     generic add-to-role shape.
+#   m365_high_priv_app_role_assigned / m365_oauth_consent_high_scope (ReadWrite.All / FullControl) —
+#     the granted scope is decoded by entraAppChange.ts into posture/object, but those rows come from
+#     the Entra audit path, not UAL AuditData.
+#   m365_hidden_mailbox_rule (HiddenFromUI) / m365_mailbox_audit_enabled (AuditEnabled) /
+#     m365_user_upn_changed / m365_user_displayname_changed — the modified property name is in
+#     AuditData / ModifiedProperties, not the rendered description.
+#   m365_signin_anomalous_location (Location) / m365_signin_impossible_travel / m365_signin_via_tor
+#     (client_ip) / m365_mfa_bypass / m365_signin_legacy_auth(detail) — m365Import's Entra sign-in
+#     path renders `[risk: <level>]` and `[legacy-auth ROPC ...]` (both ported above) but not the raw
+#     location / impossible-travel / Tor fields.
+#   m365_mailbox_export_started / m365_mailbox_moved / m365_mailbox_audit_enabled — operation names
+#     exist (`Start-ComplianceSearchAction`, `New-MoveRequest`) but their export/move qualifier is in
+#     AuditData; the UAL `description` carries the operation alone.
+#   entra_conditional_access_disabled / entra_mfa_policy_disabled — the `*disable*` detail lives in
+#     additional_details, which entraAuditImport does not render (ts_entra_policy_change tags the
+#     policy-update operation itself).
