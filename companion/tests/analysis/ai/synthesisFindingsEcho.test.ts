@@ -91,7 +91,7 @@ describe("buildFindingsEcho — 150 cap (#1994)", () => {
     expect(echo).toContain("(showing 150 of 200 findings, severest first)");
     expect(echo).not.toContain("[model-low]");
     expect(echo).toContain("[h149]");
-    expect(state.findings[0]!.id).toBe("model-low");
+    expect(state.findings[0].id).toBe("model-low");
   });
 
   it("adds no notice at exactly 150", () => {

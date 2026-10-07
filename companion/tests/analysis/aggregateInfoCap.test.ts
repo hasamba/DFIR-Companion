@@ -4,7 +4,7 @@ import type { MappedEvent } from "../../src/analysis/siemImport.js";
 import type { Severity } from "../../src/analysis/stateTypes.js";
 
 function row(i: number, severity: Severity, timestamp: string): MappedEvent {
-  return { timestamp, description: `row ${i}`, severity, mitre: [], aggKey: `k${i}` } as MappedEvent;
+  return { timestamp, description: `row ${i}`, severity, mitre: [], aggKey: `k${i}` };
 }
 
 describe("aggregate cap tie-break (#1995)", () => {

@@ -59,8 +59,8 @@ function norm(p: string): string {
 // (`\VMwareDnD\`) is attacker-choosable, so it alone must not cap a staged payload (#2002).
 // DFIR_LAB_SETUP_PATHS extras stay plain substrings: the operator owns them.
 const DEFAULT_SHAPES: ReadonlyMap<string, RegExp> = new Map([
-  [norm(DEFAULT_LAB_SETUP_PATHS[0]!), /\\temp\\vmware-[^\\]+\\vmwarednd\\/u],
-  [norm(DEFAULT_LAB_SETUP_PATHS[1]!), /\\temp\\virtualbox dropped files\\/u],
+  [norm(DEFAULT_LAB_SETUP_PATHS[0]), /\\temp\\vmware-[^\\]+\\vmwarednd\\/u],
+  [norm(DEFAULT_LAB_SETUP_PATHS[1]), /\\temp\\virtualbox dropped files\\/u],
 ]);
 
 function pathMatches(p: string, entry: string): boolean {

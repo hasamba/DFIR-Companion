@@ -7,7 +7,7 @@
 export const MAX_REREAD_REASON_LENGTH = 160;
 
 // C0 controls (incl. newline, tab, ESC), DEL and C1 controls, and the Unicode line/paragraph separators.
-// eslint-disable-next-line no-control-regex
+
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
 /** A one-line, capped reason, or "" when `v` is not a non-blank string. */

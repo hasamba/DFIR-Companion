@@ -96,19 +96,18 @@ describe("synthesis context caps (#1999)", () => {
   });
 
   it("adds a count line to the connective digest only when anchors were cut", () => {
-    const anchor = (value: string): IocAnchor =>
-      ({
-        value,
-        type: "ip",
-        hosts: ["A", "B"],
-        accounts: [],
-        tools: [],
-        malicious: false,
-        suspicious: false,
-        internalConflict: false,
-        mentioned: false,
-        score: 8,
-      }) as IocAnchor;
+    const anchor = (value: string): IocAnchor => ({
+      value,
+      type: "ip",
+      hosts: ["A", "B"],
+      accounts: [],
+      tools: [],
+      malicious: false,
+      suspicious: false,
+      internalConflict: false,
+      mentioned: false,
+      score: 8,
+    });
     const cutDigest = buildConnectiveIocDigest([anchor("1.1.1.1")], 5);
     expect(cutDigest).toContain("(showing 1 of 5 connective indicators)");
     expect(buildConnectiveIocDigest([anchor("1.1.1.1")])).not.toContain("showing");

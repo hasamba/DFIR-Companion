@@ -197,7 +197,9 @@ export function createEventAggregator(
           (a.severity === "Info" && a.timestamp && b.timestamp
             ? b.timestamp.localeCompare(a.timestamp)
             : a.severity === "Info" && !!a.timestamp !== !!b.timestamp
-              ? (a.timestamp ? -1 : 1)
+              ? a.timestamp
+                ? -1
+                : 1
               : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
           firstOrdinal.get(a)! - firstOrdinal.get(b)!,
       );
