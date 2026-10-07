@@ -820,3 +820,303 @@ ts_entra_risky_user_action:
 #   entra_conditional_access_disabled / entra_mfa_policy_disabled — the `*disable*` detail lives in
 #     additional_details, which entraAuditImport does not render (ts_entra_policy_change tags the
 #     policy-update operation itself).
+
+# ─────────────────────────── Cloud audit — Timesketch AWS / GCS parity ───────────────────────────
+# Ported from the upstream Timesketch data/tags.yaml (tagger analyzer: query_string → tags). The
+# source rules set TAGS only — no severity/MITRE — and Companion has no emojis / save_search /
+# search_name / query_string, so only the tag intent is kept. Each rule keys on the AWS eventName /
+# GCP methodName, which the importer renders verbatim into `description`:
+#   AWS   `AWS <EventName> (<source>) …`   (awsImport.ts head)
+#   GCP   `GCP <methodName> (<service>) …` (cloudActivityImport.ts head)
+# awsImport/GCP already grade every high-signal call, so these add searchable tags, not a grade.
+# NOT PORTED: aws_cloudtrail_readonly_true/false (readOnly is a boolean, not rendered) and
+# aws_cloudtrail_unauthorized_api_call (errorCode only bumps severity, not rendered); yara_match
+# (already covered by yaraImport.ts's rule/tags/path).
+
+ts_aws_console_login:
+  description: AWS console login (Timesketch ConsoleLogin)
+  any:
+    - { field: description, regex: '^AWS ConsoleLogin \(', flags: 'i' }
+  tags: ['ConsoleLogin']
+  view: 'AWS CloudTrail'
+
+ts_aws_get_caller_identity:
+  description: AWS GetCallerIdentity recon call (Timesketch GetCallerIdentity)
+  any:
+    - { field: description, regex: '^AWS GetCallerIdentity \(', flags: 'i' }
+  tags: ['GetCallerIdentity']
+  view: 'AWS CloudTrail'
+
+ts_aws_iam_persistence:
+  description: AWS IAM persistence / privilege-escalation API call (Timesketch SuspicousIAMActivity)
+  any:
+    - { field: description, regex: '^AWS (?:AddRoleToInstanceProfile|AddUserToGroup|AssumeRole|AttachGroupPolicy|AttachRolePolicy|AttachUserPolicy|CreateAccessKey|CreateLoginProfile|CreatePolicyVersion|CreateRole|PassRole|PutGroupPolicy|PutRolePolicy|PutUserPolicy|SetDefaultPolicyVersion|UpdateAccessKey|UpdateLoginProfile|GetFederationToken) \(', flags: 'i' }
+  tags: ['SuspicousIAMActivity']
+  view: 'AWS CloudTrail'
+
+ts_aws_identity_center:
+  description: AWS IAM Identity Center API call (Timesketch SuspicousIICActivity)
+  any:
+    - { field: description, regex: '^AWS (?:StartSSO|CreateUser|CreateGroup|AddMemberToGroup|CreatePermissionSet|CreateAccountAssignment|Authenticate|Federate|AssumeRoleWithSAML) \(', flags: 'i' }
+  tags: ['SuspicousIICActivity']
+  view: 'AWS CloudTrail'
+
+ts_aws_security_group_changed:
+  description: AWS security-group change (Timesketch NetworkChanged SecurityGroup)
+  any:
+    - { field: description, regex: '^AWS (?:AuthorizeSecurityGroupEgress|AuthorizeSecurityGroupIngress|CreateSecurityGroup|DeleteSecurityGroup|ModifySecurityGroupRules|RevokeSecurityGroupEgress|RevokeSecurityGroupIngress) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'SG']
+  view: 'AWS network changes'
+
+ts_aws_network_acl_changed:
+  description: AWS network-ACL change (Timesketch NetworkChanged NetworkACl)
+  any:
+    - { field: description, regex: '^AWS (?:CreateNetworkAcl|CreateNetworkAclEntry|DeleteNetworkAcl|DeleteNetworkAclEntry|ReplaceNetworkAclAssociation|ReplaceNetworkAclEntry) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'NACL']
+  view: 'AWS network changes'
+
+ts_aws_route_table_changed:
+  description: AWS route-table change (Timesketch NetworkChanged RouteTable)
+  any:
+    - { field: description, regex: '^AWS (?:CreateRoute|CreateRouteTable|DeleteRoute|DeleteRouteTable|DisassociateRouteTable|ReplaceRoute|ReplaceRouteTableAssociation) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'RouteTable']
+  view: 'AWS network changes'
+
+ts_aws_vpc_changed:
+  description: AWS VPC / peering change (Timesketch NetworkChanged VPC)
+  any:
+    - { field: description, regex: '^AWS (?:AcceptVpcPeeringConnection|AttachClassicLinkVpc|CreateVpc|CreateVpcPeeringConnection|DeleteVpc|DeleteVpcPeeringConnection|DetachClassicLinkVpc|DisableVpcClassicLink|EnableVpcClassicLink|ModifyVpcAttribute|RejectVpcPeeringConnection) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'VPC']
+  view: 'AWS network changes'
+
+ts_aws_gateway_changed:
+  description: AWS gateway change (Timesketch NetworkChanged GateWay)
+  any:
+    - { field: description, regex: '^AWS (?:Accept|Associate|Attach|Create|Delete|Replace)[A-Za-z]*Gateway[A-Za-z]* \(', flags: 'i' }
+  tags: ['NetworkChanged', 'GW']
+  view: 'AWS network changes'
+
+ts_gcp_bucket_created:
+  description: GCS bucket created (Timesketch gcs-bucket-create)
+  any:
+    - { field: description, regex: '^GCP storage\.buckets\.create \(', flags: 'i' }
+  tags: ['gcs-bucket-create']
+  view: 'GCS bucket IAM'
+
+# The source split setIamPermissions into add / remove / world-readable by reading the structured
+# policyDelta. Companion DOES render the delta (gcpIamRecord.ts) — `added a binding for`,
+# `removed a binding for`, `(public member)` — so the three intents are ported faithfully.
+ts_gcp_bucket_permission_added:
+  description: GCS bucket IAM permission added (Timesketch gcs-bucket-add)
+  any:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions[^\n]* added a binding for ', flags: 'i' }
+  tags: ['gcs-bucket-add']
+  view: 'GCS bucket IAM'
+
+ts_gcp_bucket_permission_removed:
+  description: GCS bucket IAM permission removed (Timesketch gcs-bucket-remove)
+  any:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions[^\n]* removed a binding for ', flags: 'i' }
+  tags: ['gcs-bucket-remove']
+  view: 'GCS bucket IAM'
+
+ts_gcp_bucket_world_added:
+  description: GCS bucket made publicly readable (Timesketch gcs-bucket-world-add)
+  all:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions', flags: 'i' }
+    - { field: description, regex: '\(public member\)', flags: 'i' }
+  tags: ['gcs-bucket-world-add']
+  view: 'GCS bucket IAM'
+
+# ─────────────────────────── Windows registry persistence / blinding (not already graded) ───────────────────────────
+# The built-in grader (tradecraftRules.ts) covers these when they arrive as a command line or a 4104
+# script block. These rules cover the OTHER shape: the registry WRITE itself (Sysmon 12/13/14, Security
+# 4657), where the key path is the evidence. The key renders in `description` as `TargetObject=…`; for
+# 4657 securityRegistryWrite.ts also sets `path`. genericSysmonRegistry.ts runs first and lowers only
+# GENERIC registry noise — every key below is on its KEEP list, so it survives at Medium for these rules
+# to raise. Value DATA is not rendered, so a rule reads the key/value NAME only (a direction the record
+# does not state is never claimed).
+
+# Both registry-write shapes carry key AND value name in `description`, so each condition matches
+# `key[^\n]*value` in one regex that covers both: Sysmon 12/13/14 render `TargetObject=<key>\<value>`
+# (value appended to the key), and Security 4657 renders `ObjectName=<key> - ObjectValueName=<value>`.
+# `path` is read only where the key itself is the whole evidence (4657 sets it to the key).
+win_ifeo_persistence:
+  description: Image File Execution Options / SilentProcessExit debugger hijack
+  any:
+    - { field: description, regex: '\\image file execution options\\[^\n]*\bdebugger\b', flags: 'i' }
+    - { field: description, regex: '\\silentprocessexit\\', flags: 'i' }
+  tags: ['ifeo', 'persistence', 'defense-evasion']
+  mitre: ['T1546.012']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_logon_script:
+  description: Winlogon Shell/Userinit/Notify or logon-script registry hijack
+  any:
+    - { field: description, regex: '\\winlogon\\[^\n]*(?:shell|userinit|notify|vmapplet|taskman|appsetup)\b', flags: 'i' }
+    - { field: description, regex: '\\environment\\userinitmprlogonscript\b', flags: 'i' }
+  tags: ['winlogon', 'persistence']
+  mitre: ['T1547.004']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_service_imagepath_write:
+  description: Service ImagePath / ServiceDll / FailureCommand registry write (service persistence)
+  any:
+    - { field: description, regex: '\\services\b[^\n]*(?:imagepath|servicedll|failurecommand)\b', flags: 'i' }
+    - { field: path, regex: '\\services\\[^\\]+\\(?:parameters\\)?(?:imagepath|servicedll|failurecommand)\b', flags: 'i' }
+  tags: ['service-persistence', 'persistence']
+  mitre: ['T1543.003']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_defender_registry_tamper:
+  description: Defender / security service disabled via registry (DisableAntiSpyware, exclusions, Start=4)
+  any:
+    - { field: description, regex: '\\windows defender\b[^\n]*(?:disableantispyware|disableantivirus|disablerealtimemonitoring|exclusions)\b', flags: 'i' }
+    - { field: description, regex: '\\windows advanced threat protection\\', flags: 'i' }
+    - { field: description, regex: '\\services\\(?:windefend|wdnissvc|wdfilter|wdboot|sense|securityhealthservice|wscsvc|mpssvc)[^\n]*\bstart\b', flags: 'i' }
+  tags: ['defender-tamper', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_com_hijack:
+  description: COM CLSID InprocServer32 / LocalServer32 registry hijack
+  all:
+    - { field: description, regex: '\\classes\\(?:wow6432node\\)?clsid\\', flags: 'i' }
+    - { field: description, regex: '\\(?:inprocserver32|localserver32)\b', flags: 'i' }
+  tags: ['com-hijack', 'persistence', 'defense-evasion']
+  mitre: ['T1546.015']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_security_support_provider:
+  description: LSA Security/Authentication Packages registry tamper (SSP persistence)
+  any:
+    - { field: description, regex: '\\control\\lsa\b[^\n]*(?:security packages|authentication packages|securityproviders)\b', flags: 'i' }
+    - { field: path, regex: '\\control\\lsa\\(?:security packages|authentication packages|securityproviders)\b', flags: 'i' }
+  tags: ['lsa-ssp', 'persistence', 'credential-access']
+  mitre: ['T1547.005']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_bootexecute:
+  description: Session Manager BootExecute registry tamper (boot-time native persistence)
+  any:
+    - { field: description, regex: '\\control\\session manager\b[^\n]*\bbootexecute\b', flags: 'i' }
+    - { field: path, regex: '\\control\\session manager\\bootexecute\b', flags: 'i' }
+  tags: ['bootexecute', 'persistence']
+  mitre: ['T1547.006']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_runasppl_write:
+  description: LSA RunAsPPL (LSA protection) registry write — direction not in the record
+  any:
+    - { field: description, regex: '\\control\\lsa\b[^\n]*\brunasppl\b', flags: 'i' }
+  tags: ['lsa-protection', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+# Requires a CREATE marker in the description, not just the path: a Velociraptor file listing (or an
+# MFT/USN row) sets `path` for sethc.exe or a Startup entry that every host already has, and grading a
+# listing as a backdoor is the #1666 hazard in a new place. Sysmon 11/23/26 and a USN FileCreate name
+# the event, so the marker is what separates a write from a mere presence.
+win_accessibility_backdoor:
+  description: System32 accessibility binary written (sethc/utilman sticky-keys backdoor)
+  all:
+    - { field: path, regex: '[\\/](?:sethc|utilman|osk|magnify|narrator|displayswitch|atbroker)\.exe$', flags: 'i' }
+    - { field: path, regex: '\\windows\\system32\\', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created|File deleted', flags: 'i' }
+  tags: ['accessibility-backdoor', 'persistence']
+  mitre: ['T1546.008']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_startup_folder_payload:
+  description: Executable/script written to a Startup folder (logon persistence)
+  all:
+    - { field: path, regex: '\\start menu\\programs\\startup\\', flags: 'i' }
+    - { field: path, regex: '\.(?:exe|scr|bat|cmd|ps1|vbs|js|jse|wsf|hta|com|pif)$', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created|File deleted', flags: 'i' }
+  tags: ['startup-folder', 'persistence']
+  mitre: ['T1547.001']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_ps_profile_persistence:
+  description: PowerShell profile script written (profile-based persistence)
+  # The path anchor names the profile; the create marker (same reason as the file-write rules above)
+  # keeps a Velociraptor/MFT listing of an existing profile from reading as a write.
+  all:
+    - { field: path, regex: '(?:microsoft\.powershell_profile|profile)\.ps1$', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created', flags: 'i' }
+  tags: ['powershell-profile', 'persistence']
+  mitre: ['T1546.013']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+# ─────────────────────────── Windows defense evasion / execution (command shapes not graded) ───────────────────────────
+win_amsi_bypass:
+  description: AMSI bypass (AmsiUtils / amsiInitFailed / AmsiScanBuffer patch)
+  any:
+    - { field: commandLine, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+    - { field: description, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+    - { field: message, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+  tags: ['amsi-bypass', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: High
+  view: 'Defense evasion'
+
+win_firewall_disable:
+  description: Windows Firewall disabled (netsh / Set-NetFirewallProfile)
+  any:
+    - { field: commandLine, regex: '(?:netsh\s+(?:adv)?firewall|set-netfirewallprofile)[^\n]*(?:state\s+off|opmode\s+disable|enabled\s+\$?false)', flags: 'i' }
+    - { field: description, regex: 'netsh\s+(?:adv)?firewall[^\n]*(?:state\s+off|opmode\s+disable)', flags: 'i' }
+  tags: ['firewall-disable', 'defense-evasion']
+  mitre: ['T1562.004']
+  severity: High
+  view: 'Defense evasion'
+
+win_audit_policy_tamper:
+  description: Audit policy cleared (auditpol /clear)
+  any:
+    - { field: commandLine, regex: '\bauditpol\b[^\n]*\/(?:clear|remove)\b', flags: 'i' }
+    - { field: description, regex: '\bauditpol\b[^\n]*\/(?:clear|remove)\b', flags: 'i' }
+  tags: ['audit-policy-tamper', 'defense-evasion']
+  mitre: ['T1562.002']
+  severity: High
+  view: 'Defense evasion'
+
+win_wmi_mof:
+  description: WMI MOF compiled (mofcomp / .mof) — file-based permanent event subscription
+  any:
+    - { field: commandLine, regex: '\bmofcomp(?:\.exe)?\b', flags: 'i' }
+    - { field: description, regex: '\bmofcomp\b[^\n]*\.mof\b|\.mof\b[^\n]*\bmofcomp\b', flags: 'i' }
+  tags: ['wmi-persistence', 'persistence']
+  mitre: ['T1546.003']
+  severity: Medium
+  view: 'WMI persistence'
+
+win_rdp_portproxy:
+  description: netsh interface portproxy tunnel (RDP/any-port relay)
+  any:
+    - { field: commandLine, regex: 'netsh\b[^\n]*\binterface\s+portproxy\b', flags: 'i' }
+    - { field: description, regex: 'netsh\b[^\n]*\binterface\s+portproxy\b', flags: 'i' }
+  tags: ['rdp-portproxy', 'lateral-movement', 'command-and-control']
+  mitre: ['T1021.001', 'T1090.001']
+  severity: Medium
+  view: 'Defense evasion'
+
+win_terminal_server_write:
+  description: Terminal Server (RDP) registry setting written — direction not in the record
+  any:
+    - { field: description, regex: '\\terminal server\b[^\n]*\bfdenytsconnections\b', flags: 'i' }
+    - { field: path, regex: '\\terminal server\\fdenytsconnections\b', flags: 'i' }
+  tags: ['rdp-registry', 'lateral-movement']
+  mitre: ['T1021.001']
+  severity: Low
+  view: 'Defense evasion'
