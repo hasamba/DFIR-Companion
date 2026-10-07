@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import { FindingSeverityRestoreStore, type SeverityCap } from "../../src/analysis/findingSeverityRestore.js";
 import type { SecondOpinion } from "../../src/analysis/secondOpinion.js";
+import { deriveSemanticKey } from "../../src/analysis/semanticKey.js";
 import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 
@@ -203,8 +204,9 @@ describe("second-opinion reopened decisions keep the graded state (#1972 review)
     expect(g.severityCap).toEqual(cap("High", "Medium"));
 
     const restored = await setup([capped], [delta(capped, "Critical", "Low")]);
+    // The route stores the finding's real key. A blank key matches only a keyless finding (#1991).
     await new FindingSeverityRestoreStore(restored.store).restore("c1", "f1", {
-      semanticKey: "",
+      semanticKey: deriveSemanticKey(capped),
       by: "analyst",
     });
     expect((await post(restored.app, false)).status).toBe(200);

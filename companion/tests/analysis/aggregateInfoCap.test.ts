@@ -8,20 +8,29 @@ function row(i: number, severity: Severity, timestamp: string): MappedEvent {
 }
 
 describe("aggregate cap tie-break (#1995)", () => {
-  it("keeps the newest Info rows and puts undated rows last", () => {
+  it("keeps the newest dated Info rows and lists them in the usual order", () => {
+    const rows = [
+      row(1, "Info", "2026-01-01T00:00:00Z"),
+      row(2, "Info", "2026-01-03T00:00:00Z"),
+      row(4, "Info", "2026-01-02T00:00:00Z"),
+    ];
+    const out = aggregateEvents(rows, { maxEvents: 2 });
+    expect(out.groups).toBe(3);
+    // The two newest survive, listed earliest-first as before.
+    expect(out.events.map((e) => e.description)).toEqual(["row 4", "row 2"]);
+    // Under the cap nothing is cut, and the order is the usual one.
+    const all = aggregateEvents(rows, { maxEvents: 10 });
+    expect(all.events.map((e) => e.description)).toEqual(["row 1", "row 4", "row 2"]);
+  });
+
+  it("an undated Info row (an importer's own summary row) survives the cut", () => {
     const rows = [
       row(1, "Info", "2026-01-01T00:00:00Z"),
       row(2, "Info", "2026-01-03T00:00:00Z"),
       row(3, "Info", ""),
-      row(4, "Info", "2026-01-02T00:00:00Z"),
     ];
     const out = aggregateEvents(rows, { maxEvents: 2 });
-    expect(out.groups).toBe(4);
-    // The two newest survive, listed in the usual earliest-first order.
-    expect(out.events.map((e) => e.description)).toEqual(["row 4", "row 2"]);
-    // Under the cap nothing is cut, and the order is the usual one.
-    const all = aggregateEvents(rows, { maxEvents: 10 });
-    expect(all.events.map((e) => e.description)).toEqual(["row 3", "row 1", "row 4", "row 2"]);
+    expect(out.events.map((e) => e.description)).toEqual(["row 3", "row 2"]);
   });
 
   it("keeps earliest-first for graded rows", () => {

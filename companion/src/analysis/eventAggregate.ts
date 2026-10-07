@@ -196,15 +196,15 @@ export function createEventAggregator(
         firstOrdinal.get(a)! - firstOrdinal.get(b)!;
       if (events.length <= maxEvents) return { events: events.sort(byOrder), groups };
 
-      // Over the cap: WHICH rows survive prefers the newest Info rows (undated last), so an all-Info
-      // import keeps the incident window, not the oldest rows (#1995). The kept rows are still
-      // returned in the order above, so nothing downstream sees a different order.
-      const dated = (e: SiemEvent): boolean => !!e.timestamp;
+      // Over the cap: WHICH rows survive prefers the newest DATED Info rows, so an all-Info import
+      // keeps the incident window, not the oldest rows (#1995). An undated row keeps its old place:
+      // the importers' own summary rows (an overflow count, a skipped-file note) carry no time and
+      // must survive the cut. The kept rows are still returned in the order above.
       const byKeep = (a: SiemEvent, b: SiemEvent): number =>
         SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         (b.count ?? 1) - (a.count ?? 1) ||
-        (a.severity === "Info"
-          ? Number(dated(b)) - Number(dated(a)) || (b.timestamp ?? "").localeCompare(a.timestamp ?? "")
+        (a.severity === "Info" && a.timestamp && b.timestamp
+          ? b.timestamp.localeCompare(a.timestamp)
           : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
         firstOrdinal.get(a)! - firstOrdinal.get(b)!;
       return { events: events.sort(byKeep).slice(0, maxEvents).sort(byOrder), groups };
