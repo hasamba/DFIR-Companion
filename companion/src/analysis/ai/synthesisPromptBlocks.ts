@@ -187,10 +187,7 @@ function buildScopeNote(scope: ScopeWindow): string {
  * re-guess it from the title every run and drift the grade. Exported for tests.
  */
 export function buildFindingsEcho(state: InvestigationState): string {
-  // #1994: rank before the cut so detection backfill cannot push the model's own findings out by
-  // store order. Array.sort is stable, so equal severities keep insertion order.
-  const ranked = [...state.findings].sort((a, b) => SEVERITY_RANK[echoRank(a)] - SEVERITY_RANK[echoRank(b)]);
-  const echoed = ranked.slice(0, FINDINGS_ECHO_CAP);
+  const echoed = echoedFindings(state);
   const detailed = detailedFindingIds(echoed);
   const cut = capDisclosure(echoed.length, state.findings.length, "findings, severest first");
   const lines =
@@ -205,6 +202,17 @@ export function buildFindingsEcho(state: InvestigationState): string {
 }
 
 const FINDINGS_ECHO_CAP = 150;
+
+/**
+ * The findings the model is shown, in the order it sees them. One ranking for the echo and for the
+ * #2006 carry-forward, so the two cannot drift: what is not here, the model never saw.
+ */
+export function echoedFindings(state: InvestigationState): InvestigationState["findings"] {
+  // #1994: rank before the cut so detection backfill cannot push the model's own findings out by
+  // store order. Array.sort is stable, so equal severities keep insertion order.
+  const ranked = [...state.findings].sort((a, b) => SEVERITY_RANK[echoRank(a)] - SEVERITY_RANK[echoRank(b)]);
+  return ranked.slice(0, FINDINGS_ECHO_CAP);
+}
 
 /**
  * What each finding said last run (#1586). Findings are rewritten wholesale every synthesis, and the

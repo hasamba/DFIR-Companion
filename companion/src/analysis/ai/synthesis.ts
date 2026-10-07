@@ -63,6 +63,8 @@ import {
   type SynthesisInputContext,
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
+import { carryUnshownFindings } from "./synthesisUnshownCarry.js";
+import { echoedFindings } from "./synthesisPromptBlocks.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 import { callSynthesisModel, throwIfSuperseded, type SynthesisCall } from "./synthesisCall.js";
 import { citationRunWarnings } from "./findingCitations.js";
@@ -561,6 +563,17 @@ function safetyLogNote(call: SynthesisCall): string {
   return `${call.primaryLabel}'s safety filter stopped the answer ${times}; it passed on retry`;
 }
 
+// #2006: the log-line note — the safety-filter note and/or how many unshown findings were carried.
+function logNoteFor(call: SynthesisCall, carried: number): { logNote?: string } {
+  const notes = [
+    ...(call.safetyStops > 0 ? [safetyLogNote(call)] : []),
+    ...(carried > 0
+      ? [`carried ${carried} prior finding${carried === 1 ? "" : "s"} the model was not shown`]
+      : []),
+  ];
+  return notes.length ? { logNote: notes.join(" · ") } : {};
+}
+
 export async function synthesize(
   ctx: SynthesisContext,
   caseId: string,
@@ -669,6 +682,13 @@ export async function synthesize(
   // links, and let projectScope hide them for as long as the narrow window is set. AFTER grading, so
   // a carried finding keeps the confidence it was stored with; a no-op when no scope is set.
   next = carryOutOfWindowFindings(next, { prior: state, inWindowEvents: run.inWindowEvents, markers });
+  // #2006: the model saw only the echoed findings, so it could not re-emit the rest; keep those.
+  const unshown = carryUnshownFindings(next, {
+    prior: state,
+    echoedIds: new Set(echoedFindings(state).map((f) => f.id)),
+    markers,
+  });
+  next = unshown.state;
 
   // Every collection request this run is about to persist — the model's, and the corroboration steps
   // grading just added — is stamped with the import high-water mark it was issued against, so the
@@ -692,7 +712,7 @@ export async function synthesize(
     next,
     findingsDiff,
     reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
-    ...(call.safetyStops > 0 ? { logNote: safetyLogNote(call) } : {}),
+    ...logNoteFor(call, unshown.carriedCount),
   });
   // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);
