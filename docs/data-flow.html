@@ -87,6 +87,8 @@ svg#edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .edge.forbidden.on{stroke-width:11}
 .edge.dim{opacity:.07}
 .edge.forbidden.dim{opacity:.25}
+.blocker{transition:opacity .2s}
+.blocker.dim{opacity:.25}
 .elabel{font:600 11.5px var(--f-mono);fill:var(--ink);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;opacity:0;transition:opacity .2s}
 .elabel.on{opacity:1}
 .dot{opacity:.9}
@@ -1154,6 +1156,7 @@ function render() {
     e.path.classList.toggle("on", !!on);
     e.path.classList.toggle("dim", !!a && !on);
     if (e.labelEl) e.labelEl.classList.toggle("on", !!on);
+    if (e.blocker) e.blocker.classList.toggle("dim", !!a && !on);
     e.active = !a || on;
     e.dot.style.display = flowOn && e.active && !(a && a.search) ? "" : "none";
   });
