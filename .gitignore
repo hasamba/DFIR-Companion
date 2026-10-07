@@ -96,3 +96,6 @@ graphify-out/
 # Tesseract language models: downloaded into the working directory on first OCR run, ~5 MB each,
 # and reproducible from upstream. Never evidence, never source.
 *.traineddata
+
+# herdr web UI: screenshots pasted into agent sessions. Local only, never source.
+.herdr-web-ui/
