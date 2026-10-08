@@ -798,6 +798,7 @@
     "mergeIndex.ts": "analysis/timeline",
     "stateStore.ts": "storage",
     "stateTypes.ts": "shared",
+    "substringIndex.ts": "shared",
     "summary.ts": "analysis/workflow",
     "superTimeline.ts": "analysis/timeline",
     "superTimelineMemo.ts": "analysis/timeline",

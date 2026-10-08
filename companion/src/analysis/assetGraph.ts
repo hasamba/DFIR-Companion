@@ -6,7 +6,7 @@ import {
   type ForensicEvent,
   type Severity,
 } from "./stateTypes.js";
-import { escapeRegExp } from "./regexEscape.js";
+import { SubstringIndex } from "./substringIndex.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { isMentionedIoc } from "./iocMentioned.js";
 
@@ -92,31 +92,49 @@ export function filterTimeline(events: readonly ForensicEvent[], w?: TimeWindow)
 // IOC value needs boundary-aware description matching, not to validate octet ranges.
 const IPV4_SHAPE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
-// Per-IOC predicate for "does this IOC value appear in an event description". For IP-shaped values
-// a raw substring match over-links — IOC `1.1.1.1` matches inside `11.1.1.10` and `192.168.1.1`
-// inside `192.168.1.10` — so we use a digit/dot-boundary regex `(?<![\d.])<ip>(?![\d.])` (mirrors the
-// geographic-map fix, #133, and the boundary-aware token match in iocCorroboration.ts). Non-IP values
-// keep the cheap substring test. Compiled once per case (not per event).
-interface DescMatcher {
+// "Which IOC values appear in an event description". For IP-shaped values a raw substring match
+// over-links — IOC `1.1.1.1` matches inside `11.1.1.10` and `192.168.1.1` inside `192.168.1.10` — so
+// an IP occurrence only counts with no digit or dot on either side (mirrors the geographic-map fix,
+// #133, and the boundary-aware token match in iocCorroboration.ts). All values are found in ONE pass
+// per description: a per-value `includes`/regex was events × IoCs scans and pinned the server CPU on
+// a real case. Built once per graph (not per event).
+interface DescPattern {
   ioc: IOC;
-  test: (descLower: string) => boolean;
+  ipShaped: boolean;
 }
-function buildDescMatchers(iocs: readonly IOC[]): DescMatcher[] {
-  const out: DescMatcher[] = [];
+interface DescIndex {
+  index: SubstringIndex;
+  patterns: DescPattern[];
+}
+function buildDescIndex(iocs: readonly IOC[]): DescIndex {
+  const patterns: DescPattern[] = [];
+  const values: string[] = [];
   for (const i of iocs) {
     // Match the IOC's own value plus any analyst-merged alias values (#82) — an event mentioning
     // the pre-merge duplicate value should still link to the canonical IOC.
     for (const v of [i.value, ...(i.aliasValues ?? [])].map((s) => s.toLowerCase())) {
       if (v.length < 4) continue;
-      if (IPV4_SHAPE.test(v)) {
-        const re = new RegExp(`(?<![\\d.])${escapeRegExp(v)}(?![\\d.])`);
-        out.push({ ioc: i, test: (d) => re.test(d) });
-      } else {
-        out.push({ ioc: i, test: (d) => d.includes(v) });
-      }
+      patterns.push({ ioc: i, ipShaped: IPV4_SHAPE.test(v) });
+      values.push(v);
     }
   }
-  return out;
+  return { index: new SubstringIndex(values), patterns };
+}
+
+const IP_NEIGHBOR = /[\d.]/;
+// IoCs in pattern (= IoC list) order, not text order, so edges and asset IoC lists come out in the
+// same order the old per-IoC loop produced.
+function descriptionIocs(d: DescIndex, descLower: string): IOC[] {
+  const hits = new Set<number>();
+  d.index.forEachMatch(descLower, (p, start) => {
+    if (hits.has(p)) return;
+    if (d.patterns[p].ipShaped) {
+      const end = start + d.index.patternLength(p);
+      if (IP_NEIGHBOR.test(descLower.charAt(start - 1)) || IP_NEIGHBOR.test(descLower.charAt(end))) return;
+    }
+    hits.add(p);
+  });
+  return [...hits].sort((a, b) => a - b).map((p) => d.patterns[p].ioc);
 }
 
 function basename(p: string): string {
@@ -205,7 +223,7 @@ export function buildAssetGraph(
     for (const alias of i.aliasValues ?? []) byValue.set(alias.toLowerCase(), i);
   }
   const findingById = new Map(state.findings.map((f) => [f.id, f] as const));
-  const descMatchers = buildDescMatchers(iocs);
+  const descIndex = buildDescIndex(iocs);
 
   const assetMap = new Map<string, GraphAsset>();
   const edgeSet = new Set<string>();
@@ -255,10 +273,7 @@ export function buildAssetGraph(
       const f = findingById.get(fid);
       if (f) for (const iid of f.relatedIocs) add(byId.get(iid));
     }
-    const desc = e.description.toLowerCase();
-    for (const m of descMatchers) {
-      if (m.test(desc)) add(m.ioc);
-    }
+    for (const i of descriptionIocs(descIndex, e.description.toLowerCase())) add(i);
     return [...found.values()];
   }
 
