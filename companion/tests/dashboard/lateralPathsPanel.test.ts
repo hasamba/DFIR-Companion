@@ -107,4 +107,10 @@ describe("Highlight and the grouped row, in the source", () => {
     expect(js).toContain("data-path-idxs");
     expect(js).toMatch(/for \(const path of paths\)[\s\S]*lateral-path-dismissals/);
   });
+
+  it("reloads and tells the analyst when some dismiss/restore requests fail", () => {
+    expect(js).not.toMatch(/if \(ok\) await loadLateralPaths/);
+    expect(js).toContain("chains - ${failed} failed");
+    expect(js).toMatch(/showToast\(/);
+  });
 });

@@ -566,31 +566,33 @@
           const paths = pathsOfButton(dismissBtn).filter((path) => !path.dismissed);
           if (!paths.length) return;
           const note = prompt("Why is this chain wrong? (optional)") ?? "";
-          let ok = true;
+          let failed = 0;
           for (const path of paths) {
             const res = await fetch(`/cases/${caseId}/lateral-path-dismissals`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ hostIds: path.hostIds, note }),
             }).catch(() => null);
-            if (!res || !res.ok) ok = false;
+            if (!res || !res.ok) failed++;
           }
-          if (ok) await loadLateralPaths(caseId);
+          reportPathBatchFailures("Dismissed", paths.length, failed);
+          await loadLateralPaths(caseId);
           return;
         }
         const restoreBtn = e.target.closest(".ev-path-restore");
         if (restoreBtn && evPathsData && caseId) {
           const paths = pathsOfButton(restoreBtn).filter((path) => path.dismissed);
-          let ok = true;
+          let failed = 0;
           for (const path of paths) {
             const key = path.hostIds.map((h) => String(h).trim().toLowerCase()).join(">");
             const res = await fetch(
               `/cases/${caseId}/lateral-path-dismissals/${encodeURIComponent(key)}`,
               { method: "DELETE" },
             ).catch(() => null);
-            if (!res || !res.ok) ok = false;
+            if (!res || !res.ok) failed++;
           }
-          if (ok) await loadLateralPaths(caseId);
+          reportPathBatchFailures("Restored", paths.length, failed);
+          await loadLateralPaths(caseId);
           return;
         }
       });
@@ -661,6 +663,12 @@
   }
 
   // The paths a row's buttons stand for: one path (data-path-idx) or a group (data-path-idxs).
+  // Tell the analyst when part of a grouped dismiss/restore failed; the caller reports before the reload so a stalled reload cannot hide it.
+  function reportPathBatchFailures(verb, total, failed) {
+    if (!failed || typeof showToast !== "function") return;
+    showToast(`${verb} ${total - failed} of ${total} chains - ${failed} failed`, "warn");
+  }
+
   function pathsOfButton(btn) {
     const list = btn.dataset.pathIdxs ?? btn.dataset.pathIdx ?? "";
     return String(list)
