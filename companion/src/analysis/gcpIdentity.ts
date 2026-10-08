@@ -8,12 +8,12 @@
 import type { GcpDelegation, GcpPrincipal, GcpProjectRef } from "./canonicalGcp.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, getPath, isObject, str } from "./siemImport.js";
+import { FORMAT_CHARS } from "./bidiControl.js";
 
 type Row = Record<string, unknown>;
 
 export const FIELD_MAX = 200;
 const DELEGATION_MAX = 8;
-const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
 
 /** Neutralised for display: brackets, controls, format and bidi characters gone, bounded. */
 export const show = (v: string, max = FIELD_MAX): string => {

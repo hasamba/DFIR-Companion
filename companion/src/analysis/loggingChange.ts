@@ -21,6 +21,7 @@ import type { Severity } from "./stateTypes.js";
 import type { LoggingChangeBlock, LoggingFailureKind, LoggingState } from "./canonicalLogging.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, isObject, str } from "./siemImport.js";
+import { FORMAT_CHARS } from "./bidiControl.js";
 
 type Row = Record<string, unknown>;
 
@@ -55,7 +56,6 @@ export const TECHNIQUE = "T1562.008";
 const PAST_NOTE = "enabling a source does not reconstruct its past";
 const PRIOR_NOTE = "the prior configuration is not in this record";
 const UNION_NOTE = "effective audit logging is the union of configurations — not established by this record";
-const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
 
 export const show = (v: string, max = NAME_MAX): string => {
   const shown = breakHashRuns(showToken(v.replace(FORMAT_CHARS, "")));

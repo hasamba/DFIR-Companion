@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Right-to-left override file names** — a process, parent or created file whose name hides a bidi control (real or mojibake `â€®`) is High with T1036.002, and descriptions show it as `<RLO>` (closes #2027)
 - **Host activity spikes for the AI** — synthesis gets the hosts far busier than their peers or their own usual rate, as leads with the rows to check
 - **Remote-access tools reach the AI** — AnyDesk, ScreenConnect, TeamViewer, Atera and similar tools in Prefetch or Amcache are graded Medium (T1219)
 - **Webshell writes graded** — the IIS worker writing an ASP.NET page into a web root is High; any other script created under a web root is Medium (T1505.003)
@@ -44,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **PowerShell housekeeping no longer graded Medium** — `__PSScriptPolicyTest_*` probe files and 4103 cmdlets of an encoded-launch session drop to Info; real 4103 tradecraft still graded (closes #2025)
+- **Benign process access no longer graded High** — Azure guest agents, wininit opening lsass, JIT frames in PowerShell/WinRM hosts and kernel-callback frames on Explorer stacks grade on their rights (closes #2026)
 - **Flat NXLog / Mordor Windows exports** — event fields at the top level of each record are read, so process, account and command line separate events instead of collapsing per host, and Sysmon UtcTime sets the time (closes #2023)
 - **Domain Admins add graded High in every form** — the privileged-group add is now matched when Sysmon logs it as `"net"`, `net.exe` or `net1`, so the event no longer stays Medium (closes #2016)
 - **Second attacker account reaches the AI** — a few prompt seats now go to explicit-credential logons of distinct accounts, so an account the attacker used is no longer dropped from the sample (closes #2014)
