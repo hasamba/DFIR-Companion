@@ -130,6 +130,23 @@ A name one character away from an existing case account is graded High, with a n
 and names shorter than five characters are not flagged. The check looks back only: a real account
 that first appears in a later import does not re-check an earlier look-alike.
 
+### Right-to-left override file names
+
+A file name with a hidden bidirectional-text control character can show a different extension from
+the real one. For example, `<RLO>cod.3aka3.scr` shows as `rcs.3aka3.doc` (MITRE T1036.002). On
+import, these events are graded High and tagged T1036.002: a process start whose image or command
+line has such a character, a child process whose parent image has one, and a file created with such
+a name. The description ends with a note naming the trick and how the name shows, such as
+`[bidi masquerade: right-to-left override in a file name — <RLO>cod.3aka3.scr displays as
+rcs.3aka3.doc (T1036.002)]`.
+
+Two forms are recognised: the real characters (U+202A–U+202E, U+2066–U+2069) and the form that
+appears when a log was decoded with the wrong character set, such as `â€®` in place of U+202E.
+Descriptions never contain the raw character. Each one is shown as a visible marker such as `<RLO>`,
+on every imported row. Later activity of the disguised program, such as its DLL loads or
+connections, gets the marker but keeps its grade. A name where the character was already replaced
+by `?` before the log was written cannot be recognised.
+
 ### Collecting Linux persistence artifacts
 
 The Companion reads the files that decide what a Linux host runs on its own: SSH authorized keys,

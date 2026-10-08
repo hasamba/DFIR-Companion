@@ -2,6 +2,7 @@ import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { annotateCollectorDeployment, loadCollectorInfrastructure } from "./collectorDeployment.js";
 import { annotateBenignOsActivity } from "./benignOsActivity.js";
+import { annotateBidiMasquerade } from "./bidiMasquerade.js";
 import { combineMarkings } from "./tlp.js";
 
 /**
@@ -110,6 +111,7 @@ export function createEventAggregator(
       // recognised for every source at once. Before the floor, so a demoted row is floored as Info.
       annotateCollectorDeployment(m, collector);
       annotateBenignOsActivity(m); // ordinary Windows behaviour with a grader-visible shape (#1593)
+      annotateBidiMasquerade(m); // a bidi control in a file/process name: T1036.002, escaped text (#2027)
       if (SEVERITY_RANK[m.severity] > floorRank) return; // below the severity floor
       const key = aggregate ? m.aggKey : `${order.length}`; // no-agg ⇒ unique key per row
       const existing = byKey.get(key);

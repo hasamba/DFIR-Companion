@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Right-to-left override file names** — a process, parent or created file whose name hides a bidi control (real or mojibake `â€®`) is High with T1036.002, and descriptions show it as `<RLO>` (closes #2027)
 - **Host activity spikes for the AI** — synthesis gets the hosts far busier than their peers or their own usual rate, as leads with the rows to check
 - **Remote-access tools reach the AI** — AnyDesk, ScreenConnect, TeamViewer, Atera and similar tools in Prefetch or Amcache are graded Medium (T1219)
 - **Webshell writes graded** — the IIS worker writing an ASP.NET page into a web root is High; any other script created under a web root is Medium (T1505.003)
