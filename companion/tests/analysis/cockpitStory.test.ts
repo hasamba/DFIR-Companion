@@ -633,3 +633,17 @@ describe("deriveCockpitStory — immutability", () => {
     expect(JSON.stringify(investigation)).toBe(before);
   });
 });
+
+// Grouping by tactic copied the stage's whole array once per event — quadratic. A case with ~22k
+// Defense Evasion rows took seconds per cockpit load and froze the server for every other request.
+describe("deriveCockpitStory — scale", () => {
+  it("builds the story for 40,000 events in one stage in well under a second", () => {
+    const forensicTimeline = Array.from({ length: 40_000 }, (_, i) =>
+      event(`e${i}`, { mitreTechniques: ["T1055"] }),
+    );
+    const started = performance.now();
+    const story = deriveCockpitStory(state({ forensicTimeline }), synthMeta());
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(story.stages.map((stage) => stage.eventCount)).toEqual([40_000]);
+  });
+});
