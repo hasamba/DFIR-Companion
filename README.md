@@ -335,7 +335,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Missed evidence review** — an analyst-pressed fast model (Jev) grades the Info rows the content tagger left behind; tick rows and promote them with the model's grade (off until `DFIR_JEV_ENABLED`)
 - **Containment check** — on a finding, Jev answers eleven narrow questions about its cited evidence; a tested rule suggests containment steps, and ticked steps go to the Playbook with their attribution
 - **Negative answers name their evidence** — a per-host collection inventory reaches synthesis, so "not observed" says what was collected and what to collect next
-- **Entry and spike leads** — synthesis records the earliest observed attacker access as its own finding (Initial access only on evidence of entry, otherwise First observed attacker access), and gets host activity spikes and the programs started just before each host's first script write as leads
+- **Entry and spike leads** — synthesis records the earliest observed attacker access as its own finding (Initial access only on evidence of entry, otherwise First observed attacker access; left out when no entry is visible), and gets host activity spikes and the programs started just before each host's first script write as leads
 - **Restore a capped finding** — a finding a grading check lowered shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis
 - **Other commands in this session** — each finding lists the attack session's command lines that no finding names
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
