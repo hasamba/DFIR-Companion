@@ -7,6 +7,7 @@ import {
   type ProviderErrorKind,
   ProviderError,
 } from "./provider.js";
+import { codexFailure } from "./codexErrors.js";
 import { type CodexRunner, defaultCodexRunner } from "./codexRunner.js";
 
 export interface CodexOptions {
@@ -84,14 +85,13 @@ export class CodexProvider implements AIProvider {
       // ("Reading prompt from stdin...", MCP-client startup warnings) even on a fully successful
       // run — so stderr being non-empty is NOT by itself a failure signal.
       if (parsed.errors.length) {
-        // MCP-client startup failures are unrelated to the request (they come from the user's own
-        // ~/.codex/config.toml) and codex emits them on runs that otherwise succeed. Lead with the
-        // real cause so it isn't pushed past the truncation by that noise.
-        const mcpNoise = (m: string) => /^MCP client\b/i.test(m);
-        const real = parsed.errors.filter((m) => !mcpNoise(m));
-        const chosen = real.length ? real : parsed.errors;
-        const snip = chosen.join("; ").replace(/\s+/g, " ").trim().slice(0, 300);
-        throw new ProviderError(`Codex: ${snip}`, classifyKind(run.code, snip));
+        // Warning-only events (MCP startup, service tier, model metadata) are dropped and the API's
+        // JSON refusal is unwrapped, so the real cause is not cut off behind them (#2042).
+        const failure = codexFailure(parsed.errors);
+        throw new ProviderError(
+          `Codex: ${failure.message}`,
+          failure.kind ?? classifyKind(run.code, failure.message),
+        );
       }
       if ((run.code ?? 0) !== 0) {
         const snip = (run.stderr || "no output").replace(/\s+/g, " ").trim().slice(0, 300);

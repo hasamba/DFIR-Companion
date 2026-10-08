@@ -51,6 +51,9 @@ export type ProviderErrorKind =
   | "context"
   | "output_limit"
   | "safety_stop"
+  // The configured model is not available to this account or provider (#2042): a settings change,
+  // never a transient failure.
+  | "model"
   | "other";
 
 /**
