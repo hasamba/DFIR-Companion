@@ -8,7 +8,12 @@ import {
   buildSecondOpinionDeltas,
   setDeltaStatus,
 } from "../../src/analysis/secondOpinion.js";
-import { jaccard, pairByOverlap } from "../../src/analysis/secondOpinionTargets.js";
+import {
+  containment,
+  jaccard,
+  overlappingFinding,
+  pairByOverlap,
+} from "../../src/analysis/secondOpinionTargets.js";
 
 // #1682 — the second opinion paired findings by title-derived key only. Two models that titled the
 // same activity differently produced an A-only AND a B-only delta, and "accept B" then added a
@@ -52,6 +57,101 @@ describe("jaccard", () => {
     expect(jaccard(["e1"], ["e1"])).toBe(1);
     expect(jaccard([], ["e1"])).toBe(0);
     expect(jaccard(undefined, undefined)).toBe(0);
+  });
+});
+
+const ids = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+
+describe("containment — a short B list inside a long A list (#2046)", () => {
+  const long = ids("e", 100);
+  const shortInside = long.slice(0, 8);
+
+  it("is the share of the smaller set inside the larger", () => {
+    expect(containment(shortInside, long)).toBe(1);
+    expect(containment(long, shortInside)).toBe(1);
+    expect(containment(["e0", "x1", "x2", "x3"], long)).toBe(0.25);
+    expect(containment([], long)).toBe(0);
+    expect(containment(undefined, long)).toBe(0);
+  });
+
+  it("pairs B (8 events) with A (100 events that include them) although Jaccard is 0.08", () => {
+    const as = [
+      finding({ id: "a0", title: "PsExec lateral movement", severity: "Critical", relatedEventIds: long }),
+    ];
+    const bs = [
+      finding({
+        id: "b0",
+        title: "Remote service execution",
+        severity: "Critical",
+        relatedEventIds: shortInside,
+      }),
+    ];
+    expect(jaccard(long, shortInside)).toBeLessThan(0.1);
+    expect(pairByOverlap(as, bs)).toEqual([[0, 0]]);
+  });
+
+  it("breaks containment ties by Jaccard, so the tightest A finding wins", () => {
+    const as = [
+      finding({ id: "a0", title: "Broad", severity: "High", relatedEventIds: long }),
+      finding({ id: "a1", title: "Tight", severity: "High", relatedEventIds: ids("e", 10) }),
+    ];
+    const bs = [finding({ id: "b0", title: "Short", severity: "High", relatedEventIds: shortInside })];
+    expect(pairByOverlap(as, bs)).toEqual([[1, 0]]);
+  });
+
+  it("does not pair when most of B sits outside A (low containment)", () => {
+    const as = [finding({ id: "a0", title: "A", severity: "High", relatedEventIds: long })];
+    const bs = [
+      finding({
+        id: "b0",
+        title: "B",
+        severity: "High",
+        relatedEventIds: ["e0", "e1", "x1", "x2", "x3", "x4", "x5", "x6"],
+      }),
+    ];
+    expect(pairByOverlap(as, bs)).toEqual([]);
+    expect(overlappingFinding(as, bs[0])).toBeUndefined();
+  });
+
+  it("folds an accepted b_only into the long A finding instead of adding a duplicate", () => {
+    const a = stateWith([
+      finding({ id: "f1", title: "PsExec lateral movement", severity: "High", relatedEventIds: long }),
+    ]);
+    const bf = finding({
+      id: "g1",
+      title: "Remote service execution",
+      severity: "Critical",
+      relatedEventIds: shortInside,
+    });
+    const so = {
+      generatedAt: "t",
+      modelA: "A",
+      modelB: "B",
+      referee: "",
+      summary: "",
+      agreementCount: 0,
+      deltas: [
+        {
+          id: "b_only:g1",
+          kind: "b_only" as const,
+          title: bf.title,
+          bSeverity: bf.severity,
+          finding: bf,
+          rationale: "",
+          recommendation: "accept_b" as const,
+          status: "accepted" as const,
+        },
+      ],
+    };
+    const next = applyAcceptedSecondOpinion(a, so);
+    expect(next.findings).toHaveLength(1);
+    expect(next.findings[0].severity).toBe("Critical");
+  });
+
+  it("folds a 1-event B finding that sits inside A (the issue's f4/f20 rows)", () => {
+    const as = [finding({ id: "a0", title: "A", severity: "High", relatedEventIds: ids("e", 5) })];
+    const bs = [finding({ id: "b0", title: "B", severity: "High", relatedEventIds: ["e2"] })];
+    expect(pairByOverlap(as, bs)).toEqual([[0, 0]]);
   });
 });
 
@@ -130,10 +230,10 @@ describe("buildSecondOpinionDeltas — pairs by cited events (#1682)", () => {
     const aOnlyIds = new Set(deltas.filter((d) => d.kind === "a_only").map((d) => d.finding?.id));
     const bOnlyIds = deltas.filter((d) => d.kind === "b_only").map((d) => d.finding?.id);
     // In this run B re-used A's finding ids, so an id on both sides is the same finding split in two.
-    // Only the kit (B's copy overlaps A's DLL finding more than A's own kit) and the one-event
-    // PowerShell write stay apart, and B's zero-event finding has nothing to pair on.
+    // Since #2046 containment pairs the kit and the one-event PowerShell write too, so no id is
+    // split any more. B's zero-event finding has nothing to pair on.
     const split = bOnlyIds.filter((id) => aOnlyIds.has(id));
-    expect(split.sort()).toEqual(["f-auto-8e19", "f1"]);
+    expect(split).toEqual([]);
   });
 
   it("does not strand B's DLL side-loading finding behind the emulation-kit finding", () => {

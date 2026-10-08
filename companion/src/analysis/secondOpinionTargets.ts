@@ -41,6 +41,24 @@ export function jaccard(a: readonly string[] | undefined, b: readonly string[] |
   return shared / (sa.size + sb.size - shared);
 }
 
+/**
+ * |a ∩ b| / min(|a|, |b|): the share of the SMALLER citation set that sits inside the larger. 0 when
+ * either side cites nothing. A second model cites a short list and the first a long one, so Jaccard
+ * stays low even when every short-list event is in the long list (#2046).
+ */
+export function containment(a: readonly string[] | undefined, b: readonly string[] | undefined): number {
+  if (!a?.length || !b?.length) return 0;
+  const sa = new Set(a);
+  const sb = new Set(b);
+  let shared = 0;
+  for (const x of sa) if (sb.has(x)) shared++;
+  return shared / Math.min(sa.size, sb.size);
+}
+
+/** The citation-overlap score used for pairing: the better of Jaccard and containment (#2046). */
+const overlapScore = (a: readonly string[] | undefined, b: readonly string[] | undefined): number =>
+  Math.max(jaccard(a, b), containment(a, b));
+
 // Punctuation and case do not make a different finding: "Quick Assist executed." = "quick-assist executed".
 const looseTitle = (title: string): string =>
   String(title)
@@ -51,7 +69,7 @@ const looseTitle = (title: string): string =>
 function pairScore(a: Finding, b: Finding): number {
   const t = looseTitle(a.title);
   if (t && t === looseTitle(b.title)) return 1;
-  return jaccard(a.relatedEventIds, b.relatedEventIds);
+  return overlapScore(a.relatedEventIds, b.relatedEventIds);
 }
 
 /**
@@ -61,14 +79,16 @@ function pairScore(a: Finding, b: Finding): number {
  * that another B finding matches exactly, and strand that exact match. Pure, deterministic.
  */
 export function pairByOverlap(as: readonly Finding[], bs: readonly Finding[]): Array<[number, number]> {
-  const candidates: Array<{ score: number; i: number; j: number }> = [];
+  const candidates: Array<{ score: number; tight: number; i: number; j: number }> = [];
   as.forEach((a, i) =>
     bs.forEach((b, j) => {
       const score = pairScore(a, b);
-      if (score >= OVERLAP_PAIR_THRESHOLD) candidates.push({ score, i, j });
+      // Containment makes many 1.0 ties; Jaccard breaks them so the tightest match wins (#2046).
+      if (score >= OVERLAP_PAIR_THRESHOLD)
+        candidates.push({ score, tight: jaccard(a.relatedEventIds, b.relatedEventIds), i, j });
     }),
   );
-  candidates.sort((x, y) => y.score - x.score || x.i - y.i || x.j - y.j);
+  candidates.sort((x, y) => y.score - x.score || y.tight - x.tight || x.i - y.i || x.j - y.j);
   const usedA = new Set<number>();
   const usedB = new Set<number>();
   const pairs: Array<[number, number]> = [];
@@ -83,18 +103,24 @@ export function pairByOverlap(as: readonly Finding[], bs: readonly Finding[]): A
 
 /**
  * The live finding an accepted B-only finding duplicates, if any: the open (not dismissed) finding
- * whose cited events overlap it most, at or above the pairing threshold. Accepting it then changes
+ * whose cited events overlap it most (Jaccard or containment), at or above the pairing threshold. Accepting it then changes
  * that finding's severity instead of adding a second copy (#1682).
  */
 export function overlappingFinding(findings: readonly Finding[], bf: Finding): Finding | undefined {
   let best: Finding | undefined;
   let bestScore = 0;
+  let bestTight = 0;
   for (const f of findings) {
     if (f.status === "dismissed") continue;
-    const score = jaccard(f.relatedEventIds, bf.relatedEventIds);
-    if (score >= OVERLAP_PAIR_THRESHOLD && score > bestScore) {
+    const score = overlapScore(f.relatedEventIds, bf.relatedEventIds);
+    const tight = jaccard(f.relatedEventIds, bf.relatedEventIds);
+    if (
+      score >= OVERLAP_PAIR_THRESHOLD &&
+      (score > bestScore || (score === bestScore && tight > bestTight))
+    ) {
       best = f;
       bestScore = score;
+      bestTight = tight;
     }
   }
   return best;
