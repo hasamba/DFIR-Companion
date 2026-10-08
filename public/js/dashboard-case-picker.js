@@ -49,6 +49,7 @@
         const nextById = new Map();
         const nextByText = new Map();
         const dups = dupNamesOf(cases);
+        const currentId = (document.getElementById("caseId")?.value || "").trim();
         for (const c of cases) {
           const text = displayTextFor(c, dups);
           nextById.set(c.caseId, text);
@@ -60,8 +61,12 @@
           // similar names are told apart. A lock prefix marks password-protected cases, an
           // [Archived] prefix marks cases moved to _archived/ (both can apply at once). Shown
           // beside the name, never typed into it. A case whose name IS its id adds no id line.
+          // The open case gets a "● Current" prefix: a native datalist cannot style one row, so
+          // the label is the only place to mark it.
           const prefix =
-            (c.status === "archived" ? "[Archived] " : "") + (c.hasPassword ? "\u{1F512} " : "");
+            (c.caseId === currentId ? "\u25CF Current \u00B7 " : "") +
+            (c.status === "archived" ? "[Archived] " : "") +
+            (c.hasPassword ? "\u{1F512} " : "");
           if (text !== c.caseId || prefix) o.label = prefix + c.caseId;
           dl.appendChild(o);
         }
@@ -98,6 +103,9 @@
     if (!picker || !idEl) return;
     const id = idEl.value.trim();
     picker.value = byId.get(id) || id;
+    // The box is narrow, so a long name is cut off. The tooltip carries the full name and id.
+    const text = picker.value;
+    picker.title = id && id !== text ? `${text}\n${id}` : text;
   }
 
   function pushPickerToCaseId() {
