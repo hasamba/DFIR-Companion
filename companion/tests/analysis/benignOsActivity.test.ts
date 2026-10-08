@@ -105,6 +105,9 @@ describe("#1593 — the INC-2026-005 rows grade Info", () => {
 
 describe("#1593 — parent-to-child access: the GUID link and its bounds", () => {
   const graded = (rows: object[]): string => find(parse(rows), /EID 10\)/)[0]?.severity ?? "missing";
+  // The access's own grade: powershell.exe's full-access handle on cmd.exe. Its one unbacked frame is
+  // JIT code in a .NET host, so the rights grade it (#2026) — Medium, not the old High.
+  const KEPT = "Medium";
 
   it("matches on the GUID link, never on image names: another powershell's cmd.exe keeps its grade", () => {
     expect(
@@ -112,7 +115,7 @@ describe("#1593 — parent-to-child access: the GUID link and its bounds", () =>
         create(T0, CMD, "cmd.exe /c whoami", G.cmd, G.other, PWSH, `${HOST}\\vagrant`),
         access(T0 + 10, PWSH, G.pwsh, CMD, G.cmd),
       ]),
-    ).toBe("High");
+    ).toBe(KEPT);
   });
 
   it("an access more than a second after the child's creation keeps its grade", () => {
@@ -121,7 +124,7 @@ describe("#1593 — parent-to-child access: the GUID link and its bounds", () =>
         create(T0, CMD, "cmd.exe /c whoami", G.cmd, G.pwsh, PWSH, `${HOST}\\vagrant`),
         access(T0 + 5_000, PWSH, G.pwsh, CMD, G.cmd),
       ]),
-    ).toBe("High");
+    ).toBe(KEPT);
   });
 
   it("conflicting creation records for the child fail closed", () => {
@@ -131,11 +134,11 @@ describe("#1593 — parent-to-child access: the GUID link and its bounds", () =>
         create(T0, CMD, "cmd.exe /c whoami", G.cmd, G.other, PWSH, `${HOST}\\vagrant`),
         access(T0 + 10, PWSH, G.pwsh, CMD, G.cmd),
       ]),
-    ).toBe("High");
+    ).toBe(KEPT);
   });
 
   it("no creation record for the child keeps its grade", () => {
-    expect(graded([access(T0, PWSH, G.pwsh, CMD, G.cmd)])).toBe("High");
+    expect(graded([access(T0, PWSH, G.pwsh, CMD, G.cmd)])).toBe(KEPT);
   });
 
   it("a child that a remote thread or a tampering record in the same import targets keeps its grade", () => {
@@ -155,8 +158,8 @@ describe("#1593 — parent-to-child access: the GUID link and its bounds", () =>
       Image: CMD,
       Type: "Image is replaced",
     });
-    expect(graded([...base, threadInto])).toBe("High");
-    expect(graded([tamper, ...base])).toBe("High");
+    expect(graded([...base, threadInto])).toBe(KEPT);
+    expect(graded([tamper, ...base])).toBe(KEPT);
   });
 
   it("the creation record may arrive after the access (order-independent)", () => {
