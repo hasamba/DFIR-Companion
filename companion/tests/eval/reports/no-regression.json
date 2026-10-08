@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceHash": "c20129c68f1cf72c13db7257be8fa57d057c21426bd35ec8afcf930d5a4d8f32",
+  "sourceHash": "5e2247b71761a916fad68e842bd5375b0b4e9f9048d95cfdd0dd7ea11d88e9c5",
   "runs": 3,
   "status": "passed",
   "reportPath": "eval-report.json",
-  "reportSha256": "a58a9d734525c78b1d76d30e9df45b6cd9d8cda1f7c50093bc5f1559a21ae3cc",
-  "baselineKey": "claude-code/claude-sonnet-5/dcff25ad119f584cdbeb58f4c4641507d9af9a1117f9c0c30f9fd7436ddbfbb3/r3",
-  "evaluatedAt": "2026-09-27T20:24:51.119Z"
+  "reportSha256": "d5f0ecc136f79b9b6d0d5360e9ccc6202a5fc63c1f3ddebe5a049541b0bfaef1",
+  "baselineKey": "claude-code/claude-sonnet-5/58a3b80fda9e8f177475978b645131df1d753f57e908a045504fb787d220a9d2/r3",
+  "evaluatedAt": "2026-10-08T08:43:52.278Z"
 }
