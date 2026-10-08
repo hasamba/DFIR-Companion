@@ -104,6 +104,25 @@ describe("dashboard-case-picker.js", () => {
     expect(h.options.find((o) => o.value === "Old audit")?.label).toBe("[Archived] INC-2026-003");
   });
 
+  it("marks the open case in the list with a Current label", async () => {
+    const h = harness(CASES);
+    h.caseId.value = "INC-2026-002";
+    await h.mod.loadCaseList();
+    expect(h.options[0].label).toBe("INC-2026-001");
+    expect(h.options[1].label).toBe("\u25CF Current \u00B7 \u{1F512} INC-2026-002");
+    h.caseId.value = "test9"; // name == id: the marker still shows
+    await h.mod.loadCaseList();
+    expect(h.options[2].label).toBe("\u25CF Current \u00B7 test9");
+  });
+
+  it("the box tooltip carries the full name and the id", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.caseId.value = "INC-2026-001";
+    h.mod.syncCasePicker();
+    expect((h.picker as unknown as { title: string }).title).toBe("Acme ransomware\nINC-2026-001");
+  });
+
   it("a case with no name keeps its markers on the id it already shows", async () => {
     const h = harness([{ caseId: "raw-1", hasPassword: true }]);
     await h.mod.loadCaseList();

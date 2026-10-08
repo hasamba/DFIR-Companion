@@ -40,8 +40,11 @@ win_service_install:
   # Hayabusa rows keep their text in `description` and carry no `message`, so both are read. The
   # description side anchors on "(EID nnnn" — a bare '7045' would also hit a PID or a byte count in
   # a detail field — and leaves out 'Service Control Manager', which names every 7036 state change.
+  # The message side names the id through its key (`EventID: 7045`, `EID 4697`). A bare '7045' or
+  # '4697' also sits inside a SHA256, MD5 or PID, and graded an AVG installer launch as persistence.
   any:
-    - { field: message, contains: ['7045', '4697', 'A new service was installed', 'Service Control Manager'] }
+    - { field: message, contains: ['A new service was installed', 'Service Control Manager'] }
+    - { field: message, regex: '(?:event_?id|eid)\W{0,4}(?:7045|4697)(?!\d)', flags: 'i' }
     - { field: description, contains: ['(EID 7045', '(EID 4697', 'A new service was installed'] }
   none:
     - { field: message, contains: ['svchost.exe -k'] }   # routine OS service hosting
@@ -55,8 +58,14 @@ win_scheduled_task:
   description: Scheduled task created / updated (Security 4698/4702, TaskScheduler 106/140)
   # Hayabusa rows carry no `message`; see win_service_install. The description side names 106/140
   # only under a TaskScheduler channel, because a bare 'TaskScheduler' would match every task run.
+  # The message side follows the same rule: it names the REGISTER / UPDATE text of events 106 and 140
+  # (`registered Task Scheduler task`, `updated Task Scheduler task`), never the channel name, which
+  # every task start (100) and completion (200, 201) message also carries.
+  # The message side names 4698/4702 through the id key (`EventID: 4698`, `EID 4702`). A bare '4698'
+  # also sits inside a GUID or hash, and graded a McAfee msiexec /X uninstall as persistence.
   any:
-    - { field: message, contains: ['4698', '4702', 'A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+    - { field: message, contains: ['A scheduled task was created', 'A scheduled task was updated', 'registered Task Scheduler task', 'updated Task Scheduler task'] }
+    - { field: message, regex: '(?:event_?id|eid)\W{0,4}(?:4698|4702)(?!\d)', flags: 'i' }
     - { field: description, contains: ['(EID 4698', '(EID 4702', 'A scheduled task was created', 'A scheduled task was updated'] }
     - { field: description, regex: '\(EID (?:106|140) [^)]*TaskSch', flags: 'i' }
   tags: ['win-scheduled-task', 'persistence']
@@ -165,6 +174,21 @@ win_remote_logon:
   all:
     - { field: description, contains: ['(EID 4624)'] }
     - { field: description, regex: 'LogonType=(?:3|10)\b', flags: 'i' }
+  tags: ['remote-logon']
+  severity: Low
+  view: 'Remote logons'
+
+# A network logon alone is routine (shares, printers, service and machine accounts). It becomes a
+# lateral-movement lead in two cases. RDP (type 10) from a non-loopback address. Or a network logon
+# (type 3) by a named account, not ANONYMOUS LOGON and not a machine account (`NAME$`), that shows a
+# source: a non-loopback IpAddress, or a WorkstationName when no address was logged.
+win_lateral_logon:
+  description: Remote logon from another host (RDP, or network logon by a named user account)
+  all:
+    - { field: description, contains: ['(EID 4624)'] }
+  any:
+    - { field: description, regex: 'LogonType=10\b - IpAddress=(?!-|::1|127\.)\S', flags: 'i' }
+    - { field: description, regex: '\(EID 4624\) - (?!NT AUTHORITY\\)(?:[^\s$\\]+\\)?[^$\\,]+? - LogonType=3\b(?: - IpAddress=(?!-|::1|127\.)\S| - WorkstationName=\S)', flags: 'i' }
   tags: ['remote-logon', 'lateral-movement']
   mitre: ['T1021']
   severity: Low
@@ -194,9 +218,13 @@ win_smb_admin_share:
 # ─────────────────────────── Execution — script hosts ───────────────────────────
 win_powershell_encoded:
   description: PowerShell with an encoded command (base64) — obfuscated execution
+  # The lookbehind skips the `Host Application = …` / `HostApplication=…` line of a 4103 / 800 / 4100
+  # ContextInfo (#2025). That line repeats the SESSION's launch command on every record the session
+  # writes, so one encoded launch graded every Write-Output and Join-Path after it Medium. The launch
+  # itself is graded on its own process-creation row; a payload that runs `-enc` still matches.
   any:
-    - { field: message, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
-    - { field: description, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
   tags: ['powershell-encoded', 'execution', 'defense-evasion']
   mitre: ['T1059.001', 'T1027']
   severity: Medium
@@ -361,8 +389,13 @@ staging_temp_executable:
   description: Executable written to a world-writable / temp staging path
   any:
     - { field: path, regex: '\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*\.(?:exe|dll|scr|ps1|bat|hta|js|vbs)$', flags: 'i' }
-  tags: ['temp-staging', 'defense-evasion']
-  mitre: ['T1036']
+  # PowerShell writes and deletes `__PSScriptPolicyTest_<random 8.3>.ps1` in Temp on every start to
+  # probe AppLocker/WDAC (#2025). Excluded only when the Windows-event row names PowerShell (or its
+  # remoting host, wsmprovhost.exe) as the writer: the same name dropped by any other process — e.g.
+  # rundll32.exe hosting an unmanaged PowerShell runspace — is still graded.
+  none:
+    - { field: description, regex: 'Image=[^\n]*\\(?:powershell(?:_ise)?|pwsh|wsmprovhost)\.exe - TargetFilename=[^\n]*\\__PSScriptPolicyTest_[a-z0-9]{8}\.[a-z0-9]{3}\.ps1(?: |$)', flags: 'i' }
+  tags: ['temp-staging']
   severity: Medium
   view: 'Temp-path executables'
 
@@ -488,3 +521,612 @@ emulation_framework_agent:
     - { field: commandLine, regex: '\b(?:platform|file)[\\"'']{0,2}\s*[:=,][^\n]{0,300}/file/download', flags: 'i' }
   tags: ['emulation-framework-agent']
   view: 'Emulation framework agents'
+
+# ─────────────────────────── M365 / Entra audit — timesketch rule parity ───────────────────────────
+# Ported from the community Timesketch tagger gist (FlorianGross, M365 UAL + Entra audit_log). The
+# source rules set TAGS only — no severity, no MITRE — and Companion's schema has no emojis /
+# save_search / search_name / query_string, so only the tag intent is kept. Every rule reads the
+# importer's structured operation, rendered verbatim into `description`:
+#   UAL      `M365 <Workload>: <Operation> by …`  (m365Import.ts mapUal; Exchange rows render as
+#                                                   `M365 Exchange: <Operation> …`, exchangeAuditImport.ts)
+#   Entra    `Entra audit: <activityDisplayName> …` (entraAuditImport.ts head)
+# The `description` is the operation's own literal, so anchoring on the operation text is the faithful
+# port — the importer ALREADY grades each high-signal operation, so these rules add searchable tags,
+# not a second grade. The AuditData details the source queried (`ForwardTo`, `HiddenFromUI`,
+# `Exclusion`, `ReadWrite.All`, `LegacyAuth`, risk…) are NOT rendered for the UAL/Entra paths, so the
+# detail-conditional source rules are approximated to the operation itself and the misses are noted.
+
+# ── Azure AD / Entra role assignments ──
+ts_m365_role_assignment:
+  description: M365 role membership changed — add/remove member to role (Timesketch privilege_change)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add|Add eligible|Remove) member (?:to|from) role\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: (?:Add|Remove) member to (?:directory )?role\b', flags: 'i' }
+  tags: ['privilege_change', 'role_assignment']
+  view: 'M365 role changes'
+
+ts_m365_aad_role_change:
+  description: Azure AD directory role membership changed (Timesketch aad role_change)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: (?:Add|Remove) member (?:to|from) role\b', flags: 'i' }
+  tags: ['aad', 'role_change']
+  view: 'M365 role changes'
+
+ts_m365_privileged_role_assignment:
+  description: Privileged / directory role assigned (Timesketch privilege_escalation, global_admin)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add|Add eligible) member to role\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Add member to (?:directory )?role\b', flags: 'i' }
+  tags: ['privilege_role_assignment', 'persistence']
+  view: 'M365 role changes'
+
+ts_m365_directory_role_removed:
+  description: Entra directory role removed from a user (Timesketch admin_activity role_change)
+  any:
+    - { field: description, regex: '^Entra audit: Remove member from (?:directory )?role\b', flags: 'i' }
+  tags: ['admin_activity', 'role_change']
+  view: 'M365 role changes'
+
+# ── App roles, OAuth consent, service principals (OAuth persistence) ──
+ts_m365_app_role_assignment:
+  description: App role assignment granted to a user (Timesketch app_role_assignment)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Add app role assignment grant to user\b', flags: 'i' }
+  tags: ['app_role_assignment', 'delegation']
+  view: 'M365 OAuth / app consent'
+
+ts_m365_oauth_consent:
+  description: OAuth/application consent granted (Timesketch persistence oauth)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Consent to application\b', flags: 'i' }
+  tags: ['persistence', 'oauth']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_oauth_consent_granted:
+  description: Entra consent granted to an application (Timesketch oauth_abuse consent_grant)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Grant consent to application|Consent to application)\b', flags: 'i' }
+  tags: ['persistence', 'oauth_abuse', 'consent_grant']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_app_registration:
+  description: Application registered in Entra ID (Timesketch persistence app_registration)
+  any:
+    - { field: description, regex: '^Entra audit: Add application\b', flags: 'i' }
+  tags: ['persistence', 'app_registration']
+  view: 'M365 OAuth / app consent'
+
+ts_m365_app_registration:
+  description: Azure AD application added (Timesketch persistence aad_app)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: Add application\b', flags: 'i' }
+  tags: ['persistence', 'aad_app']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_service_principal_created:
+  description: Entra service principal added (Timesketch attack service_principal)
+  any:
+    - { field: description, regex: '^Entra audit: Add service principal\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add service principal\b', flags: 'i' }
+  tags: ['attack', 'service_principal']
+  view: 'M365 OAuth / app consent'
+
+ts_entra_app_secret_added:
+  description: Client secret / certificate credential added to an application (Timesketch credential_injection)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Add|Update) application (?:password|keyCredential)\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add service principal credentials\b', flags: 'i' }
+  tags: ['persistence', 'app_secret', 'credential_injection']
+  view: 'M365 OAuth / app consent'
+
+# ── Exchange Online: inbox rules, forwarding, transport, mailbox perms ──
+ts_m365_inbox_rule:
+  description: Inbox rule created / modified (Timesketch persistence inbox_rule)
+  any:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set|Update|Remove)-?InboxRule\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: (?:New-InboxRule|Set-InboxRule|UpdateInboxRules)\b', flags: 'i' }
+  tags: ['exchange', 'inbox_rule', 'persistence']
+  view: 'M365 Exchange'
+
+ts_m365_mailbox_forwarding:
+  description: Inbox forwarding / redirect rule configured (Timesketch mailbox_forwarding)
+  all:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set|Update)-?InboxRule\b', flags: 'i' }
+    - { field: description, regex: 'forwards? (?:as attachment )?to |redirects? to ', flags: 'i' }
+  tags: ['exchange', 'mailbox_forwarding', 'persistence']
+  view: 'M365 Exchange'
+
+ts_m365_transport_rule:
+  description: Exchange transport rule created / modified (Timesketch transport_rule)
+  any:
+    - { field: description, regex: '^M365 Exchange: (?:New|Set)-?TransportRule\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: (?:New-TransportRule|Set-TransportRule)\b', flags: 'i' }
+  tags: ['exchange', 'transport_rule']
+  view: 'M365 Exchange'
+
+ts_m365_mailbox_permission:
+  description: Mailbox permission granted (Timesketch exchange mailbox_permission)
+  any:
+    - { field: description, regex: '^M365 Exchange: Add-?Mailbox(?:Folder)?Permission\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Add-?Mailbox(?:Folder)?Permission\b', flags: 'i' }
+  tags: ['exchange', 'mailbox_permission']
+  view: 'M365 Exchange'
+
+ts_m365_set_mailbox:
+  description: Mailbox configuration changed, incl. audit settings (Timesketch exchange audit)
+  any:
+    - { field: description, regex: '^M365 Exchange: Set-?Mailbox\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Set-Mailbox\b', flags: 'i' }
+  tags: ['exchange', 'mailbox_config']
+  view: 'M365 Exchange'
+
+# ── User identity & account changes ──
+ts_m365_user_added:
+  description: New user / guest created (Timesketch user_created guest_user)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Add user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: (?:Add user|Invite external user)\b', flags: 'i' }
+  tags: ['user_created', 'identity']
+  view: 'M365 identity changes'
+
+ts_m365_user_deleted:
+  description: User removed (Timesketch user_deleted)
+  # The UAL spells this `Delete user.` in current tenants and `Remove user` in older exports, so both.
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Remove|Delete) user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Delete user\b', flags: 'i' }
+  tags: ['user_deleted']
+  view: 'M365 identity changes'
+
+ts_m365_user_updated:
+  description: User object modified (Timesketch user_modified)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Set|Update) user\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Update user\b', flags: 'i' }
+  tags: ['user_modified', 'identity']
+  view: 'M365 identity changes'
+
+ts_m365_password_reset:
+  description: User password reset (Timesketch password_reset)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Reset|Change) user password\b', flags: 'i' }
+    - { field: description, regex: '^M365 [^:]+: Password reset\b', flags: 'i' }
+  tags: ['password_reset', 'user_security']
+  view: 'M365 identity changes'
+
+# ── Sign-ins & anomalies ──
+ts_m365_signin_success:
+  description: Successful user sign-in (Timesketch signin success)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: UserLoggedIn\b', flags: 'i' }
+  tags: ['signin', 'success']
+  view: 'M365 sign-ins'
+
+ts_m365_signin_failed:
+  description: Failed user sign-in (Timesketch signin failed)
+  any:
+    - { field: description, regex: '^M365 AzureActiveDirectory: UserLoginFailed\b', flags: 'i' }
+  tags: ['signin', 'failed']
+  view: 'M365 sign-ins'
+
+ts_entra_token_issuance:
+  description: Token issued at sign-in (Timesketch signin token)
+  any:
+    - { field: description, regex: '^Entra sign-in: application \b', flags: 'i' }
+  tags: ['signin', 'token']
+  view: 'M365 sign-ins'
+
+ts_entra_legacy_auth:
+  description: Legacy-auth (ROPC) sign-in — no interactive MFA prompt (Timesketch legacy_auth)
+  any:
+    - { field: description, regex: '\[legacy-auth ROPC', flags: 'i' }
+  tags: ['signin', 'legacy_auth']
+  view: 'M365 sign-ins'
+
+ts_entra_signin_risk:
+  description: Sign-in carrying a risk signal (Timesketch anomalous / impossible-travel — risk only)
+  any:
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none)\S', flags: 'i' }
+  tags: ['signin', 'risk']
+  view: 'M365 sign-ins'
+
+# ── Defender / Intune / SharePoint / OneDrive / Teams ──
+ts_m365_defender_action:
+  description: Defender response action — alert, isolation, quarantine (Timesketch defender_*)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:AlertTriggered|DeviceIsolated|QuarantineFile|FileMalwareDetected)\b', flags: 'i' }
+  tags: ['defender_action', 'security']
+  view: 'M365 Defender / Intune'
+
+ts_m365_defender_bypass:
+  description: Defender exclusion / preference changed via cloud (Timesketch defender_bypass)
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add-MpPreference|Set-MpPreference)\b', flags: 'i' }
+  tags: ['persistence', 'defender_bypass']
+  view: 'M365 Defender / Intune'
+
+ts_m365_intune_policy:
+  description: Intune device / policy management change (Timesketch intune_policy)
+  any:
+    - { field: description, regex: '^M365 Intune: (?:Register device|RemoteWipeInitiated|Update policy)\b', flags: 'i' }
+  tags: ['intune_policy', 'configuration_change']
+  view: 'M365 Defender / Intune'
+
+ts_m365_file_download:
+  description: File accessed / downloaded from SharePoint or OneDrive (Timesketch file_access)
+  any:
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileAccessed|FileSyncedDownloadedFull)\b', flags: 'i' }
+  tags: ['file_access', 'file_download']
+  view: 'M365 file access'
+
+ts_m365_anonymous_sharing:
+  description: Anonymous / external sharing link created (Timesketch anonymous_sharing)
+  any:
+    - { field: description, regex: '^M365 [^:]+: AnonymousLinkCreated\b', flags: 'i' }
+  tags: ['anonymous_sharing', 'external_sharing']
+  view: 'M365 file access'
+
+ts_m365_mass_download:
+  description: Bulk file-download operation (Timesketch mass_download — count when aggregated)
+  any:
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileSyncedDownloadedFull)\b', flags: 'i' }
+  tags: ['mass_download', 'exfil']
+  view: 'M365 file access'
+
+# ── Entra governance: conditional access, policy, audit-logging ──
+ts_entra_policy_change:
+  description: Entra conditional-access / authentication / token-lifetime policy changed (Timesketch policy_*)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Create|Update|Delete) (?:conditional access|token lifetime) policy\b', flags: 'i' }
+    - { field: description, regex: '^Entra audit: Update authentication methods policy\b', flags: 'i' }
+  tags: ['entra', 'policy', 'conditional_access']
+  view: 'Entra governance'
+
+ts_entra_audit_policy_changed:
+  description: Entra audit-log settings changed (Timesketch audit_policy logging)
+  any:
+    - { field: description, regex: '^Entra audit: Update auditLogSettings\b', flags: 'i' }
+  tags: ['audit_policy', 'logging', 'modified']
+  view: 'Entra governance'
+
+ts_entra_pim:
+  description: Entra PIM role activation / approval / denial (Timesketch pim)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Activate eligible role assignment|Approve eligible role assignment request|Deny eligible role assignment request|Eligible role assignment expired)\b', flags: 'i' }
+  tags: ['pim', 'role_activation']
+  view: 'Entra governance'
+
+ts_entra_group_change:
+  description: Entra group created or membership changed (Timesketch group)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Create group|Add member to group|Remove member from group)\b', flags: 'i' }
+  tags: ['group', 'membership']
+  view: 'Entra governance'
+
+ts_entra_risky_user_action:
+  description: Risky-user / risk-policy action — dismissal or policy change (Timesketch evasion)
+  any:
+    - { field: description, regex: '^Entra audit: (?:Dismiss risky user|Update risk policy)\b', flags: 'i' }
+  tags: ['evasion', 'risk_dismissal']
+  view: 'Entra governance'
+
+# NOT PORTED (the source rule's distinguishing data is not in the rendered description):
+#   m365_admin_role_assigned / m365_privileged_role_assignment (the specific role) — the role name
+#     lives in AuditData, not the UAL `description`; ts_m365_privileged_role_assignment covers the
+#     generic add-to-role shape.
+#   m365_high_priv_app_role_assigned / m365_oauth_consent_high_scope (ReadWrite.All / FullControl) —
+#     the granted scope is decoded by entraAppChange.ts into posture/object, but those rows come from
+#     the Entra audit path, not UAL AuditData.
+#   m365_hidden_mailbox_rule (HiddenFromUI) / m365_mailbox_audit_enabled (AuditEnabled) /
+#     m365_user_upn_changed / m365_user_displayname_changed — the modified property name is in
+#     AuditData / ModifiedProperties, not the rendered description.
+#   m365_signin_anomalous_location (Location) / m365_signin_impossible_travel / m365_signin_via_tor
+#     (client_ip) / m365_mfa_bypass / m365_signin_legacy_auth(detail) — m365Import's Entra sign-in
+#     path renders `[risk: <level>]` and `[legacy-auth ROPC ...]` (both ported above) but not the raw
+#     location / impossible-travel / Tor fields.
+#   m365_mailbox_export_started / m365_mailbox_moved / m365_mailbox_audit_enabled — operation names
+#     exist (`Start-ComplianceSearchAction`, `New-MoveRequest`) but their export/move qualifier is in
+#     AuditData; the UAL `description` carries the operation alone.
+#   entra_conditional_access_disabled / entra_mfa_policy_disabled — the `*disable*` detail lives in
+#     additional_details, which entraAuditImport does not render (ts_entra_policy_change tags the
+#     policy-update operation itself).
+
+# ─────────────────────────── Cloud audit — Timesketch AWS / GCS parity ───────────────────────────
+# Ported from the upstream Timesketch data/tags.yaml (tagger analyzer: query_string → tags). The
+# source rules set TAGS only — no severity/MITRE — and Companion has no emojis / save_search /
+# search_name / query_string, so only the tag intent is kept. Each rule keys on the AWS eventName /
+# GCP methodName, which the importer renders verbatim into `description`:
+#   AWS   `AWS <EventName> (<source>) …`   (awsImport.ts head)
+#   GCP   `GCP <methodName> (<service>) …` (cloudActivityImport.ts head)
+# awsImport/GCP already grade every high-signal call, so these add searchable tags, not a grade.
+# NOT PORTED: aws_cloudtrail_readonly_true/false (readOnly is a boolean, not rendered) and
+# aws_cloudtrail_unauthorized_api_call (errorCode only bumps severity, not rendered); yara_match
+# (already covered by yaraImport.ts's rule/tags/path).
+
+ts_aws_console_login:
+  description: AWS console login (Timesketch ConsoleLogin)
+  any:
+    - { field: description, regex: '^AWS ConsoleLogin \(', flags: 'i' }
+  tags: ['ConsoleLogin']
+  view: 'AWS CloudTrail'
+
+ts_aws_get_caller_identity:
+  description: AWS GetCallerIdentity recon call (Timesketch GetCallerIdentity)
+  any:
+    - { field: description, regex: '^AWS GetCallerIdentity \(', flags: 'i' }
+  tags: ['GetCallerIdentity']
+  view: 'AWS CloudTrail'
+
+ts_aws_iam_persistence:
+  description: AWS IAM persistence / privilege-escalation API call (Timesketch SuspicousIAMActivity)
+  any:
+    - { field: description, regex: '^AWS (?:AddRoleToInstanceProfile|AddUserToGroup|AssumeRole|AttachGroupPolicy|AttachRolePolicy|AttachUserPolicy|CreateAccessKey|CreateLoginProfile|CreatePolicyVersion|CreateRole|PassRole|PutGroupPolicy|PutRolePolicy|PutUserPolicy|SetDefaultPolicyVersion|UpdateAccessKey|UpdateLoginProfile|GetFederationToken) \(', flags: 'i' }
+  tags: ['SuspicousIAMActivity']
+  view: 'AWS CloudTrail'
+
+ts_aws_identity_center:
+  description: AWS IAM Identity Center API call (Timesketch SuspicousIICActivity)
+  any:
+    - { field: description, regex: '^AWS (?:StartSSO|CreateUser|CreateGroup|AddMemberToGroup|CreatePermissionSet|CreateAccountAssignment|Authenticate|Federate|AssumeRoleWithSAML) \(', flags: 'i' }
+  tags: ['SuspicousIICActivity']
+  view: 'AWS CloudTrail'
+
+ts_aws_security_group_changed:
+  description: AWS security-group change (Timesketch NetworkChanged SecurityGroup)
+  any:
+    - { field: description, regex: '^AWS (?:AuthorizeSecurityGroupEgress|AuthorizeSecurityGroupIngress|CreateSecurityGroup|DeleteSecurityGroup|ModifySecurityGroupRules|RevokeSecurityGroupEgress|RevokeSecurityGroupIngress) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'SG']
+  view: 'AWS network changes'
+
+ts_aws_network_acl_changed:
+  description: AWS network-ACL change (Timesketch NetworkChanged NetworkACl)
+  any:
+    - { field: description, regex: '^AWS (?:CreateNetworkAcl|CreateNetworkAclEntry|DeleteNetworkAcl|DeleteNetworkAclEntry|ReplaceNetworkAclAssociation|ReplaceNetworkAclEntry) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'NACL']
+  view: 'AWS network changes'
+
+ts_aws_route_table_changed:
+  description: AWS route-table change (Timesketch NetworkChanged RouteTable)
+  any:
+    - { field: description, regex: '^AWS (?:CreateRoute|CreateRouteTable|DeleteRoute|DeleteRouteTable|DisassociateRouteTable|ReplaceRoute|ReplaceRouteTableAssociation) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'RouteTable']
+  view: 'AWS network changes'
+
+ts_aws_vpc_changed:
+  description: AWS VPC / peering change (Timesketch NetworkChanged VPC)
+  any:
+    - { field: description, regex: '^AWS (?:AcceptVpcPeeringConnection|AttachClassicLinkVpc|CreateVpc|CreateVpcPeeringConnection|DeleteVpc|DeleteVpcPeeringConnection|DetachClassicLinkVpc|DisableVpcClassicLink|EnableVpcClassicLink|ModifyVpcAttribute|RejectVpcPeeringConnection) \(', flags: 'i' }
+  tags: ['NetworkChanged', 'VPC']
+  view: 'AWS network changes'
+
+ts_aws_gateway_changed:
+  description: AWS gateway change (Timesketch NetworkChanged GateWay)
+  any:
+    - { field: description, regex: '^AWS (?:Accept|Associate|Attach|Create|Delete|Replace)[A-Za-z]*Gateway[A-Za-z]* \(', flags: 'i' }
+  tags: ['NetworkChanged', 'GW']
+  view: 'AWS network changes'
+
+ts_gcp_bucket_created:
+  description: GCS bucket created (Timesketch gcs-bucket-create)
+  any:
+    - { field: description, regex: '^GCP storage\.buckets\.create \(', flags: 'i' }
+  tags: ['gcs-bucket-create']
+  view: 'GCS bucket IAM'
+
+# The source split setIamPermissions into add / remove / world-readable by reading the structured
+# policyDelta. Companion DOES render the delta (gcpIamRecord.ts) — `added a binding for`,
+# `removed a binding for`, `(public member)` — so the three intents are ported faithfully.
+ts_gcp_bucket_permission_added:
+  description: GCS bucket IAM permission added (Timesketch gcs-bucket-add)
+  any:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions[^\n]* added a binding for ', flags: 'i' }
+  tags: ['gcs-bucket-add']
+  view: 'GCS bucket IAM'
+
+ts_gcp_bucket_permission_removed:
+  description: GCS bucket IAM permission removed (Timesketch gcs-bucket-remove)
+  any:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions[^\n]* removed a binding for ', flags: 'i' }
+  tags: ['gcs-bucket-remove']
+  view: 'GCS bucket IAM'
+
+ts_gcp_bucket_world_added:
+  description: GCS bucket made publicly readable (Timesketch gcs-bucket-world-add)
+  all:
+    - { field: description, regex: '^GCP [^ ]*setIamPermissions', flags: 'i' }
+    - { field: description, regex: '\(public member\)', flags: 'i' }
+  tags: ['gcs-bucket-world-add']
+  view: 'GCS bucket IAM'
+
+# ─────────────────────────── Windows registry persistence / blinding (not already graded) ───────────────────────────
+# The built-in grader (tradecraftRules.ts) covers these when they arrive as a command line or a 4104
+# script block. These rules cover the OTHER shape: the registry WRITE itself (Sysmon 12/13/14, Security
+# 4657), where the key path is the evidence. The key renders in `description` as `TargetObject=…`; for
+# 4657 securityRegistryWrite.ts also sets `path`. genericSysmonRegistry.ts runs first and lowers only
+# GENERIC registry noise — every key below is on its KEEP list, so it survives at Medium for these rules
+# to raise. Value DATA is not rendered, so a rule reads the key/value NAME only (a direction the record
+# does not state is never claimed).
+
+# Both registry-write shapes carry key AND value name in `description`, so each condition matches
+# `key[^\n]*value` in one regex that covers both: Sysmon 12/13/14 render `TargetObject=<key>\<value>`
+# (value appended to the key), and Security 4657 renders `ObjectName=<key> - ObjectValueName=<value>`.
+# `path` is read only where the key itself is the whole evidence (4657 sets it to the key).
+win_ifeo_persistence:
+  description: Image File Execution Options / SilentProcessExit debugger hijack
+  any:
+    - { field: description, regex: '\\image file execution options\\[^\n]*\bdebugger\b', flags: 'i' }
+    - { field: description, regex: '\\silentprocessexit\\', flags: 'i' }
+  tags: ['ifeo', 'persistence', 'defense-evasion']
+  mitre: ['T1546.012']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_logon_script:
+  description: Winlogon Shell/Userinit/Notify or logon-script registry hijack
+  any:
+    - { field: description, regex: '\\winlogon\\[^\n]*(?:shell|userinit|notify|vmapplet|taskman|appsetup)\b', flags: 'i' }
+    - { field: description, regex: '\\environment\\userinitmprlogonscript\b', flags: 'i' }
+  tags: ['winlogon', 'persistence']
+  mitre: ['T1547.004']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_service_imagepath_write:
+  description: Service ImagePath / ServiceDll / FailureCommand registry write (service persistence)
+  any:
+    - { field: description, regex: '\\services\b[^\n]*(?:imagepath|servicedll|failurecommand)\b', flags: 'i' }
+    - { field: path, regex: '\\services\\[^\\]+\\(?:parameters\\)?(?:imagepath|servicedll|failurecommand)\b', flags: 'i' }
+  tags: ['service-persistence', 'persistence']
+  mitre: ['T1543.003']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_defender_registry_tamper:
+  description: Defender / security service disabled via registry (DisableAntiSpyware, exclusions, Start=4)
+  any:
+    - { field: description, regex: '\\windows defender\b[^\n]*(?:disableantispyware|disableantivirus|disablerealtimemonitoring|exclusions)\b', flags: 'i' }
+    - { field: description, regex: '\\windows advanced threat protection\\', flags: 'i' }
+    - { field: description, regex: '\\services\\(?:windefend|wdnissvc|wdfilter|wdboot|sense|securityhealthservice|wscsvc|mpssvc)[^\n]*\bstart\b', flags: 'i' }
+  tags: ['defender-tamper', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_com_hijack:
+  description: COM CLSID InprocServer32 / LocalServer32 registry hijack
+  all:
+    - { field: description, regex: '\\classes\\(?:wow6432node\\)?clsid\\', flags: 'i' }
+    - { field: description, regex: '\\(?:inprocserver32|localserver32)\b', flags: 'i' }
+  tags: ['com-hijack', 'persistence', 'defense-evasion']
+  mitre: ['T1546.015']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_security_support_provider:
+  description: LSA Security/Authentication Packages registry tamper (SSP persistence)
+  any:
+    - { field: description, regex: '\\control\\lsa\b[^\n]*(?:security packages|authentication packages|securityproviders)\b', flags: 'i' }
+    - { field: path, regex: '\\control\\lsa\\(?:security packages|authentication packages|securityproviders)\b', flags: 'i' }
+  tags: ['lsa-ssp', 'persistence', 'credential-access']
+  mitre: ['T1547.005']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_bootexecute:
+  description: Session Manager BootExecute registry tamper (boot-time native persistence)
+  any:
+    - { field: description, regex: '\\control\\session manager\b[^\n]*\bbootexecute\b', flags: 'i' }
+    - { field: path, regex: '\\control\\session manager\\bootexecute\b', flags: 'i' }
+  tags: ['bootexecute', 'persistence']
+  mitre: ['T1547.006']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_runasppl_write:
+  description: LSA RunAsPPL (LSA protection) registry write — direction not in the record
+  any:
+    - { field: description, regex: '\\control\\lsa\b[^\n]*\brunasppl\b', flags: 'i' }
+  tags: ['lsa-protection', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+# Requires a CREATE marker in the description, not just the path: a Velociraptor file listing (or an
+# MFT/USN row) sets `path` for sethc.exe or a Startup entry that every host already has, and grading a
+# listing as a backdoor is the #1666 hazard in a new place. Sysmon 11/23/26 and a USN FileCreate name
+# the event, so the marker is what separates a write from a mere presence.
+win_accessibility_backdoor:
+  description: System32 accessibility binary written (sethc/utilman sticky-keys backdoor)
+  all:
+    - { field: path, regex: '[\\/](?:sethc|utilman|osk|magnify|narrator|displayswitch|atbroker)\.exe$', flags: 'i' }
+    - { field: path, regex: '\\windows\\system32\\', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created|File deleted', flags: 'i' }
+  tags: ['accessibility-backdoor', 'persistence']
+  mitre: ['T1546.008']
+  severity: High
+  view: 'Windows registry persistence'
+
+win_startup_folder_payload:
+  description: Executable/script written to a Startup folder (logon persistence)
+  all:
+    - { field: path, regex: '\\start menu\\programs\\startup\\', flags: 'i' }
+    - { field: path, regex: '\.(?:exe|scr|bat|cmd|ps1|vbs|js|jse|wsf|hta|com|pif)$', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created|File deleted', flags: 'i' }
+  tags: ['startup-folder', 'persistence']
+  mitre: ['T1547.001']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+win_ps_profile_persistence:
+  description: PowerShell profile script written (profile-based persistence)
+  # The path anchor names the profile; the create marker (same reason as the file-write rules above)
+  # keeps a Velociraptor/MFT listing of an existing profile from reading as a write.
+  all:
+    - { field: path, regex: '(?:microsoft\.powershell_profile|profile)\.ps1$', flags: 'i' }
+    - { field: description, regex: '\(EID (?:11|23|26)\)|FileCreate|File created', flags: 'i' }
+  tags: ['powershell-profile', 'persistence']
+  mitre: ['T1546.013']
+  severity: Medium
+  view: 'Windows registry persistence'
+
+# ─────────────────────────── Windows defense evasion / execution (command shapes not graded) ───────────────────────────
+win_amsi_bypass:
+  description: AMSI bypass (AmsiUtils / amsiInitFailed / AmsiScanBuffer patch)
+  any:
+    - { field: commandLine, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+    - { field: description, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+    - { field: message, regex: '\bamsi(?:utils|initfailed)\b|amsiscanbuffer', flags: 'i' }
+  tags: ['amsi-bypass', 'defense-evasion']
+  mitre: ['T1562.001']
+  severity: High
+  view: 'Defense evasion'
+
+win_firewall_disable:
+  description: Windows Firewall disabled (netsh / Set-NetFirewallProfile)
+  any:
+    - { field: commandLine, regex: '(?:netsh\s+(?:adv)?firewall|set-netfirewallprofile)[^\n]*(?:state\s+off|opmode\s+disable|enabled\s+\$?false)', flags: 'i' }
+    - { field: description, regex: 'netsh\s+(?:adv)?firewall[^\n]*(?:state\s+off|opmode\s+disable)', flags: 'i' }
+  tags: ['firewall-disable', 'defense-evasion']
+  mitre: ['T1562.004']
+  severity: High
+  view: 'Defense evasion'
+
+win_audit_policy_tamper:
+  description: Audit policy cleared (auditpol /clear)
+  any:
+    - { field: commandLine, regex: '\bauditpol\b[^\n]*\/(?:clear|remove)\b', flags: 'i' }
+    - { field: description, regex: '\bauditpol\b[^\n]*\/(?:clear|remove)\b', flags: 'i' }
+  tags: ['audit-policy-tamper', 'defense-evasion']
+  mitre: ['T1562.002']
+  severity: High
+  view: 'Defense evasion'
+
+win_wmi_mof:
+  description: WMI MOF compiled (mofcomp / .mof) — file-based permanent event subscription
+  any:
+    - { field: commandLine, regex: '\bmofcomp(?:\.exe)?\b', flags: 'i' }
+    - { field: description, regex: '\bmofcomp\b[^\n]*\.mof\b|\.mof\b[^\n]*\bmofcomp\b', flags: 'i' }
+  tags: ['wmi-persistence', 'persistence']
+  mitre: ['T1546.003']
+  severity: Medium
+  view: 'WMI persistence'
+
+win_rdp_portproxy:
+  description: netsh interface portproxy tunnel (RDP/any-port relay)
+  any:
+    - { field: commandLine, regex: 'netsh\b[^\n]*\binterface\s+portproxy\b', flags: 'i' }
+    - { field: description, regex: 'netsh\b[^\n]*\binterface\s+portproxy\b', flags: 'i' }
+  tags: ['rdp-portproxy', 'lateral-movement', 'command-and-control']
+  mitre: ['T1021.001', 'T1090.001']
+  severity: Medium
+  view: 'Defense evasion'
+
+win_terminal_server_write:
+  description: Terminal Server (RDP) registry setting written — direction not in the record
+  any:
+    - { field: description, regex: '\\terminal server\b[^\n]*\bfdenytsconnections\b', flags: 'i' }
+    - { field: path, regex: '\\terminal server\\fdenytsconnections\b', flags: 'i' }
+  tags: ['rdp-registry', 'lateral-movement']
+  mitre: ['T1021.001']
+  severity: Low
+  view: 'Defense evasion'

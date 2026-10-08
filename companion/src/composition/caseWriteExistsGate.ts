@@ -56,6 +56,7 @@ const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 /** Reads that open the per-case database, so must 404 an unknown case (#1901). Same spelling rules. */
 export const STORE_OPENING_READS: ReadonlySet<string> = new Set([
   "/export/redacted",
+  "/host-duplicates", // scans the super-timeline for host names, like /host-scope
   "/host-scope",
   "/login-graph",
   "/proxy-host-identity-matches",

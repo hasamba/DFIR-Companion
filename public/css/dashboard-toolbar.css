@@ -235,7 +235,8 @@
 .ev-row.ev-flash, .finding.ev-flash { animation: evFlash 1.5s ease-out; }
 @keyframes evFlash { 0%,40% { background: var(--bg-drop-active); } 100% { background: transparent; } }
 .swimlane-wrap { display: flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; background: var(--bg-primary); }
-.swimlane-labels { width: 160px; flex-shrink: 0; border-right: 1px solid var(--border-color); overflow: hidden; }
+/* Sized to the longest lane name, so a full host name (HOST-WITH-A-LONG-NAME.corp.example.com) is not cut. */
+.swimlane-labels { width: max-content; min-width: 160px; max-width: 360px; flex-shrink: 0; border-right: 1px solid var(--border-color); overflow: hidden; }
 .swimlane-label { box-sizing: border-box; display: flex; align-items: center; padding: 0 8px;
   font-size: 11px; color: var(--text-primary); border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }

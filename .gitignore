@@ -99,3 +99,7 @@ graphify-out/
 
 # herdr web UI: screenshots pasted into agent sessions. Local only, never source.
 .herdr-web-ui/
+
+# Local login database (accounts, password verifiers, sessions, audit trail) written beside the
+# cases root by companion/src/auth/authFactory.ts. Per-machine secrets, never source.
+.dfir-auth-*/

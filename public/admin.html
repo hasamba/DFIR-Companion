@@ -100,7 +100,9 @@
       function esc(value) {
         return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
           return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char];
-        });
+        })
+          // A bidi control (RLO, ...) reverses the text after it in the browser; show it as a <RLO>-style marker (#2027).
+          .replace(/[\u202a-\u202e\u2066-\u2069]/g, function (c) { var i = c.charCodeAt(0); return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;"; });
       }
       async function api(path, options) {
         var init = Object.assign({}, options || {});

@@ -1,5 +1,6 @@
 import type { NotificationEvent } from "../../analysis/notifications.js";
 import type { Severity } from "../../analysis/stateTypes.js";
+import { escapeBidiControls } from "../../analysis/bidiControl.js";
 
 // Pure: a NotificationEvent → a Telegram Bot API sendMessage payload.
 // Uses HTML parse_mode so bold/italic/links render natively. No I/O — unit-tested.
@@ -38,8 +39,9 @@ export function formatTelegram(event: NotificationEvent): TelegramPayload {
   return { text: truncate(parts.join("\n"), 4096), parse_mode: "HTML" };
 }
 
+// Bidi controls become visible `<RLO>`-style markers first, then are escaped with the rest (#2027).
 function escHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return escapeBidiControls(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function truncate(s: string, max: number): string {

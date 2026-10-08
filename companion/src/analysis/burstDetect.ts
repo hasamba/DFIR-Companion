@@ -56,44 +56,56 @@ function dominantTactic(events: ForensicEvent[]): IrisTactic | undefined {
   return best;
 }
 
-// The end of an event's real-world span: the aggregated `endTimestamp` when present and valid,
-// else its `timestamp`. Used so a burst's window covers aggregated rows correctly.
-function eventEndMs(e: ForensicEvent): number {
-  const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
-  return Number.isNaN(end) ? Date.parse(e.timestamp) : end;
+// One position on the time axis. An event contributes its start. A row that stands for MANY
+// occurrences (`count` > 1, merged by aggregation) also contributes its end as a point with no event
+// of its own: the row proves activity at its first and last occurrence, not in between. Treating the
+// whole span as continuous let one row of routine logons (3,133 events over 24 hours) or a handful of
+// connections over six days bridge every silence in the case into a single phase. A row with a span
+// but no count (a tool-reported or AI-reported duration) is one continuous stretch, as before.
+interface TimePoint {
+  ms: number; // where this point sits
+  coverMs: number; // how far the burst reaches from here (a continuous span reaches its end)
+  ts: string; // display string for `ms` (or for the end of a continuous span, its end string)
+  coverTs: string;
+  event?: ForensicEvent; // the event this point starts; absent for an aggregate's end point
 }
 
-// The display-string companion to eventEndMs: fall back to e.timestamp when endTimestamp is
-// absent OR unparseable. The plain `e.endTimestamp || e.timestamp` truthiness check kept an
-// unparseable-but-non-empty endTimestamp (e.g. "invalid-date") as the display value while the
-// numeric helper correctly fell back — so the gap/phase card rendered a garbage ISO string (#15).
-function eventEndTsStr(e: ForensicEvent): string {
-  const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
-  return Number.isNaN(end) ? e.timestamp : e.endTimestamp!;
+function endOf(e: ForensicEvent): { ms: number; ts: string } | undefined {
+  const ms = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
+  return Number.isNaN(ms) ? undefined : { ms, ts: e.endTimestamp! };
 }
 
-function summarizePhase(index: number, events: ForensicEvent[]): AttackPhase {
+function pointsFor(e: ForensicEvent): TimePoint[] {
+  const ms = Date.parse(e.timestamp);
+  const end = endOf(e);
+  if (!end || end.ms <= ms) return [{ ms, coverMs: ms, ts: e.timestamp, coverTs: e.timestamp, event: e }];
+  if (e.count && e.count > 1) {
+    return [
+      { ms, coverMs: ms, ts: e.timestamp, coverTs: e.timestamp, event: e },
+      { ms: end.ms, coverMs: end.ms, ts: end.ts, coverTs: end.ts },
+    ];
+  }
+  return [{ ms, coverMs: end.ms, ts: e.timestamp, coverTs: end.ts, event: e }];
+}
+
+function summarizePhase(index: number, points: TimePoint[]): AttackPhase {
+  const events = points.flatMap((pt) => (pt.event ? [pt.event] : []));
   const tactic = dominantTactic(events);
   const techniques = new Set<string>();
   let count = 0;
   let maxSeverity: Severity = "Info";
-  let endTs = eventEndTsStr(events[0]);
-  let endMs = eventEndMs(events[0]);
   for (const e of events) {
     for (const t of e.mitreTechniques) techniques.add(t);
     count += e.count && e.count > 1 ? e.count : 1;
     maxSeverity = worstSeverity(maxSeverity, e.severity);
-    const ms = eventEndMs(e);
-    if (ms > endMs) {
-      endMs = ms;
-      endTs = eventEndTsStr(e);
-    }
   }
+  let end = points[0];
+  for (const pt of points) if (pt.coverMs > end.coverMs) end = pt;
   return {
     id: `phase-${index + 1}`,
     label: tactic ?? "Activity burst",
-    startTimestamp: events[0].timestamp,
-    endTimestamp: endTs,
+    startTimestamp: points[0].ts,
+    endTimestamp: end.coverTs,
     eventIds: events.map((e) => e.id),
     inferredTechniques: [...techniques].sort(),
     eventCount: count,
@@ -109,23 +121,25 @@ export function buildAttackPhases(events: ForensicEvent[], opts: BurstOptions = 
   const dated = events.filter((e) => !Number.isNaN(Date.parse(e.timestamp))).sort(byEventTime);
   if (dated.length === 0) return [];
 
-  const phases: AttackPhase[] = [];
-  let current: ForensicEvent[] = [dated[0]];
-  let prevEndMs = eventEndMs(dated[0]);
-  for (let i = 1; i < dated.length; i++) {
-    const e = dated[i];
-    const startMs = Date.parse(e.timestamp);
-    // Gap is measured from the END of the running burst so a long aggregated event doesn't
-    // spuriously split from a follow-on that overlaps it.
-    if (startMs - prevEndMs > gapMs) {
-      phases.push(summarizePhase(phases.length, current));
-      current = [e];
-      prevEndMs = eventEndMs(e);
+  // Start points keep the event order; an aggregate's end point is merged in by time.
+  const points = dated.flatMap(pointsFor).sort((a, b) => a.ms - b.ms);
+  const clusters: TimePoint[][] = [];
+  let current: TimePoint[] = [points[0]];
+  // Gap is measured from the END of the running burst so a long continuous event doesn't
+  // spuriously split from a follow-on that overlaps it.
+  let prevEndMs = points[0].coverMs;
+  for (let i = 1; i < points.length; i++) {
+    const pt = points[i];
+    if (pt.ms - prevEndMs > gapMs) {
+      clusters.push(current);
+      current = [pt];
+      prevEndMs = pt.coverMs;
     } else {
-      current.push(e);
-      prevEndMs = Math.max(prevEndMs, eventEndMs(e));
+      current.push(pt);
+      prevEndMs = Math.max(prevEndMs, pt.coverMs);
     }
   }
-  phases.push(summarizePhase(phases.length, current));
-  return phases;
+  clusters.push(current);
+  // A cluster made only of aggregate end points has no event to show.
+  return clusters.filter((c) => c.some((pt) => pt.event)).map((c, i) => summarizePhase(i, c));
 }

@@ -149,6 +149,18 @@ describe("esc drift guard", () => {
       expect(esc(`&<>"'`), file).toBe("&amp;&lt;&gt;&quot;&#39;");
     }
   });
+
+  // An AI finding title copies a raw U+202E from the payload's path ("…\<RLO>cod.3aka3.scr"), and
+  // the browser then lays everything after it out right-to-left: the lead, the attack summary and
+  // the "since your last review" row all read backwards. Every escaper shows the control instead.
+  it("every esc copy shows a bidi control as a visible marker instead of obeying it", async () => {
+    for (const { file, esc } of await findEscCopies()) {
+      expect(esc("run (‮cod.3aka3.scr) by x"), file).toBe("run (&lt;RLO&gt;cod.3aka3.scr) by x");
+      expect(esc("‪‫‬‭⁦⁧⁨⁩"), file).toBe(
+        "&lt;LRE&gt;&lt;RLE&gt;&lt;PDF&gt;&lt;LRO&gt;&lt;LRI&gt;&lt;RLI&gt;&lt;FSI&gt;&lt;PDI&gt;",
+      );
+    }
+  });
 });
 
 /** Every HTML escaper named `esc` in the tree. A copy that appears or disappears must be listed here. */

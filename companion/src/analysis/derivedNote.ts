@@ -66,6 +66,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "attack tool store",
   "lab-setup",
   "look-alike account",
+  "bidi masquerade",
 ];
 
 /**

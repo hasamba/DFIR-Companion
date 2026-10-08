@@ -16,6 +16,7 @@ import type { AwsIdentity } from "./awsIdentity.js";
 import type { ShapeHit } from "./awsLineage.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, isObject, normalizeTime, str } from "./siemImport.js";
+import { FORMAT_CHARS } from "./bidiControl.js";
 
 export type Row = Record<string, unknown>;
 
@@ -87,7 +88,6 @@ export const FACT_MITRE: Record<AwsComputeFact, string> = {
   "remote-access-request": "T1651",
 };
 
-const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
 export const show = (v: string, max = NAME_MAX): string => {
   const shown = breakHashRuns(showToken(v.replace(FORMAT_CHARS, "")));
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;

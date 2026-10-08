@@ -45,7 +45,7 @@
 
 function esc(s) {
   return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/[\u202a-\u202e\u2066-\u2069]/g, function (c) { var i = c.charCodeAt(0); return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;"; }); // a bidi control (RLO…) would reverse the text after it: show it as a marker (#2027)
 }
 
 // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute

@@ -31,6 +31,11 @@ const LISTED_IN_ISSUE = [
   "/tls-graph",
 ];
 
+// Reads that began opening the per-case database after the issue was filed. The duplicate-host list
+// scans the super-timeline for host names (the same list as the Scope & Clearance banner).
+const ADDED_LATER = ["/host-duplicates"];
+const GATED_READS = [...LISTED_IN_ISSUE, ...ADDED_LATER];
+
 const roots: string[] = [];
 
 async function harness(): Promise<{ root: string; app: Express }> {
@@ -70,11 +75,11 @@ afterAll(async () => {
 });
 
 describe("reads of a case that does not exist (#1901)", () => {
-  it("gates exactly the eleven reads the issue lists", () => {
-    expect([...STORE_OPENING_READS].sort()).toEqual([...LISTED_IN_ISSUE].sort());
+  it("gates exactly the eleven reads the issue lists, plus the ones added since", () => {
+    expect([...STORE_OPENING_READS].sort()).toEqual([...GATED_READS].sort());
   });
 
-  it.each(LISTED_IN_ISSUE)(
+  it.each(GATED_READS)(
     "GET %s answers 404, creates nothing, and leaves the id free",
     async (rel) => {
       const { root, app } = await harness();

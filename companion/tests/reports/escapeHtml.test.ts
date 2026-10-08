@@ -24,6 +24,11 @@ describe("escapeHtml", () => {
     expect(escapeHtml("C:\\Users\\analyst\\mimikatz.exe")).toBe("C:\\Users\\analyst\\mimikatz.exe");
   });
 
+  // A raw RLO in a finding title reverses the rest of the report line around it (#2027).
+  it("shows a bidi control as a visible marker instead of obeying it", () => {
+    expect(escapeHtml("run (‮cod.3aka3.scr) by x")).toBe("run (&lt;RLO&gt;cod.3aka3.scr) by x");
+  });
+
   // A value carrying an apostrophe — an analyst note, a quoted command line — must not be able to
   // close a single-quoted attribute in either exporter.
   it("neutralises an apostrophe that would otherwise close a single-quoted attribute", () => {

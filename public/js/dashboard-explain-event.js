@@ -76,10 +76,10 @@
           (result.normalContext || result.suspiciousIndicators
             ? `<div class="explain-section"><strong>Normal vs. suspicious</strong>` +
               (result.normalContext
-                ? `<div data-safe-style="color:var(--text-muted);margin-bottom:3px">${esc(result.normalContext)}</div>`
+                ? `<div data-safe-style="color:var(--text-muted);margin-bottom:3px"><span data-safe-style="font-weight:600">Normal: </span>${esc(result.normalContext)}</div>`
                 : "") +
               (result.suspiciousIndicators
-                ? `<div data-safe-style="color:var(--sev-high)">${esc(result.suspiciousIndicators)}</div>`
+                ? `<div data-safe-style="color:var(--sev-high)"><span data-safe-style="font-weight:600">Suspicious: </span>${esc(result.suspiciousIndicators)}</div>`
                 : "") +
               `</div>`
             : "") +

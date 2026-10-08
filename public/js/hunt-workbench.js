@@ -114,6 +114,13 @@ function csvCell(value) {
     : text;
 }
 
+// Where a row's pivot button goes. An IOC row is a four-column grid with its own actions cell: a
+// button appended to the row itself becomes a fifth grid child and starts a new line. Every other
+// row takes the button as its last child.
+export function pivotButtonHost(row) {
+  return (row.classList.contains("ioc-row") && row.querySelector(".ioc-actions-cell")) || row;
+}
+
 export function csvFromRows(columns, rows) {
   return [
     columns.map(csvCell).join(","),
@@ -127,7 +134,8 @@ function escapeHtml(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/'/g, "&#39;")
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, function (c) { var i = c.charCodeAt(0); return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;"; }); // a bidi control (RLO…) would reverse the text after it: show it as a marker (#2027)
 }
 
 // The statuses savedHuntStore records. Anything else is shown as text but never becomes a class.
@@ -716,7 +724,7 @@ function initialize() {
         ".ev-row[data-evid],.ioc-row[data-iocid],.finding[data-fid],.asset-chip",
       )
       .forEach((row) => {
-        if (row.querySelector(":scope > .hq-pivot")) return;
+        if (row.querySelector(".hq-pivot")) return;
         let kind;
         let value;
         let pivotDataset;
@@ -743,14 +751,14 @@ function initialize() {
         if (!value) return;
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "hq-pivot";
+        button.className = "hq-pivot hunt-add";
         button.textContent = "⌕";
         button.title = "Pivot this entity into Hunt Workbench";
         button.addEventListener("click", (event) => {
           event.stopPropagation();
           pivot(kind, value, pivotDataset);
         });
-        row.appendChild(button);
+        pivotButtonHost(row).appendChild(button);
       });
   }
 

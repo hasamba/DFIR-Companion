@@ -14,6 +14,9 @@ export function autocompleteFor(
   fields?: readonly string[],
 ): HuntAutocompleteItem[];
 
+/** Where a row's pivot button goes: an IOC row's actions cell, else the row itself. */
+export function pivotButtonHost(row: Element): Element;
+
 export function csvFromRows(
   columns: readonly string[],
   rows: ReadonlyArray<

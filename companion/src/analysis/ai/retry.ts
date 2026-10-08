@@ -25,6 +25,7 @@ const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>([
   "context",
   "output_limit",
   "safety_stop",
+  "model", // the configured model is unavailable: retrying re-sends to the same refusal (#2042)
 ]);
 
 function isRetryableError(err: unknown): boolean {

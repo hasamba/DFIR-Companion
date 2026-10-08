@@ -97,6 +97,19 @@
 
   // The layer filter this graph renders through.
   const assetTypesEnabled = new Set(["host", "account", "service"]);
+  // Which IoC nodes the graph draws. A case holds thousands of IoCs and every one linked to a host
+  // became a node, so the graph was a solid blob. Flagged-only is the default, like the IOC panel's
+  // "Signal only": the IoCs the threat-intel engines called malicious or suspicious.
+  const assetIocView = { show: true, flaggedOnly: true };
+
+  // Pure: the IoCs the graph draws, given the visible assets and the IoC choice.
+  // `visible` is the nodes' filter; `total` counts every IoC linked to a visible asset.
+  function assetVisibleIocs(iocs, assetIds, view) {
+    const linked = (iocs || []).filter((i) => i.assetIds.some((id) => assetIds.has(id)));
+    const flagged = (i) => i.verdict === "malicious" || i.verdict === "suspicious";
+    const visible = !view.show ? [] : view.flaggedOnly ? linked.filter(flagged) : linked;
+    return { visible, total: linked.length };
+  }
 
   // "Known compromised assets" — with rename/remove controls when overrides are available.
   function renderAssetList() {
@@ -179,9 +192,7 @@
       assetTypesEnabled.has(a.type),
     );
     const assetIds = new Set(assets.map((a) => a.id));
-    const iocs = assetGraphData.iocs.filter((i) =>
-      i.assetIds.some((id) => assetIds.has(id)),
-    );
+    const iocs = assetVisibleIocs(assetGraphData.iocs, assetIds, assetIocView).visible;
     const iocIds = new Set(iocs.map((i) => i.id));
     const edges = assetGraphData.edges.filter(
       (e) => assetIds.has(e.asset) && iocIds.has(e.ioc),
@@ -346,6 +357,16 @@
         "Graph library not loaded — restart the companion server.";
       return;
     }
+    const shown = assetVisibleIocs(
+      assetGraphData.iocs,
+      new Set(assets.map((a) => a.id)),
+      assetIocView,
+    );
+    const countEl = document.getElementById("assetIocCount");
+    if (countEl)
+      countEl.textContent = assetIocView.show
+        ? `showing ${shown.visible.length} of ${shown.total} IOCs`
+        : `${shown.total} IOCs hidden`;
     gv.render();
   }
 
@@ -360,6 +381,21 @@
         renderAssetGraph();
       }),
     );
+
+    // IoC toggles: show or hide every IoC node, and narrow the shown ones to the flagged.
+    const showIocs = document.getElementById("assetShowIocs");
+    const flaggedIocs = document.getElementById("assetFlaggedIocs");
+    if (showIocs)
+      showIocs.addEventListener("change", () => {
+        assetIocView.show = showIocs.checked;
+        if (flaggedIocs) flaggedIocs.disabled = !showIocs.checked;
+        renderAssetGraph();
+      });
+    if (flaggedIocs)
+      flaggedIocs.addEventListener("change", () => {
+        assetIocView.flaggedOnly = flaggedIocs.checked;
+        renderAssetGraph();
+      });
 
     // Paint the legend glyph into each Show-toggle (doubles as the graph's icon key). This ran at
     // MODULE scope in the inline script, where the markup already existed. In a <head> module it
@@ -393,6 +429,7 @@
 
   window.hasAssetGraph = hasAssetGraph;
   window.assetGraphAssets = assetGraphAssets;
+  window.assetVisibleIocs = assetVisibleIocs;
   window.assetOverrideMerges = assetOverrideMerges;
   window.loadAssetGraph = loadAssetGraph;
   window.loadAssetOverrides = loadAssetOverrides;

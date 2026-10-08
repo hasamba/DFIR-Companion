@@ -1,7 +1,6 @@
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import {
   buildHostAliasIndex,
-  findNearDuplicates,
   hostMergesFromAssetIds,
   type HostAliasIndex,
   type NearDuplicate,
@@ -45,6 +44,8 @@ export interface HostScopeSources {
   scope?: { load(caseId: string): Promise<ScopeWindow> };
   assetOverrides?: { load(caseId: string): Promise<AssetOverrides> };
   fleet?: { load(): Promise<VeloClientInventory> };
+  /** Pairs the analyst ruled out. Without it the ledger lists every near-duplicate, ruled out or not. */
+  dismissals?: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
 }
 
 export interface HostEvidenceSource {
@@ -116,6 +117,31 @@ export async function loadHostAliasIndex(
 }
 
 /**
+ * THE host list every duplicate check reads: the gate before synthesis, the merge panel, the cockpit
+ * card, the status pill and the Scope & Clearance banner. The forensic timeline's hosts, plus every
+ * host the super-timeline names (a short `host-a` seen in `WorkstationName=HOST-A` while the rows carry
+ * `host-a.corp.example.com`). The gate used to read only the forensic hosts, so the banner showed five
+ * pairs and synthesis ran straight through them.
+ *
+ * Only NAMES come from the super-timeline, through the cached host scan (#1881). No event text
+ * reaches a prompt, so the forensic / super-timeline boundary holds. `superTimeline` is optional so
+ * a caller without that store keeps the forensic-only list it always had.
+ */
+export async function loadDuplicateCheckHostNames(
+  sources: Pick<HostScopeSources, "state"> & { superTimeline?: HostEvidenceSource },
+  caseId: string,
+  index: HostAliasIndex,
+): Promise<string[]> {
+  const forensic = sources.state.forensicHostsInOrder
+    ? await sources.state.forensicHostsInOrder(caseId).then(hostNamesFromAssets)
+    : await sources.state.load(caseId).then(hostNamesFromState);
+  const seen = sources.superTimeline
+    ? [...(await loadHostEvidence(sources.superTimeline, caseId, index)).keys()]
+    : [];
+  return hostNamesFromAssets([...forensic, ...seen]);
+}
+
+/**
  * The pairs still awaiting a merge decision, loaded from the case's stores.
  *
  * The pure derivation lives in hostDuplicateGate.ts; this is the store recipe that feeds it, and it
@@ -129,20 +155,16 @@ export async function loadHostAliasIndex(
  */
 export async function loadPendingHostDuplicates(
   sources: Pick<HostScopeSources, "state" | "assetOverrides" | "fleet"> & {
+    superTimeline?: HostEvidenceSource;
     dismissals: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
   },
   caseId: string,
 ): Promise<NearDuplicate[]> {
-  // #1874: every import asks this in the background; it needs the hosts, not every row of the case.
-  const hostNames = sources.state.forensicHostsInOrder
-    ? sources.state.forensicHostsInOrder(caseId).then(hostNamesFromAssets)
-    : sources.state.load(caseId).then(hostNamesFromState);
-  const [hosts, index, dismissals] = await Promise.all([
-    hostNames,
+  const [index, dismissals] = await Promise.all([
     loadHostAliasIndex(sources, caseId),
     sources.dismissals.load(caseId),
   ]);
-  return pendingNearDuplicates(hosts, index, dismissals);
+  return pendingNearDuplicates(await loadDuplicateCheckHostNames(sources, caseId, index), index, dismissals);
 }
 
 /**
@@ -153,6 +175,7 @@ export async function loadPendingHostDuplicates(
  */
 export async function loadHostDuplicatePanelCandidates(
   sources: Pick<HostScopeSources, "state" | "assetOverrides" | "fleet"> & {
+    superTimeline?: HostEvidenceSource;
     dismissals: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
   },
   caseId: string,
@@ -162,7 +185,7 @@ export async function loadHostDuplicatePanelCandidates(
     loadHostAliasIndex(sources, caseId),
     sources.dismissals.load(caseId),
   ]);
-  const hostNames = hostNamesFromState(state);
+  const hostNames = await loadDuplicateCheckHostNames(sources, caseId, index);
   const bindingIndex = buildHostBindingIndex(state.forensicTimeline ?? [], index);
   return [
     ...pendingNearDuplicates(hostNames, index, dismissals),
@@ -193,7 +216,13 @@ export async function loadHostScopeLedger(
     caseTactics: caseTacticsOf(state),
     clients: inventory.clients,
     fleetSnapshotAt: inventory.updatedAt,
-    nearDuplicates: findNearDuplicates(index, [...evidence.keys()]),
+    // The same list and the same dismissals the pre-synthesis gate reads, so the banner never shows
+    // a pair the gate waves through, or hides one it holds on.
+    nearDuplicates: pendingNearDuplicates(
+      hostNamesFromAssets([...hostNamesFromState(state), ...evidence.keys()]),
+      index,
+      sources.dismissals ? await sources.dismissals.load(caseId) : [],
+    ),
     aliasIndex: index,
   });
 }

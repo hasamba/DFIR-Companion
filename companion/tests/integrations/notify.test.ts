@@ -89,6 +89,13 @@ describe("slack/teams/email/telegram formatters", () => {
     expect(p.text).toContain("a &amp; b");
   });
 
+  // A raw RLO copied into a finding title from a masquerading file name reverses the message (#2027).
+  it("Telegram formatter shows a bidi control as a visible marker", () => {
+    const p = formatTelegram(event({ title: "Payload (\u202ecod.3aka3.scr) on SCRANTON" }));
+    expect(p.text).not.toContain("\u202e");
+    expect(p.text).toContain("(&lt;RLO&gt;cod.3aka3.scr) on SCRANTON");
+  });
+
   it("Telegram formatter includes a link when url is set", () => {
     const p = formatTelegram(event({ url: "http://127.0.0.1:4773/dashboard" }));
     expect(p.text).toContain("Open case");
@@ -307,6 +314,29 @@ describe("dispatchEvent + createNotifier", () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(sent).toContain("https://slack");
     expect(sent).toContain("https://teams");
+  });
+
+  // Slack, Teams, Discord and Mattermost have no HTML escaper to catch a raw U+202E, so the
+  // dispatcher shows it before any channel formats the event (#2027).
+  it("shows a bidi control in the title and lines as a visible marker on every channel", async () => {
+    const bodies: string[] = [];
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ""));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const channels = (["slack", "teams", "mattermost", "discord"] as const).map((type) =>
+      channel({ id: type, type, webhookUrl: `https://${type}` }),
+    );
+    const masked = event({
+      title: "Payload \u202ecod.3aka3.scr",
+      lines: ["Path: C:\\v\\\u202ecod.3aka3.scr"],
+    });
+    await dispatchEvent(channels, masked, { fetchFn });
+    expect(bodies).toHaveLength(4);
+    for (const body of bodies) {
+      expect(body).not.toMatch(/\u202e|\\u202e/i);
+      expect(body).toContain("<RLO>cod.3aka3.scr");
+    }
   });
 
   it("routes mattermost + discord events to their webhook URLs with the right payload shape", async () => {

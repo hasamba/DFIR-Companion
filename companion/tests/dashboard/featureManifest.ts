@@ -1446,6 +1446,7 @@ export const FEATURES: Feature[] = [
       "renderAssetList",
       "hasAssetGraph",
       "assetGraphAssets",
+      "assetVisibleIocs",
       "assetOverrideMerges",
       "loadAssetGraph",
       "loadAssetOverrides",
@@ -1455,6 +1456,7 @@ export const FEATURES: Feature[] = [
       "assetGV",
       "ASSET_STYLE",
       "assetTypesEnabled",
+      "assetIocView",
       "assetGraphData",
       "assetOverridesData",
       "assetGraphTimer",
@@ -1670,7 +1672,13 @@ export const FEATURES: Feature[] = [
     // next statement belongs to report metadata.
     file: "dashboard-evidence-graph.js",
     initializer: "initEvidenceGraph",
-    publish: ["initEvidenceGraph", "loadEvidenceGraph", "scheduleEvidenceGraphReload", "hasEvidenceGraph"],
+    publish: [
+      "initEvidenceGraph",
+      "loadEvidenceGraph",
+      "scheduleEvidenceGraphReload",
+      "hasEvidenceGraph",
+      "lateralPathGroups",
+    ],
     private: [
       "evGraphData",
       "evTypesEnabled",
