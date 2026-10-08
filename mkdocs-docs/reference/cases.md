@@ -64,6 +64,8 @@ The case selector dropdown (top-left of dashboard) lists all cases, newest first
 
 When you type in the case box, the dashboard switches case only when the text names a listed case. A new case id takes effect when you leave the box or press Enter.
 
+Hover the case box to see the full case name and case id. The open case is marked **● Current** in the list.
+
 ## Case Lifecycle
 
 Each case has a status: **Open** or **Closed**.

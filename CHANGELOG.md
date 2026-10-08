@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-08
+
 ### Added
 
 - **Right-to-left override file names** — a process, parent or created file whose name hides a bidi control (real or mojibake `â€®`) is High with T1036.002, and descriptions show it as `<RLO>` (closes #2027)
@@ -37,10 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Nitrogen playbook** — Playbook Match recognises the Nitrogen malvertising-to-BlackCat chain (closes #1963)
 - **Lab-setup file transfers capped** — files dropped through a hypervisor drag-and-drop folder are capped at Medium, with `DFIR_LAB_SETUP_PATHS` for more folders (closes #1946)
 - **Duplicate hunt import warning** — importing a hunt or flow already in the case imports nothing until the analyst chooses Re-import anyway (closes #1965)
+- **Initial access finding** — synthesis records the earliest observed attacker entry as an Initial access finding even when its origin is unknown, with confidence capped when source telemetry is missing (closes #2015)
+- **Timesketch tag rules** — 61 community Timesketch rules for Windows registry persistence, AWS/GCS and M365/Entra audit logs join the tagger (#2021, #2022)
+- **Case picker tooltip** — hovering the case box shows the full case name and id, and the open case is marked Current in the list (#2033)
+- **Jump to a finished 2nd opinion** — a finished run opens its panel, or warns when the analyst is typing, and keeps a "Run finished" note (#2013)
+- **Interactive data-flow map** — a self-contained docs page traces every input through grading and analysis to each output, with a dashboard panel guide (#2009, #2010)
 
 ### Changed
 
 - **Newest rows kept when no incident window is known** — a Velociraptor read cut short by the row cap, with no time scope or case window, is re-read newest-first by the artifact's own time (closes #1983)
+- **Web Data Exposure panel** — the Served Exposure panel is renamed, with a plainer subtitle (#2035)
+- **T1059 only for interpreters** — Sysmon, 4688 and auditd process rows carry T1059 only when a shell or script host ran; run Clear tagger tags, then Run tagger, on existing cases (#2019, #2020)
+- **Synthesis waits on duplicate hosts** — synthesis stops at the gate while Scope & Clearance shows an unmerged, undismissed duplicate host pair (#2018)
+- **Faster cockpit and asset graph on large cases** — story grouping and IoC matching run in linear time, so a 20k-event case no longer freezes the server (#2037, #2045)
 
 ### Fixed
 
@@ -93,6 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Blank-key restore record fails safe** — a Restore record with no key no longer lifts the cap on another finding (closes #1991)
 - **Reopened Keep reads fresh findings** — Keep on a reopened second opinion reads the findings inside the record lock (closes #1990)
 - **Unshown findings survive synthesis** — a finding past the 150-finding echo cap is kept, and replaced only when the model re-emits a match (closes #2006)
+- **Bidi controls shown as markers everywhere** — a right-to-left override in a finding shows as `<RLO>` in the dashboard, HTML, CSV, DOCX and notifications and `‹RLO›` in Markdown, instead of reversing the text (part of #2027)
+- **Tagger false positives** — encoded PowerShell needs PowerShell, temp-folder executables are temp-staging only, network logons are lateral movement only for RDP or a named source, and event ids inside hashes no longer match (#2018)
+- **Defense Evasion not guessed from a program name** — regsvr32, rundll32 and mshta count only when they fetch or run a script (#2020)
+- **Scheduled-task persistence tag** — matches only the task register and update messages, not every task start (#2019)
+- **Hayabusa write and launch kept apart** — a file write and its launch milliseconds later stay two rows, so the AI sees the binary ran (#1940)
+- **Second look without re-synthesis** — promoting rows with re-synthesis unticked now marks conclusions out of date (#1939)
+- **Story so far lines link to full text** — each clipped cockpit line links to its full summary or path (#2011)
+- **Deep Pass progress text** — reads "reading batch 2 of 3" without the off-by-one done count (#2012)
 
 ## [0.41.0] - 2026-10-02
 
@@ -1361,7 +1380,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.38.0...v0.39.0

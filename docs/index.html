@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.41.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.42.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.41.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.42.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -918,6 +918,18 @@
           <h3>Containment Check</h3>
           <p>Press the shield on a finding. A fast model answers eleven narrow questions about the evidence the finding cites, and a tested rule turns the answers into containment steps. Tick the steps you want and they land in the Playbook, each one showing the answers behind it.</p>
           <span class="tag">v0.41.0 — containment steps you can trace</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">🚪</div>
+          <h3>Initial Access, Named</h3>
+          <p>Synthesis records the earliest observed attacker entry as its own finding, even when the origin is unknown. It is honest about the limits: your own VPN address is not external evidence, and missing source telemetry keeps the confidence low and marks the entry as inferred.</p>
+          <span class="tag">v0.42.0 — where they first got in</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon red">🔀</div>
+          <h3>Masquerades Made Visible</h3>
+          <p>A file name that hides a right-to-left override, such as <code>invoice&lt;RLO&gt;cod.scr</code>, is graded High as T1036.002. The hidden character shows as a visible marker in the dashboard and in every report, export and alert, so the name can no longer read backwards.</p>
+          <span class="tag">v0.42.0 — the name can't lie</span>
         </div>
       </div>
     </div>

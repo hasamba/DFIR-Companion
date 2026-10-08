@@ -312,6 +312,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Cloud lifecycle summaries** — one row per AWS credential lineage, EC2 instance lifecycle, Workspace OAuth client, Exchange mailbox chain and Entra application privilege path whose records form one inside an upload; each says what its records establish and what they do not
 - **Network relationships** — TLS (Zeek `ssl`/`x509`, Suricata `tls`) becomes one row per relationship and per certificate; DNS answers are joined to the same client's later connections inside the TTL; web request chains join only through identifiers both records carry
 - **Mobile origin tags** — every iLEAPP / ALEAPP row says whether its content was recorded on this device, synced or received, from a registry pinned to upstream
+- **Masquerade and look-alike detection** (T1036.002) — a file name hiding a right-to-left override is High and shows as `<RLO>` in every view and export; a new account named one edit from a built-in or case account is High
+- **Remote access, webshells and web scanners** — AnyDesk/ScreenConnect/TeamViewer/Atera in Prefetch or Amcache → Medium (T1219); an IIS worker writing a page into a web root → High (T1505.003); sqlmap, dirsearch and similar scanners → Medium, exploit modes High
+- **Timesketch tag rules** — community Timesketch rules for Windows registry persistence, AWS/GCS and M365/Entra audit logs ship in the content tagger
 
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
@@ -332,6 +335,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Missed evidence review** — an analyst-pressed fast model (Jev) grades the Info rows the content tagger left behind; tick rows and promote them with the model's grade (off until `DFIR_JEV_ENABLED`)
 - **Containment check** — on a finding, Jev answers eleven narrow questions about its cited evidence; a tested rule suggests containment steps, and ticked steps go to the Playbook with their attribution
 - **Negative answers name their evidence** — a per-host collection inventory reaches synthesis, so "not observed" says what was collected and what to collect next
+- **Entry and spike leads** — synthesis records the first observed attacker entry as an Initial access finding, and gets host activity spikes and the programs started just before each host's first script write as leads
+- **Restore a capped finding** — a finding a grading check lowered shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis
 - **Other commands in this session** — each finding lists the attack session's command lines that no finding names
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
 - **AI-input anonymization** — reversibly tokenizes IPs, users, hosts, domains, emails, paths, card/phone/national-ID numbers, encoded commands and SIDs; one-way-redacts secrets. Optional **[Presidio](mkdocs-docs/reference/presidio.md)** catches names, with an approval gate
