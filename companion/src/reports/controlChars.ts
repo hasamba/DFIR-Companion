@@ -4,6 +4,10 @@
 // Stored state keeps those exact bytes (evidence integrity), so the mapping happens only at the
 // report seam. Each control becomes its visible Unicode Control Picture (U+2400 + code, so NUL is
 // "␀"): the reader still sees that a control was there and which one, and nothing is dropped.
+// Bidi controls (RLO, …) become `<RLO>`-style markers the same way: raw, they reverse the text after
+// them in every viewer, so an RLO-masqueraded file name would read backwards in the report (#2027).
+
+import { escapeBidiControls } from "../analysis/bidiControl.js";
 
 const CONTROL_PICTURE_BASE = 0x2400;
 const DEL_PICTURE = "␡";
@@ -24,19 +28,23 @@ const XML_FORBIDDEN_OTHER = /[￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\u
  * Pictures; U+FFFE, U+FFFF and lone surrogates have no picture and become U+FFFD.
  */
 export function xmlSafeText(value: string): string {
-  return value.replace(XML_FORBIDDEN_C0, controlPicture).replace(XML_FORBIDDEN_OTHER, REPLACEMENT_CHAR);
+  return escapeBidiControls(value)
+    .replace(XML_FORBIDDEN_C0, controlPicture)
+    .replace(XML_FORBIDDEN_OTHER, REPLACEMENT_CHAR);
 }
 
 // C0 controls a Markdown fragment must not carry raw: everything below U+0020 except TAB, LF, CR
 // (the mdText callers fold or split on line breaks themselves), plus DEL.
 const MD_CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
-/** Markdown text with every C0 control (except TAB, LF, CR) and DEL shown as its Control Picture. */
+/** Markdown text with every C0 control (except TAB, LF, CR) and DEL shown as its Control Picture, and every bidi control as a marker. */
 export function mdControlPictures(value: string): string {
-  return value.replace(MD_CONTROL, (ch) => (ch === "\u007F" ? DEL_PICTURE : controlPicture(ch)));
+  return escapeBidiControls(value).replace(MD_CONTROL, (ch) =>
+    ch === "\u007F" ? DEL_PICTURE : controlPicture(ch),
+  );
 }
 
-/** A CSV cell value with NUL shown as "␀". A quoted CR is legal CSV and stays exact. */
+/** A CSV cell value with NUL shown as "␀" and every bidi control as a marker. A quoted CR is legal CSV and stays exact. */
 export function csvNulPicture(value: string): string {
-  return value.replace(/\u0000/g, controlPicture);
+  return escapeBidiControls(value).replace(/\u0000/g, controlPicture);
 }

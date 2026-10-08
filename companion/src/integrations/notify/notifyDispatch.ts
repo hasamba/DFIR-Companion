@@ -15,6 +15,7 @@ import { formatDiscord } from "./discordFormat.js";
 import { formatTelegram } from "./telegramFormat.js";
 import { buildRfc822Message, formatEmail } from "./emailFormat.js";
 import { postWebhook } from "./webhookSender.js";
+import { escapeBidiControls } from "../../analysis/bidiControl.js";
 import { sendSmtp, type SmtpConnect } from "./smtpClient.js";
 
 // Per-type payload builder for the incoming-webhook channels. They all POST a JSON body to the
@@ -64,7 +65,14 @@ export async function dispatchEvent(
   transport: NotifyTransport,
 ): Promise<ChannelResult[]> {
   const targets = channels.filter((c) => shouldNotify(c, event));
-  return Promise.all(targets.map((c) => sendToChannel(c, event, transport)));
+  const shown = withVisibleBidi(event);
+  return Promise.all(targets.map((c) => sendToChannel(c, shown, transport)));
+}
+
+// A raw bidi control (an RLO-masqueraded file name in a finding title) reverses the text after it
+// in every chat client, and the webhook formats have no HTML escaper to catch it (#2027).
+function withVisibleBidi(event: NotificationEvent): NotificationEvent {
+  return { ...event, title: escapeBidiControls(event.title), lines: event.lines.map(escapeBidiControls) };
 }
 
 async function sendToChannel(
