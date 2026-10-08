@@ -76,8 +76,17 @@ export function bidiControlsIn(s: string): string[] {
 
 /** The string with every bidi control (either encoding) shown as a visible `<NAME>` marker. */
 export function escapeBidiControls(s: string): string {
+  return escapeBidiControlsAs(s, "<", ">");
+}
+
+/**
+ * The same, with the caller's own brackets around the name — for a format that gives `<` a meaning
+ * (Markdown reads `<RLO>` as an HTML tag). A separate function rather than optional parameters, so
+ * `lines.map(escapeBidiControls)` can never pass an index in as a bracket.
+ */
+export function escapeBidiControlsAs(s: string, open: string, close: string): string {
   if (!hasBidiControl(s)) return s;
-  return normalizeBidiMojibake(s).replace(BIDI_RE, (c) => `<${BIDI_NAMES[c]}>`);
+  return normalizeBidiMojibake(s).replace(BIDI_RE, (c) => `${open}${BIDI_NAMES[c]}${close}`);
 }
 
 /**
