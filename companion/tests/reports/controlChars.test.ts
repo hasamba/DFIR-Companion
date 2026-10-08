@@ -37,8 +37,16 @@ describe("bidi controls at the report seams", () => {
   const shown = "Payload (<RLO>cod.3aka3.scr) on SCRANTON";
 
   it("Markdown, CSV and DOCX text show a bidi control as a visible marker", () => {
-    expect(mdControlPictures(title)).toBe(shown);
+    expect(mdControlPictures(title)).toBe("Payload (‹RLO›cod.3aka3.scr) on SCRANTON");
     expect(csvNulPicture(title)).toBe(shown);
     expect(xmlSafeText(title)).toBe(shown);
+  });
+
+  // `<RLO>` is an HTML tag to a Markdown renderer, so GitHub and other viewers hid the marker, and a
+  // path's own backslash ("victim\<RLO>") escaped the bracket instead. ‹ › mean nothing to Markdown.
+  it("Markdown uses a marker no renderer reads as HTML, even after a path backslash", () => {
+    const md = mdControlPictures("C:\\victim\\\u202ecod.3aka3.scr");
+    expect(md).toBe("C:\\victim\\\u2039RLO\u203acod.3aka3.scr");
+    expect(md).not.toMatch(/[<>]/);
   });
 });

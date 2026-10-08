@@ -7,7 +7,7 @@
 // Bidi controls (RLO, …) become `<RLO>`-style markers the same way: raw, they reverse the text after
 // them in every viewer, so an RLO-masqueraded file name would read backwards in the report (#2027).
 
-import { escapeBidiControls } from "../analysis/bidiControl.js";
+import { escapeBidiControls, escapeBidiControlsAs } from "../analysis/bidiControl.js";
 
 const CONTROL_PICTURE_BASE = 0x2400;
 const DEL_PICTURE = "␡";
@@ -33,13 +33,19 @@ export function xmlSafeText(value: string): string {
     .replace(XML_FORBIDDEN_OTHER, REPLACEMENT_CHAR);
 }
 
+// Markdown reads `<RLO>` as an HTML tag (GitHub hides it), and a path's own backslash before it
+// ("victim\<RLO>") escapes the bracket. Single angle quotes mean nothing to Markdown, in a code span
+// or after a backslash, so the marker survives every renderer and the DOCX lexer.
+const MD_MARKER_OPEN = "\u2039";
+const MD_MARKER_CLOSE = "\u203a";
+
 // C0 controls a Markdown fragment must not carry raw: everything below U+0020 except TAB, LF, CR
 // (the mdText callers fold or split on line breaks themselves), plus DEL.
 const MD_CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 /** Markdown text with every C0 control (except TAB, LF, CR) and DEL shown as its Control Picture, and every bidi control as a marker. */
 export function mdControlPictures(value: string): string {
-  return escapeBidiControls(value).replace(MD_CONTROL, (ch) =>
+  return escapeBidiControlsAs(value, MD_MARKER_OPEN, MD_MARKER_CLOSE).replace(MD_CONTROL, (ch) =>
     ch === "\u007F" ? DEL_PICTURE : controlPicture(ch),
   );
 }
