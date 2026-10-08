@@ -316,6 +316,29 @@ describe("dispatchEvent + createNotifier", () => {
     expect(sent).toContain("https://teams");
   });
 
+  // Slack, Teams, Discord and Mattermost have no HTML escaper to catch a raw U+202E, so the
+  // dispatcher shows it before any channel formats the event (#2027).
+  it("shows a bidi control in the title and lines as a visible marker on every channel", async () => {
+    const bodies: string[] = [];
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ""));
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const channels = (["slack", "teams", "mattermost", "discord"] as const).map((type) =>
+      channel({ id: type, type, webhookUrl: `https://${type}` }),
+    );
+    const masked = event({
+      title: "Payload \u202ecod.3aka3.scr",
+      lines: ["Path: C:\\v\\\u202ecod.3aka3.scr"],
+    });
+    await dispatchEvent(channels, masked, { fetchFn });
+    expect(bodies).toHaveLength(4);
+    for (const body of bodies) {
+      expect(body).not.toMatch(/\u202e|\\u202e/i);
+      expect(body).toContain("<RLO>cod.3aka3.scr");
+    }
+  });
+
   it("routes mattermost + discord events to their webhook URLs with the right payload shape", async () => {
     const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchFn = (async (url: string, init?: RequestInit) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { xmlSafeText } from "../../src/reports/controlChars.js";
+import { csvNulPicture, mdControlPictures, xmlSafeText } from "../../src/reports/controlChars.js";
 
 // Characters XML 1.0 forbids in a document. A single one makes word/document.xml unparseable.
 const XML_FORBIDDEN =
@@ -27,5 +27,18 @@ describe("xmlSafeText", () => {
     for (let c = 0; c < 0x20; c++) all += String.fromCharCode(c);
     all += "￾￿𐏿";
     expect(XML_FORBIDDEN.test(xmlSafeText(all))).toBe(false);
+  });
+});
+
+// A finding title carrying the raw U+202E of an RLO-masqueraded file name reverses the rest of the
+// line in every Markdown viewer, spreadsheet and Word document (#2027). Each report seam shows it.
+describe("bidi controls at the report seams", () => {
+  const title = "Payload (\u202ecod.3aka3.scr) on SCRANTON";
+  const shown = "Payload (<RLO>cod.3aka3.scr) on SCRANTON";
+
+  it("Markdown, CSV and DOCX text show a bidi control as a visible marker", () => {
+    expect(mdControlPictures(title)).toBe(shown);
+    expect(csvNulPicture(title)).toBe(shown);
+    expect(xmlSafeText(title)).toBe(shown);
   });
 });
