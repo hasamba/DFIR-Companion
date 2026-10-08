@@ -469,7 +469,7 @@ const NODES = [
     pts:["Also: OpenRouter, LiteLLM, Claude Code CLI, Codex CLI, Jev decision model"],
     tech:["src/providers/*.ts","src/composition/aiProviders.ts","DFIR_VISION_* · DFIR_AI_SYNTH_* · DFIR_AI_SECOND_OPINION_*"] },
   { id:"synth", col:5, kind:"ai", hero:true, eyebrow:"THE MAIN AI PASS", label:"Synthesis", sub:"findings · narrative · next steps",
-    plain:"The main AI pass. It reads a selected sample of the forensic timeline (up to 600 rows) with your findings, IOCs, scope, notebook and hypotheses, and rewrites the findings, MITRE techniques, key questions, next steps, attacker path and narrative. It always records the earliest observed attacker entry as an Initial access finding, even when the origin is unknown.",
+    plain:"The main AI pass. It reads a selected sample of the forensic timeline (up to 600 rows) with your findings, IOCs, scope, notebook and hypotheses, and rewrites the findings, MITRE techniques, key questions, next steps, attacker path and narrative. When the timeline shows attacker activity, it is asked to record the earliest observed attacker access as its own finding: titled Initial access only on evidence of entry (an external source, a host with no other activity, or an inbound delivery), otherwise First observed attacker access.",
     pts:["Runs when AI is turned on, on Re-synthesize, or after an import with AI on","Other changes just mark conclusions as out of date","Followed by a per-finding task pass"],
     sections:[
       { h:"Which events it is given", ol:true, intro:"Steps 1–3 always run. If what is left fits in the cap (600 rows by default), every row is sent and steps 4–8 are skipped. Only when it does not fit are rows chosen, in this order:", items:[
