@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Re-issued findings keep their citations** — a finding the model re-sends without events keeps its prior citations, so the referee no longer calls it ungrounded (closes #2047)
+- **Second opinion folds contained findings** — a second-model finding whose citations sit inside a larger live finding folds into it and no longer shows as a duplicate (closes #2046)
 - **Codex errors show the real cause** — warnings are dropped and the API refusal is shown first, so an unsupported model reads "model is not supported… change Model (synthesis and imports) in Settings" and is not retried (closes #2042)
 - **Button actions behind a reverse proxy** — the server keeps idle connections open 95 s, longer than Tailscale/nginx/Traefik, so a proxied POST no longer fails with an empty 502 ("Unexpected end of JSON input") (closes #2038)
 - **Lateral-chain dismiss/restore failures shown** — a failed request in a grouped dismiss or restore now reloads the list and warns "Dismissed X of N chains - Y failed" (closes #2029)
