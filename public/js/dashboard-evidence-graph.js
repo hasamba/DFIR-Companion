@@ -575,8 +575,8 @@
             }).catch(() => null);
             if (!res || !res.ok) failed++;
           }
-          await loadLateralPaths(caseId);
           reportPathBatchFailures("Dismissed", paths.length, failed);
+          await loadLateralPaths(caseId);
           return;
         }
         const restoreBtn = e.target.closest(".ev-path-restore");
@@ -591,8 +591,8 @@
             ).catch(() => null);
             if (!res || !res.ok) failed++;
           }
-          await loadLateralPaths(caseId);
           reportPathBatchFailures("Restored", paths.length, failed);
+          await loadLateralPaths(caseId);
           return;
         }
       });
@@ -663,7 +663,7 @@
   }
 
   // The paths a row's buttons stand for: one path (data-path-idx) or a group (data-path-idxs).
-  // Tell the analyst when part of a grouped dismiss/restore failed; the list was already reloaded.
+  // Tell the analyst when part of a grouped dismiss/restore failed; the caller reports before the reload so a stalled reload cannot hide it.
   function reportPathBatchFailures(verb, total, failed) {
     if (!failed || typeof showToast !== "function") return;
     showToast(`${verb} ${total - failed} of ${total} chains - ${failed} failed`, "warn");
