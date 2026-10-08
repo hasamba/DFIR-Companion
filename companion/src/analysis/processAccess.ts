@@ -25,8 +25,11 @@ import type { CanonicalEntity } from "./canonicalEvent.js";
 import {
   BENIGN_LSASS_ACCESSORS,
   BENIGN_THREAD_SOURCES,
+  CLOUD_AGENTS,
   EDR_AGENTS,
   isBenignLsassAccessor,
+  isCloudAgent,
+  isDotNetHost,
   isBenignThreadSource,
   isTrustedSystemImage,
   SUSP_PATH,
@@ -92,6 +95,12 @@ const WORD_MAX = 80;
 const LSASS = /(?:^|[\\/])lsass\.exe$/i;
 const SYSTEM_MODULE = /^(?:[a-z]:)?\\?windows\\(?:system32|syswow64|winsxs)\\/i;
 const LOADLIBRARY = /^LoadLibrary/i;
+// A canonical x64 kernel-half address (0xFFFF8000_00000000 and up). Sysmon writes the frames of a
+// kernel callback (win32k → user32 on every shell/UI stack) as UNKNOWN(<kernel address>): no USER
+// module backs them because they are not user code. Only a user-mode address is the unbacked claim.
+const KERNEL_ADDRESS = /^UNKNOWN\(\s*(?:0x)?ffff[89a-f][0-9a-f]{11}\s*\)$/i;
+// wininit.exe starts lsass.exe and holds the creation handle to it (#2026).
+const LSASS_PARENT = "wininit.exe";
 
 export const HANDLE_READ_NOTE = "handle rights, not a read observed";
 export const HANDLE_WRITE_NOTE = "handle rights, not a write observed";
@@ -150,7 +159,7 @@ export function readCallTrace(text: string | undefined): CallTrace {
     .split("|")
     .map((f) => f.trim())
     .filter(Boolean);
-  const unbacked = all.filter((f) => /^UNKNOWN\b/i.test(f)).length;
+  const unbacked = all.filter((f) => /^UNKNOWN\b/i.test(f) && !KERNEL_ADDRESS.test(f)).length;
   const modules = all.map((f) => f.replace(/\+(?:0x)?[0-9a-f]+(?:\(.*)?$/i, "").trim());
   const firstForeign = modules.find((m) => m && !/^UNKNOWN\b/i.test(m) && !SYSTEM_MODULE.test(m)) ?? "";
   return { state: "value", frames: all.slice(0, FRAMES_MAX), unbacked, firstForeign };
@@ -183,7 +192,8 @@ const isMasquerade = (image: string): boolean => {
   if (!/[\\/]/.test(image.trim())) return false;
   if ((BENIGN_THREAD_SOURCES.has(name) || BENIGN_LSASS_ACCESSORS.has(name)) && !isTrustedSystemImage(image))
     return true;
-  // An EDR agent's name outside the vendor's own install root is the same signal.
+  // An EDR or cloud agent's name outside the vendor's own install root is the same signal.
+  if (CLOUD_AGENTS.some((a) => a.name === name)) return !isCloudAgent(image);
   return (
     EDR_AGENTS.some((a) => a.name === name) && !isBenignThreadSource(image) && !isBenignLsassAccessor(image)
   );
@@ -283,8 +293,10 @@ function accessGrade(
 ): { severity: Severity; mitre: string[]; note: string; qualifier: string } {
   const lsass = LSASS.test(target);
   const has = (bit: number): boolean => (mask.bits & bit) !== 0;
-  // a. Code outside any module opened the handle — the record's own fact, whatever the rights.
-  if (trace.unbacked > 0)
+  // a. Code outside any module opened the handle — the record's own fact, whatever the rights —
+  //    EXCEPT in a .NET host, where JIT-compiled code is always unbacked and the frames say nothing
+  //    (#2026): there the rights below grade, and no trust exception applies to that record.
+  if (trace.unbacked > 0 && !isDotNetHost(source))
     return {
       severity: "High",
       mitre: [],
@@ -292,6 +304,17 @@ function accessGrade(
       qualifier: "",
     };
   if (lsass) {
+    // a2. wininit.exe starts lsass.exe and holds its creation handle, whatever its rights: the
+    //     genuine System32 image with a present, system-only stack is boot-time normal (#2026).
+    if (
+      baseName(source).toLowerCase() === LSASS_PARENT &&
+      /[\\/]/.test(source.trim()) &&
+      isBenignLsassAccessor(source) &&
+      trace.state === "value" &&
+      trace.unbacked === 0 &&
+      !trace.firstForeign
+    )
+      return { severity: "Low", mitre: [], note: "wininit.exe, the parent that starts lsass", qualifier: "" };
     // b. A write-, duplication- or thread-capable handle on lsass: no trust exception.
     if (
       mask.readable &&
@@ -302,7 +325,7 @@ function accessGrade(
     //    query/synchronize bits only, no unknown bit, with a backed (or absent) trace.
     if (mask.readable && has(B.VM_READ)) {
       const routine = (mask.bits & ~ROUTINE_READ_BITS) === 0 && !mask.unknown;
-      if (routine && isBenignLsassAccessor(source))
+      if (routine && trace.unbacked === 0 && isBenignLsassAccessor(source))
         return { severity: "Low", mitre: [], note: "routine read by a system-path accessor", qualifier: "" };
       return { severity: "High", mitre: ["T1003.001"], note: "", qualifier: HANDLE_READ_NOTE };
     }
@@ -310,7 +333,7 @@ function accessGrade(
     //    there is — the trade isTrustedSystemImage makes for an absent path. Rights present but
     //    UNREADABLE: the target is the lead, no technique.
     if (mask.state === "absent")
-      return isBenignLsassAccessor(source)
+      return trace.unbacked === 0 && isBenignLsassAccessor(source)
         ? {
             severity: "Low",
             mitre: [],
@@ -517,7 +540,13 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
   const trace = readCallTrace(has("CallTrace") ? field("CallTrace") : undefined);
   const g = accessGrade(target.image, source.image, mask, trace);
   const traceWords =
-    trace.unbacked > 0 ? "" : trace.firstForeign ? `via ${clip(baseName(trace.firstForeign), WORD_MAX)}` : "";
+    trace.unbacked > 0
+      ? !isDotNetHost(source.image)
+        ? ""
+        : `${trace.unbacked} unbacked frame${trace.unbacked === 1 ? "" : "s"} — JIT code in a .NET host`
+      : trace.firstForeign
+        ? `via ${clip(baseName(trace.firstForeign), WORD_MAX)}`
+        : "";
   // The key carries the record's evidence exactly: the rights (or their tri-state), the unbacked
   // count and the first foreign module — a system-only trace and one through evil.dll are two rows.
   const rightsKey = mask.readable

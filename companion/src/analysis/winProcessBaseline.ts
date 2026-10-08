@@ -238,11 +238,93 @@ function trustedForName(image: string): boolean {
   return !SUSP_PATH.test(win) && WINDOWS_DIR_PATH.test(win);
 }
 
+// Cloud guest agents (#2026): the Azure VM agent and its extensions query every process on the box,
+// lsass included, as routine health and antimalware telemetry. They do not live under Program Files,
+// so the EDR table's system-path anchor cannot hold them; each is anchored instead to its own full
+// install path at the volume root — the name, the directory AND the file must all line up. That
+// anchor is weaker than Program Files (a root-level directory a standard user could pre-create on a
+// host that is not an Azure VM), so these agents are trusted only as lsass ACCESSORS and as .NET
+// hosts, never as remote-thread sources, and never for write, thread or duplication rights.
+const VOLUME = String.raw`^(?:[a-z]:|\\\\\?\\[a-z]:|\\device\\harddiskvolume\d+)?`;
+const AZURE_AGENT_DIR = String.raw`\\windowsazure\\(?:packages|guestagent_[^\\]+)\\`;
+export const CLOUD_AGENTS: { name: string; path: RegExp }[] = [
+  { name: "waappagent.exe", path: new RegExp(String.raw`${VOLUME}${AZURE_AGENT_DIR}waappagent\.exe$`, "i") },
+  {
+    name: "windowsazureguestagent.exe",
+    path: new RegExp(
+      String.raw`${VOLUME}${AZURE_AGENT_DIR}(?:guestagent\\)?windowsazureguestagent\.exe$`,
+      "i",
+    ),
+  },
+  {
+    name: "windowsazuretelemetryservice.exe",
+    path: new RegExp(
+      String.raw`${VOLUME}${AZURE_AGENT_DIR}(?:telemetry\\)?windowsazuretelemetryservice\.exe$`,
+      "i",
+    ),
+  },
+  {
+    name: "antimalwareconfig.exe",
+    path: new RegExp(
+      String.raw`${VOLUME}\\packages\\plugins\\microsoft\.azure\.security\.iaasantimalware\\[0-9.]+\\antimalwareconfig\.exe$`,
+      "i",
+    ),
+  },
+];
+
+/** A cloud guest agent at its own install path (basename-only feeds: the same name trade as above). */
+export function isCloudAgent(image: string): boolean {
+  const agent = CLOUD_AGENTS.find((a) => a.name === baseName(image).toLowerCase());
+  if (!agent) return false;
+  const p = image.trim();
+  if (!/[\\/]/.test(p)) return true;
+  return agent.path.test(p.replace(/\//g, "\\"));
+}
+
+// The .NET hosts (#2026). Managed code is JIT-compiled into memory no module backs, so EVERY call
+// stack these processes produce carries `UNKNOWN(…)` frames — in them an unbacked frame is the
+// runtime, not evidence of injected code. Each is anchored to the path its name belongs at. Explorer
+// is deliberately absent: it is not a CLR host, so an unbacked user-mode frame there still means code
+// no module backs (its routine kernel-callback frames are filtered by address in readCallTrace).
+const CLR_HOSTS: { name: string; path: RegExp }[] = [
+  {
+    name: "powershell.exe",
+    path: new RegExp(
+      String.raw`${VOLUME}\\windows\\(?:system32|syswow64)\\windowspowershell\\v1\.0\\powershell\.exe$`,
+      "i",
+    ),
+  },
+  {
+    name: "powershell_ise.exe",
+    path: new RegExp(
+      String.raw`${VOLUME}\\windows\\(?:system32|syswow64)\\windowspowershell\\v1\.0\\powershell_ise\.exe$`,
+      "i",
+    ),
+  },
+  {
+    name: "pwsh.exe",
+    path: new RegExp(String.raw`${VOLUME}\\program files(?: \(x86\))?\\powershell\\[^\\]+\\pwsh\.exe$`, "i"),
+  },
+  {
+    name: "wsmprovhost.exe",
+    path: new RegExp(String.raw`${VOLUME}\\windows\\(?:system32|syswow64)\\wsmprovhost\.exe$`, "i"),
+  },
+];
+
+/** Unbacked call-trace frames from this source are JIT code, not by themselves injection. */
+export function isDotNetHost(image: string): boolean {
+  const host = CLR_HOSTS.find((h) => h.name === baseName(image).toLowerCase());
+  if (!host) return isCloudAgent(image);
+  const p = image.trim();
+  if (!/[\\/]/.test(p)) return true;
+  return host.path.test(p.replace(/\//g, "\\"));
+}
+
 /** A Sysmon 10 ProcessAccess to lsass.exe from this source is routine, not credential dumping. */
 export function isBenignLsassAccessor(image: string): boolean {
   return BENIGN_LSASS_ACCESSORS.has(baseName(image).toLowerCase())
     ? trustedForName(image)
-    : isBenignAgent(image);
+    : isBenignAgent(image) || isCloudAgent(image);
 }
 
 /** A Sysmon 8 CreateRemoteThread from this source is routine, not injection. */

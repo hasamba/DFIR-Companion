@@ -53,7 +53,11 @@ const eid = (events: SiemEvent[], id: number, re = /./): SiemEvent[] =>
 const accessGrade = (events: SiemEvent[], target: RegExp): string =>
   eid(events, 10, target)[0]?.severity ?? "missing";
 
-describe.each(PATHS)("#1621 — %s: a parent's handle to its own child at creation", (_name, parse) => {
+describe.each(PATHS)("#1621 — %s: a parent's handle to its own child at creation", (name, parse) => {
+  // The access's own grade when no rule lowers it. Hayabusa keeps the rule's Level; the XML path
+  // reads the record: powershell.exe's one unbacked frame is JIT code in a .NET host, so its
+  // full-access handle on cmd.exe grades on the rights — Medium (#2026).
+  const kept = name === "native Hayabusa" ? "High" : "Medium";
   it("is Info with the own-child note, linked by GUID", () => {
     const [own] = eid(parse([child(), ownAccess()]), 10);
     expect(own.severity).toBe("Info");
@@ -67,18 +71,18 @@ describe.each(PATHS)("#1621 — %s: a parent's handle to its own child at creati
   });
 
   it("keeps its grade without a creation record, or with another parent's GUID", () => {
-    expect(accessGrade(parse([ownAccess()]), OWN)).toBe("High");
+    expect(accessGrade(parse([ownAccess()]), OWN)).toBe(kept);
     const other = create(T0, CMD, "cmd.exe /c whoami", G.cmd, G.other, PWSH, `${HOST}\\vagrant`);
-    expect(accessGrade(parse([other, ownAccess()]), OWN)).toBe("High");
+    expect(accessGrade(parse([other, ownAccess()]), OWN)).toBe(kept);
   });
 
   it("keeps its grade more than one second after the creation", () => {
-    expect(accessGrade(parse([child(), ownAccess(T0 + 1_500)]), OWN)).toBe("High");
+    expect(accessGrade(parse([child(), ownAccess(T0 + 1_500)]), OWN)).toBe(kept);
   });
 
   it("fails closed on conflicting creation records for the child", () => {
     const other = create(T0, CMD, "cmd.exe /c whoami", G.cmd, G.other, PWSH, `${HOST}\\vagrant`);
-    expect(accessGrade(parse([child(), other, ownAccess()]), OWN)).toBe("High");
+    expect(accessGrade(parse([child(), other, ownAccess()]), OWN)).toBe(kept);
   });
 
   it("keeps its grade when a remote thread (EID 8) or tampering record (EID 25) targets the child", () => {
@@ -94,8 +98,8 @@ describe.each(PATHS)("#1621 — %s: a parent's handle to its own child at creati
       Image: CMD,
       Type: "Image is replaced",
     });
-    expect(accessGrade(parse([child(), ownAccess(), threadInto]), OWN)).toBe("High");
-    expect(accessGrade(parse([tamper, child(), ownAccess()]), OWN)).toBe("High");
+    expect(accessGrade(parse([child(), ownAccess(), threadInto]), OWN)).toBe(kept);
+    expect(accessGrade(parse([tamper, child(), ownAccess()]), OWN)).toBe(kept);
   });
 
   it("the demoted row falls below a Medium floor; the lsass access does not", () => {
