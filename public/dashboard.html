@@ -4222,7 +4222,7 @@
     <section id="sec-campaign-scope" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Campaign Scope<span class="ev-sub">per imported message: who was addressed, which mailbox a header indicates, and what each host's own rows establish about the attachment &mdash; a name is not identity, a header is not delivery</span></h2>
       <div id="campaignScopePanel">&mdash;</div>
     </section>
-    <section id="sec-served-exposure" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Served Exposure<span class="ev-sub">declare where a URL prefix is served from; per file under it, what the file rows and the access log establish &mdash; a logged size is what the server said, never a transfer; disclosure only with confirmed sensitivity</span></h2>
+    <section id="sec-served-exposure" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Web Data Exposure<span class="ev-sub">Find files that a web server may have given away. Match each logged request to a file. A logged size shows what the server sent. It does not prove the client got it.</span></h2>
       <div id="servedExposurePanel">&mdash;</div>
     </section>
     <section id="sec-kerberoast-chain" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Kerberoast Chain<span class="ev-sub">per service account a ticket request names: the requests, the baseline before the earliest RC4 request, every later row where the exact account acts &mdash; cracking is not observable and is never said; later use does not prove it</span></h2>
@@ -4432,7 +4432,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" }, { id: "sec-jev-review", label: "Missed Evidence Review" }, { id: "sec-second-look", label: "Second Look" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Web Data Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" }, { id: "sec-jev-review", label: "Missed Evidence Review" }, { id: "sec-second-look", label: "Second Look" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views

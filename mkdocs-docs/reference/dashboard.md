@@ -1144,7 +1144,7 @@ hosts, 20 evidence ids per cell; every unread count is shown, and an unread cell
 *incomplete* — never *unknown*. **Hunt leads** are text to run in the hunt workbench; nothing here
 contacts a recipient, collects a mailbox, or sends an attachment anywhere. The report section
 (off in every template until switched on) renders the same tables.
-## Served Exposure
+## Web Data Exposure
 
 Catch data leaving as a response to an incoming request — a dump staged under the web root and
 fetched — without ever equating a request path with a file on your own.
