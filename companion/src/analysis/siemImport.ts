@@ -58,6 +58,7 @@ import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import { joinSubjectParts, renderSubjectField, subjectBudget } from "./renderCommandLine.js";
 import { interpreterTechniques } from "./processInterpreter.js";
 import { regWriteIdentity, regWritePath, regWriteKeys } from "./securityRegistryWrite.js";
+import { isPsPolicyTestFile } from "./psPolicyTestFile.js";
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
 // textDomains.ts; bashHistoryImport keeps importing it from here.
@@ -674,6 +675,11 @@ export function mapWindows(
   // Severity — start from the table, then bump on suspicious process/command.
   let severity = def.severity;
   let mitre = [...(def.mitre ?? [])];
+  // PowerShell's own AppLocker/WDAC probe file (#2025): housekeeping, so Info and no T1070.004.
+  if (def.fileAction && isPsPolicyTestFile(str(getCI(ed, "Image")), str(getCI(ed, "TargetFilename")))) {
+    severity = "Info";
+    mitre = [];
+  }
   if (def.kind === "process") {
     const image = str(getCI(ed, "Image")) || str(getCI(ed, "NewProcessName"));
     const cmd = str(getCI(ed, "CommandLine"));

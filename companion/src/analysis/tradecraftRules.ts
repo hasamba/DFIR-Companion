@@ -25,6 +25,7 @@ import { secretSpillSignal } from "./secretSpillRules.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { scriptCommandTechniques } from "./scriptBlockCommands.js";
+import { scriptPayloadSignal } from "./scriptPayloadRules.js";
 
 export interface TradecraftRule {
   re: RegExp;
@@ -565,6 +566,11 @@ export function scriptBlockSignal(
   if (tc) {
     if (tc.weight === "strong" || !weight) weight = tc.weight;
     for (const t of tc.mitre) mitre.add(t);
+  }
+  const payload = scriptPayloadSignal(script); // in-script-only tradecraft (#2025)
+  if (payload) {
+    if (payload.weight === "strong" || !weight) weight = payload.weight;
+    for (const t of payload.mitre) mitre.add(t);
   }
   const spill = secretSpillSignal(script);
   if (spill) {

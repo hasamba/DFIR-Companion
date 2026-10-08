@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **PowerShell housekeeping no longer graded Medium** — `__PSScriptPolicyTest_*` probe files and 4103 cmdlets of an encoded-launch session drop to Info; real 4103 tradecraft still graded (closes #2025)
 - **Flat NXLog / Mordor Windows exports** — event fields at the top level of each record are read, so process, account and command line separate events instead of collapsing per host, and Sysmon UtcTime sets the time (closes #2023)
 - **Domain Admins add graded High in every form** — the privileged-group add is now matched when Sysmon logs it as `"net"`, `net.exe` or `net1`, so the event no longer stays Medium (closes #2016)
 - **Second attacker account reaches the AI** — a few prompt seats now go to explicit-credential logons of distinct accounts, so an account the attacker used is no longer dropped from the sample (closes #2014)

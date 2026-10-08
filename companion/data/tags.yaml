@@ -218,9 +218,13 @@ win_smb_admin_share:
 # ─────────────────────────── Execution — script hosts ───────────────────────────
 win_powershell_encoded:
   description: PowerShell with an encoded command (base64) — obfuscated execution
+  # The lookbehind skips the `Host Application = …` / `HostApplication=…` line of a 4103 / 800 / 4100
+  # ContextInfo (#2025). That line repeats the SESSION's launch command on every record the session
+  # writes, so one encoded launch graded every Write-Output and Join-Path after it Medium. The launch
+  # itself is graded on its own process-creation row; a payload that runs `-enc` still matches.
   any:
-    - { field: message, regex: '(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
-    - { field: description, regex: '(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:powershell|pwsh)[^\n]*?[ \t]-e(?:nc|ncodedcommand)?[ \t]+[a-z0-9+/=]{16,}', flags: 'i' }
   tags: ['powershell-encoded', 'execution', 'defense-evasion']
   mitre: ['T1059.001', 'T1027']
   severity: Medium
@@ -385,6 +389,12 @@ staging_temp_executable:
   description: Executable written to a world-writable / temp staging path
   any:
     - { field: path, regex: '\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*\.(?:exe|dll|scr|ps1|bat|hta|js|vbs)$', flags: 'i' }
+  # PowerShell writes and deletes `__PSScriptPolicyTest_<random 8.3>.ps1` in Temp on every start to
+  # probe AppLocker/WDAC (#2025). Excluded only when the Windows-event row names PowerShell (or its
+  # remoting host, wsmprovhost.exe) as the writer: the same name dropped by any other process — e.g.
+  # rundll32.exe hosting an unmanaged PowerShell runspace — is still graded.
+  none:
+    - { field: description, regex: 'Image=[^\n]*\\(?:powershell(?:_ise)?|pwsh|wsmprovhost)\.exe - TargetFilename=[^\n]*\\__PSScriptPolicyTest_[a-z0-9]{8}\.[a-z0-9]{3}\.ps1(?: |$)', flags: 'i' }
   tags: ['temp-staging']
   severity: Medium
   view: 'Temp-path executables'
