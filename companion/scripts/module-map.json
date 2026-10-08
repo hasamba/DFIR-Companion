@@ -327,6 +327,8 @@
     "appxFirewallChurn.ts": "analysis/ingest",
     "osBehaviourRules.ts": "analysis/ingest",
     "benignOsActivity.ts": "analysis/ingest",
+    "bidiControl.ts": "analysis/ingest",
+    "bidiMasquerade.ts": "analysis/ingest",
     "collectorMerge.ts": "analysis/timeline",
     "collectionPlan.ts": "analysis/workflow",
     "collectionPlanStore.ts": "analysis/workflow",

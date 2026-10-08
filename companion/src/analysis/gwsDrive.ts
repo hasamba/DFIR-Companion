@@ -21,6 +21,7 @@ import type { Severity } from "./stateTypes.js";
 import type { DriveAccessBlock, DriveDirection, DriveSharingBlock } from "./canonicalGwsDrive.js";
 import type { GwsParam } from "./gwsOAuth.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
+import { FORMAT_CHARS } from "./bidiControl.js";
 
 const NAME_MAX = 80;
 const TOTAL_MAX = 600;
@@ -31,7 +32,6 @@ const VISIBILITY_MAX = 80;
 const OBJECT_MAX = 150;
 const QUALIFIERS_MAX = 130;
 const PRODUCT_NUMBER_MAX = 30;
-const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
 
 /** The documented permission chain — anything else is resource-specific or unknown. */
 const PERMISSION_RANK: Record<string, number> = {

@@ -20,6 +20,7 @@ import type { TakeoutBlock, TakeoutLifecycleBlock } from "./canonicalGwsDrive.js
 import { readGwsParams, type GwsParam } from "./gwsOAuth.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, getPath, isObject, normalizeTime, str, type MappedEvent } from "./siemImport.js";
+import { FORMAT_CHARS } from "./bidiControl.js";
 
 type Row = Record<string, unknown>;
 
@@ -40,7 +41,6 @@ const STATUSES = new Set(["CANCELED", "COMPLETED", "FAILED", "IN_PROGRESS"]);
 const COVERAGE_NOTE = "Takeout audit retention is not in this evidence";
 const BASIS =
   "records of this export only; joined through the tenant and the Takeout job id; delivery to the destination is not evidenced by these records";
-const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
 
 const show = (v: string, max = NAME_MAX): string => {
   const shown = breakHashRuns(showToken(v.replace(FORMAT_CHARS, "")));
