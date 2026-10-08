@@ -1068,47 +1068,77 @@ Marking an item asks for a **structured reason** (known-good tool / authorized t
 
 ## Remediation Checks
 
-Declare what was remediated, then check whether the same foothold shows up again — and read how
-much the check could see before you say anything about it.
+Use this panel to find out if a threat came back after you removed it. Read how much data the
+check could see before you decide.
 
-**Declare a boundary.** Host, the artifact (a path, hash, account, domain, IP, service, scheduled
-task or registry key), when it was remediated, and how long to watch (1–720 hours, default a
-week). A boundary is your statement; it changes nothing in the case.
+**Step 1: Declare a boundary.** A boundary is your record of what you fixed. Enter these fields:
 
-**Verify now.** The check reads the forensic timeline and the super-timeline for that host inside
-the window and reports facts:
+- **Host:** the computer name, for example `WS-042`.
+- **Kind and Artifact:** the item you removed. It can be a path, hash, account, domain, IP,
+  service, scheduled task, or registry key.
+- **Remediated at:** the time you removed the threat (UTC).
+- **Window (h):** the number of hours to watch. The range is 1 to 720. The default is 168 (one
+  week).
+- **Note:** optional text that says what you did.
 
-- the host spellings it read (`WS-042`, `ws-042.corp.local` — only spellings the case holds and,
-  for a short name, only when nothing else shares it or a fleet record links them);
-- every row that named the artifact, with the match (`exact`, or `weak` for a basename-only path,
-  an account with no domain on one side, or a mention in the description) and what the row **is**:
-  *activity* (a start, a logon, a flow, a service/task/registry event), a *detection* (a scanner's
-  or sensor's claim — it says the object was seen, not when it arrived), a *presence record*
-  (Amcache, ShimCache, Prefetch — the time is not an execution time), a *listing of an older
-  object* (an MFT row whose file is older than the boundary), or *unclassified* with its shape;
-- per-source coverage and, per telemetry family, whether the case holds enough rows across the
-  window to count as **covered** — one process row in a week is *partial*, and *partial* or
-  *absent* on a family that matters for the artifact leaves the check **under-covered**;
-- whether the read was truncated, the window is still open, undated rows were skipped, the
-  super-timeline is at its retention cap, the stores changed during the read, and whether clock
-  alignment moved a row to the other side of the boundary.
+A boundary does not change the case.
 
-Every check writes a receipt of those facts (never a row's text). A receipt goes stale when either
-store changes afterwards; a status recorded against it then reads "recorded against older data".
+**Step 2: Verify now.** The check reads the forensic timeline and the super-timeline for that host
+inside the window. It reports these facts:
 
-**Record the status.** *Recurrence observed*, *checked — not observed*, or *insufficient
-coverage*, with a note, against the check you read. The tool never says "clean": a
-*checked — not observed* against a truncated, still-open or under-covered check needs your own
-override note saying why you still say so. The sentence under every check is the rule: **the check
-lists what was seen and what was covered; only you can say the foothold is gone.**
+- The host spellings it read, for example `WS-042` and `ws-042.corp.local`. It reads only
+  spellings that the case holds. It reads a short name only when no other host shares it, or when
+  a fleet record links the names.
+- Each row that named the artifact. For each row, the check shows the match type:
+    - `exact`.
+    - `weak`. This applies to a path that matches on the file name only, to an account with no
+      domain on one side, and to a mention in the description.
+- What each row **is**:
+    - *Activity*: a start, a logon, a flow, or a service, task, or registry event.
+    - *Detection*: a claim from a scanner or sensor. It says the object was seen. It does not say
+      when the object arrived.
+    - *Presence record*: Amcache, ShimCache, or Prefetch. The time is not an execution time.
+    - *Listing of an older object*: an MFT row for a file that is older than the boundary.
+    - *Unclassified*: the check shows the row shape.
+- The coverage for each source. For each telemetry family, the check shows if the case holds
+  enough rows across the window. One process row in a week is *partial*. If a family that
+  matters for the artifact is *partial* or *absent*, the check is **under-covered**.
+- Warnings. The check tells you when any of these is true:
+    - The read was truncated.
+    - The window is still open.
+    - The check skipped undated rows.
+    - The super-timeline is at its retention cap.
+    - The stores changed during the read.
+    - Clock alignment moved a row to the other side of the boundary.
 
-**Attach evidence.** A hit from the forensic timeline attaches by id; a super-timeline hit is
-promoted into the case first (intent `remediation-check`) and then attached.
+Each check writes a receipt of these facts. A receipt never contains the text of a row. A receipt
+becomes stale when either store changes later. The status then reads "recorded against older
+data".
 
-What it cannot do: tell a late import of old history from a recurrence (rows carry no import
-time — the check says so); detect that a host was rebuilt; re-check on its own, alert, isolate or
-delete anything. The report section (off in every template until you switch it on) renders your
-status, the receipt it names and the attached rows.
+**Step 3: Record the status.** Choose one status, add a note, and select the check that you read:
+
+- *Recurrence observed*: the threat came back.
+- *Checked — not observed*: the check did not find it.
+- *Insufficient coverage*: the data was not enough to decide.
+- *Unreviewed*: you have not decided.
+
+The tool never says "clean". Write an override note when you choose *checked — not observed* and
+the check is truncated, still open, or under-covered. The note says why you still trust the
+result. The sentence under every check is the rule: **the check lists what was seen and what was
+covered; only you can say the foothold is gone.**
+
+**Attach evidence.** A hit from the forensic timeline attaches by id. A hit from the
+super-timeline goes into the case first (intent `remediation-check`). Then it attaches.
+
+**Limits.** The check cannot do these things:
+
+- Tell a late import of old history from a recurrence. Rows carry no import time. The check says
+  so.
+- Detect that a host was rebuilt.
+- Re-check on its own, send an alert, isolate a host, or delete anything.
+
+The report section is off in every template until you switch it on. It shows your status, the
+receipt it names, and the attached rows.
 
 ## Campaign Scope
 
