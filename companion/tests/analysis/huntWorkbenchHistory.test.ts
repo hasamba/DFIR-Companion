@@ -39,6 +39,13 @@ describe("renderHuntHistory", () => {
     expect(renderHuntHistory(undefined)).toBe("");
   });
 
+  // A hunt for the RLO payload carries the raw U+202E in its parameter; shown raw, it reverses the row (#2027).
+  it("shows a bidi control in a parameter as a visible marker", () => {
+    const html = renderHuntHistory({ history: [run({ parameters: { file: "\u202ecod.3aka3.scr" } })] });
+    expect(html).not.toContain("\u202e");
+    expect(html).toContain("&lt;RLO&gt;cod.3aka3.scr");
+  });
+
   it('says "Not run yet" for a hunt with no history', () => {
     expect(renderHuntHistory({ history: [] })).toMatch(/Not run yet/);
     expect(renderHuntHistory({})).toMatch(/Not run yet/);
