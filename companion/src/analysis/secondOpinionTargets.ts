@@ -55,9 +55,19 @@ export function containment(a: readonly string[] | undefined, b: readonly string
   return shared / Math.min(sa.size, sb.size);
 }
 
-/** The citation-overlap score used for pairing: the better of Jaccard and containment (#2046). */
-const overlapScore = (a: readonly string[] | undefined, b: readonly string[] | undefined): number =>
-  Math.max(jaccard(a, b), containment(a, b));
+/**
+ * Containment counts as "the same claim" only when the smaller set sits mostly inside the larger.
+ * A half-shared set can be a different claim with one common event; folding it would erase that
+ * claim and its unique citation, so a half-shared pair stays separate (#2046).
+ */
+export const CONTAINMENT_PAIR_THRESHOLD = 0.75;
+
+/** The citation-overlap score used for pairing: Jaccard, or containment when B is mostly inside A (#2046). */
+const overlapScore = (a: readonly string[] | undefined, b: readonly string[] | undefined): number => {
+  const j = jaccard(a, b);
+  const c = containment(a, b);
+  return c >= CONTAINMENT_PAIR_THRESHOLD ? Math.max(j, c) : j;
+};
 
 // Punctuation and case do not make a different finding: "Quick Assist executed." = "quick-assist executed".
 const looseTitle = (title: string): string =>

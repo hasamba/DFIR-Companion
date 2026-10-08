@@ -113,6 +113,23 @@ describe("containment — a short B list inside a long A list (#2046)", () => {
     expect(overlappingFinding(as, bs[0])).toBeUndefined();
   });
 
+  it("keeps a half-shared B finding separate: one shared event, one unique event", () => {
+    const as = [
+      finding({ id: "a0", title: "Credential discovery", severity: "High", relatedEventIds: long }),
+    ];
+    const bs = [
+      finding({
+        id: "b0",
+        title: "Archive exfiltration",
+        severity: "High",
+        relatedEventIds: ["e0", "x-upload"],
+      }),
+    ];
+    expect(containment(bs[0].relatedEventIds, long)).toBe(0.5);
+    expect(pairByOverlap(as, bs)).toEqual([]);
+    expect(overlappingFinding(as, bs[0])).toBeUndefined();
+  });
+
   it("folds an accepted b_only into the long A finding instead of adding a duplicate", () => {
     const a = stateWith([
       finding({ id: "f1", title: "PsExec lateral movement", severity: "High", relatedEventIds: long }),
