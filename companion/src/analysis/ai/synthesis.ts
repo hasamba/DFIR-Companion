@@ -643,6 +643,7 @@ export async function synthesize(
     // (#787), and grading keys the model's relevance verdict on the id the case now holds.
     delta: foldedDelta,
     recoveredCitations,
+    inheritedCitations,
   } = await foldSynthesisDelta(ctx, {
     caseId,
     state,
@@ -654,7 +655,13 @@ export async function synthesize(
     hostOf: (raw) => resolveHost(aliasIndex, raw),
     membersOf: prompt.membersOf,
     promptEventIds: new Set(prompt.promptEvents.map((e) => e.id)),
+    // A dry run (second-opinion model B) must not inherit from stored state (#2047).
+    ...(opts.dryRun ? {} : { echoedFindingIds: new Set(echoedFindings(state).map((f) => f.id)) }),
   });
+  for (const r of inheritedCitations)
+    ctx.log.info(`[synthesis] ${r.findingId} cited no event; kept ${r.eventIds.length} prior citations`, {
+      caseId,
+    });
   for (const r of recoveredCitations)
     ctx.log.warn(
       `[synthesis] ${r.findingId} cited no event; recovered ${r.eventIds.join(", ")} from its text`,
