@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Lateral-chain dismiss/restore failures shown** — a failed request in a grouped dismiss or restore now reloads the list and warns "Dismissed X of N chains - Y failed" (closes #2029)
 - **PowerShell housekeeping no longer graded Medium** — `__PSScriptPolicyTest_*` probe files and 4103 cmdlets of an encoded-launch session drop to Info; real 4103 tradecraft still graded (closes #2025)
 - **Benign process access no longer graded High** — Azure guest agents, wininit opening lsass, JIT frames in PowerShell/WinRM hosts and kernel-callback frames on Explorer stacks grade on their rights (closes #2026)
 - **Flat NXLog / Mordor Windows exports** — event fields at the top level of each record are read, so process, account and command line separate events instead of collapsing per host, and Sysmon UtcTime sets the time (closes #2023)
