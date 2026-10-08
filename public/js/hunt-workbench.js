@@ -134,7 +134,12 @@ function escapeHtml(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/'/g, "&#39;")
+    // A bidi control (RLO, ...) reverses the text after it in the browser; show it as a <RLO>-style marker (#2027).
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, (c) => {
+      const i = c.charCodeAt(0);
+      return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;";
+    });
 }
 
 // The statuses savedHuntStore records. Anything else is shown as text but never becomes a class.

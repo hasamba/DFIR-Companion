@@ -89,6 +89,13 @@ describe("slack/teams/email/telegram formatters", () => {
     expect(p.text).toContain("a &amp; b");
   });
 
+  // A raw RLO copied into a finding title from a masquerading file name reverses the message (#2027).
+  it("Telegram formatter shows a bidi control as a visible marker", () => {
+    const p = formatTelegram(event({ title: "Payload (\u202ecod.3aka3.scr) on SCRANTON" }));
+    expect(p.text).not.toContain("\u202e");
+    expect(p.text).toContain("(&lt;RLO&gt;cod.3aka3.scr) on SCRANTON");
+  });
+
   it("Telegram formatter includes a link when url is set", () => {
     const p = formatTelegram(event({ url: "http://127.0.0.1:4773/dashboard" }));
     expect(p.text).toContain("Open case");
