@@ -197,8 +197,14 @@ function stagedEvents(events: readonly ForensicEvent[]): StagedEvent[] {
 }
 
 function storyStages(staged: readonly StagedEvent[], findings: readonly Finding[]): CockpitStoryStage[] {
+  // Push into a map this function owns: copying the group per event was quadratic and froze the
+  // server for seconds on a case with tens of thousands of rows in one tactic.
   const byTactic = new Map<IrisTactic, ForensicEvent[]>();
-  for (const { event, tactic } of staged) byTactic.set(tactic, [...(byTactic.get(tactic) ?? []), event]);
+  for (const { event, tactic } of staged) {
+    const group = byTactic.get(tactic);
+    if (group) group.push(event);
+    else byTactic.set(tactic, [event]);
+  }
   return STORY_STAGE_ORDER.filter((tactic) => byTactic.has(tactic)).map((tactic) =>
     buildStage(tactic, byTactic.get(tactic) ?? [], findings),
   );
