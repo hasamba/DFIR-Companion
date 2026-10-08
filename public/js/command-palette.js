@@ -157,7 +157,9 @@ function saveRecents(r) {
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+  return String(s).replace(/[&<>"']/g, (c) => ESCAPES[c])
+    // A bidi control (RLO, ...) reverses the text after it in the browser; show it as a <RLO>-style marker (#2027).
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, function (c) { var i = c.charCodeAt(0); return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;"; });
 }
 
 function createPalette(config) {

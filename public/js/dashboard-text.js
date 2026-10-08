@@ -60,7 +60,8 @@ function egShortHost(v) { return String(v || "").toLowerCase().replace(/^https?:
 // Minimal, safe Markdown → HTML (headings, ordered/unordered lists, bold, inline code, paras).
 // HTML is escaped first, so AI output can't inject markup.
 function mdToHtml(src) {
-  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, function (c) { var i = c.charCodeAt(0); return "&lt;" + ["LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"][i < 0x2066 ? i - 0x202a : i - 0x2061] + "&gt;"; });
   const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
   let html = "", list = null;
   const close = () => { if (list) { html += "</" + list + ">"; list = null; } };
