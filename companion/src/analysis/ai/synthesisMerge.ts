@@ -31,6 +31,7 @@ import {
 } from "../responseSchema.js";
 import { autoFindingSupport, coveredEventIds, dropAutoCoveredByDismissal } from "./groupedCitation.js";
 import { recoverProseCitations, type ProseRecovery } from "./findingCitations.js";
+import { inheritPriorCitations, type CitationCarry } from "./synthesisCitationCarry.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -136,6 +137,12 @@ export interface DeltaFoldInput {
    * scoped events gets the ids its own text names, from this set only. Absent → no recovery.
    */
   promptEventIds?: ReadonlySet<string>;
+  /**
+   * Ids of the prior findings the model was shown (#2047). Present: a shown finding re-issued with
+   * no citation keeps its prior ones. Absent (a dry run): no inheritance, so second-opinion model B
+   * stays independent of the stored state.
+   */
+  echoedFindingIds?: ReadonlySet<string>;
 }
 
 export interface DeltaFoldResult {
@@ -154,6 +161,8 @@ export interface DeltaFoldResult {
   delta: ReturnType<typeof deltaSchema.parse>;
   /** Findings that got their citations from their own text (#1754), for the caller's log. */
   recoveredCitations: ProseRecovery["recovered"];
+  /** Findings that took their prior citations back (#2047), for the caller's log. */
+  inheritedCitations: CitationCarry["inherited"];
 }
 
 /**
@@ -182,9 +191,17 @@ export async function foldSynthesisDelta(
   );
   // A finding that still cites nothing gets the ids its own text names (#1754) — before the merge, so
   // the event back-links, the dismissal reach and the High backfill all read them as citations.
-  const { delta, recovered: recoveredCitations } = input.promptEventIds
+  const { delta: recoveredDelta, recovered: recoveredCitations } = input.promptEventIds
     ? recoverProseCitations(resolved, input.promptEventIds, shownIds)
     : { delta: resolved, recovered: [] };
+  // A re-issued finding that still cites nothing takes back its prior, in-scope citations (#2047).
+  const { delta, inherited: inheritedCitations } = input.echoedFindingIds
+    ? inheritPriorCitations(recoveredDelta, {
+        backing: supportingEventIds(state, markers),
+        echoedIds: input.echoedFindingIds,
+        scopedIds: shownIds,
+      })
+    : { delta: recoveredDelta, inherited: [] };
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
@@ -226,6 +243,7 @@ export async function foldSynthesisDelta(
     surviving,
     delta,
     recoveredCitations,
+    inheritedCitations,
   };
 }
 
