@@ -469,7 +469,7 @@ const NODES = [
     pts:["Also: OpenRouter, LiteLLM, Claude Code CLI, Codex CLI, Jev decision model"],
     tech:["src/providers/*.ts","src/composition/aiProviders.ts","DFIR_VISION_* · DFIR_AI_SYNTH_* · DFIR_AI_SECOND_OPINION_*"] },
   { id:"synth", col:5, kind:"ai", hero:true, eyebrow:"THE MAIN AI PASS", label:"Synthesis", sub:"findings · narrative · next steps",
-    plain:"The main AI pass. It reads a selected sample of the forensic timeline (up to 600 rows) with your findings, IOCs, scope, notebook and hypotheses, and rewrites the findings, MITRE techniques, key questions, next steps, attacker path and narrative.",
+    plain:"The main AI pass. It reads a selected sample of the forensic timeline (up to 600 rows) with your findings, IOCs, scope, notebook and hypotheses, and rewrites the findings, MITRE techniques, key questions, next steps, attacker path and narrative. It always records the earliest observed attacker entry as an Initial access finding, even when the origin is unknown.",
     pts:["Runs when AI is turned on, on Re-synthesize, or after an import with AI on","Other changes just mark conclusions as out of date","Followed by a per-finding task pass"],
     sections:[
       { h:"Which events it is given", ol:true, intro:"Steps 1–3 always run. If what is left fits in the cap (600 rows by default), every row is sent and steps 4–8 are skipped. Only when it does not fit are rows chosen, in this order:", items:[
@@ -479,7 +479,7 @@ const NODES = [
         "Rows you promoted since the last run go in first, pinned so they cannot be squeezed out: up to 60, or half the cap if that is smaller.",
         "Every Critical and High event. If those alone do not fit, the severest and rarest are kept, and 15 seats (or 20% of the cap, whichever is smaller) go to the earliest events so the story still has a beginning. The quiet-command seats from step 7 are still kept; the shared seats in step 8 are not offered in that case.",
         "The 15 earliest events, for initial access.",
-        "Quiet commands from attacker sessions: 10% of the cap, never fewer than 1 or more than 40 seats (40 at the default 600 cap).",
+        "Quiet commands from attacker sessions: 10% of the cap, never fewer than 1 or more than 40 seats (40 at the default 600 cap). Beside them, accounts the attacker logged on with: one explicit-credential or network logon per distinct account, 2% of the cap, never fewer than 1 or more than 10 seats, shared across hosts.",
         "The seats still free are offered in a fixed order, each class taking at most its share: 40% to context around each High/Critical (same host, ±15 minutes, up to 6 per anchor), 25% to events seen by more than one source, 15% to MITRE-tagged events, 15% to rare one-off activity. Any seats left over are spread evenly across the time range.",
         "For all paths: put the chosen rows in time order and render each one with its host, process lineage and source → destination, plus a 'common' or 'rare' tag. Context rows are marked ~ so the model treats them as background.",
         "If the prompt is still too large for the model, select again for fewer rows, up to 4 times.",
@@ -489,12 +489,13 @@ const NODES = [
         "Tokens: a 128k context, minus 16k kept for the answer and a 5% margin, leaves about 105k input tokens. Everything below shares that budget, and the events get whatever is left.",
         "Nothing severe is lost: any Critical or High event that did not get a seat still becomes a finding through the rule-based backfill, without AI.",
         "Settings you can change: the 600-row cap (DFIR_AI_SYNTH_MAX_EVENTS), sending Info rows (DFIR_SYNTH_INCLUDE_INFO), repeat grouping on/off, its 1-hour gap and 4-repeat minimum (DFIR_SYNTH_GROUP, _GAP_SECONDS, _MIN_REPEATS), the model context size (DFIR_AI_CONTEXT_TOKENS) and the answer reserve (DFIR_AI_MAX_TOKENS).",
-        "Fixed in the code, with no setting: the ±15-minute context window and 6 rows per anchor, the 15 earliest events, the 40/25/15/15 shares, the 10% command share and its 40-seat ceiling, the 60-row pin ceiling, the 150 findings shown, and the 4 re-fit passes. The shares are fixed, but the seat counts they produce follow the 600-row cap.",
+        "Fixed in the code, with no setting: the ±15-minute context window and 6 rows per anchor, the 15 earliest events, the 40/25/15/15 shares, the 10% command share and its 40-seat ceiling, the 2% account share and its 10-seat ceiling, the 60-row pin ceiling, the 150 findings shown, and the 4 re-fit passes. The shares are fixed, but the seat counts they produce follow the 600-row cap.",
       ]},
       { h:"What else it is given", items:[
         "Existing findings: up to 150. On the first run these are the findings the importers and correlation rules created; the most severe come with detail, the rest by title only.",
         "Case context: compromised assets, threat-intel verdicts on IOCs, CISA KEV matches.",
         "Rule-built structure: the attack graph (process spawns, file lineage, lateral movement, network), beacon candidates, host activity spikes, attack phases.",
+        "Leads: entry candidates (programs started just before each host's first script write, plus console-history downloads marked time unknown), C2 settings found in logged script blocks, and an adversary-emulation note when a Caldera agent is seen.",
         "Gaps: silent periods, ATT&CK phases with no evidence, what the collection and cloud logs can and cannot answer.",
         "Your input: scope window, false-positive and authorised-test markers, notebook, hypotheses (up to 15 open, plus the refuted ones), finished hunts and playbook tasks, the incident type, pinned findings, open threads, patterns you dismissed before.",
         "Running notes: the summary from the previous run. On the first run there is none.",
@@ -540,7 +541,7 @@ const NODES = [
     plain:"Applies your decisions to what leaves the tool: out-of-scope time, false positives and excluded hosts are left out of reports and exports.",
     pts:[], tech:["src/reports/filteredState.ts","src/analysis/scope.ts","src/analysis/falsePositive.ts"] },
   { id:"safety", col:6, kind:"gate", label:"Escape & defang", sub:"CSV · Markdown · HTML",
-    plain:"Attacker-controlled text ends up in your reports, so every format is escaped: spreadsheet formula injection blocked, Markdown tables kept intact, HTML escaped, URLs and IPs defanged where they could be clicked.",
+    plain:"Attacker-controlled text ends up in your reports, so every format is escaped: spreadsheet formula injection blocked, Markdown tables kept intact, HTML escaped, URLs and IPs defanged where they could be clicked, and hidden bidi controls such as the right-to-left override shown as visible markers.",
     pts:["Exports are scanned for evidence safety"],
     tech:["src/reports/csv.ts","src/reports/mdText.ts","src/reports/escapeHtml.ts","src/reports/defang.ts","src/reports/evidenceSafety.ts"] },
 
@@ -725,7 +726,7 @@ const PANEL_GROUPS = [
     ["Kerberoast Chain","Per service account: the ticket requests, the baseline before the first RC4 request, and what the account did after.",["detectors"]],
     ["Sensitive Access","For files and folders you declare as sensitive: what the access rows show about who read them.",["detectors","decisions"]],
     ["Campaign Scope","Per imported email: who it was addressed to, which mailbox a header points at, and what each host's rows show.",["detectors"]],
-    ["Served Exposure","For a URL path you declare: what the file rows and access log show was served from it.",["detectors","decisions"]],
+    ["Web Data Exposure","For a URL path you declare: what the file rows and access log show was served from it.",["detectors","decisions"]],
   ]},
   { name:"IOCs & intel", panels:[
     ["IOCs","Every indicator with its threat-intel verdicts, risk and sources; filter to signal only or flagged only.",["state","enrich"]],
