@@ -107,6 +107,25 @@ export function isGuardedUsername(name: string): boolean {
   return COMMON_USERNAME_WORDS.has(n);
 }
 
+/**
+ * #2056: the first label of every dotted host (DC-QA-01 from DC-QA-01.sub.example), so the short
+ * name, the machine account (DC-QA-01$) and a truncated FQDN are tokenized like the FQDN itself.
+ * A label the username guard rejects (server, www, numeric — an IPv4 asset) or one equal to an
+ * internal domain is skipped: tokenizing it would mask common words or fight the domain pass.
+ */
+export function shortHostLabels(hosts: Iterable<string>, internalDomains: Iterable<string>): string[] {
+  const domains = new Set([...internalDomains].map((d) => d.toLowerCase()));
+  const out = new Set<string>();
+  for (const h of hosts) {
+    const dot = h.indexOf(".");
+    if (dot <= 0) continue;
+    const label = h.slice(0, dot);
+    if (isGuardedUsername(label) || domains.has(label.toLowerCase())) continue;
+    out.add(label);
+  }
+  return [...out];
+}
+
 /** The user half of "DOMAIN\user" or "user@domain"; the value itself when neither. */
 export function bareUsername(account: string): string {
   const slash = account.lastIndexOf("\\");

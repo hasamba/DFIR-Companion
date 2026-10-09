@@ -12,6 +12,7 @@ import {
   collectUsernames,
   insideSuppressedAccount,
   isGuardedUsername,
+  shortHostLabels,
   isNoiseAccount,
   isNoiseDomain,
   preservedSpans,
@@ -770,7 +771,8 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     ...state.iocs.map((i) => i.value),
   ];
   const usernames = collectUsernames({ texts, accountsOf: extractAccounts, internalDomains: domains });
-  return { hosts: [...hosts].sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
+  const allHosts = [...new Set([...hosts, ...shortHostLabels(hosts, domains)])];
+  return { hosts: allHosts.sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }
 
 // Is the configured AI provider on-box (so screenshots sent to it don't leave the machine)?

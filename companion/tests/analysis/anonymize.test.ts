@@ -16,6 +16,7 @@ import {
   type KnownEntities,
 } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { redactedExportPolicy } from "../../src/analysis/redactedExport.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = false): AnonPolicy {
@@ -660,6 +661,60 @@ describe("isNoiseDomain / isNoiseAccount", () => {
     expect(isNoiseAccount("AUTHORITY\\SYSTEM")).toBe(true); // captured from "NT AUTHORITY\SYSTEM"
     expect(isNoiseAccount("ACME\\jdoe")).toBe(false);
     expect(isNoiseAccount("jdoe@acme.local")).toBe(false);
+  });
+});
+
+describe("deriveKnownEntities — FQDN short names (#2056)", () => {
+  function stateWithAsset(asset: string, description = "") {
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "",
+        description,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset,
+      },
+    ];
+    return s;
+  }
+
+  it("adds the short label of an FQDN asset so the bare name is tokenized too", () => {
+    const k = deriveKnownEntities(stateWithAsset("DC-QA-01.sub.example", "SUB\\svc_backup"));
+    expect(k.hosts).toContain("DC-QA-01");
+    expect(k.hosts[0]).toBe("DC-QA-01.sub.example"); // longest first: the FQDN claims its span
+    const a = createAnonymizer(redactedExportPolicy(), k);
+    for (const text of ["on dc-qa-01 itself", "ANON_IP_2 (dc-qa-01.sub.ex...", "DC-QA-01$ logon"]) {
+      expect(a.apply(text).toLowerCase()).not.toContain("dc-qa-01");
+    }
+    expect(a.apply("DC-QA-01.sub.example")).toMatch(/^ANON_HOST_\d+$/);
+  });
+
+  it("keeps a common-word label like 'server' out of the host list", () => {
+    const k = deriveKnownEntities(stateWithAsset("server.corp.local"));
+    expect(k.hosts.map((h) => h.toLowerCase())).not.toContain("server");
+    expect(createAnonymizer(redactedExportPolicy(), k).apply("the server restarted")).toBe(
+      "the server restarted",
+    );
+  });
+
+  it("skips a label that is itself a known internal domain", () => {
+    const k = deriveKnownEntities(stateWithAsset("acme.acme.local", "ACME\\jdoe"));
+    expect(k.hosts.map((h) => h.toLowerCase())).not.toContain("acme");
+  });
+
+  it("adds the short label of a victim-side IOC FQDN", () => {
+    const s = emptyState("c1");
+    s.iocs = [{ id: "i1", type: "domain", value: "fs01.victim.local", firstSeen: "" }];
+    expect(deriveKnownEntities(s).hosts).toContain("fs01");
+  });
+
+  it("does not split an IPv4 asset into a numeric label", () => {
+    const k = deriveKnownEntities(stateWithAsset("10.1.2.3"));
+    expect(k.hosts).toEqual(["10.1.2.3"]);
   });
 });
 
