@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { SPAWNED_CHILD_NOTE } from "../../src/analysis/collectorChildren.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
+import { eventMatchesExclude, eventMatchesSearch } from "../../src/analysis/searchFilter.js";
 
 const DatabaseSync = loadDatabaseSync();
 
@@ -779,5 +781,192 @@ describe("SuperTimelineStore.rehome (#1508)", () => {
     expect(await store.rehome("c1", [])).toBe(0);
     expect((await store.meta("c1")).generation).toBe(before.generation);
     expect((await store.get("c1", "e1"))?.asset).toBe(OLD);
+  });
+});
+
+// #2069: a text search used to stream, parse and upgrade EVERY row in the window (~5 s at 70k rows,
+// match or no match). It now narrows the read with the forensic timeline's #1914 SQL prefilter and
+// takes the window-wide facets from SQL; every row-level JS predicate still decides. The reference
+// below is the old behaviour, computed in-test: the matcher over every row as the store hands it back.
+describe("SuperTimelineStore text search prefilter (#2069)", () => {
+  let cases: CaseStore;
+  let store: SuperTimelineStore;
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-search-"));
+    cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new SuperTimelineStore(cases, 100000);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Counts the rows every scanSuper response carried out of the worker. */
+  function countScannedRows(): { rows: number } {
+    const seen = { rows: 0 };
+    const original = caseSqliteWorker.request.bind(caseSqliteWorker);
+    vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (message) => {
+      const result = await original(message);
+      if ((message as { op?: string }).op === "scanSuper")
+        seen.rows += ((result as { rows?: unknown[] }).rows ?? []).length;
+      return result;
+    });
+    return seen;
+  }
+
+  it("narrows the read to rows whose stored JSON can match", async () => {
+    await store.append(
+      "c1",
+      Array.from({ length: 50 }, (_, i) =>
+        ev({
+          id: `e${i}`,
+          timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description: i === 17 ? "Suspicious service install" : `routine row ${i}`,
+          artifactName: i % 2 ? "Windows.EventLogs.Hayabusa" : "Windows.NTFS.MFT",
+          asset: i % 2 ? "HOST-A" : "HOST-B",
+        }),
+      ),
+    );
+    const seen = countScannedRows();
+    const r = await store.query("c1", { search: "susp" });
+    expect(r.events.map((e) => e.id)).toEqual(["e17"]);
+    expect(r.total).toBe(1);
+    expect(r.origins).toEqual(["Windows.EventLogs.Hayabusa", "Windows.NTFS.MFT"]);
+    expect(r.hosts).toEqual(["HOST-A", "HOST-B"]);
+    expect(seen.rows, "rows parsed out of the worker").toBeLessThanOrEqual(2);
+  });
+
+  it("an excludeText-only query still reads every row (no sound prefilter)", async () => {
+    await store.append(
+      "c1",
+      Array.from({ length: 10 }, (_, i) =>
+        ev({
+          id: `e${i}`,
+          timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description: `r${i}`,
+        }),
+      ),
+    );
+    const seen = countScannedRows();
+    const r = await store.query("c1", { excludeText: ["r3"] });
+    expect(r.total).toBe(9);
+    expect(seen.rows).toBe(10);
+  });
+
+  const VALUES = [
+    "C:\\Windows\\Temp\\evil.ps1",
+    "CORP\\ADMİN — logon",
+    "TEMP\\\u212Aeylogger.dll",
+    "plain ascii description",
+    "Suspicious service install",
+    "em dash — only",
+  ];
+
+  async function seedParity() {
+    await store.append(
+      "c1",
+      VALUES.map((description, i) =>
+        ev({
+          id: `v${i}`,
+          timestamp: i === 3 ? "" : new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description,
+          artifactName: i % 2 ? "Windows.EventLogs.Hayabusa" : "Windows.NTFS.MFT",
+          asset: i % 3 ? "HOST-A" : undefined,
+          processName: "svc.exe",
+        }),
+      ).concat([
+        ev({
+          id: "legacy",
+          timestamp: "2026-02-01T00:00:00Z",
+          description: "logon — legacy",
+          processName: "svc.exe",
+        }),
+        ev({
+          id: "edge",
+          timestamp: "2026-02-02T00:00:00Z",
+          description: "logon — edge",
+          processName: "svc.exe",
+        }),
+      ]),
+    );
+    await store.setLabels("c1", "v0", ["key-evidence"]);
+    // Rows as an older build left them: one with no canonical envelope (the read-time upgrade
+    // synthesises one), one an audited edge writer stored without its provenance stamp.
+    const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+    try {
+      const rows = db.prepare("SELECT row_id, payload FROM entities WHERE kind='superTimeline'").all() as {
+        row_id: number;
+        payload: string;
+      }[];
+      for (const row of rows) {
+        const event = JSON.parse(row.payload) as ForensicEvent & { canonical?: Record<string, unknown> };
+        if (event.id === "legacy") delete event.canonical;
+        else if (event.id === "edge" && event.canonical)
+          event.canonical = {
+            ...event.canonical,
+            producer: { importer: "network", parserVersion: "1", mappingVersion: "t" },
+            network: { source: { address: "203.0.113.9" } },
+          };
+        else continue;
+        db.prepare("UPDATE entities SET payload=? WHERE row_id=?").run(JSON.stringify(event), row.row_id);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  const TERMS = [
+    "C:\\Windows\\Temp",
+    "\\temp\\",
+    "admin",
+    "admi\u0307n",
+    "keylogger",
+    "KEYLOGGER",
+    "edge-observed",
+    "observed",
+    "description",
+    "svc.exe",
+    "logon —",
+    "zzzzqq",
+  ];
+
+  it("returns exactly what the old full-scan matcher returned, with the same facets", async () => {
+    await seedParity();
+    const all = await store.collect("c1", (e) => e);
+    expect(all.find((e) => e.id === "edge")?.canonical?.network?.source?.provenance).toBe("edge-observed");
+    expect(all.find((e) => e.id === "legacy")?.canonical).toBeTruthy();
+    const facets = await store.query("c1", { limit: 0 });
+    for (const term of TERMS) {
+      for (const excludeText of [undefined, ["legacy"]]) {
+        const expected = all.filter(
+          (e) => eventMatchesSearch(e, term) && !(excludeText && eventMatchesExclude(e, excludeText)),
+        );
+        const r = await store.query("c1", { search: term, excludeText, limit: 1000 });
+        const label = `${JSON.stringify(term)} excl=${JSON.stringify(excludeText)}`;
+        expect(r.events, label).toEqual(expected);
+        expect(r.total, label).toBe(expected.length);
+        expect(r.origins, label).toEqual(facets.origins);
+        expect(r.hosts, label).toEqual(facets.hosts);
+        expect(r.labelsAvailable, label).toEqual(facets.labelsAvailable);
+      }
+    }
+    // A JSON key is not a value: "description" must not match every row.
+    expect((await store.query("c1", { search: "description" })).events.map((e) => e.id)).toEqual(["v3"]);
+  });
+
+  it("facets stay window-wide under a search, with and without a tag map", async () => {
+    await seedParity();
+    const window = { from: "2026-01-31T00:00:00Z", to: "2026-03-01T00:00:00Z" };
+    for (const map of [undefined, { v1: ["from-tags"] }]) {
+      const r = await store.query("c1", { search: "keylogger" }, map);
+      expect(r.events.map((e) => e.id)).toEqual(["v2"]);
+      expect(r.origins).toEqual(["Unknown", "Windows.EventLogs.Hayabusa", "Windows.NTFS.MFT"]);
+      expect(r.hosts).toEqual(["(no host)", "HOST-A"]);
+      expect(r.labelsAvailable).toEqual(map ? ["from-tags", "key-evidence"] : ["key-evidence"]);
+      const windowed = await store.query("c1", { search: "keylogger", ...window }, map);
+      expect(windowed.events).toEqual([]);
+      const plain = await store.query("c1", { ...window, limit: 0 }, map);
+      expect(windowed.origins).toEqual(plain.origins);
+      expect(windowed.hosts).toEqual(plain.hosts);
+      expect(windowed.labelsAvailable).toEqual(plain.labelsAvailable);
+    }
   });
 });

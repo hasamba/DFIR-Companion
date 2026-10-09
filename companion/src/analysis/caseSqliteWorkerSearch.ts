@@ -14,12 +14,14 @@ function foldContains(payload, needle) {
 }
 
 // Appends the prefilter's WHERE clause and parameters. A query with no prefilter, or a plan that
-// scans every row, adds nothing.
-function addSearchPrefilter(db, query, where, params) {
+// scans every row, adds nothing. column is the payload expression of the caller's FROM clause: the
+// forensic query reads entities.payload, the super-timeline scan aliases the table (e.payload, #2069).
+function addSearchPrefilter(db, query, where, params, column) {
   if (!query || !query.searchPrefilter) return;
+  const payload = typeof column === "string" && column ? column : "entities.payload";
   const clauses = [];
   if (typeof query.searchLike === "string" && query.searchLike) {
-    clauses.push("entities.payload LIKE ? ESCAPE '\\'");
+    clauses.push(payload + " LIKE ? ESCAPE '\\'");
     params.push(query.searchLike);
   }
   const chars = Array.isArray(query.searchFoldChars)
@@ -27,16 +29,16 @@ function addSearchPrefilter(db, query, where, params) {
     : [];
   if (chars.length && typeof query.searchFoldNeedle === "string") {
     db.function("dfir_fold_contains", { deterministic: true }, foldContains);
-    clauses.push("((" + chars.map(() => "entities.payload LIKE ?").join(" OR ") +
-      ") AND dfir_fold_contains(entities.payload, ?))");
+    clauses.push("((" + chars.map(() => payload + " LIKE ?").join(" OR ") +
+      ") AND dfir_fold_contains(" + payload + ", ?))");
     params.push(...chars.map((char) => "%" + char + "%"), query.searchFoldNeedle);
   }
   // Read-time upgrades add searchable text the stored JSON lacks (searchFoldPrefilter.ts): a row
   // with no canonical envelope gets one synthesised, and one with a source address may be
   // restamped "edge-observed". Exact JSON tests, so no row the matcher would see is lost.
-  clauses.push("json_type(entities.payload, '$.canonical') IS NOT 'object'");
+  clauses.push("json_type(" + payload + ", '$.canonical') IS NOT 'object'");
   if (query.searchEdgeObserved) {
-    clauses.push("json_type(entities.payload, '$.canonical.network.source.address') IS NOT NULL");
+    clauses.push("json_type(" + payload + ", '$.canonical.network.source.address') IS NOT NULL");
   }
   where.push("(" + clauses.join(" OR ") + ")");
 }

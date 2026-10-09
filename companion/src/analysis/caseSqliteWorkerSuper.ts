@@ -485,6 +485,11 @@ function scanSuper(dbPath, query) {
   const db = openDatabase(dbPath);
   try {
     const { where, params } = superWindowClauses(query);
+    // A text search's candidates only (#2069): the forensic timeline's #1914 prefilter over the raw
+    // JSON. Sound — it never drops a row the JS matcher accepts — and absent unless the caller asks,
+    // so whole-store readers (eventBatches, scanWindow) still see every row. The keyset cursor is
+    // on (timestamp_ms, row_id), independent of the WHERE, so paging stays valid.
+    addSearchPrefilter(db, query, where, params, "e.payload");
     const limit = Math.max(1, Math.min(10000, Math.floor((query && query.limit) || 1000)));
     const phase = query && query.phase === "undated" ? "undated" : "dated";
     const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0;
