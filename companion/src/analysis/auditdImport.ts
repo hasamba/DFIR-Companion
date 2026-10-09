@@ -577,10 +577,13 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
       continue;
     }
 
-    let ev = bySerial.get(parsed.serial);
+    // An audit event's identity is its whole `audit(<time>:<serial>)` stamp: serials restart at
+    // boot, so the same serial at a different time is a different event.
+    const identity = `${parsed.tsMs}:${parsed.serial}`;
+    let ev = bySerial.get(identity);
     if (!ev) {
       ev = { serial: parsed.serial, tsMs: parsed.tsMs, types: [], fields: {}, argv: [], pathNames: [] };
-      bySerial.set(parsed.serial, ev);
+      bySerial.set(identity, ev);
     }
     if (!ev.types.includes(parsed.type)) ev.types.push(parsed.type);
     if (parsed.tsMs && (!ev.tsMs || parsed.tsMs < ev.tsMs)) ev.tsMs = parsed.tsMs;

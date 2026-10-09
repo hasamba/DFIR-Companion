@@ -81,6 +81,33 @@ describe("parseSentinelLinux — AUOMS / auditd SyslogMessage", () => {
     expect(who?.asset).toBe("host-a"); // the AUOMS line has no node= here: the host comes from the row
     expect(who?.timestamp).toBe("2022-05-11T18:10:21.986Z");
   });
+
+  // A multi-host export: the dominant-host fallback used to put every command on one host.
+  const onHost = (msg: string, host: string): Record<string, unknown> =>
+    syslogRow(msg, { HostName: host, Computer: host });
+
+  it("keeps each host's commands on that host when serials differ", () => {
+    const r = parseSentinelLinux(
+      ndjson([
+        onHost(auoms(1, "whoami"), "host-a"),
+        onHost(auoms(2, "id -u"), "host-a"),
+        onHost(auoms(3, "uname -a"), "host-b"),
+      ]),
+    );
+    expect(r.events).toHaveLength(3);
+    expect(r.events.find((e) => e.description.includes("uname -a"))?.asset).toBe("host-b");
+    expect(r.events.find((e) => e.description.includes("whoami"))?.asset).toBe("host-a");
+    expect(r.events.find((e) => e.description.includes("id -u"))?.asset).toBe("host-a");
+  });
+
+  it("keeps two hosts' records apart when they share an audit serial", () => {
+    const r = parseSentinelLinux(
+      ndjson([onHost(auoms(7, "whoami"), "host-a"), onHost(auoms(7, "uname -a"), "host-b")]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.find((e) => e.description.includes("whoami"))?.asset).toBe("host-a");
+    expect(r.events.find((e) => e.description.includes("uname -a"))?.asset).toBe("host-b");
+  });
 });
 
 describe("parseSentinelLinux — Linux-Sysmon XML SyslogMessage", () => {

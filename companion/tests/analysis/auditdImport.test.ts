@@ -134,6 +134,15 @@ describe("parseAuditdLog — edges", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
   });
+
+  it("keeps two records apart when they reuse a serial at a different time (serials reset on reboot)", () => {
+    const text =
+      `type=SYSCALL msg=audit(1490451000.000:42): comm="whoami" exe="/usr/bin/whoami"\n` +
+      `type=SYSCALL msg=audit(1490459999.000:42): comm="uname" exe="/usr/bin/uname"`;
+    const r = parseAuditdLog(text, { aggregate: false });
+    expect(r.total).toBe(2);
+    expect(r.events.some((e) => e.description.includes("uname"))).toBe(true);
+  });
 });
 
 describe("parseAuditdLog — T1059 only for interpreters", () => {

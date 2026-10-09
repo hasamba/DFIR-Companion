@@ -214,17 +214,26 @@ function rebuildSyslogLine(row: Row): string {
 
 interface Buckets {
   sysmonXml: string[];
-  auditLines: string[];
+  /** Audit lines keyed by the row's host, so one host's serials never merge with another's. */
+  auditByHost: Map<string, string[]>;
   syslogRows: Row[];
   vmRows: Row[];
   hosts: Map<string, number>;
   unrecognized: number;
 }
 
+function auditBucket(byHost: Map<string, string[]>, host: string): string[] {
+  const existing = byHost.get(host);
+  if (existing) return existing;
+  const created: string[] = [];
+  byHost.set(host, created);
+  return created;
+}
+
 function bucketRows(records: Row[]): Buckets {
   const b: Buckets = {
     sysmonXml: [],
-    auditLines: [],
+    auditByHost: new Map(),
     syslogRows: [],
     vmRows: [],
     hosts: new Map(),
@@ -242,11 +251,24 @@ function bucketRows(records: Row[]): Buckets {
     else {
       const msg = str(getCI(raw, "SyslogMessage"));
       if (SYSMON_XML_RE.test(msg)) b.sysmonXml.push(msg.replace(BROKEN_ENTITY_RE, "&$1;"));
-      else if (AUDIT_RECORD_RE.test(msg.trim())) b.auditLines.push(oneLine(msg).trim());
+      else if (AUDIT_RECORD_RE.test(msg.trim())) auditBucket(b.auditByHost, host).push(oneLine(msg).trim());
       else b.syslogRows.push(raw);
     }
   }
   return b;
+}
+
+// auditd groups records by audit serial, and serials are per host: parse each host's records on
+// their own and stamp that host, so a multi-host export neither merges colliding serials nor
+// hands every command to the dominant host (#2098).
+function parseAuditByHost(
+  byHost: Map<string, string[]>,
+  inner: Parameters<typeof parseAuditdLog>[1],
+): SiemParseResult[] {
+  return [...byHost.entries()].map(([host, lines]) => {
+    const r = parseAuditdLog(lines.join("\n"), inner);
+    return host ? { ...r, events: r.events.map((e) => (e.asset ? e : { ...e, asset: host })) } : r;
+  });
 }
 
 function dominantHost(hosts: Map<string, number>): string {
@@ -279,7 +301,7 @@ export function parseSentinelLinux(input: string, opts: SentinelLinuxImportOptio
 
   const parts: SiemParseResult[] = [];
   if (b.sysmonXml.length) parts.push(parseEvtxXml(`<Events>${b.sysmonXml.join("\n")}</Events>`, inner));
-  if (b.auditLines.length) parts.push({ ...parseAuditdLog(b.auditLines.join("\n"), inner) });
+  parts.push(...parseAuditByHost(b.auditByHost, inner));
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
