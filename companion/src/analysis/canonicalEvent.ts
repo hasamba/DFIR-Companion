@@ -54,6 +54,7 @@ import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./ca
 import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
+import { powerShellBlockSchema } from "./canonicalPowerShell.js";
 
 // exact-match barrier; bump policy: #1315. 1.1.0 (#1874): compact field provenance; 1.0.0 is migrated on read.
 export const CANONICAL_EVENT_SCHEMA_VERSION = COMPACT_PROVENANCE_SCHEMA_VERSION;
@@ -177,6 +178,7 @@ const envelopeObjectSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
+  powershell: powerShellBlockSchema.optional(), // psSession.ts, #2078: the PowerShell session (engine-stamped host pid)
   tlsGraph: tlsGraphBlockSchema.optional(), // tlsGraphRows.ts, #997: cert/name/client-cert/JA3 node one sensor's upload showed
   entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
   awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts

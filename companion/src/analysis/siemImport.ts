@@ -59,6 +59,7 @@ import { joinSubjectParts, renderSubjectField, subjectBudget } from "./renderCom
 import { interpreterTechniques } from "./processInterpreter.js";
 import { regWriteIdentity, regWritePath, regWriteKeys } from "./securityRegistryWrite.js";
 import { isPsPolicyTestFile } from "./psPolicyTestFile.js";
+import { powerShellCanonicalParts } from "./psSession.js";
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
 // textDomains.ts; bashHistoryImport keeps importing it from here.
@@ -837,7 +838,9 @@ export function mapWindows(
                 : str(getCI(ed, "TargetObject"))
                   ? "registry"
                   : "other";
+  const ps = powerShellCanonicalParts(isPwsh, rec); // #2078: the session the engine stamped
   const canonical = createCanonicalEvent({
+    ...ps.fields,
     event: {
       category,
       type: roles.event
@@ -1008,7 +1011,9 @@ export function mapWindows(
       ...(pid !== undefined ? { "process.pid": ["EventData.ProcessId", "EventData.NewProcessId"] } : {}),
       ...(processGuid(str(getCI(ed, "ProcessGuid"))) ? { "process.id": ["EventData.ProcessGuid"] } : {}),
       ...(commandLine ? { "process.commandLine": ["EventData.CommandLine"] } : {}),
+      ...ps.rawFieldMap,
     },
+    derivationMap: ps.derivationMap,
   });
 
   // IOCs from the structured fields. SourceAddress/DestAddress are WFP 5156's own spellings (#1211).

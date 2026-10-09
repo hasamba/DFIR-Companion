@@ -21,6 +21,7 @@ import { buildContainmentState } from "../../src/analysis/ai/jev/containmentStat
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Finding } from "../../src/analysis/stateTypes.js";
+import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
 
 // THE FORENSIC / SUPER-TIMELINE RULE, made executable (#384).
 //
@@ -481,5 +482,46 @@ describe("the containment check reads the forensic timeline only (#1925)", () =>
       const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
       expect(src, rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js/);
     }
+  });
+});
+
+describe("PowerShell session seats read the forensic timeline only (#2078)", () => {
+  // The session seats send MORE of a session to the model, so they are a new way rows reach a prompt.
+  // They read the scoped forensic timeline createTimelineSelection hands them, never the raw record,
+  // and an Info row is never a candidate even when it sits in that input.
+  const session = { sessionId: "pid:4242", processId: 4242 };
+  const psEv = (id: string, severity: ForensicEvent["severity"], minute: number): ForensicEvent =>
+    ev({
+      id,
+      severity,
+      asset: "WS-01",
+      timestamp: `2026-01-01T00:${String(minute).padStart(2, "0")}:00Z`,
+      description: `script ${id}`,
+      canonical: { powershell: session } as ForensicEvent["canonical"],
+    });
+
+  it("never seats an Info row of a High session", () => {
+    const seats = psSessionSeats({
+      events: [psEv("hi", "High", 0), psEv("info", "Info", 1), psEv("low", "Low", 2)],
+      hostOf: (h) => h.toLowerCase(),
+    });
+    expect(seats.map((s) => s.event.id)).toEqual(["low"]);
+  });
+
+  it("has no path to the super-timeline store", () => {
+    for (const rel of ["../../src/analysis/ai/synthPsSessionSeats.ts", "../../src/analysis/psSession.ts"]) {
+      const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+      expect(src, rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js/);
+    }
+  });
+
+  it("a bare synthesize() does not pull a session row that lives only in the raw record", async () => {
+    const rawOnly = psEv("raw-session-row", "Info", 5);
+    const { pipeline, stateStore, superTimelineStore, provider } = await harness([rawOnly]);
+    await stateStore.save({ ...emptyState("c1"), forensicTimeline: [psEv("hi", "High", 0)] });
+    const query = vi.spyOn(superTimelineStore, "query");
+    await pipeline.synthesize("c1").catch(() => undefined);
+    expect(query).not.toHaveBeenCalled();
+    expect(JSON.stringify(provider.lastReq ?? {})).not.toContain("raw-session-row");
   });
 });

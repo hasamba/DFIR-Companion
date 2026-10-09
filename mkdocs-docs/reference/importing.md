@@ -90,6 +90,22 @@ Deterministic imports also retain a [versioned canonical event envelope](canonic
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.
 
+### PowerShell rows carry their session
+
+A PowerShell log row records which PowerShell session it ran in. The session is the PowerShell
+process ID that Windows wrote into the record, and a script cannot change it. This covers script
+blocks (4104), pipeline rows (4103) and the other PowerShell-channel events, imported through the
+SIEM/Winlogbeat/NXLog JSON, EVTX XML, Chainsaw or Velociraptor EVTX paths.
+
+Once any row of a session is graded High, AI synthesis also sends that session's other Low and
+Medium rows to the model. This shows the AI what the attacker did next in the same session. These
+rows count against the same `DFIR_AI_SYNTH_MAX_EVENTS` cap. At most 10% of that cap (up to 50 rows)
+goes to session rows, and one session can take at most 25. Info rows are never sent.
+
+Hayabusa output does not include the process ID, so Hayabusa rows get no session. **Existing cases
+do not have the session** — re-import the PowerShell logs to add it. Until you do, synthesis selects
+rows for those cases exactly as before.
+
 ### THOR file hits: content versus name
 
 If a THOR file hit's content does not match its name (for example, an executable named

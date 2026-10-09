@@ -1,6 +1,7 @@
 import { getCI, getPath, isObject, str } from "./siemImport.js";
 import { resolveRowHost } from "./hostIdentity.js";
 import { pickTime, vrTime } from "./veloRowTime.js";
+import { systemExecutionPid } from "./psSession.js";
 
 type Row = Record<string, unknown>;
 
@@ -45,6 +46,7 @@ export function winRowToFlat(row: Row): { rec: Row; host: string } | null {
     // log share (correlate.ts step 0b). Without it a Hayabusa and a Chainsaw reading of one record
     // never met, and the path step was left to guess.
     const recordId = getCI(sys, "EventRecordID");
+    const executionPid = systemExecutionPid(sys); // the PowerShell session key (#2078)
     return {
       host: resolveRowHost(row).asset, // collector identity first; System.Computer only when no Fqdn (#1417)
       rec: {
@@ -54,6 +56,7 @@ export function winRowToFlat(row: Row): { rec: Row; host: string } | null {
         "@timestamp": vrTime(getCI(sys, "TimeCreated")),
         message,
         ...(recordId != null && str(recordId).trim() ? { EventRecordID: recordId } : {}),
+        ...(executionPid != null ? { ExecutionProcessID: executionPid } : {}),
       },
     };
   }

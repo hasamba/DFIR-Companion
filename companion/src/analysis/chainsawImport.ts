@@ -58,6 +58,7 @@ import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { loadCollectorInfrastructure } from "./collectorDeployment.js";
 import { CollectorFootprintLedger } from "./collectorChildren.js";
+import { systemExecutionPid } from "./psSession.js";
 import {
   createDecisionTally,
   tallyRowHost,
@@ -229,6 +230,7 @@ function toFlatRecord(event: Row): { rec: Row; host: string } {
     // identity (#688) — without it, the same Security.evtx read by Chainsaw and by Hayabusa
     // produced two unrelatable timeline rows for one Windows record.
     EventRecordID: getCI(sys, "EventRecordID"),
+    ExecutionProcessID: systemExecutionPid(sys), // the PowerShell session key (#2078)
     event_data: normalizeEventData(getCI(event, "EventData")),
     "@timestamp": systemTime(sys),
     message: str(getPath(event, "RenderingInfo.Message")),
