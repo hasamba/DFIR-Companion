@@ -184,6 +184,13 @@ describe("parseThorReport", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].description).not.toContain("THOR finding");
   });
+
+  it("reads a one-line JSON array of findings (a /push body) as its findings, dropping non-objects", () => {
+    const r = parseThorReport(JSON.stringify([PROC_ALERT, null, { ...PROC_ALERT, message: "Second" }]));
+    expect(r.kept).toBe(2);
+    expect(r.dropped).toBe(1);
+    expect(r.events.every((e) => !e.description.includes("THOR finding"))).toBe(true);
+  });
 });
 
 // #1603. A file inside an archive carries only the archive entry's modified time — for mimikatz,
