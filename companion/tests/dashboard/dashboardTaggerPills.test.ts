@@ -100,6 +100,19 @@ describe("tagger pills render from the page data (#2059)", () => {
     expect(api.tagPills("event", "e1")).toContain(">x<");
   });
 
+  it("a page that carries tagger tags drops the cached labels of a listed row it no longer tags", () => {
+    const { api } = harness();
+    api.DfirState.setLastSuperData({
+      events: [row("raw1")],
+      eventTaggerTags: { raw1: [tt("t9", "persistence")] },
+    });
+    api.DfirState.setLastSuperData({ events: [row("raw2")], eventTaggerTags: {} }); // paged away
+    // the tag was removed while raw1 was off-page; the page that shows it again carries none
+    api.DfirState.setLastSuperData({ events: [row("raw1")], eventTaggerTags: {} });
+    expect(api.tagsForTarget("event:raw1")).toEqual([]);
+    expect(api.tagPills("event", "raw1")).toBe("");
+  });
+
   it("asks for the tagger tags of rows a push brought that no page has described", async () => {
     const { api, calls } = harness({ taggerFor: [{ e9: [tt("t5", "lateral-movement")] }] });
     api.DfirState.setLastState({ caseId: "c1", forensicTimeline: [row("e1")], eventTaggerTags: {} });

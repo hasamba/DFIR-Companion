@@ -44,8 +44,9 @@
   // GET /tags carries analyst tags only: on an auto-tagged case the tagger's event tags are one per
   // matched event and label (~10 MB), and every tag change made every dashboard re-read them all. They
   // now arrive with each timeline page — `eventTaggerTags` on /state and /super-timeline, keyed by row
-  // id — and gather here, so a row shows exactly the pills it did. A page names only its own rows, so
-  // pages only ever ADD to what is known; a removal shows up as a new tagger version on the tag list
+  // id — and gather here, so a row shows exactly the pills it did. A page is authoritative for the
+  // rows it lists (a listed row it does not tag has no tagger tags) and says nothing about the rest;
+  // a removal on rows held but not on a page shows up as a new tagger version on the tag list
   // (X-Tagger-Tags-Version), and then every row held is asked again.
   const TAGGER_ASK_CHUNK = 5000; // the server's per-request bound (analysis/taggerRowTags.ts)
   let taggerCase = null;
@@ -61,8 +62,9 @@
     taggerVersion = null;
   }
 
-  // A page landed (a /state reply, a push, a super-timeline page). Rows it describes are taken as
-  // given; rows nobody has described yet (a push carries no page tags) are asked about once.
+  // A page landed (a /state reply, a push, a super-timeline page). A page that carries tagger tags is
+  // taken as given for every row it lists; rows a push brought (it carries no page tags) that nobody
+  // has described yet are asked about once.
   function absorbPage(data, rows) {
     if (!data || !Array.isArray(rows)) return;
     if (typeof data.caseId === "string") taggerForCase(data.caseId);
@@ -74,9 +76,12 @@
       if (carried && Object.prototype.hasOwnProperty.call(carried, id) && Array.isArray(carried[id])) {
         taggerByEvent.set(id, carried[id]);
         taggerKnown.add(id);
+      } else if (carried) {
+        // The page is authoritative for its own rows: a listed row it does not tag has none now.
+        taggerByEvent.delete(id);
+        taggerKnown.add(id);
       } else if (!taggerKnown.has(id)) {
-        if (carried) taggerKnown.add(id);
-        else unknown.push(id);
+        unknown.push(id);
       }
     });
     if (unknown.length) askTaggerTags(unknown);
