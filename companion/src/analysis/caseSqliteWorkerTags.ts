@@ -114,6 +114,52 @@ function tagsList(dbPath, tagsPath) {
   }
 }
 
+// #2059: the reads that never hand back the whole table. On an auto-tagged case the tagger's event
+// tags are nearly all of it (one per matched event and label), so they are read only as a page or
+// for named rows. q.scope:
+//   "analyst"   — every tag except the tagger's event tags, plus the tagger version (count:max seq —
+//                 seq is AUTOINCREMENT, so any add or removal of a tagger tag changes it)
+//   "tagger"    — a page of the tagger's event tags (q.offset, q.limit) and their total
+//   "taggerFor" — the tagger's event tags naming q.targetIds
+// Same migrate answer as tagsList.
+const TAG_TAGGER_EVENT_SQL = "target_type = 'event' AND substr(author, 1, " + TAGS_TAGGER_PREFIX.length + ") = '" + TAGS_TAGGER_PREFIX + "'";
+
+function taggerVersion(db) {
+  const row = db.prepare("SELECT count(*) AS n, coalesce(max(seq), 0) AS s FROM tags WHERE " + TAG_TAGGER_EVENT_SQL).get();
+  return row.n + ":" + row.s;
+}
+
+function tagsQueryRows(db, q) {
+  if (q.scope === "analyst") {
+    const tags = db.prepare(TAG_SELECT + " WHERE NOT (" + TAG_TAGGER_EVENT_SQL + ") ORDER BY seq").all().map(tagFromRow);
+    return { tags, version: taggerVersion(db) };
+  }
+  if (q.scope === "tagger") {
+    const total = db.prepare("SELECT count(*) AS n FROM tags WHERE " + TAG_TAGGER_EVENT_SQL).get().n;
+    const tags = db.prepare(TAG_SELECT + " WHERE " + TAG_TAGGER_EVENT_SQL + " ORDER BY seq LIMIT ? OFFSET ?")
+      .all(Math.max(0, Number(q.limit) || 0), Math.max(0, Number(q.offset) || 0)).map(tagFromRow);
+    return { tags, total };
+  }
+  if (q.scope === "taggerFor") {
+    const tags = db.prepare(TAG_SELECT + " WHERE target_type = 'event' AND target_id IN (SELECT value FROM json_each(?)) AND " +
+      TAG_TAGGER_EVENT_SQL + " ORDER BY seq").all(JSON.stringify(q.targetIds || [])).map(tagFromRow);
+    return { tags };
+  }
+  throw new Error("unknown tags query scope: " + q.scope);
+}
+
+function tagsQuery(dbPath, tagsPath, q) {
+  if (!existsSync(dbPath)) return existsSync(tagsPath) ? { migrate: true } : { tags: [], total: 0, version: "0:0" };
+  const db = openDatabase(dbPath);
+  try {
+    if (!hasTagsTable(db)) return { migrate: true };
+    if (!tagsMarkerSet(db) && existsSync(tagsPath)) return { migrate: true };
+    return tagsQueryRows(db, q || {});
+  } finally {
+    db.close();
+  }
+}
+
 // The writer's connection with the tags migrated. Null when the case has neither a database nor a
 // tags file and create is false: there is nothing to read or remove, and nothing is created for it.
 function openTagsDatabase(dbPath, tagsPath, create) {
@@ -333,6 +379,7 @@ function tagsRestore(dbPath, tagsPath) {
 function dispatchTags(message) {
   switch (message.op) {
     case "tagsList": return tagsList(message.dbPath, message.tagsPath);
+    case "tagsQuery": return tagsQuery(message.dbPath, message.tagsPath, message.query);
     case "tagsEnsure": return tagsEnsure(message.dbPath, message.tagsPath);
     case "tagsPlan": return tagsPlan(message.dbPath, message.tagsPath, message.inputs, message.protecting);
     case "tagsInsert": return tagsInsert(message.dbPath, message.tagsPath, message.tags);

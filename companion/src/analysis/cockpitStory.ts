@@ -1,4 +1,11 @@
-import { chronological, deriveStoryShape, parseTime, type CockpitStoryShape } from "./cockpitStoryShape.js";
+import {
+  chronological,
+  deriveStoryShape,
+  parseTime,
+  storyHostName,
+  type CockpitStoryShape,
+} from "./cockpitStoryShape.js";
+import type { HostAliasIndex } from "./hostAlias.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
   SEVERITY_RANK,
@@ -160,6 +167,7 @@ function buildStage(
   tactic: IrisTactic,
   events: readonly ForensicEvent[],
   findings: readonly Finding[],
+  aliasIndex?: HostAliasIndex,
 ): CockpitStoryStage {
   const ordered = chronological(events);
   const earliest = ordered.find((event) => parseTime(event.timestamp) !== null);
@@ -167,7 +175,7 @@ function buildStage(
   return {
     tactic,
     firstSeenAt: earliest?.timestamp ?? "",
-    host: earliest?.asset?.trim() || null,
+    host: storyHostName(earliest?.asset ?? "", aliasIndex) || null,
     eventCount: ordered.length,
     eventIds: ordered.slice(0, STORY_STAGE_EVENT_LIMIT).map((event) => event.id),
     worstSeverity: ordered.reduce<Severity>(
@@ -196,7 +204,11 @@ function stagedEvents(events: readonly ForensicEvent[]): StagedEvent[] {
   return staged;
 }
 
-function storyStages(staged: readonly StagedEvent[], findings: readonly Finding[]): CockpitStoryStage[] {
+function storyStages(
+  staged: readonly StagedEvent[],
+  findings: readonly Finding[],
+  aliasIndex?: HostAliasIndex,
+): CockpitStoryStage[] {
   // Push into a map this function owns: copying the group per event was quadratic and froze the
   // server for seconds on a case with tens of thousands of rows in one tactic.
   const byTactic = new Map<IrisTactic, ForensicEvent[]>();
@@ -206,7 +218,7 @@ function storyStages(staged: readonly StagedEvent[], findings: readonly Finding[
     else byTactic.set(tactic, [event]);
   }
   return STORY_STAGE_ORDER.filter((tactic) => byTactic.has(tactic)).map((tactic) =>
-    buildStage(tactic, byTactic.get(tactic) ?? [], findings),
+    buildStage(tactic, byTactic.get(tactic) ?? [], findings, aliasIndex),
   );
 }
 
@@ -249,14 +261,23 @@ function staleEventCount(events: readonly ForensicEvent[], synthesizedAt: string
   }).length;
 }
 
-export function deriveCockpitStory(state: InvestigationState, synthMeta?: StorySynthesisMeta): CockpitStory {
+// `aliasIndex` (#2066) folds host spellings an analyst merged (or the fleet linked) into one host
+// on the shape line and the stage cards. Absent, hosts fold by case only, as before.
+export function deriveCockpitStory(
+  state: InvestigationState,
+  synthMeta?: StorySynthesisMeta,
+  aliasIndex?: HostAliasIndex,
+): CockpitStory {
   const synthesizedAt = synthMeta?.lastSynthesizedAt?.trim() || null;
   const staged = stagedEvents(state.forensicTimeline);
-  const stages = storyStages(staged, state.findings);
+  const stages = storyStages(staged, state.findings, aliasIndex);
   return {
     stages,
     missingStages: missingStages(stages),
-    shape: deriveStoryShape(staged.map((item) => item.event)),
+    shape: deriveStoryShape(
+      staged.map((item) => item.event),
+      aliasIndex,
+    ),
     conclusion: leadSentences(state.lastSummary),
     attackerPath: leadSentences(state.attackerPath),
     synthesizedAt,

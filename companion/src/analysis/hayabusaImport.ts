@@ -154,7 +154,11 @@ function hayaTime(s: string): string {
     /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*([+-]\d{2}:?\d{2}|Z)?$/,
     (_m, d, hms, tz) => `${d}T${hms}${tz ?? ""}`,
   );
-  return normalizeTime(iso);
+  // normalizeTime hands unparseable text back unchanged, so a stamp like `9999-99-99…` or free
+  // text became the event time (#2063). Return "" instead: the row is kept, tallied as
+  // empty_timestamp, and the raw text survives in the envelope's observed: field.
+  const out = normalizeTime(iso);
+  return Number.isNaN(Date.parse(out)) ? "" : out;
 }
 
 // Parse a Hayabusa CSV `Details`/`ExtraFieldInfo` cell ("Proc: x ¦ CmdLine: y ¦ …") into a

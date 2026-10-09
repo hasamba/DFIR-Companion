@@ -1,7 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { deriveCockpit, type CockpitAction, type CockpitSnapshot } from "../analysis/cockpit.js";
 import { CockpitStore } from "../analysis/cockpitStore.js";
-import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import type { HostAliasIndex } from "../analysis/hostAlias.js";
+import { loadHostAliasIndex, loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
@@ -70,6 +71,26 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     }
   }
 
+  /**
+   * The host alias index (analyst "Same host" merges + fleet links) the story folds host spellings
+   * with (#2066). Fail-quiet for the same reason as pendingHostDuplicates: on error the story shows
+   * hosts unmerged, as it did before, instead of taking the whole cockpit down.
+   */
+  async function hostAliasIndex(caseId: string): Promise<HostAliasIndex | undefined> {
+    if (!options.assetOverridesStore && !options.velociraptorClientStore) return undefined;
+    try {
+      return await loadHostAliasIndex(
+        {
+          ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   async function loadSnapshot(
     caseId: string,
     requestedInvestigator?: unknown,
@@ -79,8 +100,8 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     if (!stateStore) throw new Error("state store not configured");
     const investigator = await resolveInvestigator(caseId, requestedInvestigator);
     const state = await stateStore.load(caseId);
-    const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates] = await Promise.all(
-      [
+    const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates, aliasIndex] =
+      await Promise.all([
         options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
         options.findingWorkflowStore?.load(caseId) ?? Promise.resolve([]),
         options.pinnedFindingsStore?.load(caseId) ?? Promise.resolve([]),
@@ -88,8 +109,8 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
         options.synthMetaStore?.load(caseId),
         cockpitStore.load(caseId),
         pendingHostDuplicates(caseId, state),
-      ],
-    );
+        hostAliasIndex(caseId),
+      ]);
     return deriveCockpit({
       state,
       ...(options.hypothesisStore ? { hypotheses } : {}),
@@ -100,6 +121,7 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
       synthMeta,
       decisions,
       hostDuplicates,
+      ...(aliasIndex ? { hostAliasIndex: aliasIndex } : {}),
       investigator,
     });
   }

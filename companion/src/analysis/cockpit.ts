@@ -1,6 +1,6 @@
 import { deriveCockpitStory, type CockpitStory } from "./cockpitStory.js";
 import type { FindingWorkflow } from "./findingWorkflow.js";
-import type { NearDuplicate } from "./hostAlias.js";
+import type { HostAliasIndex, NearDuplicate } from "./hostAlias.js";
 import type { Hypothesis } from "./hypothesis.js";
 import type { ImportMeta } from "./importMeta.js";
 import type { Job } from "./jobRegistry.js";
@@ -115,6 +115,8 @@ export interface CockpitInput {
   // existing caller keeps compiling, and an absent list reads as "nothing pending" — never as
   // "unknown, so warn", which would put a permanent blocker on any caller that doesn't supply it.
   hostDuplicates?: readonly NearDuplicate[];
+  // Analyst host merges + fleet links (#2066): the story folds merged spellings into one host.
+  hostAliasIndex?: HostAliasIndex;
   investigator?: string;
   now?: string;
 }
@@ -716,6 +718,6 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
     sections,
     parked: prioritize(parked),
     readiness: { ready: readinessReady, blockers: sections.blockers },
-    story: deriveCockpitStory(input.state, input.synthMeta),
+    story: deriveCockpitStory(input.state, input.synthMeta, input.hostAliasIndex),
   };
 }

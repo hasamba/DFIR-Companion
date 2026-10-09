@@ -112,6 +112,39 @@ export class TagsStore {
     return Array.isArray(again) ? again : [];
   }
 
+  // #2059: a bounded read (caseSqliteWorkerTags.ts tagsQuery), migrating tags.json first like load().
+  private async query<T>(caseId: string, query: Record<string, unknown>): Promise<T> {
+    const first = await this.request<T | { migrate: true }>(caseId, { op: "tagsQuery", query });
+    if (!(first as { migrate?: true }).migrate) return first as T;
+    await this.request<void>(caseId, { op: "tagsEnsure" });
+    const again = await this.request<T | { migrate: true }>(caseId, { op: "tagsQuery", query });
+    if ((again as { migrate?: true }).migrate)
+      throw new Error(`tags of case "${caseId}" could not be migrated`);
+    return again as T;
+  }
+
+  // Every tag except the automatic tagger's event tags — the list the dashboard holds (#2059). Its size
+  // follows what analysts did, not the case. `taggerVersion` changes whenever any tagger tag is added
+  // or removed, so a client can tell when the tagger labels it was handed with its rows went stale.
+  async loadAnalyst(caseId: string): Promise<{ tags: Tag[]; taggerVersion: string }> {
+    const { tags, version } = await this.query<{ tags: Tag[]; version: string }>(caseId, {
+      scope: "analyst",
+    });
+    return { tags, taggerVersion: version };
+  }
+
+  // One page of the tagger's event tags, in list order, and how many there are.
+  async taggerPage(caseId: string, offset: number, limit: number): Promise<{ tags: Tag[]; total: number }> {
+    return this.query<{ tags: Tag[]; total: number }>(caseId, { scope: "tagger", offset, limit });
+  }
+
+  // The tagger's event tags on these event ids — what a timeline page carries for its rows.
+  async taggerTagsFor(caseId: string, targetIds: readonly string[]): Promise<Tag[]> {
+    if (!targetIds.length) return [];
+    return (await this.query<{ tags: Tag[] }>(caseId, { scope: "taggerFor", targetIds: [...targetIds] }))
+      .tags;
+  }
+
   // Protect BEFORE the tags are inserted: a row that was already evicted reports false and the tag is
   // still kept — most event tags name forensic-timeline events, which are never raw rows. The plan op
   // recorded the analyst event targets as in flight, so a failure here clears that record. Returns the

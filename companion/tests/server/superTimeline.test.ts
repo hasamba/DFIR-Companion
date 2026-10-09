@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -499,6 +499,58 @@ describe("super-timeline promote route", () => {
     });
     const listed = await request(app).get(`/cases/c1/super-timeline`);
     expect(listed.body.events.find((e: { id: string }) => e.id === "e-promote").promoted).toBe(true);
+  });
+
+  // #2070: one page used to load every tag in the case (tens of thousands of tagger tags) just to
+  // build a label map. The worker now reads the case's tag table itself; the analyst's answer —
+  // rows, totals, facets, promoted flags, tagger pills — is unchanged.
+  it("answers a page without loading every tag, and folded rows stay promoted (#2070)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-2070-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const tagsStore = new TagsStore(store);
+    const app = createApp(store, { aiConfigured: false, stateStore, superTimelineStore, tagsStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const row = (id: string, minute: number, description = `row ${id}`) =>
+      ev({ id, timestamp: `2026-06-01T12:0${minute}:00Z`, description, severity: "Low" });
+    await superTimelineStore.append("c1", [
+      row("e-folded", 1),
+      row("e-direct", 2),
+      row("e-raw", 3, "keylogger"),
+    ]);
+    const state = await stateStore.load("c1");
+    // e-direct is in the forensic timeline as itself; e-folded was promoted and later folded.
+    await stateStore.save({
+      ...state,
+      forensicTimeline: [row("e-direct", 2), row("survivor", 1)],
+      eventAliases: { "e-folded": "survivor" },
+    });
+    await tagsStore.addMany("c1", [
+      { targetType: "event", targetId: "e-raw", label: "persistence", author: "tagger:svc" },
+      { targetType: "event", targetId: "e-direct", label: "starred", author: "alice" },
+      { targetType: "event", targetId: "e-folded", label: "key-evidence", author: "alice" },
+    ]);
+    const load = vi.spyOn(tagsStore, "load");
+    const ids = (res: request.Response) => res.body.events.map((e: { id: string }) => e.id);
+
+    const all = await request(app).get("/cases/c1/super-timeline?limit=200");
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(3);
+    expect(all.body.labelsAvailable).toEqual(["key-evidence", "persistence"]);
+    const promoted = Object.fromEntries(
+      all.body.events.map((e: { id: string; promoted: boolean }) => [e.id, e.promoted]),
+    );
+    expect(promoted).toEqual({ "e-folded": true, "e-direct": true, "e-raw": false });
+    expect(Object.keys(all.body.eventTaggerTags)).toEqual(["e-raw"]);
+
+    expect(ids(await request(app).get("/cases/c1/super-timeline?labels=persistence"))).toEqual(["e-raw"]);
+    expect(ids(await request(app).get("/cases/c1/super-timeline?tagged=1"))).toEqual(["e-folded", "e-raw"]);
+    expect(ids(await request(app).get("/cases/c1/super-timeline?starred=1"))).toEqual(["e-direct"]);
+    const searched = await request(app).get("/cases/c1/super-timeline?q=keylogger&labels=persistence");
+    expect(ids(searched)).toEqual(["e-raw"]);
+    expect(searched.body.labelsAvailable).toEqual(["key-evidence", "persistence"]);
+    expect(load).not.toHaveBeenCalled();
   });
 
   it("promote 400s without eventIds and 404s when none match", async () => {

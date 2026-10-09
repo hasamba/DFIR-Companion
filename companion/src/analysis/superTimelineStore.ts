@@ -7,18 +7,20 @@ import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { SuperScanMemo } from "./superTimelineMemo.js";
 import {
-  NO_HOST_FACET,
   STARRED_LABEL,
   TAGGER_AUTHOR_PREFIX,
   superHostOf,
   superOriginOf,
+  isTagTableLabels,
   type SuperLabelMap,
+  type SuperLabelSource,
   type SuperQuery,
   type SuperQueryResult,
 } from "./superTimeline.js";
 import { eventMatchesExclude, eventMatchesSearch } from "./searchFilter.js";
 import { SET_ASIDE_NOTE_MARKERS, SET_ASIDE_REGISTRY_VERSION } from "./setAsideRows.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import { searchPrefilterPlan, type SearchPrefilterPlan } from "./searchFoldPrefilter.js";
 import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.js";
 
 // The super-timeline remains logically separate from the forensic timeline: it has a distinct
@@ -87,6 +89,7 @@ const MAX_QUERY_PAGE = 10_000;
 interface SuperScanRow {
   event: ForensicEvent;
   labels: string[];
+  tagLabels?: string[]; // the row's event-tag labels, when the scan was asked for them (#2070)
   rowId: number;
   sortMs: number;
 }
@@ -260,19 +263,22 @@ export class SuperTimelineStore {
    * Without a text filter the count, the facets and the page come straight from SQL over the
    * columns the writer projects (querySuper, #1429): nothing is parsed but the page's own rows.
    * A text filter (search, excludeText) keeps its exact row-by-row JS predicates, so it still
-   * scans — in fixed-size index-served pages now, linear in the store, never quadratic.
+   * scans — in fixed-size index-served pages now, linear in the store, never quadratic — but a
+   * search reads only the SQL prefilter's candidates (#2069; see queryText).
+   *
+   * `labels` is a caller-built map or, since #2070, the case's tag table read in SQL — the route no
+   * longer loads every tag (tens of thousands of tagger tags) to build a map for one page.
    */
-  async query(caseId: string, q: SuperQuery = {}, labelMap?: SuperLabelMap): Promise<SuperQueryResult> {
+  async query(caseId: string, q: SuperQuery = {}, labels?: SuperLabelSource): Promise<SuperQueryResult> {
     const startedAt = performance.now();
     await this.ensureMigrated(caseId);
     const offset = Math.max(0, Math.floor(q.offset ?? 0));
     const requestedLimit = q.limit == null ? DEFAULT_SUPER_QUERY_LIMIT : Math.max(0, Math.floor(q.limit));
     const limit = Math.min(requestedLimit, MAX_QUERY_PAGE);
     if (!q.search && !q.excludeText?.length) {
-      const result = await caseSqliteWorker.request<SuperQueryResult>({
-        op: "querySuper",
-        dbPath: this.databasePath(caseId),
-        query: {
+      const { result } = await this.querySql(
+        caseId,
+        {
           from: q.from,
           to: q.to,
           origins: q.origins ?? [],
@@ -281,34 +287,84 @@ export class SuperTimelineStore {
           labels: q.labels ?? [],
           taggedOnly: q.taggedOnly === true,
           starred: q.starred === true,
-          labelMap: labelMap ?? {},
           offset,
           limit,
         },
-      });
+        labels,
+      );
       const events = result.events.map(upgradeForensicEvent);
       this.recordQuery(q.from || q.to ? "timestamp" : "ordinal", startedAt, events.length);
       return { ...result, events };
     }
+    const result = await this.queryText(caseId, q, labels, offset, limit);
+    this.recordQuery(q.from || q.to ? "timestamp" : "ordinal", startedAt, result.events.length);
+    return result;
+  }
+
+  /**
+   * One querySuper call with its label source. The tag-table source is read inside the worker;
+   * when that table cannot answer yet (tags.json not migrated) the worker says so, and the call is
+   * repeated with the source's fallback map — the pre-#2070 path. Returns the source that actually
+   * answered, so a scan that follows reads labels the same way.
+   */
+  private async querySql(
+    caseId: string,
+    query: Record<string, unknown>,
+    labels: SuperLabelSource | undefined,
+  ): Promise<{ result: SuperQueryResult; labels: SuperLabelSource | undefined }> {
+    const send = (source: SuperLabelSource | undefined) =>
+      caseSqliteWorker.request<SuperQueryResult & { tagTableMissing?: true }>({
+        op: "querySuper",
+        dbPath: this.databasePath(caseId),
+        query: isTagTableLabels(source)
+          ? { ...query, labelsFromTags: true, tagsPath: this.tagsPath(caseId) }
+          : { ...query, labelMap: source ?? {} },
+      });
+    const first = await send(labels);
+    if (!first.tagTableMissing) return { result: first, labels };
+    const fallback: SuperLabelMap =
+      isTagTableLabels(labels) && labels.fallback ? await labels.fallback() : {};
+    return { result: await send(fallback), labels: fallback };
+  }
+
+  /**
+   * The text-filter path of query(). Every row-level predicate is the JS one, exactly as before.
+   * A search narrows the rows read to the #1914 prefilter's candidates (#2069): before, every row
+   * in the window was parsed and upgraded — ~5 s at 70k rows, match or no match. excludeText alone
+   * has no sound prefilter (it keeps the rows that do NOT match), so it still reads every row. The
+   * facets are window-wide whatever the filters, so they can no longer fall out of the rows read:
+   * they come from SQL (querySuper with no page), the same answer the indexed path gives. With the
+   * tag-table source each scanned row carries its own event-tag labels (#2070).
+   */
+  private async queryText(
+    caseId: string,
+    q: SuperQuery,
+    source: SuperLabelSource | undefined,
+    offset: number,
+    limit: number,
+  ): Promise<SuperQueryResult> {
+    const { result: facets, labels: answered } = await this.querySql(
+      caseId,
+      { from: q.from, to: q.to, offset: 0, limit: 0 },
+      source,
+    );
+    const fromTags = isTagTableLabels(answered);
+    const labelMap = fromTags ? undefined : answered;
+    const plan = q.search ? searchPrefilterPlan(q.search.toLowerCase()) : null;
     const originSet = q.origins?.length ? new Set(q.origins) : null;
     const excludeSet = q.exclude?.length ? new Set(q.exclude) : null;
     const excludeHostSet = q.excludeHosts?.length ? new Set(q.excludeHosts) : null;
     const labelSet = q.labels?.length ? new Set(q.labels) : null;
-    const origins = new Set<string>();
-    const hosts = new Set<string>();
-    const labelsAvailable = new Set<string>();
     const events: ForensicEvent[] = [];
     let total = 0;
 
-    for await (const row of this.scan(caseId, { from: q.from, to: q.to })) {
+    const time = { from: q.from, to: q.to };
+    for await (const row of this.scan(caseId, time, SCAN_BATCH_SIZE, plan, fromTags)) {
       const event = row.event;
-      const labels = labelMap?.[event.id] ?? row.labels;
+      // An event tag wins over the sidecar, as an id in a map does.
+      const labels = row.tagLabels?.length ? row.tagLabels : (labelMap?.[event.id] ?? row.labels);
       const origin = superOriginOf(event);
       const host = superHostOf(event);
-      origins.add(origin);
-      hosts.add(host || NO_HOST_FACET);
-      for (const label of labels) if (label !== STARRED_LABEL) labelsAvailable.add(label);
-
       if (originSet && !originSet.has(origin)) continue;
       if (excludeSet && excludeSet.has(origin)) continue;
       if (excludeHostSet && excludeHostSet.has(host)) continue;
@@ -321,16 +377,9 @@ export class SuperTimelineStore {
       if (total >= offset && events.length < limit) events.push(event);
       total++;
     }
-
-    const result = {
-      events,
-      total,
-      origins: [...origins].sort(),
-      hosts: [...hosts].sort(),
-      labelsAvailable: [...labelsAvailable].sort(),
-    };
-    this.recordQuery(q.from || q.to ? "timestamp" : "ordinal", startedAt, events.length);
-    return result;
+    // The window's facets, from SQL — no payload is parsed.
+    const { origins, hosts, labelsAvailable } = facets;
+    return { events, total, origins, hosts, labelsAvailable };
   }
 
   async get(caseId: string, id: string): Promise<ForensicEvent | null> {
@@ -532,7 +581,20 @@ export class SuperTimelineStore {
     caseId: string,
     time: { from?: string; to?: string },
     batchSize = SCAN_BATCH_SIZE,
+    search: SearchPrefilterPlan | null = null,
+    tagLabels = false,
   ): AsyncGenerator<SuperScanRow> {
+    // Only a search sends a prefilter: whole-store readers (eventBatches, scanWindow) must see
+    // every row. A plan that scans all (a lone-surrogate term) sends none either.
+    const prefilter = search
+      ? {
+          searchPrefilter: !search.scanAll,
+          searchLike: search.like,
+          searchFoldChars: search.foldChars,
+          searchFoldNeedle: search.foldNeedle,
+          searchEdgeObserved: search.edgeObserved,
+        }
+      : {};
     let cursor: SuperScanCursor | null = null;
     do {
       const result: SuperScanResult = await caseSqliteWorker.request<SuperScanResult>({
@@ -545,6 +607,8 @@ export class SuperTimelineStore {
           afterMs: cursor?.afterMs,
           afterRowId: cursor?.afterRowId,
           limit: Math.max(1, Math.min(MAX_QUERY_PAGE, Math.floor(batchSize))),
+          tagLabels,
+          ...prefilter,
         },
       });
       for (const row of result.rows) yield { ...row, event: upgradeForensicEvent(row.event) };

@@ -471,9 +471,14 @@ function superWindowClauses(query) {
   return { where, params };
 }
 
-function superPageWithLabels(db, pageSql, params) {
+// With tagLabels (#2070) each row also carries its event tags' labels, read from the case's tag
+// table, so a text search answers labels with no caller-built map; '[]' when it has none.
+function superPageWithLabels(db, pageSql, params, tagLabels) {
+  const tagColumn = tagLabels && hasTagsTable(db)
+    ? ", (SELECT json_group_array(t.label) FROM tags t WHERE t.target_type='event' AND t.target_id=p.entity_id) AS tag_labels "
+    : " ";
   return db.prepare(
-    "SELECT p.row_id, p.sort_ms, p.payload, " +
+    "SELECT p.row_id, p.sort_ms, p.payload" + tagColumn + ", " +
     "CASE WHEN count(l.label)=0 THEN '[]' ELSE json_group_array(l.label) END AS labels " +
     "FROM (" + pageSql + ") p LEFT JOIN super_labels l ON l.event_id=p.entity_id " +
     "GROUP BY p.row_id ORDER BY p.sort_ms, p.row_id"
@@ -485,8 +490,14 @@ function scanSuper(dbPath, query) {
   const db = openDatabase(dbPath);
   try {
     const { where, params } = superWindowClauses(query);
+    // A text search's candidates only (#2069): the forensic timeline's #1914 prefilter over the raw
+    // JSON. Sound — it never drops a row the JS matcher accepts — and absent unless the caller asks,
+    // so whole-store readers (eventBatches, scanWindow) still see every row. The keyset cursor is
+    // on (timestamp_ms, row_id), independent of the WHERE, so paging stays valid.
+    addSearchPrefilter(db, query, where, params, "e.payload");
     const limit = Math.max(1, Math.min(10000, Math.floor((query && query.limit) || 1000)));
     const phase = query && query.phase === "undated" ? "undated" : "dated";
+    const tagLabels = !!(query && query.tagLabels === true);
     const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0;
     let rows;
     if (phase === "dated") {
@@ -495,19 +506,20 @@ function scanSuper(dbPath, query) {
         "SELECT e.row_id, e.entity_id, e.timestamp_ms AS sort_ms, e.payload FROM entities e WHERE " +
         where.concat(["e.timestamp_ms IS NOT NULL", "(e.timestamp_ms>? OR (e.timestamp_ms=? AND e.row_id>?))"]).join(" AND ") +
         " ORDER BY e.timestamp_ms, e.row_id LIMIT ?",
-        params.concat([afterMs, afterMs, afterRowId, limit + 1]));
+        params.concat([afterMs, afterMs, afterRowId, limit + 1]), tagLabels);
     } else {
       rows = superPageWithLabels(db,
         "SELECT e.row_id, e.entity_id, 9007199254740991 AS sort_ms, e.payload FROM entities e WHERE " +
         where.concat(["e.timestamp_ms IS NULL", "e.row_id>?"]).join(" AND ") +
         " ORDER BY e.row_id LIMIT ?",
-        params.concat([afterRowId, limit + 1]));
+        params.concat([afterRowId, limit + 1]), tagLabels);
     }
     const hasMore = rows.length > limit;
     const pageRows = hasMore ? rows.slice(0, limit) : rows;
     const mapped = pageRows.map((row) => ({
       event: JSON.parse(row.payload),
       labels: JSON.parse(row.labels),
+      ...(typeof row.tag_labels === "string" ? { tagLabels: JSON.parse(row.tag_labels) } : {}),
       rowId: row.row_id,
       sortMs: row.sort_ms,
     }));

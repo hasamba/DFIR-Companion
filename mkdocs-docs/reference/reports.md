@@ -26,6 +26,12 @@ the presentation deck — renders indicators inert (`hxxp://evil[.]example`, `20
 reader cannot click through to attacker infrastructure. Machine exports (CSV, STIX, JSON, the IOC
 block-list, case archives) keep the live values because the tools that read them match on them.
 
+The Word report only makes a link clickable when it points to a full `http://`, `https://` or
+`mailto:` address. A link written into evidence or AI text with any other target — `javascript:`,
+`file:`, a `\\server\share` path, a relative path — shows its text as plain words, with nothing to
+click. The HTML report applies the same rule to links and to images, so a saved report opened from
+disk never links to or loads a `//server/share` or `\\server\share` target.
+
 Before one of those files is handed over, the Companion checks the finished file against the case's
 own recorded indicators and evidence text. If a live indicator or an unescaped piece of evidence
 made it through — an exporter defect, not something you did — the export still ships, with a

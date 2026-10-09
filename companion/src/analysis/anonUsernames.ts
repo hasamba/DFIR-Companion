@@ -9,9 +9,25 @@ import { escapeRegExp } from "./regexEscape.js";
 // patterns, the guard list of ordinary words that must never be replaced globally, and the one
 // regex that finds every known username as a whole word.
 
-// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
+// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts,
+// except that a match may not start after "-" either: in \\DC-QA-01\C$ it started at "QA-01" and
+// leaked the "DC-" prefix of the host name (#2073).
 export const NETBIOS_ACCT =
-  /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+  /(?<![\\/:.\w-])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+
+// The server of a UNC path (\\SERVER\share) when it is a single label — a NetBIOS name, which is
+// internal naming. Dotted servers (FQDNs, IPs) are left to the host, domain and IP passes, because a
+// dotted UNC server can be adversary WebDAV infrastructure that the anonymizer preserves on purpose.
+// \\?\ and \\.\ device paths never match: the label must start with a letter or digit (#2073).
+const UNC_SERVER_RE = /(?<![\\\w:])\\\\([A-Za-z0-9][A-Za-z0-9-]{0,62})(?=\\)/g;
+const UNC_SERVER_SKIP = /^(?:localhost|tsclient|wsl|\d+)$/i;
+
+/** Replace each single-label UNC server name with `mint(server)`, keeping the leading `\\`. */
+export function replaceUncServers(text: string, mint: (server: string) => string): string {
+  return text.replace(UNC_SERVER_RE, (m, server: string) =>
+    UNC_SERVER_SKIP.test(server) ? m : `\\\\${mint(server)}`,
+  );
+}
 export const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
 export const PATH_DOMAINS =
   /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
@@ -105,6 +121,25 @@ export function isGuardedUsername(name: string): boolean {
   if (/^\d+$/.test(n)) return true;
   if (/^[._$-]|[._-]$/.test(n)) return true; // an edge of punctuation cannot anchor a whole-word match
   return COMMON_USERNAME_WORDS.has(n);
+}
+
+/**
+ * #2056: the first label of every dotted host (DC-QA-01 from DC-QA-01.sub.example), so the short
+ * name, the machine account (DC-QA-01$) and a truncated FQDN are tokenized like the FQDN itself.
+ * A label the username guard rejects (server, www, numeric — an IPv4 asset) or one equal to an
+ * internal domain is skipped: tokenizing it would mask common words or fight the domain pass.
+ */
+export function shortHostLabels(hosts: Iterable<string>, internalDomains: Iterable<string>): string[] {
+  const domains = new Set([...internalDomains].map((d) => d.toLowerCase()));
+  const out = new Set<string>();
+  for (const h of hosts) {
+    const dot = h.indexOf(".");
+    if (dot <= 0) continue;
+    const label = h.slice(0, dot);
+    if (isGuardedUsername(label) || domains.has(label.toLowerCase())) continue;
+    out.add(label);
+  }
+  return [...out];
 }
 
 /** The user half of "DOMAIN\user" or "user@domain"; the value itself when neither. */

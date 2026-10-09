@@ -252,6 +252,44 @@ describe("StateStore", () => {
     expect((await stateStore.load("c1")).forensicTimeline[0]).toEqual(loaded);
   });
 
+  // #2057: the report-lite load leaves the canonical provenance blocks in SQLite and changes nothing else.
+  it("a slimCanonical load returns the same rows in the same order, without provenance blocks", async () => {
+    const state = emptyState("c1");
+    state.lastSummary = "slim";
+    state.forensicTimeline = ["b", "a", "c"].map((id, i) =>
+      upgradeForensicEvent({
+        id,
+        timestamp: `2026-07-30T1${i}:00:00Z`,
+        description: `powershell.exe -enc AAAA on HOST-${id}`,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: `HOST-${id}`,
+        processName: "powershell.exe",
+      }),
+    );
+    await stateStore.save(state);
+    const full = await stateStore.load("c1");
+    const slim = await stateStore.load("c1", { slimCanonical: true });
+    expect(slim.forensicTimeline.map((e) => e.id)).toEqual(["b", "a", "c"]);
+    expect(full.forensicTimeline[0].canonical?.fieldProvenanceDefaults).toBeDefined();
+    const strip = ({
+      fieldProvenance,
+      fieldProvenanceDefaults,
+      evidence,
+      ...rest
+    }: object & {
+      fieldProvenance?: unknown;
+      fieldProvenanceDefaults?: unknown;
+      evidence?: unknown;
+    }) => rest;
+    expect(slim.forensicTimeline).toEqual(
+      full.forensicTimeline.map((e) => ({ ...e, canonical: strip(e.canonical!) })),
+    );
+    expect({ ...slim, forensicTimeline: [] }).toEqual({ ...full, forensicTimeline: [] });
+  });
+
   it("queries indexed event fields with a stable cursor", async () => {
     const state = emptyState("c1");
     state.forensicTimeline = [

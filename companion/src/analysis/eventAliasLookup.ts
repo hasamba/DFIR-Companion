@@ -5,16 +5,38 @@
 // are never rewritten — `targetId` still says what the analyst marked.
 
 import type { InvestigationState } from "./stateTypes.js";
-import { aliasCandidates, eventAliasResolver } from "./eventAliases.js";
+import { aliasCandidates, eventAliasResolver, type EventAliases } from "./eventAliases.js";
 
 export type EventResolver = (id: string) => string;
 
 const identity: EventResolver = (id) => id;
 
-/** The parts of the state store a resolver needs: the lineage, and which ids are events today. */
+/**
+ * The parts of the state store a resolver needs: the lineage, and which ids are events today. The
+ * lineage is read ALONE (#2059) — the overview it used to come from parses every finding and IOC.
+ * eventAliasRead.ts adapts a StateStore to this.
+ */
 export interface EventAliasSource {
-  loadOverview(caseId: string): Promise<Pick<InvestigationState, "eventAliases">>;
+  loadEventAliases(caseId: string): Promise<EventAliases | undefined>;
   hasForensicEventIds(caseId: string, ids: readonly string[]): Promise<Set<string>>;
+}
+
+/**
+ * A resolver for `ids` over a lineage already read. Only an id that is a KEY of the lineage can
+ * resolve to anything but itself (eventAliasResolver returns an id with no entry unchanged), so only
+ * those ids and their chains are checked for liveness, and none at all when no id has an entry (#2059).
+ */
+export async function resolverFromAliases(
+  store: Pick<EventAliasSource, "hasForensicEventIds">,
+  caseId: string,
+  aliases: EventAliases | undefined,
+  ids: readonly string[],
+): Promise<EventResolver> {
+  if (!aliases || ids.length === 0) return identity;
+  const keyed = ids.filter((id) => Object.prototype.hasOwnProperty.call(aliases, id));
+  if (keyed.length === 0) return identity;
+  const live = await store.hasForensicEventIds(caseId, aliasCandidates(aliases, keyed));
+  return eventAliasResolver(aliases, (id) => live.has(id));
 }
 
 /** A resolver for `ids` against the stored case; the identity when there is no store or no lineage. */
@@ -24,10 +46,7 @@ export async function storedEventResolver(
   ids: readonly string[],
 ): Promise<EventResolver> {
   if (!store || ids.length === 0) return identity;
-  const aliases = (await store.loadOverview(caseId)).eventAliases;
-  if (!aliases || Object.keys(aliases).length === 0) return identity;
-  const live = await store.hasForensicEventIds(caseId, aliasCandidates(aliases, ids));
-  return eventAliasResolver(aliases, (id) => live.has(id));
+  return resolverFromAliases(store, caseId, await store.loadEventAliases(caseId), ids);
 }
 
 /** A resolver against a state already loaded with its forensic timeline. */

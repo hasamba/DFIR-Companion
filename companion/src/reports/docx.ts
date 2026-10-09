@@ -27,6 +27,7 @@ import {
 } from "./evidenceSafety.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { xmlSafeText } from "./controlChars.js";
+import { isAbsoluteWebLink } from "./linkPolicy.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { DEFAULT_ACCENT, defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
@@ -227,6 +228,12 @@ function classifyHeading(
   };
 }
 
+// Which links Word may receive as a live External relationship (#2053). Shared with the
+// HTML report (#2072) so the two exports cannot drift: absolute http(s)/mailto only.
+function isSafeDocxLinkTarget(href: string): boolean {
+  return isAbsoluteWebLink(href);
+}
+
 // Inline tokens (strong/em/codespan/link/text) → docx run primitives. We accept the parent
 // formatting context (bold/italic) so nested marks compose, e.g. **_both_**. Code spans
 // carry monospace font; links emit ExternalHyperlink wrapping a styled run.
@@ -268,6 +275,11 @@ function inlineRuns(
       }
       case "link": {
         const link = t as Tokens.Link;
+        if (!isSafeDocxLinkTarget(link.href)) {
+          // #2053: evidence text is adversary-controlled — keep the words, drop the target.
+          out.push(new TextRun({ text: link.text || link.href, bold: ctx.bold, italics: ctx.italic }));
+          break;
+        }
         out.push(
           new ExternalHyperlink({
             link: link.href,

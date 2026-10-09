@@ -228,14 +228,23 @@ function writeStateBody(db, writer, state, excludedKinds) {
   }
 }
 
-function readState(db, excludedKinds) {
+// #2057: the report-lite load leaves each forensic row's canonical provenance blocks in SQLite, so the
+// worker never parses (and the main thread never clones) the bulk of a row no report route reads.
+// canonical.event and canonical.producer stay: gap edges read the first, the edge-observed restamp on
+// load reads the second. tests/reports/filteredStateLite.test.ts pins the routes that may use it.
+const SLIM_FORENSIC_PAYLOAD =
+  "json_remove(payload, '$.canonical.fieldProvenance', '$.canonical.fieldProvenanceDefaults', " +
+  "'$.canonical.evidence')";
+
+function readState(db, excludedKinds, slimCanonical) {
   const row = db.prepare("SELECT value FROM storage_meta WHERE key='investigation'").get();
   if (!row) return null;
   const state = JSON.parse(row.value);
   for (const kind of ARRAY_KINDS) {
+    const column = slimCanonical && kind === "forensicTimeline" ? SLIM_FORENSIC_PAYLOAD : "payload";
     state[kind] = (excludedKinds || []).includes(kind)
       ? []
-      : db.prepare("SELECT payload FROM entities WHERE kind=? ORDER BY ordinal")
+      : db.prepare("SELECT " + column + " AS payload FROM entities WHERE kind=? ORDER BY ordinal")
         .all(kind).map((item) => JSON.parse(item.payload));
   }
   return state;
@@ -288,10 +297,23 @@ function stateExists(dbPath) {
   }
 }
 
-function loadState(dbPath, excludedKinds) {
+function loadState(dbPath, excludedKinds, slimCanonical) {
   if (!existsSync(dbPath)) return null;
   const db = openDatabase(dbPath);
-  try { return readState(db, excludedKinds); } finally { db.close(); }
+  try { return readState(db, excludedKinds, slimCanonical); } finally { db.close(); }
+}
+
+// #2059: the case's event lineage alone — json_extract over the meta blob, no entity row parsed.
+// null when this file holds no state yet: the caller then reads the overview, which migrates.
+function loadEventAliases(dbPath) {
+  if (!existsSync(dbPath)) return null;
+  const db = openDatabase(dbPath);
+  try {
+    const row = db.prepare("SELECT json_extract(value, '$.eventAliases') AS aliases FROM storage_meta WHERE key='investigation'").get();
+    if (!row) return null;
+    const aliases = row.aliases ? JSON.parse(row.aliases) : null;
+    return { aliases: aliases && typeof aliases === "object" && !Array.isArray(aliases) ? aliases : null };
+  } finally { db.close(); }
 }
 
 function saveState(dbPath, state, excludedKinds, unsettleMerge) {
@@ -696,7 +718,8 @@ async function dispatch(message) {
     case "ensureDatabase": return ensureDatabase(message.dbPath);
     case "stateExists": return stateExists(message.dbPath);
     case "migrateState": return migrateState(message.dbPath, message.jsonPath);
-    case "loadState": return loadState(message.dbPath, message.excludedKinds);
+    case "loadState": return loadState(message.dbPath, message.excludedKinds, message.slimCanonical === true);
+    case "loadEventAliases": return loadEventAliases(message.dbPath);
     case "saveState": return saveState(message.dbPath, message.state, message.excludedKinds, message.unsettleMerge);
     case "setStateCaseId": return setStateCaseId(message.dbPath, message.caseId);
     case "queryEntities": return queryEntities(message.dbPath, message.kind, message.query || {});

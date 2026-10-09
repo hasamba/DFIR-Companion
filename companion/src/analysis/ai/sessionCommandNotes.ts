@@ -12,6 +12,7 @@ import {
   processImage,
   relevanceRank,
 } from "./sessionCommandBaseline.js";
+import { buildNamingIndex, isNamedBy, type NamingIndex } from "./sessionCommandNaming.js";
 import {
   SEVERITY_RANK,
   type Finding,
@@ -102,20 +103,26 @@ export function noteSessionCommands(
 ): InvestigationState {
   const hostOf = opts.hostOf ?? ((raw: string) => raw.trim().toLowerCase());
   const byId = new Map(opts.scopedEvents.map((e) => [e.id, e] as const));
-  const anchors = buildAnchors(state, byId, hostOf);
+  // One pass over the timeline for every finding's back-links (#2058): rescanning it per finding,
+  // three times over, made a hayabusa-sized case run for minutes.
+  const backLinks = backLinksOf(state);
+  const anchors = buildAnchors(state, byId, hostOf, backLinks);
   const sessions = buildSessions(anchors);
   const live = state.findings.filter((f) => f.status !== "dismissed");
   const texts = new Map(live.map((f) => [f.id, findingText(f)] as const));
-  const cited = citedBy(state, live);
-  const hostsOf = findingHosts(state, live, byId, hostOf);
+  const cited = citedBy(live, backLinks);
+  const hostsOf = findingHosts(live, byId, hostOf, backLinks);
+  const naming = buildNamingIndex(texts, cited, hostsOf);
 
   const anchorsByHost = groupByHost(anchors);
   const picked = new Map<string, Candidate[]>();
   for (const c of candidates(opts.scopedEvents, sessions, hostOf)) {
-    if (isNamed(c, texts, cited, hostsOf)) continue;
-    const target = closestAnchor(c, anchorsByHost.get(c.host) ?? []);
+    if (isNamed(c, naming)) continue;
+    const target = closestAnchor(c, anchorsByHost.get(c.host));
     if (!target || cited.get(c.event.id)?.has(target.finding.id)) continue;
-    picked.set(target.finding.id, [...(picked.get(target.finding.id) ?? []), c]);
+    const list = picked.get(target.finding.id);
+    if (list) list.push(c);
+    else picked.set(target.finding.id, [c]);
   }
   return {
     ...state,
@@ -147,9 +154,27 @@ function capByRelevance(list: readonly Candidate[]): Candidate[] {
     .map((r) => r.c);
 }
 
-function groupByHost(anchors: readonly Anchor[]): Map<string, Anchor[]> {
-  const out = new Map<string, Anchor[]>();
-  for (const a of anchors) out.set(a.host, [...(out.get(a.host) ?? []), a]);
+/** One host's anchors, with every cited time sorted once so a candidate binary-searches (#2058). */
+interface HostAnchors {
+  anchors: Anchor[];
+  /** Every anchor time on the host, ascending. */
+  times: number[];
+  /** owners[i] is the index into `anchors` of the anchor that cited times[i]. */
+  owners: number[];
+}
+
+function groupByHost(anchors: readonly Anchor[]): Map<string, HostAnchors> {
+  const lists = new Map<string, Anchor[]>();
+  for (const a of anchors) {
+    const list = lists.get(a.host);
+    if (list) list.push(a);
+    else lists.set(a.host, [a]);
+  }
+  const out = new Map<string, HostAnchors>();
+  for (const [host, list] of lists) {
+    const pairs = list.flatMap((a, i) => a.times.map((t) => [t, i] as const)).sort((x, y) => x[0] - y[0]);
+    out.set(host, { anchors: list, times: pairs.map((p) => p[0]), owners: pairs.map((p) => p[1]) });
+  }
   return out;
 }
 
@@ -175,17 +200,33 @@ function timeOf(e: ForensicEvent): number {
   return Number.isFinite(t) ? t : NaN;
 }
 
-/** Finding id -> the ids of the scoped rows it cites (forward links and back-links). */
-function citedIds(state: InvestigationState, f: Finding): Set<string> {
+/** Finding id -> the timeline rows that link back to it, in timeline order. One pass. */
+function backLinksOf(state: InvestigationState): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const e of state.forensicTimeline) {
+    for (const fid of e.relatedFindingIds) {
+      const list = out.get(fid);
+      if (list) list.push(e.id);
+      else out.set(fid, [e.id]);
+    }
+  }
+  return out;
+}
+
+/** The ids of the rows a finding cites (forward links, then back-links in timeline order). */
+function citedIds(f: Finding, backLinks: ReadonlyMap<string, readonly string[]>): Set<string> {
   const ids = new Set(f.relatedEventIds ?? []);
-  for (const e of state.forensicTimeline) if (e.relatedFindingIds.includes(f.id)) ids.add(e.id);
+  for (const id of backLinks.get(f.id) ?? []) ids.add(id);
   return ids;
 }
 
-function citedBy(state: InvestigationState, findings: readonly Finding[]): Map<string, Set<string>> {
+function citedBy(
+  findings: readonly Finding[],
+  backLinks: ReadonlyMap<string, readonly string[]>,
+): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const f of findings) {
-    for (const id of citedIds(state, f)) {
+    for (const id of citedIds(f, backLinks)) {
       const set = out.get(id) ?? new Set<string>();
       set.add(f.id);
       out.set(id, set);
@@ -198,12 +239,13 @@ function buildAnchors(
   state: InvestigationState,
   byId: ReadonlyMap<string, ForensicEvent>,
   hostOf: (raw: string) => string,
+  backLinks: ReadonlyMap<string, readonly string[]>,
 ): Anchor[] {
   const anchors: Anchor[] = [];
   for (const f of state.findings) {
     if (f.status === "dismissed" || f.buildBaseline || SEVERITY_RANK[f.severity] > MEDIUM_RANK) continue;
     const perHost = new Map<string, Anchor>();
-    for (const id of citedIds(state, f)) {
+    for (const id of citedIds(f, backLinks)) {
       const e = byId.get(id);
       const time = e ? timeOf(e) : NaN;
       if (!e?.asset?.trim() || Number.isNaN(time)) continue;
@@ -221,7 +263,11 @@ function buildAnchors(
 /** Host -> [start, end] windows: anchor times split at gaps over SESSION_GAP_MS, then padded. */
 function buildSessions(anchors: readonly Anchor[]): Map<string, [number, number][]> {
   const timesByHost = new Map<string, number[]>();
-  for (const a of anchors) timesByHost.set(a.host, [...(timesByHost.get(a.host) ?? []), ...a.times]);
+  for (const a of anchors) {
+    const times = timesByHost.get(a.host);
+    if (times) for (const t of a.times) times.push(t);
+    else timesByHost.set(a.host, [...a.times]);
+  }
   const sessions = new Map<string, [number, number][]>();
   for (const [host, times] of timesByHost) sessions.set(host, splitSessions(times));
   return sessions;
@@ -372,21 +418,17 @@ function unwrap(tokens: string[]): string[] {
   return tokens;
 }
 
-function wordIn(text: string, word: string): boolean {
-  return word.length > 0 && text.includes(` ${word} `);
-}
-
 /** Finding id -> the hosts of the scoped rows it cites. */
 function findingHosts(
-  state: InvestigationState,
   findings: readonly Finding[],
   byId: ReadonlyMap<string, ForensicEvent>,
   hostOf: (raw: string) => string,
+  backLinks: ReadonlyMap<string, readonly string[]>,
 ): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const f of findings) {
     const hosts = new Set<string>();
-    for (const id of citedIds(state, f)) {
+    for (const id of citedIds(f, backLinks)) {
       const asset = byId.get(id)?.asset?.trim();
       if (asset) hosts.add(hostOf(asset));
     }
@@ -399,22 +441,16 @@ function findingHosts(
  * Only a finding about this row's host can name it: one that cites the row itself, or cites some row
  * on the same host. `net view /all` named for host B says nothing about the same command on host A.
  */
-function isNamed(
-  c: Candidate,
-  texts: ReadonlyMap<string, string>,
-  cited: ReadonlyMap<string, Set<string>>,
-  hostsOf: ReadonlyMap<string, Set<string>>,
-): boolean {
-  const full = normalize(c.text);
+function isNamed(c: Candidate, index: NamingIndex): boolean {
   const core = coreOf(c);
-  const citing = cited.get(c.event.id);
-  for (const [id, text] of texts) {
-    if (!citing?.has(id) && !hostsOf.get(id)?.has(c.host)) continue;
-    if (text.includes(full)) return true;
-    if (core && (core.includes(" ") || core.length >= 4) && wordIn(text, core)) return true;
-    if (citing?.has(id) && wordIn(text, c.program)) return true;
-  }
-  return false;
+  return isNamedBy(index, {
+    eventId: c.event.id,
+    host: c.host,
+    full: normalize(c.text),
+    core,
+    coreCounts: !!core && (core.includes(" ") || core.length >= 4),
+    program: c.program,
+  });
 }
 
 /** Program plus its next two arguments; the file name for a file write. */
@@ -425,22 +461,51 @@ function coreOf(c: Candidate): string {
   return normalize([stripExe(baseName(tokens[0])), ...tokens.slice(1, 3)].join(" "));
 }
 
-/** `anchors` are the candidate's own host's (grouped once per run). */
-function closestAnchor(c: Candidate, anchors: readonly Anchor[]): Anchor | undefined {
-  const accounts = new Set(c.accounts.map((a) => a.toLowerCase()));
-  const scored = anchors.map((a) => ({
-    a,
-    distance: Math.min(...a.times.map((t) => Math.abs(t - c.time))),
-    sharesAccount: [...a.accounts].some((x) => accounts.has(x)) ? 0 : 1,
-  }));
-  scored.sort(
-    (x, y) =>
-      x.distance - y.distance ||
-      x.sharesAccount - y.sharesAccount ||
-      SEVERITY_RANK[x.a.finding.severity] - SEVERITY_RANK[y.a.finding.severity] ||
-      x.a.finding.id.localeCompare(y.a.finding.id),
+interface ScoredAnchor {
+  a: Anchor;
+  distance: number;
+  sharesAccount: number;
+}
+
+/** Nearest cited row in time, then a shared account, then the higher severity, then the lower id. */
+function compareAnchors(x: ScoredAnchor, y: ScoredAnchor): number {
+  return (
+    x.distance - y.distance ||
+    x.sharesAccount - y.sharesAccount ||
+    SEVERITY_RANK[x.a.finding.severity] - SEVERITY_RANK[y.a.finding.severity] ||
+    x.a.finding.id.localeCompare(y.a.finding.id)
   );
-  return scored[0]?.a;
+}
+
+/**
+ * The best anchor on the candidate's own host by compareAnchors (#2058). Only an anchor with a cited
+ * time at the smallest distance can win, so a binary search finds that distance and the anchors that
+ * reach it; among those, the first strictly-best in anchor order is what a stable sort puts first.
+ */
+function closestAnchor(c: Candidate, host: HostAnchors | undefined): Anchor | undefined {
+  if (!host?.times.length) return undefined;
+  const { times, owners } = host;
+  let lo = 0;
+  let hi = times.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] < c.time) lo = mid + 1;
+    else hi = mid;
+  }
+  const dist = (i: number): number => Math.abs(times[i] - c.time);
+  const distance = Math.min(lo < times.length ? dist(lo) : Infinity, lo > 0 ? dist(lo - 1) : Infinity);
+  const tied = new Set<number>();
+  for (let i = lo; i < times.length && dist(i) === distance; i++) tied.add(owners[i]);
+  for (let i = lo - 1; i >= 0 && dist(i) === distance; i--) tied.add(owners[i]);
+
+  const accounts = new Set(c.accounts.map((a) => a.toLowerCase()));
+  let best: ScoredAnchor | undefined;
+  for (const idx of [...tied].sort((x, y) => x - y)) {
+    const a = host.anchors[idx];
+    const scored = { a, distance, sharesAccount: [...a.accounts].some((x) => accounts.has(x)) ? 0 : 1 };
+    if (!best || compareAnchors(scored, best) < 0) best = scored;
+  }
+  return best?.a;
 }
 
 function toNote(c: Candidate): SessionCommand {

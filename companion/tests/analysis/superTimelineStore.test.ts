@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,10 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { SPAWNED_CHILD_NOTE } from "../../src/analysis/collectorChildren.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
+import { eventMatchesExclude, eventMatchesSearch } from "../../src/analysis/searchFilter.js";
+import { tagTableLabels } from "../../src/analysis/superTimeline.js";
+import { TagsStore } from "../../src/analysis/tags.js";
 
 const DatabaseSync = loadDatabaseSync();
 
@@ -536,7 +540,7 @@ describe("SuperTimelineStore", () => {
 
     // Forcing the scan path: an exclude term that matches nothing changes no result, but it does
     // switch query() onto the row-by-row path. Every query below is answered both ways and must agree.
-    async function both(q: Parameters<typeof store.query>[1], map?: Record<string, string[]>) {
+    async function both(q: Parameters<typeof store.query>[1], map?: Parameters<typeof store.query>[2]) {
       const fast = await store.query("c1", q, map);
       const scanned = await store.query("c1", { ...q, excludeText: ["zzz-matches-nothing"] }, map);
       expect(scanned).toEqual(fast);
@@ -622,6 +626,93 @@ describe("SuperTimelineStore", () => {
           (e) => e.id,
         ),
       ).toEqual(["u1"]);
+    });
+
+    // #2070: the route no longer loads every tag to build the map; the worker reads the case's tag
+    // table directly. Seeded with the same labels the map names, every answer must be identical —
+    // on the indexed path and the scan path (both()) alike.
+    async function seedTags() {
+      await new TagsStore(cases).addMany("c1", [
+        { targetType: "event", targetId: "d3", author: "analyst", label: "key-evidence" },
+        // A tagger tag counts as a label exactly like an analyst one (the old map held both).
+        { targetType: "event", targetId: "u1", author: "tagger:rule-1", label: "from-tags" },
+        // Not an event tag: never a super-timeline label, as before.
+        { targetType: "finding", targetId: "d2", author: "analyst", label: "finding-only" },
+      ]);
+    }
+
+    it("labels read from the tag table agree with the tag map, with no map passed (#2070)", async () => {
+      await seed();
+      await seedTags();
+      const queries: Parameters<typeof store.query>[1][] = [
+        {},
+        { labels: ["key-evidence"] },
+        { labels: ["from-tags", "noise"] },
+        { labels: ["finding-only"] },
+        { taggedOnly: true },
+        { starred: true },
+        { labels: ["from-tags"], from: "2026-08-01T00:00:00Z" },
+        { from: "2026-06-02T12:00:00Z", to: "2026-06-30T00:00:00Z" },
+        { taggedOnly: true, offset: 1, limit: 1 },
+      ];
+      for (const q of queries) {
+        const label = JSON.stringify(q);
+        expect(await both(q, tagTableLabels()), label).toEqual(await both(q, labelMap));
+      }
+      // Tag over sidecar: u1's sidecar star does not count once u1 carries an event tag.
+      expect((await both({ starred: true }, tagTableLabels())).events).toEqual([]);
+      expect((await both({}, tagTableLabels())).labelsAvailable).toEqual(["from-tags", "key-evidence"]);
+    });
+
+    it("a star kept in the tag table is filtered but never a facet (#2070)", async () => {
+      await seed();
+      await new TagsStore(cases).addMany("c1", [
+        { targetType: "event", targetId: "d4", author: "analyst", label: "starred" },
+      ]);
+      const r = await both({ starred: true }, tagTableLabels());
+      expect(r.events.map((e) => e.id)).toEqual(["d4", "u1"]);
+      expect(r.labelsAvailable).toEqual(["key-evidence", "noise"]);
+      expect((await both({ taggedOnly: true }, tagTableLabels())).events.map((e) => e.id)).toEqual([
+        "d2",
+        "u1",
+      ]);
+    });
+
+    it("an unmigrated tag table falls back to the caller's map (#2070)", async () => {
+      await seed();
+      // A tags.json the writer has not migrated yet: hold the migration back for these queries.
+      await writeFile(
+        join(cases.stateDir("c1"), "tags.json"),
+        JSON.stringify([
+          {
+            id: "t1",
+            targetType: "event",
+            targetId: "d3",
+            label: "legacy-file",
+            author: "a",
+            createdAt: "x",
+          },
+        ]),
+      );
+      const request = caseSqliteWorker.request.bind(caseSqliteWorker);
+      vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (message) =>
+        (message as { op?: string }).op === "migrateSuper" ? undefined : request(message),
+      );
+      const fallback = vi.fn(async () => labelMap);
+      try {
+        const r = await store.query("c1", { labels: ["key-evidence"] }, tagTableLabels(fallback));
+        expect(r.events.map((e) => e.id)).toEqual(["d2", "d3"]);
+        expect(r.labelsAvailable).toEqual(["from-tags", "key-evidence"]);
+        const scanned = await store.query(
+          "c1",
+          { labels: ["key-evidence"], excludeText: ["zzz-matches-nothing"] },
+          tagTableLabels(fallback),
+        );
+        expect(scanned).toEqual(r);
+        expect(fallback).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it("text search and exclude keep their row-by-row semantics on top of the column filters", async () => {
@@ -779,5 +870,215 @@ describe("SuperTimelineStore.rehome (#1508)", () => {
     expect(await store.rehome("c1", [])).toBe(0);
     expect((await store.meta("c1")).generation).toBe(before.generation);
     expect((await store.get("c1", "e1"))?.asset).toBe(OLD);
+  });
+});
+
+// #2069: a text search used to stream, parse and upgrade EVERY row in the window (~5 s at 70k rows,
+// match or no match). It now narrows the read with the forensic timeline's #1914 SQL prefilter and
+// takes the window-wide facets from SQL; every row-level JS predicate still decides. The reference
+// below is the old behaviour, computed in-test: the matcher over every row as the store hands it back.
+describe("SuperTimelineStore text search prefilter (#2069)", () => {
+  let cases: CaseStore;
+  let store: SuperTimelineStore;
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-search-"));
+    cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new SuperTimelineStore(cases, 100000);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Counts the rows every scanSuper response carried out of the worker. */
+  function countScannedRows(): { rows: number } {
+    const seen = { rows: 0 };
+    const original = caseSqliteWorker.request.bind(caseSqliteWorker);
+    vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (message) => {
+      const result = await original(message);
+      if ((message as { op?: string }).op === "scanSuper")
+        seen.rows += ((result as { rows?: unknown[] }).rows ?? []).length;
+      return result;
+    });
+    return seen;
+  }
+
+  it("narrows the read to rows whose stored JSON can match", async () => {
+    await store.append(
+      "c1",
+      Array.from({ length: 50 }, (_, i) =>
+        ev({
+          id: `e${i}`,
+          timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description: i === 17 ? "Suspicious service install" : `routine row ${i}`,
+          artifactName: i % 2 ? "Windows.EventLogs.Hayabusa" : "Windows.NTFS.MFT",
+          asset: i % 2 ? "HOST-A" : "HOST-B",
+        }),
+      ),
+    );
+    const seen = countScannedRows();
+    const r = await store.query("c1", { search: "susp" });
+    expect(r.events.map((e) => e.id)).toEqual(["e17"]);
+    expect(r.total).toBe(1);
+    expect(r.origins).toEqual(["Windows.EventLogs.Hayabusa", "Windows.NTFS.MFT"]);
+    expect(r.hosts).toEqual(["HOST-A", "HOST-B"]);
+    expect(seen.rows, "rows parsed out of the worker").toBeLessThanOrEqual(2);
+  });
+
+  it("an excludeText-only query still reads every row (no sound prefilter)", async () => {
+    await store.append(
+      "c1",
+      Array.from({ length: 10 }, (_, i) =>
+        ev({
+          id: `e${i}`,
+          timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description: `r${i}`,
+        }),
+      ),
+    );
+    const seen = countScannedRows();
+    const r = await store.query("c1", { excludeText: ["r3"] });
+    expect(r.total).toBe(9);
+    expect(seen.rows).toBe(10);
+  });
+
+  const VALUES = [
+    "C:\\Windows\\Temp\\evil.ps1",
+    "CORP\\ADMİN — logon",
+    "TEMP\\\u212Aeylogger.dll",
+    "plain ascii description",
+    "Suspicious service install",
+    "em dash — only",
+  ];
+
+  async function seedParity() {
+    await store.append(
+      "c1",
+      VALUES.map((description, i) =>
+        ev({
+          id: `v${i}`,
+          timestamp: i === 3 ? "" : new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description,
+          artifactName: i % 2 ? "Windows.EventLogs.Hayabusa" : "Windows.NTFS.MFT",
+          asset: i % 3 ? "HOST-A" : undefined,
+          processName: "svc.exe",
+        }),
+      ).concat([
+        ev({
+          id: "legacy",
+          timestamp: "2026-02-01T00:00:00Z",
+          description: "logon — legacy",
+          processName: "svc.exe",
+        }),
+        ev({
+          id: "edge",
+          timestamp: "2026-02-02T00:00:00Z",
+          description: "logon — edge",
+          processName: "svc.exe",
+        }),
+      ]),
+    );
+    await store.setLabels("c1", "v0", ["key-evidence"]);
+    // Rows as an older build left them: one with no canonical envelope (the read-time upgrade
+    // synthesises one), one an audited edge writer stored without its provenance stamp.
+    const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+    try {
+      const rows = db.prepare("SELECT row_id, payload FROM entities WHERE kind='superTimeline'").all() as {
+        row_id: number;
+        payload: string;
+      }[];
+      for (const row of rows) {
+        const event = JSON.parse(row.payload) as ForensicEvent & { canonical?: Record<string, unknown> };
+        if (event.id === "legacy") delete event.canonical;
+        else if (event.id === "edge" && event.canonical)
+          event.canonical = {
+            ...event.canonical,
+            producer: { importer: "network", parserVersion: "1", mappingVersion: "t" },
+            network: { source: { address: "203.0.113.9" } },
+          };
+        else continue;
+        db.prepare("UPDATE entities SET payload=? WHERE row_id=?").run(JSON.stringify(event), row.row_id);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  const TERMS = [
+    "C:\\Windows\\Temp",
+    "\\temp\\",
+    "admin",
+    "admi\u0307n",
+    "keylogger",
+    "KEYLOGGER",
+    "edge-observed",
+    "observed",
+    "description",
+    "svc.exe",
+    "logon —",
+    "zzzzqq",
+  ];
+
+  it("returns exactly what the old full-scan matcher returned, with the same facets", async () => {
+    await seedParity();
+    const all = await store.collect("c1", (e) => e);
+    expect(all.find((e) => e.id === "edge")?.canonical?.network?.source?.provenance).toBe("edge-observed");
+    expect(all.find((e) => e.id === "legacy")?.canonical).toBeTruthy();
+    const facets = await store.query("c1", { limit: 0 });
+    for (const term of TERMS) {
+      for (const excludeText of [undefined, ["legacy"]]) {
+        const expected = all.filter(
+          (e) => eventMatchesSearch(e, term) && !(excludeText && eventMatchesExclude(e, excludeText)),
+        );
+        const r = await store.query("c1", { search: term, excludeText, limit: 1000 });
+        const label = `${JSON.stringify(term)} excl=${JSON.stringify(excludeText)}`;
+        expect(r.events, label).toEqual(expected);
+        expect(r.total, label).toBe(expected.length);
+        expect(r.origins, label).toEqual(facets.origins);
+        expect(r.hosts, label).toEqual(facets.hosts);
+        expect(r.labelsAvailable, label).toEqual(facets.labelsAvailable);
+      }
+    }
+    // A JSON key is not a value: "description" must not match every row.
+    expect((await store.query("c1", { search: "description" })).events.map((e) => e.id)).toEqual(["v3"]);
+  });
+
+  it("facets stay window-wide under a search, with and without a tag map", async () => {
+    await seedParity();
+    const window = { from: "2026-01-31T00:00:00Z", to: "2026-03-01T00:00:00Z" };
+    for (const map of [undefined, { v1: ["from-tags"] }]) {
+      const r = await store.query("c1", { search: "keylogger" }, map);
+      expect(r.events.map((e) => e.id)).toEqual(["v2"]);
+      expect(r.origins).toEqual(["Unknown", "Windows.EventLogs.Hayabusa", "Windows.NTFS.MFT"]);
+      expect(r.hosts).toEqual(["(no host)", "HOST-A"]);
+      expect(r.labelsAvailable).toEqual(map ? ["from-tags", "key-evidence"] : ["key-evidence"]);
+      const windowed = await store.query("c1", { search: "keylogger", ...window }, map);
+      expect(windowed.events).toEqual([]);
+      const plain = await store.query("c1", { ...window, limit: 0 }, map);
+      expect(windowed.origins).toEqual(plain.origins);
+      expect(windowed.hosts).toEqual(plain.hosts);
+      expect(windowed.labelsAvailable).toEqual(plain.labelsAvailable);
+    }
+  });
+
+  it("a search keeps the tag table's labels when no map is sent (#2070)", async () => {
+    await seedParity();
+    await new TagsStore(cases).addMany("c1", [
+      { targetType: "event", targetId: "v2", author: "tagger:rule-1", label: "from-tags" },
+      { targetType: "event", targetId: "v0", author: "analyst", label: "starred" },
+    ]);
+    const map = { v2: ["from-tags"], v0: ["starred"] };
+    for (const q of [
+      { search: "keylogger", labels: ["from-tags"] },
+      { search: "keylogger", taggedOnly: true },
+      { search: "svc.exe", starred: true },
+      { search: "svc.exe", labels: ["key-evidence"] },
+      { search: "keylogger" },
+    ]) {
+      const fromTable = await store.query("c1", q, tagTableLabels());
+      expect(fromTable, JSON.stringify(q)).toEqual(await store.query("c1", q, map));
+    }
+    const r = await store.query("c1", { search: "keylogger", labels: ["from-tags"] }, tagTableLabels());
+    expect(r.events.map((e) => e.id)).toEqual(["v2"]);
+    // v0's sidecar "key-evidence" gives way to its event tag (a star, never a facet).
+    expect(r.labelsAvailable).toEqual(["from-tags"]);
   });
 });

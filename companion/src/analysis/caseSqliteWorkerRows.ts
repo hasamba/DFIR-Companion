@@ -269,6 +269,83 @@ function patchStateMeta(dbPath, patch) {
   }
 }
 
+// #2060: one forensic row placed where a stable sort by event time (forensicSort.byEventTime) puts
+// it, in one transaction, instead of a whole-case load, sort and save. A parseable time goes after
+// the last row at or before it (ties keep the existing rows first); an unparseable one goes last.
+// The neighbours come from the time index and the (kind, ordinal) key. With no free ordinal
+// between them, the timeline is spread ORDINAL_GAP times wider, set-based as the merge does. Returns false
+// when the case has no stored state yet, so the caller can create it.
+function forensicInsertAfter(db, timeMs) {
+  if (timeMs === null) {
+    return Number(db.prepare("SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind='forensicTimeline'").get().n);
+  }
+  const last = db.prepare(
+    "SELECT timestamp_ms AS t FROM entities WHERE kind='forensicTimeline' AND timestamp_ms<=? " +
+    "ORDER BY timestamp_ms DESC LIMIT 1"
+  ).get(timeMs);
+  if (!last) return -1;
+  return Number(db.prepare(
+    "SELECT max(ordinal) AS n FROM entities WHERE kind='forensicTimeline' AND timestamp_ms=?"
+  ).get(last.t).n);
+}
+
+function forensicInsertOrdinal(db, timeMs) {
+  const prev = forensicInsertAfter(db, timeMs);
+  const next = db.prepare("SELECT min(ordinal) AS n FROM entities WHERE kind='forensicTimeline' AND ordinal>?").get(prev).n;
+  if (next === null || next === undefined) return prev < 0 ? 0 : prev + ORDINAL_GAP;
+  return Number(next) - prev >= 2 ? Math.floor((prev + Number(next)) / 2) : null;
+}
+
+function spreadForensicOrdinals(db) {
+  const top = Number(db.prepare("SELECT coalesce(max(ordinal), 0) AS n FROM entities WHERE kind='forensicTimeline'").get().n);
+  // (o + 1) * ORDINAL_GAP, not o * ORDINAL_GAP: a row at ordinal 0 must get room in front of it too.
+  if ((top + 2) * ORDINAL_GAP <= ORDINAL_MAX) {
+    db.prepare("UPDATE entities SET ordinal=-ordinal-1 WHERE kind='forensicTimeline'").run();
+    db.prepare("UPDATE entities SET ordinal=(-ordinal)*? WHERE kind='forensicTimeline'").run(ORDINAL_GAP);
+    db.prepare("UPDATE entity_values SET ordinal=(ordinal+1)*? WHERE kind='forensicTimeline'").run(ORDINAL_GAP);
+    return;
+  }
+  // Too wide to spread: renumber every row (i + 1) * ORDINAL_GAP, in its current order.
+  const rows = db.prepare("SELECT row_id FROM entities WHERE kind='forensicTimeline' ORDER BY ordinal").all();
+  db.prepare("UPDATE entities SET ordinal=-ordinal-1 WHERE kind='forensicTimeline'").run();
+  const setRow = db.prepare("UPDATE entities SET ordinal=? WHERE row_id=?");
+  const setValues = db.prepare("UPDATE entity_values SET ordinal=? WHERE row_id=?");
+  rows.forEach((row, i) => {
+    setRow.run((i + 1) * ORDINAL_GAP, row.row_id);
+    setValues.run((i + 1) * ORDINAL_GAP, row.row_id);
+  });
+}
+
+function insertForensicInOrder(dbPath, entity, updatedAt) {
+  if (!existsSync(dbPath)) return false;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const metaRow = db.prepare("SELECT value FROM storage_meta WHERE key='investigation'").get();
+      if (!metaRow) return false;
+      const timeMs = entityProjection("forensicTimeline", entity, 0).timestampMs;
+      let ordinal = forensicInsertOrdinal(db, timeMs);
+      if (ordinal === null) {
+        spreadForensicOrdinals(db);
+        ordinal = forensicInsertOrdinal(db, timeMs);
+      }
+      createEntityWriter(db).insert(entityProjection("forensicTimeline", entity, ordinal), entity);
+      db.prepare(
+        "INSERT INTO entity_counts(kind, count) VALUES('forensicTimeline', 1) " +
+        "ON CONFLICT(kind) DO UPDATE SET count=entity_counts.count+1"
+      ).run();
+      if (typeof updatedAt === "string") {
+        const meta = JSON.parse(metaRow.value);
+        meta.updatedAt = updatedAt;
+        db.prepare("UPDATE storage_meta SET value=? WHERE key='investigation'").run(JSON.stringify(meta));
+      }
+      return true;
+    });
+  } finally {
+    db.close();
+  }
+}
+
 function dispatchRows(message) {
   switch (message.op) {
     case "forensicOutline": return forensicOutline(message.dbPath, message.withKeys);
@@ -282,6 +359,7 @@ function dispatchRows(message) {
     case "updateEntityRows": return updateEntityRows(message.dbPath, message.kind, message.rows);
     case "deleteEntityRows": return deleteEntityRows(message.dbPath, message.kind, message.rowIds);
     case "patchStateMeta": return patchStateMeta(message.dbPath, message.patch);
+    case "insertForensicInOrder": return insertForensicInOrder(message.dbPath, message.entity, message.updatedAt);
     default: return dispatchFacts(message); // caseSqliteWorkerFacts.ts
   }
 }

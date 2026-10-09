@@ -36,6 +36,7 @@ export function xmlSafeText(value: string): string {
 // Markdown reads `<RLO>` as an HTML tag (GitHub hides it), and a path's own backslash before it
 // ("victim\<RLO>") escapes the bracket. Single angle quotes mean nothing to Markdown, in a code span
 // or after a backslash, so the marker survives every renderer and the DOCX lexer.
+// Display-only and one-way: a literal "‹RLO›" in evidence renders the same — see bidiControl.ts.
 const MD_MARKER_OPEN = "\u2039";
 const MD_MARKER_CLOSE = "\u203a";
 

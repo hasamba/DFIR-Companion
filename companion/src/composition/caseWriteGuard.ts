@@ -22,9 +22,25 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
+import { frozenCaseRefusal } from "../routes/importCaseGuard.js";
 
 /** Manual-evidence POST routes, relative to /cases/:id. Compared lowercased. */
 const FROZEN_WHEN_CLOSED = new Set(["/events", "/iocs"]);
+
+/**
+ * Ingest POST routes outside the /import* family (#2071), relative to /cases/:id. Each one pulls
+ * evidence into the case (a drop-folder tool batch, a Velociraptor hunt, external import or collect,
+ * an IRIS case import) and refuses with the import routes' "before importing evidence" wording. All
+ * of them are registered after this gate in routeRegistry.ts. /velociraptor/hunt-rows is left out on
+ * purpose: it only reads a hunt's results, so an analyst can still review a closed case.
+ */
+const INGEST_FROZEN_WHEN_CLOSED = new Set([
+  "/drop/run-pending",
+  "/velociraptor/run-bundle",
+  "/velociraptor/import-external",
+  "/velociraptor/collect",
+  "/iris-import",
+]);
 
 export function mountCaseWriteGuard(app: Express, store: CaseStore): void {
   app.use("/cases/:id", function caseWriteGuardGate(req: Request, res: Response, next: NextFunction) {
@@ -39,18 +55,16 @@ export function mountCaseWriteGuard(app: Express, store: CaseStore): void {
         .replace(/^\/cases\/[^/]+\//, "/")
         .replace(/\/+$/, "")
         .toLowerCase() || "/";
-    if (!FROZEN_WHEN_CLOSED.has(rel)) return next();
+    const purpose = FROZEN_WHEN_CLOSED.has(rel)
+      ? "adding evidence"
+      : INGEST_FROZEN_WHEN_CLOSED.has(rel)
+        ? "importing evidence"
+        : null;
+    if (!purpose) return next();
 
-    const caseId = req.params.id;
-    void store
-      .getCaseMeta(caseId)
-      .catch(() => null)
-      .then((meta) => {
-        if (meta?.status !== "closed" && meta?.status !== "archived") return next();
-        const action = meta.status === "archived" ? "restore it" : "reopen it";
-        res
-          .status(423)
-          .json({ error: `Case "${caseId}" is ${meta.status} — ${action} before adding evidence` });
-      });
+    frozenCaseRefusal(store, req.params.id, purpose).then((refusal) => {
+      if (!refusal) return next();
+      res.status(423).json({ error: refusal });
+    }, next);
   });
 }

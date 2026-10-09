@@ -682,6 +682,10 @@
     if (!caseId) { superSaveMsg("open a case first", false); return; }
     const start = utcInputToIso((document.getElementById("stFrom") || {}).value || "");
     const end = utcInputToIso((document.getElementById("stTo") || {}).value || "");
+    // Check the range before the name prompt (#2067): the server rejects it anyway, but only after
+    // a wasted prompt and with "start"/"end" wording the From/To inputs never show. Server check stays.
+    if (!start || !end) { superSaveMsg("Set both From and To before saving a timeframe", false); return; }
+    if (Date.parse(end) < Date.parse(start)) { superSaveMsg("To must be after From", false); return; }
     const label = window.prompt("Name this timeframe (e.g. Attacker session 1):", "");
     if (!label) return;
     fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`, {

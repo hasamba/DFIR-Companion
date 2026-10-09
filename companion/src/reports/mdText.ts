@@ -101,13 +101,18 @@ export function sessionCommandsMd(f: Finding, visible: ReadonlyMap<string, unkno
     "- Other commands in this session (not named above):",
     ...shown.map((c) => {
       const who = c.accounts?.length ? ` (${oneLineMd(c.accounts.join(", "))})` : "";
-      return `  - ${oneLineMd(c.timestamp || "(undated)")} on ${codeSpan(c.host)}${who}: ${codeSpan(c.text)}`;
+      return `  - ${oneLineMd(c.timestamp || "(undated)")} on ${codeSpanMd(c.host)}${who}: ${codeSpanMd(c.text)}`;
     }),
     ...(more ? [`  - … and ${more} more in the case timeline`] : []),
   ];
 }
 
-function codeSpan(value: string): string {
+/**
+ * Inline code for untrusted text: flattened onto one line (oneLineMd), in a backtick fence longer
+ * than any backtick run inside it (CommonMark), so the text can neither open a section nor close the
+ * span early and borrow emphasis or link syntax (#1594, #2052).
+ */
+export function codeSpanMd(value: string): string {
   const text = oneLineMd(value);
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longest + 1);

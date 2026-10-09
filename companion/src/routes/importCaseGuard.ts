@@ -52,10 +52,14 @@ export const EVIDENCE_IMPORT_ROUTES = [
 // Mounted as ONE handler ahead of the route handlers rather than repeated inside each of them:
 // routes/import.ts is size-frozen (#384), and a single mount cannot drift route to route.
 //
-// Runs before each route's own payload parsing and before the closed/archived 423 check. Both are
-// deliberate: an unknown case id is not a payload problem and nothing should touch disk before the
-// case identity is settled, and an archived case still satisfies caseExists() (caseDir() falls back
-// to _archived/), so archived/closed cases keep their 423 rather than collapsing into this 404.
+// Runs before each route's own payload parsing: an unknown case id is not a payload problem, and
+// nothing should touch disk before the case identity is settled.
+//
+// It also carries the closed/archived half of the contract (#2054): a case that exists but is
+// closed or archived gets 423, the same as POST /events and /iocs. That check used to live inline
+// in /import and /import-file only, so every per-format route still 202-accepted evidence into a
+// frozen case. An archived case satisfies caseExists() (caseDir() falls back to _archived/), so
+// it reaches the status check and gets its 423 rather than collapsing into the 404.
 export function registerImportCaseGuard(app: Express, store: CaseStore): void {
   const paths = EVIDENCE_IMPORT_ROUTES.map((route) => `/cases/:id/${route}`);
   app.post(paths, async (req: Request, res: Response, next: NextFunction) => {
@@ -70,14 +74,50 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
       throw err;
     }
     try {
-      if (await store.caseExists(caseId)) return next();
+      if (!(await store.caseExists(caseId))) {
+        return res
+          .status(404)
+          .json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
+      }
     } catch (err) {
       return next(err);
     }
-    return res
-      .status(404)
-      .json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
+    const refusal = await frozenCaseRefusal(store, caseId);
+    if (refusal) return res.status(423).json({ error: refusal });
+    return next();
   });
+}
+
+/**
+ * The closed/archived half of the ingest contract (#2054, #2071), kept as one message source: the
+ * 423 text for a closed or archived case, or null when the case may take evidence. A case whose
+ * metadata cannot be read is not refused here, because existence is each caller's own 404 check.
+ *
+ * `purpose` ends the sentence. Ingest routes say "importing evidence", and the manual /events and
+ * /iocs gate (composition/caseWriteGuard.ts) keeps its "adding evidence" wording.
+ */
+export async function frozenCaseRefusal(
+  store: CaseStore,
+  caseId: string,
+  purpose = "importing evidence",
+): Promise<string | null> {
+  const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
+  if (status !== "closed" && status !== "archived") return null;
+  const action = status === "archived" ? "restore it" : "reopen it";
+  return `Case "${caseId}" is ${status} — ${action} before ${purpose}`;
+}
+
+/**
+ * frozenCaseRefusal as Express middleware: 423 on a closed or archived case, otherwise next(). Used
+ * by ingest routes registered BEFORE caseWriteGuard's gate, such as the tool-run routes (#2071).
+ */
+export function refuseFrozenCase(store: CaseStore) {
+  return function refuseFrozenCaseGate(req: Request, res: Response, next: NextFunction): void {
+    frozenCaseRefusal(store, req.params.id).then((refusal) => {
+      if (refusal) res.status(423).json({ error: refusal });
+      else next();
+    }, next);
+  };
 }
 
 // The two routes that consume the analyst's "asset for this import" (#1496): the unified sniffing

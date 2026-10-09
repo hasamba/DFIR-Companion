@@ -18,7 +18,6 @@ import { resolveBackupConfig } from "../../src/storage/backupManager.js";
 import { ReportGeneration } from "../../src/reports/reportGeneration.js";
 import { writeFailedAnswer } from "../../src/analysis/ai/failedAnswerLog.js";
 import { appendDropLog } from "../../src/analysis/dropLog.js";
-import { copyHandleExclusive } from "../../src/routes/importFileSource.js";
 import { archiveCase } from "../../src/analysis/caseArchive.js";
 import { importZipArchiveCase } from "../../src/analysis/caseZipImport.js";
 import { mountCaseWriteExistsGate } from "../../src/composition/caseWriteExistsGate.js";
@@ -84,11 +83,10 @@ describe("guarded writers refuse a deleted case and recreate nothing (#1855)", (
     await create();
     const src = join(root, "..", `src-${Date.now()}.bin`);
     await writeFile(src, "x");
-    const dest = join(store.importsDir("c1"), "copy.bin");
     await deleted();
     const handle = await open(src, "r");
     try {
-      await expectRefusedAndNoFolder(() => copyHandleExclusive(handle, dest));
+      await expectRefusedAndNoFolder(() => store.saveImportFromHandle("c1", "copy.bin", handle));
     } finally {
       await handle.close();
     }

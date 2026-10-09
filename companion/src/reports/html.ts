@@ -6,6 +6,7 @@ import { renderMarkdownReport } from "./markdown.js";
 import { caseDomains, defangIndicators } from "./defang.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { escapeHtml } from "./escapeHtml.js";
+import { isAbsoluteWebLink } from "./linkPolicy.js";
 import type { CustodyRecord } from "../analysis/custody.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
@@ -29,18 +30,15 @@ function attr(name: string, value: string | null | undefined): string {
   return value ? ` ${name}="${escapeHtml(value)}"` : "";
 }
 
+// #2072: absolute http(s)/mailto only. No base URL, so `//host` and `\\host\share` (which
+// become `file://host/share` when the saved report is opened from disk) are rejected.
 function safeLinkUrl(href: string): boolean {
-  try {
-    const u = new URL(href, "https://dfir-companion.local");
-    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:";
-  } catch {
-    return false;
-  }
+  return isAbsoluteWebLink(href);
 }
 
 function safeImageUrl(href: string): boolean {
   if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(href)) return true;
-  return safeLinkUrl(href);
+  return isAbsoluteWebLink(href);
 }
 
 // Self-contained, dependency-free stylesheet. Tuned for on-screen reading and for

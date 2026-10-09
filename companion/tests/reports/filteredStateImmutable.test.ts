@@ -9,6 +9,7 @@ import { ScopeStore } from "../../src/analysis/scope.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { seedDemoCase } from "../../src/analysis/seedDemoCase.js";
 import { renderInteractiveHtmlReport } from "../../src/reports/interactiveHtml.js";
+import { checkEvidenceSafety } from "../../src/reports/evidenceSafety.js";
 import { renderStandalonePresentationChecked } from "../../src/reports/presentationExport.js";
 
 // #1915: concurrent report requests now share ONE filtered-state object. That is safe only while no
@@ -84,6 +85,13 @@ describe("report projections never write into the shared filtered state (#1915)"
     ["redactedReportContents", () => writer.redactedReportContents(CASE, (v) => v)],
     // Route consumers of filteredState(): the interactive report and the presentation export.
     ["interactive report", async () => renderInteractiveHtmlReport(await writer.filteredState(CASE))],
+    [
+      "interactive report (report-lite load, #2057)",
+      async () => {
+        const lite = await writer.filteredState(CASE, true);
+        return checkEvidenceSafety(lite, renderInteractiveHtmlReport(lite));
+      },
+    ],
     [
       "presentation export",
       async () =>

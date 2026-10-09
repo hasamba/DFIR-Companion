@@ -595,3 +595,42 @@ describe("parseHayabusaTimeline — Net Conn aggregation keeps each peer and eac
     expect(evs[0].count).toBe(2);
   });
 });
+
+// An unparseable stamp used to pass through unchanged as the event time (#2063): `9999-…` sorted
+// last and time-window code silently dropped the event. The row is kept with an empty time instead.
+describe("parseHayabusaTimeline — malformed timestamp (#2063)", () => {
+  it("keeps a JSONL row with an impossible ISO stamp but leaves its time empty", () => {
+    const rec = { ...jsonProc(), Timestamp: "9999-99-99T99:99:99.000+00:00" };
+    const r = parseHayabusaTimeline(JSON.stringify(rec));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toBe("");
+  });
+
+  it.each([["9999-99-99 99:99:99.000 +00:00"], ["2026-13-45 10:00:00"], ["not a date"]])(
+    "keeps a CSV row stamped %s but leaves its time empty",
+    (stamp) => {
+      const text = csvTimeline([
+        [stamp, "WS02", "Sec", "4625", "medium", "Failed Logon", "SrcIP: 192.168.1.50", ""],
+      ]);
+      const r = parseHayabusaTimeline(text);
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0].timestamp).toBe("");
+    },
+  );
+
+  it("still normalizes a valid offset stamp to UTC", () => {
+    const text = csvTimeline([
+      [
+        "2026-05-01 10:00:00.123 +02:00",
+        "WS02",
+        "Sec",
+        "4625",
+        "medium",
+        "Failed Logon",
+        "SrcIP: 192.168.1.50",
+        "",
+      ],
+    ]);
+    expect(parseHayabusaTimeline(text).events[0].timestamp).toBe("2026-05-01T08:00:00.123Z");
+  });
+});

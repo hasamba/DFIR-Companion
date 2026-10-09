@@ -77,6 +77,7 @@ import {
 } from "./webRecordFields.js";
 import { isIP } from "node:net";
 import { createCanonicalEvent } from "./canonicalEvent.js";
+import { isRealUtcTime } from "./bsdTime.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -128,7 +129,9 @@ export function looksLikeCombinedLog(filename: string, text: string): boolean {
   return hits >= 2 && hits >= lines.length * 0.5;
 }
 
-// "14/May/2024:19:00:00 +0000" → ISO. Returns "" when unparseable.
+// "14/May/2024:19:00:00 +0000" → ISO. Returns "" when unparseable — including an impossible
+// wall-clock date (Feb 31, hour 24), checked BEFORE the offset applies so a real date whose offset
+// crosses midnight still parses (#2061).
 export function parseApacheDate(raw: string): string {
   const m = raw
     .trim()
@@ -137,6 +140,8 @@ export function parseApacheDate(raw: string): string {
   const [, dd, mon, yyyy, hh, mi, ss, tz] = m;
   const month = MONTHS[mon];
   if (!month) return "";
+  const [y, mo, d, h, n, s] = [yyyy, month, dd, hh, mi, ss].map(Number);
+  if (!isRealUtcTime(y, mo, d, h, n, s)) return "";
   const offset = tz ? `${tz.slice(0, 3)}:${tz.slice(3)}` : "Z";
   const t = Date.parse(`${yyyy}-${month}-${dd.padStart(2, "0")}T${hh}:${mi}:${ss}${offset}`);
   return Number.isNaN(t) ? "" : new Date(t).toISOString();

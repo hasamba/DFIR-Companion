@@ -49,6 +49,19 @@ describe("parseApacheDate", () => {
   it('returns "" for garbage', () => {
     expect(parseApacheDate("not a date")).toBe("");
   });
+  // #2061 — the wall-clock parts are checked before the offset applies, so Feb 31 is not rolled to
+  // Mar 3 and hour 24 is not rolled into the next day.
+  it('returns "" for an impossible date instead of rolling it over', () => {
+    expect(parseApacheDate("31/Feb/2026:10:00:00 +0200")).toBe("");
+    expect(parseApacheDate("31/Apr/2026:10:00:00 +0000")).toBe("");
+    expect(parseApacheDate("29/Feb/2026:10:00:00 +0000")).toBe("");
+    expect(parseApacheDate("01/Jan/2026:24:00:00")).toBe("");
+  });
+  it("keeps a real date whose offset crosses a day boundary", () => {
+    expect(parseApacheDate("14/May/2024:19:00:00 +0000")).toBe("2024-05-14T19:00:00.000Z");
+    expect(parseApacheDate("01/Mar/2024:01:00:00 +0200")).toBe("2024-02-29T23:00:00.000Z");
+    expect(parseApacheDate("29/Feb/2024:23:30:00 -0100")).toBe("2024-03-01T00:30:00.000Z");
+  });
 });
 
 describe("mapCombinedLogLine", () => {

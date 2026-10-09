@@ -5,6 +5,8 @@ import { withoutEventAliases } from "../analysis/eventAliases.js";
 import { withoutRejectedEventTags, withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js";
 import { searchForensicTimeline } from "../analysis/forensicSearch.js";
+import { eventAliasSource } from "../analysis/eventAliasRead.js";
+import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -56,6 +58,13 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         projectAlignment(skew, timeline.entities),
         state.rejectedTechniques,
       );
+      // The automatic tagger's labels for THIS page's rows (#2059) — the tag list no longer carries them.
+      const eventTaggerTags = await taggerTagsForRows(
+        options.tagsStore,
+        eventAliasSource(options.stateStore),
+        req.params.id,
+        forensicTimeline.map((e) => e.id),
+      );
       return res.status(200).json({
         ...withoutEventAliases(state), // #1715: lineage is server bookkeeping
         forensicTimeline,
@@ -64,6 +73,7 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         // and the client must not print it as if it were the number of matches.
         ...(timeline.totalIsLowerBound ? { forensicTimelineTotalIsLowerBound: true } : {}),
         forensicTimelineNextCursor: timeline.nextCursor,
+        eventTaggerTags,
         // ATT&CK names for every technique this payload mentions. The dashboard's MITRE
         // panel completes the stored table from the techniques the events carry, exactly as
         // analysis/eventTechniques.ts does server-side, and until now it had no way to name a row

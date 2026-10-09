@@ -56,7 +56,7 @@ import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
-import { copyHandleExclusive, openImportFile } from "./importFileSource.js";
+import { openImportFile } from "./importFileSource.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
@@ -547,10 +547,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
-      // never string-decode is still persisted faithfully) and append the audit line.
-      await store.mkdirInCase(store.importsDir(caseId));
-      // Exclusive: never overwrite evidence already on disk (#214). From the judged handle (#1834).
-      const size = await copyHandleExclusive(src.handle, join(store.importsDir(caseId), storedName));
+      // never string-decode is still persisted faithfully) and append the audit line. From the
+      // judged handle (#1834), exclusive (#214), and through the store so custody records it (#2055).
+      const { bytes: size } = await store.saveImportFromHandle(caseId, storedName, src.handle);
       await store.appendImport(caseId, {
         caseId,
         sequenceNumber: seq,

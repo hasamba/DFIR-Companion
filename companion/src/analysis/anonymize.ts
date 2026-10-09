@@ -12,9 +12,11 @@ import {
   collectUsernames,
   insideSuppressedAccount,
   isGuardedUsername,
+  shortHostLabels,
   isNoiseAccount,
   isNoiseDomain,
   preservedSpans,
+  replaceUncServers,
   strictlyInside,
   usernameRegExp,
 } from "./anonUsernames.js";
@@ -644,6 +646,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     t = anonCustom(t); // analyst-added entities always win (outside IPv6 literals)
     if (policy.redactSecrets) t = redactSecrets(t);
+    // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
+    if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);
     if (policy.categories.PATH) t = anonUserPaths(t);
@@ -770,7 +774,8 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     ...state.iocs.map((i) => i.value),
   ];
   const usernames = collectUsernames({ texts, accountsOf: extractAccounts, internalDomains: domains });
-  return { hosts: [...hosts].sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
+  const allHosts = [...new Set([...hosts, ...shortHostLabels(hosts, domains)])];
+  return { hosts: allHosts.sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }
 
 // Is the configured AI provider on-box (so screenshots sent to it don't leave the machine)?

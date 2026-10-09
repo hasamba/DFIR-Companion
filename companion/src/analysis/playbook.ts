@@ -1,6 +1,13 @@
 import { z } from "zod";
-import type { Finding, InvestigationState, Severity, StepPriority } from "./stateTypes.js";
-import { tacticForTechniques } from "./mitreTactics.js";
+import type {
+  CollectDirective,
+  Finding,
+  ForensicEvent,
+  InvestigationState,
+  Severity,
+  StepPriority,
+} from "./stateTypes.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import { collectSummary, isActionableCollect } from "./collectDirective.js";
 import { uncoveredCoreTactics, tacticCollectDirectives } from "./knownUnknowns.js";
 import { rankHosts } from "./hostRanking.js";
@@ -207,8 +214,11 @@ interface FindingSeedInput {
   aiTask: StoredFindingTask | undefined;
   foldedNotes: readonly string[];
   rabbitHole: boolean;
-  topHosts: readonly string[];
-  aliasIndex?: HostAliasIndex;
+  // Built once per derive (#2058): the directives depend on the tactic and the case, never on the
+  // finding, and rebuilding them (evidence graph, connective IOCs, a sorted timeline copy) for every
+  // finding made a hayabusa-sized case lock the server for minutes.
+  directivesFor: (tactic: IrisTactic) => readonly CollectDirective[];
+  eventsById: ReadonlyMap<string, ForensicEvent>;
 }
 
 function findingSeed(f: Finding, input: FindingSeedInput, priority: StepPriority): DerivedTaskSeed {
@@ -219,11 +229,9 @@ function findingSeed(f: Finding, input: FindingSeedInput, priority: StepPriority
     task = aiTask;
   } else {
     const tactic = tacticForTechniques(f.mitreTechniques ?? [], f.description ?? "");
-    const directives = tactic
-      ? tacticCollectDirectives(tactic, state, state.forensicTimeline, input.topHosts, input.aliasIndex)
-      : [];
+    const directives = tactic ? input.directivesFor(tactic) : [];
     task = fallbackFindingTask(f, {
-      hosts: findingEvidenceHosts(f, state.forensicTimeline),
+      hosts: findingEvidenceHosts(f, state.forensicTimeline, input.eventsById),
       // The directive's expectedOutcome reads "unexplained by any finding" — true for the
       // known-unknown tasks it was written for, wrong under a finding that explains it.
       collectLines: directives
@@ -251,6 +259,23 @@ function findingSeed(f: Finding, input: FindingSeedInput, priority: StepPriority
     source: "finding",
     sourceKey: `finding:${f.id}`,
     relatedFindingId: f.id,
+  };
+}
+
+// One tacticCollectDirectives call per tactic per derive, shared by every finding card and the
+// known-unknown tasks (same arguments, so the same output as calling it each time).
+function memoDirectives(
+  state: InvestigationState,
+  topHosts: readonly string[],
+  aliasIndex?: HostAliasIndex,
+): (tactic: IrisTactic) => readonly CollectDirective[] {
+  const cache = new Map<IrisTactic, readonly CollectDirective[]>();
+  return (tactic) => {
+    const hit = cache.get(tactic);
+    if (hit) return hit;
+    const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts, aliasIndex);
+    cache.set(tactic, dirs);
+    return dirs;
   };
 }
 
@@ -306,6 +331,8 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   }
   // Top hosts feed both the fallback task's collect directives and the known-unknown tasks below.
   const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
+  const directivesFor = memoDirectives(state, topHosts, opts.aliasIndex);
+  const eventsById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
   for (const f of state.findings ?? []) {
     if (f.status === "dismissed") continue;
     const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
@@ -327,11 +354,7 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
       continue;
     }
     seeds.push(
-      findingSeed(
-        f,
-        { state, aiTask, foldedNotes, rabbitHole, topHosts, aliasIndex: opts.aliasIndex },
-        seedPriority,
-      ),
+      findingSeed(f, { state, aiTask, foldedNotes, rabbitHole, directivesFor, eventsById }, seedPriority),
     );
   }
   // Collection tasks from OPEN questions (investigation-guidance #8): an unknown/partial key question
@@ -357,7 +380,7 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   // task, pointed at the right host + artifact (tacticCollectDirectives). Only fires once the case has
   // a real (Critical/High) finding — uncoveredCoreTactics gates on that. Stable sourceKey `ku:<tactic>`.
   for (const tactic of uncoveredCoreTactics(state)) {
-    const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts, opts.aliasIndex);
+    const dirs = directivesFor(tactic);
     if (!dirs.length) continue;
     seeds.push({
       title: `Collect evidence for the unexplained phase: ${tactic}`,

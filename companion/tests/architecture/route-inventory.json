@@ -282,6 +282,7 @@
     "ROUTE POST /cases/:id/sessions/:sid/summary",
     "ROUTE GET /cases/:id/comments",
     "ROUTE GET /cases/:id/tags",
+    "ROUTE POST /cases/:id/tags/tagger-for",
     "ROUTE GET /cases/:id/false-positive",
     "ROUTE GET /cases/:id/learned-patterns",
     "ROUTE POST /cases/:id/false-positive",

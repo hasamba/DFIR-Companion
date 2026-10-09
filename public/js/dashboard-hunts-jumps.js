@@ -265,7 +265,9 @@
 
   // Filter the forensic timeline to EXACTLY a set of event ids (e.g. every event behind a Timeline
   // Anomaly bucket) so the analyst sees all of them, not just the first. Clears other view filters
-  // first so none of the targeted events stay hidden, expands the section, scrolls it into view.
+  // first, expands the section, scrolls it into view. The view's severity floor and the ⊕
+  // corroboration lens survive, as they do for jumpToEvent (#1658); renderEvIdFilterChip says how
+  // many rows each holds back (#2065).
   function filterTimelineToEventIds(ids, label) {
     const list = (ids || []).map(String).filter(Boolean);
     if (!list.length) return;
@@ -301,8 +303,30 @@
     el.style.display = "";
     el.innerHTML =
       `<span data-safe-style="color:var(--accent)">⧉ Showing ${shown} of ${n} event${n !== 1 ? "s" : ""} in this group` +
-      `${DfirTimelineView.eventIdLabel() ? " — " + esc(DfirTimelineView.eventIdLabel()) : ""}</span>` +
+      `${DfirTimelineView.eventIdLabel() ? " — " + esc(DfirTimelineView.eventIdLabel()) : ""}` +
+      `${shown < n ? evIdHeldBackText() : ""}</span>` +
       ` <button type="button" data-act="clearEvIdFilter" data-safe-style="margin-left:8px;font-size:11px;background:var(--border-color);border:none;color:var(--text-primary);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
+  }
+
+  // Why the chip shows fewer rows than the filter names (#2065). The id filter keeps the two lenses
+  // jumpToEvent keeps (#1658) — the view's severity floor and the ⊕ corroboration lens — so it
+  // counts, per cause, the ids each one holds back, plus the ids not in the loaded part of the
+  // timeline (#1916). Rows both lenses let through are not attributed. Returns escaped HTML, or "".
+  function evIdHeldBackText() {
+    const loaded = new Map((DfirState.lastFt() || []).map((e) => [String(e.id), e]));
+    const counts = { floor: 0, corrob: 0, missing: 0 };
+    for (const id of DfirTimelineView.eventIdNames() || []) {
+      const ev = loaded.get(String(id));
+      const reason = ev ? timelineLensReason(ev) : "missing";
+      if (reason) counts[reason]++;
+    }
+    const parts = [];
+    if (counts.floor) {
+      parts.push(`${counts.floor} ${lensFloorText()} (${LENS_FIX.floor} to see them)`);
+    }
+    if (counts.corrob) parts.push(`${counts.corrob} hidden by the ⊕ corroboration lens (${LENS_FIX.corrob} to see them)`);
+    if (counts.missing) parts.push(`${counts.missing} not in the loaded part of the timeline (search for them to see them)`);
+    return parts.length ? " · " + esc(parts.join("; ")) : "";
   }
 
   // Reveal a forensic event by id and scroll+flash it — used by the Evidence panel's supporting-event
@@ -414,19 +438,36 @@
     const view = DfirState.activeView();
     return (view && view.filters && view.filters.minSeverity) || null;
   }
+  // Which surviving lens hides an event: "floor", "corrob", or "" when neither does. ONE test and
+  // ONE set of phrases shared by jumpToEvent's refusal and the id-filter chip (#2065), so the two
+  // can never disagree about why a row is hidden or what to change.
+  function timelineLensReason(ev) {
+    const floor = timelineViewFloor();
+    if (floor && !viewMeetsMinSev(ev.severity, ev)) return "floor";
+    const corrob = DfirTimelineView.corrobTimeline();
+    if (corrob > 1 && realSourceCount(ev.sources) < corrob) return "corrob";
+    return "";
+  }
+  // Raw text — the chip escapes it; the toast is text.
+  function lensFloorText() {
+    const view = DfirState.activeView();
+    const name = view && view.name ? `"${view.name}"` : "the active";
+    return `below the ${name} dashboard view's ${timelineViewFloor()}+ floor`;
+  }
+  const LENS_FIX = {
+    floor: "switch to a view without a severity floor, e.g. Analyst,",
+    corrob: 'set the timeline\'s ⊕ lens to "any"',
+  };
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   // Why the event cannot be shown, in the analyst's words — or "" when it can.
   function timelineLensHiding(id) {
     const ev = (DfirState.lastFt() || []).find((e) => String(e.id) === id);
-    if (!ev) return "";
-    const floor = timelineViewFloor();
-    if (floor && !viewMeetsMinSev(ev.severity, ev)) {
-      const view = DfirState.activeView();
-      const name = view && view.name ? `"${view.name}"` : "the active";
-      return `That event is ${ev.severity || "unrated"}, below the ${name} dashboard view's ${floor}+ floor. Switch to a view without a severity floor (e.g. Analyst) to see it.`;
+    const reason = ev ? timelineLensReason(ev) : "";
+    if (reason === "floor") {
+      return `That event is ${ev.severity || "unrated"}, ${lensFloorText()}. ${capitalize(LENS_FIX.floor)} to see it.`;
     }
-    const corrob = DfirTimelineView.corrobTimeline();
-    if (corrob > 1 && realSourceCount(ev.sources) < corrob) {
-      return `That event has fewer than ${corrob} corroborating sources, so the timeline's corroboration lens hides it. Set the timeline's ⊕ lens to "any" to see it.`;
+    if (reason === "corrob") {
+      return `That event has fewer than ${DfirTimelineView.corrobTimeline()} corroborating sources, so the timeline's ⊕ corroboration lens hides it. ${capitalize(LENS_FIX.corrob)} to see it.`;
     }
     return "";
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, open, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -57,6 +57,24 @@ describe("CaseStore artifact-stored hook", () => {
         provenance: undefined,
       },
     ]);
+  });
+
+  it("notifies with path and sha256 when an import is saved from an open handle", async () => {
+    // POST /cases/:id/import-file copies by handle; it must land in custody like saveImport (#2055).
+    const bytes = Buffer.from("ts,message\n2026-01-01T00:00:00Z,big file\n");
+    const src = join(await mkdtemp(join(tmpdir(), "dfir-handle-src-")), "src.csv");
+    await writeFile(src, bytes);
+    const handle = await open(src, "r");
+    try {
+      const saved = await store.saveImportFromHandle("c1", "0001_x.csv", handle);
+
+      expect(saved.bytes).toBe(bytes.length);
+      expect(seen).toEqual([
+        { caseId: "c1", path: saved.path, sha256: sha256(bytes), kind: "import", provenance: undefined },
+      ]);
+    } finally {
+      await handle.close();
+    }
   });
 
   it("does not notify when the write fails", async () => {

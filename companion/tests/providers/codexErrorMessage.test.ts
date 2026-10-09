@@ -76,3 +76,39 @@ describe("Codex error message (#2042)", () => {
     expect(err.message).toBe("Codex: stream error: connection reset");
   });
 });
+
+// #2051: kind "model" stops every retry and blames the model setting, so it needs the API's own
+// 4xx refusal, not just a sentence that mentions a model and "not found".
+const envelope = (status: number, type: string, message: string) =>
+  JSON.stringify({
+    type: "error",
+    message: JSON.stringify({ type: "error", status, error: { type, message } }),
+  });
+
+describe("Codex model-error classification (#2051)", () => {
+  it("does not treat a reworded model-metadata warning as a model error", async () => {
+    const stdout = '{"type":"error","message":"model metadata not found for gpt-5.1"}';
+    const err = await caught(analyze(stdout));
+    expect(err.kind).not.toBe("model");
+    expect(err.message).not.toMatch(/Settings/);
+  });
+
+  it("retries a server error that mentions a model and 'not found'", async () => {
+    const stdout = envelope(500, "server_error", "The model produced invalid output, request id not found.");
+    const err = await caught(analyze(stdout));
+    expect(err.kind).not.toBe("model");
+    expect(err.message).not.toMatch(/Settings/);
+    const fn = vi.fn(async () => {
+      throw err;
+    });
+    await expect(withRetry(fn, 3, 0)).rejects.toBe(err);
+    expect(fn.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("still classifies a 404 'model does not exist' refusal as a model error", async () => {
+    const stdout = envelope(404, "invalid_request_error", "The model `gpt-9` does not exist.");
+    const err = await caught(analyze(stdout));
+    expect(err.kind).toBe("model");
+    expect(err.message).toMatch(/Settings/);
+  });
+});

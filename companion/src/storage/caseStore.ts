@@ -10,6 +10,7 @@ import {
   rmdir,
   unlink,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -18,6 +19,7 @@ import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
+import { copyHandleHashed } from "./handleCopy.js";
 import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
@@ -105,8 +107,9 @@ export class CaseStore {
   private readonly deleting = new Map<string, number>();
 
   // Notified after every artifact write below, so chain-of-custody is recorded for ALL stored
-  // evidence rather than only where a caller remembered to ask (#231). It lives here, at the two
-  // methods that actually write evidence, because saveImport alone has 25 call sites — instrumenting
+  // evidence rather than only where a caller remembered to ask (#231). It lives here, in the methods
+  // that write evidence (saveScreenshot, saveImport, saveRawImport, saveImportFromHandle), because
+  // saveImport alone has 25 call sites — instrumenting
   // them individually would guarantee a gap, and every future one would start life uncovered.
   // Injected rather than imported so storage/ keeps knowing nothing about custody.
   private artifactStoredListener: ArtifactStoredListener | null = null;
@@ -676,6 +679,22 @@ export class CaseStore {
       provenance,
     });
     return path;
+  }
+
+  /** A server file copied by its open handle (POST /import-file), hashed in the same pass (#2055). */
+  async saveImportFromHandle(
+    caseId: string,
+    filename: string,
+    handle: FileHandle,
+    provenance?: ArtifactProvenance,
+  ): Promise<{ path: string; bytes: number }> {
+    const path = join(this.importsDir(caseId), filename);
+    const { bytes, sha256 } = await this.withCaseWrite(path, async () => {
+      await mkdir(this.importsDir(caseId), { recursive: true });
+      return copyHandleHashed(handle, path); // create-exclusive (#214)
+    });
+    await this.announceArtifact({ caseId, path, sha256, kind: "import", provenance });
+    return { path, bytes };
   }
 
   async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {

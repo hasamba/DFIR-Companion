@@ -185,7 +185,7 @@ By default, the Companion **tokenizes identifying information** before sending a
 | IPv4 addresses (internal — RFC1918, loopback, link-local, CGNAT) | `ANON_IP_1`, `ANON_IP_2`, … |
 | IPv4 addresses (public, routable) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible, and the known limitation for what "public" excludes |
 | IPv6 addresses (internal, or public within `2000::/3` / IPv4-mapped) | `ANON_IP_n` / `ANON_EXTIP_n` — see the IPv6 note below for what's out of scope |
-| Hostnames | `ANON_HOST_1`, … |
+| Hostnames | `ANON_HOST_1`, … — a host known by its full name (`dc01.corp.local`) also has its short name (`dc01`, `DC01$`) tokenized, and the short name is listed as a separate auto-discovered host. A short name that is a common word (`server`, `www`, `mail`) is left alone. The server name in a share path (`\\FS01\C$`) is masked as a host too, so it can appear as an auto-discovered host; add it to the suppress list to keep it visible |
 | Usernames (`DOMAIN\user`, UPNs on an internal domain) | `ANON_DOMAIN_1\ANON_USER_1`, `ANON_USER_1@ANON_DOMAIN_2` — **ASCII names only**, see below |
 | Bare usernames in prose (`the account jdoe ran scp`) | the same `ANON_USER_n` the qualified form got. A username found in any qualified form (account, UPN, profile path) is replaced wherever it appears as a whole word. Common words used as account names (`admin`, `test`, `user`, `guest`, `system`, `root`, …) are replaced only in their qualified forms |
 | Email addresses | `ANON_EMAIL_1`, … — **ASCII local parts only**, see below |
