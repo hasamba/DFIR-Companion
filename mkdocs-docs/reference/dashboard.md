@@ -18,7 +18,9 @@ next-decision questions before exposing the full panel inventory.
   (Reconnaissance → Initial Access → Execution → … → Impact). Each card shows when and where the stage was first
   seen, its most severe event, and the top finding it backs; the card's top edge is coloured by the
   worst severity in the stage. Stages with no evidence are skipped; Info events do not count. Click
-  the stage name or event count to filter the Forensic Timeline to that stage; click the finding to
+  the stage name or event count to filter the Forensic Timeline to that stage (a dashboard view's
+  severity floor or the ⊕ corroboration lens still applies, and the timeline's filter chip says how
+  many rows each holds back, and how many are past the loaded part of the timeline); click the finding to
   open it. A stage with no evidence gets a greyed card in its place — *no evidence yet* — linking to
   the Evidence Gaps panel, so "did not happen" and "not collected" never look the same.
   Reconnaissance never gets a *no evidence yet* card, because recon usually runs on the

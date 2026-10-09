@@ -282,7 +282,9 @@
   }
 
   // A stage card filters the forensic timeline to exactly that stage's events. The section is
-  // revealed first so a profile that hides the timeline still shows the filtered rows.
+  // revealed first so a profile that hides the timeline still shows the filtered rows. The view's
+  // severity floor and the ⊕ corroboration lens stay on (#1658); the filter chip counts the rows
+  // they hold back, so a stage card's count and the rows shown can differ (#2065).
   function cockpitStoryStage(el) {
     const stages =
       (lastCockpit && lastCockpit.story && lastCockpit.story.stages) || [];
