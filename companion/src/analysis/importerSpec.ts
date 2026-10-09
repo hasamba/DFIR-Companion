@@ -26,6 +26,7 @@ export const IMPORT_KINDS = [
   "cybertriage",
   "m365",
   "okta",
+  "mdehunting",
   "gws",
   "hindsight",
   "macos",

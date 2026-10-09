@@ -217,6 +217,19 @@ describe("detectImportKind — JSON formats", () => {
       "okta",
     );
   });
+  it("mdehunting: Defender advanced-hunting row (Timestamp + ActionType + DeviceName) (#2097)", () => {
+    expect(
+      detectImportKind(
+        "Microsoft365DefenderEvents.json",
+        j([{ Timestamp: "2026-01-02T00:00:00Z", ActionType: "LdapSearch", DeviceName: "h1.example.test" }]),
+      ),
+    ).toBe("mdehunting");
+  });
+  it("mdehunting: a bare Timestamp + ActionType pair is not claimed (#2097)", () => {
+    expect(detectImportKind("x.json", j([{ Timestamp: "2026-01-02T00:00:00Z", ActionType: "X" }]))).not.toBe(
+      "mdehunting",
+    );
+  });
   it("gws: Admin SDK Reports activity", () => {
     expect(
       detectImportKind(

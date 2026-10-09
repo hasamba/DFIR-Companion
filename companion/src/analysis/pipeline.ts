@@ -390,6 +390,9 @@ export class AnalysisPipeline {
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
   }
+  importMdeHunting(...args: ImporterArgs<typeof ingest.importMdeHunting>): Promise<InvestigationState> {
+    return ingest.importMdeHunting(this.importCtx, ...args);
+  }
 
   importAzureStorageLog(
     ...args: ImporterArgs<typeof ingest.importAzureStorageLog>

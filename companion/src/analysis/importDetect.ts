@@ -33,6 +33,7 @@ import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { isKapeCopyLog, isKapeSkipLog } from "./kapeAcquisitionLog.js";
 import { looksLikeSyslog } from "./syslogImport.js";
 import { looksLikeZeekTsv } from "./zeekTsv.js";
+import { looksLikeMdeHunting } from "./mdeHuntingImport.js";
 import { IMPORT_KINDS } from "./importerSpec.js";
 import type { EngineDetectContext } from "./declarativeImporter.js";
 // Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
@@ -405,6 +406,8 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isHindsight(sample)) return "hindsight";
   if (isMacosFamily(root)) return "macos";
   if (isM365(sample)) return "m365";
+  // Defender XDR advanced hunting (#2097): after M365 (UAL rows keep Operation/AuditData at top level), before Velociraptor.
+  if (looksLikeMdeHunting(sample)) return "mdehunting";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
   // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive; checked early so the generic SIEM/network catch-alls can't claim it.

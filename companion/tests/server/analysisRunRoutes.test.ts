@@ -218,6 +218,7 @@ describe("analysis-run routes", () => {
   it("BUILT_IN_IMPORT_KINDS includes every real importer #1107 found missing", () => {
     for (const kind of [
       "okta",
+      "mdehunting",
       "gws",
       "hindsight",
       "macos",
