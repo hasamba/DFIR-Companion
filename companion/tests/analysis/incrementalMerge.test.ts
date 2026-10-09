@@ -575,7 +575,7 @@ describe("incremental importer merge — Run-key value then its start (#2082)", 
       evidence: { rawRecords: [{ source: "siem", locator: `row:${ts}` }] },
       producer: { importer: "siem", parserVersion: "1", mappingVersion: "siem-v1" },
       ...extra,
-    } as Parameters<typeof createCanonicalEvent>[0]);
+    });
   const runRow = (): Ev => ({
     id: "run",
     timestamp: day(3),

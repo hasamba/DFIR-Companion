@@ -33,6 +33,8 @@ interface Rec {
   deltas: Delta[];
 }
 
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
 function harness() {
   const els = new Map<string, FakeEl>();
   const el = (id: string): FakeEl => {
@@ -79,7 +81,13 @@ function harness() {
   const follow = async (after: Rec) => {
     reply = after;
     api.applyAllSecondOpinion("case-1", "referee");
-    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    // The fetch → json → render chain settles in a few macrotask turns (same idiom as
+    // secondOpinionUnapplied.test.ts).
+    await tick();
+    await tick();
+    await tick();
+    await tick();
+    await tick();
   };
   return { api, panel, press, follow, el };
 }
