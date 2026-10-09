@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { reserveCaseForWrites } from "./archiveImportBarrier.js";
+import { refuseFrozenCase } from "./importCaseGuard.js";
 import { join, basename } from "node:path";
 import { writeFile, rm, mkdtemp } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
@@ -58,6 +59,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   app.post(
     ["/cases/:id/tools/:toolId/run", "/cases/:id/tools/:toolId/run-upload"],
     reserveCaseForWrites(store.casesRoot),
+    refuseFrozenCase(store), // #2071: a closed or archived case takes no tool output (423)
   );
   app.get("/tools/status", (_req: Request, res: Response) => {
     const configured = ctx.liveToolConfigs()();

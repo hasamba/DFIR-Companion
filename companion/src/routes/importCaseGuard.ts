@@ -82,15 +82,42 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
     } catch (err) {
       return next(err);
     }
-    const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
-    if (status === "closed" || status === "archived") {
-      const action = status === "archived" ? "restore it" : "reopen it";
-      return res
-        .status(423)
-        .json({ error: `Case "${caseId}" is ${status} — ${action} before importing evidence` });
-    }
+    const refusal = await frozenCaseRefusal(store, caseId);
+    if (refusal) return res.status(423).json({ error: refusal });
     return next();
   });
+}
+
+/**
+ * The closed/archived half of the ingest contract (#2054, #2071), kept as one message source: the
+ * 423 text for a closed or archived case, or null when the case may take evidence. A case whose
+ * metadata cannot be read is not refused here, because existence is each caller's own 404 check.
+ *
+ * `purpose` ends the sentence. Ingest routes say "importing evidence", and the manual /events and
+ * /iocs gate (composition/caseWriteGuard.ts) keeps its "adding evidence" wording.
+ */
+export async function frozenCaseRefusal(
+  store: CaseStore,
+  caseId: string,
+  purpose = "importing evidence",
+): Promise<string | null> {
+  const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
+  if (status !== "closed" && status !== "archived") return null;
+  const action = status === "archived" ? "restore it" : "reopen it";
+  return `Case "${caseId}" is ${status} — ${action} before ${purpose}`;
+}
+
+/**
+ * frozenCaseRefusal as Express middleware: 423 on a closed or archived case, otherwise next(). Used
+ * by ingest routes registered BEFORE caseWriteGuard's gate, such as the tool-run routes (#2071).
+ */
+export function refuseFrozenCase(store: CaseStore) {
+  return function refuseFrozenCaseGate(req: Request, res: Response, next: NextFunction): void {
+    frozenCaseRefusal(store, req.params.id).then((refusal) => {
+      if (refusal) res.status(423).json({ error: refusal });
+      else next();
+    }, next);
+  };
 }
 
 // The two routes that consume the analyst's "asset for this import" (#1496): the unified sniffing
