@@ -79,6 +79,34 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("![pixel]");
   });
 
+  it("does not link or embed protocol-relative, UNC or relative targets (#2072)", () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "UNC markdown",
+      description:
+        "[a](//fileserver/share) [b](\\\\fileserver\\share) [c](/\\evil/x) [d](relative/x) " +
+        "![p](//fileserver/p.png) [m](mailto:soc@example.invalid)",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
+    const html = renderHtmlReport(state);
+    expect(html).not.toContain('href="//');
+    expect(html).not.toContain('href="\\');
+    expect(html).not.toContain('href="/\\');
+    expect(html).not.toContain('href="relative');
+    expect(html).not.toContain('src="//');
+    for (const visible of ["[a]", "[b]", "[c]", "[d]", "![p]"]) expect(html).toContain(visible);
+    // An absolute target is still linked. (Evidence https URLs are defanged to hxxps before
+    // rendering, so the https accept case is covered in linkPolicy.test.ts.)
+    expect(html).toContain('<a href="mailto:');
+  });
+
   it("does not auto-print the base report (the saved/downloaded HTML stays clean)", () => {
     const html = renderHtmlReport(emptyState("c1"));
     expect(html).not.toContain("window.print()");

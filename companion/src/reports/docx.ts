@@ -27,6 +27,7 @@ import {
 } from "./evidenceSafety.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { xmlSafeText } from "./controlChars.js";
+import { isAbsoluteWebLink } from "./linkPolicy.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { DEFAULT_ACCENT, defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
@@ -227,19 +228,10 @@ function classifyHeading(
   };
 }
 
-// Link schemes Word may receive as a live External relationship (#2053).
-const SAFE_DOCX_LINK_SCHEME = /^(?:https?|mailto):/i;
-
-// True only for an ABSOLUTE http(s)/mailto href, judged on the raw string with no base URL,
-// so relative, protocol-relative (//host) and UNC (\\host) hrefs are rejected along with
-// javascript:/file:/ms-msdt:/vbscript:/data: and defanged hxxp(s) targets.
+// Which links Word may receive as a live External relationship (#2053). Shared with the
+// HTML report (#2072) so the two exports cannot drift: absolute http(s)/mailto only.
 function isSafeDocxLinkTarget(href: string): boolean {
-  if (!SAFE_DOCX_LINK_SCHEME.test(href)) return false;
-  try {
-    return SAFE_DOCX_LINK_SCHEME.test(new URL(href).protocol);
-  } catch {
-    return false;
-  }
+  return isAbsoluteWebLink(href);
 }
 
 // Inline tokens (strong/em/codespan/link/text) → docx run primitives. We accept the parent
