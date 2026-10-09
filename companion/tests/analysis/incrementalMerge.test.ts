@@ -15,6 +15,7 @@ import { applyUndoDelta } from "../../src/analysis/importUndoDelta.js";
 import { diffTimeline } from "../../src/analysis/timelineDiff.js";
 import { outlineEvents } from "../../src/analysis/forensicRows.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 
 // #1874: the incremental importer merge must leave exactly the state today's full merge leaves —
 // forensic timeline order and content, IOCs, findings, metadata — on every step of a sequence of
@@ -557,5 +558,80 @@ describe("incremental importer merge — undo and import counts", () => {
     const counts = async (c: "full" | "inc") =>
       diffTimeline(outlineEvents(baseline[c].outline), outlineEvents(await store.forensicOutline(c)));
     expect(await counts("inc")).toEqual(await counts("full"));
+  });
+});
+
+// #2082: a Run value and the start that runs it may arrive in either order, from separate imports.
+// The full merge and the path mergeIntoCase picks must agree, and a stored Run value must send every
+// later import down the full merge (mergeIndex.ts "Run-key value"). A row demoted out of the forensic
+// timeline is never read back (CLAUDE.md §7).
+describe("incremental importer merge — Run-key value then its start (#2082)", () => {
+  const RUN_KEY = "HKU\\S-1-5-21-1-2-3-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Webcache";
+  const LOCK = "C:\\Users\\jdoe\\AppData\\Roaming\\Microsoft\\cache.lock,VoidFunc";
+  const env = (category: "process" | "registry", type: string, ts: string, extra: Record<string, unknown>) =>
+    createCanonicalEvent({
+      event: { category, type },
+      time: { observed: ts, normalized: ts },
+      evidence: { rawRecords: [{ source: "siem", locator: `row:${ts}` }] },
+      producer: { importer: "siem", parserVersion: "1", mappingVersion: "siem-v1" },
+      ...extra,
+    } as Parameters<typeof createCanonicalEvent>[0]);
+  const runRow = (): Ev => ({
+    id: "run",
+    timestamp: day(3),
+    description: "Registry value set",
+    path: RUN_KEY,
+    canonical: env("registry", "change", day(3), {
+      registry: { key: RUN_KEY, valueData: `rundll32.exe ${LOCK}` },
+    }),
+  });
+  const startRow = (id: string, severity: "Low" | "Info" = "Low"): Ev => ({
+    id,
+    timestamp: day(4),
+    description: "Process created",
+    severity,
+    processName: "rundll32.exe",
+    commandLine: `"C:\\Windows\\system32\\rundll32.exe" ${LOCK}`,
+    path: "C:\\Windows\\System32\\rundll32.exe",
+    canonical: env("process", "start", day(4), {}),
+  });
+  const ctx = (): WindowContext => windowCtx();
+  const find = (state: InvestigationState, id: string) => state.forensicTimeline.find((e) => e.id === id);
+
+  it("stored start, then the Run value: the incremental path refuses and both merges raise the start", async () => {
+    await importBoth(delta([...batch("a", 5), startRow("p1")]));
+    await expectSame();
+    const d = delta([runRow()]);
+    const out = await mergeIncrementally(store, "inc", d, ctx(), mergeIndexStamp());
+    expect(out).toEqual({ ok: false, reason: "a correlation pass has work: Run-key value" });
+    await importBoth(d);
+    const state = await expectSame();
+    const p1 = find(state, "p1");
+    expect(p1?.severity).toBe("High");
+    expect(p1?.mitreTechniques).toContain("T1547.001");
+    expect(p1?.description).toContain("[persistence executed:");
+  });
+
+  it("Run value first, start later: the same result", async () => {
+    await importBoth(delta([...batch("a", 5), runRow()]));
+    await expectSame();
+    expect(await importBoth(delta([startRow("p1")]))).toBe(false);
+    const state = await expectSame();
+    expect(find(state, "p1")?.severity).toBe("High");
+  });
+
+  it("never reads back a start that was demoted out of the forensic timeline", async () => {
+    await importBoth(delta([...batch("a", 5), startRow("p0", "Info")]));
+    // What demote does: the Info row leaves the forensic timeline for the super-timeline.
+    await both(async (c) => {
+      const rows = await store.forensicRowsById(c, ["p0"]);
+      await store.deleteForensicRows(
+        c,
+        rows.map((r) => r.rowId),
+      );
+    });
+    await importBoth(delta([runRow()]));
+    const state = await expectSame();
+    expect(find(state, "p0")).toBeUndefined();
   });
 });

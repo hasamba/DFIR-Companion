@@ -38,6 +38,7 @@ import { linkQuarantineVisitOrigin } from "./quarantineVisitOrigin.js";
 import { linkQuarantineExecution } from "./quarantineExecutionLink.js";
 import { corroborateSmbExecution } from "./smbExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
+import { corroborateRunKeyExecution } from "./runKeyExecution.js";
 import { markInfectionWindow } from "./mobileInfectionWindow.js";
 import { markAppCorroboration } from "./mobileBackgroundActivity.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
@@ -442,8 +443,8 @@ export function runTimelineChain(
   const withSmbExecution = corroborateSmbExecution(withQuarantineLinks);
   // A Defender action, then a later start of the same file on the same host (#930 item 1 part B).
   // Here because the Defender record and the process start arrive from different imports. Only
-  // ever raises; its notes are recomputed from the current evidence on every merge.
-  const withDefender = corroborateDefenderEpisodes(withSmbExecution);
+  // ever raises; notes recomputed on every merge. Then a start that runs a stored Run value (#2082).
+  const withDefender = corroborateRunKeyExecution(corroborateDefenderEpisodes(withSmbExecution));
   // A mobile extraction's infection window (#932 item 18): rows of a subject device before or
   // after its earliest malicious app-inventory sign. Here because the verdict that makes a sign
   // arrives with enrichment, after the import; recomputed on every merge, notes only.

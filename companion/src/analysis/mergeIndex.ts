@@ -26,6 +26,7 @@ import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
 import { isTransferToolRow } from "./transferToolStaging.js";
 import { isToolStoreRow } from "./toolStoreFolder.js";
+import { isRunKeyValueRow } from "./runKeyExecution.js";
 
 /**
  * What the incremental importer merge keeps per forensic row (#1874), computed from the row exactly
@@ -143,6 +144,7 @@ export function mergeTrigger(e: ForensicEvent): string | null {
   if (c?.quarantine || c?.quarantineAttribute) return "quarantine record";
   if (isSmbStagedWrite(e) || isRpcPipeCall(e) !== null) return "SMB staging or pipe call";
   if (c?.defender) return "Defender record";
+  if (isRunKeyValueRow(e)) return "Run-key value";
   if (c?.mobile) return "mobile record";
   if (c?.event?.category === "process" && (c.event.type === "remote_thread" || c.event.type === "tamper"))
     return "process injection";

@@ -33,6 +33,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "injection sequence",
   "hollowing sequence",
   "after Defender",
+  "persistence executed",
   "infection window",
   "app corroboration",
   "smb-staged file executed",

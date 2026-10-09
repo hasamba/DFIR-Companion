@@ -57,3 +57,12 @@ describe("DERIVED_NOTE_NAMES registry", () => {
     for (const name of found) expect(DERIVED_NOTE_NAMES).toContain(name);
   });
 });
+
+describe("persistence executed note (#2082)", () => {
+  it("is registered, so a later pass's clip keeps it intact", () => {
+    expect(DERIVED_NOTE_NAMES).toContain("persistence executed");
+    const first = appendDerivedNote("x".repeat(5000), "[persistence executed:", "runs the Run value 'u'");
+    const second = appendDerivedNote(first, "[unexpected parent:", "started by winword.exe");
+    expect(second).toContain("[persistence executed: runs the Run value 'u']");
+  });
+});
