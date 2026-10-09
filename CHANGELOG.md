@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Custody appendix paths escaped** — an artifact path with a line break or backticks can no longer forge a heading or break its code span in the report (closes #2052)
+- **Word report links restricted** — only absolute http, https and mailto links stay clickable; javascript:, file:, ms-msdt: and similar targets render as plain text (closes #2053)
+- **HTML report blocks share links** — `//host` and `\\host\share` links and images no longer pass the report's link filter (closes #2072)
+- **Short host names redacted** — the short name of every known full host name is masked in the redacted package and in text sent to the AI (closes #2056)
+- **Admin-share paths redacted** — the server in `\\HOST\C$`-style paths is masked as a host, and share names are no longer learned as user names (closes #2073)
+- **Closed cases refuse imports** — every per-format import route answers 423 for a closed or archived case (closes #2054)
+- **Closed cases refuse other ingest** — Velociraptor bundle, external import and collect, tool runs, IRIS import and the manual drop-folder run refuse closed and archived cases (closes #2071)
+- **Server-path imports in chain of custody** — a file imported by server path gets a custody record with its SHA-256 (closes #2055)
+- **Impossible syslog dates rejected** — syslog, Cisco ASA and Apache dates such as Feb 31 or hour 24 are left unparsed instead of rolling into the next day (closes #2061)
+- **Hayabusa JSON recovers after a bad record** — one unterminated record in a pretty-printed timeline no longer drops every record after it (closes #2064)
+- **Hayabusa bad timestamps left empty** — an unparseable Hayabusa time is no longer used as the event time (closes #2063)
+- **Chainsaw bad timestamps left empty** — an unreadable Chainsaw time falls back to the detection time or stays empty (closes #2074)
+- **THOR stray lines dropped** — a `null`, array or empty JSON line no longer crashes the THOR import or becomes a phantom event (closes #2062)
+- **Cockpit story follows host merges** — hosts confirmed as the same host count as one in the story, under the chosen name (closes #2066)
+- **Filter chip names what hides rows** — a stage, anomaly or session filter that shows fewer rows says how many the severity floor, the ⊕ lens or the load cap holds back (closes #2065)
+- **Timeframe range checked first** — saving a named timeframe with an empty or reversed From/To says so before asking for a name (closes #2067)
+- **Deep pass shows its time** — a deep pass that just finished shows its timestamp without a reload (closes #2068)
+- **Codex model errors classified correctly** — only a 4xx refusal of the model counts as a model error, so transient failures are retried (closes #2051)
+- **Bidi marker brackets guarded** — the escape helper rejects empty or bidi-bearing brackets, and markers are documented as display-only (closes #2050)
+- **Manual event and IOC adds are fast** — adding one event or IOC no longer loads and saves the whole case (closes #2060)
+- **Synthesis no longer blocks the server** — the post-synthesis playbook and session-command passes no longer grow with the square of the case (closes #2058)
+- **Lighter loads for small exports** — timeline gaps, swimlane, IOC blocklist, STIX and the interactive report skip unused provenance data (closes #2057)
+- **Tag list is analyst tags only** — automatic tag labels now come with each timeline page, so the tag list stays small and dashboards reload it once per burst (closes #2059)
+- **Super-timeline search is prefiltered** — a text search reads only candidate rows instead of every row in the window (closes #2069)
+- **Super-timeline paging is faster** — label filters and facets are read from the tag table instead of loading every tag per page (closes #2070)
+
 ## [0.42.0] - 2026-10-08
 
 ### Added
