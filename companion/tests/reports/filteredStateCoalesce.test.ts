@@ -68,6 +68,24 @@ describe("ReportWriter shares concurrent whole-case loads (#1915)", () => {
     expect((results[5] as { forensicTimeline: unknown[] }).forensicTimeline).toHaveLength(2);
   });
 
+  it("the report-lite and full loads are separate cohorts that never join each other (#2057)", async () => {
+    const load = vi.spyOn(stateStore, "load");
+    const [lite, full] = await Promise.all([
+      writer.filteredState("c1", true),
+      writer.filteredState("c1"),
+      writer.swimlane("c1"),
+      writer.timelineGaps("c1"),
+      writer.anomalies("c1"),
+      writer.phases("c1"),
+    ]);
+    const calls = load.mock.calls.map((args) => JSON.stringify(args));
+    expect(calls.sort()).toEqual(
+      [JSON.stringify(["c1"]), JSON.stringify(["c1", { slimCanonical: true }])].sort(),
+    );
+    expect(lite).not.toBe(full);
+    expect((lite as { forensicTimeline: unknown[] }).forensicTimeline).toHaveLength(2);
+  });
+
   it("a request that arrives after an import finished sees the new event, even with an older load still running", async () => {
     const original = stateStore.load.bind(stateStore);
     let releaseFirst!: () => void;

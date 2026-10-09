@@ -32,11 +32,20 @@ export interface FilteredStateSources {
   falsePositives?: FalsePositiveStore;
 }
 
+/**
+ * `slim` (#2057) reads the forensic rows without their canonical provenance blocks (fieldProvenance,
+ * fieldProvenanceDefaults, evidence): about half the bytes of a whole-case load. Only for a surface
+ * that renders none of them — timeline gaps, the swimlane, the IOC blocklist, STIX and the interactive
+ * report, each pinned by tests/reports/filteredStateLite.test.ts. Everything else keeps the full rows.
+ */
 export async function loadFilteredState(
   src: FilteredStateSources,
   caseId: string,
+  opts: { slim?: boolean } = {},
 ): Promise<InvestigationState> {
-  const loaded = await src.state.load(caseId);
+  const loaded = opts.slim
+    ? await src.state.load(caseId, { slimCanonical: true })
+    : await src.state.load(caseId);
   // Clock-skew alignment (#228) applies FIRST, so every consumer reasons over one time axis. Each
   // shifted event keeps its recorded time in `originalTimestamp`. Scope filtering follows, so an
   // alignment that moves an event across the investigation window is honoured by the window too.

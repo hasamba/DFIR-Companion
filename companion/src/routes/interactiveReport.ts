@@ -17,7 +17,7 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.reportWriter.filteredState(caseId);
+      const state = await options.reportWriter.filteredState(caseId, true); // #2057: no provenance blocks
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
       const reportMeta = options.reportMetaStore
         ? await options.reportMetaStore.load(caseId).catch(() => emptyReportMeta())

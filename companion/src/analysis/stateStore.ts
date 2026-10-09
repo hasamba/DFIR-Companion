@@ -288,8 +288,9 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     );
   }
 
-  async load(caseId: string): Promise<InvestigationState> {
-    return wholeCaseLoads.run(() => this.loadState(caseId, [])); // #1915: capped across the process
+  async load(caseId: string, opts: { slimCanonical?: boolean } = {}): Promise<InvestigationState> {
+    // #1915: capped across the process. slimCanonical (#2057): report routes only, see filteredState.ts.
+    return wholeCaseLoads.run(() => this.loadState(caseId, [], opts.slimCanonical === true));
   }
 
   async loadOverview(caseId: string): Promise<InvestigationState> {
@@ -310,13 +311,14 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     return this.loadState(caseId, ["forensicTimeline", "iocs"]);
   }
 
-  private async loadState(caseId: string, excludedKinds: string[]): Promise<InvestigationState> {
+  private async loadState(caseId: string, excluded: string[], slim = false): Promise<InvestigationState> {
     const startedAt = performance.now();
     if (!(await this.ensureMigrated(caseId))) return emptyState(caseId);
     const parsed = await caseSqliteWorker.request<Partial<InvestigationState> | null>({
       op: "loadState",
       dbPath: this.databasePath(caseId),
-      excludedKinds,
+      excludedKinds: excluded,
+      slimCanonical: slim,
     });
     if (parsed?.caseId && parsed.caseId !== caseId) {
       await caseSqliteWorker.request<void>({
