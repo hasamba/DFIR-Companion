@@ -105,6 +105,50 @@
       `<ul data-safe-style="margin:4px 0 0 18px;padding:0">${items}</ul></div>`
     );
   }
+  // #2081 — "follow referee" leaves every delta the referee made no call on ("review") pending.
+  // Derived from the record: pending, no call, not held for the analyst (#1596, its own ⚠ line), and
+  // a referee that ran without error (a failed one is explained by refereeErrorLine).
+  function refereeMadeNoCall(rec, d) {
+    return (
+      !!rec && typeof rec.referee === "string" && !!rec.referee && !rec.refereeError &&
+      d.status === "pending" && d.recommendation === "review" && !heldForAnalyst(d)
+    );
+  }
+  function noCallDeltas(rec) {
+    const deltas = rec && Array.isArray(rec.deltas) ? rec.deltas : [];
+    return deltas.filter((d) => refereeMadeNoCall(rec, d));
+  }
+  // Shown only after "follow referee" on this case; a dismiss, a case switch or a new run clears it.
+  let soRefereeFollowed = null; // { caseId }
+  function noCallBlock(rec) {
+    if (soRefereeFollowed && soRefereeFollowed.caseId !== currentCaseId()) soRefereeFollowed = null;
+    if (!soRefereeFollowed) return "";
+    const list = noCallDeltas(rec);
+    if (list.length === 0) return "";
+    const items = list
+      .map(
+        (d) =>
+          `<li><span class="so-kind so-${esc(d.kind)}">${esc(SO_KIND_LABEL[d.kind] || d.kind)}</span> ${esc(d.title)} ` +
+          `<button data-so-accept="${esc(d.id)}" title="Adopt model B's call — applied now and re-applied across re-synthesis">accept</button>` +
+          `<button data-so-reject="${esc(d.id)}" title="Keep model A — just record the decision">reject</button></li>`,
+      )
+      .join("");
+    const one = list.length === 1;
+    return (
+      `<div class="so-nocall" data-safe-style="border:1px solid var(--sev-medium);border-radius:6px;padding:6px 8px;margin:6px 0">` +
+      `<div>⚖ ${list.length} delta${one ? "" : "s"} had no referee call — review ${one ? "it" : "them"}. Until you decide, model A's call stays on the case. ` +
+      `<button type="button" data-so-nocall-dismiss title="Hide this list. The rows below keep their no-call line.">dismiss</button></div>` +
+      `<ul data-safe-style="margin:4px 0 0 18px;padding:0">${items}</ul></div>`
+    );
+  }
+  function followRefereeStatus(before, rec) {
+    const c = refereeCalls(before);
+    const n = noCallDeltas(rec).length;
+    return (
+      `followed the referee: ${c.accept} accepted, ${c.keep} rejected` +
+      (n ? ` — ${n} with no referee call left for you` : "")
+    );
+  }
   const SO_KIND_LABEL = {
     b_only: "only in B",
     a_only: "only in A",
@@ -209,7 +253,9 @@
         const suggest =
           (d.recommendation === "accept_b" || d.recommendation === "keep_a"
             ? `<div class="so-rec so-${esc(d.recommendation)}">referee suggests: ${d.recommendation === "accept_b" ? "accept B" : "keep A"}</div>`
-            : "") + (d.status === "pending" ? heldLines(d) : "");
+            : refereeMadeNoCall(rec, d)
+              ? `<div class="so-rec so-review" data-safe-style="color:var(--text-dim)">referee: no call — decide this one</div>`
+              : "") + (d.status === "pending" ? heldLines(d) : "");
         let acts;
         if (d.status === "accepted" && d.unapplied)
           acts = `<span class="so-status" data-safe-style="color:var(--badge-danger-text)" title="${esc(SO_UNAPPLIED_WHY[d.unapplied] || "matches no finding")}">⚠ accepted · not applied</span>`;
@@ -226,7 +272,8 @@
         return `<div class="so-delta so-${esc(d.status)}"><div class="so-body"><span class="so-kind so-${esc(d.kind)}">${esc(kindLabel)}</span><span class="so-title">${title}</span>${rationale}${suggest}</div><div class="so-acts">${acts}</div></div>`;
       })
       .join("");
-    el.innerHTML = head + summary + unappliedBlock(unapplied) + reopenedBlock(reopened) + bulk + rows;
+    el.innerHTML =
+      head + summary + unappliedBlock(unapplied) + reopenedBlock(reopened) + noCallBlock(rec) + bulk + rows;
   }
   // A failed referee pass (#1587). Without this line the panel hides every empty referee field,
   // so a referee that crashed looks exactly like one that ran and made no call. It lives in the
@@ -322,6 +369,7 @@
   }
   // accept: true | false | "referee" (follow the referee's call on each pending delta).
   function applyAllSecondOpinion(caseId, accept) {
+    const before = lastSecondOpinionRec && Array.isArray(lastSecondOpinionRec.deltas) ? lastSecondOpinionRec.deltas : [];
     fetch(`/cases/${caseId}/second-opinion/apply-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -347,7 +395,9 @@
             "second opinion: " + rec.error;
           return;
         }
+        if (accept === "referee") soRefereeFollowed = { caseId };
         renderSecondOpinion(rec);
+        if (accept === "referee") refereeStatus(followRefereeStatus(before, rec));
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
           .then((st) => stillOpen(caseId) && render(st))
@@ -410,6 +460,7 @@
   function rerunSecondOpinionReferee(caseId) {
     if (refereeRerunInFlight || !caseId) return Promise.resolve();
     refereeRerunInFlight = true;
+    soRefereeFollowed = null; // the referee is about to make new calls
     setRefereeRerunDisabled(true);
     refereeStatus("re-running the referee…");
     return postReferee(caseId)
@@ -465,6 +516,7 @@
     if (!caseId) return;
     const btn = document.getElementById("secondOpinion");
     if (btn) btn.disabled = true;
+    soRefereeFollowed = null; // a new run makes new calls; the old no-call list no longer holds
     const deep = !!document.getElementById("deepReasoning")?.checked;
     document.getElementById("status").textContent =
       (deep
@@ -552,6 +604,11 @@
           try {
             localStorage.setItem(SO_COLLAPSE_KEY, soCollapsed ? "1" : "0");
           } catch {}
+          renderSecondOpinion(lastSecondOpinionRec);
+          return;
+        }
+        if (t.dataset.soNocallDismiss !== undefined) {
+          soRefereeFollowed = null;
           renderSecondOpinion(lastSecondOpinionRec);
           return;
         }

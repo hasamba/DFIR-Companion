@@ -267,6 +267,8 @@ If the referee call fails, the panel header says so: *⚠ referee (name) failed:
 
 For each delta you can **Accept** (adopt the second model's view) or **Keep A** (keep the original). Accepted deltas survive future re-syntheses.
 
+The referee can decline to make a call when the evidence is ambiguous. Those rows read *referee: no call — decide this one*. **⚖ follow referee** applies only the calls the referee made. It accepts where the referee suggests accept B and rejects where it suggests keep A. Every delta with no call stays pending, and model A's call stays on the case until you decide. After the bulk action, the status bar gives the counts, and the panel lists the deltas that are left: *⚖ N deltas had no referee call — review them*, each with its own **accept** and **reject** buttons. Click **dismiss** to hide the list; the per-row line stays. A new run or a switch to another case clears the list. Dismissals marked ⚠ for you are not in this list because they already carry their own warning. When the referee call failed, the list does not appear: the header error explains why there are no calls.
+
 After new evidence, the primary model can make a new call on a finding you already decided. When that call differs from both its first call and the call you accepted, the panel marks the decision **reopened** (↻) and shows what the primary model now says. Your decision stays applied until you press **Keep** or **Drop**. **Keep** records the new call as the one you overrule. **Drop** rejects your decision and puts the finding back on the primary model's call at once. A severity you restored over a grading cap still applies after **Drop**.
 
 !!! tip
