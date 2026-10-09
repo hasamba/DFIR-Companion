@@ -5,6 +5,8 @@ import { mapForensicEvent, timesketchDate } from "../integrations/timesketch/tim
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { storedEventResolver } from "../analysis/eventAliasLookup.js";
+import { eventAliasSource } from "../analysis/eventAliasRead.js";
+import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
 import type { RouteContext } from "./context.js";
 import { registerHuntWorkbenchRoutes } from "./huntWorkbench.js";
 import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
@@ -205,12 +207,15 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       // A promoted row correlation later folded into another event is still in the forensic timeline,
       // under the survivor's id (#1715) — it must not offer "Promote" again.
       const missing = rowIds.filter((id) => !promotedIds.has(id));
-      const resolve = await storedEventResolver(options.stateStore, req.params.id, missing);
+      const aliases = eventAliasSource(options.stateStore);
+      const resolve = await storedEventResolver(aliases, req.params.id, missing);
       const events = result.events.map((e) => ({
         ...e,
         promoted: promotedIds.has(e.id) || resolve(e.id) !== e.id,
       }));
-      return res.status(200).json({ ...result, events });
+      // The automatic tagger's labels for this page's rows (#2059) — the tag list no longer carries them.
+      const eventTaggerTags = await taggerTagsForRows(options.tagsStore, aliases, req.params.id, rowIds);
+      return res.status(200).json({ ...result, events, eventTaggerTags });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

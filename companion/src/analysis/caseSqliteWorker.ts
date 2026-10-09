@@ -303,6 +303,19 @@ function loadState(dbPath, excludedKinds, slimCanonical) {
   try { return readState(db, excludedKinds, slimCanonical); } finally { db.close(); }
 }
 
+// #2059: the case's event lineage alone — json_extract over the meta blob, no entity row parsed.
+// null when this file holds no state yet: the caller then reads the overview, which migrates.
+function loadEventAliases(dbPath) {
+  if (!existsSync(dbPath)) return null;
+  const db = openDatabase(dbPath);
+  try {
+    const row = db.prepare("SELECT json_extract(value, '$.eventAliases') AS aliases FROM storage_meta WHERE key='investigation'").get();
+    if (!row) return null;
+    const aliases = row.aliases ? JSON.parse(row.aliases) : null;
+    return { aliases: aliases && typeof aliases === "object" && !Array.isArray(aliases) ? aliases : null };
+  } finally { db.close(); }
+}
+
 function saveState(dbPath, state, excludedKinds, unsettleMerge) {
   const db = openDatabase(dbPath);
   try { return writeState(db, state, excludedKinds, unsettleMerge); } finally { db.close(); }
@@ -706,6 +719,7 @@ async function dispatch(message) {
     case "stateExists": return stateExists(message.dbPath);
     case "migrateState": return migrateState(message.dbPath, message.jsonPath);
     case "loadState": return loadState(message.dbPath, message.excludedKinds, message.slimCanonical === true);
+    case "loadEventAliases": return loadEventAliases(message.dbPath);
     case "saveState": return saveState(message.dbPath, message.state, message.excludedKinds, message.unsettleMerge);
     case "setStateCaseId": return setStateCaseId(message.dbPath, message.caseId);
     case "queryEntities": return queryEntities(message.dbPath, message.kind, message.query || {});

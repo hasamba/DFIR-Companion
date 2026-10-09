@@ -23,6 +23,7 @@ import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { sendSynthesisRouteFailure } from "./analystGate.js";
 import { resolveStoredTargets } from "../analysis/eventAliasLookup.js";
+import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
@@ -318,7 +319,11 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const tags = await options.tagsStore.load(req.params.id);
       const starred = tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL);
       // A star on an event correlation folded into another reports the event it lives on (#1715).
-      const resolved = await resolveStoredTargets(options.stateStore, req.params.id, starred);
+      const resolved = await resolveStoredTargets(
+        eventAliasSource(options.stateStore),
+        req.params.id,
+        starred,
+      );
       const starredIds = [...new Set(resolved.map((t) => t.resolvedTargetId ?? t.targetId))];
       if (!starredIds.length)
         return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });

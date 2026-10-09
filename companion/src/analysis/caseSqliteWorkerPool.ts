@@ -27,6 +27,7 @@ const READ_WORKER_COUNT = 2;
 const READ_OPS = new Set([
   "stateExists",
   "loadState",
+  "loadEventAliases", // #2059: the lineage alone (caseSqliteWorker.ts)
   "queryEntities",
   "hasEntityIds",
   "entityCounts",
@@ -44,6 +45,7 @@ const READ_OPS = new Set([
   "forensicHostsInOrder",
   // #1874: the tag list (caseSqliteWorkerTags.ts); it asks the writer to migrate tags.json first when needed
   "tagsList",
+  "tagsQuery", // #2059: analyst-only list, tagger page, tagger tags of named rows
 ]);
 // Ops that replace the database file underneath any open connection.
 const EXCLUSIVE_OPS = new Set(["restoreDatabase"]);

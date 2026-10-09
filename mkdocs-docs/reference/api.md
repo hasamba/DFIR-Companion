@@ -394,6 +394,11 @@ while [ "$CUR" != "null" ]; do
 done
 ```
 
+Each page also carries `eventTaggerTags`: the content tagger's labels for that page's rows, keyed by
+event id. `GET /cases/<id>/tags` lists analyst tags only (stars, hand labels, IOC and finding tags).
+To list the tagger's tags, page through them:
+`GET /cases/<id>/tags?scope=tagger&offset=0&limit=500` (maximum 5000 per page; follow `nextOffset`).
+
 ### Reports
 
 Generate the report first. The downloads return `404` until you do.
@@ -439,6 +444,7 @@ curl -s 'http://127.0.0.1:4773/cases/IR-2026-001/super-timeline?q=powershell&fro
 
 Filters: `from`, `to`, `q`, `origins`, `exclude`, `excludeHosts`, `labels`, `excludeText`
 (comma-separated), `tagged=1`, `starred=1`, and `offset` / `limit` (default 500, maximum 10000).
+Each page carries `eventTaggerTags`, the content tagger's labels for its rows.
 
 ### IOC blocklist
 

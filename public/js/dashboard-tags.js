@@ -40,9 +40,121 @@
     return keys;
   }
 
+  // ---- the automatic tagger's labels, carried by the pages (#2059) ----
+  // GET /tags carries analyst tags only: on an auto-tagged case the tagger's event tags are one per
+  // matched event and label (~10 MB), and every tag change made every dashboard re-read them all. They
+  // now arrive with each timeline page — `eventTaggerTags` on /state and /super-timeline, keyed by row
+  // id — and gather here, so a row shows exactly the pills it did. A page names only its own rows, so
+  // pages only ever ADD to what is known; a removal shows up as a new tagger version on the tag list
+  // (X-Tagger-Tags-Version), and then every row held is asked again.
+  const TAGGER_ASK_CHUNK = 5000; // the server's per-request bound (analysis/taggerRowTags.ts)
+  let taggerCase = null;
+  let taggerByEvent = new Map(); // event id -> [{ id, label, author }]
+  let taggerKnown = new Set(); // event ids whose tagger tags are known, or asked for
+  let taggerVersion = null;
+
+  function taggerForCase(caseId) {
+    if (!caseId || caseId === taggerCase) return;
+    taggerCase = caseId;
+    taggerByEvent = new Map();
+    taggerKnown = new Set();
+    taggerVersion = null;
+  }
+
+  // A page landed (a /state reply, a push, a super-timeline page). Rows it describes are taken as
+  // given; rows nobody has described yet (a push carries no page tags) are asked about once.
+  function absorbPage(data, rows) {
+    if (!data || !Array.isArray(rows)) return;
+    if (typeof data.caseId === "string") taggerForCase(data.caseId);
+    const carried = data.eventTaggerTags && typeof data.eventTaggerTags === "object" ? data.eventTaggerTags : null;
+    const unknown = [];
+    rows.forEach((e) => {
+      const id = e && typeof e.id === "string" ? e.id : null;
+      if (!id) return;
+      if (carried && Object.prototype.hasOwnProperty.call(carried, id) && Array.isArray(carried[id])) {
+        taggerByEvent.set(id, carried[id]);
+        taggerKnown.add(id);
+      } else if (!taggerKnown.has(id)) {
+        if (carried) taggerKnown.add(id);
+        else unknown.push(id);
+      }
+    });
+    if (unknown.length) askTaggerTags(unknown);
+  }
+
+  function heldRowIds() {
+    // Read through the accessors, never cached (tests/dashboard/dashboardState.test.ts).
+    const rows = [].concat(
+      (DfirState.lastState() && DfirState.lastState().forensicTimeline) || [],
+      (DfirState.lastSuperData() && DfirState.lastSuperData().events) || [],
+    );
+    return [...new Set(rows.map((e) => e && e.id).filter((id) => typeof id === "string"))];
+  }
+
+  // Ask the server for these rows' tagger tags (bounded chunks), replace what is known of them, repaint.
+  function askTaggerTags(ids) {
+    const caseId = taggerCase;
+    if (!caseId || !ids.length) return;
+    ids.forEach((id) => taggerKnown.add(id));
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += TAGGER_ASK_CHUNK) chunks.push(ids.slice(i, i + TAGGER_ASK_CHUNK));
+    chunks
+      .reduce(
+        (prev, chunk) =>
+          prev.then(() =>
+            fetch(`/cases/${encodeURIComponent(caseId)}/tags/tagger-for`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: chunk }),
+            })
+              .then((r) => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+              })
+              .then((body) => {
+                if (taggerCase !== caseId) return;
+                const found = (body && body.eventTaggerTags) || {};
+                chunk.forEach((id) => {
+                  if (Object.prototype.hasOwnProperty.call(found, id) && Array.isArray(found[id])) taggerByEvent.set(id, found[id]);
+                  else taggerByEvent.delete(id);
+                });
+              }),
+          ),
+        Promise.resolve(),
+      )
+      .then(() => {
+        if (taggerCase === caseId) repaintTags();
+      })
+      .catch(() => {
+        // Left unknown, so the next page or tag change asks again; the pills shown stay as they were.
+        if (taggerCase === caseId) ids.forEach((id) => taggerKnown.delete(id));
+      });
+  }
+
+  if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
+    DfirState.onLastStateChange((next) => absorbPage(next, next && next.forensicTimeline));
+    DfirState.onLastSuperDataChange((next) => absorbPage(next, next && next.events));
+  }
+
+  // The tagger tags of one event, shaped like the list's tags so the pills and the modal read both.
+  function taggerTagsOf(type, id) {
+    if (type !== "event") return [];
+    const key = String(id);
+    return (taggerByEvent.get(key) || []).map((t) => ({
+      id: t.id,
+      targetType: "event",
+      targetId: key,
+      label: t.label,
+      author: t.author,
+    }));
+  }
+  function tagsOf(type, id) {
+    return taggerTagsOf(type, id).concat(tagsByTarget.get(targetKey(type, id)) || []);
+  }
+
   function tagPills(type, id) {
     // One pill per label: a tag on an event correlation folded into this one (#1715) may repeat a label.
-    const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(
+    const list = tagsOf(type, id).filter(
       (t, i, all) =>
         !(t.label === "starred" && t.targetType === "event") &&
         all.findIndex((o) => o.label === t.label) === i,
@@ -61,10 +173,51 @@
     return tagPills(type, id) + tagAddBtn(type, id);
   }
 
+  // Repaint what shows tags from what is held — no fetch.
+  function repaintTags() {
+    if (DfirState.lastState()) render(DfirState.lastState());
+    if (typeof refreshSuperRows === "function") refreshSuperRows();
+    if (tagTarget) renderTagModal();
+  }
+
+  // The tagger version on the list moved: the tagger tags the pages carried may be stale.
+  function noteTaggerVersion(version) {
+    if (typeof version !== "string" || !version) return;
+    const moved = taggerVersion !== null && version !== taggerVersion;
+    taggerVersion = version;
+    if (moved) askTaggerTags(heldRowIds());
+  }
+
+  // Every tag change broadcasts tags_changed, and a bulk star sends one per event (#2059). One fetch
+  // runs at a time; whatever arrives meanwhile is answered by ONE trailing fetch after it.
+  let tagsInFlight = false;
+  let tagsAgain = null; // the case a change arrived for while a fetch was out
   function loadTags(caseId) {
-    fetch(`/cases/${caseId}/tags`)
-      .then((r) => r.json())
-      .then((list) => {
+    if (tagsInFlight) {
+      tagsAgain = caseId;
+      return;
+    }
+    tagsInFlight = true;
+    fetchTags(caseId)
+      .catch(() => {})
+      .then(() => {
+        tagsInFlight = false;
+        const next = tagsAgain;
+        tagsAgain = null;
+        if (next !== null) loadTags(next);
+      });
+  }
+
+  function fetchTags(caseId) {
+    taggerForCase(caseId);
+    return fetch(`/cases/${caseId}/tags`)
+      .then((r) => {
+        const version = r.headers && r.headers.get ? r.headers.get("X-Tagger-Tags-Version") : null;
+        return r.json().then((list) => ({ list, version }));
+      })
+      .then(({ list, version }) => {
+        if (tagsAgain !== null && tagsAgain !== caseId) return; // the analyst moved to another case meanwhile
+        noteTaggerVersion(version);
         tagsByTarget = new Map();
         (list || []).forEach((t) => {
           // A tag on an event correlation later folded into another (#1715) shows on both: the raw
@@ -86,8 +239,7 @@
         // has already been loaded, so we don't fire a fetch on the initial case-load loadTags().
         if (DfirState.lastSuperData()) loadSuperTimeline();
         if (tagTarget) renderTagModal(); // refresh an open editor (live collaboration)
-      })
-      .catch(() => {});
+      });
   }
 
   function openTagModal(type, id) {
@@ -124,8 +276,7 @@
       return;
     }
     // Single-target mode
-    const list =
-      tagsByTarget.get(targetKey(tagTarget.type, tagTarget.id)) || [];
+    const list = tagsOf(tagTarget.type, tagTarget.id); // the tagger's too, each removable (#2059)
     document.getElementById("tagTitle").textContent =
       `Tags on ${tagTarget.type} ${tagTarget.id}`;
     const cur = document.getElementById("tagCurrent");
@@ -251,8 +402,11 @@
     tagsByTarget.forEach((list) => fn(list.filter((t) => !seen.has(t.id) && seen.add(t.id))));
   }
   // js/dashboard-super-timeline.js, rendering one row's pills.
+  // `key` is targetKey(type, id); the row's tagger tags come from its page (#2059).
   function tagsForTarget(key) {
-    return tagsByTarget.get(key) || [];
+    const k = String(key);
+    const at = k.indexOf(":");
+    return at < 0 ? tagsByTarget.get(k) || [] : tagsOf(k.slice(0, at), k.slice(at + 1));
   }
 
   window.initTagModal = initTagModal;

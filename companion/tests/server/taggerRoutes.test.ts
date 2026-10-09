@@ -196,8 +196,9 @@ describe("POST /cases/:id/tagger/run", () => {
       view: "Service Installs",
     });
 
-    // e1 carries two tagger-authored tags; e2 carries none.
-    const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{
+    // e1 carries two tagger-authored tags; e2 carries none. The tag list carries analyst tags only
+    // (#2059); the tagger's are listed through the explicit, paged opt-in.
+    const tags = (await request(app()).get("/cases/c1/tags?scope=tagger")).body.tags as Array<{
       targetId: string;
       label: string;
       author: string;

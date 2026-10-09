@@ -11,6 +11,7 @@ import {
 import type { Hypothesis } from "../analysis/hypothesis.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { stateEventResolver, storedEventResolver, type EventResolver } from "../analysis/eventAliasLookup.js";
+import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import {
   activeExclusionsFor,
   resolveHypothesisLinks,
@@ -116,7 +117,7 @@ export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext
     const ids = h
       ? [...h.relatedEventIds, ...h.contradictingEventIds, ...h.excludedEvidence.map((x) => x.eventId)]
       : [];
-    return { h, resolve: await storedEventResolver(options.stateStore, caseId, ids) };
+    return { h, resolve: await storedEventResolver(eventAliasSource(options.stateStore), caseId, ids) };
   }
 
   app.get("/cases/:id/hypotheses", async (req: Request, res: Response) => {
