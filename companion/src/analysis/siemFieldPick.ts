@@ -103,9 +103,12 @@ export function timestampSource(rec: Row, ed: Row | undefined): { key: string; v
   return picked;
 }
 
+// The machine that logged the event comes before the shipper's own host: under Windows Event
+// Forwarding, Winlogbeat 7's `host.name` is the collector, and `winlog.computer_name` is the source.
 const HOST_KEYS = [
   "computer_name",
   "Computer",
+  "winlog.computer_name",
   "hostname",
   "host.name",
   "host",
@@ -117,7 +120,6 @@ const HOST_KEYS = [
   "MachineName",
   "src_host",
   "source.host",
-  "winlog.computer_name",
 ];
 
 /** The record's host, and the key it came from (`host.name` for an ECS host:{name} object). */
