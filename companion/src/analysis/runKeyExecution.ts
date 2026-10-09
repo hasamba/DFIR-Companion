@@ -83,16 +83,29 @@ const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Crit
 
 // ───────────────────────────── normalising a command ─────────────────────────────
 
-/** Expanded profile and system paths rewritten to the variable that names them; never expanded. */
-const CONTRACTIONS: ReadonlyArray<[RegExp, string]> = [
+/** Machine-wide paths rewritten to the variable that names them: the same file on every profile. */
+const SYSTEM_CONTRACTIONS: ReadonlyArray<[RegExp, string]> = [
   [/%systemroot%/g, "%windir%"],
-  [/[a-z]:\\users\\[^\\"]+\\appdata\\roaming(?=\\|"|$|\s)/g, "%appdata%"],
-  [/[a-z]:\\users\\[^\\"]+\\appdata\\local(?=\\|"|$|\s)/g, "%localappdata%"],
   [/c:\\windows(?=\\|"|$|\s)/g, "%windir%"],
 ];
 
-const contract = (s: string): string =>
-  CONTRACTIONS.reduce((acc, [re, to]) => acc.replace(re, to), s.replace(/\s+/g, " ").trim().toLowerCase());
+/**
+ * Per-user profile folders. Folded ONLY to compare a start with a value that is itself written as
+ * %APPDATA% / %LOCALAPPDATA%: two explicit paths in different profiles (or on different drives)
+ * are different files, so they are never folded together (adversarial review of #2082).
+ */
+const PROFILE_CONTRACTIONS: ReadonlyArray<[RegExp, string]> = [
+  [/[a-z]:\\users\\[^\\"]+\\appdata\\roaming(?=\\|"|$|\s)/g, "%appdata%"],
+  [/[a-z]:\\users\\[^\\"]+\\appdata\\local(?=\\|"|$|\s)/g, "%localappdata%"],
+];
+
+const PROFILE_VAR = /%(?:local)?appdata%/i;
+
+const contract = (s: string, profile: boolean): string =>
+  (profile ? [...SYSTEM_CONTRACTIONS, ...PROFILE_CONTRACTIONS] : SYSTEM_CONTRACTIONS).reduce(
+    (acc, [re, to]) => acc.replace(re, to),
+    s.replace(/\s+/g, " ").trim().toLowerCase(),
+  );
 
 /** A command split into its image and arguments, both contracted and lowercased. */
 interface Command {
@@ -100,8 +113,8 @@ interface Command {
   args: string;
 }
 
-function splitCommand(raw: string): Command | null {
-  const s = contract(raw);
+function splitCommand(raw: string, profile = false): Command | null {
+  const s = contract(raw, profile);
   if (!s) return null;
   if (s[0] === '"') {
     const end = s.indexOf('"', 1);
@@ -116,27 +129,41 @@ const hasDir = (image: string): boolean => /[\\/]/.test(image);
 const baseName = (image: string): string => image.split(/[\\/]/).pop() ?? image;
 const withExe = (name: string): string => (name.includes(".") ? name : `${name}.exe`);
 
-/** The one key a Run value is matched by, or null when the value cannot be matched safely. */
-function valueKey(raw: string): { key: string; image: string } | null {
-  const c = splitCommand(raw);
+/** The key of a Run value; `profile` folds user-profile paths and marks the key as such ("v…"). */
+function keyOf(raw: string, profile: boolean): { key: string; image: string } | null {
+  const c = splitCommand(raw, profile);
   if (!c || !c.image) return null;
-  if (hasDir(c.image)) return { key: `path|${c.image}|${c.args}`, image: baseName(c.image) };
+  const tag = profile ? "v" : "";
+  if (hasDir(c.image)) return { key: `${tag}path|${c.image}|${c.args}`, image: baseName(c.image) };
   // A bare image name alone would claim every start of that binary.
   if (!c.args) return null;
   const image = withExe(c.image);
-  return { key: `bare|${image}|${c.args}`, image };
+  return { key: `${tag}bare|${image}|${c.args}`, image };
 }
 
-/** Every key a process start can be found by: its full image path, and its bare name with arguments. */
+/** The one key a Run value is matched by, or null when the value cannot be matched safely. */
+function valueKey(raw: string): { key: string; image: string } | null {
+  return keyOf(raw, PROFILE_VAR.test(raw));
+}
+
+/** Every key a process start can be found by: its full image path and its bare name with arguments, literally and profile-folded. */
 function startKeys(e: RunKeyTimelineShape): string[] {
   const line = e.commandLine?.trim() || e.canonical?.process?.commandLine?.trim();
   if (!line) return [];
-  const c = splitCommand(line);
-  if (!c || !c.image) return [];
   const imagePath = e.path ?? e.canonical?.process?.executable;
-  const full = hasDir(c.image) ? c.image : imagePath ? (splitCommand(`"${imagePath}"`)?.image ?? "") : "";
-  const keys = full ? [`path|${full}|${c.args}`] : [];
-  if (c.args) keys.push(`bare|${withExe(baseName(c.image))}|${c.args}`);
+  const keys: string[] = [];
+  for (const profile of [false, true]) {
+    const c = splitCommand(line, profile);
+    if (!c || !c.image) return [];
+    const tag = profile ? "v" : "";
+    const full = hasDir(c.image)
+      ? c.image
+      : imagePath
+        ? (splitCommand(`"${imagePath}"`, profile)?.image ?? "")
+        : "";
+    if (full) keys.push(`${tag}path|${full}|${c.args}`);
+    if (c.args) keys.push(`${tag}bare|${withExe(baseName(c.image))}|${c.args}`);
+  }
   return keys;
 }
 
@@ -172,7 +199,8 @@ function readRunValue<T extends RunKeyTimelineShape>(e: T): RunValue<T> | null {
   const data = reg?.valueData?.trim();
   if (!registryKey || !data || !RUN_KEY.test(registryKey)) return null;
   const k = valueKey(data);
-  if (!k || STOCK_VALUES.has(k.key)) return null;
+  // The allow-list is checked profile-folded: a stock value is stock in every profile.
+  if (!k || STOCK_VALUES.has(keyOf(data, true)?.key.slice(1) ?? "")) return null;
   const tail = registryKey.split("\\").pop() ?? "";
   const name = reg?.valueName?.trim() || (/^run(?:once)?$/i.test(tail) ? "" : tail);
   const at = ms(e.canonical?.time?.normalized) ?? ms(e.timestamp);

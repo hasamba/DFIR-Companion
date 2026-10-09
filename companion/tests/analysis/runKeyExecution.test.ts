@@ -93,6 +93,35 @@ describe("corroborateRunKeyExecution", () => {
     expect(byId(out, "p1").severity).toBe("High");
   });
 
+  it("never joins explicit paths in different user profiles or on different drives", () => {
+    const out = corroborateRunKeyExecution([
+      runRow("rundll32.exe C:\\Users\\alice\\AppData\\Roaming\\payload.dll,Run"),
+      start(
+        "bob",
+        60,
+        '"C:\\Windows\\system32\\rundll32.exe" C:\\Users\\bob\\AppData\\Roaming\\payload.dll,Run',
+      ),
+      runRow("D:\\Tools\\agent.exe --tray", { id: "run2" }, RUN_KEY.replace("Webcache", "Agent")),
+      start("cdrive", 120, '"C:\\Tools\\agent.exe" --tray'),
+    ]);
+    for (const id of ["bob", "cdrive"]) {
+      expect(byId(out, id).severity).toBe("Low");
+      expect(raised(byId(out, id))).toBe(false);
+    }
+  });
+
+  it("still matches a %APPDATA% value against the same explicit profile path", () => {
+    const out = corroborateRunKeyExecution([
+      runRow("rundll32.exe %APPDATA%\\Microsoft\\cache.lock,VoidFunc"),
+      start(
+        "p1",
+        60,
+        '"C:\\Windows\\system32\\rundll32.exe" C:\\Users\\jdoe\\AppData\\Roaming\\Microsoft\\cache.lock,VoidFunc',
+      ),
+    ]);
+    expect(byId(out, "p1").severity).toBe("High");
+  });
+
   it("never matches a substring or a prefix", () => {
     const out = corroborateRunKeyExecution([
       runRow(VALUE),
