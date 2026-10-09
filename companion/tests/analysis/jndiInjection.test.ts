@@ -63,9 +63,9 @@ describe("markJndiInjection — fires on the Log4Shell shape", () => {
   });
 
   it("fires for a PRIVATE destination on a non-standard LDAP/RMI port (lab / insider attacker host)", () => {
-    // The OTRF Log4Shell lab's attacker LDAP server is 192.168.2.6:1389. Nothing ordinary listens
+    // The OTRF Log4Shell lab's attacker LDAP server is 10.66.0.6:1389. Nothing ordinary listens
     // there, so the destination's reach is not required for 1389/1099/1098.
-    const l = lookup({ dstIp: "192.168.2.6" });
+    const l = lookup({ dstIp: "10.66.0.6" });
     const s = shell();
     const out = markJndiInjection([l, s]);
     expect(byId(out, l.id).severity).toBe("High");
@@ -75,9 +75,9 @@ describe("markJndiInjection — fires on the Log4Shell shape", () => {
   it("reads Sysmon rows whose fields live only in the description, and an <unknown process> child", () => {
     const l = ev({
       description:
-        "Sysmon Network connection (EID 3) - Image=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java - DestinationIp=192.168.2.6 - DestinationPort=1389 - Protocol=tcp @ UBUNTU5",
+        "Sysmon Network connection (EID 3) - Image=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java - DestinationIp=10.66.0.6 - DestinationPort=1389 - Protocol=tcp @ linux-host-a",
       severity: "Low",
-      asset: "UBUNTU5",
+      asset: "linux-host-a",
     });
     const s = ev({
       description:
@@ -85,7 +85,7 @@ describe("markJndiInjection — fires on the Log4Shell shape", () => {
       processName: "<unknown process>",
       parentName: "java",
       commandLine: "bash -c {echo,YmFz}|{base64,-d}|{bash,-i}",
-      asset: "UBUNTU5",
+      asset: "linux-host-a",
       timestamp: at(230),
     });
     const out = markJndiInjection([l, s]);

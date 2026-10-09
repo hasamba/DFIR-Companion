@@ -18,7 +18,7 @@
 // them. For those, the destination must be a PUBLIC address — an internal bind is the normal case.
 // 1389, 1099 and 1098 are not ordinary directory ports (1389 is the marshalsec/JNDIExploit default,
 // 1099/1098 RMI), so ANY non-loopback destination counts. Requiring a public address there would miss
-// lab and insider cases: the OTRF Log4Shell dataset's attacker LDAP server is 192.168.2.6:1389.
+// lab and insider cases: the OTRF Log4Shell dataset's attacker LDAP server is 10.66.0.6:1389.
 // Loopback is excluded everywhere — a local RMI registry on 1099 is how JMX works.
 //
 // The shell child is the strong signal, so the join tolerates a child whose image the sensor could not
