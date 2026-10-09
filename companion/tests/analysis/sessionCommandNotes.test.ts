@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { upgradeForensicEvent } from "../../src/analysis/canonicalEvent.js";
 import {
   noteSessionCommands,
   pruneSessionCommands,
@@ -161,6 +162,21 @@ describe("noteSessionCommands (#1594)", () => {
     expect(notedIds(out)).toEqual([]);
   });
 
+  it("matches the full command as a substring, not only on word boundaries (#2058 index)", () => {
+    const one = ev("e-one", { timestamp: at("09:01:00"), commandLine: "ipconfig" });
+    const two = ev("e-two", { timestamp: at("09:02:00"), commandLine: "arp -a" });
+    const three = ev("e-three", { timestamp: at("09:03:00"), commandLine: "route print -4" });
+    const silent = run([...loud, one, two, three], [mimikatz]);
+    expect(notedIds(silent)).toEqual(["e-one", "e-three", "e-two"]);
+    const named = finding("f-sub", {
+      severity: "Medium",
+      title: "Recon",
+      description: "Output of xipconfigx, then arp -ab and noroute print -4s.",
+      relatedEventIds: ["e-mimi"],
+    });
+    expect(notedIds(run([...loud, one, two, three], [mimikatz, named]))).toEqual([]);
+  });
+
   it("counts a finding that cites the row and names its program", () => {
     const f = finding("f-t", {
       title: "Process discovery",
@@ -315,5 +331,45 @@ describe("noteSessionCommands — naming is scoped to the host (#1594 review)", 
     });
     const out = run([...loud, wrapped], [mimikatz, f]);
     expect(notedIds(out)).toEqual(["e-wrap"]);
+  });
+});
+
+// #2058: on a hayabusa-sized case (one finding per distinct rule) this pass ran for minutes, because
+// every finding rescanned the whole timeline for back-links and every candidate checked every finding.
+describe("noteSessionCommands at scale (#2058)", () => {
+  const HOSTS = ["ws01", "ws02", "srv01", "dc01", "fs01"];
+  const CMDS = [
+    "net view /all",
+    "tasklist /v",
+    "whoami /all",
+    "cmd /c net user admin",
+    "nltest /dclist:corp",
+  ];
+
+  it("notes 8000 events / 4000 findings, a distinct command per row, well inside the old 10 seconds", () => {
+    // Rows carry their typed envelope, as the state store hands them over on read.
+    const events = Array.from({ length: 8000 }, (_, i) =>
+      upgradeForensicEvent(
+        ev(`e${i}`, {
+          timestamp: new Date(Date.UTC(2026, 4, 11, 8, 0, i * 3)).toISOString(),
+          severity: i % 3 === 0 ? "Medium" : "Low",
+          asset: HOSTS[i % HOSTS.length],
+          relatedFindingIds: i % 13 === 0 ? [`f${(i * 7) % 4000}`] : [],
+          ...(i % 2 ? { commandLine: `${CMDS[i % CMDS.length]} ${i}` } : {}),
+        }),
+      ),
+    );
+    const findings = Array.from({ length: 4000 }, (_, i) =>
+      finding(`f${i}`, {
+        severity: i % 2 ? "High" : "Medium",
+        title: `Rule ${i}`,
+        // Findings cite the even rows; the odd rows carry the commands no finding cites.
+        relatedEventIds: [`e${(4 * i) % 8000}`, `e${(4 * i + 2) % 8000}`],
+      }),
+    );
+    const started = performance.now();
+    const out = run(events, findings);
+    expect(performance.now() - started).toBeLessThan(3000);
+    expect(notedIds(out).length).toBeGreaterThan(0);
   });
 });

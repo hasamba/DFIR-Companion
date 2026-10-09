@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { emptyState, type Finding, type NextStep } from "../../src/analysis/stateTypes.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  emptyState,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+  type NextStep,
+} from "../../src/analysis/stateTypes.js";
 import {
   derivePlaybookTasks,
   mergePlaybook,
@@ -9,6 +15,17 @@ import {
   withBlockedState,
   type PlaybookTask,
 } from "../../src/analysis/playbook.js";
+import { buildEvidenceGraph } from "../../src/analysis/evidenceGraph.js";
+import { tacticCollectDirectives } from "../../src/analysis/knownUnknowns.js";
+import { collectSummary } from "../../src/analysis/collectDirective.js";
+import { rankHosts } from "../../src/analysis/hostRanking.js";
+import type { IrisTactic } from "../../src/analysis/mitreTactics.js";
+
+// Wrap (not replace) the evidence graph so the scale test can count how often it is built (#2058).
+vi.mock("../../src/analysis/evidenceGraph.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/analysis/evidenceGraph.js")>();
+  return { ...actual, buildEvidenceGraph: vi.fn(actual.buildEvidenceGraph) };
+});
 
 const NOW = "2026-06-10T00:00:00.000Z";
 
@@ -531,5 +548,78 @@ describe("sortPlaybookTasks", () => {
     });
     const sorted = sortPlaybookTasks([t("b", 1, NOW), t("a", 0, NOW), t("c", 1, "2026-06-09T00:00:00.000Z")]);
     expect(sorted.map((x) => x.id)).toEqual(["a", "c", "b"]);
+  });
+});
+
+// #2058: a hayabusa-sized case (one High finding per distinct rule) locked the server for minutes,
+// because every finding rebuilt the whole evidence graph / connective-IOC ranking / sorted timeline
+// for its tactic's collect directives. Those depend on the tactic and the case only.
+describe("derivePlaybookTasks at scale (#2058)", () => {
+  const TECHNIQUES = ["T1021.001", "T1071.001", "T1190", "T1059.001", "T1003.001", "T1486"];
+  const HOSTS = ["WS01", "WS02", "SRV01", "DC01", "FS01"];
+
+  function scaleState(events: number, findings: number): InvestigationState {
+    const timeline: ForensicEvent[] = Array.from({ length: events }, (_, i) => ({
+      id: `e${i}`,
+      timestamp: new Date(Date.UTC(2026, 4, 11, 8, 0, i)).toISOString(),
+      description: `rule ${i % 300} fired`,
+      severity: "High",
+      mitreTechniques: [TECHNIQUES[i % TECHNIQUES.length]],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: HOSTS[i % HOSTS.length],
+    }));
+    const list: Finding[] = Array.from({ length: findings }, (_, i) =>
+      finding({
+        id: `f${i}`,
+        severity: i % 2 ? "High" : "Critical",
+        title: `Rule ${i}`,
+        description: `rule ${i} fired`,
+        mitreTechniques: [TECHNIQUES[i % TECHNIQUES.length]],
+        relatedEventIds: [`e${(2 * i) % events}`, `e${(2 * i + 1) % events}`],
+      }),
+    );
+    return { ...emptyState("c1"), forensicTimeline: timeline, findings: list };
+  }
+
+  it("builds the evidence graph once, not once per Lateral Movement finding", () => {
+    const graph = vi.mocked(buildEvidenceGraph);
+    graph.mockClear();
+    derivePlaybookTasks(scaleState(600, 300));
+    expect(graph.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it("derives 2000 events / 1000 findings in well under the old minute", () => {
+    const state = scaleState(2000, 1000);
+    const started = performance.now();
+    const seeds = derivePlaybookTasks(state);
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(seeds.filter((s) => s.source === "finding")).toHaveLength(1000);
+  });
+
+  it("gives every finding the collect lines its tactic's directives produce", () => {
+    const state = scaleState(120, 60);
+    const topHosts = rankHosts(state).topHosts;
+    const seeds = derivePlaybookTasks(state);
+    const lines = (tactic: IrisTactic): string[] =>
+      tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts)
+        .map((d) => collectSummary({ ...d, expectedOutcome: undefined }))
+        .filter(Boolean);
+    const expectations: [string, IrisTactic][] = [
+      ["f0", "Lateral Movement"],
+      ["f1", "Command and Control"],
+      ["f2", "Initial Access"],
+      ["f6", "Lateral Movement"],
+    ];
+    for (const [id, tactic] of expectations) {
+      const seed = seeds.find((s) => s.sourceKey === `finding:${id}`);
+      const expected = lines(tactic);
+      expect(expected.length).toBeGreaterThan(0);
+      // The first two directives become numbered steps; a step capitalises its first letter.
+      for (const line of expected.slice(0, 2))
+        expect(seed?.description.toLowerCase()).toContain(line.toLowerCase());
+    }
+    // Hosts come from the finding's own cited rows.
+    expect(seeds.find((s) => s.sourceKey === "finding:f0")?.description).toContain("WS01");
   });
 });

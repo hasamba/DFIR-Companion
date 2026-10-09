@@ -90,9 +90,14 @@ export function sanitizeFindingTasks(
 }
 
 // Distinct hosts of the finding's cited events, in citation order. Case-insensitive dedup keeps
-// the first spelling seen.
-export function findingEvidenceHosts(f: Finding, events: readonly ForensicEvent[]): string[] {
-  const byId = new Map(events.map((e) => [e.id, e] as const));
+// the first spelling seen. A caller looping over many findings passes `eventsById` (the id map of
+// `events`) so the timeline is indexed once, not once per finding (#2058).
+export function findingEvidenceHosts(
+  f: Finding,
+  events: readonly ForensicEvent[],
+  eventsById?: ReadonlyMap<string, ForensicEvent>,
+): string[] {
+  const byId = eventsById ?? new Map(events.map((e) => [e.id, e] as const));
   const seen = new Set<string>();
   const hosts: string[] = [];
   for (const id of f.relatedEventIds ?? []) {
