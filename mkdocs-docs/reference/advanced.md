@@ -344,6 +344,16 @@ does not re-run the AI — press **AI Re-synthesize** when you have finished pic
 panel offers an uncapped run that pages through the whole archive and says so in the caption. On a
 large case that costs more and takes longer, so the panel estimates both before it starts.
 
+When the cap stops a review, the panel says how much of the archive it read and how many rows it
+did not: for example, "Reviewed 2,000 of 81,385 archive rows (2%). 79,385 archive rows were not
+read." Next to that it shows the estimated cost of reading every row, as a range. The low end
+assumes the unread rows need grading as often as the rows read did. The high end assumes every
+unread row needs grading. Both are worked out from this run's cost per graded row, and neither is
+a quote. If the capped review found nothing above Info, the warning appears in a bordered box at
+the top of the results, ending "An empty result here is not evidence that nothing was missed."
+Otherwise it appears as one line under the caption. Either way the **Read every row** button sits
+next to it.
+
 !!! note "Masking applies"
     Row text goes through the same anonymisation gate as every other model call. There is no
     un-masking step and none is needed — a Jev answer is a number, so no real value can travel back

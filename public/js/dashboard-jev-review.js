@@ -203,14 +203,10 @@
   // OFFER THE FULL READ ONLY WHEN IT WOULD ADD SOMETHING. The cap really held rows back, so there
   // are rows a full read would reach and this one did not. When nothing was capped this returns
   // nothing at all — a panel that offers the expensive action after every run is a panel whose
-  // offer stops meaning anything.
-  function offerHtml() {
-    if (!result || result.capped !== true) return "";
-    const unread = unreadRows(result);
-    if (unread <= 0) return "";
-    return `<p class="jev-offer"><strong>${num(unread)} matching row(s) went unread.</strong>
-      Reading every row covers them. <button type="button" id="jevOfferAll">Read every row</button></p>`;
-  }
+  // offer stops meaning anything. The wording, share read and estimate live in the format module
+  // (#2077); `foundNothing` is over the UNFILTERED rows — what the model found, not what is drawn.
+  const foundNothing = () => !(result && Array.isArray(result.rows) ? result.rows : []).some((r) => r.grade && r.grade !== "Info");
+  const offerHtml = () => jevCapWarningHtml(result, { foundNothing: foundNothing() });
 
   function metaHtml() {
     const bits = [];
@@ -300,9 +296,12 @@
     const body = drawnRows().map(rowHtml).join("");
     const table = body
       ? `<table class="jev-table"><thead><tr><th scope="col"><span class="visually-hidden">Promote</span></th><th scope="col">Grade</th><th scope="col">Confidence</th><th scope="col">Time (UTC)</th><th scope="col">Artifact</th><th scope="col">What the row says</th></tr></thead><tbody>${body}</tbody></table>`
-      : `<p class="jev-status">No row is left to show. ${hideTooling ? "Untick the tooling filter, or lower the grade and confidence filters, to see more." : "Lower the grade and confidence filters, or the model graded nothing here."}</p>`;
+      : `<p class="jev-status">No row is left to show. ${hideTooling ? "Untick the tooling filter, or lower the grade and confidence filters, to see more." : "Lower the grade and confidence filters, or the model graded nothing here."}${result.capped === true && unreadRows(result) > 0 ? ` Or read every row: ${num(unreadRows(result))} archive rows were not read.` : ""}</p>`;
     const counts = { shown: visibleRows().length, kept: filteredRows().length, drawn: drawnRows().length };
-    return jevCaptionHtml(result, counts) + offerHtml() + metaHtml() + promoteResultHtml() + (body ? selectionHtml() : "") + table;
+    const caption = jevCaptionHtml(result, counts);
+    // Nothing above Info: the warning goes FIRST, above the caption, where it cannot be read past (#2077).
+    const head = foundNothing() ? offerHtml() + caption : caption + offerHtml();
+    return head + metaHtml() + promoteResultHtml() + (body ? selectionHtml() : "") + table;
   }
 
   function progressHtml() {
