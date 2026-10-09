@@ -81,12 +81,58 @@ beforeEach(async () => {
   await stateStore.save(seeded);
 });
 
-function pipeline(primary: AIProvider): AnalysisPipeline {
+/** True when the request is the second-opinion referee (reconcile) call. */
+const isReferee = (req: AnalyzeRequest) => req.systemPrompt.includes("RECONCILING");
+
+/** A verdict for every delta id in the reconcile prompt — enough for the referee pass to succeed. */
+function verdictsFor(req: AnalyzeRequest): string {
+  const ids = [...new Set(req.userPrompt.match(/\b[a-z_]+:[a-z0-9-]+/g) ?? [])];
+  return JSON.stringify({
+    summary: "judged",
+    verdicts: ids.map((id) => ({ id, rationale: "r", recommendation: "review" })),
+  });
+}
+
+/** Writes model A's synthesis and, when `referees`, answers the referee too. */
+class Answering implements AIProvider {
+  refereeCalls = 0;
+  constructor(
+    readonly name: string,
+    readonly model: string,
+    private readonly referees: boolean,
+  ) {}
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    if (!isReferee(req)) return { rawText: A_DELTA };
+    this.refereeCalls++;
+    return { rawText: this.referees ? verdictsFor(req) : A_DELTA };
+  }
+}
+
+/** The primary's filter stops synthesis only; it answers the referee. */
+class StoppedOnSynthesis implements AIProvider {
+  readonly name = "claude-code";
+  readonly model = "opus";
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    if (isReferee(req)) return { rawText: verdictsFor(req) };
+    throw safetyStopError("Claude Code (opus)");
+  }
+}
+
+interface PipelineExtras {
+  fallback?: AIProvider;
+  referee?: { provider: AIProvider; label: string };
+}
+
+function pipeline(primary: AIProvider, extras: PipelineExtras = {}): AnalysisPipeline {
   return new AnalysisPipeline({
     provider: primary,
     synthesisProvider: primary,
     synthesisModelLabel: "opus",
-    synthesisFallback: { provider: new MockProvider("codex", A_DELTA, "gpt-6-sol"), label: "gpt-6-sol" },
+    synthesisFallback: {
+      provider: extras.fallback ?? new MockProvider("codex", A_DELTA, "gpt-6-sol"),
+      label: "gpt-6-sol",
+    },
+    ...(extras.referee ? { referee: extras.referee } : {}),
     stateStore,
     synthMetaStore,
     secondOpinionStore,
@@ -108,12 +154,14 @@ describe("second opinion names the model that wrote A (#2076)", () => {
     expect(meta.secondOpinionPerf?.modelA).toBe("gpt-6-sol");
   });
 
-  it("keeps the default referee on the configured primary's label", async () => {
-    const record = await pipeline(new AlwaysStopped()).secondOpinion("c1");
+  it("keeps the default referee on the configured primary's label when the primary judges", async () => {
+    const record = await pipeline(new StoppedOnSynthesis()).secondOpinion("c1");
 
-    // The referee runs on the primary, whose safety filter stops it too: the failure names the
-    // model that was actually tried — the primary, not the fallback that wrote A.
-    expect(record.refereeError?.referee).toBe("opus");
+    // Pass 0 ran on the fallback, but the referee ran on the primary and it answered: the referee
+    // is the primary, not the fallback that wrote A.
+    expect(record.modelA).toBe("gpt-6-sol");
+    expect(record.refereeError).toBeUndefined();
+    expect(record.referee).toBe("opus");
   });
 
   it("still names the fallback when pass 0 is a no-op over a fallback-written synthesis", async () => {
@@ -125,14 +173,75 @@ describe("second opinion names the model that wrote A (#2076)", () => {
     expect(record.modelA).toBe("gpt-6-sol");
   });
 
-  it("a referee-only re-run still runs under the configured primary's label", async () => {
-    const p = pipeline(new AlwaysStopped());
+  it("a referee-only re-run names the model that was last tried", async () => {
+    const p = pipeline(new AlwaysStopped()); // the fallback writes A but cannot referee
     const first = await p.secondOpinion("c1");
     expect(first.modelA).toBe("gpt-6-sol");
 
     const { record, failed } = await p.rerunSecondOpinionReferee("c1");
     expect(failed).toBe(true);
-    expect(record.refereeError?.referee).toBe("opus");
+    // #2083: the primary was stopped, the fallback was asked and failed — the fallback is named.
+    expect(record.refereeError?.referee).toBe("gpt-6-sol");
     expect(record.modelA).toBe("gpt-6-sol");
+  });
+});
+
+describe("the default referee falls back on a safety stop (#2083)", () => {
+  it("folds the fallback's verdicts and names the fallback as referee", async () => {
+    const fallback = new Answering("codex", "gpt-6-sol", true);
+    const record = await pipeline(new AlwaysStopped(), { fallback }).secondOpinion("c1");
+
+    expect(fallback.refereeCalls).toBe(1);
+    expect(record.refereeError).toBeUndefined();
+    expect(record.referee).toBe("gpt-6-sol");
+    expect(record.deltas.some((d) => d.rationale)).toBe(true);
+  });
+
+  it("names the fallback when the fallback was tried and failed too", async () => {
+    const fallback = new Answering("codex", "gpt-6-sol", false);
+    const record = await pipeline(new AlwaysStopped(), { fallback }).secondOpinion("c1");
+
+    expect(fallback.refereeCalls).toBe(1);
+    expect(record.refereeError?.referee).toBe("gpt-6-sol");
+  });
+
+  it("never falls back for a referee picked with DFIR_AI_RECONCILE_MODEL", async () => {
+    const fallback = new Answering("codex", "gpt-6-sol", true);
+    const picked = new AlwaysStopped();
+    const record = await pipeline(new AlwaysStopped(), {
+      fallback,
+      referee: { provider: picked, label: "picked/referee" },
+    }).secondOpinion("c1");
+
+    expect(picked.calls).toBe(1);
+    expect(fallback.refereeCalls).toBe(0);
+    expect(record.refereeError?.referee).toBe("picked/referee");
+  });
+
+  it("a referee-only re-run falls back the same way", async () => {
+    const first = await pipeline(new AlwaysStopped()).secondOpinion("c1"); // referee fails
+    expect(first.refereeError).toBeDefined();
+
+    const fallback = new Answering("codex", "gpt-6-sol", true);
+    const { record, failed } = await pipeline(new AlwaysStopped(), { fallback }).rerunSecondOpinionReferee(
+      "c1",
+    );
+    expect(failed).toBe(false);
+    expect(fallback.refereeCalls).toBe(1);
+    expect(record.referee).toBe("gpt-6-sol");
+    expect(record.refereeError).toBeUndefined();
+  });
+
+  it("a referee-only re-run with a picked referee never falls back", async () => {
+    await pipeline(new AlwaysStopped()).secondOpinion("c1"); // referee fails
+    const fallback = new Answering("codex", "gpt-6-sol", true);
+    const { record, failed } = await pipeline(new AlwaysStopped(), {
+      fallback,
+      referee: { provider: new AlwaysStopped(), label: "picked/referee" },
+    }).rerunSecondOpinionReferee("c1");
+
+    expect(failed).toBe(true);
+    expect(fallback.refereeCalls).toBe(0);
+    expect(record.refereeError?.referee).toBe("picked/referee");
   });
 });

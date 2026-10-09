@@ -172,12 +172,36 @@ async function reconcileDeltas(
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
   const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
+  const asked = askedReferee(referee);
   try {
-    const parsed = await callReferee(ctx, caseId, a, referee, userPrompt, record);
-    return flagRefereeDismissals(foldVerdicts(record, parsed, referee), guard);
+    const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
+    return flagRefereeDismissals(foldVerdicts(record, parsed, asked.current()), guard);
   } catch (err) {
-    return withRefereeFailure(ctx, caseId, record, referee, userPrompt, err);
+    return withRefereeFailure(ctx, caseId, record, asked.current(), userPrompt, err);
   }
+}
+
+/**
+ * The referee as it was actually asked (#2083). The default referee is the synthesis model, so a
+ * safety stop moves it to DFIR_AI_SYNTH_FALLBACK_MODEL; the verdicts — or the failure — are then
+ * credited to the fallback, the model that last answered. `pickReferee` keeps the configured
+ * primary's label: that is who is ASKED first.
+ */
+interface AskedReferee {
+  referee: RefereeModel;
+  onFallback(label: string): void;
+  current(): RefereeModel;
+}
+
+function askedReferee(referee: RefereeModel): AskedReferee {
+  let answeredLabel = referee.label;
+  return {
+    referee,
+    onFallback: (label) => {
+      answeredLabel = label;
+    },
+    current: () => (answeredLabel === referee.label ? referee : { ...referee, label: answeredLabel }),
+  };
 }
 
 const REFEREE_ERROR_MAX = 300;
@@ -197,7 +221,7 @@ async function callReferee(
   ctx: SecondOpinionContext,
   caseId: string,
   loaded: InvestigationState,
-  referee: RefereeModel,
+  asked: AskedReferee,
   userPrompt: string,
   record: SecondOpinion,
 ): Promise<ReconcileResponse> {
@@ -205,11 +229,16 @@ async function callReferee(
     ctx,
     caseId,
     loaded,
-    referee.provider,
+    asked.referee.provider,
     "second-opinion-reconcile",
     getReconcilePrompt,
     userPrompt,
     (raw) => reconcileResponseSchema.parse(raw),
+    // #2083: only the DEFAULT referee (the synthesis model) falls back on a safety stop. A referee
+    // the analyst picked with DFIR_AI_RECONCILE_MODEL never does — even when it is the same model.
+    ctx.opts.referee
+      ? {}
+      : { safetyFallback: { task: "second-opinion referee", onFallback: asked.onFallback } },
   );
   const ids = new Set(record.deltas.map((d) => d.id));
   if (!parsed.verdicts.some((v) => ids.has(v.id)))
@@ -281,8 +310,9 @@ async function rerunReferee(
   const guard = guardCaseOf(state, (await loadScopedEvents(ctx, caseId, state)).scoped);
   let parsed: ReconcileResponse | undefined;
   let failure: unknown;
+  const asked = askedReferee(referee);
   try {
-    parsed = await callReferee(ctx, caseId, state, referee, prompt, before);
+    parsed = await callReferee(ctx, caseId, state, asked, prompt, before);
   } catch (err) {
     // A gate is a question for the analyst, not a broken referee — the route shows the approval.
     if (err instanceof PresidioApprovalRequired || err instanceof HostMergeDecisionRequired) throw err;
@@ -295,8 +325,8 @@ async function rerunReferee(
         "this second opinion was replaced by a newer second opinion — its referee result was discarded",
       );
     const next = parsed
-      ? flagRefereeDismissals(foldVerdicts(latest, parsed, referee), guard)
-      : withRefereeFailure(ctx, caseId, latest, referee, prompt, failure);
+      ? flagRefereeDismissals(foldVerdicts(latest, parsed, asked.current()), guard)
+      : withRefereeFailure(ctx, caseId, latest, asked.current(), prompt, failure);
     await store.save(caseId, next);
     return next;
   });

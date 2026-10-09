@@ -1,4 +1,5 @@
 import type { AIProvider, AnalyzeRequest } from "../../providers/provider.js";
+import type { Logger } from "../../logging/logger.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { FalsePositiveMarker, FalsePositiveStore } from "../falsePositive.js";
 import { filterFalsePositiveEvents } from "../falsePositive.js";
@@ -13,6 +14,7 @@ import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
 import type { PresidioCoverage } from "./providerCall.js";
+import { SynthesisModelChoice, type SynthesisFallback } from "./synthesisFallback.js";
 
 /**
  * What an AI-backed pipeline method needs from AnalysisPipeline, and nothing else (#418).
@@ -38,12 +40,21 @@ export interface AiCallContext {
    */
   readonly opts: {
     synthesisProvider?: AIProvider;
+    /** The main provider: the synthesis model when no synthesisProvider is set. */
+    provider?: AIProvider;
+    /** The safety-stop fallback and its retry budget (#1734/#1740), for calls that opt in (#2083). */
+    synthesisFallback?: SynthesisFallback;
+    synthesisSafetyRetries?: number;
+    synthesisModelLabel?: string;
     stateStore: StateStore;
     falsePositiveStore?: FalsePositiveStore;
     scopeStore?: ScopeStore;
     retries?: number;
     backoffMs?: number;
   };
+
+  /** The server log. Optional: test contexts omit it. */
+  readonly log?: Logger;
 
   /** The vision provider, or a thrown error naming what the analyst was trying to do. */
   requireProvider(purpose: string): AIProvider;
@@ -108,31 +119,102 @@ export async function callAiJson<T>(
   systemPrompt: string | (() => string),
   userPrompt: string,
   parse: (raw: unknown) => T,
+  options: AiCallOptions = {},
 ): Promise<T> {
   const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    kind,
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        // Resolved per ATTEMPT when a resolver is passed. DFIR_AI_*_PROMPT_FILE is documented as
-        // "re-read on each AI call", so an operator fixing a broken prompt file mid-retry must see
-        // it take effect on the next attempt. Callers whose original resolved once pass a string.
-        {
-          systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt,
-          userPrompt,
-          images: [],
-        },
-        kind,
-      );
-      return parse(parsed);
-    },
-    retries,
-    backoffMs,
+  const ask = (p: AIProvider) =>
+    ctx.analyzeRestored(
+      caseId,
+      loaded,
+      p,
+      // Resolved per ATTEMPT when a resolver is passed. DFIR_AI_*_PROMPT_FILE is documented as
+      // "re-read on each AI call", so an operator fixing a broken prompt file mid-retry must see
+      // it take effect on the next attempt. Callers whose original resolved once pass a string.
+      {
+        systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt,
+        userPrompt,
+        images: [],
+        ...(options.signal ? { signal: options.signal } : {}),
+      },
+      kind,
+    );
+  const choice = safetyChoice(ctx, provider, options.safetyFallback);
+  const answer = choice
+    ? () => askWithFallback(ctx, caseId, kind, choice, ask, options)
+    : () => ask(provider);
+  return ctx.withRetry(caseId, kind, async () => parse(await answer()), retries, backoffMs);
+}
+
+/** The opt-in safety-stop fallback for one callAiJson call (#2083). */
+export interface AiCallSafetyFallback {
+  /** Names the work in the log and in the exhaustion error ("explain event"). */
+  task: string;
+  /** Called with the fallback's label when the fallback answered instead of the primary. */
+  onFallback?: (label: string) => void;
+}
+
+export interface AiCallOptions {
+  /**
+   * Opt in to the synthesis safety-stop rule (#2083): retry on the primary per
+   * DFIR_AI_SYNTH_SAFETY_RETRIES, then answer on DFIR_AI_SYNTH_FALLBACK_MODEL. Applies ONLY when
+   * `provider` is the synthesis model — a model the analyst picked for this work (the reconcile
+   * override, the Velociraptor model, model B) is a different provider object and never falls back.
+   */
+  safetyFallback?: AiCallSafetyFallback;
+  /** Checked before a safety retry or the switch, so a cancelled call starts no further call. */
+  signal?: AbortSignal;
+}
+
+/** One SynthesisModelChoice per call, or undefined when the call keeps today's behaviour. */
+function safetyChoice(
+  ctx: AiCallContext,
+  provider: AIProvider,
+  fallback: AiCallSafetyFallback | undefined,
+): SynthesisModelChoice | undefined {
+  if (!fallback || provider !== (ctx.opts.synthesisProvider ?? ctx.opts.provider)) return undefined;
+  return new SynthesisModelChoice(
+    provider,
+    ctx.opts.synthesisModelLabel ?? `${provider.name}/${provider.model}`,
+    ctx.opts.synthesisFallback,
+    ctx.opts.synthesisSafetyRetries,
+    fallback.task,
   );
+}
+
+async function askWithFallback(
+  ctx: AiCallContext,
+  caseId: string,
+  kind: string,
+  choice: SynthesisModelChoice,
+  ask: (p: AIProvider) => Promise<unknown>,
+  options: AiCallOptions,
+): Promise<unknown> {
+  const task = options.safetyFallback?.task ?? kind;
+  const wasOnFallback = choice.fallbackFrom !== undefined;
+  const raw = await choice.ask(
+    ask,
+    () => {
+      if (options.signal?.aborted) throw new Error(`${task} cancelled`);
+    },
+    (from, to) =>
+      ctx.log?.warn(
+        `[${kind}] ${from}'s safety filter stopped the ${task} — answering on the fallback model ${to}`,
+        {
+          caseId,
+        },
+      ),
+    (err, stops) => {
+      ctx.log?.warn(
+        `[${kind}] ${choice.primaryName}'s safety filter stopped the ${task} (${stops}) — asking it once more`,
+        { caseId },
+      );
+      ctx.recordRetry?.(caseId, kind, err);
+    },
+  );
+  // Reported once, on the answer that switched — a parse retry already on the fallback is not news.
+  if (!wasOnFallback && choice.fallbackFrom !== undefined)
+    options.safetyFallback?.onFallback?.(choice.answeredByLabel);
+  return raw;
 }
 
 /**

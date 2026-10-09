@@ -75,14 +75,15 @@ describe("deep-pass result names the fallback model (#2076)", () => {
   });
 });
 
-describe("fallback model setting hint (#2076)", () => {
-  it("says the fallback covers synthesis and the deep pass", () => {
+describe("fallback model setting hint (#2076, #2083)", () => {
+  it("says the fallback covers synthesis, the deep pass, the referee, Explain event and view summaries", () => {
     const html = readFileSync(
       fileURLToPath(new URL("../../../public/dashboard.html", import.meta.url)),
       "utf8",
     );
     expect(html).toContain(
-      "DFIR_AI_SYNTH_FALLBACK_MODEL — blank = no fallback; synthesis and deep pass, not imports or reports",
+      "DFIR_AI_SYNTH_FALLBACK_MODEL — blank = no fallback; synthesis, deep pass, the default " +
+        "second-opinion referee, Explain event and view summaries — not imports or reports",
     );
   });
 });

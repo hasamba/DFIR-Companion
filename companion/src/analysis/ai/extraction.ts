@@ -45,6 +45,8 @@ export interface ExtractionContext extends AiCallContext, ProviderCallContext {
       imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
       onState?: (state: InvestigationState) => void;
     };
+  /** Required here: the provider-call gate logs (AiCallContext leaves it optional for test contexts). */
+  readonly log: ProviderCallContext["log"];
   /** Serialise the load→merge→save critical section per case. Never nest for the same caseId. */
   withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T>;
   /** mergeDelta plus the case's analyst IOC-merge aliases (#82). */
