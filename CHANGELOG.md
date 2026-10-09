@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Persistence executed** — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts such as rundll32, Medium otherwise) with T1547.001 (closes #2082)
 - **PowerShell session seats** — PowerShell rows record their session at import, and synthesis sends the other commands of a session that has a High row; re-import existing cases to gain it (closes #2078)
 - **Tagger rules for quiet tradecraft** — alternate-data-stream execution is High; anti-VM WMI checks, AV-product and installed-software discovery are Medium, a deliberate exception to tag-only discovery; netapi32/advapi32 lookups gain T1082/T1033 (closes #2079)
-- **Synthesis checks before 'unknown'** — synthesis reads the earliest attacker event's parent command line before calling initial access unknown, and checks a host's events before calling it not compromised (closes #2080)
 - **Safety-stop fallback for more AI steps** — the default referee, Explain event and view summaries fall back to the fallback model on a safety stop and name the model that answered (part of #2083)
 - **Referee no-call deltas listed** — after "follow the referee" the second-opinion panel lists each delta the referee made no call on, with accept and reject (closes #2081)
 - **JEV cap warning** — a capped missed-evidence review shows how much of the archive it read and what a full read may cost, prominently when it found nothing (closes #2077)
