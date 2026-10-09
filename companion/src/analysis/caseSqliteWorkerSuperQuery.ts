@@ -33,7 +33,40 @@ function superLabelClause(where, params, mapIds, matchIds, sidecarCondition, sid
   params.push(superJsonList(matchIds), superJsonList(mapIds), ...sidecarParams);
 }
 
-function superFilterClauses(query) {
+// #2070: the same precedence answered from the case's tag table (same database) instead of a map the
+// caller built by loading every tag: a row with ANY event tag takes its tags' labels, every other
+// row its sidecar's. Nothing is read into JS. The matching ids are IN-subqueries (built once per
+// statement) rather than per-row correlated EXISTS: 41 ms vs 145 ms for a count over 70k rows with
+// 50k tags. A NULL entity_id is never IN anything, so it fails every label test, as before.
+const SUPER_EVENT_TAG = "SELECT 1 FROM tags t WHERE t.target_type='event' AND t.target_id=e.entity_id";
+
+function superTagLabelClause(where, params, tagCondition, sidecarCondition, conditionParams) {
+  where.push(
+    "(e.entity_id IN (SELECT t.target_id FROM tags t WHERE t.target_type='event' AND " + tagCondition + ") OR " +
+    "(e.entity_id IN (SELECT l.event_id FROM super_labels l WHERE " + sidecarCondition + ") AND " +
+    "NOT EXISTS (" + SUPER_EVENT_TAG + ")))"
+  );
+  params.push(...conditionParams, ...conditionParams);
+}
+
+// The tag table answers only once it exists and holds the case's tags: a tags.json the writer has
+// not migrated yet means the caller must fall back to its map.
+function superTagTableReady(db, query) {
+  if (!hasTagsTable(db)) return false;
+  return !(typeof query.tagsPath === "string" && !tagsMarkerSet(db) && existsSync(query.tagsPath));
+}
+
+function superTagFilterClauses(query, where, params) {
+  const labels = Array.isArray(query.labels) ? query.labels : [];
+  if (labels.length) {
+    superTagLabelClause(where, params, "t.label IN (SELECT value FROM json_each(?))",
+      "l.label IN (SELECT value FROM json_each(?))", [superJsonList(labels)]);
+  }
+  if (query.taggedOnly) superTagLabelClause(where, params, "t.label<>?", "l.label<>?", [SUPER_STARRED]);
+  if (query.starred) superTagLabelClause(where, params, "t.label=?", "l.label=?", [SUPER_STARRED]);
+}
+
+function superFilterClauses(query, fromTags) {
   const { where, params } = superWindowClauses(query);
   const origins = Array.isArray(query.origins) ? query.origins : [];
   if (origins.length) {
@@ -58,6 +91,10 @@ function superFilterClauses(query) {
     where.push("(e.host IS NULL OR e.host='' OR e.host NOT IN (SELECT value FROM json_each(?)))");
     params.push(superJsonList(named));
   }
+  if (fromTags) {
+    superTagFilterClauses(query, where, params);
+    return { where, params, map: {}, mapIds: [] };
+  }
   const map = query.labelMap && typeof query.labelMap === "object" ? query.labelMap : {};
   const mapIds = Object.keys(map);
   const mapLabels = (id) => (Array.isArray(map[id]) ? map[id] : []);
@@ -78,13 +115,39 @@ function superFilterClauses(query) {
 }
 
 // Facets keep the scan's semantics: the time window alone, never the origin/host/label selection.
-function superFacets(db, query, map, mapIds) {
+function superFacets(db, query, map, mapIds, fromTags) {
   const { where, params } = superWindowClauses(query);
   const windowSql = where.join(" AND ");
   const origins = new Set(db.prepare("SELECT DISTINCT e.source AS v FROM entities e WHERE " + windowSql)
     .all(...params).map((row) => (row.v === null || row.v === "" ? SUPER_UNKNOWN_ORIGIN : String(row.v))));
   const hosts = new Set(db.prepare("SELECT DISTINCT e.host AS v FROM entities e WHERE " + windowSql)
     .all(...params).map((row) => (row.v === null || row.v === "" ? SUPER_NO_HOST_FACET : String(row.v))));
+  const labelsAvailable = fromTags ? superTagLabelFacet(db, windowSql, params) : superMapLabelFacet(db, windowSql, params, map, mapIds);
+  return {
+    origins: [...origins].sort(),
+    hosts: [...hosts].sort(),
+    labelsAvailable: [...labelsAvailable].sort(),
+  };
+}
+
+// #2070: the event tags' labels on rows in the window, plus the sidecar labels of rows with no event
+// tag. Both are driven from the few distinct labels / the sidecar, never from every row: one join
+// of all 50k tags to the store cost 50 ms, one existence check per distinct label costs ~10 ms.
+function superTagLabelFacet(db, windowSql, params) {
+  const labels = new Set(db.prepare(
+    "SELECT DISTINCT l.label AS v FROM super_labels l WHERE l.label<>? AND " +
+    "NOT EXISTS (SELECT 1 FROM tags t WHERE t.target_type='event' AND t.target_id=l.event_id) AND " +
+    "EXISTS (SELECT 1 FROM entities e WHERE e.entity_id=l.event_id AND " + windowSql + ")"
+  ).all(SUPER_STARRED, ...params).map((row) => String(row.v)));
+  for (const row of db.prepare(
+    "SELECT d.label AS v FROM (SELECT DISTINCT label FROM tags WHERE target_type='event' AND label<>?) d " +
+    "WHERE EXISTS (SELECT 1 FROM tags t JOIN entities e ON e.entity_id=t.target_id " +
+    "WHERE t.target_type='event' AND t.label=d.label AND " + windowSql + ")"
+  ).all(SUPER_STARRED, ...params)) labels.add(String(row.v));
+  return labels;
+}
+
+function superMapLabelFacet(db, windowSql, params, map, mapIds) {
   const labels = new Set(db.prepare(
     "SELECT DISTINCT l.label AS v FROM super_labels l JOIN entities e ON e.entity_id=l.event_id WHERE " +
     windowSql + " AND l.label<>? AND e.entity_id NOT IN (SELECT value FROM json_each(?))"
@@ -97,18 +160,18 @@ function superFacets(db, query, map, mapIds) {
       for (const label of Array.isArray(map[row.id]) ? map[row.id] : []) if (label !== SUPER_STARRED) labels.add(label);
     }
   }
-  return {
-    origins: [...origins].sort(),
-    hosts: [...hosts].sort(),
-    labelsAvailable: [...labels].sort(),
-  };
+  return labels;
 }
 
 function querySuper(dbPath, query) {
   if (!existsSync(dbPath)) return { events: [], total: 0, origins: [], hosts: [], labelsAvailable: [] };
   const db = openDatabase(dbPath);
   try {
-    const { where, params, map, mapIds } = superFilterClauses(query || {});
+    const fromTags = !!(query && query.labelsFromTags === true);
+    if (fromTags && !superTagTableReady(db, query)) {
+      return { events: [], total: 0, origins: [], hosts: [], labelsAvailable: [], tagTableMissing: true };
+    }
+    const { where, params, map, mapIds } = superFilterClauses(query || {}, fromTags);
     const filterSql = where.join(" AND ");
     const count = (extra) => Number(db.prepare(
       "SELECT count(*) AS n FROM entities e WHERE " + filterSql + " AND " + extra
@@ -132,7 +195,7 @@ function querySuper(dbPath, query) {
         " AND e.timestamp_ms IS NULL ORDER BY e.row_id LIMIT ? OFFSET ?"
       ).all(...params, limit - payloads.length, Math.max(0, offset - dated)).map((row) => row.payload));
     }
-    const facets = superFacets(db, query || {}, map, mapIds);
+    const facets = superFacets(db, query || {}, map, mapIds, fromTags);
     return {
       events: payloads.map((payload) => JSON.parse(payload)),
       total: dated + undated,

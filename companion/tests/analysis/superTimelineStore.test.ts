@@ -9,6 +9,8 @@ import { SPAWNED_CHILD_NOTE } from "../../src/analysis/collectorChildren.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
 import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 import { eventMatchesExclude, eventMatchesSearch } from "../../src/analysis/searchFilter.js";
+import { tagTableLabels } from "../../src/analysis/superTimeline.js";
+import { TagsStore } from "../../src/analysis/tags.js";
 
 const DatabaseSync = loadDatabaseSync();
 
@@ -626,6 +628,93 @@ describe("SuperTimelineStore", () => {
       ).toEqual(["u1"]);
     });
 
+    // #2070: the route no longer loads every tag to build the map; the worker reads the case's tag
+    // table directly. Seeded with the same labels the map names, every answer must be identical —
+    // on the indexed path and the scan path (both()) alike.
+    async function seedTags() {
+      await new TagsStore(cases).addMany("c1", [
+        { targetType: "event", targetId: "d3", author: "analyst", label: "key-evidence" },
+        // A tagger tag counts as a label exactly like an analyst one (the old map held both).
+        { targetType: "event", targetId: "u1", author: "tagger:rule-1", label: "from-tags" },
+        // Not an event tag: never a super-timeline label, as before.
+        { targetType: "finding", targetId: "d2", author: "analyst", label: "finding-only" },
+      ]);
+    }
+
+    it("labels read from the tag table agree with the tag map, with no map passed (#2070)", async () => {
+      await seed();
+      await seedTags();
+      const queries: Parameters<typeof store.query>[1][] = [
+        {},
+        { labels: ["key-evidence"] },
+        { labels: ["from-tags", "noise"] },
+        { labels: ["finding-only"] },
+        { taggedOnly: true },
+        { starred: true },
+        { labels: ["from-tags"], from: "2026-08-01T00:00:00Z" },
+        { from: "2026-06-02T12:00:00Z", to: "2026-06-30T00:00:00Z" },
+        { taggedOnly: true, offset: 1, limit: 1 },
+      ];
+      for (const q of queries) {
+        const label = JSON.stringify(q);
+        expect(await both(q, tagTableLabels()), label).toEqual(await both(q, labelMap));
+      }
+      // Tag over sidecar: u1's sidecar star does not count once u1 carries an event tag.
+      expect((await both({ starred: true }, tagTableLabels())).events).toEqual([]);
+      expect((await both({}, tagTableLabels())).labelsAvailable).toEqual(["from-tags", "key-evidence"]);
+    });
+
+    it("a star kept in the tag table is filtered but never a facet (#2070)", async () => {
+      await seed();
+      await new TagsStore(cases).addMany("c1", [
+        { targetType: "event", targetId: "d4", author: "analyst", label: "starred" },
+      ]);
+      const r = await both({ starred: true }, tagTableLabels());
+      expect(r.events.map((e) => e.id)).toEqual(["d4", "u1"]);
+      expect(r.labelsAvailable).toEqual(["key-evidence", "noise"]);
+      expect((await both({ taggedOnly: true }, tagTableLabels())).events.map((e) => e.id)).toEqual([
+        "d2",
+        "u1",
+      ]);
+    });
+
+    it("an unmigrated tag table falls back to the caller's map (#2070)", async () => {
+      await seed();
+      // A tags.json the writer has not migrated yet: hold the migration back for these queries.
+      await writeFile(
+        join(cases.stateDir("c1"), "tags.json"),
+        JSON.stringify([
+          {
+            id: "t1",
+            targetType: "event",
+            targetId: "d3",
+            label: "legacy-file",
+            author: "a",
+            createdAt: "x",
+          },
+        ]),
+      );
+      const request = caseSqliteWorker.request.bind(caseSqliteWorker);
+      vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (message) =>
+        (message as { op?: string }).op === "migrateSuper" ? undefined : request(message),
+      );
+      const fallback = vi.fn(async () => labelMap);
+      try {
+        const r = await store.query("c1", { labels: ["key-evidence"] }, tagTableLabels(fallback));
+        expect(r.events.map((e) => e.id)).toEqual(["d2", "d3"]);
+        expect(r.labelsAvailable).toEqual(["from-tags", "key-evidence"]);
+        const scanned = await store.query(
+          "c1",
+          { labels: ["key-evidence"], excludeText: ["zzz-matches-nothing"] },
+          tagTableLabels(fallback),
+        );
+        expect(scanned).toEqual(r);
+        expect(fallback).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     it("text search and exclude keep their row-by-row semantics on top of the column filters", async () => {
       await seed();
       const r = await store.query("c1", { search: "undated", exclude: ["Unknown"] });
@@ -968,5 +1057,28 @@ describe("SuperTimelineStore text search prefilter (#2069)", () => {
       expect(windowed.hosts).toEqual(plain.hosts);
       expect(windowed.labelsAvailable).toEqual(plain.labelsAvailable);
     }
+  });
+
+  it("a search keeps the tag table's labels when no map is sent (#2070)", async () => {
+    await seedParity();
+    await new TagsStore(cases).addMany("c1", [
+      { targetType: "event", targetId: "v2", author: "tagger:rule-1", label: "from-tags" },
+      { targetType: "event", targetId: "v0", author: "analyst", label: "starred" },
+    ]);
+    const map = { v2: ["from-tags"], v0: ["starred"] };
+    for (const q of [
+      { search: "keylogger", labels: ["from-tags"] },
+      { search: "keylogger", taggedOnly: true },
+      { search: "svc.exe", starred: true },
+      { search: "svc.exe", labels: ["key-evidence"] },
+      { search: "keylogger" },
+    ]) {
+      const fromTable = await store.query("c1", q, tagTableLabels());
+      expect(fromTable, JSON.stringify(q)).toEqual(await store.query("c1", q, map));
+    }
+    const r = await store.query("c1", { search: "keylogger", labels: ["from-tags"] }, tagTableLabels());
+    expect(r.events.map((e) => e.id)).toEqual(["v2"]);
+    // v0's sidecar "key-evidence" gives way to its event tag (a star, never a facet).
+    expect(r.labelsAvailable).toEqual(["from-tags"]);
   });
 });

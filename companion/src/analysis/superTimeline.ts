@@ -8,6 +8,25 @@ import { cleanDescription } from "./correlate.js";
 
 export type SuperLabelMap = Record<string, string[]>;
 
+// #2070: a row's labels read in SQL from the case's tag table (same database as the store) instead
+// of a map the caller built by loading every tag. Same semantics as a map holding every event tag:
+// a row with any event tag takes the tags' labels, every other row keeps its sidecar labels.
+// `fallback` builds that map when the table cannot be read yet (tags.json not migrated).
+export interface SuperTagTableLabels {
+  readonly fromTagTable: true;
+  readonly fallback?: () => Promise<SuperLabelMap>;
+}
+export type SuperLabelSource = SuperLabelMap | SuperTagTableLabels;
+
+export function tagTableLabels(fallback?: () => Promise<SuperLabelMap>): SuperTagTableLabels {
+  return fallback ? { fromTagTable: true, fallback } : { fromTagTable: true };
+}
+
+// A map's values are arrays, so no event id can make a map pass for the tag-table source.
+export function isTagTableLabels(source: SuperLabelSource | undefined): source is SuperTagTableLabels {
+  return (source as SuperTagTableLabels | undefined)?.fromTagTable === true;
+}
+
 // Pseudo-facet for events with no affected host, so the host filter can control them too (and "None"
 // truly empties the timeline) — mirrors the forensic source filter's "(no source)".
 export const NO_HOST_FACET = "(no host)";

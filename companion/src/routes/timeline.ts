@@ -7,7 +7,19 @@ import { sendPipelineError } from "./presidioApproval.js";
 import { storedEventResolver } from "../analysis/eventAliasLookup.js";
 import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
+import { tagTableLabels, type SuperLabelMap } from "../analysis/superTimeline.js";
+import type { TagsStore } from "../analysis/tags.js";
 import type { RouteContext } from "./context.js";
+
+// The pre-#2070 label map, { eventId: labels[] } over every event tag: now only the fallback for a
+// case whose tag table cannot answer yet (tags.json not migrated).
+async function eventTagLabelMap(tagsStore: Pick<TagsStore, "load">, caseId: string): Promise<SuperLabelMap> {
+  const map: SuperLabelMap = {};
+  for (const t of await tagsStore.load(caseId)) {
+    if (t.targetType === "event") (map[t.targetId] ??= []).push(t.label);
+  }
+  return map;
+}
 import { registerHuntWorkbenchRoutes } from "./huntWorkbench.js";
 import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
 
@@ -166,19 +178,15 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       return Number.isFinite(n) ? n : undefined;
     };
     try {
-      // The Labels filter + labelsAvailable facet now come from the case's analyst TAGS (unifying the
+      // The Labels filter + labelsAvailable facet come from the case's event TAGS (unifying the
       // super-timeline's per-row labelling with the forensic timeline's tags), not the legacy per-event
-      // label sidecar. Build a { eventId: labels[] } map from tags targeting events and pass it as the
-      // querySuper labelMap. When the tags store isn't wired, query() falls back to the sidecar.
-      let tagLabelMap: Record<string, string[]> | undefined;
-      if (options.tagsStore) {
-        const tags = await options.tagsStore.load(req.params.id);
-        tagLabelMap = {};
-        for (const t of tags) {
-          if (t.targetType !== "event") continue;
-          (tagLabelMap[t.targetId] ??= []).push(t.label);
-        }
-      }
+      // label sidecar. The store reads them from the case's tag table in SQL (#2070) — loading every
+      // tag into a map cost ~0.6 s per page on a tagger-heavy case. The map build stays as the fallback
+      // for a tag table not migrated yet. When the tags store isn't wired, query() uses the sidecar.
+      const tagsStore = options.tagsStore;
+      const labelSource = tagsStore
+        ? tagTableLabels(() => eventTagLabelMap(tagsStore, req.params.id))
+        : undefined;
       const result = await options.superTimelineStore.query(
         req.params.id,
         {
@@ -195,7 +203,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
           offset: num(req.query.offset),
           limit: num(req.query.limit),
         },
-        tagLabelMap,
+        labelSource,
       );
       // Mark rows already pulled into the forensic timeline (promote's mergeDelta dedups by id, so
       // "promoted" means this event's id is already there) so the UI can show persistent state instead
