@@ -2,20 +2,20 @@
 // file-size ledger freezes) so the Sysmon mapper could carry the process GUID and the structured
 // action the sequence join reads (#987). Re-exported from siemImport.ts for its callers.
 
-// One forward scan for the next depth-0 value at or after `from`, with fresh state.
-// "ok" — a balanced value parsed; "fail" — a value opened at `start` but never closed before EOF
-// (`end` = -1), or closed at `end` and failed JSON.parse; "none" — no further value opens.
+// One forward scan for the next depth-0 value in [from, limit), with fresh state.
+// "ok" — a balanced value parsed; "fail" — a value opened at `start` but never closed before
+// `limit` (`end` = -1), or closed at `end` and failed JSON.parse; "none" — no value opens.
 type ScanResult =
   | { kind: "ok"; value: unknown; end: number }
   | { kind: "fail"; start: number; end: number }
   | { kind: "none" };
 
-function scanValue(text: string, from: number): ScanResult {
+function scanValue(text: string, from: number, limit: number): ScanResult {
   let depth = 0,
     start = -1,
     inStr = false,
     esc = false;
-  for (let i = from; i < text.length; i++) {
+  for (let i = from; i < limit; i++) {
     const ch = text[i];
     if (inStr) {
       if (esc) esc = false;
@@ -54,6 +54,14 @@ function nextColumnZeroOpener(text: string, from: number): number {
   return -1;
 }
 
+// Recovery scan budget, as a multiple of the input length (see parseConcatenatedJson).
+const RECOVERY_BUDGET = 8;
+
+// Characters a scan from `from` to `limit` read for result `r`.
+function scanned(r: ScanResult, from: number, limit: number): number {
+  return r.kind === "ok" || (r.kind === "fail" && r.end !== -1) ? r.end - from : limit - from;
+}
+
 // Parse a stream of CONCATENATED top-level JSON values (objects/arrays), tolerating pretty-
 // printing and any separators (commas / whitespace / newlines) between them. This is the shape
 // Hayabusa's `json-timeline` emits by default: many multi-line `{ … }` objects with NO array
@@ -64,14 +72,25 @@ function nextColumnZeroOpener(text: string, from: number): number {
 // (#2064): when a value never closes before EOF (truncated record, stray brace, unterminated
 // string), or closes but fails to parse, the scan resyncs at the next column-0 `{`/`[` after the
 // chunk's start with fresh state; a closed chunk with no such opener inside it resumes at its end.
-// Valid input never takes the failure path, so its output is unchanged. Worst case O(k·n) for k
-// unterminated openers.
+// Valid input never takes the failure path, so its output is unchanged. Recovery work is
+// bounded: once scanning has cost RECOVERY_BUDGET times the input length, each later candidate is
+// scanned only up to the next column-0 opener, so a file of many unterminated openers stays linear
+// instead of rescanning to EOF from every one of them.
 export function parseConcatenatedJson(text: string): unknown[] {
   const out: unknown[] = [];
+  const budget = RECOVERY_BUDGET * text.length;
   let pos = 0;
+  let spent = 0;
   while (pos < text.length) {
-    const r = scanValue(text, pos);
-    if (r.kind === "none") break;
+    const bounded = spent > budget ? nextColumnZeroOpener(text, pos + 1) : -1;
+    const limit = bounded === -1 ? text.length : bounded;
+    const r = scanValue(text, pos, limit);
+    spent += scanned(r, pos, limit);
+    if (r.kind === "none") {
+      if (limit >= text.length) break;
+      pos = limit;
+      continue;
+    }
     if (r.kind === "ok") {
       out.push(r.value);
       pos = r.end;

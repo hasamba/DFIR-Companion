@@ -42,6 +42,16 @@ describe("parseConcatenatedJson — resync after a broken chunk (#2064)", () => 
   });
 });
 
+describe("parseConcatenatedJson — bounded recovery work", () => {
+  it("stays linear on many unterminated column-0 openers and still recovers the record after them", () => {
+    const text = `${"{\n".repeat(40_000)}{"a":1}\n`;
+    const started = performance.now();
+    const out = parseConcatenatedJson(text);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(out).toEqual([{ a: 1 }]);
+  });
+});
+
 describe("parseConcatenatedJson — valid shapes are unchanged", () => {
   it("parses a valid pretty-printed stream with nested arrays and braces inside strings", () => {
     const a = { x: [1, { y: [2, 3] }], s: '} { [ "quoted" ]' };
