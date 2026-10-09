@@ -540,7 +540,7 @@ describe("SuperTimelineStore", () => {
 
     // Forcing the scan path: an exclude term that matches nothing changes no result, but it does
     // switch query() onto the row-by-row path. Every query below is answered both ways and must agree.
-    async function both(q: Parameters<typeof store.query>[1], map?: Record<string, string[]>) {
+    async function both(q: Parameters<typeof store.query>[1], map?: Parameters<typeof store.query>[2]) {
       const fast = await store.query("c1", q, map);
       const scanned = await store.query("c1", { ...q, excludeText: ["zzz-matches-nothing"] }, map);
       expect(scanned).toEqual(fast);
