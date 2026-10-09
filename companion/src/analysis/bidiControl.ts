@@ -11,6 +11,12 @@
 // That is exactly how it appears in the OTRF APT29 NXLog export. normalizeBidiMojibake() turns the
 // three-character sequence back into the character it stood for, and every reader below sees
 // through it.
+//
+// The markers are DISPLAY-ONLY and ONE-WAY (#2050). Evidence text can already contain the literal
+// characters `<RLO>` (or `‹RLO›`), and it renders exactly like an escaped control — the escape is
+// not reversible and is not meant to be. So no code may parse a marker back into a character, or
+// treat a marker in a stored description as proof a control was present: decide on the RAW value
+// with hasBidiControl() / bidiControlsIn() before escaping (bidiMasquerade.ts grades that way).
 
 /**
  * Zero-width, line/paragraph separator, bidi embedding/override/isolate and BOM characters — the
@@ -74,17 +80,38 @@ export function bidiControlsIn(s: string): string[] {
   return [...new Set(names)];
 }
 
-/** The string with every bidi control (either encoding) shown as a visible `<NAME>` marker. */
+/**
+ * The string with every bidi control (either encoding) shown as a visible `<NAME>` marker.
+ * Display-only and one-way: literal `<RLO>` text in the input comes out identical, so never parse
+ * the result back — check the raw value with hasBidiControl().
+ */
 export function escapeBidiControls(s: string): string {
-  return escapeBidiControlsAs(s, "<", ">");
+  return substituteMarkers(s, "<", ">");
 }
 
 /**
  * The same, with the caller's own brackets around the name — for a format that gives `<` a meaning
  * (Markdown reads `<RLO>` as an HTML tag). A separate function rather than optional parameters, so
  * `lines.map(escapeBidiControls)` can never pass an index in as a bracket.
+ *
+ * The same one-way rule applies: the brackets may also occur literally in the value, and nothing
+ * tells them apart. Throws on an empty bracket or one carrying a bidi control — the only choices
+ * that would defeat the escape itself (a bracket that reorders the text it was meant to expose).
  */
 export function escapeBidiControlsAs(s: string, open: string, close: string): string {
+  assertMarkerBracket(open, "open");
+  assertMarkerBracket(close, "close");
+  return substituteMarkers(s, open, close);
+}
+
+function assertMarkerBracket(bracket: string, which: "open" | "close"): void {
+  if (!bracket) throw new Error(`escapeBidiControlsAs: the ${which} bracket must not be empty`);
+  if (hasBidiControl(bracket)) {
+    throw new Error(`escapeBidiControlsAs: the ${which} bracket must not contain a bidi control`);
+  }
+}
+
+function substituteMarkers(s: string, open: string, close: string): string {
   if (!hasBidiControl(s)) return s;
   return normalizeBidiMojibake(s).replace(BIDI_RE, (c) => `${open}${BIDI_NAMES[c]}${close}`);
 }

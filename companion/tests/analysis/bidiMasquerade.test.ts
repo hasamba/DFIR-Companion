@@ -4,6 +4,8 @@ import {
   bidiControlsIn,
   bidiVisual,
   escapeBidiControls,
+  escapeBidiControlsAs,
+  hasBidiControl,
   normalizeBidiMojibake,
 } from "../../src/analysis/bidiControl.js";
 import { BIDI_MASQUERADE_MARKER, annotateBidiMasquerade } from "../../src/analysis/bidiMasquerade.js";
@@ -238,5 +240,40 @@ describe("parseSiemExport — RLO payload end to end (#2027)", () => {
     expect(r.events[0].mitreTechniques).not.toContain("T1036.002");
     expect(r.events[0].description).toContain("<RLO>cod.3aka3.scr");
     expect(r.events[0].description).not.toMatch(RAW_BIDI);
+  });
+});
+
+// The markers are display-only and one-way (#2050): literal `<RLO>` text in evidence renders the
+// same as a real control, so nothing may parse a marker back out — the grading signal comes from
+// the raw value.
+describe("bidi markers are one-way", () => {
+  it("renders literal marker text and a real control identically", () => {
+    expect(escapeBidiControls("a<RLO>b")).toBe(escapeBidiControls(`a${RLO}b`));
+  });
+
+  it("does not read literal marker text as a bidi control", () => {
+    expect(hasBidiControl("a<RLO>b")).toBe(false);
+    expect(bidiControlsIn("a<RLO>b")).toEqual([]);
+    expect(hasBidiControl(`a${RLO}b`)).toBe(true);
+  });
+
+  it("refuses a bracket that is itself a bidi control", () => {
+    expect(() => escapeBidiControlsAs(`a${RLO}b`, RLO, ">")).toThrow(/bracket/i);
+    expect(() => escapeBidiControlsAs(`a${RLO}b`, "<", "\u2066")).toThrow(/bracket/i);
+    expect(() => escapeBidiControlsAs(`a${RLO}b`, MOJIBAKE_RLO, ">")).toThrow(/bracket/i);
+  });
+
+  it("refuses empty brackets", () => {
+    expect(() => escapeBidiControlsAs(`a${RLO}b`, "", "")).toThrow(/bracket/i);
+    expect(() => escapeBidiControlsAs(`a${RLO}b`, "<", "")).toThrow(/bracket/i);
+  });
+
+  it("checks the brackets even when the value has no control", () => {
+    expect(() => escapeBidiControlsAs("plain", "", "")).toThrow(/bracket/i);
+  });
+
+  it("still accepts the built-in bracket pairs", () => {
+    expect(escapeBidiControlsAs(`a${RLO}b`, "\u2039", "\u203a")).toBe("a\u2039RLO\u203ab");
+    expect(escapeBidiControls(`a${RLO}b`)).toBe("a<RLO>b");
   });
 });
