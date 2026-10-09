@@ -243,7 +243,7 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorde
 
   return {
     timestamp: normalizeTime(
-      pickStr(rec, ["CreationTime", "CreationDate"], (k) => debug?.field("timestamp", k)),
+      pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) => debug?.field("timestamp", k)),
     ),
     description,
     severity,

@@ -50,6 +50,8 @@ export const TIME_KEYS = [
   "EventTime",
   "event_time",
   "DeviceEventTime",
+  // Sentinel / Log Analytics event time (#2096). Never TimeCollected — that is the collector clock.
+  "TimeGenerated",
   "createdAt",
   "created",
   "event.created",
