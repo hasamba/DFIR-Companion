@@ -210,6 +210,12 @@ The correlation uses only the link domains extracted from the email — never se
 
 ---
 
+## JNDI Injection (Log4Shell) Correlation
+
+A Java process that makes an outbound LDAP or RMI lookup and then, within 60 seconds on the same host, starts a shell or downloader (bash, sh, cmd, PowerShell, curl, wget, Python, Perl, nc) is the Log4Shell exploit shape. Both rows (the lookup and the shell) are raised to at least **High**, tagged T1190 and T1203, and carry a `[jndi injection: …]` note. The note names the lookup address and port, the delay, and any other port the JVM reached on the same address (the class download). The Java process can be java, javaw, Tomcat or Catalina. Ports 1389, 1099 and 1098 count for any address except loopback, so a lab or insider attacker on an internal address is still caught. The ordinary directory ports 389 and 636 count only for a public address, because a Java service talking to a domain controller is normal. A shell child whose image the sensor recorded as `<unknown process>` is read from its command line. This shows the exploit's shape, not that the payload was a JNDI string. The network row must be graded above Info by its importer for the pass to see it. Sysmon network connections and Azure VM Insights (VMConnection) flows are graded Low, so they qualify.
+
+---
+
 ## Hypothesis-Driven Mode
 
 The **Hypotheses** panel lets you track explicit investigation hypotheses. Open hypotheses are fed into synthesis as context, steering the AI to look for supporting or refuting evidence.

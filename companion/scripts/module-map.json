@@ -569,6 +569,7 @@
     "jobRegistry.ts": "analysis/case",
     "jobServedModel.ts": "analysis/case",
     "journaldImport.ts": "analysis/ingest",
+    "jndiInjection.ts": "analysis/timeline",
     "k8sAuditImport.ts": "analysis/ingest",
     "kapeImport.ts": "analysis/ingest",
     "kapeAcquisitionLog.ts": "analysis/ingest",

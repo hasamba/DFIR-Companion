@@ -26,6 +26,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "cloud bulk read",
   "noninteractive account browsing",
   "container escape",
+  "jndi injection",
   "download-marked file executed",
   "ran a download-marked file",
   "stream referenced by a command line",
