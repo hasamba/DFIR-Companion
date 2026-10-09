@@ -28,13 +28,18 @@ export function safetyRetriesFromEnv(raw: string | undefined): number {
 
 /**
  * The error a synthesis call throws when the primary's safety filter used up the retry budget and
- * no fallback is set (#1740). Only synthesis says this: the provider's own safety_stop reaches every
+ * no fallback is set (#1740). Only synthesis and the deep pass (#2076) say this: the provider's own safety_stop reaches every
  * AI path and must not claim retries that other paths never run.
  */
-export function synthesisSafetyExhaustedError(label: string, stops: number, retries: number): ProviderError {
+export function synthesisSafetyExhaustedError(
+  label: string,
+  stops: number,
+  retries: number,
+  task = "synthesis",
+): ProviderError {
   const times = stops === 1 ? "once" : `${stops} times`;
   return new ProviderError(
-    `${label}'s safety filter stopped the synthesis answer ${times} ` +
+    `${label}'s safety filter stopped the ${task} answer ${times} ` +
       `(DFIR_AI_SYNTH_SAFETY_RETRIES allows ${retries} ${retries === 1 ? "retry" : "retries"}). ` +
       "Set a fallback synthesis model (DFIR_AI_SYNTH_FALLBACK_MODEL) in Settings, or choose another " +
       "synthesis model.",
@@ -48,6 +53,8 @@ export function synthesisSafetyExhaustedError(label: string, stops: number, retr
  * the fallback for good, so a later parse retry stays on the fallback and the primary is not
  * re-asked. The budget covers the whole call, across parse retries — a cost ceiling. No fallback →
  * the stop that exhausts the budget is rethrown. One instance per call; nothing leaks between runs.
+ * `task` names the work in that error: "synthesis" by default, "deep-pass" for the deep pass's
+ * batch reads (#2076).
  */
 export class SynthesisModelChoice {
   private active: AIProvider;
@@ -59,6 +66,7 @@ export class SynthesisModelChoice {
     private readonly primaryLabel: string,
     private readonly fallback: SynthesisFallback | undefined,
     private readonly safetyRetries: number = DEFAULT_SAFETY_RETRIES,
+    private readonly task: string = "synthesis",
   ) {
     this.active = primary;
   }
@@ -114,7 +122,7 @@ export class SynthesisModelChoice {
           continue;
         }
         if (!this.fallback)
-          throw synthesisSafetyExhaustedError(this.primaryLabel, this.stops, this.safetyRetries);
+          throw synthesisSafetyExhaustedError(this.primaryLabel, this.stops, this.safetyRetries, this.task);
         beforeNext();
         this.stopped = this.primaryLabel;
         this.active = this.fallback.provider;

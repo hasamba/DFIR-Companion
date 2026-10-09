@@ -1130,3 +1130,86 @@ win_terminal_server_write:
   mitre: ['T1021.001']
   severity: Low
   view: 'Defense evasion'
+
+# ── APT29 Day 2 tradecraft (#2079) ──────────────────────────────────────────────────────────────
+# Five per-event rules for steps an APT29-style scenario left at Info. Every PowerShell-text pattern
+# carries the HostApplication lookbehind of win_powershell_encoded (#2025): a 4103 / 800 / 4100
+# ContextInfo repeats the session's launch command on every record, so without the guard one launch
+# line would grade every pipeline record of the session. Cross-event shapes (a Run-key value later
+# executed, a Defender self-write at boot) are NOT here — the tagger evaluates one event at a time.
+
+# Running code out of an NTFS alternate data stream: `Get-Content x -Stream s | IEX` or
+# `IEX (Get-Content x -Stream s)`. Reading a stream alone (Zone.Identifier) or listing streams
+# (`Get-Item -Stream *`) is not execution and does not match. tradecraftRules' generic IEX match
+# already makes the siemImport row Medium; this rule supplies the High grade and T1564.004 on every
+# import path. Stream RECORDS (MFT / Sysmon 15) stay with ntfsStreams.ts.
+win_ads_stream_exec:
+  description: Script executed from an NTFS alternate data stream (Get-Content -Stream piped to IEX)
+  any:
+    - { field: commandLine, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:iex|invoke-expression)\b[^\n]{0,40}?\(?\s*(?:get-content|gc|type|cat)\b[^\n|]{0,300}?-stream\b|\b(?:get-content|gc)\b[^\n|]{0,300}?-stream\b[^\n]{0,200}?\|\s*(?:iex|invoke-expression)\b)', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:iex|invoke-expression)\b[^\n]{0,40}?\(?\s*(?:get-content|gc|type|cat)\b[^\n|]{0,300}?-stream\b|\b(?:get-content|gc)\b[^\n|]{0,300}?-stream\b[^\n]{0,200}?\|\s*(?:iex|invoke-expression)\b)', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:iex|invoke-expression)\b[^\n]{0,40}?\(?\s*(?:get-content|gc|type|cat)\b[^\n|]{0,300}?-stream\b|\b(?:get-content|gc)\b[^\n|]{0,300}?-stream\b[^\n]{0,200}?\|\s*(?:iex|invoke-expression)\b)', flags: 'i' }
+  tags: ['ads-exec', 'defense-evasion', 'execution']
+  mitre: ['T1564.004', 'T1059.001']
+  severity: High
+  view: 'Defense evasion'
+
+# Anti-VM probe: ONE script block / command line that queries Win32_BIOS together with
+# Win32_PnPEntity or Win32_ComputerSystem — the per-event approximation of "one process, three
+# hardware queries within seconds". A lone Win32_BIOS query (asset inventory) does not match.
+# DELIBERATE, USER-APPROVED EXCEPTION (#2079) to the "pure discovery is tag-only" precedent
+# (tradecraftRules.ts header, reconTechniques.ts): graded Medium on purpose so the probe reaches the
+# AI. reconTechniques does not grade this shape, so nothing double-grades.
+win_antivm_wmi_probe:
+  description: Anti-VM WMI probe — Win32_BIOS queried together with PnPEntity / ComputerSystem
+  any:
+    - { field: commandLine, regex: '(?<!host ?application ?=[^\n]*)(?:win32_bios\b[\s\S]{0,2000}?win32_(?:pnpentity|computersystem)\b|win32_(?:pnpentity|computersystem)\b[\s\S]{0,2000}?win32_bios\b)', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:win32_bios\b[\s\S]{0,2000}?win32_(?:pnpentity|computersystem)\b|win32_(?:pnpentity|computersystem)\b[\s\S]{0,2000}?win32_bios\b)', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:win32_bios\b[\s\S]{0,2000}?win32_(?:pnpentity|computersystem)\b|win32_(?:pnpentity|computersystem)\b[\s\S]{0,2000}?win32_bios\b)', flags: 'i' }
+  tags: ['anti-vm', 'defense-evasion', 'discovery']
+  mitre: ['T1497.001']
+  severity: Medium
+  view: 'Discovery'
+
+# Security-software discovery through WMI: the root\SecurityCenter2 namespace AND the
+# AntiVirusProduct class in the same text. reconTechniques.ts tags the same shape T1518.001 with no
+# weight; the grade lives HERE only, so the two layers never double-grade. Get-MpComputerStatus
+# stays recon-tag-only.
+# DELIBERATE, USER-APPROVED EXCEPTION (#2079) to the "pure discovery is tag-only" precedent: Medium.
+win_av_product_discovery:
+  description: Security software discovery — WMI root\SecurityCenter2 AntiVirusProduct query
+  any:
+    - { field: commandLine, regex: '(?<!host ?application ?=[^\n]*)(?:securitycenter2\b[\s\S]{0,300}?antivirusproduct\b|antivirusproduct\b[\s\S]{0,300}?securitycenter2\b)', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:securitycenter2\b[\s\S]{0,300}?antivirusproduct\b|antivirusproduct\b[\s\S]{0,300}?securitycenter2\b)', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:securitycenter2\b[\s\S]{0,300}?antivirusproduct\b|antivirusproduct\b[\s\S]{0,300}?securitycenter2\b)', flags: 'i' }
+  tags: ['av-discovery', 'discovery']
+  mitre: ['T1518.001']
+  severity: Medium
+  view: 'Discovery'
+
+# Installed-software discovery: script code WALKING ...\CurrentVersion\Uninstall through the .NET
+# registry API (OpenRemoteBaseKey / OpenSubKey / GetSubKeyNames). A registry-event row that only
+# names one Uninstall entry (an installer writing its DisplayName) carries no API call: no match.
+# DELIBERATE, USER-APPROVED EXCEPTION (#2079) to the "pure discovery is tag-only" precedent: Medium.
+win_installed_software_enum:
+  description: Installed software discovery — script walking the CurrentVersion\Uninstall key
+  any:
+    - { field: commandLine, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:openremotebasekey|opensubkey|getsubkeynames)\b[\s\S]{0,500}?currentversion\\uninstall\b|currentversion\\uninstall\b[\s\S]{0,500}?\b(?:getsubkeynames|opensubkey)\b)', flags: 'i' }
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:openremotebasekey|opensubkey|getsubkeynames)\b[\s\S]{0,500}?currentversion\\uninstall\b|currentversion\\uninstall\b[\s\S]{0,500}?\b(?:getsubkeynames|opensubkey)\b)', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)(?:\b(?:openremotebasekey|opensubkey|getsubkeynames)\b[\s\S]{0,500}?currentversion\\uninstall\b|currentversion\\uninstall\b[\s\S]{0,500}?\b(?:getsubkeynames|opensubkey)\b)', flags: 'i' }
+  tags: ['software-discovery', 'discovery']
+  mitre: ['T1518']
+  severity: Medium
+  view: 'Discovery'
+
+# P/Invoke host / account lookups: a DllImport of netapi32 / advapi32 / secur32 followed by a lookup
+# function. MITRE-ONLY on purpose: scriptPayloadRules.ts (#2025) already grades a DllImport block
+# Medium (T1106) at import, so this rule only unions the discovery techniques and never double-grades.
+win_api_lookup_pinvoke:
+  description: P/Invoke of a host / account lookup API (NetWkstaGetInfo, GetUserNameEx, LookupAccountSid ...)
+  any:
+    - { field: message, regex: '(?<!host ?application ?=[^\n]*)dllimport\b[\s\S]{0,200}?\b(?:netapi32|advapi32|secur32)\b[\s\S]{0,400}?\b(?:netwkstagetinfo|getusernameex[aw]?|lookupaccountsid[aw]?|convertsidtostringsid[aw]?|getcomputernameex[aw]?)\b', flags: 'i' }
+    - { field: description, regex: '(?<!host ?application ?=[^\n]*)dllimport\b[\s\S]{0,200}?\b(?:netapi32|advapi32|secur32)\b[\s\S]{0,400}?\b(?:netwkstagetinfo|getusernameex[aw]?|lookupaccountsid[aw]?|convertsidtostringsid[aw]?|getcomputernameex[aw]?)\b', flags: 'i' }
+  tags: ['api-lookup', 'discovery']
+  mitre: ['T1082', 'T1033']
+  view: 'Discovery'

@@ -34,30 +34,93 @@
 
   const num = (v) => (typeof v === "number" && isFinite(v) ? v.toLocaleString() : "0");
 
+  // A count from the wire: a finite positive number, or 0. A string or NaN never reaches arithmetic.
+  const count = (v) => (typeof v === "number" && isFinite(v) && v > 0 ? v : 0);
+
   /** Rows the last run matched but never reached. Zero when there is no run to compare against. */
   function unreadRows(r) {
     if (!r) return 0;
-    return Math.max(0, (r.matched || 0) - (r.read || 0));
+    return Math.max(0, count(r.matched) - count(r.read));
   }
 
   // WHAT A FULL READ WOULD COVER, FROM THE LAST RUN'S OWN NUMBERS — never from a guess.
   //
-  // `matched` is how many rows a full read reads. The cost is the last run's real cost scaled by
-  // rows read (cost x matched / read), because the spend is per row read, not per row matched.
+  // `matched` is how many rows a full read reads. The spend is per row GRADED, not per row read:
+  // rows already analysed, inside a build window or from the collector's own footprint are read and
+  // set aside before anything goes to the model (#2077). So the last run's cost is divided by the
+  // rows it graded and multiplied by the rows a full read would grade. That second number is not
+  // knowable without reading the rows, so the plan gives a range rather than inventing one figure:
+  //   - costLow:  the unread rows get graded as often as the rows read did;
+  //   - costHigh: every unread row needs grading (none is analysed or set aside).
+  // On the case behind #2077 the read sample was mostly already analysed, so the low end came out
+  // about 3x under the real cost — which is why the high end is shown beside it.
   // When there is no last run, `known` is false and the panel says it does not know rather than
-  // printing a number it invented. Same when the run reported no cost: `cost` stays null.
+  // printing a number it invented. Same when the run reported no cost or graded nothing: both stay null.
   function fullReadPlan(result) {
-    if (!result) return { known: false, matched: 0, unread: 0, cost: null };
-    const matched = result.matched || 0;
-    const read = result.read || 0;
+    if (!result) return { known: false, matched: 0, unread: 0, costLow: null, costHigh: null };
+    const matched = count(result.matched);
+    const read = count(result.read);
+    const graded = count(result.graded);
+    const unread = unreadRows(result);
     const usage = result.usage || {};
     const spent = typeof usage.costUSD === "number" && isFinite(usage.costUSD) ? usage.costUSD : null;
+    const perGraded = spent !== null && graded > 0 && read > 0 ? spent / graded : null;
     return {
       known: true,
       matched,
-      unread: unreadRows(result),
-      cost: spent !== null && read > 0 ? (spent * matched) / read : null,
+      unread,
+      costLow: perGraded !== null ? perGraded * (graded + (unread * graded) / read) : null,
+      costHigh: perGraded !== null ? perGraded * (graded + unread) : null,
     };
+  }
+
+  // The plan's cost in words: "" when unknown, one figure when both ends print the same.
+  function costRangeText(plan) {
+    const low = money(plan && plan.costLow);
+    const high = money(plan && plan.costHigh);
+    if (!low || !high) return "";
+    return low === high ? `about ${low}` : `${low} to ${high}`;
+  }
+
+  // The share of the archive a run read, as a percentage that never lies at either end: a read of
+  // a few rows is "<1%", never "0%", and a read one row short is ">99%", never "100%".
+  function coverageShare(read, matched) {
+    if (!(matched > 0)) return "";
+    const ratio = Math.min(1, Math.max(0, read / matched));
+    if (ratio < 0.01) return "<1%";
+    if (ratio < 1 && Math.round(ratio * 100) >= 100) return ">99%";
+    return `${Math.round(ratio * 100)}%`;
+  }
+
+  // THE CAPPED-REVIEW WARNING (#2077). Only when the cap really held rows back — the #1540 rule:
+  // a shortfall with no cap in force is the caption's to report, and it must not blame the cap.
+  // `foundNothing` (no graded row above Info) makes it a bordered status block the panel puts
+  // first, because an empty result is when an analyst stops. It states the unread count only:
+  // how many of those rows were never graded is not knowable without reading them.
+  function capWarningHtml(result, opts) {
+    if (!result || result.capped !== true) return "";
+    const unread = unreadRows(result);
+    if (unread <= 0) return "";
+    const read = count(result.read);
+    const matched = count(result.matched);
+    const share = coverageShare(read, matched);
+    const lead =
+      `Reviewed ${num(read)} of ${num(matched)} archive rows${share ? ` (${share})` : ""}. ` +
+      `${num(unread)} archive rows were not read.`;
+    const cost = costRangeText(fullReadPlan(result));
+    const offer =
+      "Reading every row covers them" +
+      (cost ? ` — estimated ${cost} from this run's cost per graded row, an estimate, not a quote.` : ".");
+    const button = `<button type="button" id="jevOfferAll">Read every row</button>`;
+    if (opts && opts.foundNothing) {
+      return `<div class="jev-cap-warn" role="status">
+      <p class="jev-confirm-head">Nothing above Info was found — in the rows that were read.</p>
+      <p class="jev-caption">${esc(lead)} ${esc(offer)}</p>
+      <p class="jev-offer">${button}</p>
+      <p class="jev-caption jev-truncated">An empty result here is not evidence that nothing was missed.</p>
+    </div>`;
+    }
+    return `<p class="jev-offer"><strong>${esc(lead)}</strong> ${esc(offer)} ${button}</p>`;
   }
 
   // `counts` is what the panel drew — { shown, kept, drawn } after the tooling filter, the grade
@@ -181,12 +244,12 @@
         "covers or what it would cost. That is not an estimate of zero — the figures are simply " +
         "not known until a first run reports them.";
     } else {
-      const est = money(plan.cost);
+      const est = costRangeText(plan);
       body =
         `This reads all ${num(plan.matched)} matching super-timeline row(s), ` +
         `${num(plan.unread)} of which the last run never reached. ` +
         (est
-          ? `Estimated cost ${est}, worked out from the last run's own cost per row — an estimate, not a quote.`
+          ? `Estimated cost ${est}, worked out from the last run's own cost per graded row — an estimate, not a quote.`
           : "The last run reported no cost, so there is no figure to estimate from.");
     }
     return `<div class="jev-confirm" role="group" aria-label="Confirm reading every row">
@@ -243,4 +306,5 @@
   window.jevCaptionHtml = captionHtml;
   window.jevSignalsText = signalsText;
   window.jevFullReadConfirmHtml = confirmHtml;
+  window.jevCapWarningHtml = capWarningHtml;
 })();

@@ -142,6 +142,7 @@ function parseEventBlock(block: string): Row | undefined {
     Computer: elText(sys, "Computer"),
     Level: elText(sys, "Level"),
     EventRecordID: elText(sys, "EventRecordID"),
+    ExecutionProcessID: attr(sys, "Execution", "ProcessID"), // the PowerShell session key (#2078)
     "@timestamp": attr(sys, "TimeCreated", "SystemTime"),
     EventData: parseEventData(block),
   };

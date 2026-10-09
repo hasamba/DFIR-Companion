@@ -171,6 +171,7 @@ export const FEATURES: Feature[] = [
       "jevCaptionHtml",
       "jevSignalsText",
       "jevFullReadConfirmHtml",
+      "jevCapWarningHtml",
     ],
     private: ["GRADES", "STRENGTH_WORDS", "STRENGTH_CUTS", "IMPACT_WORDS"],
   },

@@ -287,10 +287,14 @@
       ? `<span class="dp-partial-hd">⚠ Partial coverage — ${Number(r.batchesFailed).toLocaleString()} of ${Number(r.batches).toLocaleString()} batch(es) failed</span><br>`
         + `This run read LESS of the case than the numbers below suggest; the failed batches contributed no observations. Re-run to cover them.<br>`
       : "";
+    // #2076: batches another model read after the configured model's safety filter stopped them.
+    const fellBack = Number(r.batchesOnFallback) > 0 && r.fallbackModel
+      ? `<br><span data-safe-style="color:var(--text-muted)">${Number(r.batchesOnFallback).toLocaleString()} batch(es) read by the fallback model <b>${esc(r.fallbackModel)}</b> after a safety stop.</span>`
+      : "";
     host.innerHTML = `<div class="dp-result${partial ? " dp-partial" : ""}">${head}${label}`
       + `Floor <b>${esc(r.floor)}+</b> · read <b>${Number(r.events || 0).toLocaleString()}</b> event(s) `
       + `as <b>${Number(r.rows || 0).toLocaleString()}</b> prompt row(s) in <b>${Number(r.batches || 0).toLocaleString()}</b> batch(es) · `
-      + `<b>${Number(r.observations || 0).toLocaleString()}</b> observation(s) folded into the synthesis.${when}${superseded}</div>`;
+      + `<b>${Number(r.observations || 0).toLocaleString()}</b> observation(s) folded into the synthesis.${when}${fellBack}${superseded}</div>`;
   }
 
   window.runDeepPass = runDeepPass;

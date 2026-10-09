@@ -338,6 +338,8 @@ export async function explainEvent(
     getExplainEventPrompt,
     userPrompt,
     (raw) => explainEventSchema.parse(raw),
+    // #2083: a safety stop on the synthesis model retries, then answers on the fallback model.
+    { safetyFallback: { task: "explain event" } },
   );
 }
 

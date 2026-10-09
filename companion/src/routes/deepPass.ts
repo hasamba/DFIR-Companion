@@ -7,8 +7,41 @@ import type { Severity } from "../analysis/stateTypes.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
+/**
+ * #2076: name the reads the fallback model answered after the configured model's safety filter
+ * stopped them, so the job and the activity log never credit the configured model with them.
+ * Empty when the fallback answered nothing.
+ */
+export function deepPassFallbackNote(result: { batchesOnFallback?: number; fallbackModel?: string }): string {
+  return result.batchesOnFallback && result.fallbackModel
+    ? `${result.batchesOnFallback} batch(es) read by the fallback model ${result.fallbackModel} after a safety stop`
+    : "";
+}
+
+interface DeepPassOutcome {
+  events: number;
+  batches: number;
+  observations: number;
+  batchesFailed: number;
+  batchesOnFallback?: number;
+  fallbackModel?: string;
+  aborted: boolean;
+}
+
 export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
+
+  // The job's warnings: what went unread, and what another model read (#2076).
+  const warnJob = async (jobId: string, result: DeepPassOutcome): Promise<void> => {
+    if (result.batchesFailed) {
+      await options.jobManager?.warn(
+        jobId,
+        `${result.batchesFailed} batch(es) failed; the result has partial coverage`,
+      );
+    }
+    const note = deepPassFallbackNote(result);
+    if (note) await options.jobManager?.warn(jobId, note);
+  };
 
   // "blocked" is in the union because a deep pass ends with synthesize() (deepPassRun.ts), so it
   // inherits the merge gate. Without it this helper could only call a held run an error.
@@ -25,17 +58,8 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
     });
   };
 
-  const recordResult = (
-    caseId: string,
-    minSeverity: Severity,
-    result: {
-      events: number;
-      batches: number;
-      observations: number;
-      batchesFailed: number;
-      aborted: boolean;
-    },
-  ): void => {
+  const recordResult = (caseId: string, minSeverity: Severity, result: DeepPassOutcome): void => {
+    const note = deepPassFallbackNote(result);
     void logActivity(options.activityLogStore, options.onActivity, caseId, {
       category: "ai",
       action: "deep-pass",
@@ -43,6 +67,7 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
         `deep pass (${minSeverity}+) read ${result.events} event(s) in ${result.batches} batch(es), ` +
         `${result.observations} observation(s)` +
         (result.batchesFailed ? ` — ${result.batchesFailed} batch(es) FAILED (partial coverage)` : "") +
+        (note ? ` — ${note}` : "") +
         (result.aborted ? " — CANCELLED, nothing was written" : ""),
     });
   };
@@ -85,12 +110,7 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
     }
     aiStatus(job.caseId, "analyzing", `resuming deep pass (${minSeverity}+)`);
     const result = await execute(job, minSeverity, signal);
-    if (result.batchesFailed) {
-      await options.jobManager?.warn(
-        job.id,
-        `${result.batchesFailed} batch(es) failed; the result has partial coverage`,
-      );
-    }
+    await warnJob(job.id, result);
     aiStatus(job.caseId, "idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
     recordResult(job.caseId, minSeverity, result);
   });
@@ -147,12 +167,7 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
       const job = registered ? options.jobManager!.get(registered.jobId)! : { id: "untracked", caseId };
       aiStatus(caseId, "analyzing", `deep pass (${minSeverity}+) — starting`);
       const result = await execute(job, minSeverity, registered?.signal);
-      if (registered && result.batchesFailed) {
-        await options.jobManager?.warn(
-          registered.jobId,
-          `${result.batchesFailed} batch(es) failed; the result has partial coverage`,
-        );
-      }
+      if (registered) await warnJob(registered.jobId, result);
       if (registered) await options.jobManager?.finish(registered.jobId);
       aiStatus(caseId, "idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
       recordResult(caseId, minSeverity, result);

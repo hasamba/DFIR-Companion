@@ -24,6 +24,7 @@ import { inputTokenBudget } from "../promptBudget.js";
 import { getObservePrompt, getSynthesisPrompt } from "./prompts/index.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 import { promptDescription } from "./promptDescription.js";
+import { deepPassObserver, type DeepPassFallbackTally } from "./deepPassObserve.js";
 
 /**
  * Deep Pass (#418): read the whole graded timeline in batches, then synthesize over the digest.
@@ -47,6 +48,8 @@ export interface DeepPassResult {
   rows: number; // prompt rows after detection-burst grouping
   batches: number; // observation calls made
   batchesFailed: number; // batches whose response never parsed — that slice went unread
+  batchesOnFallback: number; // #2076: reads (batches + condense groups) the fallback model answered
+  fallbackModel?: string; // #2076: its label — set only when batchesOnFallback > 0
   observations: number; // observations that survived sanitising
 }
 
@@ -174,11 +177,14 @@ async function observeAllBatches(
     onProgress?: (done: number, total: number, detail: string) => void;
     onCheckpoint?: (checkpoint: DeepPassCheckpoint) => Promise<void>;
     resumeFrom?: DeepPassCheckpoint;
+    analystChose: boolean;
   },
-): Promise<Awaited<ReturnType<typeof executeDeepPassBatches>>> {
-  const retries = ctx.opts.retries ?? 3;
-  const backoffMs = ctx.opts.backoffMs ?? 500;
-  return executeDeepPassBatches({
+): Promise<ObservedRun> {
+  const observer = deepPassObserver(ctx, caseId, state, provider, {
+    analystChose: opts.analystChose,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+  const run = await executeDeepPassBatches({
     batches: plan.batches,
     floor: opts.minSeverity,
     selectionHash: plan.selectionHash,
@@ -189,29 +195,14 @@ async function observeAllBatches(
     ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
     ...(opts.onCheckpoint ? { onCheckpoint: opts.onCheckpoint } : {}),
     renderBatch: (batch) => renderBatchRows(batch),
-    observe: (userPrompt) =>
-      ctx.withRetry(
-        caseId,
-        "deep-pass-observe",
-        () =>
-          ctx.analyzeRestored(
-            caseId,
-            state,
-            provider,
-            {
-              systemPrompt: getObservePrompt(),
-              userPrompt,
-              images: [],
-              ...(opts.signal ? { signal: opts.signal } : {}),
-            },
-            "deep-pass-observe",
-          ),
-        retries,
-        backoffMs,
-      ),
+    observe: observer.observe,
     onFailure: (message) => ctx.log.warn(`deep pass: ${message}`, { caseId }),
   });
+  return { ...run, ...observer.tally(), primaryLabel: observer.primaryLabel };
 }
+
+type ObservedRun = Awaited<ReturnType<typeof executeDeepPassBatches>> &
+  DeepPassFallbackTally & { primaryLabel: string };
 
 /** The analysis-run row describing WHAT this deep pass read and under which knobs. */
 function buildRunRecord(
@@ -223,6 +214,7 @@ function buildRunRecord(
     minSeverity: Severity;
     batchesFailed: number;
     parentRunId: string | undefined;
+    fallback: DeepPassFallbackTally & { primaryLabel: string };
   },
 ) {
   return {
@@ -237,6 +229,11 @@ function buildRunRecord(
     rowsPerBatch: plan.cap,
     scope: plan.scope,
     batchesFailed: run.batchesFailed,
+    // #2076: the configured model stays in provider/model; the warning names who actually answered.
+    batchesOnFallback: run.fallback.batchesOnFallback,
+    ...(run.fallback.fallbackModel
+      ? { fallbackModel: run.fallback.fallbackModel, primaryLabel: run.fallback.primaryLabel }
+      : {}),
     falsePositiveMarkers: plan.markers.length,
     observePrompt: getObservePrompt(),
     synthesisPrompt: getSynthesisPrompt(),
@@ -266,8 +263,11 @@ export async function deepPass(
   if (!provider) throw new Error("no synthesis provider configured");
 
   const plan = await planDeepPass(ctx, caseId, state, opts.minSeverity, opts.maxBatches);
-  const run = await observeAllBatches(ctx, caseId, state, provider, plan, opts);
-  const { observations, batchesFailed, aborted } = run;
+  const run = await observeAllBatches(ctx, caseId, state, provider, plan, {
+    ...opts,
+    analystChose: opts.provider !== undefined,
+  });
+  const { observations, batchesFailed, aborted, batchesOnFallback, fallbackModel } = run;
 
   const summary: DeepPassResult = {
     aborted,
@@ -276,6 +276,8 @@ export async function deepPass(
     rows: plan.rows.length,
     batches: plan.batches.length,
     batchesFailed,
+    batchesOnFallback,
+    ...(fallbackModel ? { fallbackModel } : {}),
     observations: observations.length,
   };
   const runRecord = buildRunRecord(plan, provider, {
@@ -284,6 +286,11 @@ export async function deepPass(
     minSeverity: opts.minSeverity,
     batchesFailed,
     parentRunId: opts.analysisParentRunId,
+    fallback: {
+      batchesOnFallback,
+      primaryLabel: run.primaryLabel,
+      ...(fallbackModel ? { fallbackModel } : {}),
+    },
   });
   if (aborted) {
     // Recorded as FAILED with the pre-run state as its output: recording a success would leave an

@@ -26,6 +26,7 @@ import {
   type CommandSeat,
 } from "./synthCommandSeats.js";
 import { accountLogonSeats, accountSeatCap } from "./synthAccountSeats.js";
+import { psSessionSeatCap, psSessionSeats } from "./synthPsSessionSeats.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -121,18 +122,25 @@ export function createTimelineSelection(
   // motivating case the only Critical/High rows are two unrelated installs, so an anchor-based
   // restriction would exclude the attack itself, and the hard cap bounds the noise.
   const accountSeats = accountSeatRows(scopedEvents, grouping, pinnedIds, aliasIndex);
+  // PowerShell session seats (#2078) ride the same reserve with their own cap, like the accounts: the
+  // other Low/Medium rows of a session the import recorded and one of whose rows is High. A row seated
+  // here leaves the command list, so it never takes two reserve slots.
+  const sessionSeats = sessionSeatRows(scopedEvents, grouping, pinnedIds, aliasIndex);
+  const sessionIds = new Set(sessionSeats.map((s) => s.event.id));
+  const quietCommands = commandSeatList.filter((s) => !sessionIds.has(s.event.id));
   const choose = (count: number) => {
     const pins = pinned.slice(0, count);
     const accounts = accountSeats.slice(0, accountSeatCap(count));
+    const sessions = sessionSeats.slice(0, psSessionSeatCap(count));
     // The reserve is sized from the whole prompt count, not what the pins leave, and a pinned
     // Critical/High row already satisfies the one-anchor guarantee (#1622).
     const chosen = selectOrNone(
       collapsedEvents,
       count - pins.length,
       rarityOf,
-      [...accounts, ...commandSeatList],
+      [...accounts, ...sessions, ...quietCommands],
       {
-        cap: commandSeatCap(count) + accounts.length,
+        cap: commandSeatCap(count) + accounts.length + sessions.length,
         anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
       },
     );
@@ -261,13 +269,37 @@ function accountSeatRows(
 ): CommandSeat[] {
   const hostOf = (raw: string): string =>
     aliasIndex ? resolveHost(aliasIndex, raw) : raw.trim().toLowerCase();
+  return poolSeatRows(accountLogonSeats({ events: scopedEvents, hostOf }), grouping, pinnedIds);
+}
+
+/** Reserved seats for the rest of a High PowerShell session (#2078), as rows of the collapsed pool. */
+function sessionSeatRows(
+  scopedEvents: readonly ForensicEvent[],
+  grouping: CollapsedPrompt,
+  pinnedIds: ReadonlySet<string>,
+  aliasIndex?: HostAliasIndex,
+): CommandSeat[] {
+  const hostOf = (raw: string): string =>
+    aliasIndex ? resolveHost(aliasIndex, raw) : raw.trim().toLowerCase();
+  return poolSeatRows(psSessionSeats({ events: scopedEvents, hostOf }), grouping, pinnedIds);
+}
+
+/**
+ * Unshadowed seats as rows of the collapsed prompt pool: a pinned row is already on the prompt and
+ * takes no reserve; a grouped one reserves the seat of the row that represents its burst, once.
+ */
+function poolSeatRows(
+  seats: readonly CommandSeat[],
+  grouping: CollapsedPrompt,
+  pinnedIds: ReadonlySet<string>,
+): CommandSeat[] {
   const pool = new Map(grouping.events.map((e) => [e.id, e] as const));
   const representativeOf = new Map<string, string>();
   for (const [rep, members] of grouping.memberIdsByRepresentative)
     for (const id of members) representativeOf.set(id, rep);
   const out: CommandSeat[] = [];
   const seen = new Set<string>();
-  for (const { event } of accountLogonSeats({ events: scopedEvents, hostOf })) {
+  for (const { event } of seats) {
     if (pinnedIds.has(event.id)) continue;
     const row = pool.get(representativeOf.get(event.id) ?? event.id);
     if (!row || seen.has(row.id)) continue;

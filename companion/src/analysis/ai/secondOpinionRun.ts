@@ -66,6 +66,11 @@ export function pickReferee(opts: SecondOpinionContext["opts"], modelA: string):
   return provider ? { provider, label: modelA } : undefined;
 }
 
+/** The configured synthesis model's label — what the primary provider is called, whoever answered. */
+function configuredModelALabel(ctx: SecondOpinionContext): string {
+  return ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
+}
+
 // Every read-modify-write of the saved record runs under this per-case lock (#1587 review): a
 // referee re-run holds the AI call OUTSIDE it, then re-reads, merges and saves inside it, so an
 // accept/reject or a newer full run can never land between its re-read and its save.
@@ -96,6 +101,10 @@ export async function secondOpinion(
     deepReasoning: opts.deepReasoning,
     thinkingTokens: opts.thinkingTokens,
   });
+  // #2076: model A is the model that WROTE the synthesis being compared — the fallback when the
+  // primary's safety filter stopped pass 0. Synth-meta records who answered (also when pass 0 was a
+  // no-op); it is read before pass 1 so model B's run can never stand in for it.
+  const modelA = (await ctx.opts.synthMetaStore?.load(caseId))?.synthModel || configuredModelALabel(ctx);
 
   // Pass 1 — independent synthesis with model B over the SAME current timeline/context, routed
   // through a different model and NOT persisted (dryRun). This is model B's analysis.
@@ -107,10 +116,9 @@ export async function secondOpinion(
     thinkingTokens: opts.thinkingTokens,
   });
 
-  const modelA =
-    ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
   const modelB = ctx.opts.secondOpinionModelLabel ?? provider.name;
-  const referee = pickReferee(ctx.opts, modelA);
+  // The default referee runs on the configured primary, so it carries that label — never the fallback's.
+  const referee = pickReferee(ctx.opts, configuredModelALabel(ctx));
   // `referee` stays "" until the verdict pass actually succeeds (reconcileDeltas stamps it), so a
   // failed or skipped pass never shows a referee that wrote nothing.
   // The scope window both syntheses read, and the scoped events the referee is shown: out-of-window
@@ -164,12 +172,36 @@ async function reconcileDeltas(
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
   const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
+  const asked = askedReferee(referee);
   try {
-    const parsed = await callReferee(ctx, caseId, a, referee, userPrompt, record);
-    return flagRefereeDismissals(foldVerdicts(record, parsed, referee), guard);
+    const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
+    return flagRefereeDismissals(foldVerdicts(record, parsed, asked.current()), guard);
   } catch (err) {
-    return withRefereeFailure(ctx, caseId, record, referee, userPrompt, err);
+    return withRefereeFailure(ctx, caseId, record, asked.current(), userPrompt, err);
   }
+}
+
+/**
+ * The referee as it was actually asked (#2083). The default referee is the synthesis model, so a
+ * safety stop moves it to DFIR_AI_SYNTH_FALLBACK_MODEL; the verdicts — or the failure — are then
+ * credited to the fallback, the model that last answered. `pickReferee` keeps the configured
+ * primary's label: that is who is ASKED first.
+ */
+interface AskedReferee {
+  referee: RefereeModel;
+  onFallback(label: string): void;
+  current(): RefereeModel;
+}
+
+function askedReferee(referee: RefereeModel): AskedReferee {
+  let answeredLabel = referee.label;
+  return {
+    referee,
+    onFallback: (label) => {
+      answeredLabel = label;
+    },
+    current: () => (answeredLabel === referee.label ? referee : { ...referee, label: answeredLabel }),
+  };
 }
 
 const REFEREE_ERROR_MAX = 300;
@@ -189,7 +221,7 @@ async function callReferee(
   ctx: SecondOpinionContext,
   caseId: string,
   loaded: InvestigationState,
-  referee: RefereeModel,
+  asked: AskedReferee,
   userPrompt: string,
   record: SecondOpinion,
 ): Promise<ReconcileResponse> {
@@ -197,11 +229,16 @@ async function callReferee(
     ctx,
     caseId,
     loaded,
-    referee.provider,
+    asked.referee.provider,
     "second-opinion-reconcile",
     getReconcilePrompt,
     userPrompt,
     (raw) => reconcileResponseSchema.parse(raw),
+    // #2083: only the DEFAULT referee (the synthesis model) falls back on a safety stop. A referee
+    // the analyst picked with DFIR_AI_RECONCILE_MODEL never does — even when it is the same model.
+    ctx.opts.referee
+      ? {}
+      : { safetyFallback: { task: "second-opinion referee", onFallback: asked.onFallback } },
   );
   const ids = new Set(record.deltas.map((d) => d.id));
   if (!parsed.verdicts.some((v) => ids.has(v.id)))
@@ -264,7 +301,8 @@ async function rerunReferee(
   const prompt = before.refereePrompt;
   if (!before.refereeError || !prompt)
     throw new Error("the referee did not fail on this second opinion — nothing to re-run");
-  const referee = pickReferee(ctx.opts, before.modelA);
+  // Not before.modelA: that names who wrote A, which may be the fallback (#2076).
+  const referee = pickReferee(ctx.opts, configuredModelALabel(ctx));
   if (!referee) throw new Error("no referee model configured");
   const state = await ctx.opts.stateStore.load(caseId);
   // The replayed prompt is the failed attempt's, byte for byte; one saved before #1596 has no guard
@@ -272,8 +310,9 @@ async function rerunReferee(
   const guard = guardCaseOf(state, (await loadScopedEvents(ctx, caseId, state)).scoped);
   let parsed: ReconcileResponse | undefined;
   let failure: unknown;
+  const asked = askedReferee(referee);
   try {
-    parsed = await callReferee(ctx, caseId, state, referee, prompt, before);
+    parsed = await callReferee(ctx, caseId, state, asked, prompt, before);
   } catch (err) {
     // A gate is a question for the analyst, not a broken referee — the route shows the approval.
     if (err instanceof PresidioApprovalRequired || err instanceof HostMergeDecisionRequired) throw err;
@@ -286,8 +325,8 @@ async function rerunReferee(
         "this second opinion was replaced by a newer second opinion — its referee result was discarded",
       );
     const next = parsed
-      ? flagRefereeDismissals(foldVerdicts(latest, parsed, referee), guard)
-      : withRefereeFailure(ctx, caseId, latest, referee, prompt, failure);
+      ? flagRefereeDismissals(foldVerdicts(latest, parsed, asked.current()), guard)
+      : withRefereeFailure(ctx, caseId, latest, asked.current(), prompt, failure);
     await store.save(caseId, next);
     return next;
   });

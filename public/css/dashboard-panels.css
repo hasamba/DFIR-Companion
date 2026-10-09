@@ -515,6 +515,10 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 /* Offered only after a run the cap really truncated, so it is not a standing nag. */
 .jev-offer { font-size: 12px; color: var(--text-primary); margin: 6px 0; display: flex;
   flex-wrap: wrap; align-items: center; gap: 8px; }
+/* A capped review that found nothing above Info (#2077): bordered and placed first, so the share
+   read and the unread count are not lost at the end of the caption. role="status" in the markup. */
+.jev-cap-warn { border: 1px solid var(--sev-high); border-radius: 4px; padding: 10px 12px;
+  margin: 8px 0; background: var(--bg-elevated); }
 /* Elapsed time while a run is in flight. No bar and no percentage: the server reports neither. */
 .jev-progress { font-size: 12px; color: var(--text-muted); margin: 6px 0; }
 

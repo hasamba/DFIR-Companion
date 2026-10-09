@@ -105,6 +105,9 @@ async function callViewReport(
     systemPrompt,
     userPrompt,
     (raw) => markdownSchema.parse(raw).markdown,
+    // #2083: a safety stop on the synthesis model retries, then answers on the fallback model. The
+    // report is ephemeral, so nothing persisted needs to name which model wrote it.
+    { safetyFallback: { task: kind.replace("-", " ") } },
   );
 }
 
