@@ -51,6 +51,7 @@ import {
 } from "./dnsWireRead.js";
 import { mapDnsRows, tallyDnsChains } from "./dnsWireRows.js";
 import { asciiName, isIndicatorName } from "./dnsRecord.js";
+import { looksLikeZeekTsv, parseZeekTsv } from "./zeekTsv.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -607,7 +608,7 @@ function pickHost(row: Row): string {
 
 export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}): NetworkParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const { records } = extractRecords(text);
+  const records = looksLikeZeekTsv(text) ? parseZeekTsv(text) : extractRecords(text).records;
   const total = records.length;
   if (total === 0) {
     return {

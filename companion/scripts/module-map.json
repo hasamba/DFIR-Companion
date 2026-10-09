@@ -912,6 +912,7 @@
     "yaraGrade.ts": "analysis/ingest",
     "yaraHitContext.ts": "analysis/ingest",
     "yaraImport.ts": "analysis/ingest",
+    "zeekTsv.ts": "analysis/ingest",
     "zipArchive.ts": "analysis/ingest",
     "zipCrypto.ts": "analysis/ingest",
     "zipExtract.ts": "analysis/ingest"
