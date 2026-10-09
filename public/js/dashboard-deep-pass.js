@@ -221,8 +221,7 @@
       .then(r => r.json().then(j => ({ r, j })))
       .then(({ r, j }) => {
         if (r.ok) {
-          storeDeepPassResult(cid, j);
-          renderDeepPassResult(j);
+          renderDeepPassResult(storeDeepPassResult(cid, j));
           // The final synthesis rewrote the conclusions — pull them in case the WS push was missed.
           fetch(`/cases/${encodeURIComponent(cid)}/state`).then(x => x.json()).then(render).catch(() => {});
           loadSynthMeta(cid);
@@ -250,7 +249,11 @@
   function storeDeepPassResult(cid, r) {
     // The summary lives only in the HTTP response body; persisting it per case is what keeps
     // batchesFailed readable after a reload instead of dying with the request.
-    try { localStorage.setItem(deepPassResultKey(cid), JSON.stringify({ ...r, at: new Date().toISOString() })); } catch {}
+    // The stamped record is built outside the try and returned, so the fresh render shows the
+    // run time too — even when localStorage refuses the write (#2068).
+    const rec = { ...r, at: new Date().toISOString() };
+    try { localStorage.setItem(deepPassResultKey(cid), JSON.stringify(rec)); } catch {}
+    return rec;
   }
 
   function cancelDeepPass() {
