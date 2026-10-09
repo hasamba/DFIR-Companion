@@ -230,15 +230,37 @@ win_powershell_encoded:
   severity: Medium
   view: 'Encoded PowerShell'
 
-win_suspicious_child:
-  description: Office / script host spawning a shell (macro or exploit execution chain)
+# Office and script hosts are split (#2091): one combined rule tagged every script-host child
+# T1566.001 (phishing attachment), so Windows' own System32 scripts — netsh's gatherNetworkInfo.vbs
+# under cscript — read as spearphishing. Only an Office parent implies a phishing document.
+win_office_suspicious_child:
+  description: Office application spawning a shell (macro or exploit execution chain)
   all:
-    - { field: parentName, regex: '(winword|excel|powerpnt|outlook|mshta|wscript|cscript)\.exe', flags: 'i' }
+    - { field: parentName, regex: '(winword|excel|powerpnt|outlook)\.exe', flags: 'i' }
     - { field: processName, regex: '(cmd|powershell|pwsh|rundll32|regsvr32)\.exe', flags: 'i' }
   tags: ['suspicious-child-process', 'execution']
   mitre: ['T1059', 'T1566.001']
   severity: High
   view: 'Office-spawned shells'
+
+# A script host whose OWN command line runs a script out of System32 / SysWOW64 is Windows running
+# its own tooling, so it is left ungraded (it keeps its importer severity). The exclusion reads the
+# rendered `ParentCommandLine=` field and stops at the next `=` (the next ` - Field=`), so a System32
+# path in the CHILD's fields cannot excuse a user-path parent. That field is the first trimmed on a
+# long row; a trimmed row fails open to High (the pre-#2091 grade), never to a silent miss.
+# Never exclude on cscript alone — `cscript C:\Users\…\x.vbs` is the real attack.
+win_script_host_suspicious_child:
+  description: Script host (wscript / cscript / mshta) spawning a shell
+  all:
+    - { field: parentName, regex: '(mshta|wscript|cscript)\.exe', flags: 'i' }
+    - { field: processName, regex: '(cmd|powershell|pwsh|rundll32|regsvr32)\.exe', flags: 'i' }
+  none:
+    - { field: description, regex: 'ParentCommandLine=[^\n=]*?[\\/]windows[\\/](?:system32|syswow64)[\\/][^\\/\s"]+\.(?:vbs|js|jse|vbe|wsf)\b', flags: 'i' }
+    - { field: message, regex: 'ParentCommandLine=[^\n=]*?[\\/]windows[\\/](?:system32|syswow64)[\\/][^\\/\s"]+\.(?:vbs|js|jse|vbe|wsf)\b', flags: 'i' }
+  tags: ['suspicious-child-process', 'execution']
+  mitre: ['T1059.005']
+  severity: High
+  view: 'Script-host spawned shells'
 
 # A web-server worker spawning a command shell or a discovery binary is the textbook web-application
 # exploitation / webshell signal (#1501). Graded High with T1190 HERE, before the AI reads the row,
