@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { marked } from "marked";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
@@ -138,5 +139,51 @@ describe("chain of custody appendix", () => {
 
   it("does not break a report rendered without any custody data at all", () => {
     expect(() => render(undefined)).not.toThrow();
+  });
+});
+
+// #2052 — the artifact path is attacker-chosen (a filename on mounted evidence, an uploaded evidence
+// file). It must stay inside its own code span on its own list item: a newline must not start a
+// forged section, and a backtick must not close the span early and let the rest render as Markdown.
+describe("chain of custody appendix — hostile artifact paths (#2052)", () => {
+  const lineStarting = (text: string, prefix: string): string =>
+    text.split("\n").find((l) => l.startsWith(prefix)) ?? "";
+  const toHtml = (md: string): string => marked.parse(md, { async: false });
+
+  it("does not let a newline in the path forge a report heading", () => {
+    const text = render([record({ artifactPath: "/ev/evil\n## 5 Conclusion\nx.bin" })]);
+
+    expect(text.split("\n").some((l) => /^#{1,6}\s*5 Conclusion/.test(l))).toBe(false);
+    expect(lineStarting(text, "- Path:")).toContain("/ev/evil ## 5 Conclusion x.bin");
+    expect(toHtml(text)).not.toMatch(/<h\d[^>]*>\s*5 Conclusion/);
+  });
+
+  it("keeps a path containing backticks inside one code span", () => {
+    const text = render([record({ artifactPath: "/ev/a`b **bold** `c.bin" })]);
+    const pathLine = lineStarting(text, "- Path:");
+
+    expect(pathLine).toBe("- Path: `` /ev/a`b **bold** `c.bin ``");
+    const html = toHtml(pathLine);
+    expect(html).toContain("<code>/ev/a`b **bold** `c.bin</code>");
+    expect(html).not.toContain("<strong>");
+  });
+
+  it("renders an ordinary path as the same inline code it always was", () => {
+    const html = toHtml(lineStarting(render([record()]), "- Path:"));
+
+    expect(html).toContain("<code>/cases/INC-1/imports/0001_evidence.csv</code>");
+  });
+
+  it("keeps a forged hash value inside its code span on one line", () => {
+    const text = render([record({ sha256: "ab`c\n## Forged" })]);
+
+    expect(text.split("\n").some((l) => /^#{1,6}\s*Forged/.test(l))).toBe(false);
+    expect(lineStarting(text, "- SHA-256:")).toBe("- SHA-256: `` ab`c ## Forged ``");
+  });
+
+  it("keeps the artifact heading on one trimmed line", () => {
+    const text = render([record({ artifactPath: "/ev/name with  trailing\r\n" })]);
+
+    expect(lineStarting(text, "### ")).toBe("### name with  trailing");
   });
 });

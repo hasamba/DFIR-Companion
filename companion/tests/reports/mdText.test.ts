@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { blockMd, cellMd, oneLineMd } from "../../src/reports/mdText.js";
+import { blockMd, cellMd, codeSpanMd, oneLineMd } from "../../src/reports/mdText.js";
+
+describe("codeSpanMd (#2052)", () => {
+  it("wraps plain text in a single-backtick span", () => {
+    expect(codeSpanMd("C:\\Users\\bob\\evidence.csv")).toBe("` C:\\Users\\bob\\evidence.csv `");
+  });
+
+  it("uses a fence longer than any backtick run inside the text", () => {
+    expect(codeSpanMd("a`b``c")).toBe("``` a`b``c ```");
+  });
+
+  it("flattens newlines so the span stays on its line", () => {
+    expect(codeSpanMd("x\n## Forged\r\ny")).toBe("` x ## Forged y `");
+  });
+});
 
 describe("oneLineMd", () => {
   it("collapses every newline so the value cannot leave its line", () => {

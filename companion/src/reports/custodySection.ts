@@ -1,8 +1,8 @@
 import type { CustodyRecord } from "../analysis/custody.js";
-import { cellMd } from "./mdText.js";
+import { cellMd, codeSpanMd, oneLineMd } from "./mdText.js";
 
 // Extracted from markdown.ts verbatim when that file reached its size ledger (#932 item 5 part C
-// needed one builder line). Nothing here changed.
+// needed one builder line). Since then only the escaping of the heading, path and hash (#2052).
 /**
  * "Chain of Custody" appendix (#231 item 4): every artifact under custody, with its hash and the
  * full sequence of events that touched it.
@@ -33,10 +33,12 @@ export function chainOfCustodySection(custody: CustodyRecord[] | undefined, line
   lines.push(`${byArtifact.size} artifact(s) under custody, ${records.length} recorded event(s).`, "");
   for (const [artifactPath, chain] of byArtifact) {
     const name = artifactPath.split(/[\\/]/).pop() || artifactPath;
-    lines.push(`### ${cellMd(name)}`, "");
-    lines.push(`- Path: \`${artifactPath}\``);
+    // The path is attacker-chosen (a filename on mounted evidence or an upload), so it goes through
+    // the same one-line, fence-sized code span as other untrusted inline code (#2052).
+    lines.push(`### ${oneLineMd(name)}`, "");
+    lines.push(`- Path: ${codeSpanMd(artifactPath)}`);
     // The hash from the most recent event: what the artifact was last known to be.
-    lines.push(`- SHA-256: \`${chain[chain.length - 1].sha256}\``, "");
+    lines.push(`- SHA-256: ${codeSpanMd(chain[chain.length - 1].sha256)}`, "");
     lines.push("| # | Event | When (UTC) | By | Source | Trigger |", "| --- | --- | --- | --- | --- | --- |");
     for (const r of chain) {
       lines.push(
