@@ -258,6 +258,26 @@ function readSigmaMeta(rec: Row): SigmaMeta {
   };
 }
 
+// normalizeTime hands unparseable text back unchanged, so a stamp like `9999-99-99…` or free text
+// became the event time and the row fell out of every time view (#2074, as #2063 for Hayabusa).
+// Return "" instead: the row is kept and lands undated.
+function chainsawTime(raw: string): string {
+  if (!raw) return "";
+  const out = normalizeTime(raw);
+  return Number.isNaN(Date.parse(out)) ? "" : out;
+}
+
+// The same rule for the event's own time, which mapWindows read through normalizeTime (#2074).
+// Returns a NEW event with an empty time and canonical normalized, the raw text kept as observed,
+// so applySigma can fall back to the detection's own readable timestamp.
+function withReadableTime(ev: MappedEvent): MappedEvent {
+  if (!ev.timestamp || !Number.isNaN(Date.parse(ev.timestamp))) return ev;
+  const canonical = ev.canonical
+    ? { ...ev.canonical, time: { ...ev.canonical.time, normalized: "" } }
+    : undefined;
+  return { ...ev, timestamp: "", ...(canonical ? { canonical } : {}) };
+}
+
 // Overlay a Chainsaw rule verdict onto a Windows-mapped event in place: raise severity to
 // the Sigma level, union the attack-tag MITRE, lead the description with the rule name, and
 // key the aggregate by rule (so two different rules on the same event stay distinct).
@@ -269,7 +289,7 @@ function applySigma(mapped: MappedEvent, meta: SigmaMeta): MappedEvent {
   mapped.description = `${head} - ${mapped.description}`.slice(0, 600);
   mapped.aggKey = `chainsaw|${meta.ruleName.toLowerCase()}|${mapped.aggKey}`;
   mapped.sources = ["Chainsaw"];
-  if (!mapped.timestamp && meta.ts) mapped.timestamp = normalizeTime(meta.ts);
+  if (!mapped.timestamp && meta.ts) mapped.timestamp = chainsawTime(meta.ts);
   return mapped;
 }
 
@@ -278,7 +298,7 @@ function applySigma(mapped: MappedEvent, meta: SigmaMeta): MappedEvent {
 function genericDetection(meta: SigmaMeta, host = ""): MappedEvent {
   const head = `Chainsaw${meta.group ? `/${meta.group}` : ""}: ${meta.ruleName}`;
   return {
-    timestamp: meta.ts ? normalizeTime(meta.ts) : "",
+    timestamp: chainsawTime(meta.ts),
     description: head.slice(0, 600),
     severity: SIGMA_LEVEL[meta.level.toLowerCase()] ?? "Medium",
     mitre: mitreFromTags(meta.tags),
@@ -343,7 +363,7 @@ function tallyFlatRow(t: DecisionTally, rec: Row, rh: RowHost): void {
 export function mapFlatChainsawRow(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent {
   const meta = readFlatSigmaMeta(rec);
   const win = mapWindows(rec, host, iocSink);
-  return win ? applySigma(win, meta) : genericDetection(meta);
+  return win ? applySigma(withReadableTime(win), meta) : genericDetection(meta);
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────
@@ -447,7 +467,8 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       const rh = hostOf({ ...rec, Event: event }, recordName);
       const host = rh.asset;
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-      const win = mapWindows(flat, host, iocSink);
+      const mappedWin = mapWindows(flat, host, iocSink);
+      const win = mappedWin ? withReadableTime(mappedWin) : null;
       const raw: Row = { Event: event };
       if (tally)
         tallyRowHost(tally, { ...rec, Event: event }, rh, recordName ? "System.Computer" : undefined);

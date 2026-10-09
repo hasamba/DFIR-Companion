@@ -581,3 +581,88 @@ describe("parseChainsawReport — script blocks of the PowerShell the collector 
     expect(sb.severity).toBe("Info");
   });
 });
+
+// normalizeTime hands text it cannot read back unchanged, so an impossible stamp became the event
+// time and the row silently fell out of every time view (#2074, the Chainsaw twin of #2063).
+describe("parseChainsawReport — an unreadable timestamp is left empty (#2074)", () => {
+  const BAD = "9999-99-99T99:99:99Z";
+
+  function sigmaWithTimes(eventTime: string, detectionTs: string) {
+    const d = sigmaPowershell();
+    const event = d.document.data.Event;
+    return {
+      ...d,
+      timestamp: detectionTs,
+      document: {
+        ...d.document,
+        data: {
+          Event: {
+            ...event,
+            System: { ...event.System, TimeCreated: { "#attributes": { SystemTime: eventTime } } },
+            EventData: { ...event.EventData, UtcTime: eventTime },
+          },
+        },
+      },
+    };
+  }
+
+  it("leaves a verdict-only detection's unreadable timestamp empty", () => {
+    for (const ts of [BAD, "unknown"]) {
+      const verdict = {
+        group: "Sigma",
+        kind: "individual",
+        rule: { name: "Odd Rule", level: "high" },
+        timestamp: ts,
+      };
+      const r = parseChainsawReport(JSON.stringify([verdict]));
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0].timestamp).toBe("");
+    }
+  });
+
+  it("falls back to the detection's own readable timestamp when the embedded time is unreadable", () => {
+    const rec = sigmaWithTimes("9999-99-99 99:99:99.000", "2023-01-02T10:00:00.000Z");
+    const r = parseChainsawReport(JSON.stringify([rec]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toBe("2023-01-02T10:00:00.000Z");
+  });
+
+  it("leaves the time empty when both are unreadable, keeping the raw text as observed", () => {
+    const r = parseChainsawReport(JSON.stringify([sigmaWithTimes("9999-99-99 99:99:99.000", BAD)]));
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.timestamp).toBe("");
+    expect(e.canonical?.time.normalized).toBe("");
+    expect(e.canonical?.time.observed).toContain("9999-99-99");
+  });
+
+  it("leaves a flat hunt row's unreadable EventTime empty", () => {
+    const row = {
+      EventTime: BAD,
+      Detection: "Odd Flat Rule",
+      Severity: "medium",
+      "Rule Group": "Sigma",
+      Computer: "WIN-CASEHOST7",
+      Channel: "Microsoft-Windows-Sysmon/Operational",
+      EventID: 1,
+      EventData: { Image: "C:\\Windows\\System32\\cmd.exe", CommandLine: "cmd.exe /c whoami" },
+    };
+    const r = parseChainsawReport(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].canonical?.time.normalized).toBe("");
+    expect(r.events[0].canonical?.time.observed).toBe(BAD);
+  });
+
+  it("keeps readable times unchanged", () => {
+    const naive = {
+      group: "Sigma",
+      kind: "individual",
+      rule: { name: "Naive", level: "low" },
+      timestamp: "2023-01-02 10:00:00",
+    };
+    const r = parseChainsawReport(JSON.stringify([sigmaPowershell(), naive]));
+    const times = r.events.map((e) => e.timestamp).sort();
+    expect(times).toEqual(["2023-01-02T10:00:00.000Z", "2023-01-02T10:00:00Z"]);
+  });
+});
