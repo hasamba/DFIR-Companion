@@ -61,6 +61,7 @@ kept apart from what a collector or the machine itself wrote.
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays, YARA CLI scan output (`yara -s -m`) |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
 | **Linux** | shell history (`.bash_history` / `.zsh_history`, with or without timestamps), auditd logs (raw/ausearch/aureport), journald JSON (`journalctl -o json`), **persistence artifacts** — SSH authorized keys, cron, systemd units, shell profiles, SUID listings and PATH (see [Collecting Linux persistence artifacts](#collecting-linux-persistence-artifacts)) |
+| **Linux via Microsoft Sentinel** | Log Analytics `Syslog` table exports (JSON or NDJSON): Sysmon for Linux XML is unwrapped and read as Sysmon events, AUOMS (Azure Monitor auditd) records are read as auditd with their full command line, and any other message is read as syslog — each at the row's host and time. `VMConnection` (VM insights) rows become Low network-flow events naming the process, both endpoints and the bytes sent and received |
 | **Container/syscall** | Falco alert JSON, sysdig JSON, Kubernetes API-server audit log (`audit.k8s.io` JSON-lines / EventList) |
 | **Host telemetry** | osquery scheduled-query result log (differential + snapshot) |
 | **Case management** | TheHive 5 case/alert/observable export |

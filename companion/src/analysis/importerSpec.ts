@@ -27,6 +27,7 @@ export const IMPORT_KINDS = [
   "m365",
   "okta",
   "mdehunting",
+  "sentinellinux",
   "gws",
   "hindsight",
   "macos",

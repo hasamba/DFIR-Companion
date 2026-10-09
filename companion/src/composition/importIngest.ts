@@ -315,6 +315,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importOkta(caseId, text, base));
       case "mdehunting":
         return observe(pipeline.importMdeHunting(caseId, text, base));
+      case "sentinellinux":
+        return observe(pipeline.importSentinelLinux(caseId, text, base));
       case "azurestoragelog":
         return observe(pipeline.importAzureStorageLog(caseId, text, base));
       case "diskimagelog":

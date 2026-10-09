@@ -757,6 +757,7 @@
     "seedDemoPaths.ts": "analysis/workflow",
     "selfDisclaimedSubject.ts": "analysis/findings",
     "semanticKey.ts": "analysis/timeline",
+    "sentinelLinuxImport.ts": "analysis/ingest",
     "serviceAccountBrowsing.ts": "analysis/timeline",
     "sessionSegmentation.ts": "analysis/detect",
     "severityFloor.ts": "analysis/findings",
