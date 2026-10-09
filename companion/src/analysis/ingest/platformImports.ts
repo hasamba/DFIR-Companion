@@ -12,6 +12,7 @@ import {
   type SiemImportOptions,
   type SiemParseResult,
 } from "../siemImport.js";
+import { clockDisputeText } from "../siemFieldPick.js";
 import { parseSocrates, type SocratesImportOptions } from "../socratesImport.js";
 
 import { type InvestigationState, type Severity } from "../stateTypes.js";
@@ -83,7 +84,8 @@ export async function importSiem(
       `SIEM import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      (parsed.hostname ? ` (host ${parsed.hostname})` : "") +
+      (parsed.clockDisputed ? `; ${clockDisputeText(parsed.clockDisputed)}` : ""), // #2089
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -618,7 +620,8 @@ export async function importEvtxXml(
       `Windows Event Log (XML) import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+      (parsed.hostname ? ` (host ${parsed.hostname})` : "") +
+      (parsed.clockDisputed ? `; ${clockDisputeText(parsed.clockDisputed)}` : ""), // #2089
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

@@ -47,7 +47,14 @@ import { processGuid, processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { boundedAggKey, foldVolatileIds } from "./aggKey.js";
 import { firstStr, getCI, getPath, hostSource, isObject, str, TIME_KEYS } from "./siemFieldPick.js";
-import { timestampSource, windowsEventDataRaw } from "./siemFieldPick.js";
+import {
+  createClockDisputeTally,
+  sysmonClockDispute,
+  timestampSource,
+  windowsEventDataRaw,
+  withClockDisputeNote,
+  type ClockDisputeSummary,
+} from "./siemFieldPick.js";
 export { firstStr, getCI, getPath, isObject, str };
 import { createSiemDebugTally } from "./siemImportDebug.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
@@ -132,6 +139,7 @@ export interface SiemParseResult {
   groups: number; // distinct event groups before the cap
   format: string; // detected container shape (elastic-data / elastic-hits / ndjson / array / events:<key> / single)
   hostname: string; // best-effort dominant host
+  clockDisputed?: ClockDisputeSummary; // Sysmon rows re-dated by the record time (#2089)
 }
 
 type Row = Record<string, unknown>;
@@ -1049,7 +1057,7 @@ export function mapWindows(
 
   return {
     timestamp: normalizedTimestamp,
-    description,
+    description: withClockDisputeNote(description, sysmonClockDispute(rec, ed)), // #2089
     severity,
     mitre,
     canonical,
@@ -1374,6 +1382,7 @@ export function buildSiemResult(
   const mapped: MappedEvent[] = [];
   const dnsIocs: HeldDnsIocs = new Map(); // #1642 — a DNS row links its IOCs once its key is final
   const tally = createSiemDebugTally(opts.debug, opts.minSeverity);
+  const clock = createClockDisputeTally();
   for (const [recordIndex, rec] of records.entries()) {
     tally.begin();
     const host = pickHost(rec);
@@ -1382,6 +1391,7 @@ export function buildSiemResult(
     const w = mapWindows(rec, host, rowSink, { source: format, recordIndex });
     const m = w ?? mapGeneric(rec, host, rowSink);
     tally.row(w !== null, m);
+    if (w) clock.note(rec); // #2089
     mergeRowIocsHoldingDns(iocSink, rowSink, m, dnsIocs);
     mapped.push(m);
   }
@@ -1399,6 +1409,7 @@ export function buildSiemResult(
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   tally.floored(mapped);
   tally.flush({ total, kept: events.length, groups, dropped: Math.max(0, total - represented) });
+  const clockDisputed = clock.summary();
   return {
     events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
@@ -1408,6 +1419,7 @@ export function buildSiemResult(
     groups,
     format,
     hostname,
+    ...(clockDisputed ? { clockDisputed } : {}),
   };
 }
 
