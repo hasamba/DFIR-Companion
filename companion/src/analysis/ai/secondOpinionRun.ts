@@ -66,6 +66,11 @@ export function pickReferee(opts: SecondOpinionContext["opts"], modelA: string):
   return provider ? { provider, label: modelA } : undefined;
 }
 
+/** The configured synthesis model's label — what the primary provider is called, whoever answered. */
+function configuredModelALabel(ctx: SecondOpinionContext): string {
+  return ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
+}
+
 // Every read-modify-write of the saved record runs under this per-case lock (#1587 review): a
 // referee re-run holds the AI call OUTSIDE it, then re-reads, merges and saves inside it, so an
 // accept/reject or a newer full run can never land between its re-read and its save.
@@ -96,6 +101,10 @@ export async function secondOpinion(
     deepReasoning: opts.deepReasoning,
     thinkingTokens: opts.thinkingTokens,
   });
+  // #2076: model A is the model that WROTE the synthesis being compared — the fallback when the
+  // primary's safety filter stopped pass 0. Synth-meta records who answered (also when pass 0 was a
+  // no-op); it is read before pass 1 so model B's run can never stand in for it.
+  const modelA = (await ctx.opts.synthMetaStore?.load(caseId))?.synthModel || configuredModelALabel(ctx);
 
   // Pass 1 — independent synthesis with model B over the SAME current timeline/context, routed
   // through a different model and NOT persisted (dryRun). This is model B's analysis.
@@ -107,10 +116,9 @@ export async function secondOpinion(
     thinkingTokens: opts.thinkingTokens,
   });
 
-  const modelA =
-    ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
   const modelB = ctx.opts.secondOpinionModelLabel ?? provider.name;
-  const referee = pickReferee(ctx.opts, modelA);
+  // The default referee runs on the configured primary, so it carries that label — never the fallback's.
+  const referee = pickReferee(ctx.opts, configuredModelALabel(ctx));
   // `referee` stays "" until the verdict pass actually succeeds (reconcileDeltas stamps it), so a
   // failed or skipped pass never shows a referee that wrote nothing.
   // The scope window both syntheses read, and the scoped events the referee is shown: out-of-window
@@ -264,7 +272,8 @@ async function rerunReferee(
   const prompt = before.refereePrompt;
   if (!before.refereeError || !prompt)
     throw new Error("the referee did not fail on this second opinion — nothing to re-run");
-  const referee = pickReferee(ctx.opts, before.modelA);
+  // Not before.modelA: that names who wrote A, which may be the fallback (#2076).
+  const referee = pickReferee(ctx.opts, configuredModelALabel(ctx));
   if (!referee) throw new Error("no referee model configured");
   const state = await ctx.opts.stateStore.load(caseId);
   // The replayed prompt is the failed attempt's, byte for byte; one saved before #1596 has no guard

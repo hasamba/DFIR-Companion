@@ -37,9 +37,28 @@ interface DeepPassRecord {
   scope: ScopeWindow;
   falsePositiveMarkers: number;
   batchesFailed: number;
+  /** #2076: reads the fallback model answered after the configured model's safety filter stopped. */
+  batchesOnFallback?: number;
+  fallbackModel?: string;
+  /** The configured model's label, named in the fallback warning. */
+  primaryLabel?: string;
   output: InvestigationState;
   observePrompt: string;
   synthesisPrompt: string;
+}
+
+// The record keeps the CONFIGURED model in configuration.model; these lines say what went unread and
+// which reads another model answered (#2076), so the record never credits the primary with them.
+function deepPassWarnings(input: DeepPassRecord): string[] {
+  const warnings: string[] = [];
+  if (input.batchesFailed) warnings.push(`${input.batchesFailed} batch(es) produced no usable observations`);
+  if (input.batchesOnFallback && input.fallbackModel) {
+    warnings.push(
+      `${input.batchesOnFallback} batch(es) answered by the fallback model ${input.fallbackModel} ` +
+        `after ${input.primaryLabel ?? input.model}'s safety filter stopped them`,
+    );
+  }
+  return warnings;
 }
 
 export async function recordDeepPassRun(
@@ -83,9 +102,7 @@ export async function recordDeepPassRun(
     },
     execution: {
       retries: input.batchesFailed,
-      warnings: input.batchesFailed
-        ? [`${input.batchesFailed} batch(es) produced no usable observations`]
-        : [],
+      warnings: deepPassWarnings(input),
     },
     output:
       input.status === "failed"
