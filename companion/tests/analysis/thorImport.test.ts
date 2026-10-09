@@ -159,6 +159,31 @@ describe("parseThorReport", () => {
     expect(r.kept).toBe(1);
     expect(r.dropped).toBeGreaterThanOrEqual(2);
   });
+
+  // #2062. A `null` line used to throw and kill the whole file; any other non-object (or `{}`)
+  // became a phantom "THOR finding" Medium event with no time and no subject.
+  it("drops a JSON line 'null' without throwing", () => {
+    const r = parseThorReport("null");
+    expect(r.total).toBe(0);
+    expect(r.kept).toBe(0);
+    expect(r.dropped).toBe(1);
+    expect(r.events).toHaveLength(0);
+  });
+
+  it.each(["[]", "{}", "42", '"x"', "true"])("drops the non-finding JSON line %s", (line) => {
+    const r = parseThorReport(line);
+    expect(r.total).toBe(0);
+    expect(r.dropped).toBe(1);
+    expect(r.events).toHaveLength(0);
+  });
+
+  it("keeps real findings next to null and array lines", () => {
+    const r = parseThorReport("null\n[]\n" + JSON.stringify(PROC_ALERT));
+    expect(r.kept).toBe(1);
+    expect(r.dropped).toBe(2);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).not.toContain("THOR finding");
+  });
 });
 
 // #1603. A file inside an archive carries only the archive entry's modified time — for mimikatz,

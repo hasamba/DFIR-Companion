@@ -197,14 +197,27 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
   const tally = opts.debug ? createDecisionTally() : undefined;
 
   for (const line of lines) {
-    let row: Row;
+    let parsed: unknown;
     try {
-      row = JSON.parse(line) as Row;
+      parsed = JSON.parse(line);
     } catch {
       dropped++;
       tally?.skipped.add("unparseable_json");
       continue;
     }
+    // #2062: a THOR finding is a JSON object. `null` used to throw and abort the whole file, and
+    // arrays/scalars/`{}` became phantom "THOR finding" events — drop them like unparseable lines.
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      dropped++;
+      tally?.skipped.add("not_an_object");
+      continue;
+    }
+    if (Object.keys(parsed).length === 0) {
+      dropped++;
+      tally?.skipped.add("empty_row");
+      continue;
+    }
+    const row = parsed as Row;
     total++;
     if (!hostname) hostname = str(row.hostname);
 
