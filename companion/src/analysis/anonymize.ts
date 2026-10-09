@@ -16,6 +16,7 @@ import {
   isNoiseAccount,
   isNoiseDomain,
   preservedSpans,
+  replaceUncServers,
   strictlyInside,
   usernameRegExp,
 } from "./anonUsernames.js";
@@ -645,6 +646,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     t = anonCustom(t); // analyst-added entities always win (outside IPv6 literals)
     if (policy.redactSecrets) t = redactSecrets(t);
+    // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
+    if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);
     if (policy.categories.PATH) t = anonUserPaths(t);

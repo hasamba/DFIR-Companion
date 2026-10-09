@@ -9,9 +9,25 @@ import { escapeRegExp } from "./regexEscape.js";
 // patterns, the guard list of ordinary words that must never be replaced globally, and the one
 // regex that finds every known username as a whole word.
 
-// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
+// DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts,
+// except that a match may not start after "-" either: in \\DC-QA-01\C$ it started at "QA-01" and
+// leaked the "DC-" prefix of the host name (#2073).
 export const NETBIOS_ACCT =
-  /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+  /(?<![\\/:.\w-])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
+
+// The server of a UNC path (\\SERVER\share) when it is a single label — a NetBIOS name, which is
+// internal naming. Dotted servers (FQDNs, IPs) are left to the host, domain and IP passes, because a
+// dotted UNC server can be adversary WebDAV infrastructure that the anonymizer preserves on purpose.
+// \\?\ and \\.\ device paths never match: the label must start with a letter or digit (#2073).
+const UNC_SERVER_RE = /(?<![\\\w:])\\\\([A-Za-z0-9][A-Za-z0-9-]{0,62})(?=\\)/g;
+const UNC_SERVER_SKIP = /^(?:localhost|tsclient|wsl|\d+)$/i;
+
+/** Replace each single-label UNC server name with `mint(server)`, keeping the leading `\\`. */
+export function replaceUncServers(text: string, mint: (server: string) => string): string {
+  return text.replace(UNC_SERVER_RE, (m, server: string) =>
+    UNC_SERVER_SKIP.test(server) ? m : `\\\\${mint(server)}`,
+  );
+}
 export const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
 export const PATH_DOMAINS =
   /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
