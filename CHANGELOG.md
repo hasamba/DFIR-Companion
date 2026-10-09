@@ -14,11 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - **Zeek classic TSV import** — Zeek's default `#fields` logs (conn, dns, http, files, ssl) import like Zeek JSON (closes #2094)
 - **Defender XDR advanced-hunting import** — advanced-hunting exports import with hosts and accounts; replication from a non-DC and AD FS DKM LDAP reads are High (closes #2097)
 - **Sentinel Linux telemetry** — Sentinel Syslog-wrapped auditd/AUOMS and Sysmon for Linux, plus VMConnection flows, import with full command lines (closes #2098)
 - **Log4Shell shape** — a JVM LDAP/RMI lookup followed by the JVM spawning a shell is raised to High with T1190/T1203 (closes #2099)
-
 - **Synthesis checks before 'unknown'** — synthesis reads the earliest attacker event's parent command line before calling initial access unknown, and checks a host's events before calling it not compromised (closes #2080)
 - **Persistence executed** — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts such as rundll32, Medium otherwise) with T1547.001 (closes #2082)
 - **PowerShell session seats** — PowerShell rows record their session at import, and synthesis sends the other commands of a session that has a High row; re-import existing cases to gain it (closes #2078)
