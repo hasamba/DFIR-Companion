@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveStoryShape, STORY_SHAPE_LIMIT } from "../../src/analysis/cockpitStoryShape.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { buildHostAliasIndex, hostMergesFromAssetIds } from "../../src/analysis/hostAlias.js";
 
 function event(id: string, overrides: Partial<ForensicEvent> = {}): ForensicEvent {
   return {
@@ -107,6 +108,50 @@ describe("deriveStoryShape — hosts", () => {
 
     expect(shape.hosts).toEqual(["dc01", "FS01", "fs01.example.com"]);
     expect(shape.hostsTotal).toBe(3);
+  });
+
+  it("folds hosts the analyst merged, shown with the name the analyst chose (#2066)", () => {
+    const events = [
+      event("short", { timestamp: "2026-07-30T08:00:00.000Z", asset: "WS01" }),
+      event("fqdn", { timestamp: "2026-07-30T09:00:00.000Z", asset: "ws01.sub.example" }),
+      event("other", { timestamp: "2026-07-30T10:00:00.000Z", asset: "DC01" }),
+    ];
+    const index = buildHostAliasIndex([], hostMergesFromAssetIds({ "host:ws01": "host:ws01.sub.example" }));
+
+    const merged = deriveStoryShape(events, index);
+    expect(merged.hosts).toEqual(["ws01.sub.example", "DC01"]);
+    expect(merged.hostsTotal).toBe(2);
+
+    // Without the index nothing has linked the pair, so it stays two hosts.
+    const unlinked = deriveStoryShape(events);
+    expect(unlinked.hosts).toEqual(["WS01", "ws01.sub.example", "DC01"]);
+    expect(unlinked.hostsTotal).toBe(3);
+  });
+
+  it("never folds a short name into an FQDN on the first label alone, even with an index (#2066)", () => {
+    const shape = deriveStoryShape(
+      [
+        event("short", { timestamp: "2026-07-30T08:00:00.000Z", asset: "FS01" }),
+        event("fqdn", { timestamp: "2026-07-30T09:00:00.000Z", asset: "fs01.example.com" }),
+      ],
+      buildHostAliasIndex([], {}),
+    );
+
+    expect(shape.hosts).toEqual(["FS01", "fs01.example.com"]);
+    expect(shape.hostsTotal).toBe(2);
+  });
+
+  it("follows the fleet snapshot's hostname-to-FQDN link when the index carries one (#2066)", () => {
+    const shape = deriveStoryShape(
+      [
+        event("short", { timestamp: "2026-07-30T08:00:00.000Z", asset: "SRV7" }),
+        event("fqdn", { timestamp: "2026-07-30T09:00:00.000Z", asset: "SRV7.corp.example" }),
+      ],
+      buildHostAliasIndex([{ hostname: "srv7", fqdn: "srv7.corp.example" }], {}),
+    );
+
+    expect(shape.hosts).toEqual(["srv7.corp.example"]);
+    expect(shape.hostsTotal).toBe(1);
   });
 
   it("caps hosts at STORY_SHAPE_LIMIT and reports the distinct total before the cap", () => {

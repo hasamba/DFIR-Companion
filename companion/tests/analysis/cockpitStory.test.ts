@@ -11,6 +11,7 @@ import {
   type InvestigationState,
 } from "../../src/analysis/stateTypes.js";
 import type { SynthMeta } from "../../src/analysis/synthMeta.js";
+import { buildHostAliasIndex, hostMergesFromAssetIds } from "../../src/analysis/hostAlias.js";
 
 const SYNTH_AT = "2026-07-30T11:00:00.000Z";
 
@@ -130,6 +131,29 @@ describe("deriveCockpitStory — stage chain", () => {
       eventCount: 4,
     });
     expect(story.stages[0].eventIds.slice(0, 2)).toEqual(["early", "late"]);
+  });
+
+  it("names the stage host and the shape hosts by the analyst's merge when given an alias index (#2066)", () => {
+    const merged = state({
+      forensicTimeline: [
+        event("short", { mitreTechniques: ["T1059"], timestamp: "2026-07-30T08:00:00.000Z", asset: "WS01" }),
+        event("fqdn", {
+          mitreTechniques: ["T1059"],
+          timestamp: "2026-07-30T09:00:00.000Z",
+          asset: "ws01.sub.example",
+        }),
+      ],
+    });
+    const index = buildHostAliasIndex([], hostMergesFromAssetIds({ "host:ws01": "host:ws01.sub.example" }));
+
+    const story = deriveCockpitStory(merged, undefined, index);
+    expect(story.stages[0].host).toBe("ws01.sub.example");
+    expect(story.shape.hosts).toEqual(["ws01.sub.example"]);
+    expect(story.shape.hostsTotal).toBe(1);
+
+    const plain = deriveCockpitStory(merged);
+    expect(plain.stages[0].host).toBe("WS01");
+    expect(plain.shape.hosts).toEqual(["WS01", "ws01.sub.example"]);
   });
 
   it("reports a null host when the earliest event names no asset", () => {

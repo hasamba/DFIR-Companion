@@ -1,4 +1,5 @@
 import { extractAccounts } from "./assetGraph.js";
+import { canonicalHostName, resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 // The story's shape line (#1493): when the staged activity starts and ends, how long the attacker
@@ -78,19 +79,41 @@ function firstTouch(
   return [...seen.values()];
 }
 
-function hostOf(event: ForensicEvent): string[] {
-  const host = event.asset?.trim();
-  return host ? [host] : [];
+// The host name the story shows for a raw asset spelling (#2066). Without an alias index it is the
+// spelling as written. With one, a spelling that an analyst "Same host" merge or the fleet snapshot
+// redirected shows the canonical name the analyst picked; an unredirected spelling keeps its own.
+// Only evidence-linked aliases fold — never a short name onto an FQDN by first label (hostAlias.ts).
+export function storyHostName(raw: string, aliasIndex?: HostAliasIndex): string {
+  const host = raw.trim();
+  if (!aliasIndex || !host) return host;
+  const resolved = resolveHost(aliasIndex, host);
+  return resolved === canonicalHostName(host) ? host : resolved;
+}
+
+function hostsOf(aliasIndex?: HostAliasIndex): (event: ForensicEvent) => string[] {
+  return (event) => {
+    const host = storyHostName(event.asset ?? "", aliasIndex);
+    return host ? [host] : [];
+  };
+}
+
+// What counts as one host. Case never matters ("DC01" is "dc01"); with an alias index every
+// spelling the index links counts as its canonical name.
+function hostKey(aliasIndex?: HostAliasIndex): (host: string) => string {
+  return aliasIndex ? (host) => resolveHost(aliasIndex, host) : (host) => host.toLowerCase();
 }
 
 function accountsOf(event: ForensicEvent): string[] {
   return extractAccounts(event.description ?? "");
 }
 
-export function deriveStoryShape(events: readonly ForensicEvent[]): CockpitStoryShape {
+export function deriveStoryShape(
+  events: readonly ForensicEvent[],
+  aliasIndex?: HostAliasIndex,
+): CockpitStoryShape {
   const ordered = chronological(events);
-  // Hostnames are case-insensitive: "DC01" and "dc01" are one host, shown as first seen.
-  const hosts = firstTouch(ordered, hostOf, (host) => host.toLowerCase());
+  // One host per identity, shown as first seen (or by the merged name — see storyHostName).
+  const hosts = firstTouch(ordered, hostsOf(aliasIndex), hostKey(aliasIndex));
   const accounts = firstTouch(ordered, accountsOf);
   return {
     ...span(ordered),

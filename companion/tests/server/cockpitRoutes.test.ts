@@ -11,6 +11,7 @@ import { FindingWorkflowStore } from "../../src/analysis/findingWorkflow.js";
 import { PinnedFindingsStore } from "../../src/analysis/pinnedFindings.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
 
 async function makeApp() {
   const root = await mkdtemp(join(tmpdir(), "dfir-cockpit-routes-"));
@@ -181,5 +182,64 @@ describe("cockpit routes", () => {
           .send({ action: "explode", actor: "Alice" })
       ).status,
     ).toBe(400);
+  });
+});
+
+describe("cockpit routes — story hosts follow the analyst's host merge (#2066)", () => {
+  async function makeMergeApp(cases: CaseStore, assetOverridesStore: AssetOverridesStore) {
+    const stateStore = new StateStore(cases);
+    const app = createApp(cases, { stateStore, assetOverridesStore });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "c1", name: "Case", investigator: "Case Owner", aiProvider: null });
+    const staged = (id: string, timestamp: string, asset: string) => ({
+      id,
+      timestamp,
+      description: `Execution ${id}`,
+      severity: "High" as const,
+      mitreTechniques: ["T1059"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset,
+    });
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [
+        staged("e1", "2026-07-30T08:00:00.000Z", "WS01"),
+        staged("e2", "2026-07-30T09:00:00.000Z", "ws01.sub.example"),
+      ],
+      updatedAt: "2026-07-30T10:00:00.000Z",
+    });
+    return app;
+  }
+
+  it("shows one host, by the chosen name, once the pair is merged", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-cockpit-merge-")));
+    const assetOverridesStore = new AssetOverridesStore(cases);
+    const app = await makeMergeApp(cases, assetOverridesStore);
+
+    const before = await request(app).get("/cases/c1/cockpit");
+    expect(before.status).toBe(200);
+    expect(before.body.story.shape.hosts).toEqual(["WS01", "ws01.sub.example"]);
+
+    await assetOverridesStore.mergeAsset("c1", "host:ws01", "host:ws01.sub.example");
+    const after = await request(app).get("/cases/c1/cockpit");
+    expect(after.status).toBe(200);
+    expect(after.body.story.shape.hosts).toEqual(["ws01.sub.example"]);
+    expect(after.body.story.shape.hostsTotal).toBe(1);
+    expect(after.body.story.stages[0].host).toBe("ws01.sub.example");
+  });
+
+  it("keeps the cockpit up, unmerged, when the merge store fails to load", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-cockpit-merge-fail-")));
+    const broken = new AssetOverridesStore(cases);
+    broken.load = async () => {
+      throw new Error("merge store unavailable");
+    };
+    const app = await makeMergeApp(cases, broken);
+
+    const res = await request(app).get("/cases/c1/cockpit");
+    expect(res.status).toBe(200);
+    expect(res.body.story.shape.hosts).toEqual(["WS01", "ws01.sub.example"]);
   });
 });
