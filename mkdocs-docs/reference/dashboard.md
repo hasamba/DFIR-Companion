@@ -142,7 +142,12 @@ remembered the next time you open the case.
 
 Two more checkboxes sit beside it. **Hide auto-flagged** hides the deterministic backfill raised for
 any in-scope Critical/High-severity event the AI left unlinked to a finding, so a graded detection is
-never silently missed. **Hide coverage-gap** hides the deterministic backfill raised for a window
+never silently missed. Two cases do not raise one. The first is a row whose parent process a
+dismissed finding already explained as one cluster: same host, and that finding cites the parent itself
+or at least 3 of its children. That row is linked to the dismissed finding instead. It is never
+skipped this way when it is Critical, or when an open finding cites the same parent. The second is an
+auto-flagged finding you dismissed. It stays dismissed when synthesis runs again, unless the AI raises
+it again itself. **Hide coverage-gap** hides the deterministic backfill raised for a window
 where every log source went silent — the classic signature of cleared logs or a stopped collector.
 Both are lenses, not gates: nothing is deleted, a pinned finding stays in the 📌 strip even while
 hidden from the list below, and each is a per-case choice remembered like the confidence floor.

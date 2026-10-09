@@ -469,6 +469,7 @@
     "hayabusaImport.ts": "analysis/ingest",
     "absorbedHighRows.ts": "analysis/findings",
     "highSeverityFindings.ts": "analysis/findings",
+    "dismissedClusterFold.ts": "analysis/findings",
     "hijackLibImport.ts": "analysis/ingest",
     "hindsightImport.ts": "analysis/ingest",
     "hostAlias.ts": "analysis/timeline",
