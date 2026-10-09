@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { linkArchiveToExfil } from "../../src/analysis/exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "../../src/analysis/processLifetime.js";
+import { reconTechniques } from "../../src/analysis/reconTechniques.js";
+import { tradecraftSignal } from "../../src/analysis/tradecraftRules.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const stage = (id: string, ts: string, asset = "FS-01"): ForensicEvent => ({
@@ -154,5 +156,48 @@ describe("linkArchiveToExfil", () => {
     });
     const out = linkArchiveToExfil([plain("p1"), plain("p2")]);
     expect(out).toEqual([plain("p1"), plain("p2")]);
+  });
+});
+
+// #2090 — a renamed 7-Zip staging an archive, then a scripted `ftp -s:` upload, then a delete. Neither
+// row used to carry its tag (the archive rule keyed on the `7z` binary name; no rule tagged scripted
+// FTP), so the deterministic pairing never fired and the whole chain stayed Medium.
+describe("linkArchiveToExfil — renamed 7-Zip + scripted FTP chain (#2090)", () => {
+  const graded = (id: string, ts: string, image: string, cmd: string): ForensicEvent => {
+    const sig = tradecraftSignal(image, cmd);
+    return {
+      id,
+      timestamp: ts,
+      asset: "WS-07",
+      description: `Sysmon Process create (EID 1) - ${cmd}`,
+      commandLine: cmd,
+      severity: "Medium",
+      mitreTechniques: [...new Set([...reconTechniques(image, cmd), ...(sig?.mitre ?? [])])],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: ["Sysmon"],
+    };
+  };
+
+  it("raises the ftp upload to High with the confirmed-exfiltration marker", () => {
+    const out = linkArchiveToExfil([
+      graded(
+        "a1",
+        "2024-05-02T10:00:00Z",
+        "C:\\Windows\\System32\\svch.exe",
+        "C:\\Windows\\System32\\svch.exe a -t7z C:\\$Recycle.Bin\\old.7z C:\\$Recycle.Bin\\data.docx",
+      ),
+      graded("f1", "2024-05-02T10:02:00Z", "C:\\Windows\\System32\\ftp.exe", "ftp.exe -v -s:ftp.txt"),
+      graded(
+        "d1",
+        "2024-05-02T10:03:00Z",
+        "C:\\Windows\\System32\\cmd.exe",
+        "cmd /c del C:\\$Recycle.Bin\\old.7z",
+      ),
+    ]);
+    const f = out.find((e) => e.id === "f1")!;
+    expect(f.severity).toBe("High");
+    expect(f.description).toContain("[confirmed exfiltration:");
+    expect(out.find((e) => e.id === "d1")!.severity).toBe("Medium");
   });
 });

@@ -186,7 +186,7 @@ Disable permanently: Settings → Diagnostics → disable pre-flight (for setups
 
 ## Exfiltration Correlation
 
-A deterministic pass stitches archive **staging** (Compress-Archive/zip/tar/7z) to a subsequent **upload** on the same host within a bounded window (6 hours by default). The sequence — not the destination — is the signal: a lone upload to routine SaaS/cloud infrastructure is never escalated, but staging followed by upload anywhere raises the upload to **High** and tags it `[confirmed exfiltration: …]`.
+A deterministic pass stitches archive **staging** (Compress-Archive/zip/tar/7z, including a renamed 7-Zip recognised by its `a -t7z`-style switches) to a subsequent **upload** (web-client upload, scripted `ftp -s:<script>`, or a `bitsadmin /upload` job) on the same host within a bounded window (6 hours by default). A scripted FTP or BITS upload on its own is graded **Medium**. The sequence — not the destination — is the signal: a lone upload to routine SaaS/cloud infrastructure is never escalated, but staging followed by upload anywhere raises the upload to **High** and tags it `[confirmed exfiltration: …]`.
 
 Synthesis is told to give a confirmed staging→upload pairing its own dedicated **"Data Exfiltration"** finding (with T1041, plus the named cloud service's technique if applicable) instead of folding it into a generic C2/beacon finding.
 

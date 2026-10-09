@@ -360,6 +360,14 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
     weight: "weak",
     ids: ["T1041"],
   },
+  // Scripted FTP upload (`ftp -s:<script>`) and a BITS upload job — dual-use → Medium. Interactive
+  // ftp and a BITS download are not flagged. Paired with archive staging, exfilCorrelate raises it
+  // to High (#2090).
+  {
+    re: /\bftp(?:\.exe)?\b[^\n]*\s-s:\S+|\bbitsadmin(?:\.exe)?\b[^\n]*\s\/upload\b/i,
+    weight: "weak",
+    ids: ["T1041"],
+  },
   // Discovery/collection output shipped to an attacker-controlled Elasticsearch/Elastic Cloud ingest
   // endpoint (a free-trial SIEM abused as exfil/triage infrastructure) — flagged regardless of the
   // upload-verb specifics above, since sending host data to an external log-ingest service is exfil.

