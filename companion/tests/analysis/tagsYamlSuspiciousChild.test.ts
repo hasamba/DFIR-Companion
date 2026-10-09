@@ -27,7 +27,7 @@ function ev(parentName: string, processName: string, description: string): Foren
     relatedFindingIds: [],
     sourceScreenshots: [],
     sources: ["Sysmon"],
-  } as ForensicEvent;
+  };
 }
 
 function hit(parentName: string, processName: string, description: string) {
@@ -95,6 +95,41 @@ describe("bundled data/tags.yaml — suspicious child process split (#2091)", ()
       "cmd.exe",
       "CommandLine=cmd.exe /c cscript C:\\Windows\\System32\\gatherNetworkInfo.vbs - " +
         "ParentCommandLine=cscript.exe C:\\Users\\x\\AppData\\Local\\Temp\\a.vbs",
+    );
+    expect(res?.ruleIds).toContain(SCRIPT);
+    expect(res?.severity).toBe("High");
+  });
+
+  it("still excludes a System32 script behind script-host switches or %SystemRoot%", () => {
+    const switched = hit(
+      "cscript.exe",
+      "cmd.exe",
+      "ParentCommandLine=cscript.exe //nologo //B C:\\Windows\\System32\\gatherNetworkInfo.vbs - User=x",
+    );
+    expect(switched?.ruleIds ?? []).not.toContain(SCRIPT);
+    const envVar = hit(
+      "wscript.exe",
+      "cmd.exe",
+      'ParentCommandLine=wscript.exe "%SystemRoot%\\System32\\slmgr.vbs" /dli',
+    );
+    expect(envVar?.ruleIds ?? []).not.toContain(SCRIPT);
+  });
+
+  it("stays High when a System32 script is only an unused extra argument", () => {
+    const res = hit(
+      "wscript.exe",
+      "cmd.exe",
+      "ParentCommandLine=wscript.exe C:\\Users\\x\\invoice.vbs C:\\Windows\\System32\\slmgr.vbs",
+    );
+    expect(res?.ruleIds).toContain(SCRIPT);
+    expect(res?.severity).toBe("High");
+  });
+
+  it("stays High for a user folder that merely contains Windows\\System32", () => {
+    const res = hit(
+      "wscript.exe",
+      "cmd.exe",
+      "ParentCommandLine=wscript.exe C:\\Users\\x\\Windows\\System32\\invoice.vbs",
     );
     expect(res?.ruleIds).toContain(SCRIPT);
     expect(res?.severity).toBe("High");
