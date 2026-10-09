@@ -14,6 +14,7 @@ import { parseNsrlText } from "../analysis/nsrl.js";
 import { NsrlDb, saveNsrlDbPath, removeNsrlDbPath } from "../analysis/nsrlDb.js";
 import { registerKevRoutes } from "./kev.js";
 import { buildManualIoc } from "../analysis/manualEntry.js";
+import { announceCaseChanged } from "../analysis/forensicEventInsert.js";
 import { CustomerStore, parseList, sanitizeTargets } from "../analysis/customerStore.js";
 import {
   buildCustomerExposureTargets,
@@ -270,16 +271,14 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       const stateStore = options.stateStore;
       let conflict = false;
       await runStateExclusive(caseId, async () => {
-        const state = await stateStore.load(caseId);
-        if (state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase())) {
-          conflict = true;
-          return;
-        }
-        const next = { ...state, iocs: [...state.iocs, ioc], updatedAt: new Date().toISOString() };
-        await stateStore.save(next);
-        options.onState?.(next);
+        // #2060: the overview only. saveOverview leaves the forensic rows as stored (enrichment.ts).
+        const state = await stateStore.loadOverview(caseId);
+        conflict = state.iocs.some((i) => i.value.toLowerCase() === ioc.value.toLowerCase());
+        const updatedAt = new Date().toISOString();
+        if (!conflict) await stateStore.saveOverview({ ...state, iocs: [...state.iocs, ioc], updatedAt });
       });
       if (conflict) return res.status(409).json({ error: `IOC already exists: ${ioc.value}` });
+      announceCaseChanged(options, caseId); // after the lock; dashboards get a coalesced push
       ctx.autoEnrichIfEnabled(caseId);
       logLine(`[manual] ${caseId} added ioc ${ioc.id} (${ioc.type})`);
       return res.status(201).json(ioc);

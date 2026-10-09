@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -3014,6 +3014,71 @@ describe("manual entry (events / IOCs the AI didn't catch)", () => {
     expect(r2.status).toBe(409);
     const state = await stateStore.load("c1");
     expect(state.iocs.filter((i) => i.value === "8.8.8.8")).toHaveLength(1);
+  });
+
+  // #2060: one manual add must not load, re-sort and save the whole case under its lock, nor push
+  // the whole state from inside it; the dashboards get a coalesced "changed" push afterwards.
+  async function seededApp() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-manual-cost-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const changed: string[] = [];
+    const pushed: InvestigationState[] = [];
+    const app = createApp(store, {
+      stateStore,
+      onStateChanged: (c) => changed.push(c),
+      onState: (s) => pushed.push(s),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const row = (id: string, timestamp: string) => ({
+      id,
+      timestamp,
+      description: `row ${id}`,
+      severity: "Medium" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    const seeded = await stateStore.load("c1");
+    await stateStore.save({
+      ...seeded,
+      forensicTimeline: [row("a", "2026-06-01T00:00:00Z"), row("b", "2026-06-02T00:00:00Z")],
+      iocs: [],
+    });
+    const load = vi.spyOn(stateStore, "load");
+    const save = vi.spyOn(stateStore, "save");
+    return { app, stateStore, changed, pushed, load, save };
+  }
+
+  it("POST /cases/:id/events inserts in time order without a whole-case load or save (#2060)", async () => {
+    const { app, stateStore, changed, pushed, load, save } = await seededApp();
+    const res = await request(app)
+      .post("/cases/c1/events")
+      .send({ timestamp: "2026-05-01T00:00:00Z", description: "early manual row", severity: "High" });
+    expect(res.status).toBe(201);
+    expect(load).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(changed).toEqual(["c1"]);
+    expect(pushed).toEqual([]);
+    load.mockRestore();
+    const state = await stateStore.load("c1");
+    expect(state.forensicTimeline.map((e) => e.description)).toEqual(["early manual row", "row a", "row b"]);
+  });
+
+  it("POST /cases/:id/iocs reads only the overview and still rejects a duplicate (#2060)", async () => {
+    const { app, stateStore, changed, pushed, load, save } = await seededApp();
+    const r1 = await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "9.9.9.9" });
+    expect(r1.status).toBe(201);
+    const r2 = await request(app).post("/cases/c1/iocs").send({ type: "ip", value: "9.9.9.9" });
+    expect(r2.status).toBe(409);
+    expect(load).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(changed).toEqual(["c1"]);
+    expect(pushed).toEqual([]);
+    load.mockRestore();
+    const state = await stateStore.load("c1");
+    expect(state.iocs.map((i) => i.value)).toEqual(["9.9.9.9"]);
+    expect(state.forensicTimeline.map((e) => e.id)).toEqual(["a", "b"]);
   });
 });
 

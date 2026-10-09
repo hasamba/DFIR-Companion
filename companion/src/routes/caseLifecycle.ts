@@ -23,7 +23,7 @@ import { deleteArchivesFirst, withArchiveBarrier } from "./archiveImportBarrier.
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
-import { byEventTime } from "../analysis/forensicSort.js";
+import { announceCaseChanged, insertForensicEventInOrder } from "../analysis/forensicEventInsert.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
@@ -597,13 +597,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try {
       const event = buildManualEvent(req.body);
       const stateStore = options.stateStore;
-      await runStateExclusive(caseId, async () => {
-        const state = await stateStore.load(caseId);
-        const forensicTimeline = [...state.forensicTimeline, event].sort(byEventTime);
-        const next = { ...state, forensicTimeline, updatedAt: new Date().toISOString() };
-        await stateStore.save(next);
-        options.onState?.(next);
-      });
+      // #2060: one indexed insert at its time-ordered place, not a whole-case load, sort and save.
+      await runStateExclusive(caseId, () => insertForensicEventInOrder(stateStore, caseId, event));
+      announceCaseChanged(options, caseId); // after the lock; dashboards get a coalesced push
       await ctx.markConclusionsOutOfDate(caseId, "manual event added"); // #1599: no run of its own
       logLine(`[manual] ${caseId} added event ${event.id} (${event.severity})`);
       return res.status(201).json(event);

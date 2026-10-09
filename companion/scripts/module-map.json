@@ -285,6 +285,7 @@
     "caseSqliteWorkerRows.ts": "storage",
     "forensicRows.ts": "storage",
     "forensicRowRewrite.ts": "storage",
+    "forensicEventInsert.ts": "storage",
     "caseSqliteWorkerSuper.ts": "storage",
     "caseSqliteWorkerSuperQuery.ts": "storage",
     "caseSqliteWorkerSaveState.ts": "storage",
