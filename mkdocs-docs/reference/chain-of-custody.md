@@ -13,10 +13,10 @@ The Activity Log answers *what was done to this case*. Chain of custody answers 
 | Artifact | Recorded as |
 |---|---|
 | Screenshots from the browser extension | `collected` — with the page URL it came from, the capture trigger, and `browser-extension` as the collector |
-| Imports (every format) | `collected` |
+| Imports (every format, including server-path imports of large files) | `collected` |
 | Files dropped in the case's `drop/` folder | `collected`, once a tool ingests them |
 
-Recording is hooked onto the two functions that actually write evidence, not onto the individual import routes — so an import path added in a future version is covered from the day it ships, rather than silently skipping custody.
+Recording is hooked onto the case store's evidence-writing functions, not onto the individual import routes — so an import path added in a future version is covered from the day it ships, rather than silently skipping custody.
 
 **Exports** append an `exported` event for every artifact in the case, re-hashed at the moment it leaves:
 
