@@ -227,6 +227,21 @@ function classifyHeading(
   };
 }
 
+// Link schemes Word may receive as a live External relationship (#2053).
+const SAFE_DOCX_LINK_SCHEME = /^(?:https?|mailto):/i;
+
+// True only for an ABSOLUTE http(s)/mailto href, judged on the raw string with no base URL,
+// so relative, protocol-relative (//host) and UNC (\\host) hrefs are rejected along with
+// javascript:/file:/ms-msdt:/vbscript:/data: and defanged hxxp(s) targets.
+function isSafeDocxLinkTarget(href: string): boolean {
+  if (!SAFE_DOCX_LINK_SCHEME.test(href)) return false;
+  try {
+    return SAFE_DOCX_LINK_SCHEME.test(new URL(href).protocol);
+  } catch {
+    return false;
+  }
+}
+
 // Inline tokens (strong/em/codespan/link/text) → docx run primitives. We accept the parent
 // formatting context (bold/italic) so nested marks compose, e.g. **_both_**. Code spans
 // carry monospace font; links emit ExternalHyperlink wrapping a styled run.
@@ -268,6 +283,11 @@ function inlineRuns(
       }
       case "link": {
         const link = t as Tokens.Link;
+        if (!isSafeDocxLinkTarget(link.href)) {
+          // #2053: evidence text is adversary-controlled — keep the words, drop the target.
+          out.push(new TextRun({ text: link.text || link.href, bold: ctx.bold, italics: ctx.italic }));
+          break;
+        }
         out.push(
           new ExternalHyperlink({
             link: link.href,

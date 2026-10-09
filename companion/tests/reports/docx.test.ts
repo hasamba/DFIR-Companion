@@ -331,3 +331,84 @@ describe("XML-forbidden characters in evidence text (#9)", () => {
     expect(xml).toContain("INC␀-9");
   });
 });
+
+describe("hyperlink targets from evidence text (#2053)", () => {
+  // Every External relationship target in the .rels file.
+  function externalTargets(rels: string): string[] {
+    return [...rels.matchAll(/<Relationship\b[^>]*>/g)]
+      .map((m) => m[0])
+      .filter((r) => r.includes('TargetMode="External"'))
+      .map((r) => /Target="([^"]*)"/.exec(r)?.[1] ?? "");
+  }
+
+  async function packWithRels(md: string): Promise<{ xml: string; rels: string }> {
+    const tokens = new Marked({ gfm: true }).lexer(md);
+    const { Document, Packer } = await import("docx");
+    const doc = new Document({ sections: [{ children: tokensToDocxChildren(tokens) }] });
+    const buf = await Packer.toBuffer(doc);
+    return { xml: await unzipDocumentXml(buf), rels: await unzipDocumentRels(buf) };
+  }
+
+  const HOSTILE = [
+    "[LinkAlpha](javascript:alert(1))",
+    "[LinkBravo](file:///C:/Windows/System32/calc.exe)",
+    "[LinkCharlie](ms-msdt:/id)",
+    "[LinkDelta](vbscript:msgbox)",
+    "[LinkEcho](data:text/html,x)",
+    "[LinkFoxtrot](\\\\host\\share)",
+    "[LinkGolf](//host/share)",
+    "[LinkHotel](/relative/path)",
+  ];
+  const TEXTS = HOSTILE.map((l) => /^\[([^\]]+)\]/.exec(l)![1]);
+
+  it("never emits a hyperlink with a non-http(s)/mailto target from a report", async () => {
+    const state = emptyState("c1");
+    state.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "Hostile links",
+      description: HOSTILE.join(" "),
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
+    });
+    const buf = await renderDocxReport(state);
+    const rels = await unzipDocumentRels(buf);
+    for (const target of externalTargets(rels)) {
+      expect(target).toMatch(/^(?:https?:|mailto:)/i);
+    }
+    for (const bad of ["javascript:", "file:", "ms-msdt:", "vbscript:", "data:", "host"]) {
+      expect(rels).not.toContain(bad);
+    }
+    const xml = await unzipDocumentXml(buf);
+    for (const text of TEXTS) expect(xml).toContain(text);
+  });
+
+  it("drops hostile targets in the mapper but keeps the link text as plain runs", async () => {
+    const { xml, rels } = await packWithRels(HOSTILE.join(" "));
+    expect(externalTargets(rels)).toEqual([]);
+    expect(xml).not.toContain("<w:hyperlink");
+    for (const text of TEXTS) expect(xml).toContain(text);
+  });
+
+  it("still links absolute http, https and mailto targets", async () => {
+    const { xml, rels } = await packWithRels(
+      "[web](http://example.com/a) [secure](https://example.com/b) [mail](mailto:soc@example.com)",
+    );
+    expect(externalTargets(rels).sort()).toEqual([
+      "http://example.com/a",
+      "https://example.com/b",
+      "mailto:soc@example.com",
+    ]);
+    expect(xml.match(/<w:hyperlink/g)?.length).toBe(3);
+  });
+
+  it("does not link a defanged hxxps target (it would be a dead link)", async () => {
+    const { xml, rels } = await packWithRels("[dead](hxxps://example[.]com/x)");
+    expect(externalTargets(rels)).toEqual([]);
+    expect(xml).toContain("dead");
+  });
+});
