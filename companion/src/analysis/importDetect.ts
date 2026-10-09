@@ -32,6 +32,9 @@ import { looksLikeCombinedLog } from "./combinedLogImport.js";
 import { looksLikeCiscoAsa } from "./ciscoAsaImport.js";
 import { isKapeCopyLog, isKapeSkipLog } from "./kapeAcquisitionLog.js";
 import { looksLikeSyslog } from "./syslogImport.js";
+import { looksLikeZeekTsv } from "./zeekTsv.js";
+import { looksLikeMdeHunting } from "./mdeHuntingImport.js";
+import { looksLikeSentinelLinux } from "./sentinelLinuxImport.js";
 import { IMPORT_KINDS } from "./importerSpec.js";
 import type { EngineDetectContext } from "./declarativeImporter.js";
 // Newer-source detectors live in importDetectSources.ts — this file is at the 800-line limit.
@@ -404,6 +407,10 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isHindsight(sample)) return "hindsight";
   if (isMacosFamily(root)) return "macos";
   if (isM365(sample)) return "m365";
+  // Defender XDR advanced hunting (#2097): after M365 (UAL rows keep Operation/AuditData at top level), before Velociraptor.
+  if (looksLikeMdeHunting(sample)) return "mdehunting";
+  // Sentinel Syslog (Sysmon-for-Linux XML / AUOMS) and VMConnection rows (#2098) — before Velociraptor and the SIEM catch-all.
+  if (looksLikeSentinelLinux(sample)) return "sentinellinux";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
   // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive; checked early so the generic SIEM/network catch-alls can't claim it.
@@ -643,6 +650,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     if (sample) return vrHint(detectJson(root, sample));
   }
 
+  if (looksLikeZeekTsv(t)) return "network"; // Zeek classic TSV: `#separator` + `#fields` header (#2094)
   // Linux auditd records (`type=… msg=audit(…)`) — shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
   if (isBulkExtractorCarvedFeatureFile(t)) return "bulkextractorcarved"; // before url: structural, name-agnostic (#1116)

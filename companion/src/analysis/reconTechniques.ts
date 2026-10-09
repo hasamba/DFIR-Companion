@@ -101,13 +101,18 @@ const RECON_RULES: ReconRule[] = [
   },
   // T1005 Data from Local System (bulk DB dump)
   { re: /\bmysqldump\b|\bpg_dump(?:all)?\b|\bmongodump\b/i, ids: ["T1005"] },
-  // T1560.001 Archive Collected Data: Archive via Utility
+  // T1560.001 Archive Collected Data: Archive via Utility. The last alternative is the 7-Zip `a`
+  // (add) command with a `-t<format>` switch, keyed on the switches rather than the binary name so a
+  // renamed 7-Zip (`svch.exe a -t7z out.7z …`) still tags (#2090). Extraction (`x`) does not match.
   {
-    re: /\btar\b[^\n]*\s-[a-z]*c[a-z]*f|\bzip\b\s+-r\b|\bgzip\b\s+\S|\b7z\b\s+a\b|compress-archive|\brar\b\s+a\b/i,
+    re: /\btar\b[^\n]*\s-[a-z]*c[a-z]*f|\bzip\b\s+-r\b|\bgzip\b\s+\S|\b7z\b\s+a\b|compress-archive|\brar\b\s+a\b|\sa\s+(?:-\S+\s+)*-t(?:7z|zip|tar|gzip|bzip2|xz)\b/i,
     ids: ["T1560.001"],
   },
   // T1041 Exfiltration Over C2 Channel (file upload via web client)
   { re: /(?:curl|wget)\b[^\n]*(?:--data-binary|--upload-file|\s-T\b|\s-F\b|--form|-d\s+@)/i, ids: ["T1041"] },
+  // T1041 — scripted FTP (`ftp -s:<script>`, the unattended upload form) and a BITS upload job.
+  // Interactive `ftp <host>` and a BITS download are not tagged (#2090).
+  { re: /\bftp(?:\.exe)?\b[^\n]*\s-s:\S+|\bbitsadmin(?:\.exe)?\b[^\n]*\s\/upload\b/i, ids: ["T1041"] },
   // T1070.003 Indicator Removal: Clear Command History
   {
     re: /\bhistory\s+-c\b|unset\s+histfile|histfile=\/dev\/null|histsize=0\b|histignore=\*|(?:rm|truncate|>\s*)\s*[^\n]*\.bash_history|clear-history/i,

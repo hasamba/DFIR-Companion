@@ -15,6 +15,7 @@ import { backfillSilenceGapFindings } from "../gapDetect.js";
 import { backfillHostHistoryNote, gapOptionsFor } from "../gapHostHistory.js";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings, rederiveAutoFindingTechniques } from "../highSeverityFindings.js";
+import { AUTO_FINDING_ID_PREFIX } from "../responseSchema.js";
 import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
 import { backfillScriptCommandFindings } from "../scriptBlockCommandFindings.js";
 import { backfillScriptC2Findings } from "../scriptBlockC2Findings.js";
@@ -215,7 +216,7 @@ export async function foldSynthesisDelta(
 
   // The backfills are restricted to the events synthesis actually considered.
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
-  const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts);
+  const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts, state);
   const pinned = preserveAcceptedTechniques(state, await preservePinnedQuestions(ctx, caseId, netted.state));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
@@ -444,15 +445,20 @@ function applyBackfills(
   scopedEvents: ForensicEvent[],
   eligibleIds: Set<string>,
   ts: string,
+  prior: InvestigationState,
 ): { state: InvestigationState; highSeverityBackfillCount: number } {
   // The Defender episode finding first (#964): it links the start row it raised to High, so the
   // generic backfill below does not also mint a confidence-100 finding on it.
   const withDefender = backfillDefenderEpisodeFindings(linked, eligibleIds, ts);
+  // An f-auto-* finding the analyst dismissed before this run stays dismissed when re-minted (#2092).
+  const priorAutoFindings = new Map(
+    prior.findings.filter((f) => f.id.startsWith(AUTO_FINDING_ID_PREFIX)).map((f) => [f.id, f] as const),
+  );
   // An echoed f-auto-* id keeps the tags its cited events carry, not the model's (#1684). After the
   // backfill, which links the events it reads as uncovered, and before the script-command pass,
   // which reads those tags as coverage and adds its own onto the f-auto finding.
   const backfilled = rederiveAutoFindingTechniques(
-    backfillHighSeverityFindings(withDefender, eligibleIds, ts),
+    backfillHighSeverityFindings(withDefender, eligibleIds, ts, priorAutoFindings),
   );
   const highSeverityBackfillCount = backfilled.findings.length - withDefender.findings.length;
   // Commands in a logged script block that NO finding on the row accounts for (#1531). After the

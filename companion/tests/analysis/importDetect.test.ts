@@ -217,6 +217,51 @@ describe("detectImportKind — JSON formats", () => {
       "okta",
     );
   });
+  it("mdehunting: Defender advanced-hunting row (Timestamp + ActionType + DeviceName) (#2097)", () => {
+    expect(
+      detectImportKind(
+        "Microsoft365DefenderEvents.json",
+        j([{ Timestamp: "2026-01-02T00:00:00Z", ActionType: "LdapSearch", DeviceName: "h1.example.test" }]),
+      ),
+    ).toBe("mdehunting");
+  });
+  it("mdehunting: a bare Timestamp + ActionType pair is not claimed (#2097)", () => {
+    expect(detectImportKind("x.json", j([{ Timestamp: "2026-01-02T00:00:00Z", ActionType: "X" }]))).not.toBe(
+      "mdehunting",
+    );
+  });
+  it("sentinellinux: Sentinel Syslog table row (SyslogMessage + Facility + HostName) (#2098)", () => {
+    const row = {
+      TimeGenerated: "2022-05-11T18:10:21.997Z",
+      Computer: "host-a",
+      HostName: "host-a",
+      Facility: "user",
+      SeverityLevel: "info",
+      ProcessName: "auoms",
+      SyslogMessage: 'type=AUOMS_EXECVE audit(1652292621.986:1): cmdline="whoami"',
+      Type: "Syslog",
+    };
+    expect(detectImportKind("syslog.json", j([row]))).toBe("sentinellinux");
+  });
+  it("sentinellinux: VMConnection row (Direction + ProcessName + DestinationIp + port) (#2098)", () => {
+    const row = {
+      TimeGenerated: "2022-05-11T18:09:38.868Z",
+      Computer: "host-a",
+      Direction: "outbound",
+      ProcessName: "java",
+      SourceIp: "192.0.2.5",
+      DestinationIp: "192.0.2.6",
+      DestinationPort: 1389,
+      Protocol: "tcp",
+      Type: "VMConnection",
+    };
+    expect(detectImportKind("vmconnection.json", j([row]))).toBe("sentinellinux");
+  });
+  it("sentinellinux: a bare SyslogMessage without Facility is not claimed (#2098)", () => {
+    expect(
+      detectImportKind("x.json", j([{ TimeGenerated: "2022-05-11T18:09:38Z", SyslogMessage: "hi" }])),
+    ).not.toBe("sentinellinux");
+  });
   it("gws: Admin SDK Reports activity", () => {
     expect(
       detectImportKind(

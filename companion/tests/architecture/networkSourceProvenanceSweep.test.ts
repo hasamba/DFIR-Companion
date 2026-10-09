@@ -73,6 +73,7 @@ const SITES: Record<string, number> = {
   "awsFlowLogImport.ts": 1, // VPC Flow Log srcaddr — AWS network plane
   "azureFlowLogImport.ts": 1, // VNet flow tuple srcIp — Azure network plane (#1294)
   "gcpFlowLogImport.ts": 1, // VPC Flow Log connection.src_ip — Google network plane (#1294)
+  "sentinelLinuxImport.ts": 1, // VMConnection (VM Insights) SourceIp — Azure Monitor flow record (#2098)
   "dnsWireRows.ts": 1, // Zeek dns.log id.orig_h
   "exporterFlowImport.ts": 1, // nfdump src4_addr — exporter-observed
   "networkImport.ts": 3, // Zeek notice.log src / conn.log id.orig_h / Suricata eve src_ip

@@ -257,6 +257,8 @@ Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to
 - Added findings (model B found something model A missed)
 - Removed findings (model B did not confirm something model A concluded)
 - Severity differences
+
+A finding that one side already dismissed is not a claim, so it is never listed as an added or removed finding. Without this, every finding you or an accepted decision dismissed on model A (harness noise, for example) would come back as a "removed" row.
 - MITRE technique additions/removals — a technique counts as mapped by a model when its MITRE table or one of its findings that is not dismissed carries it, so a technique both models tag on a finding is not a disagreement
 
 For a technique disagreement, the referee also reads the findings that carry the technique. A staged tool or script that never ran keeps its technique: the finding text records that it did not run. The referee suggests a removal only when the technique is wrong for the artefact, for example build-time activity.

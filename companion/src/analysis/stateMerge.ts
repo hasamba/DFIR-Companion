@@ -56,6 +56,7 @@ import { correlateAwsFlowIdentityExecution } from "./awsFlowIdentityExecutionJoi
 import { correlateAwsFlowSensitiveData } from "./awsFlowSensitiveDataJoin.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
+import { markJndiInjection } from "./jndiInjection.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -518,9 +519,8 @@ export function runTimelineChain(
   // Container escape (#908 item 11). Here because the container's own command line, the host's
   // process telemetry and the host's persistence artifacts arrive from different importers — and
   // because a container-originated change to host persistence only reads as one event when both
-  // halves are in the same timeline. Only raises, and it keeps configuration and behaviour apart.
-  const withEscape = markContainerEscape(withServiceBrowsing);
-  return withEscape;
+  // halves are in the same timeline. Only raises. Then the JNDI-injection (Log4Shell) join, #2099.
+  return markJndiInjection(markContainerEscape(withServiceBrowsing));
 }
 
 /** Fold correlated events and sort by event time; every folded-away id maps to its survivor. */

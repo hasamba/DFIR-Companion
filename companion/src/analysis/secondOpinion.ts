@@ -161,9 +161,12 @@ export function buildSecondOpinionDeltas(
   const deltas: SecondOpinionDelta[] = [];
   const matchedA = new Set<Finding>();
 
+  // A finding dismissed on its own side is not a claim (#2093): it raises no one-sided delta. It
+  // stays in the pairing so the other side restating it still matches instead of going one-sided.
   for (const bf of bAll) {
     const af = counterpart.get(bf);
     if (!af) {
+      if (bf.status === "dismissed") continue;
       deltas.push(delta("b_only", matchKey(bf), bf.title, { finding: bf, bSeverity: bf.severity }));
     } else if (!matchedA.has(af)) {
       matchedA.add(af); // one delta per A finding — a second B finding mapping to it agrees, no delta
@@ -180,7 +183,7 @@ export function buildSecondOpinionDeltas(
     }
   }
   for (const af of aAll) {
-    if (!matchedA.has(af))
+    if (!matchedA.has(af) && af.status !== "dismissed")
       deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
   }
 

@@ -22,6 +22,7 @@ import {
   type SiemConnCandidate,
 } from "./siemDnsConnJoin.js";
 import { createSiemDebugTally, type SiemDebugTally } from "./siemImportDebug.js";
+import { createClockDisputeTally } from "./siemFieldPick.js";
 
 type Row = Record<string, unknown>;
 
@@ -63,6 +64,7 @@ export class WindowsEventBuilder {
   private readonly conns: SiemConnCandidate[] = [];
   private total = 0;
   private readonly tally: SiemDebugTally; // #1736 — per-attempt mapping decisions
+  private readonly clock = createClockDisputeTally(); // #2089 — Sysmon rows re-dated by the record time
 
   constructor(
     private readonly format: string,
@@ -87,6 +89,7 @@ export class WindowsEventBuilder {
     const windows = mapWindows(record, host, rowSink, { source: this.format, recordIndex });
     const mapped = windows ?? mapGeneric(record, host, rowSink);
     this.tally.row(windows !== null, mapped);
+    if (windows) this.clock.note(record);
     this.os.note(record, [mapped]);
     collectWindowsConnCandidate(this.conns, mapped);
     if (isOsBehaviourCandidateRow(record)) {
@@ -136,6 +139,7 @@ export class WindowsEventBuilder {
     const hostname = [...this.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
     const dropped = Math.max(0, this.total - represented);
     this.tally.flush({ total: this.total, kept: events.length, groups, dropped });
+    const clockDisputed = this.clock.summary();
     return {
       events: finalEvents,
       iocs: [...this.iocSink.values()].slice(0, this.opts.maxIocs ?? 5000),
@@ -145,6 +149,7 @@ export class WindowsEventBuilder {
       groups,
       format: this.format,
       hostname,
+      ...(clockDisputed ? { clockDisputed } : {}),
     };
   }
 }

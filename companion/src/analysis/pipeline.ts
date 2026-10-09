@@ -390,6 +390,9 @@ export class AnalysisPipeline {
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
   }
+  importMdeHunting(...args: ImporterArgs<typeof ingest.importMdeHunting>): Promise<InvestigationState> {
+    return ingest.importMdeHunting(this.importCtx, ...args);
+  }
 
   importAzureStorageLog(
     ...args: ImporterArgs<typeof ingest.importAzureStorageLog>
@@ -515,6 +518,9 @@ export class AnalysisPipeline {
     return ingest.importPlasoFile(this.importCtx, ...args);
   }
 
+  importSentinelLinux(...args: ImporterArgs<typeof ingest.importSentinelLinux>): Promise<InvestigationState> {
+    return ingest.importSentinelLinux(this.importCtx, ...args);
+  }
   importAuditd(...args: ImporterArgs<typeof ingest.importAuditd>): Promise<InvestigationState> {
     return ingest.importAuditd(this.importCtx, ...args);
   }

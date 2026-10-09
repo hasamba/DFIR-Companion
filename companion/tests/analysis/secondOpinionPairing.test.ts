@@ -346,3 +346,35 @@ describe("applyAcceptedSecondOpinion — duplicate guard on an accepted b_only (
     expect(next.findings[0].severity).toBe("High");
   });
 });
+
+describe("buildSecondOpinionDeltas — dismissed findings are not one-sided claims (#2093)", () => {
+  const live = finding({ id: "f1", title: "Credential dump of lsass", severity: "High" });
+  const harness = (n: number): Finding =>
+    finding({
+      id: `f${n}`,
+      title: `gatherNetworkInfo.vbs run ${n} (harness)`,
+      severity: "Info",
+      status: "dismissed",
+    });
+  const kinds = (a: Finding[], b: Finding[]): string[] =>
+    buildSecondOpinionDeltas(stateWith(a), stateWith(b)).map((d) => d.kind);
+
+  it("raises no a_only for findings A already dismissed", () => {
+    const k = kinds([live, harness(2), harness(3), harness(4)], [{ ...live, id: "b1" }]);
+    expect(k.filter((x) => x === "a_only")).toHaveLength(0);
+  });
+
+  it("still raises an a_only for a live A finding B dropped", () => {
+    expect(kinds([live], [])).toEqual(["a_only"]);
+  });
+
+  it("raises no b_only for a finding B itself dismissed", () => {
+    const k = kinds([], [{ ...harness(5), id: "b5" }]);
+    expect(k.filter((x) => x === "b_only")).toHaveLength(0);
+  });
+
+  it("keeps a dismissed A finding in the pairing so B restating it is not a b_only", () => {
+    const k = kinds([harness(2)], [{ ...harness(2), id: "b2", status: "open" }]);
+    expect(k.filter((x) => x === "b_only" || x === "a_only")).toHaveLength(0);
+  });
+});

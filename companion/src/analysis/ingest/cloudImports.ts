@@ -4,6 +4,7 @@ import { parseAzureStorageLog, type AzureStorageLogImportOptions } from "../azur
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
+import { parseMdeHunting, MDE_HUNTING_SOURCE, type MdeHuntingImportOptions } from "../mdeHuntingImport.js";
 import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
 import { parseHindsight, type HindsightImportOptions } from "../hindsightImport.js";
 import { parseMacos, type MacosImportOptions } from "../macosImport.js";
@@ -160,6 +161,59 @@ export async function importOkta(
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import a Microsoft 365 Defender / Defender XDR advanced-hunting export (#2097). Deterministic (no
+// AI call): plain rows default Low; DCSync-shaped replication, AD FS DKM reads, Domain Admins
+// enumeration and delegated permission grants are graded up by mdeHuntingImport.ts.
+export async function importMdeHunting(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    mdehunting?: MdeHuntingImportOptions;
+    minSeverity?: Severity;
+    debug?: ImportDebugRecorder;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseMdeHunting(text, { ...opts.mdehunting, debug: opts.debug });
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Defender advanced hunting", parsed.total);
+
+  const delta = deltaSchema.parse({
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : [MDE_HUNTING_SOURCE],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Defender advanced hunting import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  });
 
   return ctx.withStateLock(caseId, async () => {
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {

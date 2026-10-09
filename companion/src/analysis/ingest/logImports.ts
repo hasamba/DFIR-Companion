@@ -14,6 +14,11 @@ import { resolveExtractedFrom } from "../siemImport.js";
 
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
+import {
+  SENTINEL_SYSLOG_SOURCE,
+  parseSentinelLinux,
+  type SentinelLinuxImportOptions,
+} from "../sentinelLinuxImport.js";
 import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
@@ -269,6 +274,59 @@ export async function importSyslog(
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    const state = await mergeAndSaveDelta(ctx, caseId, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import Linux telemetry exported from Microsoft Sentinel / Log Analytics (#2098): `Syslog` rows are
+// unwrapped and routed to the Sysmon XML, auditd (AUOMS) or syslog parser; `VMConnection` rows become
+// Low network-flow events. Deterministic (no AI call).
+export async function importSentinelLinux(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    sentinellinux?: SentinelLinuxImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+    debug?: ImportDebugRecorder;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseSentinelLinux(text, { ...opts.sentinellinux, debug: opts.debug });
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Sentinel Linux", parsed.total);
+
+  const delta = deltaSchema.parse({
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : [SENTINEL_SYSLOG_SOURCE],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Sentinel Linux import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
+      `, ${parsed.iocs.length} IOC(s)` +
+      (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+    summary: "",
+  });
 
   return ctx.withStateLock(caseId, async () => {
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {

@@ -49,6 +49,8 @@ A Timesketch-style rule engine (`tags.yaml`) that matches events on any real fie
 
 **PowerShell tradecraft rules** — running a script out of an NTFS alternate data stream (`Get-Content … -Stream x | IEX`) grades **High** with T1564.004. Three discovery shapes grade **Medium** so the AI sees them: one script that queries `Win32_BIOS` together with `Win32_PnPEntity` or `Win32_ComputerSystem` (anti-VM, T1497.001), a `root\SecurityCenter2` `AntiVirusProduct` query (T1518.001), and a script walking `CurrentVersion\Uninstall` through the registry API (T1518). These are a deliberate exception: plain discovery is normally tagged but not graded. A `DllImport` of a netapi32 / advapi32 / secur32 lookup function (`NetWkstaGetInfo`, `GetUserNameEx`, `LookupAccountSid`, …) adds T1082 / T1033 without changing severity. A lone `Win32_BIOS` query, `Get-Item -Stream *`, and the `Host Application` line that 4103 records repeat do not match.
 
+**Shells spawned by Office and script hosts** — Word, Excel, PowerPoint or Outlook starting cmd, PowerShell, rundll32 or regsvr32 grades **High** with T1566.001 (malicious attachment) and T1059. wscript, cscript or mshta starting the same programs also grades **High**, but with T1059.005 only, because a script host does not by itself mean a phishing document. A script host that is running a script from `C:\Windows\System32` or `SysWOW64` is Windows running its own tooling (for example netsh's `gatherNetworkInfo.vbs`), so the rule skips it and the row keeps its import severity. This check reads the parent command line in the row's description. When a very long row has lost that part, the row still grades High. Like every tag rule, it applies at import only.
+
 **AI-assisted rule authoring** — describe a rule in plain English and the AI drafts a valid `tags.yaml` rule you can preview (live match count against the open case), edit, and add. Includes per-rule remove (including shipped defaults) and a reset-to-defaults button. Uses the ejectable prompt `tagger-rule.txt` (`npm run prompts:eject`). AI-gated — falls back cleanly with no provider configured.
 
 ---
@@ -186,7 +188,7 @@ Disable permanently: Settings → Diagnostics → disable pre-flight (for setups
 
 ## Exfiltration Correlation
 
-A deterministic pass stitches archive **staging** (Compress-Archive/zip/tar/7z) to a subsequent **upload** on the same host within a bounded window (6 hours by default). The sequence — not the destination — is the signal: a lone upload to routine SaaS/cloud infrastructure is never escalated, but staging followed by upload anywhere raises the upload to **High** and tags it `[confirmed exfiltration: …]`.
+A deterministic pass stitches archive **staging** (Compress-Archive/zip/tar/7z, including a renamed 7-Zip recognised by its `a -t7z`-style switches) to a subsequent **upload** (web-client upload, scripted `ftp -s:<script>`, or a `bitsadmin /upload` job) on the same host within a bounded window (6 hours by default). A scripted FTP or BITS upload on its own is graded **Medium**. The sequence — not the destination — is the signal: a lone upload to routine SaaS/cloud infrastructure is never escalated, but staging followed by upload anywhere raises the upload to **High** and tags it `[confirmed exfiltration: …]`.
 
 Synthesis is told to give a confirmed staging→upload pairing its own dedicated **"Data Exfiltration"** finding (with T1041, plus the named cloud service's technique if applicable) instead of folding it into a generic C2/beacon finding.
 
@@ -205,6 +207,12 @@ Import the file listing (MFT) and the execution artifacts (Prefetch / Amcache) i
 When a host later contacts a domain that a phishing email linked to, that contact event is tagged as initial access (upgraded from T1566.002 to **T1204.002**) and raised to at least Medium severity. This gives synthesis a real entry-vector root instead of concluding "began via an unknown vector."
 
 The correlation uses only the link domains extracted from the email — never sender or recipient domains — and is conservative and idempotent.
+
+---
+
+## JNDI Injection (Log4Shell) Correlation
+
+A Java process that makes an outbound LDAP or RMI lookup and then, within 60 seconds on the same host, starts a shell or downloader (bash, sh, cmd, PowerShell, curl, wget, Python, Perl, nc) is the Log4Shell exploit shape. Both rows (the lookup and the shell) are raised to at least **High**, tagged T1190 and T1203, and carry a `[jndi injection: …]` note. The note names the lookup address and port, the delay, and any other port the JVM reached on the same address (the class download). The Java process can be java, javaw, Tomcat or Catalina. Ports 1389, 1099 and 1098 count for any address except loopback, so a lab or insider attacker on an internal address is still caught. The ordinary directory ports 389 and 636 count only for a public address, because a Java service talking to a domain controller is normal. A shell child whose image the sensor recorded as `<unknown process>` is read from its command line. This shows the exploit's shape, not that the payload was a JNDI string. The network row must be graded above Info by its importer for the pass to see it. Sysmon network connections and Azure VM Insights (VMConnection) flows are graded Low, so they qualify.
 
 ---
 

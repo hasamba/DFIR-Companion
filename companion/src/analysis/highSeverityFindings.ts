@@ -1,5 +1,6 @@
 import { AUTO_FINDING_ID_PREFIX } from "./responseSchema.js";
 import { absorbedHighRowIds } from "./absorbedHighRows.js";
+import { dismissedClusters, findDismissedCluster } from "./dismissedClusterFold.js";
 import type { InvestigationState, Finding, Severity, ForensicEvent } from "./stateTypes.js";
 
 const HIGH_SEVERITY = new Set<Severity>(["Critical", "High"]);
@@ -221,8 +222,16 @@ function groupTitle(description: string): string {
 // explaining a bundled test-tool's own false-positive corpus by directory shouldn't leave a dozen more
 // events from that same directory to resurface as separate, un-triaged open High findings).
 //
+// Nor when it is a child of a parent process a dismissed finding already explains as one cluster —
+// same host, same ParentProcessGuid (or parent image + arguments); never a Critical row (#2092).
+//
 // Nor is it backfilled when it is the TWIN of an event a live non-auto finding cites — same host,
 // same command line (or same image at the same moment). It is linked onto that finding (#1556).
+//
+// An f-auto-* id the analyst dismissed BEFORE this synthesis (`priorAutoFindings`) that the model did
+// not re-issue is re-minted with that dismissal, not as open — synthesis replaces conclusions, so
+// without this the next run brought every dismissed auto finding back (#2092). A re-issued id is
+// already in `state` and the model's version stands.
 //
 // Pure: returns a new state (never mutates). Idempotent — the finding id is derived from
 // the lex-first event id in each title-group, and synthesis resets relatedFindingIds
@@ -231,6 +240,7 @@ export function backfillHighSeverityFindings(
   state: InvestigationState,
   eligibleIds: ReadonlySet<string>,
   timestamp: string,
+  priorAutoFindings: ReadonlyMap<string, Finding> = new Map(),
 ): InvestigationState {
   const { eligible, foldOnto } = partitionUncovered(state, eligibleIds);
   if (eligible.length === 0 && foldOnto.size === 0) return state;
@@ -245,7 +255,8 @@ export function backfillHighSeverityFindings(
     // Stable finding id: lex-first event id in the group.
     const repId = [...events].sort((a, b) => a.id.localeCompare(b.id))[0].id;
     const findingId = `${AUTO_FINDING_ID_PREFIX}${repId}`;
-    if (!existingIds.has(findingId)) newFindings.push(buildFinding(findingId, title, events, timestamp));
+    if (!existingIds.has(findingId))
+      newFindings.push(carryDismissal(buildFinding(findingId, title, events, timestamp), priorAutoFindings));
     for (const e of events) linkByEvent.set(e.id, findingId);
   }
 
@@ -293,13 +304,14 @@ export function rederiveAutoFindingTechniques(state: InvestigationState): Invest
 
 // Uncovered eligible High/Critical events, split into the ones that need a new finding and the ones
 // an existing finding already explains (event id -> that finding's id): a dismissed corpus-level
-// finding over the same directory, or a live finding citing the event's twin (#1556). A cited row
+// finding over the same directory or the same parent process (#2092), or a live finding citing the event's twin (#1556). A cited row
 // the citing finding absorbed without naming it (#1943) still counts as uncovered.
 function partitionUncovered(
   state: InvestigationState,
   eligibleIds: ReadonlySet<string>,
 ): { eligible: ForensicEvent[]; foldOnto: Map<string, string> } {
   const dismissed = dismissedEventPaths(state);
+  const clusters = dismissedClusters(state);
   const cited = citedEvents(state);
   const absorbed = absorbedHighRowIds(state);
   const eligible: ForensicEvent[] = [];
@@ -310,12 +322,18 @@ function partitionUncovered(
     if (e.relatedFindingIds.length > 0 && !absorbed.has(e.id)) continue;
     const explainedBy =
       (dismissed.length > 0 ? findDismissingFinding(e, dismissed) : undefined) ??
+      findDismissedCluster(e, clusters) ??
       (cited.length > 0 ? findTwinFinding(e, cited) : undefined);
     if (explainedBy && e.relatedFindingIds.includes(explainedBy)) continue;
     if (explainedBy) foldOnto.set(e.id, explainedBy);
     else eligible.push(e);
   }
   return { eligible, foldOnto };
+}
+
+// A re-minted auto finding keeps the analyst's earlier dismissal (#2092).
+function carryDismissal(built: Finding, prior: ReadonlyMap<string, Finding>): Finding {
+  return prior.get(built.id)?.status === "dismissed" ? { ...built, status: "dismissed" } : built;
 }
 
 function groupByTitle(events: ForensicEvent[]): Map<string, ForensicEvent[]> {

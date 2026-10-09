@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Zeek classic TSV import** — Zeek's default `#fields` logs (conn, dns, http, files, ssl) import like Zeek JSON (closes #2094)
+- **Defender XDR advanced-hunting import** — advanced-hunting exports import with hosts and accounts; replication from a non-DC and AD FS DKM LDAP reads are High (closes #2097)
+- **Sentinel Linux telemetry** — Sentinel Syslog-wrapped auditd/AUOMS and Sysmon for Linux, plus VMConnection flows, import with full command lines (closes #2098)
+- **Log4Shell shape** — a JVM LDAP/RMI lookup followed by the JVM spawning a shell is raised to High with T1190/T1203 (closes #2099)
 - **Synthesis checks before 'unknown'** — synthesis reads the earliest attacker event's parent command line before calling initial access unknown, and checks a host's events before calling it not compromised (closes #2080)
 - **Persistence executed** — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts such as rundll32, Medium otherwise) with T1547.001 (closes #2082)
 - **PowerShell session seats** — PowerShell rows record their session at import, and synthesis sends the other commands of a session that has a High row; re-import existing cases to gain it (closes #2078)
@@ -25,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sentinel timestamps** — Sentinel/Log Analytics exports (SecurityEvent, OfficeActivity) are dated from `TimeGenerated` (closes #2096)
+- **Sysmon clock dispute** — a Sysmon row whose UtcTime is over an hour from the record time is dated by the record time and flagged (closes #2089)
+- **Exfiltration chain tagging** — renamed 7-Zip archiving and scripted FTP/BITS uploads are tagged, so the archive → upload pairing fires (closes #2090)
+- **Script-host child rule** — script hosts spawning a shell no longer carry T1566.001, and Windows' own System32 scripts are excluded (closes #2091)
+- **Dismissed clusters stay dismissed** — High rows under a dismissed process cluster fold onto that dismissal, and dismissed auto findings stay dismissed across re-synthesis (closes #2092)
+- **Second-opinion deltas** — findings either model already dismissed no longer appear as added or removed (closes #2093)
 - **Deep pass falls back on a safety stop** — a stopped deep-pass batch is read on the fallback model instead of being lost, and the second-opinion record names the model that actually wrote model A (closes #2076)
 - **Custody appendix paths escaped** — an artifact path with a line break or backticks can no longer forge a heading or break its code span in the report (closes #2052)
 - **Word report links restricted** — only absolute http, https and mailto links stay clickable; javascript:, file:, ms-msdt: and similar targets render as plain text (closes #2053)

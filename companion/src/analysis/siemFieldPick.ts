@@ -50,6 +50,8 @@ export const TIME_KEYS = [
   "EventTime",
   "event_time",
   "DeviceEventTime",
+  // Sentinel / Log Analytics event time (#2096). Never TimeCollected — that is the collector clock.
+  "TimeGenerated",
   "createdAt",
   "created",
   "event.created",
@@ -96,11 +98,100 @@ function isFlatWindowsRecord(rec: Row): boolean {
 // The event's own time, and the key it came from. For Sysmon prefer the structured UtcTime (the
 // in-event clock — the artifact's own time); otherwise the record's @timestamp / common time fields.
 // Never the import time. The value is raw: siemImport's pickTimestamp normalizes it.
+// Exception (#2089): when UtcTime and the record's own time disagree by more than an hour, the
+// record time wins — it is the clock every channel in the file shares, so a Sysmon row days off
+// cannot move out of the attack window. UtcTime survives as the observed time and the row is flagged.
 export function timestampSource(rec: Row, ed: Row | undefined): { key: string; value: string } | undefined {
   const sysmonUtc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
-  const picked = sysmonUtc ? { key: "UtcTime", value: sysmonUtc } : firstKeyed(rec, TIME_KEYS);
+  const dispute = sysmonUtc ? sysmonClockDispute(rec, ed) : undefined;
+  const picked = dispute
+    ? { key: dispute.recordKey, value: dispute.recordValue }
+    : sysmonUtc
+      ? { key: "UtcTime", value: sysmonUtc }
+      : firstKeyed(rec, TIME_KEYS);
   pickSink?.("timestamp", picked?.key);
   return picked;
+}
+
+// Sysmon EID 3 legitimately lags its record by seconds to minutes; the disputes seen in real
+// exports are 19 hours to 11 days (#2089). An hour sits well clear of both.
+export const SYSMON_CLOCK_DISPUTE_MS = 60 * 60 * 1000;
+
+export interface SysmonClockDispute {
+  utc: string; // the Sysmon UtcTime as written
+  recordKey: string; // the record time field that wins
+  recordValue: string;
+  offsetMs: number; // |UtcTime - record time|
+}
+
+const ZONED = /(Z|[+-]\d{2}:?\d{2})$/i;
+
+// UtcTime carries no zone but is UTC by definition, the convention normalizeTime follows.
+function clockMs(v: string): number {
+  const t = v.trim().replace(/^(\d{4}-\d{2}-\d{2}) /, "$1T");
+  return Date.parse(ZONED.test(t) ? t : `${t}Z`);
+}
+
+// Only a record time that states its zone can dispute UtcTime: NXLog's naive EventTime is the
+// collector's LOCAL time, so a UTC-4 site would read as a four-hour dispute with nothing wrong.
+function zonedRecordTime(rec: Row): { key: string; value: string } | undefined {
+  for (const k of TIME_KEYS) {
+    const hit = firstKeyed(rec, [k]);
+    if (hit && ZONED.test(hit.value)) return hit;
+  }
+  return undefined;
+}
+
+/** A Sysmon row whose UtcTime is more than SYSMON_CLOCK_DISPUTE_MS from the record time, or undefined. */
+export function sysmonClockDispute(rec: Row, ed: Row | undefined): SysmonClockDispute | undefined {
+  const utc = ed ? str(getCI(ed, "UtcTime")).trim() : "";
+  const record = utc ? zonedRecordTime(rec) : undefined;
+  if (!record) return undefined;
+  const offsetMs = Math.abs(clockMs(utc) - clockMs(record.value));
+  if (!Number.isFinite(offsetMs) || offsetMs <= SYSMON_CLOCK_DISPUTE_MS) return undefined;
+  return { utc, recordKey: record.key, recordValue: record.value, offsetMs };
+}
+
+function spanText(ms: number): string {
+  const h = ms / 3_600_000;
+  return h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h)}h`;
+}
+
+/** The row's description with the dispute stated, so the analyst and the AI both see it. */
+export function withClockDisputeNote(description: string, d: SysmonClockDispute | undefined): string {
+  if (!d) return description;
+  const note = `Sysmon UtcTime ${d.utc} disagrees with the record time by ${spanText(d.offsetMs)}`;
+  return `${description} [${note}; dated by ${d.recordKey}]`;
+}
+
+export interface ClockDisputeSummary {
+  rows: number;
+  maxOffsetMs: number;
+}
+
+/** The analyst's one line for an import's disputed rows ("" when there were none). */
+export function clockDisputeText(s: ClockDisputeSummary | undefined): string {
+  if (!s) return "";
+  return `${s.rows} Sysmon row(s) had a UtcTime up to ${spanText(s.maxOffsetMs)} from the record time; dated by the record time`;
+}
+
+/** Counts disputed Windows rows across one import; `summary()` is undefined when there were none. */
+export function createClockDisputeTally(): {
+  note(rec: Row): void;
+  summary(): ClockDisputeSummary | undefined;
+} {
+  let rows = 0;
+  let maxOffsetMs = 0;
+  return {
+    note(rec) {
+      const ed = windowsEventDataRaw(rec);
+      const d = sysmonClockDispute(rec, isObject(ed) ? ed : undefined);
+      if (!d) return;
+      rows += 1;
+      maxOffsetMs = Math.max(maxOffsetMs, d.offsetMs);
+    },
+    summary: () => (rows ? { rows, maxOffsetMs } : undefined),
+  };
 }
 
 // The machine that logged the event comes before the shipper's own host: under Windows Event

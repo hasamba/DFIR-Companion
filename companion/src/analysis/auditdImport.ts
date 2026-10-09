@@ -74,6 +74,9 @@ interface AuditTypeDef {
 const AUDIT_TYPES: Record<string, AuditTypeDef> = {
   // Execution
   EXECVE: { label: "Command executed", severity: "Low" },
+  // AUOMS (Azure Monitor auditd, #2098) folds SYSCALL+EXECVE+PATH into one record per process.
+  AUOMS_EXECVE: { label: "Command executed", severity: "Low" },
+  AUOMS_SYSCALL: { label: "System call", severity: "Info" },
   ANOM_EXEC: { label: "Anomalous program execution", severity: "High" },
   // Authentication / sessions
   USER_LOGIN: { label: "User login", severity: "Low", mitre: ["T1078"] },
@@ -171,7 +174,11 @@ const SUSP_CMD: { re: RegExp; mitre: string[] }[] = [
 
 // ───────────────────────────── line parsing ─────────────────────────────
 
-const RE_MSG_AUDIT = /msg=audit\((\d+)\.(\d+):(\d+)\)/;
+// `msg=` is optional: AUOMS writes `type=AUOMS_EXECVE audit(…): …` with no prefix (#2098).
+const RE_MSG_AUDIT = /(?:msg=)?audit\((\d+)\.(\d+):(\d+)\)/;
+// AUOMS `cmdline="…"` leaves the command's own quotes unescaped (`cmdline="bash -c "x""`), so the
+// value runs to the last quote that is followed by another `key=` or the end of the record.
+const RE_AUOMS_CMDLINE = /\scmdline="(.*?)"(?=\s+[A-Za-z0-9_-]+=|\s*$)/;
 const RE_TYPE = /(?:^|\s)type=(\w+)/;
 // One key=value pair: bareword, "double", or 'single' quoted.
 const RE_PAIR = /([A-Za-z0-9_-]+)=("(?:[^"\\]|\\.)*"|'[^']*'|\S+)/g;
@@ -231,7 +238,9 @@ function parseAuditLine(line: string): AuditLine | null {
   // Parse pairs from after the "msg=audit(...):" header so we don't re-capture it.
   const headerEnd = line.indexOf("):", auditM.index);
   const body = headerEnd >= 0 ? line.slice(headerEnd + 2) : line;
-  return { type: typeM[1], serial, tsMs, fields: parseFields(body) };
+  const fields = parseFields(body);
+  const cmdM = RE_AUOMS_CMDLINE.exec(body);
+  return { type: typeM[1], serial, tsMs, fields: cmdM ? { ...fields, cmdline: cmdM[1] } : fields };
 }
 
 // ───────────────────────────── sockaddr decode ─────────────────────────────
@@ -330,9 +339,13 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
 
   const exe = (f["exe"] ?? "").trim();
   const comm = (f["comm"] ?? "").trim();
-  const acct = account(f);
+  // AUOMS resolves the uid to a name in `user=`; prefer it over the numeric uid.
+  const auomsUser = ptype.startsWith("AUOMS_") ? (f["user"] ?? "").trim() : "";
+  const acct = auomsUser && auomsUser !== "unset" ? auomsUser : account(f);
   const node = (f["node"] ?? "").trim();
-  const cmdLine = ev.argv.length ? ev.argv.join(" ") : decodeHex(f["proctitle"] ?? f["cmd"] ?? "");
+  const cmdLine = ev.argv.length
+    ? ev.argv.join(" ")
+    : decodeHex(f["cmdline"] ?? f["proctitle"] ?? f["cmd"] ?? "");
   const key = (f["key"] ?? "").trim();
   const failed = isFailure(f);
 
@@ -341,7 +354,7 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
 
   // T1059 only when the program that ran is a shell or script interpreter. EXECVE and ANOM_EXEC
   // used to carry it for every program, which made every executed command read as scripting.
-  if (ptype === "EXECVE" || ptype === "ANOM_EXEC") {
+  if (ptype === "EXECVE" || ptype === "AUOMS_EXECVE" || ptype === "ANOM_EXEC") {
     for (const t of interpreterTechniques(exe || ev.argv[0] || comm)) if (!mitre.includes(t)) mitre.push(t);
   }
 
@@ -491,7 +504,7 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
       ...(node ? { "target.name": ["node"] } : {}),
       ...(procName ? { "process.name": ["exe", "comm"] } : {}),
       ...(exe ? { "process.executable": ["exe"] } : {}),
-      ...(cmdLine ? { "process.commandLine": ["EXECVE.a0..aN", "proctitle", "cmd"] } : {}),
+      ...(cmdLine ? { "process.commandLine": ["EXECVE.a0..aN", "cmdline", "proctitle", "cmd"] } : {}),
       ...(sourceAddress ? { "network.source.address": ["addr", "hostname", "SOCKADDR.saddr"] } : {}),
     },
   });
@@ -564,10 +577,13 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
       continue;
     }
 
-    let ev = bySerial.get(parsed.serial);
+    // An audit event's identity is its whole `audit(<time>:<serial>)` stamp: serials restart at
+    // boot, so the same serial at a different time is a different event.
+    const identity = `${parsed.tsMs}:${parsed.serial}`;
+    let ev = bySerial.get(identity);
     if (!ev) {
       ev = { serial: parsed.serial, tsMs: parsed.tsMs, types: [], fields: {}, argv: [], pathNames: [] };
-      bySerial.set(parsed.serial, ev);
+      bySerial.set(identity, ev);
     }
     if (!ev.types.includes(parsed.type)) ev.types.push(parsed.type);
     if (parsed.tsMs && (!ev.tsMs || parsed.tsMs < ev.tsMs)) ev.tsMs = parsed.tsMs;

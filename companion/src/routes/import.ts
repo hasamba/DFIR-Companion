@@ -1021,6 +1021,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         groups: preview.groups,
         format: preview.format,
         iocs: preview.iocs.length,
+        ...(preview.clockDisputed ? { clockDisputed: preview.clockDisputed } : {}), // #2089
       });
 
       options.onAiStatus?.(caseId, {

@@ -41,6 +41,7 @@ export const EDGE_OBSERVED_IMPORTERS: ReadonlySet<string> = new Set([
   "exporter-flow", // exporterFlowImport.ts
   "auditd", // auditdImport.ts
   "ecar", // ecarImport.ts (and passwordSprayFanout.ts rows built from it)
+  "vmconnection", // sentinelLinuxImport.ts — Azure Monitor VMConnection SourceIp (#2098)
 ]);
 
 /**
