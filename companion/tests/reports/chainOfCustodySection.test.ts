@@ -197,7 +197,7 @@ describe("chain of custody appendix — backslash before a pipe (#2117)", () => 
         trigger: "TRIGGER_SENTINEL",
       }),
     ]);
-    const html = marked.parse(text, { async: false, gfm: true }) as string;
+    const html = marked.parse(text, { async: false, gfm: true });
 
     expect(html).toContain("<td>alice\\|FORGED</td>");
     expect(html).toContain("<td>SOURCE_SENTINEL</td>");

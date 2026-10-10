@@ -26,7 +26,7 @@ function stubFetch(names: string[], bodies: Record<string, Buffer>): FetchLike {
     const name = url.replace("https://example.com/dl/", "");
     const body = bodies[name];
     return body ? new Response(new Uint8Array(body), { status: 200 }) : new Response("nope", { status: 404 });
-  }) as FetchLike;
+  });
 }
 
 describe("downloadLatestVelociraptor", () => {

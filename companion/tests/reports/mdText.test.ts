@@ -150,7 +150,7 @@ describe("cellMd keeps a backslash before a pipe from splitting the row (#2117)"
   // A GFM row is split by marked, not by us, so the round trip through the real parser is the test.
   const cellsOf = (first: string): string[] => {
     const md = `| A | B | C |\n| --- | --- | --- |\n| ${cellMd(first)} | SRC | TRG |`;
-    const html = new Marked({ gfm: true }).parse(md, { async: false }) as string;
+    const html = new Marked({ gfm: true }).parse(md, { async: false });
     const body = html.slice(html.indexOf("<tbody>"));
     return [...body.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
   };
