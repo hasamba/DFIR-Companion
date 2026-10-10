@@ -7,6 +7,7 @@ async function loadHelper(): Promise<{ html: string; fn: (v: string | null) => s
   const html = await readFile(new URL("../../../public/login.html", import.meta.url), "utf8");
   const match = /function safeReturnTo\(v\) \{[\s\S]*?\n {6}\}\n/.exec(html);
   expect(match, "login.html must define safeReturnTo").not.toBeNull();
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fn = new Function("location", `${match![0]}\nreturn safeReturnTo;`)({ origin: ORIGIN }) as (
     v: string | null,
   ) => string;
