@@ -1679,6 +1679,9 @@ export const FEATURES: Feature[] = [
       "scheduleEvidenceGraphReload",
       "hasEvidenceGraph",
       "lateralPathGroups",
+      // Pure LOLBIN-chains selection (#2113): published so the filter order is testable headless.
+      "evSelectGraph",
+      "evLolbinSubset",
     ],
     private: [
       "evGraphData",
