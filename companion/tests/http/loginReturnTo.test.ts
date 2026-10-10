@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 const ORIGIN = "http://127.0.0.1:4773";
 
 async function loadHelper(): Promise<{ html: string; fn: (v: string | null) => string }> {
-  const html = await readFile(new URL("../../../public/login.html", import.meta.url), "utf8");
+  // Normalise CRLF: Windows CI checks login.html out with \r\n, which the extractor regex must not see.
+  const raw = await readFile(new URL("../../../public/login.html", import.meta.url), "utf8");
+  const html = raw.replace(/\r\n/g, "\n");
   const match = /function safeReturnTo\(v\) \{[\s\S]*?\n {6}\}\n/.exec(html);
   expect(match, "login.html must define safeReturnTo").not.toBeNull();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
