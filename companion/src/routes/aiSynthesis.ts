@@ -27,6 +27,7 @@ import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
+import { yieldToEventLoop } from "../analysis/yieldToEventLoop.js";
 
 /**
  * AI synthesis / Q&A / summary domain: the large cluster of LLM-backed (and LLM-adjacent) endpoints
@@ -207,6 +208,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
         try {
+          await yieldToEventLoop(); // #2058: the playbook derive rebuilds the asset graph
           await syncPlaybook(caseId);
           options.onPlaybook?.(caseId);
         } catch {

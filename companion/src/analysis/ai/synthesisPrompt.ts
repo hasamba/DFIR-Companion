@@ -8,6 +8,7 @@ import type { CollapsedPrompt } from "../synthGroup.js";
 import { buildSynthesisCoverage, type SynthesisCoverage } from "../synthMeta.js";
 import type { selectSynthesisEventsAnnotated } from "../synthSelect.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
+import { yieldToEventLoop } from "../yieldToEventLoop.js";
 import type { AiCallContext } from "./aiContext.js";
 import {
   assembleUserPrompt,
@@ -145,6 +146,7 @@ export async function buildSynthesisPrompt(
   } = input;
   const { newPromotedIds } = input;
   const timeline = createTimelineSelection(state, scopedEvents, aliasIndex, newPromotedIds);
+  await yieldToEventLoop(); // #2058: selection and the block builders each take seconds on a large case
   const blocks = await buildSynthesisBlocks(ctx, {
     caseId,
     state,
