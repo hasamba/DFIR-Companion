@@ -162,6 +162,42 @@ describe("markJndiInjection — only raises, once", () => {
   });
 });
 
+describe("markJndiInjection — scales on a mass-exploited host (#2102)", () => {
+  it("joins many lookups and shell children over a large timeline quickly, with the same notes", () => {
+    const LEGS = 120;
+    const FILLER = 6000;
+    const lookups = Array.from({ length: LEGS }, (_, i) => lookup({ timestamp: at(i * 1000) }));
+    const fetches = Array.from({ length: LEGS }, (_, i) => classFetch({ timestamp: at(i * 1000 + 300) }));
+    const shells = Array.from({ length: LEGS }, (_, i) => shell({ timestamp: at(i * 1000 + 800) }));
+    // Filler: ordinary JVM traffic to other hosts/ports plus non-JVM process noise, all on the same host.
+    const filler = Array.from({ length: FILLER }, (_, i) =>
+      i % 2
+        ? lookup({ dstIp: `10.0.${i % 250}.9`, port: 443, timestamp: at(i * 20) })
+        : ev({ description: "Process create: svchost", processName: "svchost", timestamp: at(i * 20) }),
+    );
+    const events = [...lookups, ...fetches, ...shells, ...filler];
+
+    const started = performance.now();
+    const out = markJndiInjection(events);
+    const elapsed = performance.now() - started;
+
+    // Each shell's latest prior lookup is the one 0.8s earlier; each lookup's first note comes from
+    // the shell 0.8s after it. Every class fetch on the lookup's IP is the same 8888 port.
+    for (const e of [...lookups, ...shells]) {
+      const marked = byId(out, e.id);
+      expect(marked.severity).toBe("High");
+      expect(marked.description).toContain(
+        "looked up 203.0.113.5:1389 then spawned bash 0.8s later on web-01",
+      );
+      expect(marked.description).toContain("The JVM also connected to 203.0.113.5:8888");
+      expect(marked.description.split(JNDI_INJECTION_MARKER)).toHaveLength(2);
+    }
+    for (const e of [...fetches, ...filler]) expect(byId(out, e.id)).toBe(e);
+    // Generous bound: the old per-pair rescan took tens of seconds here.
+    expect(elapsed).toBeLessThan(3000);
+  }, 120_000);
+});
+
 describe("markJndiInjection — wired into the merge chain", () => {
   it("survives runTimelineChain and correlate does not fold the two legs together", () => {
     const l = lookup();
