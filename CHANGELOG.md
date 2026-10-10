@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hunt event budget keeps detections** — the hunt-wide event cap counts only rows that stay in the forensic timeline, and once spent later artifacts still import their Medium-and-above rows instead of being skipped
 - **THOR repeats keep the highest grade** — a THOR finding reported several times takes its most severe copy's grade, not the first one's
+- **Login redirect stays on the companion** — a `returnTo` with a backslash, tab or newline can no longer send a signed-in analyst to another site (closes #2107)
+- **Sentinel Linux respects the event cap** — a multi-host export is cut to the event cap by severity, so later High rows survive (closes #2108)
+- **Defender hunting keeps apostrophe values** — AdditionalFields with an apostrophe or quote no longer vanish, so AD FS DKM and Domain Admins rules fire (closes #2109)
+- **Zeek TSV import uses less memory** — large classic Zeek logs are read line by line instead of split whole before the row cap (closes #2110)
 
 ## [0.43.0] - 2026-10-10
 
