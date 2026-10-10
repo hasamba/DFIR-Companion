@@ -19,7 +19,7 @@ import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
-import { copyHandleHashed } from "./handleCopy.js";
+import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
@@ -691,11 +691,19 @@ export class CaseStore {
     filename: string,
     handle: FileHandle,
     provenance?: ArtifactProvenance,
+    expectSha256?: string,
   ): Promise<{ path: string; bytes: number }> {
     const path = join(this.importsDir(caseId), filename);
     const { bytes, sha256, sha1 } = await this.withCaseWrite(path, async () => {
       await mkdir(this.importsDir(caseId), { recursive: true });
-      return copyHandleHashed(handle, path); // create-exclusive (#214)
+      const copy = await copyHandleHashed(handle, path); // create-exclusive (#214)
+      // The file changed after the receipt hashed it (#2111): drop the copy before it is announced,
+      // so no stored artifact and no custody entry describe bytes that were never receipted.
+      if (expectSha256 && copy.sha256 !== expectSha256) {
+        await unlink(path).catch(() => undefined);
+        throw new CopyContentChangedError();
+      }
+      return copy;
     });
     await this.announceArtifact({ caseId, path, sha256, sha1, kind: "import", provenance });
     return { path, bytes };

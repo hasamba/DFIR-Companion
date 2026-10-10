@@ -3,6 +3,14 @@ import { unlink, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 
+/** The copy's SHA-256 is not the one the caller expected: the file changed after it was hashed (#2111). */
+export class CopyContentChangedError extends Error {
+  constructor() {
+    super("file changed while it was being imported");
+    this.name = "CopyContentChangedError";
+  }
+}
+
 /**
  * Copy the whole open file to `dest`, which must not exist (never overwrite evidence already on
  * disk, #214), hashing it in the same stream pass. One pass matters: server-path imports run to

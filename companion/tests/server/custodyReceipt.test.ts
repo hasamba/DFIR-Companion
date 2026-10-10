@@ -178,6 +178,28 @@ describe("custody at receipt (#2111)", () => {
     expect(recvHashes).toContain(coll!.sha256);
   });
 
+  it("receipts the decoded dataBase64 binary even when a text field is also present", async () => {
+    const { app, custody } = await makeApp();
+    const binary = Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0xde, 0xad, 0xbe, 0xef]);
+    await request(app)
+      .post("/cases/c1/import-binary")
+      .send({ filename: "tool.exe", text: JUNK, dataBase64: binary.toString("base64") });
+    const records = await custody.load("c1");
+    const hashes = received(records).map((r) => r.sha256);
+    expect(hashes).toEqual(expect.arrayContaining([sha("sha256", JUNK), sha("sha256", binary)]));
+    const coll = records.find((r) => r.event === "collected");
+    if (coll) expect(hashes).toContain(coll.sha256);
+  });
+
+  it("receipts the server file when an empty text field is also present", async () => {
+    const { app, custody } = await makeApp();
+    const src = join(await mkdtemp(join(tmpdir(), "dfir-receipt-src-")), "real.bin");
+    await writeFile(src, JUNK);
+    await request(app).post("/cases/c1/import-file").send({ text: "", path: src });
+    const hashes = received(await custody.load("c1")).map((r) => r.sha256);
+    expect(hashes).toContain(sha("sha256", JUNK));
+  });
+
   it("Verify now stays ok after a rejected import, and the monitor sees no problem", async () => {
     const { app, custody } = await makeApp();
     await request(app).post("/cases/c1/import-thor").send({ filename: "t.json", text: JUNK });

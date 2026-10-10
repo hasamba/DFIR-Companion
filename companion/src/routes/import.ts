@@ -56,7 +56,7 @@ import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
-import { openImportFile } from "./importFileSource.js";
+import { openImportFile, saveReceiptedImport } from "./importFileSource.js";
 import { registerImportReceiptCustody } from "./importReceipt.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
@@ -546,10 +546,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
-      // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
-      // never string-decode is still persisted faithfully) and append the audit line. From the
-      // judged handle (#1834), exclusive (#214), and through the store so custody records it (#2055).
-      const { bytes: size } = await store.saveImportFromHandle(caseId, storedName, src.handle);
+      // Evidence-first: copy the raw bytes (a >512 MB file is never string-decoded), then audit-log it. From
+      // the judged handle (#1834), exclusive (#214), custody-recorded (#2055); 409 if changed since receipt.
+      const saved = await saveReceiptedImport(store, caseId, storedName, src, res, filePath);
+      if (!saved) return;
       await store.appendImport(caseId, {
         caseId,
         sequenceNumber: seq,
@@ -557,7 +557,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         filename: storedName,
         originalName,
         rows: 0,
-        bytes: size,
+        bytes: saved.bytes,
       });
 
       // Same AI-off gate as /import above — rationale on isAiDependent().
@@ -609,7 +609,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        section = await beginImportSection(importLock, caseId, options.stateStore, size);
+        section = await beginImportSection(importLock, caseId, options.stateStore, saved.bytes);
         baseline = section.baseline;
         return streaming
           ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)

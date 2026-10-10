@@ -4,7 +4,8 @@ import type { Express, NextFunction, Request, Response } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { hashHandleBoth, RECEIVED_PATH_PREFIX, type CustodyStore } from "../analysis/custody.js";
 import { EVIDENCE_IMPORT_ROUTES } from "./importCaseGuard.js";
-import { openImportPath } from "./serverPathGuard.js";
+import { openImportPath, type GuardedFile } from "./serverPathGuard.js";
+import { setReceiptedFile, type ReceiptedFile } from "./receiptedFile.js";
 
 // Custody at RECEIPT (#2111). Most import routes parse a preview first and store afterwards, so a
 // file the importer rejects never reached the chain of custody at all. This runs ahead of every
@@ -16,6 +17,8 @@ import { openImportPath } from "./serverPathGuard.js";
 
 /** The body fields the routes read their payload from, in the priority they use. */
 const TEXT_FIELDS = ["text", "json", "csv", "eml", "log"] as const;
+/** The two routes that import a file the server names by `path`; only they get a handle handed over. */
+const SERVER_PATH_ROUTES: readonly string[] = ["import-file", "import-mac-login-item"];
 const MAX_NAME = 200;
 
 interface Received {
@@ -42,44 +45,57 @@ const receivedOf = (bytes: Buffer, name: string): Received => ({
 });
 
 /**
- * One receipt per distinct payload copy in the body. Routes disagree on whether `text` or `json`
- * wins, so hashing only the first present field could record a hash the stored artifact never has;
+ * One receipt per payload copy in the body: each text field and the decoded dataBase64. Routes
+ * disagree on which copy they keep (import-thor reads `json` before `text`, import-binary stores
+ * the decoded bytes), so receipting only one could record a hash the stored artifact never has;
  * receipting every copy guarantees the one the route keeps is on the chain.
  */
 function fromBody(body: Record<string, unknown>): Received[] {
   const name = receiptName(body.filename, "import.dat");
   // utf8 in, utf8 on disk: the same bytes saveImport writes, so each hash equals the stored one.
-  const texts = TEXT_FIELDS.filter((f) => typeof body[f] === "string").map((f) =>
-    receivedOf(Buffer.from(body[f] as string, "utf8"), name),
+  const copies = TEXT_FIELDS.filter((f) => typeof body[f] === "string").map((f) =>
+    Buffer.from(body[f] as string, "utf8"),
   );
-  if (texts.length === 0 && typeof body.dataBase64 === "string" && body.dataBase64) {
-    return [receivedOf(Buffer.from(body.dataBase64, "base64"), name)];
+  if (typeof body.dataBase64 === "string" && body.dataBase64) {
+    copies.push(Buffer.from(body.dataBase64, "base64"));
   }
-  return texts.filter((r, i) => texts.findIndex((o) => o.sha256 === r.sha256) === i);
+  return copies.map((bytes) => receivedOf(bytes, name));
 }
 
-/** import-file / import-mac-login-item name a server file: hash the handle the path guard judged. */
-async function fromServerPath(
+interface OpenedServerFile {
+  received: Received;
+  receipted: ReceiptedFile;
+}
+
+/**
+ * import-file / import-mac-login-item name a server file: hash the handle the path guard judged and
+ * KEEP it open for the route, so the bytes receipted are the bytes imported (#2111). The caller owns
+ * the handle from here and must close it.
+ */
+async function openServerFile(
   store: CaseStore,
   caseId: string,
   body: Record<string, unknown>,
-): Promise<Received | null> {
+): Promise<OpenedServerFile | null> {
   const filePath = typeof body.path === "string" ? body.path.trim() : "";
   if (!filePath) return null;
+  let file: GuardedFile | null = null;
   try {
     const opened = await openImportPath(filePath, store, caseId);
     if (opened.refusal) return null; // the route reports the refusal; nothing was received
-    try {
-      const { size } = await opened.file.handle.stat();
-      const hashes = await hashHandleBoth(opened.file.handle);
-      return { ...hashes, bytes: size, name: receiptName(filePath, "import.dat") };
-    } finally {
-      await opened.file.handle.close();
-    }
+    file = opened.file;
+    const { size } = await file.handle.stat();
+    const hashes = await hashHandleBoth(file.handle);
+    const received = { ...hashes, bytes: size, name: receiptName(filePath, "import.dat") };
+    return { received, receipted: { path: filePath, file, sha256: hashes.sha256 } };
   } catch {
+    await file?.handle.close().catch(() => undefined);
     return null; // unreadable: the route returns its own 400
   }
 }
+
+const uniqueBySha = (all: Received[]): Received[] =>
+  all.filter((r, i) => all.findIndex((o) => o.sha256 === r.sha256) === i);
 
 export function registerImportReceiptCustody(
   app: Express,
@@ -93,9 +109,14 @@ export function registerImportReceiptCustody(
     const route = req.path.split("/").filter(Boolean).pop() ?? "import";
     const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
     try {
-      const inBody = fromBody(body);
-      const fromPath = inBody.length ? null : await fromServerPath(store, caseId, body);
-      const receipts = fromPath ? [fromPath] : inBody;
+      const server = SERVER_PATH_ROUTES.includes(route) ? await openServerFile(store, caseId, body) : null;
+      if (server) {
+        // Closed exactly once, when the response does: whether the route used it, refused first, or
+        // the request died before reaching it. The routes never close it themselves.
+        res.once("close", () => void server.receipted.file.handle.close().catch(() => undefined));
+        setReceiptedFile(res, server.receipted);
+      }
+      const receipts = uniqueBySha([...fromBody(body), ...(server ? [server.received] : [])]);
       // Sequential, not parallel: each entry chains onto the previous one's hash.
       for (const got of receipts) {
         await custody.record(caseId, {

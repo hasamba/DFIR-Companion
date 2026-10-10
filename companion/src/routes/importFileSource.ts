@@ -1,5 +1,8 @@
 import type { Response } from "express";
+import type { CaseStore } from "../storage/caseStore.js";
+import { CopyContentChangedError } from "../storage/handleCopy.js";
 import { openImportPath, type GuardedFile } from "./serverPathGuard.js";
+import { CHANGED_WHILE_IMPORTING, receiptedFileFor } from "./receiptedFile.js";
 
 /**
  * The one open of the server file POST /cases/:id/import-file reads (#1834).
@@ -17,6 +20,10 @@ export async function openImportFile(
   caseId: string,
   res: Response,
 ): Promise<GuardedFile | null> {
+  // The receipt middleware already opened and hashed this very path; read that handle, never a
+  // second open that a swapped file could change (#2111). The middleware closes it with the response.
+  const receipted = receiptedFileFor(res, filePath);
+  if (receipted) return receipted.file;
   let opened;
   try {
     opened = await openImportPath(filePath, store, caseId);
@@ -31,4 +38,27 @@ export async function openImportFile(
   const { handle } = opened.file;
   res.once("close", () => void handle.close().catch(() => undefined));
   return opened.file;
+}
+
+/**
+ * Copy the judged handle into the case's imports dir. When the receipt hashed this file, the copy
+ * must hash the same: a file that grew or changed since is refused with 409 and no copy is kept
+ * (#2111). Sends the 409 itself and returns null when it did.
+ */
+export async function saveReceiptedImport(
+  store: CaseStore,
+  caseId: string,
+  storedName: string,
+  src: GuardedFile,
+  res: Response,
+  filePath: string,
+): Promise<{ path: string; bytes: number } | null> {
+  const expected = receiptedFileFor(res, filePath)?.sha256;
+  try {
+    return await store.saveImportFromHandle(caseId, storedName, src.handle, undefined, expected);
+  } catch (err) {
+    if (!(err instanceof CopyContentChangedError)) throw err;
+    res.status(409).json({ error: CHANGED_WHILE_IMPORTING });
+    return null;
+  }
 }
