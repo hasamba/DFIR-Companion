@@ -61,8 +61,18 @@
   <script nonce="__CSP_NONCE__">
     (function () {
       var params = new URLSearchParams(location.search);
-      var requested = params.get('returnTo') || '/dashboard';
-      var returnTo = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/dashboard';
+      // Resolve the value the way the browser will and require the same origin (#2107). A bare
+      // prefix check misses `/\host` and `/<TAB>/host`, which browsers normalise to another site.
+      function safeReturnTo(v) {
+        if (!v || v.charAt(0) !== '/') return '/dashboard';
+        try {
+          var u = new URL(v, location.origin);
+          if (u.origin !== location.origin) return '/dashboard';
+          var t = u.pathname + u.search + u.hash;
+          return /^\/[\/\\]/.test(t) ? '/dashboard' : t;
+        } catch (e) { return '/dashboard'; }
+      }
+      var returnTo = safeReturnTo(params.get('returnTo'));
       var message = document.getElementById('message');
       var queryError = params.get('error');
       if (queryError) message.textContent = queryError;
