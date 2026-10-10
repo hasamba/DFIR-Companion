@@ -163,6 +163,42 @@ describe("cellMd keeps a backslash before a pipe from splitting the row (#2117)"
   );
 });
 
+describe("cellMd escapes backslash runs in linear time (#2117)", () => {
+  // The first fix used an unanchored /(\\*)\|/g: on a long backslash run with no pipe the engine
+  // retried the rest of the run from every position, so 80,000 backslashes took ~7 s and one hostile
+  // evidence field could block the event loop.
+  const RUN = 200_000;
+
+  it("handles a long backslash run with no pipe quickly and leaves it unchanged", () => {
+    const input = "\\".repeat(RUN);
+    const start = performance.now();
+    const out = cellMd(input);
+    expect(performance.now() - start).toBeLessThan(100);
+    expect(out).toBe(input);
+  });
+
+  it("handles a long backslash run before a pipe quickly and doubles it", () => {
+    const start = performance.now();
+    const out = cellMd(`${"\\".repeat(RUN)}|`);
+    expect(performance.now() - start).toBeLessThan(100);
+    expect(out).toBe(`${"\\".repeat(RUN * 2)}\\|`);
+  });
+
+  it("matches the reference escaping on mixed inputs", () => {
+    // The original quadratic regex, as an oracle on short strings where it is fast.
+    const reference = (v: string): string => v.replace(/(\\*)\|/g, (_m, bs: string) => bs + bs + "\\|");
+    const alphabet = ["\\", "|", "a", "\n"];
+    let seed = 7;
+    const next = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    for (let i = 0; i < 2000; i++) {
+      const len = next() % 12;
+      let s = "";
+      for (let j = 0; j < len; j++) s += alphabet[next() % alphabet.length];
+      expect(cellMd(s)).toBe(reference(s).replace(/[\r\n]+/g, " "));
+    }
+  });
+});
+
 describe("control characters become visible Control Pictures (#9)", () => {
   it("cellMd maps NUL and other C0 controls, and DEL", () => {
     expect(cellMd("A\u0000B\u0001C\u007FD")).toBe("A␀B␁C␡D");

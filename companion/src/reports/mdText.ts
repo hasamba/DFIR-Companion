@@ -12,6 +12,15 @@ import { mdControlPictures } from "./controlChars.js";
 // the DOCX outline too. Report integrity is the product here, so structure is never borrowed from
 // the data the report is about.
 
+// A whole backslash run with the pipe that may follow it, or a bare pipe.
+const BACKSLASH_RUN_OR_PIPE = /\\+\|?|\|/g;
+
+function escapeRunBeforePipe(match: string): string {
+  if (!match.endsWith("|")) return match;
+  const run = match.slice(0, -1);
+  return `${run}${run}\\|`;
+}
+
 /**
  * Table-cell text. Escapes the pipe (the GFM cell separator) AND neutralizes newlines. A \n or \r
  * inside a GFM table cell ends the row; the text after the newline becomes spurious rows with empty
@@ -26,10 +35,14 @@ import { mdControlPictures } from "./controlChars.js";
  * backslash followed by a LIVE separator: the row shifts and its last cell is dropped. Doubling
  * keeps every original backslash literal and the pipe escaped. Backslashes not before a pipe (a
  * Windows path) are left alone, so the raw .md stays readable.
+ *
+ * The match consumes each backslash run exactly once (greedy, with an optional pipe after it), so the
+ * scan is linear. An unanchored `(\\*)\|` retried the rest of a pipe-less run from every position —
+ * quadratic, and one long hostile evidence field blocked the event loop for seconds.
  */
 export function cellMd(value: string): string {
   return mdControlPictures(
-    value.replace(/(\\*)\|/g, (_m, bs: string) => bs + bs + "\\|").replace(/[\r\n]+/g, " "),
+    value.replace(BACKSLASH_RUN_OR_PIPE, escapeRunBeforePipe).replace(/[\r\n]+/g, " "),
   );
 }
 
