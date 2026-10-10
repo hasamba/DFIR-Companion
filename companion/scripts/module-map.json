@@ -413,6 +413,7 @@
     "attributionGroupMatch.ts": "analysis/ai",
     "attributionGapLeads.ts": "analysis/ai",
     "evidenceGraph.ts": "analysis/detect",
+    "lolbinChains.ts": "analysis/detect",
     "evtxChannel.ts": "analysis/ingest",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",

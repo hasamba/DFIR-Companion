@@ -3601,6 +3601,7 @@
               <label title="Same binary hash or account seen on ≥ 2 hosts."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
               <label title="A file written then executed with the same hash."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
               <label title="Directed network connections from Suricata/Zeek."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
+              <label title="Only LOLBIN chains: a living-off-the-land binary launched by Office, a browser, wmiprvse, wscript or cscript, or graded Medium or higher, with its parents up to the root and its direct children. Info-graded events never reach this graph."><input type="checkbox" id="evLolbinOnly"> LOLBIN chains <span class="ev-leg-dot" data-safe-style="background:transparent;border:2px solid #ff5c8a"></span></label>
             </div>
             <div class="lg-opt-group"><span class="lg-opt-label">Min severity</span>
               <label><select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>

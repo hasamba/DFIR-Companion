@@ -17,6 +17,7 @@
   "analysis/iocWhitelist.ts -> analysis/csvImport.ts [runtime]",
   "analysis/learnedPatterns.ts -> analysis/falsePositive.ts [type]",
   "analysis/loginGraph.ts -> analysis/siemImport.ts [runtime]",
+  "analysis/lolbinChains.ts -> analysis/winProcessBaseline.ts [runtime]",
   "analysis/nsrl.ts -> analysis/csvImport.ts [runtime]",
   "analysis/playbook.ts -> analysis/collectDirective.ts [runtime]",
   "analysis/playbook.ts -> analysis/hostRanking.ts [runtime]",

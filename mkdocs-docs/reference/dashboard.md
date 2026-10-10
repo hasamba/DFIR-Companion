@@ -458,7 +458,9 @@ This is the "how did we get here" graph — tracing the attack path through actu
 
 Shares the same interactive Cytoscape view as the [Login Graph](#login-graph) and [Assets & IoC Graph](#compromised-assets--ioc-graph) above (5 layouts, live filter, fullscreen, PNG export), replacing the old static SVG rendering; its typed, colored, directional edges are preserved on top.
 
-Filters: severity floor.
+Filters: severity floor, and the **LOLBIN chains** toggle.
+
+**LOLBIN chains** (Options, Show group; off by default) narrows the graph to the living-off-the-land chains. A process qualifies when it is a known LOLBIN (powershell, cmd, certutil, mshta, rundll32 and the rest of the list) **and** either its parent is an unusual launcher (Word, Excel, PowerPoint, Outlook, OneNote, Access, Chrome, Edge, Firefox, Internet Explorer, `wmiprvse`, `wscript`, `cscript`) **or** its worst event is graded Medium or higher. Qualifying processes get an outline; the edge from an unusual launcher into a LOLBIN is drawn thicker. Each one is shown with its parents up to the root and its direct children. The toggle applies after the layer toggles and before the severity floor and the text filter. If no process qualifies, the panel says "No LOLBIN chains in this case". Info-graded events never reach the forensic timeline, so an Info-graded spawn cannot appear in this graph, with or without the toggle.
 
 ---
 

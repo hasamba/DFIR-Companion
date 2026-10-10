@@ -885,3 +885,28 @@ describe("buildEvidenceGraph — time window (#83)", () => {
     expect(g.edges.filter((e) => e.type === "spawned")).toHaveLength(1); // undated → kept
   });
 });
+
+describe("buildEvidenceGraph — LOLBIN chain flags (#2113)", () => {
+  it("flags a Low powershell under winword as a hit, marks the launcher edge, and leaves Low powershell under explorer alone", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "a", asset: "H1", parentName: "winword.exe", processName: "powershell.exe", severity: "Low" }),
+      ev({
+        id: "b",
+        asset: "H2",
+        parentName: "explorer.exe",
+        processName: "powershell.exe",
+        severity: "Low",
+      }),
+    );
+    const g = buildEvidenceGraph(s);
+    const byId = (id: string) => g.nodes.find((n) => n.id === id);
+    expect(byId("proc:h1:powershell.exe")?.lolbin).toBe("hit");
+    expect(byId("proc:h1:winword.exe")?.lolbin).toBe("context");
+    expect(byId("proc:h2:powershell.exe")?.lolbin).toBeUndefined();
+    const launcher = g.edges.filter((e) => e.launcher);
+    expect(launcher).toHaveLength(1);
+    expect(launcher[0].basis).toContain("winword.exe");
+    expect(g.edges.filter((e) => e.type === "ran_on").every((e) => e.launcher === undefined)).toBe(true);
+  });
+});

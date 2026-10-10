@@ -8,6 +8,7 @@ import {
   canonicalProcess,
   upgradeForensicEvent,
 } from "./canonicalEvent.js";
+import { markLolbinChains } from "./lolbinChains.js";
 
 // Derives the EVIDENCE CHAIN GRAPH — the *causal* view of an incident, complementing the
 // chronological forensic timeline and the (associative) asset↔IoC graph. Where the asset
@@ -51,6 +52,9 @@ export interface EvidenceNode {
   // this node sits in. Undefined when no backing event maps to a tactic
   // (powers the dashboard's optional color-by-kill-chain overlay, #93).
   eventIds: string[]; // forensic events that produced this node (provenance)
+  // LOLBIN-chains view (#2113): "hit" = a LOLBIN under an unusual launcher or graded Medium+;
+  // "context" = a hit's ancestors and direct children. Absent on every other node.
+  lolbin?: "hit" | "context";
 }
 
 export interface EvidenceEdge {
@@ -62,6 +66,7 @@ export interface EvidenceEdge {
   rule: string; // derivation rule, e.g. "process-parent-child" | "shared-hash" | "shared-account" | "process-on-host"
   basis: string; // human one-liner, e.g. "excel.exe → powershell.exe on ALCLIENT07"
   eventIds: string[]; // backing events (provenance)
+  launcher?: true; // spawned edge from an unusual launcher (Office, browser, ...) into a LOLBIN (#2113)
 }
 
 export interface EvidenceGraph {
@@ -431,7 +436,7 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     (a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id),
   );
   const edges = [...edgeMap.values()].sort((a, b) => a.id.localeCompare(b.id));
-  return { nodes, edges };
+  return markLolbinChains(nodes, edges);
 }
 
 // ── Lateral-movement PATH inference (#92) ───────────────────────────────────────────────
