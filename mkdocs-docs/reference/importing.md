@@ -72,6 +72,29 @@ kept apart from what a collector or the machine itself wrote.
 
 All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI call** — they map the tool's own verdict/fields, not re-detect threats.
 
+### Packet captures (.pcap / .pcapng)
+
+No importer reads a raw capture directly. Run it through the built-in **Suricata** tool instead:
+install Suricata yourself (ideally with the free ET Open ruleset), set its binary path under
+**Settings → Tools** (`DFIR_TOOL_SURICATA_BINARY`; blank = off), then import or drop the
+`.pcap`/`.pcapng`. The Companion runs `suricata -r <capture> -l <run folder>` and sends the
+`eve.json` it writes through the network importer. The Import dialog offers the run in a banner; set
+`DFIR_TOOL_SURICATA_AUTO_RUN=on` to run it on drop without asking. See [Tools](settings.md#tools).
+
+The result is the same rows a Suricata `eve.json` import gives: flows, DNS, HTTP requests, file
+transfers and TLS sessions, plus Suricata's rule **alerts**.
+
+- **Raw traffic stays in the super-timeline.** Flows, DNS, TLS and web requests and transfers are
+  graded **Info**, so they are searchable and promotable but the AI does not see them. A web
+  request is raised to Medium only when it carries an attack pattern or an exposed secret.
+- **Only detections reach the forensic timeline.** Suricata alerts are graded by signature priority
+  (1 High, 2 Medium, 3 Low), and Zeek notices are Medium. Without a ruleset that fires, a capture
+  adds nothing the AI analyses — load rules before you rely on it.
+- **Zeek logs produced elsewhere import directly** — Zeek JSON or the classic tab-separated
+  `conn.log`/`dns.log`/`http.log`/… format. The Companion does not run Zeek for you.
+- **Nothing is bundled.** The Docker image ships no Suricata, Zeek or tshark; the tool must be
+  installed where the Companion runs.
+
 ### Large Velociraptor exports are imported in batches
 
 A Velociraptor export at or above 8 MB (`DFIR_IMPORT_BULK_MIN_MB`) — a full `$MFT`, a USN journal, a

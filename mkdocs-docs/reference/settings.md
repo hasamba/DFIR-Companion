@@ -199,7 +199,8 @@ Run your **own locally-installed** external tools against raw evidence the Compa
 downloads or bundles a binary — install and update it yourself (repo links are shown per tool).
 
 - **Hayabusa / Velociraptor CLI** — EVTX → csv/json-timeline / artifact JSON
-- **Suricata / Snort** — PCAP → alerts (Snort uses your own rules file)
+- **Suricata / Snort** — PCAP → alerts (Snort uses your own rules file); see
+  [Packet captures](importing.md#packet-captures-pcap-pcapng) for what a Suricata run imports
 - **YARA** — scan files/dirs → rule matches (file/hash IOCs)
 
 **Custom tools** — beyond the five built-ins, add your own: a name, the binary path, a run command
