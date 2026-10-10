@@ -157,6 +157,27 @@ describe("custody at receipt (#2111)", () => {
     expect(recv!.sha1).toBe(sha("sha1", csv));
   });
 
+  it("receipts every payload copy, so the stored one is on the chain whichever field the route reads", async () => {
+    // import-thor reads `json` before `text`; a receipt of `text` alone would never match the store.
+    const { app, custody } = await makeApp();
+    const json = JSON.stringify({
+      level: "Alert",
+      module: "Filescan",
+      message: "Malware file found",
+      time: "2026-05-02T10:00:00Z",
+      file: "C:\\Temp\\b.exe",
+    });
+    const res = await request(app)
+      .post("/cases/c1/import-thor")
+      .send({ filename: "both.json", text: JUNK, json });
+    expect(res.status).toBe(202);
+    const records = await custody.load("c1");
+    const coll = records.find((r) => r.event === "collected");
+    const recvHashes = received(records).map((r) => r.sha256);
+    expect(recvHashes).toEqual(expect.arrayContaining([sha("sha256", JUNK), sha("sha256", json)]));
+    expect(recvHashes).toContain(coll!.sha256);
+  });
+
   it("Verify now stays ok after a rejected import, and the monitor sees no problem", async () => {
     const { app, custody } = await makeApp();
     await request(app).post("/cases/c1/import-thor").send({ filename: "t.json", text: JUNK });
