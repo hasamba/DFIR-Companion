@@ -912,7 +912,7 @@
     "wazuhImport.ts": "analysis/ingest",
     "werImport.ts": "analysis/ingest",
     "wholeCaseLoadLimit.ts": "storage",
-    "winProcessBaseline.ts": "analysis/ingest",
+    "winProcessBaseline.ts": "analysis/detect",
     "workLogFilter.ts": "analysis/workflow",
     "yaraGrade.ts": "analysis/ingest",
     "yaraHitContext.ts": "analysis/ingest",
