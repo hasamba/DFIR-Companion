@@ -107,8 +107,14 @@ export function isAttackerDefenderTouch(e: ForensicEvent): boolean {
 const OFF_SWITCH = /^disable[a-z]+$/i;
 const ZERO_DWORD = /^(?:dword\s*\(0x0+\)|0x0+|0)$/i;
 const DETAILS_TOKEN = /(?:^|[\s¦-])Details(?:=|:[ \t]*)(DWORD \(0x[0-9a-f]+\)|\d+)/i;
-const SET_PREF = /\bSet-MpPreference\b([\s\S]*)$/i;
+const SET_PREF = /^([\s\S]*?)\bSet-MpPreference\b([\s\S]*)$/i;
 const PARAM = /-([A-Za-z]+)(?::|\s+)("?[^\s"]*"?)/g;
+// Anything that can chain a second command onto the ON cmdlet: statement separators, pipes, blocks.
+const CMD_SEPARATOR = /[;&|`{}\r\n]/;
+// Only a PowerShell launcher (with its switches) may precede the cmdlet; only an EID/host tag follow it.
+const LAUNCHER_PREFIX =
+  /^\s*(?:["']?(?:[a-z]:\\[^"']*\\)?(?:powershell|pwsh)(?:\.exe)?["']?(?:\s+-[A-Za-z]+(?:\s+(?!-)[^\s"'-][^\s"']*)?)*\s+)?["']?$/i;
+const TAG_SUFFIX = /^\s*["']?\s*(?:\(EID \d+\)\s*)?(?:@\s*[\w.-]+\s*)?$/i;
 
 function registryTurnsOn(e: ForensicEvent): boolean {
   const key = defenderKeyOf(e);
@@ -118,18 +124,31 @@ function registryTurnsOn(e: ForensicEvent): boolean {
   return ZERO_DWORD.test(data.trim());
 }
 
-function cmdletTurnsOn(e: ForensicEvent): boolean {
-  const text = rowText(e);
-  if (/\b(?:Add|Remove)-MpPreference\b/i.test(text)) return false;
-  const args = SET_PREF.exec(text)?.[1];
-  if (!args) return false;
-  const params = [...args.matchAll(PARAM)];
+/** One text field holding nothing but `Set-MpPreference -Disable* $false|0`, launcher and tag aside. */
+function fieldIsLoneOnCmdlet(field: string): boolean {
+  const m = SET_PREF.exec(field);
+  if (!m || !LAUNCHER_PREFIX.test(m[1])) return false;
+  const params = [...m[2].matchAll(PARAM)];
   return (
     params.length > 0 &&
     params.every(
       ([, name, value]) => OFF_SWITCH.test(name) && /^(?:\$false|0)$/i.test(value.replace(/"/g, "")),
-    )
+    ) &&
+    TAG_SUFFIX.test(m[2].replace(PARAM, ""))
   );
+}
+
+// Fail closed: a row that chains, or that names Defender beyond the ON cmdlet, is never "only ON".
+function cmdletTurnsOn(e: ForensicEvent): boolean {
+  const fields = [e.description, e.message, e.commandLine].filter((s): s is string => !!s);
+  const unsafe = (f: string): boolean =>
+    CMD_SEPARATOR.test(f) ||
+    /\b(?:Add|Remove)-MpPreference\b/i.test(f) ||
+    REMOVE_DEFINITIONS.test(f) ||
+    DEFENDER_TEXT.test(f);
+  if (fields.some(unsafe)) return false;
+  const withCmdlet = fields.filter((f) => /\bSet-MpPreference\b/i.test(f));
+  return withCmdlet.length > 0 && withCmdlet.every(fieldIsLoneOnCmdlet);
 }
 
 /** True when the row only switches Defender protection ON (a Disable* flag set to 0 / $false). */

@@ -188,6 +188,44 @@ describe("isProtectionOnRow (#2084, option B)", () => {
     ).toBe(false);
     expect(isProtectionOnRow(ev({ commandLine: "Add-MpPreference -ExclusionPath C:\\x" }))).toBe(false);
   });
+  it("is false when the ON cmdlet shares the row with another command (review finding)", () => {
+    const compound = [
+      "Set-MpPreference -DisableRealtimeMonitoring $false ; sc.exe stop WinDefend",
+      "sc.exe stop WinDefend; Set-MpPreference -DisableRealtimeMonitoring $false",
+      "Set-MpPreference -DisableRealtimeMonitoring $false\nStop-Service WinDefend",
+      "Set-MpPreference -DisableRealtimeMonitoring $false | Out-Null; Remove-Item C:\\x",
+      "Set-MpPreference -DisableRealtimeMonitoring $false && net stop windefend",
+      "Set-MpPreference -DisableRealtimeMonitoring $false Stop-Service WinDefend",
+      "Invoke-Evil; Set-MpPreference -DisableRealtimeMonitoring $false",
+    ];
+    for (const script of compound) {
+      expect(isProtectionOnRow(ev({ message: script }))).toBe(false);
+      expect(isProtectionOnRow(ev({ commandLine: script }))).toBe(false);
+    }
+    expect(
+      isProtectionOnRow(
+        ev({
+          commandLine: "Set-MpPreference -DisableRealtimeMonitoring $false",
+          message: "sc.exe stop WinDefend",
+        }),
+      ),
+    ).toBe(false);
+  });
+  it("still accepts a launcher prefix and an EID/host suffix around a lone ON cmdlet", () => {
+    expect(
+      isProtectionOnRow(
+        ev({
+          commandLine:
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-MpPreference -DisableRealtimeMonitoring $false"',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isProtectionOnRow(
+        ev({ description: "Set-MpPreference -DisableRealtimeMonitoring $false (EID 4104) @ host1" }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("stampEngineBoot (#2084)", () => {
