@@ -173,7 +173,8 @@
           kind: n.kind,
           sev: n.maxSeverity,
           tactic: n.tactic || null,
-          lolbin: n.lolbin || null,
+          // Marks render only while LOLBIN chains is on: off must be the graph exactly as before.
+          lolbin: evLolbinOnly ? n.lolbin || null : null,
           glyph: glyphDataUri(evNodeGlyph(n, 11, 11, evNodeColor(n))),
         },
       });
@@ -187,7 +188,7 @@
           etype: e.type,
           conf: e.confidence,
           basis: e.basis,
-          launcher: e.launcher ? true : null,
+          launcher: evLolbinOnly && e.launcher ? true : null,
         },
       });
     }

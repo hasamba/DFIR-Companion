@@ -119,6 +119,14 @@ describe("LOLBIN chains markup and empty message", () => {
     expect(js).toContain("No LOLBIN chains in this case");
     expect(js).toMatch(/evLolbinOnly && !evHasLolbinHit\(evGraphData\)/);
   });
+
+  it("renders the outline and launcher marks only while the toggle is on (off = today's graph)", () => {
+    // Codex review: the server flags reached the elements unconditionally, so the styles applied
+    // with the toggle off. Both element fields must be gated on evLolbinOnly.
+    const js = read("public/js/dashboard-evidence-graph.js");
+    expect(js).toMatch(/lolbin: evLolbinOnly \? n\.lolbin \|\| null : null/);
+    expect(js).toMatch(/launcher: evLolbinOnly && e\.launcher \? true : null/);
+  });
 });
 
 describe("manual", () => {
