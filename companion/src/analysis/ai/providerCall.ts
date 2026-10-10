@@ -37,6 +37,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
 import { noteAiCallStarted } from "../../http/rateLimiter.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
+import { captureIfSafetyStop, type SafetyStopCapture } from "./safetyStopCapture.js";
 
 /**
  * The AI-call gate (#418).
@@ -67,6 +68,8 @@ export interface ProviderCallContext {
     presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
     aiCostStore?: AiCostStore;
     operationalMetrics?: OperationalMetricsStore;
+    /** DFIR_AI_CAPTURE_SAFETY_STOPS (#2083): absent → a safety-stopped prompt is never saved. */
+    safetyStopCapture?: SafetyStopCapture;
   };
 }
 
@@ -676,7 +679,15 @@ async function sendPrepared(
   prepared: PreparedCall,
   label: string,
 ): Promise<unknown> {
-  const result = await analyzeProvider(ctx, provider, prepared.req, label);
+  let result: AnalyzeResult;
+  try {
+    result = await analyzeProvider(ctx, provider, prepared.req, label);
+  } catch (err) {
+    // #2083: opt-in, best-effort save of the exact (as-sent) prompt a safety filter refused.
+    const sent = { req: prepared.req, anonymized: prepared.anon !== null };
+    await captureIfSafetyStop(ctx.opts.safetyStopCapture, ctx.log, caseId, provider, sent, label, err);
+    throw err;
+  }
   logAiUsage(ctx, caseId, label, provider, result);
   await recordAiCost(ctx, caseId, label, provider, result);
   const anon = prepared.anon;

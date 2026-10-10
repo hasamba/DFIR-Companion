@@ -8,6 +8,7 @@ import {
   httpErrorMessage,
   outputLimitError,
   requestSignal,
+  safetyStopError,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
@@ -45,7 +46,10 @@ function estTokens(text: string): number {
 // model hit max_tokens. `message.reasoning` is the thinking text hosted Ollama (and OpenRouter)
 // return; OpenAI proper reports only a count, in usage.completion_tokens_details.
 interface ChatCompletion {
-  choices?: { message?: { content?: string; reasoning?: unknown }; finish_reason?: string }[];
+  choices?: {
+    message?: { content?: string | null; reasoning?: unknown; refusal?: string | null };
+    finish_reason?: string;
+  }[];
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -181,6 +185,14 @@ export class OpenAIProvider implements AIProvider {
   private answerText(json: ChatCompletion, req: AnalyzeRequest, maxTokens: number | undefined): string {
     const choice = json.choices?.[0];
     const text = choice?.message?.content;
+    // #2083: a content filter or a refusal is the safety filter — the same safety_stop Claude Code
+    // raises, so the synthesis safety retries and fallback run and the generic retry never resends it.
+    if (choice?.finish_reason === "content_filter" || choice?.message?.refusal) {
+      throw safetyStopError(
+        `${this.label} (${this.opts.model})`,
+        choice.finish_reason === "content_filter" ? "Finish reason: content_filter." : undefined,
+      );
+    }
     if (choice?.finish_reason === "length" && (!text || req.rejectTruncated)) {
       throw outputLimitError(this.label, maxTokens, reasoningTokensOf(json));
     }

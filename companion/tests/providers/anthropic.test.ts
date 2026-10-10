@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import { ProviderError } from "../../src/providers/provider.js";
+import { withRetry } from "../../src/analysis/ai/retry.js";
 
 const OK = { content: [{ type: "text", text: '{"summary":"done"}' }] };
 
@@ -183,7 +184,7 @@ describe("AnthropicProvider", () => {
   });
 
   it.each([
-    ["refusal", { category: "cyber" }, /declined the request \(cyber\)/],
+    ["refusal", { category: "cyber" }, /safety filter.*Refusal category: cyber/s],
     ["max_tokens", null, /Anthropic stopped at its output limit of 32,000 tokens/],
   ])(
     "throws a clear error on stop_reason %s instead of reading a partial reply",
@@ -194,7 +195,7 @@ describe("AnthropicProvider", () => {
     },
   );
 
-  it("labels a cut-off as an output_limit error (not retried) and a refusal as other (retried once more)", async () => {
+  it("labels a cut-off as an output_limit error and a refusal as a safety_stop (#2083)", async () => {
     const kinds: string[] = [];
     for (const stop_reason of ["max_tokens", "refusal"]) {
       const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason }));
@@ -205,7 +206,22 @@ describe("AnthropicProvider", () => {
       expect(err).toBeInstanceOf(ProviderError);
       kinds.push((err as ProviderError).kind);
     }
-    expect(kinds).toEqual(["output_limit", "other"]);
+    expect(kinds).toEqual(["output_limit", "safety_stop"]);
+  });
+
+  // #2083: the refusal used to be "other", so the generic retry resent the same evidence and the
+  // synthesis safety retries and fallback model never ran for the direct API.
+  it("never resends a refusal through the generic retry (#2083)", async () => {
+    const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason: "refusal" }));
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", fetchFn });
+    const err = await withRetry(
+      () => p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
+      3,
+      0,
+    ).catch((e: unknown) => e);
+    expect((err as ProviderError).kind).toBe("safety_stop");
+    expect((err as ProviderError).message).toContain("Anthropic (claude-opus-5)");
+    expect(fetchFn).toHaveBeenCalledOnce();
   });
 
   it("names the max_tokens actually sent (cap plus thinking room) and throws even on an empty answer", async () => {

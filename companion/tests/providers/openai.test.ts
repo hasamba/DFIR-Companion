@@ -282,3 +282,34 @@ describe('OpenAIProvider — output limit (finish_reason "length")', () => {
     }
   });
 });
+
+// #2083: a content filter or a refusal is the model's safety filter, not a blip. It must raise the
+// same safety_stop Claude Code raises, so the synthesis safety retries and fallback model run and
+// the generic retry never resends the same evidence.
+describe("OpenAIProvider — safety stops (#2083)", () => {
+  const run = (choice: Record<string, unknown>) => {
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [choice] }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    return p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: unknown) => e);
+  };
+
+  it('raises safety_stop on finish_reason "content_filter", even with partial text', async () => {
+    const err = await run({ message: { content: '{"findings":[' }, finish_reason: "content_filter" });
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe("safety_stop");
+    expect((err as ProviderError).message).toContain("OpenAI (gpt-4o)");
+  });
+
+  it("raises safety_stop when the model returns a refusal instead of content", async () => {
+    const err = await run({
+      message: { content: null, refusal: "I can't help with that." },
+      finish_reason: "stop",
+    });
+    expect((err as ProviderError).kind).toBe("safety_stop");
+  });
+
+  it("keeps the plain no-content error for an empty reply that was not filtered", async () => {
+    const err = await run({ message: { content: "" }, finish_reason: "stop" });
+    expect((err as ProviderError).kind).toBe("other");
+  });
+});

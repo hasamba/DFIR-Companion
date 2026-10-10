@@ -8,6 +8,7 @@ import {
   httpErrorMessage,
   outputLimitError,
   requestSignal,
+  safetyStopError,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
@@ -78,14 +79,19 @@ export class GeminiProvider implements AIProvider {
       maxBytes: RESPONSE_SIZE_LIMITS.json,
       context: "Gemini",
     });
-    const text = replyText(json, req, this.opts.maxTokens);
+    const text = replyText(json, req, this.opts.maxTokens, `Gemini (${this.opts.model})`);
     const usage = parseUsage(json.usageMetadata);
     return { rawText: text, ...(usage ? { usage } : {}) };
   }
 }
 
+// Gemini finish reasons that mean its safety filter stopped the answer (#2083). RECITATION is a
+// copyright stop, not a safety one, and stays a plain "no content" error.
+const SAFETY_FINISH_REASONS = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY"]);
+
 type GeminiResponse = {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  promptFeedback?: { blockReason?: string };
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
@@ -98,10 +104,20 @@ type GeminiResponse = {
  * The answer text, or a thrown error. finishReason MAX_TOKENS means the model hit maxOutputTokens —
  * on a thinking model the hidden thoughts count against it. A cut-off with no text, or any cut-off
  * when the caller rejects truncated output, is an output_limit error; otherwise the partial text is
- * returned for the caller to salvage.
+ * returned for the caller to salvage. A safety block — of the prompt (promptFeedback.blockReason) or
+ * of the answer (a SAFETY_FINISH_REASONS finish) — is a safety_stop (#2083), never partial text.
  */
-function replyText(json: GeminiResponse, req: AnalyzeRequest, maxTokens: number | undefined): string {
+function replyText(
+  json: GeminiResponse,
+  req: AnalyzeRequest,
+  maxTokens: number | undefined,
+  label: string,
+): string {
+  const blocked = json.promptFeedback?.blockReason;
+  if (blocked) throw safetyStopError(label, `Prompt blocked: ${blocked}.`);
   const candidate = json.candidates?.[0];
+  const finish = candidate?.finishReason;
+  if (finish && SAFETY_FINISH_REASONS.has(finish)) throw safetyStopError(label, `Finish reason: ${finish}.`);
   const text = candidate?.content?.parts?.[0]?.text;
   if (candidate?.finishReason === "MAX_TOKENS" && (!text || req.rejectTruncated)) {
     throw outputLimitError("Gemini", maxTokens, json.usageMetadata?.thoughtsTokenCount);

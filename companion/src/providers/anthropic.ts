@@ -8,6 +8,7 @@ import {
   httpErrorMessage,
   outputLimitError,
   requestSignal,
+  safetyStopError,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
 import {
@@ -153,9 +154,14 @@ export class AnthropicProvider implements AIProvider {
     }
     // Check why the model stopped before reading content. A refusal is HTTP 200 with no usable
     // answer; a max_tokens stop is a cut-off JSON document that would fail to parse downstream.
+    // #2083: a refusal is the safety filter, raised as the same safety_stop Claude Code raises, so the
+    // synthesis safety retries and fallback model run and the generic retry never resends it.
     if (json.stop_reason === "refusal") {
       const category = json.stop_details?.category;
-      throw new ProviderError(`Anthropic declined the request${category ? ` (${category})` : ""}`, "other");
+      throw safetyStopError(
+        `Anthropic (${this.opts.model})`,
+        category ? `Refusal category: ${category}.` : undefined,
+      );
     }
     // Always thrown, even without rejectTruncated: the limit named is the one actually sent (thinking
     // room included). No thinking share is passed — usage does not break it out, and current models

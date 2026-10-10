@@ -61,12 +61,14 @@ export type ProviderErrorKind =
  * to repeat the content, and whatever it writes next is not the answer that was asked for. The
  * generic retry never retries this kind, so this message names no retry setting: it reaches every
  * AI path. Synthesis runs its own retries and fallback (#1740) and, when they run out, replaces this
- * error with synthesisSafetyExhaustedError.
+ * error with synthesisSafetyExhaustedError. The direct Anthropic API's refusal, OpenAI's content
+ * filter and Gemini's safety block raise it too (#2083); `detail` names the provider's own reason.
  */
-export function safetyStopError(label: string): ProviderError {
+export function safetyStopError(label: string, detail?: string): ProviderError {
   return new ProviderError(
     `${label}'s safety filter stopped the answer partway. The same evidence can stop it again. ` +
-      "Choose another model for this work.",
+      "Choose another model for this work." +
+      (detail ? ` ${detail}` : ""),
     "safety_stop",
   );
 }
