@@ -4,10 +4,11 @@ import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
 import { withoutRejectedEventTags, withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js";
-import { searchForensicTimeline } from "../analysis/forensicSearch.js";
+import { isAbortError } from "../analysis/abortable.js";
 import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
-import { clientGone } from "../http/requestAbort.js";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { readCaseState } from "./caseStateRead.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -43,14 +44,17 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         cursor: Number.isFinite(rawCursor) && rawCursor >= 0 ? Math.floor(rawCursor) : undefined,
         limit: Number.isFinite(rawLimit) && rawLimit >= 0 ? Math.min(10_000, Math.floor(rawLimit)) : 10_000,
       };
-      const timeline = search
-        ? await searchForensicTimeline(options.stateStore, req.params.id, search, timelineQuery)
-        : await options.stateStore.queryForensicTimeline(req.params.id, timelineQuery);
-      // The analyst's technique removals (#1742) are hidden from the state and its events alike —
-      // after the techniques each finding's own text names are added (#1873), so a removal still wins.
-      const overview = await options.stateStore.loadOverview(req.params.id);
+      // #2120: shared with concurrent callers for the same page (caseStateRead.ts). SHARED — never mutated.
+      const { timeline, overview } = await readCaseState(
+        options.stateStore,
+        req.params.id,
+        { search, timelineQuery },
+        requestAbortSignal(res),
+      );
       // #1915: a client that left while the case loaded gets no projection or JSON built for it.
       if (clientGone(res)) return;
+      // The analyst's technique removals (#1742) are hidden from the state and its events alike —
+      // after the techniques each finding's own text names are added (#1873), so a removal still wins.
       const state = withoutRejectedTechniques(withFindingTextTechniques(overview));
       // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
@@ -87,7 +91,7 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         techniqueNames: techniqueNamesFor(state.mitreTechniques, forensicTimeline),
       });
     } catch (err) {
-      if (clientGone(res)) return;
+      if (clientGone(res) || isAbortError(err)) return;
       return res.status(500).json({ error: (err as Error).message });
     }
   });
