@@ -111,7 +111,9 @@ describe("receipt and handler share one open of the server file (#2111)", () => 
     hooks.afterGuard = async () => {
       hooks.afterGuard = null;
       await writeFile(join(dir, "other.tmp"), hunt("whoami REPLACED"));
-      await rename(join(dir, "other.tmp"), src);
+      // Windows refuses to replace a file that is open (EPERM/EBUSY): the OS blocks the swap there,
+      // which is the safe outcome. The assertions below hold either way.
+      await rename(join(dir, "other.tmp"), src).catch(() => undefined);
     };
     const res = await request(app).post("/cases/c1/import-file").send({ path: src });
     expect(res.status).toBe(202);
