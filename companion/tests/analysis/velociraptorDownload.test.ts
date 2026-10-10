@@ -20,13 +20,13 @@ function releaseJson(names: string[]) {
 
 // Serves the release JSON and one body per asset URL; anything else is a 404.
 function stubFetch(names: string[], bodies: Record<string, Buffer>): FetchLike {
-  return (async (input: string | URL | Request) => {
+  return async (input: string | URL | Request) => {
     const url = String(input);
     if (url === RELEASE_URL) return new Response(JSON.stringify(releaseJson(names)), { status: 200 });
     const name = url.replace("https://example.com/dl/", "");
     const body = bodies[name];
     return body ? new Response(new Uint8Array(body), { status: 200 }) : new Response("nope", { status: 404 });
-  });
+  };
 }
 
 describe("downloadLatestVelociraptor", () => {
