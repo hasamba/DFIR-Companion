@@ -484,7 +484,7 @@ function episodesOf(chain: Chain): { episodes: Episode[]; episodesBeyond: number
   return { episodes: out, episodesBeyond: Math.max(0, credentials.length - EPISODES_PER_APP_MAX) };
 }
 
-const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 // ───────────────────────────── the pass ─────────────────────────────
 
