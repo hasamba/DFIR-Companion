@@ -357,6 +357,8 @@ export class SuperTimelineStore {
     const labelSet = q.labels?.length ? new Set(q.labels) : null;
     const events: ForensicEvent[] = [];
     let total = 0;
+    const ceiling = q.countCeiling;
+    let lowerBound = false;
 
     const time = { from: q.from, to: q.to };
     for await (const row of this.scan(caseId, time, SCAN_BATCH_SIZE, plan, fromTags)) {
@@ -376,10 +378,21 @@ export class SuperTimelineStore {
 
       if (total >= offset && events.length < limit) events.push(event);
       total++;
+      // A broad term matches every row, so the exact count is what costs (#2069). Past the
+      // caller's ceiling with the page full, stop: breaking ends the scan generator, and no further
+      // worker page is requested. Without a ceiling the count stays exact.
+      if (ceiling !== undefined && total > ceiling && events.length >= limit) {
+        lowerBound = true;
+        break;
+      }
     }
     // The window's facets, from SQL — no payload is parsed.
     const { origins, hosts, labelsAvailable } = facets;
-    return { events, total, origins, hosts, labelsAvailable };
+    if (!lowerBound) return { events, total, origins, hosts, labelsAvailable };
+    // One match PAST the ceiling makes a floor, as in forensicSearch: exactly the ceiling is exact.
+    // A page read beyond the ceiling floors at the rows actually reached.
+    const floor = Math.max(ceiling ?? 0, offset + events.length);
+    return { events, total: floor, totalIsLowerBound: true, origins, hosts, labelsAvailable };
   }
 
   async get(caseId: string, id: string): Promise<ForensicEvent | null> {

@@ -8,6 +8,7 @@ import { storedEventResolver } from "../analysis/eventAliasLookup.js";
 import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
 import { tagTableLabels, type SuperLabelMap } from "../analysis/superTimeline.js";
+import { SEARCH_TOTAL_CEILING } from "../analysis/forensicSearch.js";
 import type { TagsStore } from "../analysis/tags.js";
 import type { RouteContext } from "./context.js";
 
@@ -202,6 +203,9 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
           excludeText: csv(req.query.excludeText),
           offset: num(req.query.offset),
           limit: num(req.query.limit),
+          // The analyst's page only: a broad term stops counting at the forensic search's ceiling
+          // and reports "10,000+" (#2069). Internal callers need the exact total and omit it.
+          countCeiling: SEARCH_TOTAL_CEILING,
         },
         labelSource,
       );

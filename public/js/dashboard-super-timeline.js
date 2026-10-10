@@ -228,22 +228,29 @@
   function renderSuperTimeline(data, caseId) {
     DfirState.setLastSuperData(data);   // cache for client-side re-render on tag/comment/star change
     superTotal = Number(data.total) || 0;
+    // A broad text search stops counting past 10,000 matches (#2069): the total is then a floor,
+    // shown as "10,000+" like the forensic timeline's search, and the last page is unknown.
+    const isFloor = !!data.totalIsLowerBound;
+    const totalText = isFloor ? `${superTotal.toLocaleString("en-US")}+` : String(superTotal);
     const badge = document.getElementById("superTimelineBadge");
     if (badge) {
       // Match the forensic timeline badge format: "(N events — page X of Y)".
       const pages = superTotal ? Math.ceil(superTotal / ST_PAGE) : 0;
       const page = superTotal ? Math.floor(superOffset / ST_PAGE) + 1 : 0;
-      badge.textContent = superTotal ? ` (${superTotal} events — page ${page} of ${pages})` : "";
+      const pageText = isFloor ? `page ${page}` : `page ${page} of ${pages}`;
+      badge.textContent = superTotal ? ` (${totalText} events — ${pageText})` : "";
+      badge.title = isFloor ? `More than ${totalText.slice(0, -1)} events match — narrow the term for an exact count` : "";
     }
     renderSuperFilters(data);
     const pager = document.getElementById("stPager");
     const events = Array.isArray(data.events) ? data.events : [];
     const shownFrom = superTotal ? superOffset + 1 : 0;
     const shownTo = superOffset + events.length;
-    if (pager) pager.textContent = superTotal ? `${shownFrom}–${shownTo} of ${superTotal}` : "0 events";
+    if (pager) pager.textContent = superTotal ? `${shownFrom}–${shownTo} of ${totalText}` : "0 events";
     const prev = document.getElementById("stPrev"), next = document.getElementById("stNext");
     if (prev) prev.disabled = superOffset <= 0;
-    if (next) next.disabled = superOffset + ST_PAGE >= superTotal;
+    // Under a floor the last page is unknown: a full page means there may be more.
+    if (next) next.disabled = isFloor ? events.length < ST_PAGE : superOffset + ST_PAGE >= superTotal;
     const el = document.getElementById("superTimelineList");
     if (!el) return;
     // Starred-only is now a SERVER-side filter (starred=1) — the rows here are already filtered.

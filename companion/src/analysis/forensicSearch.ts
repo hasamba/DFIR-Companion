@@ -20,7 +20,7 @@ const DEFAULT_LIMIT = 500;
  * buys nothing and costs everything. Past the ceiling the page reports totalIsLowerBound, and the
  * caller should render it as "10,000+" rather than as a total.
  */
-const TOTAL_CEILING = 10_000;
+export const SEARCH_TOTAL_CEILING = 10_000;
 
 // The LIKE pattern builder moved with the rest of the prefilter planning (#1914); re-exported
 // because callers and tests know it by this module.
@@ -129,8 +129,8 @@ function countMatch(tally: { total: number; lowerBound: boolean }): boolean {
   tally.total++;
   // One match PAST the ceiling, not one at it. A case with exactly 10,000 matches has an exact
   // total, and reporting it as "10,000+" would invent evidence that is not there.
-  if (tally.total > TOTAL_CEILING) {
-    tally.total = TOTAL_CEILING;
+  if (tally.total > SEARCH_TOTAL_CEILING) {
+    tally.total = SEARCH_TOTAL_CEILING;
     tally.lowerBound = true;
   }
   return tally.lowerBound;

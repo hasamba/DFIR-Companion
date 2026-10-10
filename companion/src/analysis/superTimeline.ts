@@ -54,11 +54,16 @@ export interface SuperQuery {
   excludeText?: string[]; // hide events matching ANY of these terms (dashboard's main filter "Exclude" chips)
   offset?: number;
   limit?: number;
+  // Text filters only: stop counting once the page is full and the count passes this, and report
+  // the total as a floor (#2069). The dashboard route passes it; internal callers (Jev review/build
+  // window, viewSummary) must not — they page or disclose truncation by the exact total.
+  countCeiling?: number;
 }
 
 export interface SuperQueryResult {
   events: ForensicEvent[];
-  total: number; // full match count before pagination
+  total: number; // full match count before pagination (a floor when totalIsLowerBound)
+  totalIsLowerBound?: boolean; // set only when a countCeiling stopped the count early
   origins: string[]; // distinct origins across the matched set (facet, sorted)
   hosts: string[]; // distinct hosts across the time window (facet, sorted; incl. NO_HOST_FACET)
   labelsAvailable: string[]; // distinct labels across the matched set (facet, sorted)
