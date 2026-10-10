@@ -870,6 +870,7 @@
     "defenderEvents.ts": "analysis/detect",
     "defenderTamperCap.ts": "analysis/findings",
     "labSetupTransfer.ts": "analysis/detect",
+    "defenderEngineBoot.ts": "analysis/detect",
     "echoOnlyCommand.ts": "analysis/timeline",
     "rowFacts.ts": "analysis/case",
     "tradecraftRules.ts": "analysis/detect",

@@ -16,6 +16,7 @@ import {
   labSetupFolder,
   labSetupPaths,
 } from "../analysis/labSetupTransfer.js";
+import { engineBootOf, stampEngineBoot, withEngineBoot } from "../analysis/defenderEngineBoot.js";
 
 /**
  * The build-time cap (#1529) over the rows it can change, not the whole case (#1874).
@@ -89,4 +90,20 @@ export async function capLabSetupScoped(
   if (!ids.size) return 0;
   const rows = await store.forensicRowsById(caseId, [...ids]);
   return (await rewriteRows(store, caseId, rows, (e) => capLabSetupRow(e, paths))).length;
+}
+
+/**
+ * The Defender engine's start-up anchor (#2084): stamp each engine policy write in `candidates` that
+ * follows a start-up record on the same host. It runs before demote because the start-up rows are
+ * Info and this is the last step that still holds them. It only adds a record; no grade changes.
+ */
+export async function stampEngineBootScoped(
+  store: ForensicRowStore,
+  caseId: string,
+  candidates: readonly ForensicEvent[],
+): Promise<number> {
+  const stamps = new Map(stampEngineBoot(candidates).map((e) => [e.id, engineBootOf(e)] as const));
+  if (!stamps.size) return 0;
+  const rows = await store.forensicRowsById(caseId, [...stamps.keys()]);
+  return (await rewriteRows(store, caseId, rows, (e) => withEngineBoot(e, stamps.get(e.id)))).length;
 }

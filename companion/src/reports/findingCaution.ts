@@ -33,6 +33,10 @@ export function findingCautionLine(f: Finding): string {
     return `> ⚠️ **Date unknown** — the only evidence is PowerShell console history, which has no per-line time; the time shown is the history file's. Severity capped at Medium.`;
   if (tamperTiming === "before-incident")
     return `> ⚠️ **Before the incident** — every cited event is dated well before the main activity burst; kept as a lead. Severity capped at Medium.`;
+  if (tamperTiming === "engine-boot")
+    return `> ⚠️ **Defender loading its own policy at start-up — kept as a lead** — every cited change was written by the Defender engine minutes after the host started, and no attacker tool touched Defender then. Severity capped at Medium.`;
+  if (tamperTiming === "protection-on")
+    return `> ⚠️ **Protection turned on** — every cited change switches Defender protection on, which is not tampering. Severity capped at Medium.`;
   if (f.corroboration) return `- Corroboration: ${corroborationLabel(f)}`;
   return "";
 }

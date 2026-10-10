@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { capBuildTimeRows } from "../../src/analysis/buildTimeWindow.js";
-import { capBuildTimeScoped, capLabSetupScoped } from "../../src/routes/importSettleCap.js";
+import {
+  capBuildTimeScoped,
+  capLabSetupScoped,
+  stampEngineBootScoped,
+} from "../../src/routes/importSettleCap.js";
+import { settleForensicImport } from "../../src/routes/importSettle.js";
+import { engineBootOf } from "../../src/analysis/defenderEngineBoot.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { HostRenameRecord } from "../../src/analysis/hostRenameRecord.js";
 import { memoryRowStore } from "../helpers/memoryRowStore.js";
@@ -118,5 +124,50 @@ describe("capLabSetupScoped (#1946)", () => {
     const store = memoryRowStore(state);
     expect(await capLabSetupScoped(store, "c1", { scanAll: false, candidates: [] })).toBe(0);
     expect(await capLabSetupScoped(store, "c1", { scanAll: true, candidates: [] })).toBe(1);
+  });
+});
+
+describe("Defender engine start-up anchor at the import seam (#2084)", () => {
+  const ENGINE = "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18\\MsMpEng.exe";
+  const KEY = "HKLM\\SOFTWARE\\Microsoft\\Windows Defender\\Real-Time Protection\\DisableRealtimeMonitoring";
+  const bootRow = ev("boot", "2026-10-05T12:00:00Z", {
+    severity: "Info",
+    description: `Windows System Event log service started (EID 6005) @ ${HOST}`,
+    canonical: { event: { category: "other", type: "boot" } } as ForensicEvent["canonical"],
+  });
+  const engineRow = ev("rtp", "2026-10-05T12:03:00Z", {
+    severity: "Low",
+    path: ENGINE,
+    description: `Sysmon Registry value set (EID 13) - Image=${ENGINE} - TargetObject=${KEY} @ ${HOST}`,
+    canonical: {
+      event: { category: "registry", type: "event" },
+      registry: { key: KEY, valueData: "DWORD (0x00000001)" },
+    } as ForensicEvent["canonical"],
+  });
+  const caseOf = (rows: ForensicEvent[]): InvestigationState =>
+    ({ caseId: "c1", iocs: [], forensicTimeline: rows }) as unknown as InvestigationState;
+
+  it("stamps the engine write from the Info boot row before demote removes it", async () => {
+    const store = memoryRowStore(caseOf([bootRow, engineRow]));
+    await settleForensicImport(
+      {
+        stateStore: store,
+        superTimelineStore: { append: async (_c: string, e: ForensicEvent[]) => e.length },
+        autoTagImported: async () => {},
+        demoteForensic: () => store.demoteInfo(),
+      },
+      "c1",
+      caseOf([]),
+    );
+    const rows = (await store.load()).forensicTimeline;
+    expect(rows.map((e) => e.id)).toEqual(["rtp"]); // the boot row left for the super-timeline
+    expect(engineBootOf(rows[0])?.bootAt).toBe("2026-10-05T12:00:00.000Z");
+    expect(rows[0].severity).toBe("Low"); // the stamp never changes a row's grade
+  });
+
+  it("stampEngineBootScoped writes only the rows it stamps", async () => {
+    const store = memoryRowStore(caseOf([bootRow, engineRow]));
+    expect(await stampEngineBootScoped(store, "c1", [bootRow, engineRow])).toBe(1);
+    expect(await stampEngineBootScoped(store, "c1", [engineRow])).toBe(0); // no boot in hand, no anchor
   });
 });
