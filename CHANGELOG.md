@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sentinel Linux respects the event cap** — a multi-host export is cut to the event cap by severity, so later High rows survive (closes #2108)
 - **Defender hunting keeps apostrophe values** — AdditionalFields with an apostrophe or quote no longer vanish, so AD FS DKM and Domain Admins rules fire (closes #2109)
 - **Zeek TSV import uses less memory** — large classic Zeek logs are read line by line instead of split whole before the row cap (closes #2110)
+- **Report tables keep backslash-pipe evidence in its cell** — a value like `alice\|x` no longer shifts Markdown, HTML and DOCX table columns or drops the last cell, chain of custody included (closes #2117)
+- **Velociraptor "Download latest" works again** — the downloader picks and unpacks the gzip-compressed binaries official releases now ship (closes #2118)
+- **Synthesis no longer freezes the server on large cases** — finding grounding and the asset graph stop rescanning the whole timeline, and synthesis yields between steps (closes #2058)
+- **Small report panels open fast on large cases** — gaps, swimlane, IOC blocklist, STIX and the interactive report reuse the case's filtered state until the case changes (closes #2057)
+- **Heavy reads cannot starve the server** — whole-case reads run behind a bounded queue, a full queue answers "busy" at once, and requests the analyst abandoned never run (closes #1915)
+- **Graph, export and AI-summary panels share the busy gate** — about twenty more whole-case reads queue behind it and stop for analysts who left (closes #2119)
+- **Dashboard state fetches share one read** — concurrent state requests for the same case and page read the case once, never older than the last change (closes #2120)
+- **Broad super-timeline searches answer fast** — a search matching more than 10,000 rows shows "10,000+" instead of counting every row (closes #2069)
 
 ## [0.43.0] - 2026-10-10
 
