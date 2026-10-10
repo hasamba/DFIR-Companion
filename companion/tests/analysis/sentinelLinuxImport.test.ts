@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { capEvents } from "../../src/analysis/eventAggregate.js";
+import type { SiemEvent } from "../../src/analysis/siemImport.js";
 import { detectImportKind } from "../../src/analysis/importDetect.js";
 import {
   parseSentinelLinux,
@@ -174,5 +176,67 @@ describe("parseSentinelLinux — mixed and empty input", () => {
   it("returns an empty result for empty input", () => {
     expect(parseSentinelLinux("").events).toHaveLength(0);
     expect(parseSentinelLinux("").format).toBe("empty");
+  });
+});
+
+describe("parseSentinelLinux — shared event cap (#2108)", () => {
+  const onHost = (msg: string, host: string): Record<string, unknown> =>
+    syslogRow(msg, { HostName: host, Computer: host });
+  const vmRows = (n: number): Record<string, unknown>[] =>
+    Array.from({ length: n }, (_, i) => ({ ...vmRow, DestinationPort: 2000 + i, RemoteIp: "192.0.2.6" }));
+  const mixed = (extra: Record<string, unknown>[] = []): string =>
+    ndjson([
+      onHost(auoms(1, "whoami"), "host-a"),
+      onHost(auoms(2, "id -u"), "host-a"),
+      onHost(auoms(3, "uname -a"), "host-a"),
+      onHost(auoms(4, "hostname"), "host-b"),
+      onHost(auoms(5, "uptime"), "host-b"),
+      onHost(auoms(6, "df -h"), "host-b"),
+      syslogRow(sysmonEid1),
+      ...vmRows(4),
+      ...extra,
+    ]);
+
+  it("holds the merged result to maxEvents, not maxEvents per sub-parser", () => {
+    const r = parseSentinelLinux(mixed(), { maxEvents: 3 });
+    expect(r.events.length).toBeLessThanOrEqual(3);
+    expect(r.kept).toBe(r.events.length);
+  });
+
+  it("keeps ids contiguous after the cap", () => {
+    const r = parseSentinelLinux(mixed(), { maxEvents: 3 });
+    expect(r.events.map((e) => e.id)).toEqual(r.events.map((_, i) => `sl${i + 1}`));
+  });
+
+  it("drops the least severe rows first, so a severe event in a later part survives", () => {
+    const uncapped = parseSentinelLinux(mixed(), { maxEvents: 100 });
+    const lowOrWorse = uncapped.events.filter((e) => e.severity !== "Info").length;
+    // The VMConnection rows are the LAST part and grade Low; with a cap below the number of
+    // non-Info rows the cap must keep a Low row over an Info one wherever it sits.
+    const r = parseSentinelLinux(mixed(), { maxEvents: Math.max(1, lowOrWorse - 1) });
+    const rank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 } as Record<string, number>;
+    const worstDropped = uncapped.events
+      .filter((u) => !r.events.some((e) => e.description === u.description))
+      .map((u) => rank[u.severity]);
+    const worstKept = r.events.map((e) => rank[e.severity]);
+    if (worstDropped.length) expect(Math.min(...worstDropped)).toBeGreaterThanOrEqual(Math.max(...worstKept));
+  });
+
+  it("leaves a small import untouched under the default cap", () => {
+    const r = parseSentinelLinux(mixed());
+    expect(r.events).toHaveLength(11);
+  });
+
+  it("capEvents keeps a High row from the last part over earlier Info rows, in original order", () => {
+    const ev = (id: string, severity: SiemEvent["severity"]): SiemEvent => ({
+      id,
+      timestamp: "2022-05-11T18:00:00Z",
+      description: id,
+      severity,
+      mitreTechniques: [],
+    });
+    const merged = [ev("a", "Info"), ev("b", "Info"), ev("c", "Low"), ev("d", "High")];
+    expect(capEvents(merged, 2).map((e) => e.id)).toEqual(["c", "d"]);
+    expect(capEvents(merged, 10)).toBe(merged);
   });
 });

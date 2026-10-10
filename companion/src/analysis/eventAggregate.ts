@@ -25,6 +25,31 @@ export function maxEventsDefault(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_EVENTS;
 }
 
+// Which rows survive a cap: most severe, then noisiest, then (Info only) newest-dated, else earliest.
+// Shared by the aggregator and capEvents so both cut identically (#1995).
+function keepComparator(ordinal: (e: SiemEvent) => number): (a: SiemEvent, b: SiemEvent) => number {
+  return (a, b) =>
+    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+    (b.count ?? 1) - (a.count ?? 1) ||
+    (a.severity === "Info" && a.timestamp && b.timestamp
+      ? b.timestamp.localeCompare(a.timestamp)
+      : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
+    ordinal(a) - ordinal(b);
+}
+
+/**
+ * Re-cap an already-merged event list (an importer that joins several sub-parser results, each
+ * capped alone) to `max` using the aggregator's keep rule, so a severe row in a later part survives
+ * over Info rows from an earlier one. Returns the survivors in their ORIGINAL order; a list within
+ * the cap is returned as-is. Pure.
+ */
+export function capEvents(events: SiemEvent[], max: number): SiemEvent[] {
+  if (events.length <= max) return events;
+  const at = new Map(events.map((e, i) => [e, i] as const));
+  const keep = new Set([...events].sort(keepComparator((e) => at.get(e)!)).slice(0, max));
+  return events.filter((e) => keep.has(e));
+}
+
 // ───────────────────────────── aggregation (shared) ─────────────────────────────
 
 // Incremental accumulator behind aggregateEvents — collapse mapped events by aggKey into counted
@@ -202,13 +227,7 @@ export function createEventAggregator(
       // keeps the incident window, not the oldest rows (#1995). An undated row keeps its old place:
       // the importers' own summary rows (an overflow count, a skipped-file note) carry no time and
       // must survive the cut. The kept rows are still returned in the order above.
-      const byKeep = (a: SiemEvent, b: SiemEvent): number =>
-        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
-        (b.count ?? 1) - (a.count ?? 1) ||
-        (a.severity === "Info" && a.timestamp && b.timestamp
-          ? b.timestamp.localeCompare(a.timestamp)
-          : (a.timestamp || "~").localeCompare(b.timestamp || "~")) ||
-        firstOrdinal.get(a)! - firstOrdinal.get(b)!;
+      const byKeep = keepComparator((e) => firstOrdinal.get(e)!);
       return { events: events.sort(byKeep).slice(0, maxEvents).sort(byOrder), groups };
     },
   };
