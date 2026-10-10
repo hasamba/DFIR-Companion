@@ -52,6 +52,7 @@ import {
 import { mapDnsRows, tallyDnsChains } from "./dnsWireRows.js";
 import { asciiName, isIndicatorName } from "./dnsRecord.js";
 import { looksLikeZeekTsv, parseZeekTsv } from "./zeekTsv.js";
+export { countLines } from "./zeekTsv.js";
 import {
   extractRecords,
   aggregateEvents,
