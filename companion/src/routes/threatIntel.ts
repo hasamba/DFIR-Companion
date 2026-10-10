@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { ZodError } from "zod";
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
@@ -119,17 +120,17 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.get("/cases/:id/ioc-sources", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.iocSources(req.params.id));
+      const sources = await options.reportWriter.iocSources(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(sources); // #1915
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
-  // #IOC provenance: class each IOC detection-linked (appears in a Low+ event) vs telemetry-only
-  // (Info-only). Derived on read over forensic ∪ super events (telemetry-only IOCs live in super
-  // under the severity gate). Distinct from the threat-intel verdict. Powers the dashboard IOC badge/filter.
-  // Uses RAW (unfiltered) state.load — an IOC is detection-linked if ANY event was Low+, even one
-  // later scoped/legit out — so provenance reflects the complete evidence picture, not the report view.
+  // #IOC provenance: class each IOC detection-linked (in a Low+ event) vs telemetry-only (Info-only),
+  // derived on read over forensic ∪ super events (telemetry-only IOCs live in super under the severity
+  // gate). Distinct from the threat-intel verdict; powers the IOC badge/filter. Uses RAW state.load: an IOC
+  // is detection-linked if ANY event was Low+, even one later scoped/legit out (not the report view).
   app.get("/cases/:id/ioc-provenance", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {

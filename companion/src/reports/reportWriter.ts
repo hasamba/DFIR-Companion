@@ -261,15 +261,14 @@ export class ReportWriter {
     return tpl ?? defaultReportTemplate();
   }
 
-  // Load the case state with the same deterministic report filters applied: drop out-of-scope events
-  // (and the findings/IOCs/MITRE supported only by them) and exclude client-confirmed false positives,
-  // so every export is scope/FP-consistent even if AI re-synthesis hasn't run.
-  private loadFilteredState(caseId: string, slim = false): Promise<InvestigationState> {
-    // filteredState.ts; concurrent calls share a load (#1915); slim ones are cached too (reportLiteCache.ts).
+  // The case state with the deterministic report filters (scope, client-confirmed FPs: filteredState.ts),
+  // so every export agrees even before AI re-synthesis. Concurrent calls share a load and slim ones are
+  // cached (reportLiteCache.ts); `signal` ends only this caller's wait, never a shared load (#1915).
+  private loadFilteredState(caseId: string, slim = false, signal?: AbortSignal): Promise<InvestigationState> {
     const { state, cases, clockSkew, scope, falsePositives } = this;
-    return (slim ? this.filteredLiteLoads : this.filteredLoads).load(caseId, () =>
-      loadFilteredState({ state, cases, clockSkew, scope, falsePositives }, caseId, { slim }),
-    );
+    const read = () =>
+      loadFilteredState({ state, cases, clockSkew, scope, falsePositives }, caseId, { slim });
+    return (slim ? this.filteredLiteLoads : this.filteredLoads).load(caseId, read, signal);
   }
 
   private async loadNotebook(caseId: string): Promise<NotebookEntry[] | undefined> {
@@ -337,10 +336,9 @@ export class ReportWriter {
     return toTimesketchJsonl(await this.loadFilteredState(caseId));
   }
 
-  // The case state with the report's scope/legitimate filters applied — so the Timesketch push
-  // uploads exactly the timeline the report (and the JSONL export) show. `slim`: see filteredState.ts.
-  async filteredState(caseId: string, slim = false): Promise<InvestigationState> {
-    return this.loadFilteredState(caseId, slim);
+  // The report-filtered state, so the Timesketch push uploads the report's timeline. `slim`: filteredState.ts.
+  async filteredState(caseId: string, slim = false, signal?: AbortSignal): Promise<InvestigationState> {
+    return this.loadFilteredState(caseId, slim, signal);
   }
 
   // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report),
@@ -402,11 +400,10 @@ export class ReportWriter {
     return detectBeacons(state.forensicTimeline, beaconEnvOptions());
   }
 
-  // Timeline gaps (#83): long silent periods — complete (every source dark, the log-tampering
-  // signature), partial (one tool blind), or `betweenWaves` (dwell time between two bursts). Read via
-  // detectGapsWithWaves so this panel labels a window exactly as the finding about it does.
-  async timelineGaps(caseId: string): Promise<TimelineGap[]> {
-    const state = await this.loadFilteredState(caseId, true);
+  // Timeline gaps (#83): complete (every source dark: tampering), partial (one tool blind) or
+  // `betweenWaves` (dwell). detectGapsWithWaves, so the panel labels a window as its finding does.
+  async timelineGaps(caseId: string, signal?: AbortSignal): Promise<TimelineGap[]> {
+    const state = await this.loadFilteredState(caseId, true, signal);
     return detectGapsWithWaves(state.forensicTimeline, gapOptionsFor(state)).gaps;
   }
 
@@ -418,18 +415,21 @@ export class ReportWriter {
     return detectTimelineAnomalies(state.forensicTimeline, anomalyEnvOptions());
   }
 
-  // Swimlane data for the visual timeline chart — events grouped into lanes by the chosen
-  // groupBy axis (asset | severity | tactic). Same scope/legitimate filtering as the report.
-  async swimlane(caseId: string, groupBy: SwimlaneGroupBy = "asset"): Promise<SwimlaneData> {
-    const state = await this.loadFilteredState(caseId, true);
+  // Swimlane chart data: events in lanes by asset | severity | tactic, filtered like the report.
+  async swimlane(
+    caseId: string,
+    groupBy: SwimlaneGroupBy = "asset",
+    signal?: AbortSignal,
+  ): Promise<SwimlaneData> {
+    const state = await this.loadFilteredState(caseId, true, signal);
     return buildSwimlaneData(state.forensicTimeline, groupBy);
   }
 
   // Per-IOC corroboration: iocId → distinct tools that observed the indicator (derived by matching
   // the IOC value against the forensic events' `sources`). Same scope/legitimate filtering as the
   // report. Powers the dashboard's "⊕ N sources" badge on IOCs.
-  async iocSources(caseId: string): Promise<Record<string, string[]>> {
-    const state = await this.loadFilteredState(caseId);
+  async iocSources(caseId: string, signal?: AbortSignal): Promise<Record<string, string[]>> {
+    const state = await this.loadFilteredState(caseId, false, signal);
     return deriveIocSources(state.iocs, state.forensicTimeline);
   }
 
@@ -537,18 +537,18 @@ export class ReportWriter {
     return geoMapCsv(await this.geoMap(caseId));
   }
 
-  // Build a clean IOC block-list for network/firewall teams (same scope/legitimate filtering as
-  // the report). Supports three formats: plain text (one value per line, grouped by type),
-  // minimal CSV (type, value, severity, verdict, description), and STIX-indicators-only
-  // (a stripped-down STIX 2.1 bundle with only `indicator` objects — no identities, report,
-  // or relationship objects). Severity is derived from the worst enrichment verdict. "summary"
-  // returns the match count and why the rest were left out (#1807).
+  // Build a clean IOC block-list for network/firewall teams (same scope/legitimate filtering as the
+  // report): plain text (one value per line, grouped by type), minimal CSV (type, value, severity,
+  // verdict, description), or STIX-indicators-only (a STIX 2.1 bundle of `indicator` objects only).
+  // Severity is the worst enrichment verdict. "summary" returns the match count and why the rest
+  // were left out (#1807).
   async iocBlocklist(
     caseId: string,
     format: IocBlocklistRequestFormat = "txt",
     opts: IocBlocklistOptions = {},
+    signal?: AbortSignal,
   ): Promise<string | StixBundle | BlocklistSummary> {
-    const state = await this.loadFilteredState(caseId, true);
+    const state = await this.loadFilteredState(caseId, true, signal);
     const caseMeta = await this.cases.getCaseMeta(caseId);
     return buildIocBlocklist(format, state, { ...opts, caseName: opts.caseName ?? caseMeta?.name });
   }
@@ -556,8 +556,8 @@ export class ReportWriter {
   // Build a STIX 2.1 bundle for the case (same scope/legitimate filtering as the report) — the
   // portable, vendor-neutral export every TIP (OpenCTI, MISP, Anomali…) ingests. The victim
   // identity, producing firm, and incident id come from the human-authored report metadata.
-  async stixBundle(caseId: string): Promise<StixBundle> {
-    const state = await this.loadFilteredState(caseId, true);
+  async stixBundle(caseId: string, signal?: AbortSignal): Promise<StixBundle> {
+    const state = await this.loadFilteredState(caseId, true, signal);
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     return buildStixBundle(state, {
       organization: meta.organization,

@@ -2,6 +2,8 @@
 
 All panels are visible by default. Some are collapsed until they have data. Use **Settings → Dashboard Views** to show/hide panels per role or phase.
 
+When many clients load whole cases at the same time, the server serves a few of these reads at once and asks the rest to wait. The dashboard then shows **Server busy — retrying…** and loads the panel by itself a few seconds later. If the server is still busy after several retries, the note offers **Reload**. A single analyst using one dashboard does not see this note.
+
 ---
 
 ## Now — Decision Cockpit

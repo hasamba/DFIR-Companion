@@ -129,6 +129,7 @@
     }
   },
   "flatAnalysisFiles": {
+    "abortable.ts": "shared",
     "absorbedCitations.ts": "analysis/timeline",
     "accountUsageImport.ts": "analysis/ingest",
     "activityLog.ts": "analysis/workflow",

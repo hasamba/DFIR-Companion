@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { once } from "node:events";
 import { logActivity } from "../analysis/activityLog.js";
 import { mapForensicEvent, timesketchDate } from "../integrations/timesketch/timesketchMap.js";
@@ -67,9 +68,10 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
           ? "tactic"
           : "asset";
     try {
-      return res.status(200).json(await options.reportWriter.swimlane(req.params.id, groupBy));
+      const data = await options.reportWriter.swimlane(req.params.id, groupBy, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(data); // #1915: no answer for a gone client
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -80,9 +82,10 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/timeline-gaps", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.timelineGaps(req.params.id));
+      const gaps = await options.reportWriter.timelineGaps(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(gaps); // #1915
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

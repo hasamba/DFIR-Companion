@@ -13,8 +13,13 @@
 // a whole report projection) does not take a second one when it calls StateStore.load. Without that,
 // two holders each waiting for a second permit would deadlock. A permit is released in `finally`,
 // and work a holder leaves running after its release takes its own permit.
+//
+// A wait is ABORTABLE (#1915 reopened): a caller whose client went away passes its signal, and is
+// dropped from the queue without ever running its load. An abort after the load started changes
+// nothing: the load finishes and releases its permit as usual.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { abortError } from "./abortable.js";
 
 /**
  * Two, to match the two SQLite read workers (caseSqliteWorkerPool.ts): two cases can still load in
@@ -46,9 +51,9 @@ export class LoadLimiter {
     return this.queue.length;
   }
 
-  async run<T>(load: () => Promise<T>): Promise<T> {
+  async run<T>(load: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (this.permits.getStore()?.held) return load();
-    await this.acquire();
+    await this.acquire(signal);
     const permit: Permit = { held: true };
     try {
       return await this.permits.run(permit, load);
@@ -58,14 +63,29 @@ export class LoadLimiter {
     }
   }
 
-  private acquire(): Promise<void> {
+  private acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(abortError());
     if (this.running < this.max) {
       this.running++;
       return Promise.resolve();
     }
     // The permit passes straight from the releasing load to the next waiter (running is unchanged),
-    // so a newcomer can never take it out of turn.
-    return new Promise((resolve) => this.queue.push(resolve));
+    // so a newcomer can never take it out of turn. An aborted waiter is spliced out, so release()
+    // only ever hands the permit to a live one.
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        const at = this.queue.indexOf(waiter);
+        if (at < 0) return;
+        this.queue.splice(at, 1);
+        reject(abortError());
+      };
+      const waiter = (): void => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.queue.push(waiter);
+    });
   }
 
   private release(): void {

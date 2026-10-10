@@ -141,4 +141,83 @@ describe("CaseLoadCoalescer (#1915)", () => {
     expect(result).toBe("nested");
     expect(limiter.active).toBe(0);
   });
+
+  // #1915 (reopened): a caller whose client went away stops waiting, but a load other callers share
+  // is never cancelled by it.
+  describe("abort", () => {
+    it("one joiner aborting rejects only that joiner; the shared load runs and the rest get it", async () => {
+      const gate = gateWith(1);
+      const src = source();
+      const blocker = deferred<string>();
+      // Hold the only permit with another case, so the c1 cohort stays QUEUED (joinable).
+      const other = gate.load("other", () => blocker.promise);
+      await flush();
+      const gone = new AbortController();
+      const a = gate.load("c1", src.read, gone.signal);
+      const b = gate.load("c1", src.read, new AbortController().signal);
+      const c = gate.load("c1", src.read);
+      gone.abort();
+      await expect(a).rejects.toMatchObject({ name: "AbortError" });
+      blocker.resolve("x");
+      await other;
+      await flush();
+      expect(src.gates).toHaveLength(1);
+      src.gates[0].resolve("shared");
+      expect(await b).toBe("shared");
+      expect(await c).toBe("shared");
+      expect(gate.size).toBe(0);
+    });
+
+    it("a queued load whose every joiner went away never reads; a newcomer gets a fresh load", async () => {
+      const gate = gateWith(1);
+      const src = source();
+      const blocker = deferred<string>();
+      const other = gate.load("other", () => blocker.promise);
+      await flush();
+      const one = new AbortController();
+      const two = new AbortController();
+      const a = gate.load("c1", src.read, one.signal);
+      const b = gate.load("c1", src.read, two.signal);
+      one.abort();
+      two.abort();
+      await expect(a).rejects.toMatchObject({ name: "AbortError" });
+      await expect(b).rejects.toMatchObject({ name: "AbortError" });
+      const fresh = gate.load("c1", src.read);
+      blocker.resolve("x");
+      await other;
+      await flush();
+      expect(src.gates).toHaveLength(1); // only the newcomer's load read the case
+      src.gates[0].resolve("fresh");
+      expect(await fresh).toBe("fresh");
+      expect(gate.size).toBe(0);
+    });
+
+    it("a joiner aborting after the load started reading leaves the read running", async () => {
+      const gate = gateWith(1);
+      const src = source();
+      const gone = new AbortController();
+      const a = gate.load("c1", src.read, gone.signal);
+      await flush(); // reading now
+      const late = gate.load("c1", src.read); // queues the next cohort
+      gone.abort();
+      await expect(a).rejects.toMatchObject({ name: "AbortError" });
+      src.gates[0].resolve("first");
+      await flush();
+      expect(src.gates).toHaveLength(2);
+      src.gates[1].resolve("second");
+      expect(await late).toBe("second");
+      expect(gate.size).toBe(0);
+    });
+
+    it("a pre-aborted caller is refused without opening a load", async () => {
+      const gate = gateWith(1);
+      const src = source();
+      await expect(gate.load("c1", src.read, AbortSignal.abort())).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      await flush();
+      expect(src.gates).toHaveLength(0);
+      expect(gate.size).toBe(0);
+    });
+  });
 });

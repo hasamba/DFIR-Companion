@@ -100,11 +100,11 @@ describe("report-lite cache (#2057)", () => {
     const src = await readFile(new URL("../../src/reports/filteredState.ts", import.meta.url), "utf8");
     const body = src.slice(src.indexOf("export async function loadFilteredState"));
     const read = new Set<string>([
-      ...[...body.matchAll(/src\.(\w+)\b/g)].map((m) => m[1]!),
-      ...[...body.matchAll(/new (\w+Store)\(/g)].map((m) => m[1]!),
+      ...[...body.matchAll(/src\.(\w+)\b/g)].map((m) => m[1]),
+      ...[...body.matchAll(/new (\w+Store)\(/g)].map((m) => m[1]),
     ]);
     const priv = (store: unknown, method: string, caseId: string): string =>
-      (store as Record<string, (id: string) => string>)[method]!(caseId);
+      (store as Record<string, (id: string) => string>)[method](caseId);
     const table: Record<string, string[]> = {
       state: [], // the database itself: covered by the pool's write sequence and the file identity
       cases: [], // the store handle the side stores below are built from
@@ -277,5 +277,66 @@ describe("ReportLiteCache bounds (#2057)", () => {
     const cache = new ReportLiteCache<string>(async () => "rev", coalescer());
     await expect(cache.load("c1", async () => Promise.reject(new Error("disk")))).rejects.toThrow("disk");
     expect(cache.size).toBe(0);
+  });
+});
+
+// #1915 (reopened): a caller whose client went away stops waiting on a shared miss, but the miss
+// still loads, is cached, and reaches every caller that stayed.
+describe("ReportLiteCache abort (#1915)", () => {
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  it("one caller aborting a shared miss leaves it running; the result is still cached", async () => {
+    const cache = new ReportLiteCache<string>(
+      async () => "rev",
+      new CaseLoadCoalescer<string>(new LoadLimiter(2)),
+    );
+    let reads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const read = async () => {
+      reads++;
+      await held;
+      return "state";
+    };
+    const gone = new AbortController();
+    const a = cache.load("c1", read, gone.signal);
+    const b = cache.load("c1", read, new AbortController().signal);
+    await flush();
+    gone.abort();
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    release();
+    expect(await b).toBe("state");
+    expect(reads).toBe(1);
+    expect(cache.size).toBe(1);
+    expect(await cache.load("c1", read)).toBe("state"); // a hit
+    expect(reads).toBe(1);
+  });
+
+  it("a miss every caller left while it was queued never reads the case", async () => {
+    const limiter = new LoadLimiter(1);
+    const cache = new ReportLiteCache<string>(async () => "rev", new CaseLoadCoalescer<string>(limiter));
+    let releaseHolder!: () => void;
+    const holder = limiter.run(() => new Promise<void>((r) => (releaseHolder = r)));
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      return "state";
+    };
+    const one = new AbortController();
+    const two = new AbortController();
+    const a = cache.load("c1", read, one.signal);
+    const b = cache.load("c1", read, two.signal);
+    await flush();
+    one.abort();
+    two.abort();
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    await expect(b).rejects.toMatchObject({ name: "AbortError" });
+    releaseHolder();
+    await holder;
+    await flush();
+    expect(reads).toBe(0);
+    expect(limiter.waiting).toBe(0);
+    expect(await cache.load("c1", read)).toBe("state"); // a newcomer gets a fresh load
+    expect(reads).toBe(1);
   });
 });

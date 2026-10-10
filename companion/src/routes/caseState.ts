@@ -7,6 +7,7 @@ import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js"
 import { searchForensicTimeline } from "../analysis/forensicSearch.js";
 import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
+import { clientGone } from "../http/requestAbort.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -47,9 +48,10 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         : await options.stateStore.queryForensicTimeline(req.params.id, timelineQuery);
       // The analyst's technique removals (#1742) are hidden from the state and its events alike —
       // after the techniques each finding's own text names are added (#1873), so a removal still wins.
-      const state = withoutRejectedTechniques(
-        withFindingTextTechniques(await options.stateStore.loadOverview(req.params.id)),
-      );
+      const overview = await options.stateStore.loadOverview(req.params.id);
+      // #1915: a client that left while the case loaded gets no projection or JSON built for it.
+      if (clientGone(res)) return;
+      const state = withoutRejectedTechniques(withFindingTextTechniques(overview));
       // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
       // while state/state.json keeps the evidence exactly as imported.
@@ -65,6 +67,7 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         req.params.id,
         forensicTimeline.map((e) => e.id),
       );
+      if (clientGone(res)) return;
       return res.status(200).json({
         ...withoutEventAliases(state), // #1715: lineage is server bookkeeping
         forensicTimeline,
@@ -84,6 +87,7 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
         techniqueNames: techniqueNamesFor(state.mitreTechniques, forensicTimeline),
       });
     } catch (err) {
+      if (clientGone(res)) return;
       return res.status(500).json({ error: (err as Error).message });
     }
   });

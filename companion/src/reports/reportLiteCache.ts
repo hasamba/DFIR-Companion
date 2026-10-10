@@ -20,6 +20,9 @@
 //
 // Bounded: one case per writer, dropped after REPORT_LITE_IDLE_MS idle. The state is shared by every
 // caller and must not be modified (tests/reports/filteredStateImmutable.test.ts).
+//
+// A caller may pass its request's abort signal (#1915): leaving stops only its own wait. A shared miss
+// is dropped only when every caller has left it, and then only while still queued (stateLoadGate.ts).
 
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -28,6 +31,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
 import { FILTERED_STATE_SIDE_FILES } from "./filteredState.js";
 import { CaseLoadCoalescer } from "./stateLoadGate.js";
+import { JoinedSignal, abortError, untilAborted } from "../analysis/abortable.js";
 
 /** How long the viewed case's state is kept without a request. A constant, not a setting. */
 export const REPORT_LITE_IDLE_MS = 5 * 60 * 1000;
@@ -74,6 +78,11 @@ export function liteStateCache(
   });
 }
 
+interface Miss<T> {
+  promise: Promise<T>;
+  joiners: JoinedSignal;
+}
+
 interface Entry<T> {
   caseId: string;
   revision: string;
@@ -83,7 +92,7 @@ interface Entry<T> {
 export class ReportLiteCache<T> {
   private entry: Entry<T> | null = null;
   private timer: NodeJS.Timeout | null = null;
-  private readonly misses = new Map<string, Promise<T>>();
+  private readonly misses = new Map<string, Miss<T>>();
 
   constructor(
     private readonly revisionOf: (caseId: string) => Promise<string | null>,
@@ -95,9 +104,10 @@ export class ReportLiteCache<T> {
     return this.entry ? 1 : 0;
   }
 
-  async load(caseId: string, read: () => Promise<T>): Promise<T> {
+  async load(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const revision = await this.safeRevision(caseId);
-    if (revision === null) return this.loads.load(caseId, read);
+    if (signal?.aborted) throw abortError();
+    if (revision === null) return this.loads.load(caseId, read, signal);
     const held = this.entry;
     if (held && held.caseId === caseId && held.revision === revision) {
       this.touch();
@@ -107,17 +117,29 @@ export class ReportLiteCache<T> {
     // dashboard fan-out into several cohorts. Equal revisions mean no write landed between the two
     // arrivals, so the shared result is as fresh for the later caller as a load of its own.
     const key = `${caseId}\0${revision}`;
-    const running = this.misses.get(key);
-    if (running) return running;
-    const miss = this.miss(caseId, revision, read);
+    const miss = this.misses.get(key) ?? this.startMiss(key, caseId, revision, read);
+    miss.joiners.join(signal);
+    return untilAborted(miss.promise, signal);
+  }
+
+  private startMiss(key: string, caseId: string, revision: string, read: () => Promise<T>): Miss<T> {
+    const forget = (): void => {
+      if (this.misses.get(key) === miss) this.misses.delete(key);
+    };
+    const joiners = new JoinedSignal(forget); // every caller left: a newcomer starts its own miss
+    const miss: Miss<T> = { promise: this.miss(caseId, revision, read, joiners.signal), joiners };
     this.misses.set(key, miss);
-    const done = (): void => void this.misses.delete(key);
-    miss.then(done, done);
+    miss.promise.then(forget, forget);
     return miss;
   }
 
-  private async miss(caseId: string, revision: string, read: () => Promise<T>): Promise<T> {
-    const value = await this.loads.load(caseId, read);
+  private async miss(
+    caseId: string,
+    revision: string,
+    read: () => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    const value = await this.loads.load(caseId, read, signal);
     // Stored only when nothing changed during the load: a write that raced it is never cached.
     if ((await this.safeRevision(caseId)) === revision) {
       this.entry = { caseId, revision, value };
