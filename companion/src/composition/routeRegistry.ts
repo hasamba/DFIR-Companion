@@ -17,6 +17,7 @@ import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
 import { mountCaseWriteExistsGate } from "./caseWriteExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
+import { mountHeavyReadGate } from "./heavyReadGate.js";
 import { registerSystemRoutes } from "../routes/system.js";
 import { registerSupportBundleRoutes } from "../routes/supportBundleRoutes.js";
 import { registerGeoTileRoutes } from "../routes/geoTiles.js";
@@ -137,6 +138,9 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // covers what follows it, and both routes it guards are registered below. See
   // composition/caseWriteGuard.ts.
   mountCaseWriteGuard(app, store);
+  // Admit the heavy whole-case GETs (/state, swimlane, gaps, exports, ...) a few at a time, and 503
+  // a burst past the queue (#1915). Above every route family it covers. See composition/heavyReadGate.ts.
+  mountHeavyReadGate(app);
 
   registerImportRoutes(app, ctx);
   // The third case gate, and the narrowest: /cases/:id/velociraptor/* additionally requires a case

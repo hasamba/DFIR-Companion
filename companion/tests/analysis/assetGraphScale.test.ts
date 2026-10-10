@@ -72,3 +72,30 @@ describe("buildAssetGraph — description matching at scale", () => {
     expect(linked("WIN-6")).toEqual([]);
   });
 });
+
+// #2058: a host asset's finding list was de-duplicated with Array.includes, so one host carrying
+// thousands of per-rule findings cost events × findings on every one of the graph's rebuilds.
+describe("buildAssetGraph — finding ids at scale (#2058)", () => {
+  it("builds a 40k-event graph on one host, each event with its own finding, quickly", () => {
+    const s = emptyState("c1");
+    for (let i = 0; i < 40000; i++) {
+      s.forensicTimeline.push({ ...event(i, `rule hit ${i}`), asset: "WS01", relatedFindingIds: [`f${i}`] });
+    }
+    const t = performance.now();
+    const g = buildAssetGraph(s);
+    const ms = performance.now() - t;
+    expect(g.assets.find((a) => a.name === "WS01")?.findingIds).toHaveLength(40000);
+    // Generous for a slow CI runner; the includes-based dedupe took seconds here.
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it("keeps finding ids in first-seen order with no duplicates", () => {
+    const s = emptyState("c1");
+    const ids = [["f2", "f1"], ["f1", "f3", "f3"], [], ["f2", "f4"]];
+    for (const [i, rel] of ids.entries()) {
+      s.forensicTimeline.push({ ...event(i, "x"), asset: "WS01", relatedFindingIds: rel });
+    }
+    const g = buildAssetGraph(s);
+    expect(g.assets.find((a) => a.name === "WS01")?.findingIds).toEqual(["f2", "f1", "f3", "f4"]);
+  });
+});

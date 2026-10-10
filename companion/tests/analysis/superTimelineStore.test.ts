@@ -1082,3 +1082,68 @@ describe("SuperTimelineStore text search prefilter (#2069)", () => {
     expect(r.labelsAvailable).toEqual(["from-tags"]);
   });
 });
+
+// #2069 (reopened): a BROAD term matches every row, so the prefilter above cannot shrink the read
+// and the exact count still parsed every row — 5.7 s at 70k rows for one page. The dashboard route
+// opts into the forensic search's count ceiling: once the page is full and the count has passed
+// it, the scan stops and the total is a floor. Internal callers (Jev review, Jev build window,
+// viewSummary) pass no ceiling and keep the exact total.
+describe("SuperTimelineStore text-path count ceiling (#2069)", () => {
+  const CEILING = 5;
+  const ROWS = 12;
+  let cases: CaseStore;
+  let store: SuperTimelineStore;
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-ceiling-"));
+    cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new SuperTimelineStore(cases, 100000);
+  });
+
+  async function seed(count: number): Promise<void> {
+    await store.append(
+      "c1",
+      Array.from({ length: count }, (_, i) =>
+        ev({
+          id: `e${String(i).padStart(2, "0")}`,
+          timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+          description: `Suspicious row ${i}`,
+        }),
+      ),
+    );
+  }
+
+  const textFilters: { name: string; q: { search?: string; excludeText?: string[] } }[] = [
+    { name: "search", q: { search: "susp" } },
+    { name: "excludeText", q: { excludeText: ["zzz-matches-nothing"] } },
+  ];
+
+  for (const { name, q } of textFilters) {
+    it(`${name}: past the ceiling the page is unchanged and the total is a floor`, async () => {
+      await seed(ROWS);
+      const exact = await store.query("c1", { ...q, limit: 2 });
+      const capped = await store.query("c1", { ...q, limit: 2, countCeiling: CEILING });
+      expect(capped.events.map((e) => e.id)).toEqual(exact.events.map((e) => e.id));
+      expect(capped.total).toBe(CEILING);
+      expect(capped.totalIsLowerBound).toBe(true);
+      // No ceiling asked for: the exact count the internal callers depend on.
+      expect(exact.total).toBe(ROWS);
+      expect(exact.totalIsLowerBound).toBeUndefined();
+    });
+
+    it(`${name}: exactly the ceiling is an exact total, not a floor`, async () => {
+      await seed(CEILING);
+      const r = await store.query("c1", { ...q, limit: 2, countCeiling: CEILING });
+      expect(r.total).toBe(CEILING);
+      expect(r.totalIsLowerBound).toBeUndefined();
+    });
+
+    it(`${name}: an offset past the ceiling still returns the right page`, async () => {
+      await seed(ROWS);
+      const offset = 2 * CEILING;
+      const r = await store.query("c1", { ...q, offset, limit: 2, countCeiling: CEILING });
+      expect(r.events.map((e) => e.id)).toEqual(["e10", "e11"]);
+      expect(r.total).toBeGreaterThanOrEqual(offset + r.events.length);
+    });
+  }
+});

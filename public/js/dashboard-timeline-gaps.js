@@ -28,7 +28,8 @@
   let timelineGapsTimer = null;
   function loadTimelineGaps(caseId) {
     fetch(`/cases/${caseId}/timeline-gaps`)
-      .then((r) => r.json())
+      // An error answer (a server still busy after its retries, #1915) is not "no gaps": keep the panel.
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((g) => {
         timelineGapsData = Array.isArray(g) ? g : [];
         renderTimelineGaps();

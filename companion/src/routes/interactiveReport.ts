@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { renderInteractiveHtmlReport } from "../reports/interactiveHtml.js";
 import { emptyReportMeta } from "../reports/reportMeta.js";
 import { withNonce } from "../http/securityHeaders.js";
@@ -17,7 +18,9 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.reportWriter.filteredState(caseId, true); // #2057: no provenance blocks
+      // #2057: no provenance blocks. #1915: a client that left gets no report rendered for it.
+      const state = await options.reportWriter.filteredState(caseId, true, requestAbortSignal(res));
+      if (clientGone(res)) return;
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
       const reportMeta = options.reportMetaStore
         ? await options.reportMetaStore.load(caseId).catch(() => emptyReportMeta())

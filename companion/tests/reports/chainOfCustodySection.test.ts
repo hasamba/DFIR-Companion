@@ -187,3 +187,20 @@ describe("chain of custody appendix — hostile artifact paths (#2052)", () => {
     expect(lineStarting(text, "### ")).toBe("### name with  trailing");
   });
 });
+
+describe("chain of custody appendix — backslash before a pipe (#2117)", () => {
+  it("keeps the collector in its own cell and the source and trigger in theirs", () => {
+    const text = render([
+      record({
+        collectedBy: "alice\\|FORGED",
+        source: "SOURCE_SENTINEL",
+        trigger: "TRIGGER_SENTINEL",
+      }),
+    ]);
+    const html = marked.parse(text, { async: false, gfm: true });
+
+    expect(html).toContain("<td>alice\\|FORGED</td>");
+    expect(html).toContain("<td>SOURCE_SENTINEL</td>");
+    expect(html).toContain("<td>TRIGGER_SENTINEL</td>");
+  });
+});

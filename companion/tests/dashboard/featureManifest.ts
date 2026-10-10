@@ -1179,6 +1179,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // "Server busy, retrying" (#1915): wraps fetch at load so a GET the server queued past its cap
+    // (503 + X-DFIR-Server-Busy) is retried after Retry-After instead of breaking the panel. The
+    // retry counters are private: nothing outside may clear the analyst's "could not load" note.
+    file: "dashboard-busy-retry.js",
+    publish: ["dfirServerBusy"],
+    private: ["retrying", "gaveUp", "baseFetch"],
+  },
+  {
     // The case's live WebSocket (#1675): open, reconnect with capped backoff, catch up after a gap,
     // and re-derive on tab wake. Split from dashboard-case-connect.js, which had no room for it.
     // The session and timer state is private: a retry timer reachable from outside could reopen a

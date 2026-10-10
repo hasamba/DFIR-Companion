@@ -12,6 +12,7 @@ import type { SynthesisFallback } from "./synthesisFallback.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import { noteSessionCommands } from "./sessionCommandNotes.js";
+import { yieldToEventLoop } from "../yieldToEventLoop.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
@@ -326,8 +327,10 @@ async function finalizeFindings(
     kevCatalog: await ctx.getKevCatalog(),
     aliasIndex: input.aliasIndex,
   };
+  await yieldToEventLoop();
   const graded = gradeFindings({ ...gradeInput, next: withAccepted });
   // #1972: the primary model's own graded call, before the accepted decisions and the #1973 restores.
+  if (record) await yieldToEventLoop(); // a second grading pass follows (#2058)
   const primaryCalls = primaryCallSnapshot(record, () => gradeFindings({ ...gradeInput, next: folded }));
   // #1973: the analyst's per-finding restores lift a grading cap. After grading, which records the
   // cap, and before the simulation step, whose case-wide cap still applies on top.
@@ -597,11 +600,14 @@ export async function synthesize(
   // and its "conclusions out of date" marker survives the run's record.
   const startRevision = (await ctx.opts.synthMetaStore?.revision(caseId)) ?? 0;
   const loaded = await ctx.opts.stateStore.load(caseId);
+  // #2058: each CPU-bound phase below hands the event loop a turn, so /health and other cases answer.
+  await yieldToEventLoop();
   if (loaded.forensicTimeline.length === 0)
     return skipEmptyTimeline(ctx.opts.synthMetaStore, caseId, loaded, startRevision, opts);
   const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock, aliasIndex);
+  await yieldToEventLoop();
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
   if (!opts.force && !opts.dryRun && ctx.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -658,6 +664,7 @@ export async function synthesize(
     // A dry run (second-opinion model B) must not inherit from stored state (#2047).
     ...(opts.dryRun ? {} : { echoedFindingIds: new Set(echoedFindings(state).map((f) => f.id)) }),
   });
+  await yieldToEventLoop();
   for (const r of inheritedCitations)
     ctx.log.info(`[synthesis] ${r.findingId} cited no event; kept ${r.eventIds.length} prior citations`, {
       caseId,
@@ -687,9 +694,11 @@ export async function synthesize(
     sourceTrust,
     aliasIndex,
   });
+  await yieldToEventLoop();
   // Quiet session commands no finding names (#1594): a structured note, set AFTER grading because it
   // is not evidence the finding claims. Reads the scoped forensic timeline only.
   next = noteSessionCommands(next, { scopedEvents, hostOf: (raw) => resolveHost(aliasIndex, raw) });
+  await yieldToEventLoop();
 
   // Scope is a lens, not a shredder (#751). This run rebuilt its conclusions from an empty base over
   // the events inside the window, so a narrowed window would otherwise DELETE the deterministic

@@ -33,10 +33,27 @@ export interface FilteredStateSources {
 }
 
 /**
+ * #2057: every side file (under the case's state/ folder) the projection below reads. The report-lite
+ * cache (reportLiteCache.ts) keys on them, so ANY NEW SIDE INPUT MUST BE ADDED HERE, or a cached
+ * report would survive an edit to it. tests/reports/reportLiteCache.test.ts scans this file to enforce it.
+ */
+export const FILTERED_STATE_SIDE_FILES: readonly string[] = [
+  "clock-skew.json",
+  "scope.json",
+  "false-positive.json",
+  "legitimate.json", // the pre-rename false-positive file, still read when it is the only one
+  "finding-outcome.json",
+  "remediation-boundaries.json",
+  "served-locations.json",
+  "sensitive-locations.json",
+];
+
+/**
  * `slim` (#2057) reads the forensic rows without their canonical provenance blocks (fieldProvenance,
  * fieldProvenanceDefaults, evidence): about half the bytes of a whole-case load. Only for a surface
  * that renders none of them — timeline gaps, the swimlane, the IOC blocklist, STIX and the interactive
  * report, each pinned by tests/reports/filteredStateLite.test.ts. Everything else keeps the full rows.
+ * ReportWriter keeps the slim result of the viewed case until any input changes (reportLiteCache.ts).
  */
 export async function loadFilteredState(
   src: FilteredStateSources,

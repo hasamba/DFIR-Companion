@@ -222,6 +222,21 @@ function findingIsKevLinked(
   return false;
 }
 
+// Finding id → the scoped events that name it (reverse links), in scoped-event order. Built once so
+// grading is linear in events + findings rather than a full timeline scan per finding (#2058). An
+// event naming the same finding twice is listed twice; the caller's `seen` set drops the repeat.
+function reverseLinkIndex(scopedEvents: readonly ForensicEvent[]): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const e of scopedEvents) {
+    for (const fid of e.relatedFindingIds ?? []) {
+      const ids = index.get(fid);
+      if (ids) ids.push(e.id);
+      else index.set(fid, [e.id]);
+    }
+  }
+  return index;
+}
+
 export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   const { findings, scopedEvents, iocs, graphLinkedEventIds, sourceTrust, aliasIndex } = input;
   const kevCveIds = input.kevCveIds ?? new Set<string>();
@@ -231,6 +246,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   // Hosts the evidence independently confirms as attack-involved — the actor-provenance gate's allow-list.
   const compromisedHosts = confirmedCompromisedHosts(scopedEvents);
   const burst = tamperCap.incidentBurst(scopedEvents); // #1941: the densest 24 h of High/Critical rows
+  const reverseIds = reverseLinkIndex(scopedEvents); // #2058: one pass, not one per finding
 
   return findings.map((f) => {
     // Supporting in-scope events: forward links (finding.relatedEventIds present in scope) UNION reverse
@@ -247,7 +263,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     };
     for (const id of forward) push(id);
-    for (const e of scopedEvents) if ((e.relatedFindingIds ?? []).includes(f.id)) push(e.id);
+    for (const id of reverseIds.get(f.id) ?? []) push(id);
 
     const distinctTools = new Set(supporting.flatMap((e) => e.sources ?? [])).size;
     const distinctHosts = new Set(

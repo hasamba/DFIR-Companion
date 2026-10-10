@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { writeFile, mkdir } from "node:fs/promises";
 import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
 import { join } from "node:path";
@@ -162,14 +163,16 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/report.docx", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const { buffer: buf, evidenceSafety } = await options.reportWriter.docx(req.params.id);
+      const signal = requestAbortSignal(res);
+      const { buffer: buf, evidenceSafety } = await options.reportWriter.docx(req.params.id, signal);
+      if (clientGone(res)) return; // #2119
       logEvidenceSafety(options, req.params.id, "docx", evidenceSafety);
       res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
       res.setHeader("Content-Disposition", attachmentContentDisposition(`report-${req.params.id}.docx`));
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(buf);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -179,7 +182,8 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/export/stix", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const bundle = await options.reportWriter.stixBundle(req.params.id);
+      const bundle = await options.reportWriter.stixBundle(req.params.id, requestAbortSignal(res));
+      if (clientGone(res)) return; // #1915: no bundle serialised for a client that left
       res.type("application/json; charset=utf-8");
       res.setHeader("Content-Disposition", attachmentContentDisposition(`stix-bundle-${req.params.id}.json`));
       res.setHeader("Cache-Control", "private, no-cache");

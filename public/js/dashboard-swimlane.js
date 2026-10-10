@@ -87,7 +87,8 @@
       const groupBy = document.getElementById("swimlaneGroupBy").value || "asset";
       swUpdateSubtitle();
       fetch(`/cases/${caseId}/swimlane?groupBy=${encodeURIComponent(groupBy)}`)
-        .then(r => r.json()).then(d => {
+        // An error answer (server still busy, #1915) is not "no events": keep the lanes on screen.
+        .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))).then(d => {
           swLanes = Array.isArray(d.lanes) ? d.lanes : [];
           swDataMinMs = d.minTime ? Date.parse(d.minTime) : 0;
           swDataMaxMs = d.maxTime ? Date.parse(d.maxTime) : 0;

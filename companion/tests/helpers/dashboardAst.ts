@@ -2542,7 +2542,13 @@ const PUBLISH_OPS = new Set<ts.SyntaxKind>([
  *
  * A list of names would be simpler and would be a claim about the page that nothing checks. The
  * page and the modules are both on disk; ask them.
+ *
+ * A platform global a module WRAPS is not a name it declares: js/dashboard-busy-retry.js replaces
+ * `window.fetch` with a retrying wrapper (#1915), and if that file 404s every `fetch(...)` still
+ * resolves to the browser's own. Those names are skipped (WRAPPED_PLATFORM_GLOBALS).
  */
+const WRAPPED_PLATFORM_GLOBALS = new Set(["fetch"]);
+
 export function moduleGlobals(scripts: DashboardScript[] = dashboardScripts()): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const s of scripts) {
@@ -2558,7 +2564,9 @@ export function moduleGlobals(scripts: DashboardScript[] = dashboardScripts()): 
         names.add(target.argumentExpression.text);
       }
     });
-    for (const name of names) out.set(name, [...(out.get(name) ?? []), s.name]);
+    for (const name of names) {
+      if (!WRAPPED_PLATFORM_GLOBALS.has(name)) out.set(name, [...(out.get(name) ?? []), s.name]);
+    }
   }
   return out;
 }

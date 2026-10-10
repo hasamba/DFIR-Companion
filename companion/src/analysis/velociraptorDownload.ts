@@ -9,6 +9,7 @@ import { chmod, mkdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 import { githubLatestUrl } from "./updateCheck.js";
 import { VELOCIRAPTOR_REPO, parseReleaseAssets, pickVelociraptorAsset } from "./velociraptorRelease.js";
 
@@ -41,7 +42,9 @@ export async function downloadLatestVelociraptor(opts: DownloadLatestOptions): P
   if (!picked) throw new Error(`no release asset matches this server's OS/arch (${platform}/${arch})`);
 
   await mkdir(destDir, { recursive: true });
-  const finalPath = join(destDir, picked.name);
+  // A compressed asset (`….gz`, the only packaging current releases publish — #2118) is gunzipped
+  // on the way to disk, so the saved file is the runnable binary without the `.gz` suffix.
+  const finalPath = join(destDir, picked.compressed ? picked.name.replace(/\.gz$/i, "") : picked.name);
   const tmpPath = `${finalPath}.download`;
 
   // 2-minute budget for the binary itself (tens of MB) vs. the 10s default for the small JSON call above.
@@ -53,10 +56,10 @@ export async function downloadLatestVelociraptor(opts: DownloadLatestOptions): P
     throw new Error(`GitHub returned ${assetResp.status} downloading the release asset`);
   }
   try {
-    await pipeline(
-      Readable.fromWeb(assetResp.body as unknown as Parameters<typeof Readable.fromWeb>[0]),
-      createWriteStream(tmpPath),
-    );
+    const source = Readable.fromWeb(assetResp.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
+    // A corrupt gzip body rejects here and lands in the catch below, which removes the temp file.
+    if (picked.compressed) await pipeline(source, createGunzip(), createWriteStream(tmpPath));
+    else await pipeline(source, createWriteStream(tmpPath));
     if (platform !== "win32") await chmod(tmpPath, 0o755); // POSIX exec bit; meaningless on Windows.
     await rename(tmpPath, finalPath);
   } catch (err) {

@@ -11,6 +11,7 @@ import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import { ImporterStore } from "../../src/analysis/importerStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { SEARCH_TOTAL_CEILING } from "../../src/analysis/forensicSearch.js";
 import { TagsStore } from "../../src/analysis/tags.js";
 import { EXAMPLE_IMPORTER_SPEC } from "../../src/analysis/importerSpec.js";
 import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
@@ -262,7 +263,7 @@ async function makeQueryApp() {
       sources: ["ToolA"],
     }),
   ]);
-  return { app };
+  return { app, superTimelineStore };
 }
 
 describe("super-timeline query + label routes", () => {
@@ -307,6 +308,26 @@ describe("super-timeline query + label routes", () => {
     const r = await request(app).get(`/cases/c1/super-timeline?q=in-range`);
     expect(r.body.events.map((e: { id: string }) => e.id)).toEqual(["e-mid"]);
     expect(r.body.total).toBe(1);
+  });
+
+  // #2069: the dashboard read opts into the forensic search's count ceiling, so a broad term stops
+  // counting once the page is full; the floor flag reaches the dashboard in the body as is.
+  it("asks the store for the shared count ceiling and passes the floor flag through", async () => {
+    const { app, superTimelineStore } = await makeQueryApp();
+    const spy = vi.spyOn(superTimelineStore, "query").mockResolvedValue({
+      events: [],
+      total: SEARCH_TOTAL_CEILING,
+      totalIsLowerBound: true,
+      origins: [],
+      hosts: [],
+      labelsAvailable: [],
+    });
+    const r = await request(app).get(`/cases/c1/super-timeline?q=event`);
+    expect(r.status).toBe(200);
+    expect(spy.mock.calls[0][1]).toMatchObject({ search: "event", countCeiling: SEARCH_TOTAL_CEILING });
+    expect(SEARCH_TOTAL_CEILING).toBe(10_000);
+    expect(r.body.total).toBe(10_000);
+    expect(r.body.totalIsLowerBound).toBe(true);
   });
 
   it("excludeText= hides events matching any exclude term", async () => {

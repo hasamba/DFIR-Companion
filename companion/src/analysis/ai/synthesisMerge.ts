@@ -37,6 +37,7 @@ import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
+import { yieldToEventLoop } from "../yieldToEventLoop.js";
 
 /**
  * Folding the model's delta back into the case (#418).
@@ -206,6 +207,7 @@ export async function foldSynthesisDelta(
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
+  await yieldToEventLoop(); // #2058: the merge and the backfills each take seconds on a large case
   // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
   const filtered = applyFalsePositive(merged, markers);
   const surviving = new Set(filtered.findings.map((f) => f.id));
@@ -217,6 +219,7 @@ export async function foldSynthesisDelta(
   // The backfills are restricted to the events synthesis actually considered.
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts, state);
+  await yieldToEventLoop();
   const pinned = preserveAcceptedTechniques(state, await preservePinnedQuestions(ctx, caseId, netted.state));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to

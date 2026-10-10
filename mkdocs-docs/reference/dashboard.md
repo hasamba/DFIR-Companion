@@ -2,6 +2,8 @@
 
 All panels are visible by default. Some are collapsed until they have data. Use **Settings → Dashboard Views** to show/hide panels per role or phase.
 
+When many clients load whole cases at the same time, the server serves a few of these reads at once and asks the rest to wait. The dashboard then shows **Server busy — retrying…** and loads the panel by itself a few seconds later. If the server is still busy after several retries, the note offers **Reload**. A single analyst using one dashboard does not see this note.
+
 ---
 
 ## Now — Decision Cockpit
@@ -1043,7 +1045,7 @@ Requires GeoIP enrichment to be configured and enabled.
 
 A Timesketch-style complete record of **every** imported event, kept separately from the forensic timeline so the AI never synthesizes it — the forensic timeline stays detections-focused while nothing is ever lost.
 
-- **Filter** by time, origin (artifact), or label — e.g. hide Sigma/YARA/Hayabusa detections to see only raw host artifacts
+- **Filter** by time, origin (artifact), or label — e.g. hide Sigma/YARA/Hayabusa detections to see only raw host artifacts. A text search that matches more than 10,000 rows shows the count as **10,000+** (as the forensic timeline's search does) and keeps **Next** enabled while pages come back full; narrow the term for an exact count.
 - **Save named timeframes** for quick recall
 - **Label** events for your own triage
 - **Promote** selected events into the forensic timeline so AI synthesis picks them up

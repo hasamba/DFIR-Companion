@@ -228,6 +228,8 @@ export function buildAssetGraph(
   const assetMap = new Map<string, GraphAsset>();
   const edgeSet = new Set<string>();
   const edges: AssetGraphEdge[] = [];
+  // Asset id → its finding ids, for an O(1) dedupe beside the ordered `findingIds` array (#2058).
+  const assetFindings = new Map<string, Set<string>>();
 
   function ensureAsset(type: AssetType, name: string): GraphAsset {
     const id = `${type}:${name.toLowerCase()}`;
@@ -253,6 +255,16 @@ export function buildAssetGraph(
     edgeSet.add(key);
     edges.push({ asset: a.id, ioc: ioc.id, ...(isMentionedIoc(ioc) ? { referenced: true } : {}) });
     a.iocIds.push(ioc.id);
+  }
+
+  function addFindingIds(a: GraphAsset, fids: readonly string[]): void {
+    let seen = assetFindings.get(a.id);
+    if (!seen) assetFindings.set(a.id, (seen = new Set()));
+    for (const fid of fids) {
+      if (seen.has(fid)) continue;
+      seen.add(fid);
+      a.findingIds.push(fid);
+    }
   }
 
   // Which IoCs an event references: structured fields, IoCs from its findings, and IoC
@@ -292,7 +304,7 @@ export function buildAssetGraph(
     for (const a of assetsForEvent) {
       a.eventCount++;
       a.maxSeverity = worstSeverity(a.maxSeverity, e.severity);
-      for (const fid of e.relatedFindingIds) if (!a.findingIds.includes(fid)) a.findingIds.push(fid);
+      addFindingIds(a, e.relatedFindingIds);
       for (const ioc of refIocs) link(a, ioc);
     }
   }

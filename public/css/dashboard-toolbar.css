@@ -180,6 +180,9 @@
   opacity: 0; transition: opacity .15s ease; }
 .toast.show { opacity: 1; }
 .toast.warn { border-color: var(--sev-medium); color: var(--sev-medium); }
+/* "Server busy" note (#1915, js/dashboard-busy-retry.js): a toast that stays, with a Reload button. */
+#serverBusyNote { pointer-events: auto; }
+#serverBusyNote[hidden] { display: none; }
 /* Kill-chain tactic phase view */
 .kc-strip { display: flex; flex-wrap: wrap; gap: 6px; }
 .kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid var(--border-color); border-radius: 6px;

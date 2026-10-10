@@ -12,6 +12,8 @@ export interface ReleaseAsset {
 export interface PickedAsset {
   name: string;
   url: string;
+  // True when the asset is the gzip-compressed binary (`….gz`); the downloader gunzips it.
+  compressed: boolean;
 }
 
 export interface ParsedRelease {
@@ -37,9 +39,11 @@ export function parseReleaseAssets(json: unknown): ParsedRelease | null {
   return { version: tag.replace(/^v/i, ""), assets };
 }
 
-// Velociraptor publishes one plain binary per OS/arch (velociraptor-vX.Y.Z-<os>-<arch>[.exe]),
-// alongside .msi/.deb/.rpm/.sig/musl variants this must NOT match — the trailing `$` anchor
-// excludes all of those, since they carry extra suffix text after the arch tag.
+// Velociraptor publishes one binary per OS/arch (velociraptor-vX.Y.Z-<os>-<arch>[.exe]). Current
+// releases ship it gzip-compressed only (`….gz`, #2118); older ones shipped it plain. A plain match
+// wins when both exist. Alongside sit .msi/.deb/.rpm/.sig/musl/sumo-musl/legacy variants this must
+// NOT match — the trailing `$` anchor excludes all of those, since they carry extra suffix text
+// after the arch tag (or after `.gz`, for `.gz.sig`).
 export function pickVelociraptorAsset(
   assets: ReleaseAsset[],
   platform: string,
@@ -48,7 +52,17 @@ export function pickVelociraptorAsset(
   const platformTag = platform === "win32" ? "windows" : platform === "darwin" ? "darwin" : "linux";
   const archTag = arch === "arm64" ? "arm64" : "amd64";
   const suffix = platformTag === "windows" ? "\\.exe" : "";
-  const pattern = new RegExp(`^velociraptor-v[0-9][0-9a-zA-Z.\\-]*-${platformTag}-${archTag}${suffix}$`, "i");
-  const match = assets.find((a) => pattern.test(a.name));
-  return match ? { name: match.name, url: match.browser_download_url } : null;
+  const pattern = new RegExp(
+    `^velociraptor-v[0-9][0-9a-zA-Z.\\-]*-${platformTag}-${archTag}${suffix}(\\.gz)?$`,
+    "i",
+  );
+  const candidates = assets.filter((a) => pattern.test(a.name));
+  const match = candidates.find((a) => !isGzipName(a.name)) ?? candidates[0];
+  return match
+    ? { name: match.name, url: match.browser_download_url, compressed: isGzipName(match.name) }
+    : null;
+}
+
+function isGzipName(name: string): boolean {
+  return /\.gz$/i.test(name);
 }

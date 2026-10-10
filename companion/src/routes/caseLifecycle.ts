@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
@@ -434,7 +435,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         req.params.id,
         fmt,
         parseBlocklistQuery(req.query),
+        requestAbortSignal(res),
       );
+      if (clientGone(res)) return; // #1915
       res.setHeader("Cache-Control", "private, no-cache");
       if (fmt === "summary") return res.status(200).json(data);
       const file = IOC_BLOCKLIST_FILE_FORMATS[fmt];

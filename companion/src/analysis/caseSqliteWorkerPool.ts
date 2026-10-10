@@ -174,15 +174,32 @@ export class CaseSqliteWorkerPool {
   private exclusiveChain: Promise<unknown> = Promise.resolve();
   // Resolved while no exclusive op is pending; every read and write posted after one waits on it.
   private held: Promise<void> = Promise.resolve();
+  // #2057: per file, how many writes (exclusive ops included) were SUBMITTED; plus a counter for a
+  // write that names no file. Bumped before the op is posted, so a revision read while a write is
+  // pending already differs from the one before it (reports/reportLiteCache.ts).
+  private readonly writeSeqs = new Map<string, number>();
+  private pathlessWrites = 0;
 
   constructor(source: string) {
     this.writer = new WorkerLane(source, "write");
     this.readers = Array.from({ length: READ_WORKER_COUNT }, () => new WorkerLane(source, "read"));
   }
 
+  /** Writes submitted for `path` since this process started (monotonic; never moved by a read). */
+  writeSequence(path: string): number {
+    return this.pathlessWrites + (this.writeSeqs.get(path) ?? 0);
+  }
+
+  private bumpWriteSequence(message: WorkerMessage): void {
+    const key = pathKey(message);
+    if (key) this.writeSeqs.set(key, (this.writeSeqs.get(key) ?? 0) + 1);
+    else this.pathlessWrites++;
+  }
+
   request<T>(message: WorkerMessage): Promise<T> {
     const op = String(message.op);
     if (READ_OPS.has(op)) return this.readRequest<T>(message);
+    this.bumpWriteSequence(message);
     let release: () => void;
     try {
       release = admitWrite(message);
@@ -247,6 +264,7 @@ export class CaseSqliteWorkerPool {
   private ensureDatabase(key: string): Promise<boolean> {
     const running = this.ensuring.get(key);
     if (running) return running;
+    this.bumpWriteSequence({ dbPath: key }); // it may upgrade the schema: treat it as a write
     let release: () => void;
     try {
       release = admitWrite({ dbPath: key }); // it opens the file for write (#1855)

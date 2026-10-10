@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { describeFindingTagDiffs, diffFindingTags } from "../analysis/findingTagDiff.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
@@ -27,6 +28,7 @@ import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
+import { yieldToEventLoop } from "../analysis/yieldToEventLoop.js";
 
 /**
  * AI synthesis / Q&A / summary domain: the large cluster of LLM-backed (and LLM-adjacent) endpoints
@@ -207,6 +209,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
         try {
+          await yieldToEventLoop(); // #2058: the playbook derive rebuilds the asset graph
           await syncPlaybook(caseId);
           options.onPlaybook?.(caseId);
         } catch {
@@ -665,9 +668,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.get("/cases/:id/adversary-hints", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.adversaryHints(req.params.id));
+      const body = await options.reportWriter.adversaryHints(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return sendPipelineError(res, err);
+      return clientGone(res) ? undefined : sendPipelineError(res, err);
     }
   });
 
@@ -726,9 +730,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.get("/cases/:id/mobile-summary", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.mobileSummary(req.params.id));
+      const body = await options.reportWriter.mobileSummary(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return sendPipelineError(res, err);
+      return clientGone(res) ? undefined : sendPipelineError(res, err);
     }
   });
 
@@ -739,9 +744,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const minSeverity = parseMinSeverity(req.query.minSeverity);
-      return res.status(200).json(await options.reportWriter.presentation(req.params.id, { minSeverity }));
+      const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
+      return clientGone(res) ? undefined : res.status(200).json(deck); // #2119
     } catch (err) {
-      return sendPipelineError(res, err);
+      return clientGone(res) ? undefined : sendPipelineError(res, err);
     }
   });
 
@@ -753,21 +759,23 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const minSeverity = parseMinSeverity(req.query.minSeverity);
       const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
+      if (clientGone(res)) return; // #2119
       // The exported deck stays self-contained: embed the sink guard that the live page loads from
       // /js. Nonces let the attachment survive this response's CSP and are harmless when the saved
       // file is later opened without a CSP header.
       // Defanged and checked at the export boundary (#892, #1006) — see presentationExport.ts.
       // Shipped with its findings: the warning is in the file and on the activity log.
       const { html, evidenceSafety } = await renderStandalonePresentationChecked(
-        await options.reportWriter.filteredState(req.params.id),
+        await options.reportWriter.filteredState(req.params.id, false, requestAbortSignal(res)),
         deck,
         String(res.locals.cspNonce ?? ""),
       );
       logEvidenceSafety(options, req.params.id, "presentation", evidenceSafety);
+      if (clientGone(res)) return;
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res.type("html").set("Content-Disposition", `attachment; filename="${filename}"`).send(html);
     } catch (err) {
-      return sendPipelineError(res, err);
+      return clientGone(res) ? undefined : sendPipelineError(res, err);
     }
   });
 

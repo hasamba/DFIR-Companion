@@ -262,6 +262,8 @@
         const res = await fetch(`/cases/${caseId}/state`, {
           signal: loadSignal,
         });
+        // Still busy after its retries (#1915): the busy note says so; never render the error as a case.
+        if (typeof dfirServerBusy === "function" && dfirServerBusy(res)) throw new Error("server busy");
         clpStage("query"); // headers are in — the server has finished querying
         const api = clpApi();
         const body = api

@@ -84,4 +84,57 @@ describe("LoadLimiter (#1915)", () => {
     await held;
     expect(await detached).toBe("detached");
   });
+
+  // #1915 (reopened): a waiter whose client went away is dropped from the queue, never run.
+  describe("abort", () => {
+    it("an aborted queued waiter rejects with AbortError, never runs, and the permit passes on", async () => {
+      const limiter = new LoadLimiter(1);
+      const holder = deferred<string>();
+      const held = limiter.run(() => holder.promise);
+      const gone = new AbortController();
+      let ranGone = false;
+      const abandoned = limiter.run(async () => {
+        ranGone = true;
+        return "gone";
+      }, gone.signal);
+      const next = limiter.run(async () => "next");
+      await flush();
+      expect(limiter.waiting).toBe(2);
+      gone.abort();
+      await expect(abandoned).rejects.toMatchObject({ name: "AbortError" });
+      expect(limiter.waiting).toBe(1);
+      holder.resolve("held");
+      expect(await held).toBe("held");
+      expect(await next).toBe("next");
+      expect(ranGone).toBe(false);
+      expect(limiter.active).toBe(0);
+      expect(limiter.waiting).toBe(0);
+    });
+
+    it("a pre-aborted signal is refused before it queues or takes a free permit", async () => {
+      const limiter = new LoadLimiter(1);
+      const signal = AbortSignal.abort();
+      let ran = false;
+      await expect(
+        limiter.run(async () => {
+          ran = true;
+        }, signal),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(ran).toBe(false);
+      expect(limiter.active).toBe(0);
+      expect(limiter.waiting).toBe(0);
+    });
+
+    it("an abort after the load has started does not cancel it or leak its permit", async () => {
+      const limiter = new LoadLimiter(1);
+      const controller = new AbortController();
+      const gate = deferred<string>();
+      const run = limiter.run(() => gate.promise, controller.signal);
+      await flush();
+      controller.abort();
+      gate.resolve("done");
+      expect(await run).toBe("done");
+      expect(limiter.active).toBe(0);
+    });
+  });
 });

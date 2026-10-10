@@ -129,6 +129,8 @@
     }
   },
   "flatAnalysisFiles": {
+    "abortable.ts": "shared",
+    "pendingWork.ts": "shared",
     "absorbedCitations.ts": "analysis/timeline",
     "accountUsageImport.ts": "analysis/ingest",
     "activityLog.ts": "analysis/workflow",
@@ -917,6 +919,7 @@
     "yaraGrade.ts": "analysis/ingest",
     "yaraHitContext.ts": "analysis/ingest",
     "yaraImport.ts": "analysis/ingest",
+    "yieldToEventLoop.ts": "shared",
     "zeekTsv.ts": "analysis/ingest",
     "zipArchive.ts": "analysis/ingest",
     "zipCrypto.ts": "analysis/ingest",
