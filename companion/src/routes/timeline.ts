@@ -142,13 +142,14 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const csv = await options.reportWriter.incidentTimelineCsv(req.params.id);
+      const csv = await options.reportWriter.incidentTimelineCsv(req.params.id, requestAbortSignal(res));
+      if (clientGone(res)) return; // #2119
       res.type("text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="incident-timeline.csv"');
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(csv);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -158,13 +159,14 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/timeline.jsonl", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const jsonl = await options.reportWriter.timesketchJsonl(req.params.id);
+      const jsonl = await options.reportWriter.timesketchJsonl(req.params.id, requestAbortSignal(res));
+      if (clientGone(res)) return; // #2119
       res.type("application/x-ndjson; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="timesketch-timeline.jsonl"');
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(jsonl);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -284,11 +286,14 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
         for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) count(batch);
       } else {
         if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
-        count((await options.reportWriter.filteredState(req.params.id)).forensicTimeline);
+        count(
+          (await options.reportWriter.filteredState(req.params.id, false, requestAbortSignal(res)))
+            .forensicTimeline,
+        );
       }
-      return res.status(200).json({ scope, events, omitted });
+      return clientGone(res) ? undefined : res.status(200).json({ scope, events, omitted }); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

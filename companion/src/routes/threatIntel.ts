@@ -137,10 +137,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      // Streamed (#1444) and shared between concurrent requests for the same case (#1447).
-      return res.status(200).json(await provenanceReads().provenance(req.params.id));
+      const body = await provenanceReads().provenance(req.params.id); // streamed #1444, shared #1447
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -167,17 +167,17 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // lookups, and citing findings, each timestamped. Distinct from /ioc-provenance above (which only
   // classes detection-linked vs telemetry-only). Extraction is APPROXIMATE (indexed exact-token
   // match against forensic ∪ super events — no importer records which specific event produced an
-  // IOC); enrichment + findings legs are authoritative. Powers the dashboard's per-IOC provenance
-  // panel + its "export as JSON" button.
+  // IOC); enrichment + findings legs are authoritative. Powers the per-IOC provenance panel + export.
   app.get("/cases/:id/ioc-provenance-chain", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      return res.status(200).json(await provenanceReads().chains(req.params.id));
+      const chains = await provenanceReads().chains(req.params.id);
+      return clientGone(res) ? undefined : res.status(200).json(chains); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

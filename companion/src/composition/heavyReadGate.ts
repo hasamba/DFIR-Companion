@@ -13,15 +13,18 @@
  * its slot back when it finishes or its client disconnects. The handlers stop early on their own
  * (http/requestAbort.ts), and one caller leaving never cancels a load another caller shares.
  *
- * NORMAL USE NEVER SEES A 503. One dashboard opens about ten of these reads at once; the caps hold
+ * NORMAL USE NEVER SEES A 503. One case open fires 17 of these reads (#2119); the caps hold
  * two such fan-outs together (tests/composition/heavyReadGate.test.ts pins it). The numbers are
  * constants, not settings, for the same reason as READ_WORKER_COUNT: they size the server, not the
  * analyst's workflow.
  *
  * MOUNTED PER-EXACT-PATH like composition/aiRateLimit.ts, and only over GET/HEAD: every write, and
- * every light read, passes straight through. /health is never covered. Routes left out on purpose
- * (follow-ups): the other ReportWriter GETs (graphs, anomalies, phases, geo map, exports), and the
- * super-timeline (its own store and count ceiling, #2069).
+ * every light read, passes straight through. /health is never covered. Left out on purpose:
+ * report/:file (a pre-generated file read from disk, no case load), and the super-timeline (a paged
+ * worker-pool query with its own count ceiling, #2069; if gated, an analyst's search would queue behind
+ * the case-open fan-out). Routes that call stateStore.load() directly (ioc-risk, cockpit, sessions,
+ * ...) are a separate follow-up. /ioc-provenance(-chain) are gated by path only: their scan is shared
+ * per case (#1447), and one caller leaving must never cancel it.
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import { requestAbortSignal } from "../http/requestAbort.js";
@@ -29,7 +32,7 @@ import { requestAbortSignal } from "../http/requestAbort.js";
 /** Heavy reads running at once, across every case. Two read workers, plus room for cheap cache hits. */
 export const HEAVY_READ_CONCURRENCY = 4;
 /** Heavy reads waiting for a slot before the next one is refused with 503. */
-export const HEAVY_READ_QUEUE_LIMIT = 32;
+export const HEAVY_READ_QUEUE_LIMIT = 40;
 /** What a refused client is told to wait, in seconds. */
 export const HEAVY_READ_RETRY_AFTER_SECONDS = 2;
 /** Marks a 503 as "busy, retry" (not a broken feature), so the dashboard knows to retry it. */
@@ -45,6 +48,29 @@ export const HEAVY_READ_PATHS: ReadonlySet<string> = new Set([
   "/export/ioc-blocklist",
   "/export/stix",
   "/report/interactive",
+  // #2119: the remaining ReportWriter reads, the panel loaders and the on-demand exports.
+  "/asset-graph",
+  "/evidence-graph",
+  "/lateral-paths",
+  "/phases",
+  "/beacon-candidates",
+  "/anomalies",
+  "/host-ranking",
+  "/d3fend-countermeasures",
+  "/attack-mitigations",
+  "/geo-map",
+  "/geo-map.csv",
+  "/attack-layer.json",
+  "/adversary-hints",
+  "/mobile-summary",
+  "/presentation",
+  "/present/export",
+  "/incident-timeline.csv",
+  "/timeline.jsonl",
+  "/report.docx",
+  "/timesketch-omitted",
+  "/ioc-provenance",
+  "/ioc-provenance-chain",
 ]);
 
 export interface HeavyReadLimits {

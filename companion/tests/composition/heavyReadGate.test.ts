@@ -47,7 +47,7 @@ function harness(gate: HeavyReadGate) {
   const app: Express = express();
   mountHeavyReadGate(app, gate);
   const started: number[] = [];
-  const holds: ReturnType<typeof deferred>[] = [];
+  const holds: ReturnType<typeof deferred<void>>[] = [];
   let calls = 0;
   app.get("/health", (_req: Request, res: Response) => res.status(200).json({ ok: true }));
   app.get("/cases/:id/state", (req: Request, _res: Response, next) => {
@@ -211,9 +211,12 @@ describe("heavy read gate (#1915)", () => {
   });
 
   it("normal use: one dashboard's whole fan-out of heavy reads is never refused", async () => {
-    // A dashboard opens about ten heavy panel reads at once (state, swimlane, gaps, IOC sources,
-    // ...). Two such fan-outs together must still fit, so an analyst never sees "server busy".
-    const DASHBOARD_FANOUT = 12;
+    // One case open fires 17 heavy reads (#2119): /state, plus the panel loaders asset-graph,
+    // evidence-graph, lateral-paths, phases, timeline-gaps, beacon-candidates, anomalies,
+    // adversary-hints, host-ranking, d3fend-countermeasures, attack-mitigations, geo-map, swimlane,
+    // ioc-sources, ioc-provenance and ioc-provenance-chain. Two such fan-outs together must still
+    // fit, so an analyst never sees "server busy".
+    const DASHBOARD_FANOUT = 17;
     expect(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT).toBeGreaterThanOrEqual(2 * DASHBOARD_FANOUT);
     const gate = new HeavyReadGate();
     const app = express();
@@ -269,6 +272,75 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       const routeAt = inventory.stack.findIndex((l) => l === `ROUTE GET /cases/:id${path}`);
       expect(routeAt, path).toBeGreaterThan(gateAt);
     }
+  });
+
+  it("covers every whole-case report read the dashboard and exports fire (#2119)", () => {
+    const covered = [
+      ...["/state", "/swimlane", "/ioc-sources", "/timeline-gaps", "/export/ioc-blocklist", "/export/stix"],
+      ...["/report/interactive", "/asset-graph", "/evidence-graph", "/lateral-paths", "/phases"],
+      ...["/beacon-candidates", "/anomalies", "/host-ranking", "/d3fend-countermeasures"],
+      ...["/attack-mitigations", "/geo-map", "/geo-map.csv", "/attack-layer.json", "/adversary-hints"],
+      ...["/mobile-summary", "/presentation", "/present/export", "/incident-timeline.csv"],
+      ...["/timeline.jsonl", "/report.docx", "/timesketch-omitted", "/ioc-provenance"],
+      "/ioc-provenance-chain",
+    ];
+    for (const path of covered) expect(HEAVY_READ_PATHS, path).toContain(path);
+    // A pre-generated report file is a disk read, and the super-timeline is a paged, interactive
+    // query with its own count ceiling (#2069): neither waits behind the case-open fan-out.
+    for (const path of ["/report/report.md", "/report/report.html", "/super-timeline"])
+      expect(HEAVY_READ_PATHS.has(path), path).toBe(false);
+  });
+
+  it("a report file and the super-timeline still answer while the gate is saturated", async () => {
+    const gate = new HeavyReadGate({ concurrency: 1, queueLimit: 0, retryAfterSeconds: 2 });
+    const h = harness(gate);
+    h.app.get("/cases/:id/report/:file", (_req, res) => res.status(200).send("md"));
+    h.app.get("/cases/:id/super-timeline", (_req, res) => res.status(200).json({ rows: [] }));
+    const port = await listen(h.app);
+    const running = get(port, "/cases/c1/state");
+    await until(() => gate.active === 1);
+    expect((await get(port, "/cases/c1/anomalies").reply).status).toBe(503);
+    expect((await get(port, "/cases/c1/report/report.md").reply).status).toBe(200);
+    expect((await get(port, "/cases/c1/super-timeline").reply).status).toBe(200);
+    h.holds[0].resolve();
+    await running.reply;
+  });
+
+  it("a gated report read whose client left skips serialising its answer and passes its slot on", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-gone-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore, {
+      scope: new ScopeStore(store),
+      falsePositives: new FalsePositiveStore(store),
+    });
+    const hold = deferred<unknown>();
+    const signals: (AbortSignal | undefined)[] = [];
+    const anomalies = vi.spyOn(reportWriter, "anomalies").mockImplementation(async (_id, signal) => {
+      signals.push(signal);
+      return (await hold.promise) as Awaited<ReturnType<ReportWriter["anomalies"]>>;
+    });
+    const gate = new HeavyReadGate({ concurrency: 1, queueLimit: 4, retryAfterSeconds: 2 });
+    const app = express();
+    mountHeavyReadGate(app, gate);
+    const inner = createApp(store, { stateStore, reportWriter });
+    await request(inner)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    app.use(inner);
+    const port = await listen(app);
+    const gone = get(port, "/cases/c1/anomalies");
+    gone.reply.catch(() => undefined);
+    await until(() => anomalies.mock.calls.length === 1);
+    const next = get(port, "/cases/c1/anomalies");
+    await until(() => gate.waiting === 1);
+    gone.drop();
+    await until(() => anomalies.mock.calls.length === 2); // the slot passed on
+    expect(signals[0]?.aborted).toBe(true); // the shared load wait ends for the caller who left
+    const serialise = vi.fn(() => ({ spikes: [] }));
+    hold.resolve({ toJSON: serialise });
+    expect((await next.reply).status).toBe(200);
+    expect(serialise).toHaveBeenCalledTimes(1); // only the caller still connected got an answer
   });
 
   it("the report-lite cache still serves the second request behind the gate", async () => {

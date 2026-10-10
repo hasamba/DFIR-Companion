@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import type { AssetType } from "../analysis/assetGraph.js";
 import {
   LoginGraphBuilder,
@@ -86,9 +87,11 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/asset-graph", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.assetGraph(req.params.id, timeWindow(req)));
+      const signal = requestAbortSignal(res);
+      const graph = await options.reportWriter.assetGraph(req.params.id, timeWindow(req), signal);
+      return clientGone(res) ? undefined : res.status(200).json(graph); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -148,9 +151,11 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/evidence-graph", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id, timeWindow(req)));
+      const signal = requestAbortSignal(res);
+      const graph = await options.reportWriter.evidenceGraph(req.params.id, timeWindow(req), signal);
+      return clientGone(res) ? undefined : res.status(200).json(graph); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -164,11 +169,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const includeDismissed = req.query.includeDismissed === "1" || req.query.includeDismissed === "true";
-      return res
-        .status(200)
-        .json(await options.reportWriter.lateralPaths(req.params.id, timeWindow(req), includeDismissed));
+      const paths = await options.reportWriter.lateralPaths(req.params.id, timeWindow(req), includeDismissed);
+      return clientGone(res) ? undefined : res.status(200).json(paths); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -223,9 +227,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/phases", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.phases(req.params.id));
+      const body = await options.reportWriter.phases(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -235,9 +240,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/beacon-candidates", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.beaconCandidates(req.params.id));
+      const body = await options.reportWriter.beaconCandidates(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -248,9 +254,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/anomalies", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.anomalies(req.params.id));
+      const body = await options.reportWriter.anomalies(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -260,9 +267,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/host-ranking", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.hostRanking(req.params.id));
+      const body = await options.reportWriter.hostRanking(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -271,9 +279,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/d3fend-countermeasures", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.d3fendCountermeasures(req.params.id));
+      const body = await options.reportWriter.d3fendCountermeasures(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -282,9 +291,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/attack-mitigations", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.attackMitigations(req.params.id));
+      const body = await options.reportWriter.attackMitigations(req.params.id, requestAbortSignal(res));
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -294,9 +304,10 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/geo-map", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.geoMap(req.params.id));
+      const body = await options.reportWriter.geoMap(req.params.id);
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2119
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -305,12 +316,13 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const csv = await options.reportWriter.geoMapCsv(req.params.id);
+      if (clientGone(res)) return; // #2119
       res.type("text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="geo-map.csv"');
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(csv);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -321,12 +333,13 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const layer = await options.reportWriter.attackLayer(req.params.id);
+      if (clientGone(res)) return; // #2119
       res.type("application/json; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="attack-navigator-${req.params.id}.json"`);
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(JSON.stringify(layer, null, 2));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

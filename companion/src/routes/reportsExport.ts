@@ -163,14 +163,16 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/report.docx", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const { buffer: buf, evidenceSafety } = await options.reportWriter.docx(req.params.id);
+      const signal = requestAbortSignal(res);
+      const { buffer: buf, evidenceSafety } = await options.reportWriter.docx(req.params.id, signal);
+      if (clientGone(res)) return; // #2119
       logEvidenceSafety(options, req.params.id, "docx", evidenceSafety);
       res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
       res.setHeader("Content-Disposition", attachmentContentDisposition(`report-${req.params.id}.docx`));
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(buf);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
