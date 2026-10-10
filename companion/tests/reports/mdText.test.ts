@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Marked } from "marked";
 import { blockMd, cellMd, codeSpanMd, oneLineMd } from "../../src/reports/mdText.js";
 
 describe("codeSpanMd (#2052)", () => {
@@ -138,6 +139,28 @@ describe("cellMd", () => {
   it("escapes the cell separator and flattens newlines", () => {
     expect(cellMd("a|b\nc")).toBe("a\\|b c");
   });
+
+  it("leaves backslashes that are not before a pipe as they are (#2117)", () => {
+    expect(cellMd("C:\\Users\\bob")).toBe("C:\\Users\\bob");
+    expect(cellMd("trailing\\")).toBe("trailing\\");
+  });
+});
+
+describe("cellMd keeps a backslash before a pipe from splitting the row (#2117)", () => {
+  // A GFM row is split by marked, not by us, so the round trip through the real parser is the test.
+  const cellsOf = (first: string): string[] => {
+    const md = `| A | B | C |\n| --- | --- | --- |\n| ${cellMd(first)} | SRC | TRG |`;
+    const html = new Marked({ gfm: true }).parse(md, { async: false }) as string;
+    const body = html.slice(html.indexOf("<tbody>"));
+    return [...body.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
+  };
+
+  it.each([["alice\\|FORGED"], ["a\\\\|b"], ["x\\\\\\|y"], ["C:\\Users\\bob"], ["plain|pipe"]])(
+    "round-trips %s and keeps every following cell",
+    (input) => {
+      expect(cellsOf(input)).toEqual([input, "SRC", "TRG"]);
+    },
+  );
 });
 
 describe("control characters become visible Control Pictures (#9)", () => {
