@@ -109,7 +109,7 @@ export function applyAnonDeep<T>(value: T, redact: (s: string) => string): T {
 /**
  * Fields of a custody record that survive redaction untouched (#362).
  *
- * A SHA-256 is not PII: it reveals nothing about a file's contents, its name, or the host it came
+ * A SHA-256 (or SHA-1, #2111) is not PII: it reveals nothing about a file's contents, its name, or the host it came
  * from. Tokenizing it leaves an external recipient a chain they cannot check against the evidence
  * they actually hold, which is most of what the appendix is for. `prevHash` goes with it — without
  * it the chain cannot be walked at all in the redacted copy. `seq` is an ordinal and `event` a fixed
@@ -119,7 +119,7 @@ export function applyAnonDeep<T>(value: T, redact: (s: string) => string): T {
  * Everything else is redacted, including fields added later: `artifactPath` carries filenames and
  * case ids, `source` a hostname or page URL, `collectedBy` an analyst's name.
  */
-const CUSTODY_PRESERVED_FIELDS: ReadonlySet<string> = new Set(["sha256", "prevHash", "seq", "event"]);
+const CUSTODY_PRESERVED_FIELDS: ReadonlySet<string> = new Set(["sha256", "sha1", "prevHash", "seq", "event"]);
 
 /**
  * Redact custody records for the redacted export, field by field.

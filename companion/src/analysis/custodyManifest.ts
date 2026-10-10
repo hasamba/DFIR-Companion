@@ -17,6 +17,10 @@ export interface CustodyManifestArtifact {
   path: string;
   /** Hash from the most recent record for this artifact — what it was last known to be. */
   sha256: string;
+  /** SHA-1 from the same record (version 2 manifests; absent when the record had none). */
+  sha1?: string;
+  /** `false` when every event is a receipt: the bytes arrived but were not stored (#2111). */
+  stored?: false;
   /** Every custody event for this artifact, in log order. */
   chain: CustodyRecord[];
 }
@@ -27,7 +31,8 @@ export interface CustodyManifestSignature {
 }
 
 export interface CustodyManifest {
-  version: 1;
+  /** 1: SHA-256 only. 2 (#2111): adds sha1 and receipt-only artifacts. Both verify. */
+  version: 1 | 2;
   caseId: string;
   generatedAt: string;
   generatedBy: string;
@@ -106,11 +111,13 @@ export function assembleCustodyManifest(input: {
   const artifacts: CustodyManifestArtifact[] = [...byArtifact].map(([artifactPath, chain]) => ({
     path: (input.caseDir ? toCaseRelative(input.caseDir, artifactPath) : null) ?? artifactPath,
     sha256: chain[chain.length - 1].sha256,
+    ...(chain[chain.length - 1].sha1 ? { sha1: chain[chain.length - 1].sha1 } : {}),
+    ...(chain.every((r) => r.event === "received") ? { stored: false as const } : {}),
     chain,
   }));
 
   const unsigned: Omit<CustodyManifest, "signature"> = {
-    version: 1,
+    version: 2,
     caseId: input.caseId,
     generatedAt: new Date().toISOString(),
     generatedBy: getAppVersion(),
@@ -127,6 +134,8 @@ export function assembleCustodyManifest(input: {
  */
 export function verifyCustodyManifest(manifest: CustodyManifest, secret: Buffer): boolean {
   const { signature, ...unsigned } = manifest;
+  // A version this build does not know cannot be vouched for, even with a matching signature.
+  if (unsigned.version !== 1 && unsigned.version !== 2) return false;
   if (!signature || signature.algorithm !== "HMAC-SHA256" || typeof signature.value !== "string")
     return false;
   const expected = Buffer.from(sign(unsigned, secret), "hex");

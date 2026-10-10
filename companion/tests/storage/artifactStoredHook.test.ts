@@ -9,6 +9,7 @@ let store: CaseStore;
 let seen: StoredArtifact[];
 
 const sha256 = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
+const sha1 = (data: Buffer | string) => createHash("sha1").update(data).digest("hex");
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-artifacthook-"));
@@ -27,7 +28,14 @@ describe("CaseStore artifact-stored hook", () => {
     const path = await store.saveScreenshot("c1", "000001_shot.webp", bytes);
 
     expect(seen).toEqual([
-      { caseId: "c1", path, sha256: sha256(bytes), kind: "screenshot", provenance: undefined },
+      {
+        caseId: "c1",
+        path,
+        sha256: sha256(bytes),
+        sha1: sha1(bytes),
+        kind: "screenshot",
+        provenance: undefined,
+      },
     ]);
   });
 
@@ -53,6 +61,7 @@ describe("CaseStore artifact-stored hook", () => {
         caseId: "c1",
         path,
         sha256: sha256(Buffer.from(text, "utf8")),
+        sha1: sha1(Buffer.from(text, "utf8")),
         kind: "import",
         provenance: undefined,
       },
@@ -70,7 +79,14 @@ describe("CaseStore artifact-stored hook", () => {
 
       expect(saved.bytes).toBe(bytes.length);
       expect(seen).toEqual([
-        { caseId: "c1", path: saved.path, sha256: sha256(bytes), kind: "import", provenance: undefined },
+        {
+          caseId: "c1",
+          path: saved.path,
+          sha256: sha256(bytes),
+          sha1: sha1(bytes),
+          kind: "import",
+          provenance: undefined,
+        },
       ]);
     } finally {
       await handle.close();

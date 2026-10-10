@@ -8,7 +8,8 @@ import { detectBinaryImportKind, MAC_LOGIN_ITEM_FILENAMES } from "../analysis/ma
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "./importFileHead.js";
-import { openImportPath } from "./serverPathGuard.js";
+import { openImportFile } from "./importFileSource.js";
+import { CHANGED_WHILE_IMPORTING, changedSinceReceipt } from "./receiptedFile.js";
 
 /**
  * The two byte-native import routes for macOS login-item containers — both BTM generations, the
@@ -52,20 +53,20 @@ export function registerMacLoginItemImportRoute(
     const originalName = basename(filePath);
     // The same deny-list as /import-file (#1792): never the Companion's config or its case storage.
     // The guard opens and judges the handle; the read uses that handle, never the path again (#1834).
+    // openImportFile reuses the receipt's handle for this path (#2111) and closes it with the response.
+    const file = await openImportFile(filePath, store, caseId, res);
+    if (!file) return;
     let bytes: Buffer;
     try {
-      const opened = await openImportPath(filePath, store, caseId);
-      if (opened.refusal) return res.status(opened.refusal.status).json({ error: opened.refusal.error });
-      try {
-        bytes = await readHandleBounded(opened.file.handle, readCap());
-      } finally {
-        await opened.file.handle.close();
-      }
+      bytes = await readHandleBounded(file.handle, readCap());
     } catch (err) {
       if (err instanceof FileTooLargeError) {
         return res.status(413).json({ error: `file is too large to import (${err.size} bytes)` });
       }
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
+    }
+    if (changedSinceReceipt(res, filePath, bytes)) {
+      return res.status(409).json({ error: CHANGED_WHILE_IMPORTING });
     }
     return acceptMacLoginItemBytes(ctx, settleDeps, caseId, originalName, bytes, res);
   });

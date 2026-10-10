@@ -1,6 +1,6 @@
 # Chain of Custody
 
-A court-ready record of what happened to every piece of evidence the Companion stores: who collected it, when, from where, its SHA-256, and every subsequent access, transfer or export.
+A court-ready record of what happened to every piece of evidence the Companion stores: who collected it, when, from where, its SHA-256 and SHA-1, and every subsequent access, transfer or export.
 
 The Activity Log answers *what was done to this case*. Chain of custody answers *what happened to this artifact* — the question you have to be able to answer if a case goes to court or in front of a regulator.
 
@@ -15,6 +15,10 @@ The Activity Log answers *what was done to this case*. Chain of custody answers 
 | Screenshots from the browser extension | `collected` — with the page URL it came from, the capture trigger, and `browser-extension` as the collector |
 | Imports (every format, including server-path imports of large files) | `collected` |
 | Files dropped in the case's `drop/` folder | `collected`, once a tool ingests them |
+
+**Files are recorded the moment they arrive, before any parser runs.** Every import route writes a `received` entry first, holding the file name, its size, and its SHA-256 and SHA-1. A file the importer then **rejects** (wrong format, nothing parseable, empty) therefore still has a hashed entry: you can show that it was handed to the Companion, and match it against your own copy. The bytes of a rejected file are **not stored**. In the panel such an artifact reads **received — not stored**, and the report appendix says the same. An accepted import gets two entries — `received`, then `collected` — with the same hashes. If the `received` entry cannot be written, the import is refused with a `500` and no parser runs. A server file imported by path is hashed and imported from one open of the file; if it changes between the hash and the copy, the import is refused with a `409` ("file changed while it was being imported") and no copy is kept.
+
+For an import that names a file on the server (`import-file`, `import-mac-login-item`), the Companion reads the file once more to hash it on arrival; for a very large file (a Plaso timeline) that adds a second pass of a few seconds. Screenshots, tool runs, the drop folder and MCP deliveries are still recorded when they are stored, not on arrival.
 
 Recording is hooked onto the case store's evidence-writing functions, not onto the individual import routes — so an import path added in a future version is covered from the day it ships, rather than silently skipping custody.
 
@@ -36,7 +40,7 @@ curl -X POST http://127.0.0.1:4773/cases/INC-1/custody \
   -d '{"artifactPath":"/mnt/evidence/laptop.dd","collectedBy":"alice","source":"seized 2026-07-28","event":"collected"}'
 ```
 
-`event` is one of `collected`, `accessed`, `transferred`, `exported`. An unrecognised value is **rejected** rather than quietly filed as a collection — a custody chain that silently relabels what happened is worse than one that refuses the entry. The Companion hashes the file itself; you cannot supply the hash.
+`event` is one of `collected`, `accessed`, `transferred`, `exported`, `received`. An unrecognised value is **rejected** rather than quietly filed as a collection — a custody chain that silently relabels what happened is worse than one that refuses the entry. The Companion hashes the file itself; you cannot supply the hash.
 
 The path must be absolute. It is read as given and may live outside the case directory, which is deliberate: evidence usually does. Two places are refused with `403`: the Companion's own configuration file (`.env`, which holds the API keys) and other cases' folders in the cases root. This case's own files can still be recorded. A closed or archived case refuses new records until you reopen or restore it.
 
@@ -50,7 +54,9 @@ Records live in `custody.jsonl` inside the case's `metadata/` folder, one JSON o
 |---|---|
 | `artifactPath` | Where the artifact is. Stored **relative to the case folder** when it lives inside it, so archiving a case or moving the cases root does not invalidate the record |
 | `sha256` | The artifact's hash at the moment of this event |
-| `event` | `collected` / `accessed` / `transferred` / `exported` |
+| `sha1` | The same bytes under SHA-1, taken in the same read pass, for lookup in tools that still key on it (VirusTotal, older tooling). It is a lookup aid, not tamper protection — verification relies on SHA-256. Absent on records written before it existed; those still verify |
+| `bytes` | Size in bytes, on `received` entries |
+| `event` | `collected` / `accessed` / `transferred` / `exported` / `received` (arrived, before parsing; the path is a `received:` marker, not a file) |
 | `collectedBy`, `collectedAt`, `source`, `trigger` | Who, when, from where, and what caused it |
 | `seq` | Position in this case's chain |
 | `prevHash` | SHA-256 of the **previous line in the file** |
@@ -66,7 +72,7 @@ That last field is what makes the log a chain rather than a list. Editing or rem
 
 Two questions get asked, and both matter:
 
-- **Did the evidence change?** Every artifact is re-hashed and compared.
+- **Did the evidence change?** Every stored artifact is re-hashed and compared (SHA-256, and SHA-1 when the record has one). `received` entries have no stored file and are skipped, so a rejected import never shows as missing.
 - **Did the log change?** The chain is walked link by link.
 
 Checking one without the other misses a whole class of tampering: swapping a file leaves the chain intact, and rewriting who collected an artifact leaves every hash intact.
@@ -103,6 +109,8 @@ The **Chain of Custody** panel (see [Dashboard Panels](dashboard.md)) has a **Ve
 
 It exists to close a gap the chain cannot close on its own: **chopping entries off the end of the log leaves a shorter chain that verifies perfectly.** Nothing inside the file can detect that, because the file is exactly what an attacker controls. So the manifest records where the chain *ends* — the record count, the final `seq`, and the hash of the last line — and signs that along with the records.
 
+**Version 2** (current) adds `sha1` to each artifact and lists receipt-only artifacts with `"stored": false`. Manifests written before this change are version 1 and still verify unchanged; a manifest with any other version is reported as unverifiable.
+
 You get it in four places:
 
 - **In the report folder**, written every time you generate a report
@@ -117,10 +125,10 @@ You get it in four places:
 
 ## In the report
 
-The **Chain of Custody** appendix lists each artifact with its hash and every event that touched it. It is a normal report section: reorder or switch it off in **Settings → Report Templates**, like any other. It is on in the Standard template and off in the Executive Brief, where a per-artifact table is operator detail rather than client-facing content.
+The **Chain of Custody** appendix lists each artifact with its SHA-256 and SHA-1 and every event that touched it. It is a normal report section: reorder or switch it off in **Settings → Report Templates**, like any other. It is on in the Standard template and off in the Executive Brief, where a per-artifact table is operator detail rather than client-facing content.
 
 !!! info "What a redacted export keeps"
-    In a **redacted case package** the appendix is redacted field by field rather than wholesale. Artifact hashes (`sha256`, `prevHash`), the ordinal and the event name survive intact, so a recipient can still check the chain against the evidence they hold — a SHA-256 reveals nothing about a file's contents, name or origin. Paths, source hosts and collector names are tokenized, and so is any field added to the record in future: only the four named above are exempt, so a new field is redacted by default rather than leaking by default.
+    In a **redacted case package** the appendix is redacted field by field rather than wholesale. Artifact hashes (`sha256`, `sha1`, `prevHash`), the ordinal and the event name survive intact, so a recipient can still check the chain against the evidence they hold — a SHA-256 reveals nothing about a file's contents, name or origin. Paths, source hosts and collector names are tokenized, and so is any field added to the record in future: only the five named above are exempt, so a new field is redacted by default rather than leaking by default.
 
 ---
 

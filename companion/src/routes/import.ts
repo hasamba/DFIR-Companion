@@ -56,7 +56,8 @@ import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
-import { openImportFile } from "./importFileSource.js";
+import { openImportFile, saveReceiptedImport } from "./importFileSource.js";
+import { registerImportReceiptCustody } from "./importReceipt.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
@@ -88,17 +89,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const aiEnabled = async (id: string): Promise<boolean> => (await getControl(id)).enabled;
   const onAiStatus: typeof options.onAiStatus = (id, event) => options.onAiStatus?.(id, event);
   registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
+  registerImportReceiptCustody(app, store, options.custodyStore); // `received` custody entry BEFORE any parser (#2111)
   registerImportAssetHostGuard(app); // 400 a malformed "asset for this import" before either generic route runs (#1496)
 
   const settleDeps = routeSettleDeps(ctx); // the settle wiring the import replay shares (#1891)
 
-  // Poll interval reported by GET /drop-status. Reconstructed from the same env expression createApp
-  // uses (DFIR_DROP_POLL_S, clamped 2..600s) — deterministic, so it matches the watcher's value.
+  // Poll interval for GET /drop-status: createApp's DFIR_DROP_POLL_S expression (clamped 2..600s), so it matches the watcher.
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
   const dropDirOf = (caseId: string): string => join(store.caseDir(caseId), "drop");
-  // Resolve which CONFIGURED tool handles a file extension: built-in preference first (via TOOL_DEFS),
-  // then a custom tool that claims the extension. Rebuilt here (the createApp original read its closure
-  // `customTools`); the live custom-tool list comes from ctx.
+  // Which CONFIGURED tool handles a file extension: built-in first (TOOL_DEFS), then a custom tool
+  // that claims it (the live custom-tool list comes from ctx).
   const resolveToolForExt = (ext: string, configured: Map<string, ToolConfig>): string | null => {
     const builtin = toolForExtension(ext, configured);
     if (builtin) return builtin;
@@ -546,10 +546,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
-      // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
-      // never string-decode is still persisted faithfully) and append the audit line. From the
-      // judged handle (#1834), exclusive (#214), and through the store so custody records it (#2055).
-      const { bytes: size } = await store.saveImportFromHandle(caseId, storedName, src.handle);
+      // Evidence-first: copy the raw bytes (a >512 MB file is never string-decoded), then audit-log it. From
+      // the judged handle (#1834), exclusive (#214), custody-recorded (#2055); 409 if changed since receipt.
+      const saved = await saveReceiptedImport(store, caseId, storedName, src, res, filePath);
+      if (!saved) return;
       await store.appendImport(caseId, {
         caseId,
         sequenceNumber: seq,
@@ -557,7 +557,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         filename: storedName,
         originalName,
         rows: 0,
-        bytes: size,
+        bytes: saved.bytes,
       });
 
       // Same AI-off gate as /import above — rationale on isAiDependent().
@@ -609,7 +609,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Plaso streams from disk; everything else dispatches the in-memory string.
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        section = await beginImportSection(importLock, caseId, options.stateStore, size);
+        section = await beginImportSection(importLock, caseId, options.stateStore, saved.bytes);
         baseline = section.baseline;
         return streaming
           ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)

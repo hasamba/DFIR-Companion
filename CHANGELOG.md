@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Custody at receipt with SHA-1** — every import is hashed (SHA-256 and SHA-1) into chain of custody before any parser runs, rejected files included; custody manifests are now version 2 (closes #2111)
+- **LOLBIN chains filter** — an Evidence Chain toggle shows only LOLBIN processes started by an unusual launcher or graded Medium+, with their parents and children (closes #2113)
+
 ### Fixed
 
 - **Hunt event budget keeps detections** — the hunt-wide event cap counts only rows that stay in the forensic timeline, and once spent later artifacts still import their Medium-and-above rows instead of being skipped

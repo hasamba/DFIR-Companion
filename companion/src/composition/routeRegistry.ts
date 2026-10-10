@@ -178,6 +178,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
       await custody.record(artifact.caseId, {
         artifactPath: artifact.path,
         sha256: artifact.sha256,
+        sha1: artifact.sha1,
         // Only the capture path knows its collector and origin URL; an import is attributed to the
         // companion itself, with the analyst's action already in the activity log.
         collectedBy: artifact.provenance?.collectedBy ?? "companion",

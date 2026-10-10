@@ -33,6 +33,7 @@
   const evTypesEnabled = new Set();
   const evMinSevRank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
   let evMinSev = "Info"; // show nodes at this severity or above; "Info" = show all
+  let evLolbinOnly = false; // "LOLBIN chains" subset (#2113); off = the graph exactly as before
 
   // Kill-chain overlay (#93): recolour nodes by their ATT&CK tactic (the phase the server tagged
   // each node with) instead of by severity. Ordered as the kill chain; the palette runs cool
@@ -112,22 +113,51 @@
   }
   let evGV = null;
 
-  function evBuildElements(view) {
+  // Which nodes and edges the graph shows. Pure, so a test can drive it. Filter order is fixed:
+  // type toggles, then the LOLBIN subset (#2113), then the severity floor; the text filter runs
+  // later inside the graph view on whatever this returns.
+  function evSelectGraph(data, opts) {
     // ran_on rides with the Process-trees toggle — it hangs each tree off its host.
-    const edges0 = evGraphData.edges.filter(
+    let edges0 = data.edges.filter(
       (e) =>
-        evTypesEnabled.has(e.type) ||
-        (e.type === "ran_on" && evTypesEnabled.has("spawned")),
+        opts.types.has(e.type) ||
+        (e.type === "ran_on" && opts.types.has("spawned")),
     );
+    if (opts.lolbinOnly) edges0 = evLolbinSubset(data.nodes, edges0);
     const keep = new Set(edges0.flatMap((e) => [e.source, e.target]));
-    const minRank = evMinSevRank[evMinSev] ?? 4;
-    const nodes = evGraphData.nodes.filter(
+    const minRank = evMinSevRank[opts.minSev] ?? 4;
+    const nodes = data.nodes.filter(
       (n) => keep.has(n.id) && (evMinSevRank[n.maxSeverity] ?? 4) <= minRank,
     );
     const visibleIds = new Set(nodes.map((n) => n.id));
     const edges = edges0.filter(
       (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
     );
+    return { nodes, edges };
+  }
+
+  // The edges of the LOLBIN chains: both ends marked by the server (lolbin hit or context), plus
+  // ran_on edges into a marked node so each chain still reaches its host.
+  function evLolbinSubset(nodes, edges) {
+    const marked = new Set(nodes.filter((n) => n.lolbin).map((n) => n.id));
+    return edges.filter((e) =>
+      e.type === "ran_on"
+        ? marked.has(e.target)
+        : marked.has(e.source) && marked.has(e.target),
+    );
+  }
+
+  // True when the loaded graph has at least one LOLBIN hit (checked on the unfiltered data).
+  function evHasLolbinHit(data) {
+    return !!(data && data.nodes && data.nodes.some((n) => n.lolbin === "hit"));
+  }
+
+  function evBuildElements(view) {
+    const { nodes, edges } = evSelectGraph(evGraphData, {
+      types: evTypesEnabled,
+      lolbinOnly: evLolbinOnly,
+      minSev: evMinSev,
+    });
     const els = [];
     for (const n of nodes) {
       const titleSuffix = n.asset
@@ -143,6 +173,8 @@
           kind: n.kind,
           sev: n.maxSeverity,
           tactic: n.tactic || null,
+          // Marks render only while LOLBIN chains is on: off must be the graph exactly as before.
+          lolbin: evLolbinOnly ? n.lolbin || null : null,
           glyph: glyphDataUri(evNodeGlyph(n, 11, 11, evNodeColor(n))),
         },
       });
@@ -156,6 +188,7 @@
           etype: e.type,
           conf: e.confidence,
           basis: e.basis,
+          launcher: evLolbinOnly && e.launcher ? true : null,
         },
       });
     }
@@ -191,6 +224,20 @@
         "target-arrow-color": "#7f8aa0",
         "arrow-scale": 0.9,
         "line-style": "dashed",
+      },
+    },
+    // LOLBIN chains (#2113): outline the qualifying process, mark the launcher -> LOLBIN edge.
+    {
+      selector: 'node[lolbin = "hit"]',
+      style: { "border-width": 2, "border-color": "#ff5c8a", "border-opacity": 1 },
+    },
+    {
+      selector: "edge[?launcher]",
+      style: {
+        width: 3,
+        "line-color": "#ff5c8a",
+        "target-arrow-color": "#ff5c8a",
+        "line-style": "solid",
       },
     },
     // causal high-confidence: solid orange
@@ -345,6 +392,12 @@
     if (!evGraphData || !evGraphData.edges || !evGraphData.edges.length) {
       el.innerHTML =
         "<div data-safe-style='padding:16px;color:var(--text-muted)'>No causal chains yet — import process-creation events (Sysmon EID 1, THOR, Velociraptor, Cyber Triage, Volatility/Rekall memory) or evidence spanning multiple hosts, then Synthesize.</div>";
+      if (evGV) evGV.destroy();
+      return;
+    }
+    if (evLolbinOnly && !evHasLolbinHit(evGraphData)) {
+      el.innerHTML =
+        "<div data-safe-style='padding:16px;color:var(--text-muted)'>No LOLBIN chains in this case</div>";
       if (evGV) evGV.destroy();
       return;
     }
@@ -529,6 +582,14 @@
         renderEvidenceGraph();
       }),
     );
+    const lolbinBox = document.getElementById("evLolbinOnly");
+    if (lolbinBox) {
+      evLolbinOnly = !!lolbinBox.checked;
+      lolbinBox.addEventListener("change", () => {
+        evLolbinOnly = lolbinBox.checked;
+        renderEvidenceGraph();
+      });
+    }
     document.getElementById("evMinSev").addEventListener("change", (e) => {
       evMinSev = e.target.value;
       renderEvidenceGraph();
@@ -678,6 +739,8 @@
   }
 
   window.lateralPathGroups = lateralPathGroups;
+  window.evSelectGraph = evSelectGraph;
+  window.evLolbinSubset = evLolbinSubset;
   window.loadEvidenceGraph = loadEvidenceGraph;
   window.scheduleEvidenceGraphReload = scheduleEvidenceGraphReload;
   window.hasEvidenceGraph = hasEvidenceGraph;
