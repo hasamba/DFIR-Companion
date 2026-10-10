@@ -84,7 +84,7 @@ export const MAX_EVENTS_PER_HOST = 2_000;
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const PRECURSOR_MARKER = "[ransomware precursors:";
 
-const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 function classOf(techniques: readonly string[]): string | null {
   for (const c of PRECURSOR_CLASSES) {
