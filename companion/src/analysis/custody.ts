@@ -20,11 +20,18 @@ export async function hashFile(path: string): Promise<string> {
 
 /** hashFile on a handle already open — the one a path guard judged (#1834). Leaves it open. */
 export async function hashHandle(handle: FileHandle): Promise<string> {
-  const hash = createHash("sha256");
+  return (await hashHandleBoth(handle)).sha256;
+}
+
+/** SHA-256 and SHA-1 of an open handle in ONE read pass (#2111). SHA-1 is for cross-tool lookup only. */
+export async function hashHandleBoth(handle: FileHandle): Promise<{ sha256: string; sha1: string }> {
+  const sha256 = createHash("sha256");
+  const sha1 = createHash("sha1");
   for await (const chunk of handle.createReadStream({ start: 0, autoClose: false, highWaterMark: 1 << 20 })) {
-    hash.update(chunk as Buffer);
+    sha256.update(chunk as Buffer);
+    sha1.update(chunk as Buffer);
   }
-  return hash.digest("hex");
+  return { sha256: sha256.digest("hex"), sha1: sha1.digest("hex") };
 }
 
 /**
@@ -45,7 +52,7 @@ export function custodyPathPolicy(
 }
 
 /** What re-hashing a recorded path found. `refused` carries the guard's reason; no hash is taken. */
-type Rehash = { sha256: string } | { refused: string } | { missing: true };
+type Rehash = { sha256: string; sha1?: string } | { refused: string } | { missing: true };
 
 const CHANGED_WHILE_CHECKED =
   "refused: the file changed while it was being checked (replaced by a link) — nothing was read";
@@ -60,7 +67,7 @@ async function rehashRecorded(policy: ServerPathPolicy, artifactPath: string): P
     const opened = await openServerPath(artifactPath, policy);
     if (opened.refusal) return { refused: opened.refusal.error };
     try {
-      return { sha256: await hashHandle(opened.file.handle) };
+      return await hashHandleBoth(opened.file.handle);
     } finally {
       await opened.file.handle.close();
     }
@@ -76,8 +83,11 @@ async function rehashRecorded(policy: ServerPathPolicy, artifactPath: string): P
 /**
  * What happened to the artifact. A custody chain is a sequence of events, not a one-off inventory
  * line — "collected" alone cannot answer who has since held or released the evidence.
+ *
+ * `received` (#2111) means the bytes ARRIVED at the companion, before any parser ran. Its path is a
+ * virtual `received:` marker, not a file, so integrity re-hashing skips it.
  */
-export const CUSTODY_EVENTS = ["collected", "accessed", "transferred", "exported"] as const;
+export const CUSTODY_EVENTS = ["collected", "accessed", "transferred", "exported", "received"] as const;
 export type CustodyEvent = (typeof CUSTODY_EVENTS)[number];
 
 export function isCustodyEvent(value: unknown): value is CustodyEvent {
@@ -88,6 +98,10 @@ export interface CustodyRecord {
   /** Always absolute, in both directions — see StoredCustodyRecord for how it is persisted. */
   artifactPath: string;
   sha256: string;
+  /** SHA-1 of the same bytes, for lookup in tools that still key on it (#2111). Absent on older records. */
+  sha1?: string;
+  /** Size of the bytes, set on `received` entries. */
+  bytes?: number;
   collectedBy: string;
   actorId?: string;
   actorDisplayName?: string;
@@ -133,6 +147,8 @@ export interface CustodyMismatch {
   artifactPath: string;
   recordedSha256: string;
   actualSha256: string | null;
+  recordedSha1?: string;
+  actualSha1?: string;
   /** `refused`: the recorded path now names something the server-path guard will not read (#1841). */
   reason: "hash-mismatch" | "missing" | "refused";
   /** Why a `refused` artifact was not read. */
@@ -160,12 +176,18 @@ function hashLine(line: string): string {
   return createHash("sha256").update(line, "utf8").digest("hex");
 }
 
+/** Prefix of the virtual path a `received` entry carries — never a filesystem location (#2111). */
+export const RECEIVED_PATH_PREFIX = "received:";
+export const isReceivedPath = (artifactPath: string): boolean =>
+  artifactPath.startsWith(RECEIVED_PATH_PREFIX);
+
 /**
  * artifactPath expressed relative to caseDir, or null when it lives outside. Shared by the store
  * (which persists the relative form) and the manifest (which publishes it), so both answer
  * "is this artifact inside the case?" the same way.
  */
 export function toCaseRelative(caseDir: string, artifactPath: string): string | null {
+  if (isReceivedPath(artifactPath)) return null;
   const rel = relative(caseDir, artifactPath);
   // "" is the case dir itself; ".." escapes it; an absolute result means a different root entirely.
   if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
@@ -298,7 +320,10 @@ export class CustodyStore {
     opts: { exportedBy: string; destination: string },
   ): Promise<CustodyRecord[]> {
     const existing = await this.load(caseId);
-    const artifactPaths = [...new Set(existing.map((r) => r.artifactPath))];
+    // A receipt names bytes that were never stored; there is nothing to re-hash or to have left.
+    const artifactPaths = [
+      ...new Set(existing.filter((r) => r.event !== "received").map((r) => r.artifactPath)),
+    ];
     const exportedAt = new Date().toISOString();
     const inputs: CustodyRecordInput[] = [];
     const rehash = this.rehasher(caseId);
@@ -311,6 +336,7 @@ export class CustodyStore {
       inputs.push({
         artifactPath,
         sha256: found.sha256,
+        ...(found.sha1 ? { sha1: found.sha1 } : {}),
         caseId,
         event: "exported",
         collectedBy: opts.exportedBy,
@@ -375,6 +401,8 @@ export class CustodyStore {
       inputs.push({
         artifactPath,
         sha256: found.sha256,
+        // Only when this call hashed the file itself; a caller-supplied hash has no SHA-1 to offer.
+        ...(found.sha1 ? { sha1: found.sha1 } : {}),
         caseId,
         event: "transferred",
         collectedBy: opts.transferredBy,
@@ -476,6 +504,8 @@ export class CustodyStore {
     const rehash = this.rehasher(caseId);
     const mismatches: CustodyMismatch[] = [];
     for (const record of records) {
+      // A receipt has no file to re-hash; reading it as "missing" would turn every case red (#2111).
+      if (record.event === "received") continue;
       const found = await rehash(record.artifactPath);
       const base = { artifactPath: record.artifactPath, recordedSha256: record.sha256 };
       if ("missing" in found) mismatches.push({ ...base, actualSha256: null, reason: "missing" });
@@ -484,6 +514,15 @@ export class CustodyStore {
         mismatches.push({ ...base, actualSha256: null, reason: "refused", detail: found.refused });
       else if (found.sha256 !== record.sha256)
         mismatches.push({ ...base, actualSha256: found.sha256, reason: "hash-mismatch" });
+      // SHA-1 is checked only when the record has one, and only reached when SHA-256 agrees.
+      else if (record.sha1 && found.sha1 && found.sha1 !== record.sha1)
+        mismatches.push({
+          ...base,
+          actualSha256: found.sha256,
+          recordedSha1: record.sha1,
+          actualSha1: found.sha1,
+          reason: "hash-mismatch",
+        });
     }
     return mismatches;
   }

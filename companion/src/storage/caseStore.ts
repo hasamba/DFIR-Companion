@@ -70,6 +70,7 @@ export interface StoredArtifact {
   caseId: string;
   path: string;
   sha256: string;
+  sha1?: string;
   kind: "screenshot" | "import";
   provenance?: ArtifactProvenance;
 }
@@ -563,6 +564,7 @@ export class CaseStore {
       caseId,
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha1: createHash("sha1").update(bytes).digest("hex"),
       kind: "screenshot",
       provenance,
     });
@@ -645,6 +647,7 @@ export class CaseStore {
       caseId,
       path,
       sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"),
+      sha1: createHash("sha1").update(Buffer.from(text, "utf8")).digest("hex"),
       kind: "import",
       provenance,
     });
@@ -675,6 +678,7 @@ export class CaseStore {
       caseId,
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha1: createHash("sha1").update(bytes).digest("hex"),
       kind: "import",
       provenance,
     });
@@ -689,11 +693,11 @@ export class CaseStore {
     provenance?: ArtifactProvenance,
   ): Promise<{ path: string; bytes: number }> {
     const path = join(this.importsDir(caseId), filename);
-    const { bytes, sha256 } = await this.withCaseWrite(path, async () => {
+    const { bytes, sha256, sha1 } = await this.withCaseWrite(path, async () => {
       await mkdir(this.importsDir(caseId), { recursive: true });
       return copyHandleHashed(handle, path); // create-exclusive (#214)
     });
-    await this.announceArtifact({ caseId, path, sha256, kind: "import", provenance });
+    await this.announceArtifact({ caseId, path, sha256, sha1, kind: "import", provenance });
     return { path, bytes };
   }
 

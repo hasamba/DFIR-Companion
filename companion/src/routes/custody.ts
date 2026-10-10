@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { custodyPathPolicy, hashHandle, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
+import { custodyPathPolicy, hashHandleBoth, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
 import { buildCustodyManifest } from "../analysis/custodyManifest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
@@ -71,13 +71,13 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     // Companion's config or for other cases' files (#1792). This case's own files stay recordable.
     // The guard opens and judges the handle, and the hash reads that handle — never the path
     // again, so a path swapped after the check cannot be hashed (#1834).
-    let sha256: string;
+    let hashes: { sha256: string; sha1: string };
     try {
       // The same policy verify, export and transfer re-check the path under later (#1841).
       const opened = await openServerPath(artifactPath, custodyPathPolicy(store, caseId));
       if (opened.refusal) return res.status(opened.refusal.status).json({ error: opened.refusal.error });
       try {
-        sha256 = await hashHandle(opened.file.handle);
+        hashes = await hashHandleBoth(opened.file.handle);
       } finally {
         await opened.file.handle.close();
       }
@@ -87,7 +87,8 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     try {
       const record = await options.custodyStore.record(caseId, {
         artifactPath,
-        sha256,
+        sha256: hashes.sha256,
+        sha1: hashes.sha1,
         collectedBy: collectedBy || "analyst",
         collectedAt: new Date().toISOString(),
         source,
@@ -99,7 +100,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         category: "triage",
         action: "custody-record",
         actor: collectedBy || "analyst",
-        detail: `recorded custody for ${artifactPath} (${sha256.slice(0, 12)}…)`,
+        detail: `recorded custody for ${artifactPath} (${hashes.sha256.slice(0, 12)}…)`,
       });
       return res.status(201).json({ ok: true, record });
     } catch (err) {

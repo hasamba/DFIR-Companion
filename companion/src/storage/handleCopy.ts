@@ -13,16 +13,18 @@ import { pipeline } from "node:stream/promises";
 export async function copyHandleHashed(
   handle: FileHandle,
   dest: string,
-): Promise<{ bytes: number; sha256: string }> {
+): Promise<{ bytes: number; sha256: string; sha1: string }> {
   const out = createWriteStream(dest, { flags: "wx" });
   let created = false;
   out.once("open", () => (created = true));
   let bytes = 0;
   const hash = createHash("sha256");
+  const hash1 = createHash("sha1");
   const src = handle.createReadStream({ start: 0, autoClose: false, highWaterMark: 1 << 20 });
   src.on("data", (chunk) => {
     bytes += chunk.length;
     hash.update(chunk);
+    hash1.update(chunk);
   });
   try {
     await pipeline(src, out);
@@ -30,5 +32,5 @@ export async function copyHandleHashed(
     if (created) await unlink(dest).catch(() => undefined);
     throw err;
   }
-  return { bytes, sha256: hash.digest("hex") };
+  return { bytes, sha256: hash.digest("hex"), sha1: hash1.digest("hex") };
 }

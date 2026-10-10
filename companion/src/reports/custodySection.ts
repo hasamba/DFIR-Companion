@@ -38,7 +38,12 @@ export function chainOfCustodySection(custody: CustodyRecord[] | undefined, line
     lines.push(`### ${oneLineMd(name)}`, "");
     lines.push(`- Path: ${codeSpanMd(artifactPath)}`);
     // The hash from the most recent event: what the artifact was last known to be.
-    lines.push(`- SHA-256: ${codeSpanMd(chain[chain.length - 1].sha256)}`, "");
+    const last = chain[chain.length - 1];
+    lines.push(`- SHA-256: ${codeSpanMd(last.sha256)}`);
+    if (last.sha1) lines.push(`- SHA-1: ${codeSpanMd(last.sha1)}`);
+    // A receipt-only artifact arrived and was hashed but its bytes were not kept (#2111).
+    if (chain.every((r) => r.event === "received")) lines.push("- Status: received — not stored");
+    lines.push("");
     lines.push("| # | Event | When (UTC) | By | Source | Trigger |", "| --- | --- | --- | --- | --- | --- |");
     for (const r of chain) {
       lines.push(

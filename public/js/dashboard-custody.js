@@ -35,7 +35,12 @@
       const name = path.split(/[\\/]/).pop() || path;
       const last = chain[chain.length - 1];
       const failed = custodyFailedPaths.has(path);
-      const state = failed
+      // A receipt-only artifact (every event `received`) arrived and was hashed but never stored, so
+      // there is no file to re-hash: say that instead of implying it can be verified (#2111).
+      const receiptOnly = chain.every(r => r.event === "received");
+      const state = receiptOnly
+        ? "<span data-safe-style='color:var(--text-muted)' title='The file was hashed on arrival but its bytes were not stored'>received — not stored</span>"
+        : failed
         ? "<span data-safe-style='color:#e5484d;font-weight:600' title='This artifact no longer matches its recorded hash, or is missing'>&#9888; FAILED</span>"
         : (custodyVerifiedAt ? "<span data-safe-style='color:#46a758' title='Re-hashed and matching'>&#10003; verified</span>" : "<span data-safe-style='color:var(--text-muted)'>&mdash;</span>");
       const events = chain.map(r => `<tr data-safe-style="border-bottom:1px solid var(--border-color)">
@@ -50,11 +55,12 @@
         <summary data-safe-style="padding:5px 8px;cursor:pointer;display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;font-size:12px">
           <span title="${escAttr(path)}">${esc(name)}</span>
           <span data-safe-style="color:var(--text-muted)">${chain.length} event(s)</span>
-          <code data-safe-style="color:var(--text-muted);font-size:11px" title="${escAttr(last.sha256)}">${esc(String(last.sha256).slice(0, 12))}&hellip;</code>
+          <span data-safe-style="display:inline-flex;gap:6px"><code data-safe-style="color:var(--text-muted);font-size:11px" title="SHA-256 ${escAttr(last.sha256)}">${esc(String(last.sha256).slice(0, 12))}&hellip;</code>${last.sha1 ? `<code data-safe-style="color:var(--text-muted);font-size:11px" title="SHA-1 ${escAttr(last.sha1)}">${esc(String(last.sha1).slice(0, 8))}&hellip;</code>` : ""}</span>
           <span>${state}</span>
         </summary>
         <div data-safe-style="padding:4px 8px 10px">
           <div data-safe-style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${esc(path)}</div>
+          <div data-safe-style="font-size:11px;color:var(--text-muted);margin-bottom:4px;word-break:break-all">SHA-256 <code>${esc(last.sha256)}</code>${last.sha1 ? ` &middot; SHA-1 <code>${esc(last.sha1)}</code>` : ""}</div>
           <table data-safe-style="width:100%;font-size:12px;border-collapse:collapse">
             <tr data-safe-style="color:var(--text-muted)"><td data-safe-style="padding:3px 8px">#</td><td data-safe-style="padding:3px 8px">Event</td><td data-safe-style="padding:3px 8px">When</td><td data-safe-style="padding:3px 8px">By</td><td data-safe-style="padding:3px 8px">Source</td><td data-safe-style="padding:3px 8px">Trigger</td></tr>
             ${events}
