@@ -175,6 +175,70 @@ describe("Defender tamper cap — engine start-up (#2084, option A)", () => {
   });
 });
 
+// #2104 item 2 (option 2a, strict): a writer-less Defender Operational 5001 / 5007 row counts as
+// covered only beside a cited stamped engine write on the same host, inside that write's start-up
+// window, with no attacker touch of Defender there then.
+describe("Defender tamper cap — writer-less 5001 / 5007 rows (#2104)", () => {
+  const status = (id: string, ts: string, eid: 5001 | 5007, asset = HOST): ForensicEvent =>
+    ev({
+      id,
+      timestamp: ts,
+      asset,
+      description:
+        eid === 5001
+          ? `Windows Event Log Microsoft Defender Antivirus Real-time Protection scanning for malware was disabled. (EID 5001) @ ${asset}`
+          : `Windows Event Log Microsoft Defender Antivirus Configuration has changed. (EID 5007) @ ${asset}`,
+    });
+  const engineRows = (): ForensicEvent[] =>
+    imported([
+      boot("boot", "2026-10-05T12:00:00Z"),
+      regWrite("rtp", "2026-10-05T12:03:00Z", ENGINE, RTP_KEY, "DWORD (0x00000001)"),
+      regWrite("excl", "2026-10-05T12:04:00Z", ENGINE, EXCL_KEY, "DWORD (0x00000000)"),
+    ]);
+  const mixed = (): ForensicEvent[] => [
+    ...engineRows(),
+    status("s5001", "2026-10-05T12:03:01Z", 5001),
+    status("s5007", "2026-10-05T12:04:01Z", 5007),
+  ];
+
+  it("caps a finding citing stamped engine writes plus 5001 / 5007 in the same window on the same host", () => {
+    const out = grade(f({ relatedEventIds: ["rtp", "excl", "s5001", "s5007"] }), mixed());
+    expect(out.severity).toBe("Medium");
+    expect(timing(out)).toBe("engine-boot");
+  });
+
+  it("keeps Critical when the finding cites only 5001 / 5007 rows", () => {
+    expect(grade(f({ relatedEventIds: ["s5001", "s5007"] }), mixed()).severity).toBe("Critical");
+  });
+
+  it("keeps Critical when the 5001 / 5007 row is on another host", () => {
+    const rows = [...engineRows(), status("s5001", "2026-10-05T12:03:01Z", 5001, "HOST-B")];
+    expect(grade(f({ relatedEventIds: ["rtp", "s5001"] }), rows).severity).toBe("Critical");
+  });
+
+  it("keeps Critical when the 5001 / 5007 row falls outside the start-up window", () => {
+    const late = new Date(Date.parse("2026-10-05T12:00:00Z") + ENGINE_BOOT_WINDOW_MS + 60_000).toISOString();
+    const before = "2026-10-05T11:59:00Z";
+    expect(
+      grade(f({ relatedEventIds: ["rtp", "s"] }), [...engineRows(), status("s", late, 5007)]).severity,
+    ).toBe("Critical");
+    expect(
+      grade(f({ relatedEventIds: ["rtp", "s"] }), [...engineRows(), status("s", before, 5001)]).severity,
+    ).toBe("Critical");
+  });
+
+  it("keeps Critical when an attacker tool touched Defender on that host in the window", () => {
+    const attacker = ev({
+      id: "ps",
+      timestamp: "2026-10-05T12:02:30Z",
+      commandLine: "powershell.exe -c Set-MpPreference -DisableRealtimeMonitoring $true",
+    });
+    const out = grade(f({ relatedEventIds: ["rtp", "excl", "s5001", "s5007"] }), [...mixed(), attacker]);
+    expect(out.severity).toBe("Critical");
+    expect(timing(out)).toBeUndefined();
+  });
+});
+
 describe("Defender tamper cap — protection turned on (#2084, option B)", () => {
   const on = regWrite("on", "2026-10-05T15:00:00Z", PS, RTP_KEY, "DWORD (0x00000000)");
   const off = regWrite("off", "2026-10-05T15:01:00Z", PS, RTP_KEY, "DWORD (0x00000001)");

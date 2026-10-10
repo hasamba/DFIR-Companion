@@ -81,9 +81,22 @@ export function isDefenderEngineWrite(e: ForensicEvent): boolean {
   return !!defenderKeyOf(e) && ENGINE_IMAGE.test(writerImage(e));
 }
 
+// Defender Operational 5001 (real-time protection disabled) / 5007 (configuration changed): the
+// importers write `(EID n)`, `(EID n Defender)` or `(EID n, Microsoft Defender)`; the label or the
+// rendered message names Defender. A row with no Defender marker is not read as one.
+const STATUS_EID = eidRe("5001|5007");
+const DEFENDER_NAME = /\bdefender\b/i;
+
+/** True for a writer-less Defender Operational 5001 / 5007 row (#2104). */
+export function isDefenderStatusRow(e: ForensicEvent): boolean {
+  const text = rowText(e);
+  return STATUS_EID.test(text) && DEFENDER_NAME.test(text) && !writerImage(e);
+}
+
 /** True when something other than the engine touched Defender: a cmdlet, a tool, a key write. */
 export function isAttackerDefenderTouch(e: ForensicEvent): boolean {
-  if (isDefenderEngineWrite(e)) return false;
+  // Defender's own record of a change names no tool; the change's value may name one (an exclusion).
+  if (isDefenderEngineWrite(e) || isDefenderStatusRow(e)) return false;
   const text = rowText(e);
   if (DEFENDER_CMDLET.test(text) || REMOVE_DEFINITIONS.test(text)) return true;
   if (defenderKeyOf(e)) return true;
@@ -177,15 +190,29 @@ export function stampEngineBoot(rows: readonly ForensicEvent[]): ForensicEvent[]
 }
 
 /**
- * True when every row is a stamped engine write and no row in `context` shows an attacker tool
- * touching Defender on that row's host inside its start-up window (a later import can bring one).
+ * True when every row is covered and no row in `context` shows an attacker tool touching Defender
+ * on that row's host inside its start-up window (a later import can bring one). Covered: a stamped
+ * engine write; or a writer-less 5001 / 5007 row (#2104) that falls inside the start-up window of a
+ * clear stamped engine write among `rows` on the same host. 5001 / 5007 rows alone never cap.
  */
 export function engineBootOnly(rows: readonly ForensicEvent[], context: readonly ForensicEvent[]): boolean {
   if (!rows.length) return false;
   const touches = timesByHost(context, isAttackerDefenderTouch);
-  return rows.every((e) => {
+  const clearBoots = new Map<string, number[]>();
+  for (const e of rows) {
     const rec = engineBootOf(e);
-    if (!rec || !isDefenderEngineWrite(e)) return false;
-    return !touchedIn(touches.get(assetKey(e)), Date.parse(rec.bootAt));
+    if (!rec || !isDefenderEngineWrite(e)) continue;
+    const host = assetKey(e);
+    const bootAt = Date.parse(rec.bootAt);
+    if (!touchedIn(touches.get(host), bootAt))
+      clearBoots.set(host, [...(clearBoots.get(host) ?? []), bootAt]);
+  }
+  return rows.every((e) => {
+    const host = assetKey(e);
+    const rec = engineBootOf(e);
+    if (rec && isDefenderEngineWrite(e)) return (clearBoots.get(host) ?? []).includes(Date.parse(rec.bootAt));
+    if (!isDefenderStatusRow(e)) return false;
+    const at = [Date.parse(e.timestamp)]; // NaN never falls in a window
+    return (clearBoots.get(host) ?? []).some((bootAt) => touchedIn(at, bootAt));
   });
 }

@@ -12,6 +12,7 @@ import {
   isDefenderEngineWrite,
   isAttackerDefenderTouch,
   isProtectionOnRow,
+  isDefenderStatusRow,
   stampEngineBoot,
   engineBootOf,
 } from "../../src/analysis/defenderEngineBoot.js";
@@ -247,5 +248,59 @@ describe("stampEngineBoot (#2084)", () => {
     const once = stampEngineBoot(apt29());
     const rows = apt29().map((e) => once.find((x) => x.id === e.id) ?? e);
     expect(stampEngineBoot(rows)).toEqual([]);
+  });
+});
+
+// #2104 item 2: Defender Operational 5001 (real-time protection disabled) and 5007 (configuration
+// changed) name no writer. The SIEM importer renders the record's message as the label with
+// `(EID n)` after it; Hayabusa writes `(EID n Defender)`; the decoded Defender rows say
+// `(EID n, Microsoft Defender)`.
+describe("isDefenderStatusRow (#2104)", () => {
+  const msg5007 =
+    "Microsoft Defender Antivirus Configuration has changed. If this is an unexpected event you should review the settings as this may be the result of malware.\n\tOld value: \n\tNew value: HKLM\\SOFTWARE\\Microsoft\\Windows Defender\\Exclusions\\Processes\\powershell.exe = 0x0";
+  const siem = (eid: number, message: string): ForensicEvent =>
+    parseSiemExport(
+      JSON.stringify([
+        {
+          "@timestamp": "2020-05-02T03:04:00Z",
+          log_name: "Microsoft-Windows-Windows Defender/Operational",
+          computer_name: HOST,
+          event_id: eid,
+          message,
+        },
+      ]),
+    ).events[0];
+
+  it("is true for the 5001 / 5007 rows the importers build from Defender Operational", () => {
+    const rtpOff = "Microsoft Defender Antivirus Real-time Protection scanning for malware was disabled.";
+    expect(isDefenderStatusRow(siem(5001, rtpOff))).toBe(true);
+    expect(isDefenderStatusRow(siem(5007, msg5007))).toBe(true);
+    expect(
+      isDefenderStatusRow(ev({ description: "Hayabusa: Defender Config Change (EID 5007 Defender)" })),
+    ).toBe(true);
+    expect(
+      isDefenderStatusRow(
+        ev({ description: "Real-time Protection Disabled (EID 5001, Microsoft Defender)" }),
+      ),
+    ).toBe(true);
+  });
+  it("is false without a Defender marker, for another event id, or for a row that names a writer", () => {
+    expect(isDefenderStatusRow(ev({ description: "Windows Event Log Event 5001 (EID 5001) @ HOST-A" }))).toBe(
+      false,
+    );
+    expect(isDefenderStatusRow(ev({ description: "Windows Defender something (EID 50010)" }))).toBe(false);
+    expect(isDefenderStatusRow(ev({ description: "Windows Defender scan started (EID 1000)" }))).toBe(false);
+    expect(isDefenderStatusRow(regWrite("r", "2026-10-05T12:00:00Z", ENGINE, RTP_KEY))).toBe(false);
+    const named = ev({ description: "Windows Defender change (EID 5007) - Image=C:\\Temp\\x.exe" });
+    expect(isDefenderStatusRow(named)).toBe(false);
+  });
+  it("is never itself an attacker touch, even when its new value names powershell.exe", () => {
+    expect(isAttackerDefenderTouch(siem(5007, msg5007))).toBe(false);
+    const hayabusa = ev({
+      description:
+        "Hayabusa: Defender Config Change (EID 5007 Defender) — New Value=HKLM\\SOFTWARE\\Microsoft\\Windows Defender\\Exclusions\\Processes\\powershell.exe = 0x0",
+    });
+    expect(isDefenderStatusRow(hayabusa)).toBe(true);
+    expect(isAttackerDefenderTouch(hayabusa)).toBe(false);
   });
 });
