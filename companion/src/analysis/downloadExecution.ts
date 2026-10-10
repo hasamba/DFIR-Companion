@@ -92,7 +92,7 @@ const COMMANDS_PER_STREAM_MAX = 4;
 const REFERENCES_PER_COMMAND_MAX = 4;
 const NOTE_MAX = 900;
 
-const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 // ───────────────────────────── paths ─────────────────────────────
 

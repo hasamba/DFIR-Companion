@@ -31,6 +31,7 @@ import type { LearnedPatternStore } from "../learnedPatternStore.js";
 import type { NotebookStore } from "../notebookStore.js";
 import type { OcrRunner } from "../ocrRedact.js";
 import type { OperationalMetricsStore } from "../operationalMetrics.js";
+import type { SafetyStopCapture } from "./safetyStopCapture.js";
 import type { PresidioClient } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
 import type { PlaybookStore } from "../playbookStore.js";
@@ -151,6 +152,8 @@ export interface PipelineOptions {
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).
   aiCostStore?: AiCostStore;
   operationalMetrics?: OperationalMetricsStore;
+  // #2083: DFIR_AI_CAPTURE_SAFETY_STOPS, read at startup. Absent → a refused prompt is never saved.
+  safetyStopCapture?: SafetyStopCapture;
   correlationProfileStore?: CorrelationProfileStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.

@@ -42,7 +42,7 @@ const TRANSFER_VERB = /-urlcache\b|-verifyctl\b|-decode(?:hex)?\b|-encode(?:hex)
 const CERT_ADMIN_VERB =
   /-store\b|-addstore\b|-delstore\b|-repairstore\b|-verify\b|-dump\b|-viewstore\b|-ca\b|-template\b|-csp\b|-getreg\b/i;
 
-const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 /** True when this event is a certutil invocation that moves or decodes data. */
 export function isCertutilTransfer(image: string, cmd: string): boolean {

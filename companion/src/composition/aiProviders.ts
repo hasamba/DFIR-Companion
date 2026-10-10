@@ -65,6 +65,7 @@ import { FindingSeverityRestoreStore } from "../analysis/findingSeverityRestore.
 import type { StateLock } from "../analysis/stateLock.js";
 import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
+import type { SafetyStopCapture } from "../analysis/ai/safetyStopCapture.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { Logger } from "../logging/logger.js";
 
@@ -316,6 +317,8 @@ export interface RuntimePipelineParams {
   stateLock?: StateLock;
   analysisRunStore?: AnalysisRunStore;
   operationalMetrics?: OperationalMetricsStore;
+  // #2083: DFIR_AI_CAPTURE_SAFETY_STOPS — absent (the default) → a refused prompt is never saved.
+  safetyStopCapture?: SafetyStopCapture;
   // Global, file-backed fleet roster — threaded rather than built inline because it is not a
   // per-case CaseStore store. Feeds host alias resolution + the pre-synthesis merge gate.
   velociraptorClientStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["velociraptorClientStore"];
@@ -363,6 +366,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     analysisRunStore: params.analysisRunStore,
     operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),
+    safetyStopCapture: params.safetyStopCapture,
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store), // #140 auto-generate hypotheses on synthesis

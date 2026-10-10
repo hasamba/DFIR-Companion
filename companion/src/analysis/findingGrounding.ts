@@ -420,14 +420,14 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       confidenceReason = appendReason(confidenceReason, echoOnlyReason(echoOnly));
     }
 
-    // Defender-tamper timing (#1941): console history only, or every row well before the burst.
+    // Defender-tamper timing (#1941): console history only, or every row well before the burst; #2084:
+    // the engine's own start-up write, or a change that only turns protection on.
     // Records the marker at any severity (like the decoy gate), floors only High/Critical, never raises.
-    const tamperTiming = tamperCap.tamperTimingOf(f, supporting, burst);
+    const tamperTiming = tamperCap.tamperTimingOf(f, supporting, burst, scopedEvents);
     if (tamperTiming) {
       if (severity === "Critical" || severity === "High")
         lowerTo(tamperCap.TAMPER_CAP_SEVERITY, "tamper-timing");
-      const note =
-        tamperTiming === "date-unknown" ? tamperCap.DATE_UNKNOWN_REASON : tamperCap.BEFORE_INCIDENT_REASON;
+      const note = tamperCap.TAMPER_TIMING_REASONS[tamperTiming];
       if (!(confidenceReason ?? "").includes(note)) confidenceReason = appendReason(confidenceReason, note);
     }
 

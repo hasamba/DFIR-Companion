@@ -26,9 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Safety-stop fallback for more AI steps** — the default referee, Explain event and view summaries fall back to the fallback model on a safety stop and name the model that answered (part of #2083)
 - **Referee no-call deltas listed** — after "follow the referee" the second-opinion panel lists each delta the referee made no call on, with accept and reject (closes #2081)
 - **JEV cap warning** — a capped missed-evidence review shows how much of the archive it read and what a full read may cost, prominently when it found nothing (closes #2077)
+- **Safety stops on every API provider** — Anthropic, OpenAI-compatible and Gemini refusals take the safety retries and fallback instead of a blind retry (part of #2083)
+- **Capture refused prompts** — opt-in `DFIR_AI_CAPTURE_SAFETY_STOPS` saves a safety-stopped prompt into the case folder for replay (part of #2083)
+- **Packet captures documented** — the manual explains importing .pcap/.pcapng through the Suricata tool and that raw flows stay in the super-timeline (closes #2095)
 
 ### Fixed
 
+- **Defender start-up policy load** — Defender's own engine changing its settings within 10 minutes of start-up, with no attacker tool on Defender, is capped to Medium; turning protection on is never tampering (closes #2084)
+- **Defender 5001/5007 in a start-up window** — a writer-less Defender 5001/5007 row counts toward the start-up cap only beside a stamped engine write on the same host and window (part of #2104)
+- **Codex safety stops** — a Codex refusal or usage-policy rejection is a safety stop, so it is captured and falls back instead of being retried (closes #2105)
+- **Log4Shell pass speed** — the JNDI-injection pass indexes the timeline once instead of rescanning per pair, with identical results (closes #2102)
+- **Severity rank maps typed** — every local severity rank map is checked by the compiler for all five severities (closes #2101)
 - **Sentinel timestamps** — Sentinel/Log Analytics exports (SecurityEvent, OfficeActivity) are dated from `TimeGenerated` (closes #2096)
 - **Sysmon clock dispute** — a Sysmon row whose UtcTime is over an hour from the record time is dated by the record time and flagged (closes #2089)
 - **Exfiltration chain tagging** — renamed 7-Zip archiving and scripted FTP/BITS uploads are tagged, so the archive → upload pairing fires (closes #2090)

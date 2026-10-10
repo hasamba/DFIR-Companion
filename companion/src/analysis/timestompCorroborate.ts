@@ -227,7 +227,7 @@ interface TimelineEventShape {
   fileModified?: string;
 }
 
-const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 /**
  * Weigh every MFT-derived timestomp signal against what other artifacts recorded for the same file.

@@ -35,6 +35,7 @@ import {
   resolvePresidioTimeoutMs,
 } from "../analysis/presidio.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
+import { safetyStopCaptureFromEnv } from "../analysis/ai/safetyStopCapture.js";
 import { isLocalAiProvider } from "../analysis/anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import { findingEventsFromDiff } from "../analysis/notifications.js";
@@ -143,9 +144,16 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     logLine(
       `[synthesis] fallback model "${synthesisFallback.label}" (${synthesisFallback.provider.name}) — used when a safety filter stops a synthesis`,
     );
+  // #2083: opt-in, read once at startup. Off (the default) → nothing is wired and nothing is saved.
+  const safetyStopCapture = safetyStopCaptureFromEnv(store, process.env.DFIR_AI_CAPTURE_SAFETY_STOPS);
+  if (safetyStopCapture)
+    logLine(
+      "[ai] safety-stop capture on — a refused prompt is saved to the case's state/safety-stops folder",
+    );
   const wiredPipeline = buildRuntimePipeline({
     provider,
     synthesisProvider,
+    ...(safetyStopCapture ? { safetyStopCapture } : {}),
     ...(synthesisFallback ? { synthesisFallback } : {}),
     // #1740: read once, like the fallback model, so Settings' "restart required" stays true.
     synthesisSafetyRetries: safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),

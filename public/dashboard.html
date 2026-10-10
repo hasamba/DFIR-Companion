@@ -1697,6 +1697,7 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_SAFETY_RETRIES">Safety-stop retries<span class="sfield-hint">DFIR_AI_SYNTH_SAFETY_RETRIES — times a safety-stopped synthesis asks the same model again before the fallback (0–3, default 1). 0 = no same-model retry: switch to the fallback if set, otherwise fail</span></label><input id="env-DFIR_AI_SYNTH_SAFETY_RETRIES" type="number" min="0" max="3" step="1" placeholder="1" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_CAPTURE_SAFETY_STOPS">Save safety-stopped prompts<span class="sfield-hint">DFIR_AI_CAPTURE_SAFETY_STOPS — when a model's safety filter stops an answer, save the exact prompt it was sent (with the AI step, provider, model and time) in the case folder under state/safety-stops, so it can be replayed later. The file holds case evidence (masked when anonymisation is on). Restart after changing</span></label><select id="env-DFIR_AI_CAPTURE_SAFETY_STOPS"><option value="">off (default)</option><option value="1">on</option></select></div>
         </div>
         <div id="codex-status" class="sfield" data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">

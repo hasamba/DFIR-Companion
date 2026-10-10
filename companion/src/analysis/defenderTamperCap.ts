@@ -10,13 +10,24 @@
 // finding's grade to Medium and marks why. It never changes a row's severity: the rows stay in the
 // forensic timeline as leads.
 //
+// #2084 adds two more: the Defender engine loading its own policy at start-up (the anchor is recorded
+// at import, defenderEngineBoot.ts), and a change that only turns protection ON, which is never
+// tampering whoever made it, so such rows never support the finding.
+//
 // The marker lives here, not in stateTypes.ts (at its size ledger): `FindingDefenderCap` is the one
 // extra field, and `findingTamperTiming` is the one reader.
 
 import type { Finding, ForensicEvent, Severity } from "./stateTypes.js";
 import { capabilityTechniques } from "./findingTextTechniques.js";
+import { ENGINE_BOOT_WINDOW_MS, engineBootOnly, isProtectionOnRow } from "./defenderEngineBoot.js";
 
-export type TamperTiming = "date-unknown" | "before-incident";
+export type TamperTiming = "date-unknown" | "before-incident" | "engine-boot" | "protection-on";
+const TIMINGS: ReadonlySet<string> = new Set([
+  "date-unknown",
+  "before-incident",
+  "engine-boot",
+  "protection-on",
+]);
 export interface FindingDefenderCap {
   tamperTiming?: TamperTiming;
 }
@@ -31,6 +42,18 @@ export const DATE_UNKNOWN_REASON =
   "capped: the only evidence is PowerShell console history, which has no per-line time — the row carries the history file's time, so the command may be much older than the incident; date unknown";
 export const BEFORE_INCIDENT_REASON =
   "capped: every cited event is dated more than 48 h before the main activity burst — before the incident; keep it as a lead";
+
+export const ENGINE_BOOT_REASON = `capped: Defender loading its own policy at start-up — kept as a lead (every cited change was written by the Defender engine within ${ENGINE_BOOT_WINDOW_MS / 60_000} min of the host starting, and no attacker tool touched Defender on that host then)`;
+export const PROTECTION_ON_REASON =
+  "capped: every cited change turns Defender protection on — that is not tampering; kept as a lead";
+
+/** The confidence-reason note for each timing. */
+export const TAMPER_TIMING_REASONS: Readonly<Record<TamperTiming, string>> = {
+  "date-unknown": DATE_UNKNOWN_REASON,
+  "before-incident": BEFORE_INCIDENT_REASON,
+  "engine-boot": ENGINE_BOOT_REASON,
+  "protection-on": PROTECTION_ON_REASON,
+};
 
 const PSREADLINE_ARTIFACT = /psreadline/i;
 const HISTORY_FILE = /(?:^|[\\/])consolehost_history\.txt$/i;
@@ -83,19 +106,26 @@ export function isTamperFinding(f: Finding): boolean {
 }
 
 /**
- * Why a tamper finding cannot be placed in the incident, or null. `date-unknown` when every cited row
- * is console history; `before-incident` when every cited row is dated more than 48 h before the burst.
+ * Why a tamper finding cannot be placed in the incident, or null. Rows that only turn protection on
+ * never support it: `protection-on` when that is all it cites. Of the rest: `date-unknown` when every
+ * one is console history; `engine-boot` when every one is the engine's own start-up write and no row
+ * in `context` (the in-scope timeline) shows an attacker tool touching Defender then;
+ * `before-incident` when every one is dated more than 48 h before the burst.
  */
 export function tamperTimingOf(
   f: Finding,
   supporting: readonly ForensicEvent[],
   burst: IncidentBurst | undefined,
+  context: readonly ForensicEvent[] = supporting,
 ): TamperTiming | null {
   if (!supporting.length || !isTamperFinding(f)) return null;
-  if (supporting.every(isConsoleHistoryRow)) return "date-unknown";
+  const cited = supporting.filter((e) => !isProtectionOnRow(e));
+  if (!cited.length) return "protection-on";
+  if (cited.every(isConsoleHistoryRow)) return "date-unknown";
+  if (engineBootOnly(cited, context)) return "engine-boot";
   if (!burst) return null;
   const cutoff = burst.start - BEFORE_BURST_MARGIN_MS;
-  const before = supporting.every((e) => {
+  const before = cited.every((e) => {
     const t = Date.parse(e.timestamp);
     return Number.isFinite(t) && t < cutoff;
   });
@@ -105,5 +135,5 @@ export function tamperTimingOf(
 /** The finding's tamper-timing marker, when it carries a valid one. */
 export function findingTamperTiming(f: Finding): TamperTiming | undefined {
   const t = (f as Finding & FindingDefenderCap).tamperTiming;
-  return t === "date-unknown" || t === "before-incident" ? t : undefined;
+  return typeof t === "string" && TIMINGS.has(t) ? t : undefined;
 }

@@ -141,3 +141,28 @@ describe("GeminiProvider — output-token limit (finishReason MAX_TOKENS)", () =
     expect((err as ProviderError).message).toBe("Gemini returned no content");
   });
 });
+
+// #2083: Gemini's safety block must raise the same safety_stop Claude Code raises, so the
+// synthesis safety retries and fallback model run instead of a "no content" error being retried.
+describe("GeminiProvider — safety stops (#2083)", () => {
+  const run = (body: unknown) =>
+    new GeminiProvider({ apiKey: "k", model: "gemini-2.5-pro", fetchFn: async () => jsonResponse(body) })
+      .analyze({ systemPrompt: "s", userPrompt: "x", images: [] })
+      .catch((e: unknown) => e);
+
+  it.each(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"])(
+    "raises safety_stop on finishReason %s",
+    async (finishReason) => {
+      const err = await run({ candidates: [{ content: { parts: [{ text: "{" }] }, finishReason }] });
+      expect(err).toBeInstanceOf(ProviderError);
+      expect((err as ProviderError).kind).toBe("safety_stop");
+      expect((err as ProviderError).message).toContain("Gemini (gemini-2.5-pro)");
+    },
+  );
+
+  it("raises safety_stop when the prompt itself was blocked (promptFeedback.blockReason)", async () => {
+    const err = await run({ promptFeedback: { blockReason: "SAFETY" } });
+    expect((err as ProviderError).kind).toBe("safety_stop");
+    expect((err as ProviderError).message).toContain("SAFETY");
+  });
+});

@@ -55,9 +55,12 @@ function baseName(path: string | undefined): string {
   return tail.replace(/\.exe$/i, "");
 }
 
+/** One compiled RegExp per field name: descField runs per row, so it must not rebuild one each call. */
+const FIELD_RES = new Map<string, RegExp>();
+
 function descField(e: ForensicEvent, name: string): string | undefined {
-  const m = new RegExp(`\\b${name}=([^\\s]+)`).exec((e.description ?? "").slice(0, MAX_FIELD));
-  return m?.[1];
+  const re = FIELD_RES.get(name) ?? FIELD_RES.set(name, new RegExp(`\\b${name}=([^\\s]+)`)).get(name)!;
+  return re.exec((e.description ?? "").slice(0, MAX_FIELD))?.[1];
 }
 
 function jvmName(e: ForensicEvent): string | undefined {
@@ -121,18 +124,67 @@ function noteFor(l: Lookup, c: Child, fetches: readonly string[]): string {
   );
 }
 
-/** Other ports the same JVM reached on the lookup's destination, inside the window. */
-function classFetches(l: Lookup, events: readonly ForensicEvent[]): string[] {
-  const out = new Set<string>();
+/** A JVM row with a destination: a candidate for a lookup's class fetch. */
+interface JvmConnection {
+  event: ForensicEvent;
+  port: number;
+  time: number;
+}
+
+const connectionKey = (host: string, ip: string): string => `${host}\u0000${ip}`;
+
+/** Every JVM row with a destination IP and port, bucketed by host + IP, in timeline order. */
+function jvmConnections(events: readonly ForensicEvent[]): Map<string, JvmConnection[]> {
+  const out = new Map<string, JvmConnection[]>();
   for (const e of events) {
-    if (e === l.event || !jvmName(e) || shortHost(e.asset) !== l.host) continue;
+    if (!jvmName(e)) continue;
     const ip = e.dstIp ?? descField(e, "DestinationIp");
     const port = e.port ?? Number(descField(e, "DestinationPort"));
-    const dt = Date.parse(e.timestamp) - l.time;
-    if (ip === l.dstIp && port && port !== l.port && dt >= 0 && dt <= JNDI_WINDOW_MS)
-      out.add(`${ip}:${port}`);
+    if (!ip || !port) continue;
+    const key = connectionKey(shortHost(e.asset), ip);
+    const row = { event: e, port, time: Date.parse(e.timestamp) };
+    (out.get(key) ?? out.set(key, []).get(key)!).push(row);
+  }
+  return out;
+}
+
+/** Other ports the same JVM reached on the lookup's destination, inside the window. */
+function classFetches(l: Lookup, connections: ReadonlyMap<string, readonly JvmConnection[]>): string[] {
+  const out = new Set<string>();
+  for (const r of connections.get(connectionKey(l.host, l.dstIp)) ?? []) {
+    const dt = r.time - l.time;
+    if (r.event !== l.event && r.port !== l.port && dt >= 0 && dt <= JNDI_WINDOW_MS)
+      out.add(`${l.dstIp}:${r.port}`);
   }
   return [...out].slice(0, 5);
+}
+
+/** Lookups per host, oldest first (a stable sort, so ties keep timeline order). */
+function lookupsByHost(lookups: readonly Lookup[]): Map<string, Lookup[]> {
+  const out = new Map<string, Lookup[]>();
+  for (const l of lookups) (out.get(l.host) ?? out.set(l.host, []).get(l.host)!).push(l);
+  for (const rows of out.values()) rows.sort((a, b) => a.time - b.time);
+  return out;
+}
+
+/** The first index in a time-sorted list whose time fails `before`. */
+function firstIndex(rows: readonly Lookup[], before: (time: number) => boolean): number {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (before(rows[mid].time)) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** The host's lookups with c.time - window <= time <= c.time, newest first (ties keep timeline order). */
+function priorLookups(c: Child, byHost: ReadonlyMap<string, readonly Lookup[]>): Lookup[] {
+  const rows = byHost.get(c.host) ?? [];
+  const from = firstIndex(rows, (t) => c.time - t > JNDI_WINDOW_MS);
+  const to = firstIndex(rows, (t) => t <= c.time);
+  return rows.slice(from, to).sort((a, b) => b.time - a.time);
 }
 
 function raise(e: ForensicEvent, note: string): ForensicEvent {
@@ -152,15 +204,22 @@ export function markJndiInjection(events: readonly ForensicEvent[]): ForensicEve
   const lookups = events.map(asLookup).filter((l): l is Lookup => l !== undefined);
   if (lookups.length === 0) return events as ForensicEvent[];
   const children = events.map(asChild).filter((c): c is Child => c !== undefined);
+  if (children.length === 0) return events as ForensicEvent[];
+  // Index once, then join per child (#2102): a per-pair rescan of the timeline was O(C x L x n).
+  const byHost = lookupsByHost(lookups);
+  const connections = jvmConnections(events);
+  const fetchesOf = new Map<Lookup, string[]>();
+  const fetches = (l: Lookup): string[] =>
+    fetchesOf.get(l) ?? fetchesOf.set(l, classFetches(l, connections)).get(l)!;
   const notes = new Map<ForensicEvent, string>();
   for (const c of children) {
-    const prior = lookups
-      .filter((l) => l.host === c.host && c.time >= l.time && c.time - l.time <= JNDI_WINDOW_MS)
-      .sort((a, b) => b.time - a.time);
-    for (const [i, l] of prior.entries()) {
-      const note = noteFor(l, c, classFetches(l, events));
-      if (!notes.has(l.event)) notes.set(l.event, note);
-      if (i === 0 && !notes.has(c.event)) notes.set(c.event, note);
+    for (const [i, l] of priorLookups(c, byHost).entries()) {
+      const wantLookup = !notes.has(l.event);
+      const wantChild = i === 0 && !notes.has(c.event);
+      if (!wantLookup && !wantChild) continue;
+      const note = noteFor(l, c, fetches(l));
+      if (wantLookup) notes.set(l.event, note);
+      if (wantChild) notes.set(c.event, note);
     }
   }
   let changed = false;

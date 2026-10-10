@@ -11,7 +11,7 @@ import { downgradeGenericSysmonRegistry } from "../analysis/genericSysmonRegistr
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
-import { capBuildTimeScoped, capLabSetupScoped } from "./importSettleCap.js";
+import { capBuildTimeScoped, capLabSetupScoped, stampEngineBootScoped } from "./importSettleCap.js";
 import { flagCaseLookalikesScoped } from "./importSettleLookalike.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
@@ -224,6 +224,9 @@ export async function settleForensicImport(
   const candidates = [...added, ...stamped.touched];
   const labCapped = await lock(caseId, () => capLabSetupScoped(store, caseId, { scanAll, candidates }));
   changed ||= labCapped > 0;
+  // Defender engine start-up (#2084): the Info start-up rows are still here; demote is next.
+  const engineBoot = await lock(caseId, () => stampEngineBootScoped(store, caseId, candidates));
+  changed ||= engineBoot > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
   // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).

@@ -6,6 +6,7 @@ import {
   type ProviderUsage,
   type ProviderErrorKind,
   ProviderError,
+  safetyStopError,
 } from "./provider.js";
 import { codexFailure } from "./codexErrors.js";
 import { type CodexRunner, defaultCodexRunner } from "./codexRunner.js";
@@ -80,6 +81,12 @@ export class CodexProvider implements AIProvider {
     if (run.timedOut) throw new ProviderError(`Codex timed out after ${this.timeoutMs}ms`, "timeout");
 
     const parsed = parseCodexOutput(run.stdout);
+    const label = `Codex (${this.model || "default model"})`;
+    // #2105: a refusal is the safety filter — the same safety_stop the other providers raise, so the
+    // synthesis safety retries and fallback run and the generic retry never resends the evidence.
+    if (parsed.refusal !== undefined) {
+      throw safetyStopError(label, `Refusal: ${parsed.refusal.replace(/\s+/g, " ").trim().slice(0, 300)}`);
+    }
     if (!parsed.text) {
       // Codex's own `error` events are far more useful than stderr, which carries routine noise
       // ("Reading prompt from stdin...", MCP-client startup warnings) even on a fully successful
@@ -88,6 +95,8 @@ export class CodexProvider implements AIProvider {
         // Warning-only events (MCP startup, service tier, model metadata) are dropped and the API's
         // JSON refusal is unwrapped, so the real cause is not cut off behind them (#2042).
         const failure = codexFailure(parsed.errors);
+        if (failure.kind === "safety_stop")
+          throw safetyStopError(label, `Codex reported: ${failure.message}`);
         throw new ProviderError(
           `Codex: ${failure.message}`,
           failure.kind ?? classifyKind(run.code, failure.message),
@@ -119,12 +128,33 @@ interface ParsedCodex {
   text?: string;
   usage?: ProviderUsage;
   errors: string[];
+  refusal?: string; // the model's refusal text (#2105); its presence is the safety signal
+}
+
+// The Responses API's refusal shapes, as OpenAI documents them (#2105): a `refusal` content part
+// `{type: "refusal", refusal: "…"}` inside a message's content, and the streamed
+// `response.refusal.delta` (`delta`) / `response.refusal.done` (`refusal`) events. Matched on the
+// type, never on the wording of an answer.
+const REFUSAL_PART_TYPES = new Set(["refusal", "response.refusal.done"]);
+
+function refusalText(payload: Record<string, unknown>): string | undefined {
+  const type = typeof payload.type === "string" ? payload.type : "";
+  if (REFUSAL_PART_TYPES.has(type)) return firstString(payload.refusal);
+  if (type === "response.refusal.delta") return firstString(payload.delta);
+  const parts = Array.isArray(payload.content) ? payload.content : [];
+  for (const part of parts) {
+    const r = asRecord(part);
+    const text = r?.type === "refusal" ? firstString(r.refusal) : undefined;
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function parseCodexOutput(stdout: string): ParsedCodex {
   let agentText: string | undefined; // from an explicit agent_message — the actual answer
   let anyText: string | undefined; // fallback: any other message-like event
   let usage: ProviderUsage | undefined;
+  let refusal: string | undefined;
   const errors: string[] = [];
   for (const line of stdout.split("\n")) {
     const t = line.trim();
@@ -151,6 +181,11 @@ function parseCodexOutput(stdout: string): ParsedCodex {
       if (m) errors.push(m);
       continue;
     }
+    const refused = refusalText(payload);
+    if (refused) {
+      refusal = refused; // a later .done replaces the partial delta
+      continue;
+    }
     const msg = extractText(payload);
     if (msg) {
       // Prefer a real agent_message: a turn also emits reasoning / command / tool items that carry
@@ -173,7 +208,7 @@ function parseCodexOutput(stdout: string): ParsedCodex {
       .trim();
     if (raw) text = raw;
   }
-  return { ...(text ? { text } : {}), ...(usage ? { usage } : {}), errors };
+  return { ...(text ? { text } : {}), ...(usage ? { usage } : {}), ...(refusal ? { refusal } : {}), errors };
 }
 
 function asRecord(v: unknown): Record<string, unknown> | undefined {

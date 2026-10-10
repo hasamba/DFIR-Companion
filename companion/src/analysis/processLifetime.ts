@@ -338,7 +338,7 @@ export function markProcessLifetimeSignals<T extends TimelineProcessEvent>(event
     if (n && /executable memory region flagged|malfind/i.test(e.description ?? "")) injected.add(n);
   }
 
-  const rank: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+  const rank: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
   return events.map((e) => {
     const name = (e.processName ?? "").toLowerCase();

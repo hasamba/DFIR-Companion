@@ -75,6 +75,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get operationalMetrics() {
       return opts.operationalMetrics;
     },
+    get safetyStopCapture() {
+      return opts.safetyStopCapture;
+    },
     get correlationProfileStore() {
       return opts.correlationProfileStore;
     },
