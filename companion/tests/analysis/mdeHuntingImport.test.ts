@@ -228,4 +228,43 @@ describe("parseAdditionalFields (#2097)", () => {
     expect(parseAdditionalFields(undefined)).toEqual({});
     expect(parseAdditionalFields(42)).toEqual({});
   });
+  it("keeps apostrophes in a double-quoted repr value", () => {
+    expect(parseAdditionalFields(`{'SearchFilter': "(cn=O'Connor)"}`)).toEqual({
+      SearchFilter: "(cn=O'Connor)",
+    });
+  });
+  it("keeps double quotes inside a single-quoted repr value", () => {
+    expect(parseAdditionalFields(`{'a': 'say "hi"'}`)).toEqual({ a: 'say "hi"' });
+  });
+  it("maps True/False/None only outside strings", () => {
+    expect(parseAdditionalFields("{'a': 'None of it, True story', 'b': None}")).toEqual({
+      a: "None of it, True story",
+      b: null,
+    });
+  });
+  it("handles escaped quotes, nested containers and numbers", () => {
+    expect(
+      parseAdditionalFields(
+        "{'a': 'it\\'s', 'n': [True, {'f': False}], 'x': -1.5e3, 'u': '\\x41\\u0042\\n'}",
+      ),
+    ).toEqual({ a: "it's", n: [true, { f: false }], x: -1500, u: "AB\n" });
+  });
+  it("returns an empty object for unterminated or garbled repr", () => {
+    expect(parseAdditionalFields("{'a': 'oops")).toEqual({});
+    expect(parseAdditionalFields("{'a': Nope}")).toEqual({});
+    expect(parseAdditionalFields("{'a': 'x'} trailing")).toEqual({});
+  });
+  it("still grades rows whose repr AdditionalFields hold apostrophes", () => {
+    const dkm = {
+      ...ldapDkm,
+      AdditionalFields_string: `{'DistinguishedName': "CN=O'Neil,CN=ADFS,CN=Microsoft,CN=Program Data,DC=example,DC=test", 'SearchFilter': '(name=x)'}`,
+    };
+    const admins = {
+      ...ldapDomainAdmins,
+      AdditionalFields_string: `{'DistinguishedName': 'DC=example,DC=test', 'SearchFilter': "(&(sAMAccountName=O'Brien)(memberOf=CN=Domain Admins,CN=Users,DC=example,DC=test))"}`,
+    };
+    const out = parseMdeHunting(ndjson([dkm, admins]));
+    expect(out.events[0].severity).toBe("High");
+    expect(out.events[1].severity).toBe("Medium");
+  });
 });
