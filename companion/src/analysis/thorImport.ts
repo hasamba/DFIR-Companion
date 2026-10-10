@@ -306,6 +306,12 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
         existing.endTimestamp = timestamp;
       if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
       if (!existing.asset && host) existing.asset = host;
+      // The level is not in the signature, so the same finding can repeat at a higher grade: the
+      // merged event takes the most severe copy's grade and its description (which names the level).
+      if (SEVERITY_RANK[severity] < SEVERITY_RANK[existing.severity]) {
+        existing.severity = severity;
+        existing.description = description;
+      }
       tally?.omitted.add("aggregated");
     } else {
       bySig.set(sig, {

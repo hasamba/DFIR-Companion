@@ -248,3 +248,23 @@ describe("parseThorReport — content and name disagree (#1966)", () => {
     expect(parseThorReport(jsonl(row)).events[0].severity).toBe("Info");
   });
 });
+
+describe("THOR duplicate collapse keeps the highest grade", () => {
+  const notice = { ...PROC_ALERT, level: "Notice", time: "2026-06-03T09:41:00Z" };
+  const alert = { ...PROC_ALERT, time: "2026-06-03T09:44:00Z" };
+
+  it("raises a merged finding to the grade of a later, more severe copy", () => {
+    const r = parseThorReport(jsonl(notice, alert));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Critical");
+    expect(r.events[0].count).toBe(2);
+    expect(r.events[0].description).toMatch(/^THOR Alert/);
+  });
+
+  it("does not lower a merged finding when the less severe copy comes later", () => {
+    const r = parseThorReport(jsonl(alert, notice));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Critical");
+    expect(r.events[0].description).toMatch(/^THOR Alert/);
+  });
+});
