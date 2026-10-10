@@ -103,17 +103,24 @@ const REPR_SIMPLE_ESCAPES: Record<string, string> = {
   f: "\f",
   "0": "\0",
 };
+/** Python repr's hex escapes and their digit counts: \xNN, \uNNNN and the non-BMP \UNNNNNNNN. */
+const REPR_HEX_ESCAPES: Record<string, number> = { x: 2, u: 4, U: 8 };
 
 /** Decode one backslash escape at s[i] (the char after the backslash); returns text and next index. */
 function readReprEscape(s: string, i: number): [string, number] | null {
   const c = s[i];
-  if (c === "x" || c === "u") {
-    const len = c === "x" ? 2 : 4;
-    const hex = s.slice(i + 1, i + 1 + len);
-    if (!new RegExp(`^[0-9a-fA-F]{${len}}$`).test(hex)) return null;
-    return [String.fromCharCode(parseInt(hex, 16)), i + 1 + len];
+  const hexLen = REPR_HEX_ESCAPES[c];
+  if (hexLen) {
+    const hex = s.slice(i + 1, i + 1 + hexLen);
+    if (!new RegExp(`^[0-9a-fA-F]{${hexLen}}$`).test(hex)) return null;
+    const code = parseInt(hex, 16);
+    if (code > 0x10ffff) return null;
+    return [String.fromCodePoint(code), i + 1 + hexLen];
   }
-  return [REPR_SIMPLE_ESCAPES[c] ?? c, i + 1];
+  if (c in REPR_SIMPLE_ESCAPES) return [REPR_SIMPLE_ESCAPES[c], i + 1];
+  if (c === "\\" || c === "'" || c === '"') return [c, i + 1];
+  // Python keeps an unrecognised escape verbatim, backslash included — never drop it (#2109).
+  return [`\\${c}`, i + 1];
 }
 
 /** Read a quoted string starting at s[start]; returns its JSON encoding and the index after it. */

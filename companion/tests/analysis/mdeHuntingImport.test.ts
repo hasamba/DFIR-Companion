@@ -249,6 +249,14 @@ describe("parseAdditionalFields (#2097)", () => {
       ),
     ).toEqual({ a: "it's", n: [true, { f: false }], x: -1500, u: "AB\n" });
   });
+  it("decodes non-BMP \\U escapes and keeps unknown escapes verbatim", () => {
+    // Codex review: \U was decoded as a literal "U…", merging distinct LDAP filters into one event.
+    expect(parseAdditionalFields("{'f': '(cn=case\\U000e0001)'}")).toEqual({
+      f: "(cn=case\u{e0001})",
+    });
+    expect(parseAdditionalFields("{'f': 'C:\\q'}")).toEqual({ f: "C:\\q" });
+    expect(parseAdditionalFields("{'f': '\\U00110000'}")).toEqual({});
+  });
   it("returns an empty object for unterminated or garbled repr", () => {
     expect(parseAdditionalFields("{'a': 'oops")).toEqual({});
     expect(parseAdditionalFields("{'a': Nope}")).toEqual({});
