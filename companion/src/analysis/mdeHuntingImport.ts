@@ -94,12 +94,86 @@ export function looksLikeMdeHunting(s: Row): boolean {
 }
 
 // Python-repr dicts (`{'a': False}`) appear in some AH re-exports; convert them only as a fallback.
-function reprToJson(s: string): string {
-  return s
-    .replace(/'/g, '"')
-    .replace(/\bTrue\b/g, "true")
-    .replace(/\bFalse\b/g, "false")
-    .replace(/\bNone\b/g, "null");
+const REPR_WORDS: Record<string, string> = { True: "true", False: "false", None: "null" };
+const REPR_SIMPLE_ESCAPES: Record<string, string> = {
+  n: "\n",
+  t: "\t",
+  r: "\r",
+  b: "\b",
+  f: "\f",
+  "0": "\0",
+};
+/** Python repr's hex escapes and their digit counts: \xNN, \uNNNN and the non-BMP \UNNNNNNNN. */
+const REPR_HEX_ESCAPES: Record<string, number> = { x: 2, u: 4, U: 8 };
+
+/** Decode one backslash escape at s[i] (the char after the backslash); returns text and next index. */
+function readReprEscape(s: string, i: number): [string, number] | null {
+  const c = s[i];
+  const hexLen = REPR_HEX_ESCAPES[c];
+  if (hexLen) {
+    const hex = s.slice(i + 1, i + 1 + hexLen);
+    if (!new RegExp(`^[0-9a-fA-F]{${hexLen}}$`).test(hex)) return null;
+    const code = parseInt(hex, 16);
+    if (code > 0x10ffff) return null;
+    return [String.fromCodePoint(code), i + 1 + hexLen];
+  }
+  if (c in REPR_SIMPLE_ESCAPES) return [REPR_SIMPLE_ESCAPES[c], i + 1];
+  if (c === "\\" || c === "'" || c === '"') return [c, i + 1];
+  // Python keeps an unrecognised escape verbatim, backslash included — never drop it (#2109).
+  return [`\\${c}`, i + 1];
+}
+
+/** Read a quoted string starting at s[start]; returns its JSON encoding and the index after it. */
+function readReprString(s: string, start: number): [string, number] | null {
+  const quote = s[start];
+  let out = "";
+  let i = start + 1;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === quote) return [JSON.stringify(out), i + 1];
+    if (c !== "\\") {
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (i + 1 >= s.length) return null;
+    const esc = readReprEscape(s, i + 1);
+    if (!esc) return null;
+    out += esc[0];
+    i = esc[1];
+  }
+  return null;
+}
+
+/**
+ * Quote-aware Python-repr to JSON: strings of either quote style are re-encoded verbatim, and only
+ * bare True/False/None outside strings are mapped. Returns null on anything it cannot read.
+ */
+function reprToJson(s: string): string | null {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'" || c === '"') {
+      const str = readReprString(s, i);
+      if (!str) return null;
+      out += str[0];
+      i = str[1];
+    } else if (/[-\d]/.test(c)) {
+      const num = /^-?\d[\d.eE+-]*/.exec(s.slice(i))?.[0] ?? c;
+      out += num;
+      i += num.length;
+    } else if (/[A-Za-z_]/.test(c)) {
+      const word = /^[A-Za-z_]\w*/.exec(s.slice(i))![0];
+      if (!(word in REPR_WORDS)) return null;
+      out += REPR_WORDS[word];
+      i += word.length;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
 }
 
 function tryParseObject(s: string): Row | null {
@@ -115,7 +189,10 @@ function tryParseObject(s: string): Row | null {
 export function parseAdditionalFields(v: unknown): Row {
   if (isObject(v)) return v;
   if (typeof v !== "string" || !v.trim()) return {};
-  return tryParseObject(v) ?? tryParseObject(reprToJson(v)) ?? {};
+  const direct = tryParseObject(v);
+  if (direct) return direct;
+  const json = reprToJson(v);
+  return (json && tryParseObject(json)) || {};
 }
 
 function joinAccount(domain: string, name: string): string {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { looksLikeZeekTsv, parseZeekTsv } from "../../src/analysis/zeekTsv.js";
+import { describe, it, expect, vi } from "vitest";
+import { looksLikeZeekTsv, parseZeekTsv, iterateLines, countLines } from "../../src/analysis/zeekTsv.js";
 import { parseNetworkLogs } from "../../src/analysis/networkImport.js";
 import { detectImportKind } from "../../src/analysis/importDetect.js";
 
@@ -227,5 +227,54 @@ describe("Zeek classic TSV logs (#2094)", () => {
 
   it("honours a row cap", () => {
     expect(parseZeekTsv(CONN, 2)).toHaveLength(2);
+  });
+  describe("line streaming (#2110)", () => {
+    const samples = [
+      "",
+      "a",
+      "a\n",
+      "a\r\nb\r\n",
+      "a\n\n\nb",
+      "a\r\n\r\nb\rc",
+      "a\rb",
+      "a\r",
+      "\n",
+      "\r\n",
+      "a\r\r\nb",
+    ];
+
+    it("iterateLines matches split(/\\r?\\n/) and countLines matches its length", () => {
+      for (const t of samples) {
+        expect([...iterateLines(t)]).toEqual(t.split(/\r?\n/));
+        expect(countLines(t)).toBe(t.split(/\r?\n/).length);
+      }
+    });
+
+    it("parses CRLF, blank-line and no-trailing-newline input like LF input", () => {
+      const lf = CONN;
+      const crlf = lf.replace(/\n/g, "\r\n");
+      const blanks = lf.replace(/\n/g, "\n\n");
+      expect(parseZeekTsv(crlf)).toEqual(parseZeekTsv(lf));
+      expect(parseZeekTsv(blanks)).toEqual(parseZeekTsv(lf));
+      expect(parseZeekTsv(lf + "\n")).toEqual(parseZeekTsv(lf));
+    });
+
+    it("never splits the whole text with a newline regex", () => {
+      const spy = vi.spyOn(String.prototype, "split");
+      try {
+        parseZeekTsv(CONN, 1);
+        const regexCalls = spy.mock.calls.filter((c) => c[0] instanceof RegExp);
+        expect(regexCalls).toHaveLength(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("stops at the cap on a huge input without walking every line", () => {
+      const head = header("conn", ["ts", "uid"], ["time", "string"]).join("\n");
+      const body = Array.from({ length: 300_000 }, (_, i) => `${i}\tC${i}`).join("\n");
+      const rows = parseZeekTsv(`${head}\n${body}`, 10);
+      expect(rows).toHaveLength(10);
+    });
   });
 });

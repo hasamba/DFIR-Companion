@@ -7,7 +7,7 @@ import { parseSiemExport, type SiemImportOptions } from "../analysis/siemImport.
 import { parseChainsawReport, type ChainsawImportOptions } from "../analysis/chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "../analysis/hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "../analysis/velociraptorImport.js";
-import { parseNetworkLogs, type NetworkImportOptions } from "../analysis/networkImport.js";
+import { parseNetworkLogs, countLines, type NetworkImportOptions } from "../analysis/networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
@@ -1443,7 +1443,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "network",
         storedName,
         importedAt,
-        linesIn: text.split(/\r?\n/).length,
+        linesIn: countLines(text),
         path: "deterministic",
         minSeverity,
         parameters: { network: importerParameter(netOpts) },

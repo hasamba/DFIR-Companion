@@ -15,6 +15,7 @@ import {
   type SiemIoc,
   type SiemParseResult,
 } from "./siemImport.js";
+import { capEvents } from "./eventAggregate.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseAuditdLog } from "./auditdImport.js";
@@ -311,14 +312,16 @@ export function parseSentinelLinux(input: string, opts: SentinelLinuxImportOptio
     else opts.debug?.skipped("unparseable_syslog_row");
   }
   for (const row of b.vmRows) mapped.push(mapVmConnection(row, sink));
+  const capN = opts.maxEvents ?? maxEventsDefault();
   const agg = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    maxEvents: capN,
   });
 
   const host = dominantHost(b.hosts);
-  const events = finalize([...parts.flatMap((p) => p.events), ...agg.events], host);
+  // Each part was capped alone; re-cap the merged list so the result honours maxEvents (#2108).
+  const events = finalize(capEvents([...parts.flatMap((p) => p.events), ...agg.events], capN), host);
   const iocMap = new Map<string, SiemIoc>();
   for (const ioc of [...parts.flatMap((p) => p.iocs), ...sink.values()])
     iocMap.set(`${ioc.type}|${ioc.value}`, ioc);

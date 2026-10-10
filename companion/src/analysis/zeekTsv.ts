@@ -98,6 +98,31 @@ function applyHeader(line: string, b: Block): Block {
   }
 }
 
+/**
+ * Yield the lines of `text` one at a time, without splitting the whole string (#2110).
+ * Same line boundaries as `text.split(/\r?\n/)`: a `\r` is stripped only when a `\n` follows it.
+ */
+export function* iterateLines(text: string): Generator<string> {
+  let start = 0;
+  for (;;) {
+    const nl = text.indexOf("\n", start);
+    if (nl === -1) {
+      yield text.slice(start);
+      return;
+    }
+    const end = nl > start && text.charCodeAt(nl - 1) === 13 ? nl - 1 : nl;
+    yield text.slice(start, end);
+    start = nl + 1;
+  }
+}
+
+/** Number of lines in `text`; equals `text.split(/\r?\n/).length` without allocating the array. */
+export function countLines(text: string): number {
+  let count = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) count++;
+  return count;
+}
+
 /** Parse Zeek TSV text into Zeek-JSON-shaped records. Rows before a `#fields` header are skipped. */
 export function parseZeekTsv(text: string, maxRows: number = ZEEK_TSV_MAX_ROWS): Row[] {
   const rows: Row[] = [];
@@ -110,7 +135,7 @@ export function parseZeekTsv(text: string, maxRows: number = ZEEK_TSV_MAX_ROWS):
     fields: [],
     types: [],
   };
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of iterateLines(text)) {
     if (rows.length >= maxRows) break;
     if (!line) continue;
     if (line[0] === "#") {
