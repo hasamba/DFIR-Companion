@@ -259,7 +259,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Hayabusa** | `json-timeline` or `csv-timeline` | Matched Sigma rule level |
 | **Velociraptor** | JSON array, JSONL, or artifact map | Sigma/YARA verdict or per-EID |
 | **THOR (Nextron)** | JSON-Lines scan output | THOR alert level |
-| **Suricata / Zeek** | `eve.json`, Zeek JSON logs; telemetry → IOCs only | Alert priority / notice severity |
+| **Suricata / Zeek** | `eve.json`, Zeek JSON logs and classic `#fields` TSV logs (conn, dns, http, files, ssl); telemetry → IOCs only | Alert priority / notice severity |
 | **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
 | **YARA** | `yara -s -m` CLI scan output (rule matches + strings/meta) | Info→Medium per match; bump on rule `score`/`threat_level` meta |
 | **Web/proxy access log** | Apache/Nginx/Squid **combined** log format (web server or forward-proxy access log); request URL, **HTTP Referer, and User-Agent** captured (secrets in URL/Referer + scanner/bot/injection UAs survive as events + IOCs) | Info by default; access-denied (401/403/407) → Low; git smart-HTTP clone/push → T1213 |
@@ -268,6 +268,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
 | **SO-CRATES** | Suricata alerts + YARA file matches (`/api/events`) and Sigma detections (`/api/sigma-alerts`); pushed by the extension or a raw export | Suricata priority / Sigma level / YARA match |
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
+| **Defender XDR** | Advanced-hunting exports (hosts + accounts) | Tradecraft table — replication from a non-DC and AD FS DKM LDAP reads → High |
+| **Microsoft Sentinel / Log Analytics** | SecurityEvent, OfficeActivity, Syslog-wrapped auditd/AUOMS, Sysmon for Linux, VMConnection flows (dated from `TimeGenerated`) | Per-source tables; full Linux command lines graded |
 | **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
 | **Okta** | System Log export | IdP tradecraft table (MFA disabled, admin grant, API token minted, session impersonated) — not the vendor's operational grade |
 | **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added) |
@@ -314,6 +316,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Mobile origin tags** — every iLEAPP / ALEAPP row says whether its content was recorded on this device, synced or received, from a registry pinned to upstream
 - **Masquerade and look-alike detection** (T1036.002) — a file name hiding a right-to-left override is High and shows as `<RLO>` in every view and export; a new account named one edit from a built-in or case account is High
 - **Remote access, webshells and web scanners** — AnyDesk/ScreenConnect/TeamViewer/Atera in Prefetch or Amcache → Medium (T1219); an IIS worker writing a page into a web root → High (T1505.003); sqlmap, dirsearch and similar scanners → Medium, exploit modes High
+- **Log4Shell shape** (T1190 / T1203) — a JVM LDAP/RMI lookup followed by the JVM spawning a shell → High
+- **Persistence executed** (T1547.001) — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts)
+- **Quiet tradecraft** — alternate-data-stream execution → High; anti-VM WMI checks, AV-product and installed-software discovery → Medium
 - **Timesketch tag rules** — community Timesketch rules for Windows registry persistence, AWS/GCS and M365/Entra audit logs ship in the content tagger
 
 ### AI analysis
@@ -321,7 +326,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
 - **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini, Anthropic, Claude Code CLI, Codex CLI; optional two-tier (cheap extract + strong synth) with context budgeting
 - **Per-provider keys** — one API key and base URL per provider; every model uses its provider's values, so switching a model to another provider needs nothing new. Per-model keys become optional overrides
-- **Synthesis safety-stop fallback** — a synthesis the model's safety filter stops is retried on the same model, then runs once on a fallback model you pick (ideally another vendor)
+- **Safety-stop fallback** — synthesis, deep pass, the referee, Explain event and view summaries stopped by a model's safety filter (any API provider or Codex) are retried, then run once on a fallback model you pick, naming the model that answered; opt-in `DFIR_AI_CAPTURE_SAFETY_STOPS` saves the refused prompt for replay
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
 - **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand

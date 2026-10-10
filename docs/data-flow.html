@@ -322,7 +322,7 @@ const NODES = [
     tech:["ext/pageHook.ts","ext/adapters/registry.ts","ext/contextMenuCapture.ts","POST /cases/:id/import"] },
   { id:"upload", col:0, kind:"source", label:"Artifact upload", sub:"60+ formats · auto-detected",
     plain:"The Import button. Drop in any supported artifact and the companion works out what it is. Each format has its own reader, so fields land in the right place instead of being guessed.",
-    pts:["Endpoint: Velociraptor, KAPE, Hayabusa, Chainsaw, THOR, EVTX (XML), Plaso, osquery, memory (Volatility, MemProcFS), YARA, sandbox reports, mobile (iLEAPP/ALEAPP), browser history, macOS & Linux persistence","Logs & SIEM: Security Onion, Wazuh, TheHive, auditd, journald, syslog, web access logs, Cisco ASA, Snort, generic CSV/log","Cloud: Microsoft 365, Okta, Google Workspace, AWS CloudTrail, Azure/GCP activity, flow logs, Kubernetes","Network: Zeek, Suricata, nfdump · Email: messages and Exchange audit"],
+    pts:["Endpoint: Velociraptor, KAPE, Hayabusa, Chainsaw, THOR, EVTX (XML), Plaso, osquery, memory (Volatility, MemProcFS), YARA, sandbox reports, mobile (iLEAPP/ALEAPP), browser history, macOS & Linux persistence","Logs & SIEM: Security Onion, Wazuh, Defender XDR advanced hunting, Microsoft Sentinel, TheHive, auditd, journald, syslog, web access logs, Cisco ASA, Snort, generic CSV/log","Cloud: Microsoft 365, Okta, Google Workspace, AWS CloudTrail, Azure/GCP activity, flow logs, Kubernetes","Network: Zeek, Suricata, nfdump · Email: messages and Exchange audit"],
     tech:["POST /cases/:id/import  (auto-detect)","POST /cases/:id/import-<kind>  (25 dedicated routes)","src/routes/import.ts","src/analysis/importerSpec.ts → IMPORT_KINDS"] },
   { id:"drop", col:0, kind:"source", label:"Drop folder", sub:"cases/<case>/drop/ · polled",
     plain:"An inbox folder per case. Anything copied into it is picked up automatically: images go down the screenshot path, artifacts down the import path. Processed files move to _processed, rejects to _failed.",
@@ -403,7 +403,7 @@ const NODES = [
     tech:["src/analysis/stateMerge.ts → mergeDelta","src/analysis/caseMerge.ts","src/analysis/caseSqliteWorker*.ts"] },
   { id:"correlate", col:2, kind:"process", label:"Correlation chain", sub:"~20 deterministic linkers",
     plain:"Rule-based checks that connect events into stories: download then execution, archive then exfiltration, timestomping, process parentage, injection, ransomware precursors, cloud key-then-read and more. They only ever raise severity or add notes.",
-    pts:["Email → initial access · archive → exfil · download → execution","Timestomp corroboration · SMB execution · Defender episodes · Run-key value executed (persistence fired)","Ransomware precursors · certutil transfer · container escape","Cloud: metadata access, bulk reads, Azure key→read, AWS flow joins"],
+    pts:["Email → initial access · archive → exfil · download → execution","Timestomp corroboration · SMB execution · Defender episodes · Run-key value executed (persistence fired)","Ransomware precursors · certutil transfer · container escape · Log4Shell (JVM lookup → shell)","Cloud: metadata access, bulk reads, Azure key→read, AWS flow joins"],
     tech:["src/analysis/stateMerge.ts → runTimelineChain","src/analysis/correlate.ts","src/analysis/eventAliases.ts"] },
 
   /* ---------------- 3 · Grading seam ---------------- */

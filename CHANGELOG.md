@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-10
+
 ### Added
 
 - **Zeek classic TSV import** — Zeek's default `#fields` logs (conn, dns, http, files, ssl) import like Zeek JSON (closes #2094)
@@ -1437,7 +1439,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.39.0...v0.40.0
