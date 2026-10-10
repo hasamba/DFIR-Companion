@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hunt event budget keeps detections** — the hunt-wide event cap counts only rows that stay in the forensic timeline, and once spent later artifacts still import their Medium-and-above rows instead of being skipped
+
 ## [0.43.0] - 2026-10-10
 
 ### Added

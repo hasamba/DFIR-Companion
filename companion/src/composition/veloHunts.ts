@@ -47,6 +47,8 @@ import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
+import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
+import { createHuntEventBudget } from "./huntEventBudget.js";
 import { settleForensicImport } from "../routes/importSettle.js";
 import { describeImportSource } from "../analysis/importMeta.js";
 import {
@@ -401,10 +403,15 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // read from its scratch file, imported, and released before the next is read.
       const jobHuntId = job.huntId; // hoisted so later closures don't re-narrow the reassignable `job`
       const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId); // GUI deep-link every event shares
-      // The importer's per-call event cap (DFIR_MAX_EVENTS) bounds the WHOLE hunt: a fresh cap per
-      // artifact would let a 45-artifact bundle through 45x the ceiling. One budget is carried across
-      // the loop, shrunk by the forensic events each artifact added (step 5's before/after diff).
-      let eventBudgetRemaining = maxEventsDefault();
+      // One DFIR_MAX_EVENTS budget across the whole hunt, charged only with the rows the forensic gate
+      // will keep; once spent, the remaining artifacts import Medium and above only (huntEventBudget.ts).
+      const eventBudget = createHuntEventBudget(maxEventsDefault());
+      const gateMin = resolveForensicMinSeverity(
+        options.forensicGateControlStore
+          ? (await options.forensicGateControlStore.load(caseId).catch(() => undefined))?.minSeverity
+          : undefined,
+        process.env.DFIR_FORENSIC_MIN_SEVERITY,
+      );
       let budgetBaseline = options.stateStore ? stateBefore : null;
       let budgetExhaustedLogged = false;
       // A super-only bundle shares one DFIR_SUPERTIMELINE_MAX across its artifacts, by row count (#1982).
@@ -461,32 +468,30 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             : superTimelineEvicted;
           if (r.capped) superCapped.push(r.capped);
           if (r.imported) importedAny = true; // success even though nothing hit the forensic timeline
-        } else if (eventBudgetRemaining <= 0) {
-          // Hunt-wide cap already spent by earlier artifacts. The rows are still persisted as evidence
-          // above (chain of custody intact) — only the derived forensic-timeline import is skipped.
-          if (!budgetExhaustedLogged) {
+        } else {
+          if (eventBudget.exhausted && !budgetExhaustedLogged) {
             budgetExhaustedLogged = true;
             logLine(
-              `[velociraptor] hunt ${job.huntId}: hunt-wide event cap (${maxEventsDefault()}) reached — remaining artifacts' rows are persisted as evidence but not further imported into the forensic timeline (raise DFIR_MAX_EVENTS to lift it)`,
+              `[velociraptor] hunt ${job.huntId}: hunt-wide event cap (${maxEventsDefault()}) reached — remaining artifacts import Medium and above only; their other rows are persisted as evidence (raise DFIR_MAX_EVENTS to lift it)`,
             );
           }
-        } else {
           await pipeline.importVelociraptorArtifact(caseId, json, {
             label: storedName,
             idPrefix: `${seq}`,
             importedAt,
             minSeverity,
             veloUrl,
-            velociraptor: { maxEvents: eventBudgetRemaining, partlyReadArtifact: partly },
+            velociraptor: { ...eventBudget.nextImport(), partlyReadArtifact: partly },
             debug,
           });
           importedAny = true;
           if (options.stateStore && budgetBaseline) {
             try {
               const afterState = await options.stateStore.load(caseId);
-              const added = diffTimeline(budgetBaseline.forensicTimeline, afterState.forensicTimeline).added
-                .length;
-              eventBudgetRemaining -= added;
+              eventBudget.charge(
+                diffTimeline(budgetBaseline.forensicTimeline, afterState.forensicTimeline).added,
+                gateMin,
+              );
               budgetBaseline = afterState;
             } catch {
               /* best-effort budget tracking; a read failure here must not fail the collect */
