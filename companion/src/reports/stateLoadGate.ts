@@ -12,7 +12,8 @@
 //     new load, which starts when this one ends.
 //
 // So every caller receives data read after it arrived, and one case costs at most one reading and one
-// queued load, whatever the burst size. Nothing is kept once a load settles. A failed load fails only
+// queued load, whatever the burst size. Nothing is kept here once a load settles (the slim report
+// state is kept, keyed on an exact case revision, by reportLiteCache.ts, #2057). A failed load fails only
 // its own callers; the queued load still makes its own fresh attempt.
 //
 // The load runs under the permit, which is re-entrant, so the StateStore.load inside it does not take

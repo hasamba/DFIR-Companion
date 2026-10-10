@@ -6,6 +6,7 @@ import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { loadFilteredState } from "./filteredState.js";
 import { CaseLoadCoalescer } from "./stateLoadGate.js";
+import { liteStateCache } from "./reportLiteCache.js";
 import {
   applyFalsePositive,
   filterFalsePositiveEvents,
@@ -176,7 +177,7 @@ export class ReportWriter {
   private readonly custodyStore?: CustodyStore;
   private readonly instanceSecret?: Buffer;
   private readonly filteredLoads = new CaseLoadCoalescer<InvestigationState>();
-  private readonly filteredLiteLoads = new CaseLoadCoalescer<InvestigationState>();
+  private readonly filteredLiteLoads = liteStateCache(() => ({ cases: this.cases, state: this.state }));
 
   constructor(
     private readonly cases: CaseStore,
@@ -264,8 +265,7 @@ export class ReportWriter {
   // (and the findings/IOCs/MITRE supported only by them) and exclude client-confirmed false positives,
   // so every export is scope/FP-consistent even if AI re-synthesis hasn't run.
   private loadFilteredState(caseId: string, slim = false): Promise<InvestigationState> {
-    // See reports/filteredState.ts. Concurrent calls for one case share one load, never one older than
-    // the call (#1915, stateLoadGate.ts); `slim` (#2057) is its own cohort, never joined by a full call.
+    // filteredState.ts; concurrent calls share a load (#1915); slim ones are cached too (reportLiteCache.ts).
     const { state, cases, clockSkew, scope, falsePositives } = this;
     return (slim ? this.filteredLiteLoads : this.filteredLoads).load(caseId, () =>
       loadFilteredState({ state, cases, clockSkew, scope, falsePositives }, caseId, { slim }),

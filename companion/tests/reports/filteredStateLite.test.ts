@@ -28,6 +28,7 @@ import type { ForensicEvent, InvestigationState } from "../../src/analysis/state
 const CASE = "lite";
 const HOST = "LITE-HOST-01";
 let stateStore: StateStore;
+let caseStore: CaseStore;
 let writer: ReportWriter;
 let full: InvestigationState;
 
@@ -67,7 +68,7 @@ beforeAll(async () => {
   vi.setSystemTime(new Date("2026-07-01T00:00:00Z"));
   const root = await mkdtemp(join(tmpdir(), "dfir-lite-"));
   await seedDemoCase(root, { caseId: CASE });
-  const cases = new CaseStore(root);
+  const cases = (caseStore = new CaseStore(root));
   stateStore = new StateStore(cases);
   const seeded = await stateStore.load(CASE);
   await stateStore.save({ ...seeded, forensicTimeline: [...seeded.forensicTimeline, ...fixtureRows()] });
@@ -169,11 +170,20 @@ describe("the report-lite load answers the five routes exactly as the full load 
 
   it("the five routes read the lite load; every other report surface keeps the full one", async () => {
     const load = vi.spyOn(stateStore, "load");
-    await writer.timelineGaps(CASE);
-    await writer.swimlane(CASE);
-    await writer.iocBlocklist(CASE, "txt");
-    await writer.stixBundle(CASE);
-    await writer.filteredState(CASE, true);
+    // The lite state is cached until a case input changes (#2057, reportLiteCache.ts): rewriting the
+    // scope before each call makes each one load, so each route's own load mode is what is observed.
+    const scope = new ScopeStore(caseStore);
+    const touch = async (): Promise<void> => scope.save(CASE, await scope.load(CASE));
+    for (const route of [
+      () => writer.timelineGaps(CASE),
+      () => writer.swimlane(CASE),
+      () => writer.iocBlocklist(CASE, "txt"),
+      () => writer.stixBundle(CASE),
+      () => writer.filteredState(CASE, true),
+    ]) {
+      await touch();
+      await route();
+    }
     expect(load.mock.calls).toEqual(Array.from({ length: 5 }, () => [CASE, { slimCanonical: true }]));
     load.mockClear();
     await writer.filteredState(CASE);
