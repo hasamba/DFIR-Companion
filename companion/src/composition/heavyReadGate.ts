@@ -9,9 +9,14 @@
  * THE GATE. At most HEAVY_READ_CONCURRENCY of these requests run at once, process-wide. Up to
  * HEAVY_READ_QUEUE_LIMIT more wait in arrival order. Past that the answer is an immediate 503 with
  * Retry-After and the SERVER_BUSY_HEADER marker, which the dashboard retries on its own. A queued
- * request whose client disconnects leaves the queue and its handler never runs; a running one gives
- * its slot back when it finishes or its client disconnects. The handlers stop early on their own
- * (http/requestAbort.ts), and one caller leaving never cancels a load another caller shares.
+ * request whose client disconnects leaves the queue and its handler never runs. A running one gives
+ * its slot back when its answer is sent, or — once its client has gone — when the uncancellable work
+ * it started has settled (analysis/pendingWork.ts: a whole-case load cannot be stopped mid-read, and
+ * one caller leaving never cancels a load another caller shares). Freeing the slot at socket close
+ * instead let every disconnect start a new handler while the abandoned loads piled up behind the load
+ * limiter, out of the gate's sight. A handler with nothing pending frees its slot at once; a slot is
+ * never held past HEAVY_READ_ABANDONED_MAX_HOLD_MS, so a hung load cannot leak it. The handlers stop
+ * early on their own (http/requestAbort.ts).
  *
  * NORMAL USE NEVER SEES A 503. One case open fires 17 of these reads (#2119); the caps hold
  * two such fan-outs together (tests/composition/heavyReadGate.test.ts pins it). The numbers are
@@ -28,6 +33,7 @@
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import { requestAbortSignal } from "../http/requestAbort.js";
+import { WorkTracker } from "../analysis/pendingWork.js";
 
 /** Heavy reads running at once, across every case. Two read workers, plus room for cheap cache hits. */
 export const HEAVY_READ_CONCURRENCY = 4;
@@ -35,6 +41,8 @@ export const HEAVY_READ_CONCURRENCY = 4;
 export const HEAVY_READ_QUEUE_LIMIT = 40;
 /** What a refused client is told to wait, in seconds. */
 export const HEAVY_READ_RETRY_AFTER_SECONDS = 2;
+/** Safety net: the longest a disconnected request's slot waits for its abandoned work to settle. */
+export const HEAVY_READ_ABANDONED_MAX_HOLD_MS = 120_000;
 /** Marks a 503 as "busy, retry" (not a broken feature), so the dashboard knows to retry it. */
 export const SERVER_BUSY_HEADER = "X-DFIR-Server-Busy";
 export const SERVER_BUSY_ERROR = "server busy — retry shortly";
@@ -77,12 +85,15 @@ export interface HeavyReadLimits {
   concurrency: number;
   queueLimit: number;
   retryAfterSeconds: number;
+  /** Defaults to HEAVY_READ_ABANDONED_MAX_HOLD_MS. */
+  abandonedMaxHoldMs?: number;
 }
 
 const DEFAULT_LIMITS: HeavyReadLimits = {
   concurrency: HEAVY_READ_CONCURRENCY,
   queueLimit: HEAVY_READ_QUEUE_LIMIT,
   retryAfterSeconds: HEAVY_READ_RETRY_AFTER_SECONDS,
+  abandonedMaxHoldMs: HEAVY_READ_ABANDONED_MAX_HOLD_MS,
 };
 
 interface Waiter {
@@ -93,16 +104,19 @@ interface Waiter {
 export class HeavyReadGate {
   private running = 0;
   private readonly queue: Waiter[] = [];
-  private readonly limits: HeavyReadLimits;
+  private readonly limits: Required<HeavyReadLimits>;
 
   constructor(limits: HeavyReadLimits = DEFAULT_LIMITS) {
     const { concurrency, queueLimit, retryAfterSeconds } = limits;
+    const abandonedMaxHoldMs = limits.abandonedMaxHoldMs ?? HEAVY_READ_ABANDONED_MAX_HOLD_MS;
     if (!Number.isInteger(concurrency) || concurrency < 1)
       throw new Error(`heavy read concurrency must be a positive integer, got ${concurrency}`);
     if (!Number.isInteger(queueLimit) || queueLimit < 0)
       throw new Error(`heavy read queue limit must be a non-negative integer, got ${queueLimit}`);
     if (!(retryAfterSeconds > 0)) throw new Error(`retry-after must be positive, got ${retryAfterSeconds}`);
-    this.limits = { ...limits };
+    if (!(abandonedMaxHoldMs > 0))
+      throw new Error(`abandoned max hold must be positive, got ${abandonedMaxHoldMs}`);
+    this.limits = { concurrency, queueLimit, retryAfterSeconds, abandonedMaxHoldMs };
   }
 
   /** Requests running now. */
@@ -134,6 +148,7 @@ export class HeavyReadGate {
 
   private start(res: Response, next: NextFunction): void {
     this.running++;
+    const work = new WorkTracker();
     let released = false;
     const release = (): void => {
       if (released) return;
@@ -142,8 +157,17 @@ export class HeavyReadGate {
       this.drain();
     };
     res.once("finish", release);
-    res.once("close", release);
-    next();
+    res.once("close", () => {
+      if (res.writableEnded) return release(); // answered: nothing left running for it
+      // The client left mid-request: hold the slot until the work it started has settled.
+      const safetyNet = setTimeout(release, this.limits.abandonedMaxHoldMs);
+      safetyNet.unref();
+      work.whenIdle(() => {
+        clearTimeout(safetyNet);
+        release();
+      });
+    });
+    work.run(next);
   }
 
   private drain(): void {

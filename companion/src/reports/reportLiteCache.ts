@@ -23,6 +23,8 @@
 //
 // A caller may pass its request's abort signal (#1915): leaving stops only its own wait. A shared miss
 // is dropped only when every caller has left it, and then only while still queued (stateLoadGate.ts).
+// The whole lookup, revision stat included, is tracked work (analysis/pendingWork.ts): a request whose
+// client left keeps its admission slot until the load it asked for has settled.
 
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,6 +34,7 @@ import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
 import { FILTERED_STATE_SIDE_FILES } from "./filteredState.js";
 import { CaseLoadCoalescer } from "./stateLoadGate.js";
 import { JoinedSignal, abortError, untilAborted } from "../analysis/abortable.js";
+import { trackedWork } from "../analysis/pendingWork.js";
 
 /** How long the viewed case's state is kept without a request. A constant, not a setting. */
 export const REPORT_LITE_IDLE_MS = 5 * 60 * 1000;
@@ -104,7 +107,11 @@ export class ReportLiteCache<T> {
     return this.entry ? 1 : 0;
   }
 
-  async load(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  load(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return trackedWork(() => this.lookup(caseId, read, signal));
+  }
+
+  private async lookup(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const revision = await this.safeRevision(caseId);
     if (signal?.aborted) throw abortError();
     if (revision === null) return this.loads.load(caseId, read, signal);

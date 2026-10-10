@@ -27,9 +27,11 @@
 // wait; a load another caller still waits for is never cancelled. A QUEUED load whose every caller
 // has left is dropped before it reads (analysis/abortable.ts JoinedSignal), and the next caller opens
 // a fresh one. A caller with no signal pins the load: it can then never be cancelled.
+// Each caller's wait is tracked work (analysis/pendingWork.ts), from the moment it asks.
 
 import { wholeCaseLoads, type LoadLimiter } from "../analysis/wholeCaseLoadLimit.js";
 import { JoinedSignal, abortError, untilAborted } from "../analysis/abortable.js";
+import { trackedWork } from "../analysis/pendingWork.js";
 
 interface Cohort<T> {
   promise: Promise<T>;
@@ -54,6 +56,10 @@ export class CaseLoadCoalescer<T> {
   }
 
   load(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return trackedWork(() => this.join(caseId, read, signal));
+  }
+
+  private join(caseId: string, read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (signal?.aborted) return Promise.reject(abortError());
     const entry = this.cases.get(caseId) ?? this.open(caseId);
     const cohort = entry.queued ?? this.queue(caseId, entry, read);

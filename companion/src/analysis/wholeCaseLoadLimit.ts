@@ -17,9 +17,14 @@
 // A wait is ABORTABLE (#1915 reopened): a caller whose client went away passes its signal, and is
 // dropped from the queue without ever running its load. An abort after the load started changes
 // nothing: the load finishes and releases its permit as usual.
+//
+// A load, queued or running, is TRACKED work (analysis/pendingWork.ts): a heavy read whose client
+// left keeps its admission slot until its load settles, so abandoned loads cannot pile up here
+// behind the gate's back.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { abortError } from "./abortable.js";
+import { trackedWork } from "./pendingWork.js";
 
 /**
  * Two, to match the two SQLite read workers (caseSqliteWorkerPool.ts): two cases can still load in
@@ -53,14 +58,16 @@ export class LoadLimiter {
 
   async run<T>(load: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (this.permits.getStore()?.held) return load();
-    await this.acquire(signal);
-    const permit: Permit = { held: true };
-    try {
-      return await this.permits.run(permit, load);
-    } finally {
-      permit.held = false;
-      this.release();
-    }
+    return trackedWork(async () => {
+      await this.acquire(signal);
+      const permit: Permit = { held: true };
+      try {
+        return await this.permits.run(permit, load);
+      } finally {
+        permit.held = false;
+        this.release();
+      }
+    });
   }
 
   private acquire(signal?: AbortSignal): Promise<void> {

@@ -24,6 +24,8 @@ import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { createApp } from "../../src/server.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { trackedWork } from "../../src/analysis/pendingWork.js";
+import { wholeCaseLoads } from "../../src/analysis/wholeCaseLoadLimit.js";
 
 // #1915 (reopened): a burst of whole-case reads must not build an unbounded backlog of main-thread
 // work. The heavy whole-case GETs are admitted a few at a time; a bounded queue holds the rest; a full
@@ -54,12 +56,13 @@ function harness(gate: HeavyReadGate) {
     if (req.query.throw) throw new Error("boom"); // Express answers 500 for a synchronous throw
     next();
   });
-  app.get("/cases/:id/state", async (_req: Request, res: Response) => {
+  app.get("/cases/:id/state", async (req: Request, res: Response) => {
     const n = calls++;
     started.push(n);
     const hold = deferred();
     holds.push(hold);
-    await hold.promise;
+    // ?tracked=1: the wait is uncancellable work (like a whole-case load) the gate must wait out.
+    await (req.query.tracked ? trackedWork(() => hold.promise) : hold.promise);
     if (clientGone(res)) return;
     res.status(200).json({ n });
   });
@@ -178,7 +181,7 @@ describe("heavy read gate (#1915)", () => {
     expect((await next.reply).status).toBe(200);
   });
 
-  it("(d) a slot is released when a running request's client disconnects, and the next one starts", async () => {
+  it("(d) a disconnected request with no uncancellable work pending passes its slot on at once", async () => {
     const gate = new HeavyReadGate({ concurrency: 1, queueLimit: 1, retryAfterSeconds: 2 });
     const h = harness(gate);
     const port = await listen(h.app);
@@ -192,6 +195,48 @@ describe("heavy read gate (#1915)", () => {
     h.holds[1].resolve();
     expect((await next.reply).status).toBe(200);
     h.holds[0].resolve(); // the abandoned handler wakes, sees its client gone, writes nothing
+    await until(() => gate.active === 0);
+  });
+
+  it("(e) an abandoned request keeps its slot until its uncancellable work settles", async () => {
+    const gate = new HeavyReadGate({ concurrency: 1, queueLimit: 1, retryAfterSeconds: 2 });
+    const h = harness(gate);
+    const port = await listen(h.app);
+    const gone = get(port, "/cases/c1/state?tracked=1");
+    gone.reply.catch(() => undefined);
+    await until(() => h.started.length === 1);
+    const next = get(port, "/cases/c1/state");
+    await until(() => gate.waiting === 1);
+    gone.drop();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.started).toEqual([0]); // the abandoned load still runs: its slot is not handed on
+    expect(gate.active).toBe(1);
+    h.holds[0].resolve();
+    await until(() => h.started.length === 2);
+    h.holds[1].resolve();
+    expect((await next.reply).status).toBe(200);
+    await until(() => gate.active === 0 && gate.waiting === 0);
+  });
+
+  it("(e) a slot held for abandoned work is released after the safety-net hold even if it never settles", async () => {
+    const gate = new HeavyReadGate({
+      concurrency: 1,
+      queueLimit: 1,
+      retryAfterSeconds: 2,
+      abandonedMaxHoldMs: 60,
+    });
+    const h = harness(gate);
+    const port = await listen(h.app);
+    const gone = get(port, "/cases/c1/state?tracked=1");
+    gone.reply.catch(() => undefined);
+    await until(() => h.started.length === 1);
+    const next = get(port, "/cases/c1/state");
+    await until(() => gate.waiting === 1);
+    gone.drop();
+    await until(() => h.started.length === 2); // never settled, but the slot did not leak
+    h.holds[1].resolve();
+    expect((await next.reply).status).toBe(200);
+    h.holds[0].resolve();
     await until(() => gate.active === 0);
   });
 
@@ -341,6 +386,67 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     hold.resolve({ toJSON: serialise });
     expect((await next.reply).status).toBe(200);
     expect(serialise).toHaveBeenCalledTimes(1); // only the caller still connected got an answer
+  });
+
+  it("repeated disconnects on the covered report paths keep pending work bounded by the gate (#1915)", async () => {
+    // These handlers run whole-case loads that ignore the request's abort signal (geo-map, its CSV,
+    // lateral paths, the ATT&CK layer, the presentation). A slot freed at socket close let each
+    // disconnect start another one while the last stayed queued in the load limiter: a probe left 58
+    // loads queued while the gate reported none. The real app and its own gate, nothing stubbed but a
+    // slower load.
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-abandon-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const reportWriter = new ReportWriter(store, stateStore, {
+      scope: new ScopeStore(store),
+      falsePositives: new FalsePositiveStore(store),
+    });
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore, reportWriter });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/geo-map")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+    const slow = stateStore as unknown as { loadState: (...a: unknown[]) => Promise<unknown> };
+    const loadState = slow.loadState.bind(stateStore);
+    vi.spyOn(slow, "loadState").mockImplementation(async (...a: unknown[]) => {
+      await new Promise((r) => setTimeout(r, 100));
+      return loadState(...a);
+    });
+    const port = await listen(app);
+
+    let peakGate = 0;
+    let peakLoads = 0;
+    const sample = setInterval(() => {
+      peakGate = Math.max(peakGate, gate.active + gate.waiting);
+      peakLoads = Math.max(peakLoads, wholeCaseLoads.active + wholeCaseLoads.waiting);
+    }, 1);
+    const idle = (): boolean =>
+      gate.active === 0 && gate.waiting === 0 && wholeCaseLoads.active === 0 && wholeCaseLoads.waiting === 0;
+    try {
+      const paths = ["/geo-map", "/geo-map.csv", "/lateral-paths", "/attack-layer.json", "/presentation"];
+      // A fixed number of bursts, each dropped once its requests are in flight (not a poll loop).
+      const inFlight = (): Promise<void> => new Promise((r) => setTimeout(r, 25));
+      for (let round = 0; round < 15; round++) {
+        const burst = [...paths, ...paths].map((p) => get(port, `/cases/c1${p}`));
+        for (const r of burst) r.reply.catch(() => undefined);
+        await inFlight();
+        for (const r of burst) r.drop();
+      }
+      const health = await get(port, "/health").reply;
+      expect(health.status).toBe(200);
+      expect(health.ms).toBeLessThan(500);
+      await until(idle, 10_000);
+    } finally {
+      clearInterval(sample);
+    }
+    expect(peakGate).toBeLessThanOrEqual(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT);
+    // Every load queued or running belongs to a request still holding a slot: at most one per slot.
+    expect(peakLoads).toBeGreaterThan(0);
+    expect(peakLoads).toBeLessThanOrEqual(HEAVY_READ_CONCURRENCY);
+    // And the gate still serves a live caller afterwards: no slot leaked.
+    expect((await get(port, "/cases/c1/geo-map").reply).status).toBe(200);
+    await until(idle);
   });
 
   it("the report-lite cache still serves the second request behind the gate", async () => {
