@@ -112,3 +112,62 @@ describe("Codex model-error classification (#2051)", () => {
     expect(err.message).toMatch(/Settings/);
   });
 });
+
+// #2105: OpenAI rejects a prompt its usage-policy check flags with a 400 whose `error.code` is
+// `invalid_prompt` (Azure OpenAI's content filter uses `content_filter`). That is the safety filter,
+// so it must be a safety_stop — never resent as a generic "other" error.
+const coded = (status: number, type: string, code: string, message: string) =>
+  JSON.stringify({
+    type: "error",
+    message: JSON.stringify({ type: "error", status, error: { type, code, message } }),
+  });
+
+const POLICY_MESSAGE =
+  "Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt.";
+
+describe("Codex content-policy refusal (#2105)", () => {
+  it("classifies an invalid_prompt usage-policy refusal as a safety stop", async () => {
+    const err = await caught(analyze(coded(400, "invalid_request_error", "invalid_prompt", POLICY_MESSAGE)));
+    expect(err.kind).toBe("safety_stop");
+    expect(err.message).toMatch(/Codex \(gpt-6-sol\)'s safety filter stopped the answer/);
+    expect(err.message).toMatch(/usage policy/);
+  });
+
+  it("classifies an Azure content_filter refusal as a safety stop", async () => {
+    const err = await caught(analyze(coded(400, "invalid_request_error", "content_filter", "Filtered.")));
+    expect(err.kind).toBe("safety_stop");
+  });
+
+  it("does not retry a content-policy refusal", async () => {
+    const err = await caught(analyze(coded(400, "invalid_request_error", "invalid_prompt", POLICY_MESSAGE)));
+    const fn = vi.fn(async () => {
+      throw err;
+    });
+    await expect(withRetry(fn, 3, 0)).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat policy wording alone, with no refusal code, as a safety stop", async () => {
+    const err = await caught(analyze(envelope(400, "invalid_request_error", POLICY_MESSAGE)));
+    expect(err.kind).not.toBe("safety_stop");
+    const plain = await caught(analyze(JSON.stringify({ type: "error", message: POLICY_MESSAGE })));
+    expect(plain.kind).not.toBe("safety_stop");
+  });
+
+  it("does not treat a server error or a rate limit carrying the code as a safety stop", async () => {
+    const server = await caught(analyze(coded(500, "server_error", "invalid_prompt", "Internal error.")));
+    expect(server.kind).not.toBe("safety_stop");
+    const limited = await caught(analyze(coded(429, "rate_limit_error", "content_filter", "Slow down.")));
+    expect(limited.kind).not.toBe("safety_stop");
+  });
+
+  it("still treats a safety refusal after warning-only events as a safety stop", async () => {
+    const warning = UNSUPPORTED_MODEL_STDOUT.split("\n").slice(1, 2);
+    const stdout = [...warning, coded(400, "invalid_request_error", "invalid_prompt", POLICY_MESSAGE)].join(
+      "\n",
+    );
+    const err = await caught(analyze(stdout));
+    expect(err.kind).toBe("safety_stop");
+    expect(err.message).not.toMatch(/service tier/i);
+  });
+});

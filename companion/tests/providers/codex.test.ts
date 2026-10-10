@@ -237,4 +237,78 @@ describe("CodexProvider", () => {
       new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
     ).rejects.toBeInstanceOf(ProviderError);
   });
+
+  it("keeps the old 'no content' error for an empty successful run", async () => {
+    const stdout = JSON.stringify({ type: "turn.completed", usage: { input_tokens: 3, output_tokens: 0 } });
+    await expect(
+      new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) }).analyze({
+        systemPrompt: "s",
+        userPrompt: "u",
+        images: [],
+      }),
+    ).rejects.toMatchObject({ message: "Codex returned no content", kind: "other" });
+  });
+});
+
+// #2105: the Responses API puts a model refusal in a `refusal` content part ({type: "refusal",
+// refusal: "…"}), not in `text`, and streams it as response.refusal.delta/.done events. That is the
+// safety filter, so it must be a safety_stop, not "Codex returned no content" (which is retried).
+describe("CodexProvider refusals (#2105)", () => {
+  const run = (stdout: string, model = "gpt-5-codex") =>
+    new CodexProvider({ model, runner: fakeRunner({ stdout }) }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
+  const REFUSAL = "I'm sorry, but I can't help with that.";
+
+  it("raises a safety stop for a refusal content part in an agent message", async () => {
+    const stdout = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", content: [{ type: "refusal", refusal: REFUSAL }] },
+    });
+    const err: unknown = await run(stdout).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err).toMatchObject({ kind: "safety_stop" });
+    expect((err as ProviderError).message).toMatch(/Codex \(gpt-5-codex\)'s safety filter/);
+    expect((err as ProviderError).message).toContain(REFUSAL);
+  });
+
+  it("raises a safety stop for a bare refusal part and for a refusal.done stream event", async () => {
+    await expect(run(JSON.stringify({ type: "refusal", refusal: REFUSAL }))).rejects.toMatchObject({
+      kind: "safety_stop",
+    });
+    const stream = [
+      JSON.stringify({ type: "response.refusal.delta", delta: "I'm sorry" }),
+      JSON.stringify({ type: "response.refusal.done", refusal: REFUSAL }),
+    ].join("\n");
+    await expect(run(stream)).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("never returns a streamed refusal delta as the answer", async () => {
+    const stdout = JSON.stringify({ type: "response.refusal.delta", delta: "I'm sorry" });
+    await expect(run(stdout)).rejects.toMatchObject({ kind: "safety_stop" });
+  });
+
+  it("names the default model when none is set", async () => {
+    await expect(run(JSON.stringify({ type: "refusal", refusal: REFUSAL }), "")).rejects.toThrow(
+      /Codex \(default model\)'s safety filter/,
+    );
+  });
+
+  it("does not treat an answer that merely mentions a refusal as a safety stop", async () => {
+    const stdout = JSON.stringify({
+      type: "agent_message",
+      text: "The user's refusal to log in was logged.",
+    });
+    await expect(run(stdout)).resolves.toMatchObject({ rawText: "The user's refusal to log in was logged." });
+  });
+
+  it("ignores a refusal part whose refusal text is empty", async () => {
+    const stdout = [
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "the answer" } }),
+      JSON.stringify({ type: "refusal", refusal: "  " }),
+    ].join("\n");
+    await expect(run(stdout)).resolves.toMatchObject({ rawText: "the answer" });
+  });
 });
