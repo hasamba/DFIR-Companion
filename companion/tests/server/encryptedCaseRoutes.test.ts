@@ -12,7 +12,7 @@ import { CustodyStore } from "../../src/analysis/custody.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { encryptBuffer, decryptBuffer } from "../../src/analysis/caseEncryption.js";
 import { createZip, readZip } from "../../src/analysis/zipArchive.js";
-import { scryptSync, createCipheriv, randomBytes } from "node:crypto";
+import { scryptSync, createCipheriv, randomBytes, createHash } from "node:crypto";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -389,6 +389,51 @@ describe("POST /cases/import/encrypted", () => {
     expect(arrivals[0].caseId).toBe("INC-2");
     expect(arrivals[0].source).toContain("INC-1");
     expect(arrivals[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // #2124: the archive the analyst handed over is receipted with its own hashes, ahead of the
+  // `transferred` arrival (whose hash is the new case.json, not the archive).
+  it("receipts the .dfircase archive's SHA-256, SHA-1 and size before the transferred entry", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+    const archive = Buffer.from(data, "base64");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2" });
+    expect(imp.status).toBe(201);
+
+    const records = (await readFile(store.custodyLogPath("INC-2"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const sha256 = createHash("sha256").update(archive).digest("hex");
+    const receivedAt = records.findIndex((r) => r.event === "received" && r.sha256 === sha256);
+    expect(receivedAt).toBeGreaterThanOrEqual(0);
+    const received = records[receivedAt];
+    expect(received.sha1).toBe(createHash("sha1").update(archive).digest("hex"));
+    expect(received.bytes).toBe(archive.length);
+    expect(received.caseId).toBe("INC-2");
+    expect(received.trigger).toBe("encrypted-case-import");
+    expect(String(received.artifactPath).startsWith("received:")).toBe(true);
+    expect(receivedAt).toBeLessThan(records.findIndex((r) => r.event === "transferred"));
+  });
+
+  // #2124: a rejected archive has no case to hold a chain, so nothing is written for it.
+  it("writes no custody entry for an archive rejected by a wrong password", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+    const before = await readFile(store.custodyLogPath("INC-1"), "utf8").catch(() => "");
+
+    const imp = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: "wrong password", targetCaseId: "INC-2" });
+    expect(imp.status).toBe(400);
+    expect(await store.caseExists("INC-2")).toBe(false);
+    await expect(readFile(store.custodyLogPath("INC-2"), "utf8")).rejects.toThrow();
+    expect(await readFile(store.custodyLogPath("INC-1"), "utf8").catch(() => "")).toBe(before);
   });
 
   it("rejects an archive whose bytes disagree with its manifest with a 400, not a 500", async () => {

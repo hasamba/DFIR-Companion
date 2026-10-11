@@ -8,9 +8,10 @@ import {
 import { importZipArchiveCase } from "../analysis/caseZipImport.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
-import { hashFile } from "../analysis/custody.js";
+import { hashFile, RECEIVED_PATH_PREFIX } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
 import { importedCaseIdClaim } from "./caseIdentity.js";
+import { receivedOf } from "./importReceipt.js";
 
 /**
  * Whole-case import — POST /cases/import/encrypted (a `.dfircase` package) and POST
@@ -91,6 +92,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         },
       );
       options.teamAuth?.grantCreator(req, meta.caseId);
+      await recordReceipt(ctx, meta.caseId, DFIRCASE_ARRIVAL, fileBuffer);
       await recordArrival(ctx, meta.caseId, DFIRCASE_ARRIVAL, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
@@ -162,13 +164,15 @@ function registerZipImportRoute(app: Express, ctx: RouteContext): void {
         res.setHeader("Retry-After", "60");
         return res.status(429).json({ error: "too many import attempts, try again later" });
       }
-      const result = await importZipArchiveCase(store, Buffer.from(data, "base64"), {
+      const archive = Buffer.from(data, "base64");
+      const result = await importZipArchiveCase(store, archive, {
         targetCaseId:
           typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
         beforePublish: importedCaseIdClaim(ctx, req),
       });
       const { meta, verified, sourceCaseId } = result;
       options.teamAuth?.grantCreator(req, meta.caseId);
+      await recordReceipt(ctx, meta.caseId, ZIP_ARRIVAL, archive);
       await recordArrival(ctx, meta.caseId, ZIP_ARRIVAL, sourceCaseId);
       const counts = await countsFromState(ctx, meta.caseId, result.counts);
       // sanitizeCaseMeta for the same reason as above: case.json travels byte-for-byte, lock hash included.
@@ -211,6 +215,43 @@ interface ArrivalWording {
 
 const DFIRCASE_ARRIVAL: ArrivalWording = { label: ".dfircase archive", trigger: "encrypted-case-import" };
 const ZIP_ARRIVAL: ArrivalWording = { label: "ZIP archive", trigger: "zip-case-import" };
+
+/**
+ * Receipt the archive the analyst handed over — its SHA-256, SHA-1 and size — as a `received` entry
+ * in the new case's chain, ahead of the `transferred` arrival (#2124), so the case can be tied to the
+ * exact `.dfircase`/ZIP file received. Success path only: no case exists until the archive opens, so
+ * a rejected archive has no chain to write into. Never throws, for the reason recordArrival gives.
+ */
+async function recordReceipt(
+  ctx: RouteContext,
+  caseId: string,
+  wording: ArrivalWording,
+  archive: Buffer,
+): Promise<void> {
+  const custody = ctx.options.custodyStore;
+  if (!custody) return;
+  const got = receivedOf(archive, wording.label);
+  try {
+    await custody.record(caseId, {
+      artifactPath: `${RECEIVED_PATH_PREFIX}${wording.trigger}/${got.name}@${got.sha256.slice(0, 12)}`,
+      sha256: got.sha256,
+      sha1: got.sha1,
+      bytes: got.bytes,
+      collectedBy: "import",
+      collectedAt: new Date().toISOString(),
+      source: got.name,
+      trigger: wording.trigger,
+      caseId,
+      event: "received",
+    });
+  } catch (err) {
+    ctx.serverLogger.warn(
+      `imported case ${caseId} published but its archive receipt could not be written: ` +
+        (err as Error).message,
+      { caseId },
+    );
+  }
+}
 
 /**
  * Record in the new case's custody chain that it ARRIVED rather than being created here (#904).

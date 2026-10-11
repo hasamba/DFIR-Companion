@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import request from "supertest";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -19,7 +20,7 @@ async function harness() {
   const stateStore = new StateStore(store);
   const custodyStore = new CustodyStore(store);
   const app = createApp(store, { stateStore, custodyStore });
-  return { app, store, stateStore };
+  return { app, store, stateStore, custodyStore };
 }
 
 async function seedAndArchive(app: ReturnType<typeof createApp>, stateStore: StateStore): Promise<Buffer> {
@@ -73,6 +74,51 @@ describe("POST /cases/import/zip", () => {
     expect(arrivals).toHaveLength(1);
     expect(arrivals[0].source).toBe("ZIP archive of case INC-1");
     expect(arrivals[0].trigger).toBe("zip-case-import");
+  });
+
+  // #2124: the ZIP the analyst handed over is receipted with its own hashes, ahead of `transferred`.
+  it("receipts the ZIP archive's SHA-256, SHA-1 and size before the transferred entry", async () => {
+    const { app, store, stateStore } = await harness();
+    const zip = await seedAndArchive(app, stateStore);
+
+    const res = await request(app)
+      .post("/cases/import/zip")
+      .send({ data: zip.toString("base64"), targetCaseId: "INC-2" });
+    expect(res.status).toBe(201);
+
+    const records = (await readFile(store.custodyLogPath("INC-2"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const sha256 = createHash("sha256").update(zip).digest("hex");
+    const receivedAt = records.findIndex((r) => r.event === "received" && r.sha256 === sha256);
+    expect(receivedAt).toBeGreaterThanOrEqual(0);
+    const received = records[receivedAt];
+    expect(received.sha1).toBe(createHash("sha1").update(zip).digest("hex"));
+    expect(received.bytes).toBe(zip.length);
+    expect(received.trigger).toBe("zip-case-import");
+    expect(String(received.artifactPath).startsWith("received:")).toBe(true);
+    expect(receivedAt).toBeLessThan(records.findIndex((r) => r.event === "transferred"));
+  });
+
+  // #2124: the case is already published when the receipt is written, so a failed write is logged,
+  // never turned into a 500 for an import that succeeded.
+  it("still answers 201 when the archive receipt cannot be written", async () => {
+    const { app, store, stateStore, custodyStore } = await harness();
+    const zip = await seedAndArchive(app, stateStore);
+    const record = custodyStore.record.bind(custodyStore);
+    custodyStore.record = async (caseId, entry) => {
+      if (entry.event === "received" && entry.trigger === "zip-case-import") throw new Error("disk full");
+      return record(caseId, entry);
+    };
+
+    const res = await request(app)
+      .post("/cases/import/zip")
+      .send({ data: zip.toString("base64"), targetCaseId: "INC-2" });
+    expect(res.status).toBe(201);
+    const log = await readFile(store.custodyLogPath("INC-2"), "utf8");
+    expect(log).toContain('"transferred"');
+    expect(log).not.toContain("zip-case-import/");
   });
 
   it("answers 409 with the conflicting case id", async () => {

@@ -3,8 +3,8 @@
 // Under a burst of heavy whole-case reads the server admits a few at a time and answers the overflow
 // with 503 + Retry-After + an X-DFIR-Server-Busy marker (companion/src/composition/heavyReadGate.ts).
 // That is not a broken feature, so a panel must not show it as one: this wraps window.fetch once,
-// at load, and retries a busy GET/HEAD after the server's Retry-After, a few times, while a small
-// note says "Server busy — retrying…". If the server stays busy, the note says so and offers a
+// at load, and retries a busy GET/HEAD after the server's Retry-After (longer each time, with
+// jitter), a few times, while a small note says "Server busy — retrying…". If the server stays busy, the note says so and offers a
 // reload, and the caller gets the 503 to handle as it already does. One dashboard on its own never
 // reaches the cap, so in normal use this does nothing at all.
 //
@@ -15,6 +15,7 @@
   const MAX_RETRIES = 4;
   const DEFAULT_WAIT_S = 2;
   const MAX_WAIT_S = 30;
+  const JITTER = 0.5;
   const NOTE_ID = "serverBusyNote";
   const baseFetch = window.fetch;
   let retrying = 0;
@@ -24,10 +25,14 @@
     return !!response && response.status === 503 && response.headers.get(BUSY_HEADER) === "1";
   }
 
-  function retryAfterMs(response) {
+  // Doubles per attempt and adds 0-50% at random (#2123): with a fixed wait every refused dashboard
+  // came back in the same wave and refilled the queue. Jitter only adds, because Retry-After is the
+  // least the server asked for; MAX_WAIT_S stays the ceiling, jitter included.
+  function retryAfterMs(response, attempt) {
     const seconds = Number(response.headers.get("Retry-After"));
-    const wait = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_WAIT_S) : DEFAULT_WAIT_S;
-    return wait * 1000;
+    const floor = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_WAIT_S) : DEFAULT_WAIT_S;
+    const grown = floor * 2 ** attempt * (1 + Math.random() * JITTER);
+    return Math.round(Math.min(grown, MAX_WAIT_S) * 1000);
   }
 
   function abortReason(signal) {
@@ -102,7 +107,7 @@
     try {
       for (let attempt = 0; attempt < MAX_RETRIES && isServerBusy(response); attempt++) {
         showNote("Server busy — retrying…", false);
-        await wait(retryAfterMs(response), signal);
+        await wait(retryAfterMs(response, attempt), signal);
         response = await baseFetch(input, init);
       }
     } finally {

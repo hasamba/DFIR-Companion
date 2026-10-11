@@ -2,9 +2,10 @@
 // `event_terms` entry, the writer hook that keeps it beside every forensic/super row, the backfill
 // for a database built before the index existed, and the `iocCandidates` op that turns IOC values
 // into the candidate rows the builders in iocProvenance.ts / iocProvenanceChain.ts then match
-// exactly. Spliced into caseSqliteWorker.ts's WORKER_SOURCE as plain text, so everything here runs
-// inside the worker thread with that file's helpers in scope (openDatabase, withTransaction,
-// existsSync). Keep it backtick-free: the fragment is a String.raw template.
+// exactly; iocCandidatesRead is its read-lane twin (#2131). Spliced into caseSqliteWorker.ts's
+// WORKER_SOURCE as plain text, so everything here runs inside the worker thread with that file's
+// helpers in scope (openDatabase, withTransaction, existsSync). Keep it backtick-free: the
+// fragment is a String.raw template.
 //
 // The index only has to be a SUPERSET of the builders' matches — they re-check every candidate. A
 // stored term is one TOKEN_RE run of the description (the FTS tokenizer's `tokenchars` mirror the
@@ -145,20 +146,46 @@ function compareSuperCandidates(a, b) {
   return aMs - bMs || Number(a.row_id) - Number(b.row_id);
 }
 
+function queryIocCandidates(db, keys, ids) {
+  const rows = fetchIocCandidateRows(db, iocCandidateRowIds(db, keys, ids));
+  const forensic = rows.filter((row) => row.kind === "forensicTimeline")
+    .sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
+  const superRows = rows.filter((row) => row.kind === "superTimeline").sort(compareSuperCandidates);
+  return {
+    forensic: forensic.map((row) => JSON.parse(row.payload)),
+    super: superRows.map((row) => JSON.parse(row.payload)),
+    candidates: rows.length,
+  };
+}
+
+// The WRITER op: builds or rebuilds the term index when due, then queries. Posted only when the read
+// op below answers needsIndex (#2131), and by the legacy backfill tests directly.
 function iocCandidates(dbPath, keys, ids) {
   if (!existsSync(dbPath)) return { forensic: [], super: [], candidates: 0 };
   const db = openDatabase(dbPath);
   try {
     ensureEventTerms(db);
-    const rows = fetchIocCandidateRows(db, iocCandidateRowIds(db, keys, ids));
-    const forensic = rows.filter((row) => row.kind === "forensicTimeline")
-      .sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
-    const superRows = rows.filter((row) => row.kind === "superTimeline").sort(compareSuperCandidates);
-    return {
-      forensic: forensic.map((row) => JSON.parse(row.payload)),
-      super: superRows.map((row) => JSON.parse(row.payload)),
-      candidates: rows.length,
-    };
+    return queryIocCandidates(db, keys, ids);
+  } finally {
+    db.close();
+  }
+}
+
+// #2131: the READ op. The pool counts every writer op as a write, so posting iocCandidates on a
+// settled case moved the case write sequence on every IOC-provenance GET. This answers needsIndex
+// instead of querying when the index is absent or stale. THIS PREDICATE MUST MIRROR THE EARLY
+// RETURN IN ensureEventTerms; the table check runs first so a pre-#1452 database never hits
+// "no such table".
+function iocCandidatesRead(dbPath, keys, ids) {
+  if (!existsSync(dbPath)) return { forensic: [], super: [], candidates: 0 };
+  const db = openDatabase(dbPath);
+  try {
+    const table = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE name='event_terms'").get();
+    const version = readEventTermsVersion(db);
+    // The exact complement of ensureEventTerms' early return, so a NaN (malformed) stamp rebuilds
+    // here as it does there.
+    if (!table || !(version !== null && version >= EVENT_TERMS_VERSION)) return { needsIndex: true };
+    return queryIocCandidates(db, keys, ids);
   } finally {
     db.close();
   }

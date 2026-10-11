@@ -3,6 +3,8 @@
 // Under a burst the server answers heavy reads past its queue with 503 + Retry-After + the
 // X-DFIR-Server-Busy marker. js/dashboard-busy-retry.js wraps fetch so a panel's GET is retried after
 // Retry-After while a note says "retrying", and only a GET/HEAD carrying the marker is retried.
+// Each retry waits longer than the last, plus a random 0-50% on top, so refused dashboards do not all
+// come back in the same wave (#2123). The server's Retry-After is a floor; 30 s is the ceiling.
 import { describe, it, expect } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
@@ -23,14 +25,16 @@ class FakeEl {
   addEventListener() {}
 }
 
-const busy = () =>
+const busyAfter = (seconds: string) => () =>
   new Response(JSON.stringify({ error: "server busy" }), {
     status: 503,
-    headers: { "Retry-After": "2", "X-DFIR-Server-Busy": "1" },
+    headers: { "Retry-After": seconds, "X-DFIR-Server-Busy": "1" },
   });
+const busy = busyAfter("2");
 const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
-function harness(replies: Array<() => Response>) {
+// `random` is the module's Math.random, fixed so the jitter is deterministic.
+function harness(replies: Array<() => Response>, random: () => number = () => 0) {
   const elements: Record<string, FakeEl> = {};
   const body = new FakeEl();
   const calls: Array<{ input: unknown; init?: RequestInit }> = [];
@@ -63,6 +67,7 @@ function harness(replies: Array<() => Response>) {
       createTextNode: (t: string) => t,
     },
     location: { reload: () => undefined },
+    Math: Object.assign(Object.create(Math), { random }),
   });
   return { api, calls, waits, note: () => elements.serverBusyNote };
 }
@@ -74,8 +79,38 @@ describe("dashboard server-busy retry (#1915)", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ lanes: [] });
     expect(h.calls).toHaveLength(3);
-    expect(h.waits).toEqual([2000, 2000]);
+    expect(h.waits).toEqual([2000, 4000]); // no jitter drawn: Retry-After, then twice that
     expect(h.note().hidden).toBe(true); // the "retrying" note is gone once the data arrived
+  });
+
+  it("spreads retries so refused clients do not retry in lockstep (#2123)", async () => {
+    const h = harness([busy, busy, () => ok({})], () => 0.5);
+    await h.api.fetch("/cases/c1/swimlane");
+    expect(h.waits).toEqual([2500, 5000]); // 2 s and 4 s, each plus half of the 50% jitter
+  });
+
+  it("never waits less than the server's Retry-After, nor more than 30 s", async () => {
+    const low = harness(
+      Array.from({ length: 5 }, () => busy),
+      () => 0,
+    );
+    await low.api.fetch("/cases/c1/state");
+    expect(low.waits).toHaveLength(4);
+    expect(Math.min(...low.waits)).toBeGreaterThanOrEqual(2000);
+
+    const high = harness(
+      Array.from({ length: 5 }, () => busyAfter("120")),
+      () => 0.99,
+    );
+    await high.api.fetch("/cases/c1/state");
+    expect(high.waits).toEqual([30000, 30000, 30000, 30000]);
+
+    const grown = harness(
+      Array.from({ length: 5 }, () => busy),
+      () => 0.99,
+    );
+    await grown.api.fetch("/cases/c1/state");
+    expect(Math.max(...grown.waits)).toBeLessThanOrEqual(30000);
   });
 
   it("shows 'retrying' while waiting, and a reload offer if the server stays busy", async () => {

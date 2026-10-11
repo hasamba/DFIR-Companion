@@ -2,7 +2,7 @@
 
 All panels are visible by default. Some are collapsed until they have data. Use **Settings → Dashboard Views** to show/hide panels per role or phase.
 
-When many clients load whole cases at the same time, the server serves a few of these reads at once and asks the rest to wait. The dashboard then shows **Server busy — retrying…** and loads the panel by itself a few seconds later. If the server is still busy after several retries, the note offers **Reload**. A single analyst using one dashboard does not see this note. Opening a case shares one read of it across its panels and keeps that read for 5 minutes, so panels opened again in that time answer quickly; any import or edit makes the next panel read the case again.
+When many clients load whole cases at the same time, the server serves a few of these reads at once and asks the rest to wait. The dashboard then shows **Server busy — retrying…** and loads the panel by itself a few seconds later, waiting a little longer on each retry so that many dashboards do not all retry at the same moment. If the server is still busy after several retries, the note offers **Reload**. A single analyst using one dashboard does not see this note. Opening a case shares one read of it across its panels and keeps that read for 5 minutes, so panels opened again in that time answer quickly; any import or edit makes the next panel read the case again.
 
 ---
 
