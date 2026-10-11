@@ -74,18 +74,6 @@ beforeAll(async () => {
 
 afterAll(() => vi.restoreAllMocks());
 
-/**
- * The panels that also read the super-timeline. Each such read runs SuperTimelineStore's migrateSuper,
- * which the pool counts as a write, so it moves the case revision and the next panel loads afresh.
- */
-const SUPER_TIMELINE_READERS = new Set([
-  "/cockpit",
-  "/tls-graph",
-  "/host-scope",
-  "/host-duplicates",
-  "/second-look/preview",
-]);
-
 function spyLoads() {
   const loaded: InvestigationState[] = [];
   const real = stateStore.load.bind(stateStore);
@@ -114,16 +102,18 @@ describe("case-open panels never write into the shared full state (#2126)", () =
     load.mockRestore();
   }, 60_000);
 
-  it("on a settled case the panels that read only the case share one load, then hit", async () => {
-    const stateOnly = CASE_OPEN_FULL_STATE_ROUTES.filter((p) => !SUPER_TIMELINE_READERS.has(p));
-    await open(CASE_OPEN_FULL_STATE_ROUTES); // the case settles: migrations done
+  // #2129: the super-timeline readers (cockpit, tls-graph, host-scope, host-duplicates, second-look)
+  // used to post a no-op migrateSuper on every read, which moved the revision; they now share too.
+  it("on a settled case every panel shares one load, then hits", async () => {
+    const panels = CASE_OPEN_FULL_STATE_ROUTES;
+    await open(panels); // the case settles: migrations done
     const { load } = spyLoads();
     await stateStore.save({ ...(await stateStore.load(CASE)), caseId: CASE }); // an edit: a fresh revision
     load.mockClear();
-    const replies = await open(stateOnly);
-    replies.forEach((res, i) => expect(res.status, stateOnly[i]).toBe(200));
+    const replies = await open(panels);
+    replies.forEach((res, i) => expect(res.status, panels[i]).toBe(200));
     expect(load).toHaveBeenCalledTimes(1);
-    for (const path of stateOnly)
+    for (const path of panels)
       expect((await request(app).get(`/cases/${CASE}${path}`)).status, path).toBe(200);
     expect(load).toHaveBeenCalledTimes(1);
     load.mockRestore();

@@ -37,6 +37,7 @@ const READ_OPS = new Set([
   "getSuper",
   "listSuperProtected",
   "superMeta",
+  "superMigrateNeeded", // #2129: asked before migrateSuper, so a settled case's reads stay reads
   // #1874: the targeted row reads (caseSqliteWorkerRows.ts)
   "forensicOutline",
   "entityRows",

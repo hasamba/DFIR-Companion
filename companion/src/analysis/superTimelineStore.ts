@@ -204,9 +204,10 @@ export class SuperTimelineStore {
     return join(this.cases.stateDir(caseId), "tags.json");
   }
 
+  // #2129: a READ op first, so a settled case's reads never post a writer op (the pool counts every
+  // writer op as a write, which moves the case read revision). migrateSuper only when one is due.
   private async ensureMigrated(caseId: string): Promise<void> {
-    await caseSqliteWorker.request<void>({
-      op: "migrateSuper",
+    const message = {
       dbPath: this.databasePath(caseId),
       eventsPath: this.eventsPath(caseId),
       labelsPath: this.labelsPath(caseId),
@@ -215,7 +216,9 @@ export class SuperTimelineStore {
       max: this.max,
       setAsideMarkers: SET_ASIDE_NOTE_MARKERS,
       setAsideVersion: SET_ASIDE_REGISTRY_VERSION,
-    });
+    };
+    if (!(await caseSqliteWorker.request<boolean>({ ...message, op: "superMigrateNeeded" }))) return;
+    await caseSqliteWorker.request<void>({ ...message, op: "migrateSuper" });
   }
 
   /**

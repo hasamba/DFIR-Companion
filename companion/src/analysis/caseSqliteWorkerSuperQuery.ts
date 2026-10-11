@@ -207,4 +207,33 @@ function querySuper(dbPath, query) {
     db.close();
   }
 }
+
+// #2129: the READ-side pre-check for migrateSuper (caseSqliteWorkerSuper.ts). The pool counts every
+// writer op as a write, so a migrateSuper that does nothing still moved the case's write sequence on
+// every super-timeline read and defeated the caches keyed on it (#2126, #2057). The store asks this
+// first and posts migrateSuper only when it returns true. THIS PREDICATE MUST MIRROR THE EARLY
+// RETURNS IN migrateSuper (ensureTagsMigrated, the super_migrated legacy import, reconcileSetAside,
+// reconcileSuperProtection, ensureSuperContentStamp); when unsure it answers true.
+// tests/analysis/superTimelineMigrateNoop.test.ts forces a migrateSuper wherever this says false and
+// fails if anything changed. Any tags_protect_pending row counts as due: a reader has its own
+// TAGS_WORKER_BOOT, so it cannot tell the writer's in-flight rows from a dead writer's.
+function superMigrateNeeded(dbPath, tagsPath, setAsideMarkers, setAsideVersion) {
+  if (!existsSync(dbPath)) return true;
+  const db = openDatabase(dbPath);
+  try {
+    const meta = (key) => db.prepare("SELECT value FROM storage_meta WHERE key=?").get(key);
+    if (!hasTagsTable(db)) return true;
+    if (!tagsMarkerSet(db) && existsSync(tagsPath)) return true;
+    if (!meta("super_migrated") || !meta("super_version")) return true;
+    if (setAsideMatchSql(setAsideMarkers) && typeof setAsideVersion === "string" && setAsideVersion) {
+      const synced = meta("super_set_aside_sync");
+      if (!synced || synced.value !== setAsideVersion) return true;
+    }
+    if (db.prepare("SELECT 1 AS x FROM tags_protect_pending LIMIT 1").get()) return true;
+    const protectedSync = meta("super_protected_sync");
+    return !protectedSync || protectedSync.value !== tagsFingerprint(db);
+  } finally {
+    db.close();
+  }
+}
 `;

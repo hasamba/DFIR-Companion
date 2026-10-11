@@ -18,11 +18,6 @@
 //     when another case is loaded, and dropped when the case is deleted (onCaseForgotten). The idle
 //     timer is unref'd. No revision (no database yet, a failed stat) means no sharing past the
 //     coalescer and nothing kept.
-//   - KNOWN LIMIT: every super-timeline read runs SuperTimelineStore's migrateSuper, which the pool
-//     counts as a write, so the panels that also scan the super-timeline (cockpit, tls-graph,
-//     host-scope, host-duplicates, second-look) move the revision and the next panel loads afresh.
-//     Correct (over-invalidation), but it costs extra loads on a case open; the report-lite cache
-//     has the same limit.
 //
 // READ-ONLY. StateStore.load itself never shares: its write callers load, modify and save. Only the
 // GET panel handlers use this, and the state they get is shared by every caller and must not be
