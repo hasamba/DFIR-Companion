@@ -25,12 +25,13 @@ beforeEach(async () => {
 });
 
 describe("/cases/:id/host-scope", () => {
-  // #2128: the GET hands the ledger load the request's abort signal; the POST, which reads the ledger
-  // around a decision write, does not, so a closed tab never cuts a decision short.
-  it("passes the request signal to the GET's whole-case load and none to the decision write's", async () => {
+  // #2128/#2126: the GET reads the shared case-open state, waited on with its own request signal: the
+  // shared load itself takes no caller's signal. The POST, which reads the
+  // ledger around a decision write, loads its own state and is never cut short by a closed tab.
+  it("the GET reads the shared case-open state; the decision write loads its own", async () => {
     const load = vi.spyOn(stateStore, "load");
     expect((await request(app).get("/cases/c1/host-scope")).status).toBe(200);
-    expect(load.mock.calls.at(-1)?.[1]).toEqual({ signal: expect.any(AbortSignal) });
+    expect(load.mock.calls).toEqual([["c1"]]);
     load.mockClear();
     const res = await request(app).post("/cases/c1/host-scope/ws-042").send({ to: "suspected", reason: "x" });
     expect(res.status).toBe(200);

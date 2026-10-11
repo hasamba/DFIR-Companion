@@ -14,9 +14,11 @@
  * it started has settled (analysis/pendingWork.ts: a whole-case load cannot be stopped mid-read, and
  * one caller leaving never cancels a load another caller shares). Freeing the slot at socket close
  * instead let every disconnect start a new handler while the abandoned loads piled up behind the load
- * limiter, out of the gate's sight. A handler with nothing pending frees its slot at once; a slot is
- * never held past HEAVY_READ_ABANDONED_MAX_HOLD_MS, so a hung load cannot leak it. The handlers stop
- * early on their own (http/requestAbort.ts).
+ * limiter, out of the gate's sight. A shared load is counted once, on the request that started it: a
+ * request that only joined it frees its slot when its own wait ends (#2126, routes/caseOpenState.ts).
+ * A handler with nothing pending frees its slot at once; a slot is never held past
+ * HEAVY_READ_ABANDONED_MAX_HOLD_MS, so a hung load cannot leak it. The handlers stop early on their
+ * own (http/requestAbort.ts).
  *
  * NORMAL USE NEVER SEES A 503. One case open fires 33 of these reads (#2119, #2121, #2127); the caps hold
  * two such fan-outs together (tests/composition/heavyReadGate.test.ts pins it). The numbers are

@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { caseOpenState } from "./caseOpenState.js";
 import { buildTlsCaseGraph, tlsCaseGraphReads } from "../analysis/tlsCaseGraph.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
@@ -23,7 +24,7 @@ export function registerTlsGraphRoutes(app: Express, ctx: RouteContext): void {
       const signal = requestAbortSignal(res);
       const pick = (e: ForensicEvent): ForensicEvent | undefined => (tlsCaseGraphReads(e) ? e : undefined);
       const [state, superEvents] = await Promise.all([
-        options.stateStore.load(caseId, { signal }),
+        caseOpenState(ctx.store, options.stateStore).load(caseId, { signal }),
         // #2128: the scan takes the signal too, so it stops with its sibling load for a gone client.
         options.superTimelineStore
           ? options.superTimelineStore.collect(caseId, pick, undefined, signal)

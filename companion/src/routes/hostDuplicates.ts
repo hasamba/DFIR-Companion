@@ -4,6 +4,7 @@ import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName, NEAR_DUPLICATE_BLOCKING, type NearDuplicate } from "../analysis/hostAlias.js";
 import { loadHostDuplicatePanelCandidates } from "../analysis/hostScopeLoad.js";
 import type { RouteContext } from "./context.js";
+import { caseOpenState } from "./caseOpenState.js";
 
 /**
  * Near-duplicate host review — the pre-synthesis merge gate's UI surface.
@@ -35,10 +36,11 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   }
 
   // Only the GET passes a signal; merge, dismiss and undo read this list around a write (#2128).
+  // The GET also reads the shared case-open state (#2126).
   async function pending(caseId: string, signal?: AbortSignal): Promise<NearDuplicate[]> {
     return loadHostDuplicatePanelCandidates(
       {
-        state: options.stateStore!,
+        state: signal ? caseOpenState(ctx.store, options.stateStore!) : options.stateStore!,
         assetOverrides: options.assetOverridesStore!,
         dismissals: options.hostDuplicateDismissalStore!,
         ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),

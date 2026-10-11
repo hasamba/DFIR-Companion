@@ -8,6 +8,7 @@ import type { HostScopeStatus } from "../analysis/hostScopeStore.js";
 import { ScopeStore } from "../analysis/scope.js";
 import type { IrisTactic } from "../analysis/mitreTactics.js";
 import type { RouteContext } from "./context.js";
+import { caseOpenState } from "./caseOpenState.js";
 
 /**
  * Host scope & clearance ledger.
@@ -39,11 +40,11 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
   }
 
   // Only the GET passes a signal: the POST reads the ledger to record a decision, and a closed tab
-  // must not cut that write short (#2128).
+  // must not cut that write short (#2128). The GET also reads the shared case-open state (#2126).
   async function ledger(caseId: string, signal?: AbortSignal): Promise<HostScopeLedger> {
     return loadHostScopeLedger(
       {
-        state: options.stateStore!,
+        state: signal ? caseOpenState(ctx.store, options.stateStore!) : options.stateStore!,
         superTimeline: options.superTimelineStore!,
         decisions: options.hostScopeStore!,
         scope: scopeStore,

@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { caseOpenState } from "./caseOpenState.js";
 import { deriveCockpit, type CockpitAction, type CockpitSnapshot } from "../analysis/cockpit.js";
 import { CockpitStore } from "../analysis/cockpitStore.js";
 import type { HostAliasIndex } from "../analysis/hostAlias.js";
@@ -101,7 +102,11 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     const stateStore = options.stateStore;
     if (!stateStore) throw new Error("state store not configured");
     const investigator = await resolveInvestigator(caseId, requestedInvestigator);
-    const state = await stateStore.load(caseId, { signal });
+    // Only the GET passes a signal, and only the GET reads the shared case-open state (#2126); the
+    // card action loads its own.
+    const state = signal
+      ? await caseOpenState(store, stateStore).load(caseId, { signal })
+      : await stateStore.load(caseId);
     if (signal?.aborted) return null; // #2121: the caller has gone, derive nothing for it
     const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates, aliasIndex] =
       await Promise.all([

@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
-import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { clientGone } from "../http/requestAbort.js";
+import { loadCaseOpenState } from "./caseOpenState.js";
 import { FalsePositiveStore, falsePositiveEventIds } from "../analysis/falsePositive.js";
 import {
   assessHypothesisEvidence,
@@ -127,9 +128,7 @@ export function registerHypothesisEvidenceRoutes(app: Express, ctx: RouteContext
       const hypotheses = await options.hypothesisStore.load(req.params.id);
       // Eligibility: the case timeline as stored, minus the analyst's false-positive marks. Without a
       // state store every linked id is taken as present — the reading then says less, never more.
-      const state = options.stateStore
-        ? await options.stateStore.load(req.params.id, { signal: requestAbortSignal(res) })
-        : null;
+      const state = options.stateStore ? await loadCaseOpenState(ctx, req.params.id, res) : null;
       if (clientGone(res)) return; // #2121
       const events = state?.forensicTimeline ?? [];
       const elig: AssessmentEligibility = {

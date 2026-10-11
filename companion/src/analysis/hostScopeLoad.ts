@@ -34,9 +34,13 @@ import { abortError } from "./abortable.js";
 // derive it identically. Everything it needs is injected, which keeps the two callers from growing
 // their own subtly different versions of the same derivation.
 
+/** A whole-case read. The GET panels pass the shared, read-only one (routes/caseOpenState.ts, #2126). */
+export interface CaseStateReader {
+  load(caseId: string, opts?: { signal?: AbortSignal }): Promise<InvestigationState>;
+}
+
 export interface HostScopeSources {
-  state: {
-    load(caseId: string, opts?: { signal?: AbortSignal }): Promise<InvestigationState>;
+  state: CaseStateReader & {
     /** Each distinct forensic host in the order of its first row — without reading the rows (#1874). */
     forensicHostsInOrder?(caseId: string): Promise<string[]>;
   };

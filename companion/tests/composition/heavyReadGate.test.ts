@@ -476,6 +476,8 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(emptyState("c1"));
     expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    // #2126: that read kept the case's state for the panels; an edit makes the next read load afresh.
+    await stateStore.save(emptyState("c1"));
     const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
     const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
     const port = await listen(app);
@@ -525,6 +527,8 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(emptyState("c1"));
     expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    // #2126: that read kept the case's state for the panels; an edit makes the next read load afresh.
+    await stateStore.save(emptyState("c1"));
     const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
     const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
     const port = await listen(app);
@@ -548,6 +552,50 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     for (const path of paths) expect((await get(port, `/cases/c1${path}`).reply).status, path).toBe(200);
   });
 
+  // #2126: the case-open panels share one full-state load. The load is tracked work on the request
+  // that STARTED it, so that request's slot is held until the load settles, client gone or not. A
+  // request that JOINED it frees its slot as soon as its own wait ends: the load is already counted.
+  it("a departed joiner frees its slot at once; the starter's slot holds until the shared load settles (#2126)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-shared-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/kerberoast-chain")).status).toBe(200);
+    await stateStore.save(emptyState("c1")); // a fresh revision: the next panel read loads afresh
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      const starter = get(port, "/cases/c1/kerberoast-chain");
+      starter.reply.catch(() => undefined);
+      await until(() => wholeCaseLoads.waiting === 1);
+      const joiner = get(port, "/cases/c1/campaign-scope");
+      joiner.reply.catch(() => undefined);
+      await until(() => gate.active === 2);
+      expect(wholeCaseLoads.waiting).toBe(1); // one shared load for both
+      joiner.drop();
+      await until(() => gate.active === 1); // the joiner's slot is free at once
+      expect(wholeCaseLoads.waiting).toBe(1); // and the load the starter waits for runs on
+      const stayer = get(port, "/cases/c1/campaign-scope");
+      await until(() => gate.active === 2);
+      starter.drop();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(2); // the starter's slot holds: its load is still queued for the stayer
+      busy.forEach((b) => b.resolve());
+      expect((await stayer.reply).status).toBe(200);
+      await until(() => gate.active === 0);
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
   it("tls-graph holds its slot until its super-timeline scan settles, and the scan stops for a gone client (#2128)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-heavy-tls-"));
     const store = new CaseStore(root);
@@ -558,6 +606,7 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(emptyState("c1"));
     expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    await stateStore.save(emptyState("c1")); // #2126: a fresh revision, so tls-graph loads afresh
     const gate = admit.mock.contexts[0] as HeavyReadGate;
     // A three-page raw record whose second page is slow to read.
     const page = deferred();

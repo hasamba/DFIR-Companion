@@ -1,7 +1,7 @@
 import { abortError } from "../abortable.js";
 import { filterFalsePositiveEvents } from "../falsePositive.js";
 import type { HostAliasIndex } from "../hostAlias.js";
-import { loadHostAliasIndex } from "../hostScopeLoad.js";
+import { loadHostAliasIndex, type CaseStateReader } from "../hostScopeLoad.js";
 import { rankConnectiveIocs } from "../iocAnchors.js";
 import { isPendingLabRow } from "../labIntel.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
@@ -132,11 +132,12 @@ async function sweepCase(
   ctx: SecondLookContext,
   caseId: string,
   signal?: AbortSignal,
+  reader: CaseStateReader = ctx.opts.stateStore,
 ): Promise<SweptCase | null> {
   const superStore = ctx.opts.superTimelineStore;
   if (!superStore) return null;
 
-  const state = await ctx.opts.stateStore.load(caseId, { signal });
+  const state = await reader.load(caseId, { signal });
   const markers = ctx.opts.falsePositiveStore ? await ctx.opts.falsePositiveStore.load(caseId) : [];
   const scope = ctx.opts.scopeStore ? await ctx.opts.scopeStore.load(caseId) : NO_SCOPE;
   const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(state.forensicTimeline, scope), markers);
@@ -188,8 +189,9 @@ export async function secondLookPreview(
   ctx: SecondLookContext,
   caseId: string,
   signal?: AbortSignal,
+  reader?: CaseStateReader, // the GET's shared, read-only case-open state (#2126); the run loads its own
 ): Promise<SecondLookPreview> {
-  const swept = await sweepCase(ctx, caseId, signal);
+  const swept = await sweepCase(ctx, caseId, signal, reader);
   if (!swept) {
     return {
       configured: false,

@@ -12,6 +12,7 @@ import { tagTableLabels, type SuperLabelMap } from "../analysis/superTimeline.js
 import { SEARCH_TOTAL_CEILING } from "../analysis/forensicSearch.js";
 import type { TagsStore } from "../analysis/tags.js";
 import type { RouteContext } from "./context.js";
+import { caseOpenStateOf } from "./caseOpenState.js";
 
 // The pre-#2070 label map, { eventId: labels[] } over every event tag: now only the fallback for a
 // case whose tag table cannot answer yet (tags.json not migrated).
@@ -119,7 +120,11 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/known-unknowns", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
     try {
-      const items = await options.pipeline.knownUnknownsForCase(req.params.id, requestAbortSignal(res));
+      const items = await options.pipeline.knownUnknownsForCase(
+        req.params.id,
+        requestAbortSignal(res),
+        caseOpenStateOf(ctx),
+      );
       return clientGone(res) ? undefined : res.status(200).json({ items }); // #2121
     } catch (err) {
       return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
