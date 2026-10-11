@@ -14,6 +14,12 @@ import { setReceiptedFile, type ReceiptedFile } from "./receiptedFile.js";
 //
 // If the entry cannot be written the request stops with a 500 and the parser never runs: an import
 // with no receipt would quietly re-open the gap this exists to close.
+//
+// Whole-case imports (POST /cases/import/encrypted for a `.dfircase`, POST /cases/import/zip) are
+// NOT covered here: custody is per case, and no case exists until the archive opens. They are
+// receipted on success only — routes/encryptedImport.ts records the archive's SHA-256, SHA-1 and
+// size as a `received` entry in the new case's chain, ahead of its `transferred` arrival (#2124).
+// A rejected archive (wrong password, corrupt) has no chain to write into and leaves no entry.
 
 /** The body fields the routes read their payload from, in the priority they use. */
 const TEXT_FIELDS = ["text", "json", "csv", "eml", "log"] as const;
@@ -21,7 +27,7 @@ const TEXT_FIELDS = ["text", "json", "csv", "eml", "log"] as const;
 const SERVER_PATH_ROUTES: readonly string[] = ["import-file", "import-mac-login-item"];
 const MAX_NAME = 200;
 
-interface Received {
+export interface Received {
   sha256: string;
   sha1: string;
   bytes: number;
@@ -37,7 +43,7 @@ function receiptName(raw: unknown, fallback: string): string {
   return clean || fallback;
 }
 
-const receivedOf = (bytes: Buffer, name: string): Received => ({
+export const receivedOf = (bytes: Buffer, name: string): Received => ({
   sha256: digest("sha256", bytes),
   sha1: digest("sha1", bytes),
   bytes: bytes.length,
