@@ -28,14 +28,20 @@ import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import type { ScopeWindow } from "./scope.js";
 import type { AssetOverrides } from "./assetOverrides.js";
 import type { VeloClientInventory } from "./velociraptorClientStore.js";
+import { abortError } from "./abortable.js";
+import { trackedWork } from "./pendingWork.js";
 
 // One place that turns the case's stores into a HostScopeLedger, so the route and the report writer
 // derive it identically. Everything it needs is injected, which keeps the two callers from growing
 // their own subtly different versions of the same derivation.
 
+/** A whole-case read. The GET panels pass the shared, read-only one (routes/caseOpenState.ts, #2126). */
+export interface CaseStateReader {
+  load(caseId: string, opts?: { signal?: AbortSignal }): Promise<InvestigationState>;
+}
+
 export interface HostScopeSources {
-  state: {
-    load(caseId: string): Promise<InvestigationState>;
+  state: CaseStateReader & {
     /** Each distinct forensic host in the order of its first row — without reading the rows (#1874). */
     forensicHostsInOrder?(caseId: string): Promise<string[]>;
   };
@@ -81,16 +87,20 @@ async function collectRaw(batches: AsyncIterable<ForensicEvent[]>): Promise<RawH
 // Per-host evidence from the super-timeline. The raw per-spelling totals are cached until the rows
 // change (#1881), and the alias index is applied afterwards, so a fleet refresh or an analyst merge
 // never forces a rescan. The fold returns fresh sets, so the caller may mutate the result.
+// Tracked, never cancelled: admission control holds the starting request's slot until the scan
+// settles, while a departed caller cannot cut short a scan other callers share (#2128).
 export async function loadHostEvidence(
   source: HostEvidenceSource,
   caseId: string,
   index: HostAliasIndex,
 ): Promise<HostEvidenceMap> {
-  if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
-  const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
-    cacheable: smallEnoughToCache,
+  return trackedWork(async () => {
+    if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
+    const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
+      cacheable: smallEnoughToCache,
+    });
+    return foldRawHostEvidence(raw, index);
   });
-  return foldRawHostEvidence(raw, index);
 }
 
 // The tactics this case has actually confirmed, from its findings' techniques. Clearance asks
@@ -179,12 +189,16 @@ export async function loadHostDuplicatePanelCandidates(
     dismissals: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
   },
   caseId: string,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<NearDuplicate[]> {
   const [state, index, dismissals] = await Promise.all([
-    sources.state.load(caseId),
+    sources.state.load(caseId, { signal: opts.signal }),
     loadHostAliasIndex(sources, caseId),
     sources.dismissals.load(caseId),
   ]);
+  // A departed client skips the super-timeline host scan. The scan itself is shared and memoized
+  // (#1881), so it never takes the signal: one caller leaving must not cancel it for the rest (#2128).
+  if (opts.signal?.aborted) throw abortError();
   const hostNames = await loadDuplicateCheckHostNames(sources, caseId, index);
   const bindingIndex = buildHostBindingIndex(state.forensicTimeline ?? [], index);
   return [
@@ -196,14 +210,17 @@ export async function loadHostDuplicatePanelCandidates(
 export async function loadHostScopeLedger(
   sources: HostScopeSources,
   caseId: string,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<HostScopeLedger> {
-  const state = await sources.state.load(caseId);
+  const state = await sources.state.load(caseId, { signal: opts.signal });
   const window = sources.scope ? await sources.scope.load(caseId) : { start: null, end: null };
   const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
   const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
 
   // overrides.merges is keyed by asset id, not host name — see hostMergesFromAssetIds.
   const index = buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
+  // Checked before the shared, memoized scan, which never takes the signal (see above, #2128).
+  if (opts.signal?.aborted) throw abortError();
   const evidence = await loadHostEvidence(sources.superTimeline, caseId, index);
   // The super-timeline is never synthesized, so it carries no finding links. Without this overlay a
   // host with a Critical finding against it still derives as `unknown` — see overlayFindingLinks.

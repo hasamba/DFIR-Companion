@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +26,14 @@ beforeEach(async () => {
 });
 
 describe("StateStore", () => {
+  it("a load whose caller already gave up never reads (#2121)", async () => {
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    await expect(stateStore.load("c1", { signal: AbortSignal.abort() })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(reads).not.toHaveBeenCalled();
+  });
+
   it("returns empty state when none saved", async () => {
     const state = await stateStore.load("c1");
     expect(state.findings).toEqual([]);

@@ -3,6 +3,7 @@ import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import type { CaptureMetadata } from "../types.js";
 import type { InvestigationState } from "./stateTypes.js";
+import type { CaseStateReader } from "./hostScopeLoad.js";
 import { type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { mergeDelta, type WindowContext } from "./stateMerge.js";
 import { mergeIntoCase, type CaseMergeResult } from "./caseMerge.js";
@@ -570,8 +571,12 @@ export class AnalysisPipeline {
     return analystQueries.explainEvent(this.aiCtx, caseId, eventId);
   }
 
-  knownUnknownsForCase(caseId: string): Promise<KnownUnknownItem[]> {
-    return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId);
+  knownUnknownsForCase(
+    caseId: string,
+    signal?: AbortSignal,
+    reader?: CaseStateReader,
+  ): Promise<KnownUnknownItem[]> {
+    return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId, signal, reader);
   }
 
   cloudCoverageForCase(caseId: string): Promise<CloudCoverageSummary> {
@@ -678,8 +683,12 @@ export class AnalysisPipeline {
     return synthesis.synthesize(this.aiCtx, ...args);
   }
 
-  secondLookPreview(caseId: string): Promise<SecondLookPreview> {
-    return secondLookRun.secondLookPreview(this.aiCtx, caseId);
+  secondLookPreview(
+    caseId: string,
+    signal?: AbortSignal,
+    reader?: CaseStateReader,
+  ): Promise<SecondLookPreview> {
+    return secondLookRun.secondLookPreview(this.aiCtx, caseId, signal, reader);
   }
 
   secondLook(...args: AiArgs<typeof secondLookRun.secondLookRun>): Promise<SecondLookRunResult | null> {

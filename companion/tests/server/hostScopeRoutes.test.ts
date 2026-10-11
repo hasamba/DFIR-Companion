@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,19 +10,35 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 
 let app: ReturnType<typeof createApp>;
+let stateStore: StateStore;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-hostscope-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  stateStore = new StateStore(cases);
   app = createApp(cases, {
-    stateStore: new StateStore(cases),
+    stateStore,
     superTimelineStore: new SuperTimelineStore(cases),
     hostScopeStore: new HostScopeStore(cases),
   });
 });
 
 describe("/cases/:id/host-scope", () => {
+  // #2128/#2126: the GET reads the shared case-open state, waited on with its own request signal: the
+  // shared load itself takes no caller's signal. The POST, which reads the
+  // ledger around a decision write, loads its own state and is never cut short by a closed tab.
+  it("the GET reads the shared case-open state; the decision write loads its own", async () => {
+    const load = vi.spyOn(stateStore, "load");
+    expect((await request(app).get("/cases/c1/host-scope")).status).toBe(200);
+    expect(load.mock.calls).toEqual([["c1"]]);
+    load.mockClear();
+    const res = await request(app).post("/cases/c1/host-scope/ws-042").send({ to: "suspected", reason: "x" });
+    expect(res.status).toBe(200);
+    expect(load).toHaveBeenCalled();
+    for (const call of load.mock.calls) expect(call[1]?.signal).toBeUndefined();
+  });
+
   it("returns an empty ledger for a fresh case", async () => {
     const res = await request(app).get("/cases/c1/host-scope");
     expect(res.status).toBe(200);

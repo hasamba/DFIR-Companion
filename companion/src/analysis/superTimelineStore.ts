@@ -6,6 +6,8 @@ import type { ForensicEvent } from "./stateTypes.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { SuperScanMemo } from "./superTimelineMemo.js";
+import { abortError } from "./abortable.js";
+import { trackedWork } from "./pendingWork.js";
 import {
   STARRED_LABEL,
   TAGGER_AUTHOR_PREFIX,
@@ -467,15 +469,21 @@ export class SuperTimelineStore {
     caseId: string,
     pick: (event: ForensicEvent) => T | undefined,
     batchSize = SCAN_BATCH_SIZE,
+    signal?: AbortSignal,
   ): Promise<T[]> {
-    const out: T[] = [];
-    for await (const batch of this.eventBatches(caseId, batchSize)) {
-      for (const event of batch) {
-        const kept = pick(event);
-        if (kept !== undefined) out.push(kept);
+    // Tracked so admission control holds the request's slot until the scan settles, and checked once
+    // per batch so a departed client stops it: leaving the `for await` ends the page reads (#2128).
+    return trackedWork(async () => {
+      const out: T[] = [];
+      for await (const batch of this.eventBatches(caseId, batchSize)) {
+        if (signal?.aborted) throw abortError();
+        for (const event of batch) {
+          const kept = pick(event);
+          if (kept !== undefined) out.push(kept);
+        }
       }
-    }
-    return out;
+      return out;
+    });
   }
 
   /**
@@ -489,12 +497,15 @@ export class SuperTimelineStore {
     reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
     opts: { cacheable?: (value: T) => boolean } = {},
   ): Promise<T> {
-    return this.scanMemo.get(
-      caseId,
-      name,
-      async () => (await this.meta(caseId)).version,
-      () => reduce(this.eventBatches(caseId)),
-      opts.cacheable,
+    // Tracked like collect (#2128), but never cancelled: the result is shared by every caller.
+    return trackedWork(() =>
+      this.scanMemo.get(
+        caseId,
+        name,
+        async () => (await this.meta(caseId)).version,
+        () => reduce(this.eventBatches(caseId)),
+        opts.cacheable,
+      ),
     );
   }
 

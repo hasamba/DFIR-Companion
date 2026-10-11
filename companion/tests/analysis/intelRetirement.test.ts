@@ -1,7 +1,7 @@
 // #1024 part 4: the retirement review lists findings whose intel corroboration is no longer
 // actionable; the analyst's decision is recorded and changes nothing else; the decision survives
 // a merge and a concurrent synthesis; the route exposes both.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -186,6 +186,42 @@ describe("the route", () => {
     expect(saved.intelRetirementDecisions).toHaveLength(1);
     expect(saved.findings[0].severity).toBe("High");
     expect(saved.findings[0].status).toBe("open");
+  });
+});
+
+describe("the route's load (#2127)", () => {
+  it("GET reads the overview, never the forensic timeline, and lists the same review; POST keeps the full load", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-retire-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = stateWith([hit({ validity: { until: at(1) } })]);
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: T,
+      description: "beacon to 203.0.113.5",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+    });
+    await stateStore.save(s);
+    const app = createApp(cases, { stateStore });
+    const full = vi.spyOn(stateStore, "load");
+    const overview = vi.spyOn(stateStore, "loadOverview");
+    const list = await request(app).get("/cases/c1/intel-retirement");
+    expect(full).not.toHaveBeenCalled();
+    expect(overview).toHaveBeenCalledTimes(1);
+    expect(list.status).toBe(200);
+    // The finding whose only assertion has expired is still listed, from the overview's IOCs.
+    expect(list.body.items.map((i: { findingId: string }) => i.findingId)).toEqual(["f1"]);
+    // The decision write saves the whole state, so it must load the whole state — timeline included.
+    const posted = await request(app).post("/cases/c1/intel-retirement/f1").send({ decision: "keep" });
+    expect(posted.status).toBe(200);
+    expect(full).toHaveBeenCalledTimes(1);
+    full.mockRestore();
+    overview.mockRestore();
+    expect((await stateStore.load("c1")).forensicTimeline.map((e) => e.id)).toEqual(["e1"]);
   });
 });
 

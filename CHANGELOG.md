@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case-open panels behind the busy gate** — the 19 panels a case open fires queue behind the heavy-read gate and drop work for a departed analyst (closes #2121)
+- **Lighter loads for findings-only panels** — compliance, handoff and intel retirement skip the forensic timeline they never read (closes #2127)
+- **Departed analysts stop indirect panel loads** — host scope, host duplicates, second look, known unknowns and the TLS graph scan stop for a closed tab (closes #2128)
+- **One shared case read per case open** — case-open panels share one full read and keep it for 5 idle minutes, cleared by any change (closes #2126)
 - **Hunt event budget keeps detections** — the hunt-wide event cap counts only rows that stay in the forensic timeline, and once spent later artifacts still import their Medium-and-above rows instead of being skipped
 - **THOR repeats keep the highest grade** — a THOR finding reported several times takes its most severe copy's grade, not the first one's
 - **Login redirect stays on the companion** — a `returnTo` with a backslash, tab or newline can no longer send a signed-in analyst to another site (closes #2107)

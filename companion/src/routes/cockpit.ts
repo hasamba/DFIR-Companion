@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { caseOpenState } from "./caseOpenState.js";
 import { deriveCockpit, type CockpitAction, type CockpitSnapshot } from "../analysis/cockpit.js";
 import { CockpitStore } from "../analysis/cockpitStore.js";
 import type { HostAliasIndex } from "../analysis/hostAlias.js";
@@ -94,12 +96,18 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
   async function loadSnapshot(
     caseId: string,
     requestedInvestigator?: unknown,
+    signal?: AbortSignal,
   ): Promise<CockpitSnapshot | null> {
     if (!(await store.caseExists(caseId))) return null;
     const stateStore = options.stateStore;
     if (!stateStore) throw new Error("state store not configured");
     const investigator = await resolveInvestigator(caseId, requestedInvestigator);
-    const state = await stateStore.load(caseId);
+    // Only the GET passes a signal, and only the GET reads the shared case-open state (#2126); the
+    // card action loads its own.
+    const state = signal
+      ? await caseOpenState(store, stateStore).load(caseId, { signal })
+      : await stateStore.load(caseId);
+    if (signal?.aborted) return null; // #2121: the caller has gone, derive nothing for it
     const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates, aliasIndex] =
       await Promise.all([
         options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
@@ -129,11 +137,12 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/cockpit", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const snapshot = await loadSnapshot(req.params.id, req.query.investigator);
+      const snapshot = await loadSnapshot(req.params.id, req.query.investigator, requestAbortSignal(res));
+      if (clientGone(res)) return;
       if (!snapshot) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       return res.status(200).json(snapshot);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

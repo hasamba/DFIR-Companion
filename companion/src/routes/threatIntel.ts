@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { loadCaseOpenState } from "./caseOpenState.js";
+import { loadIocRiskInputs } from "./iocRiskInputs.js";
 import { ZodError } from "zod";
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
@@ -144,22 +146,19 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // Composite IOC risk score (#63): { iocId: { score, factors } }. Full fidelity — pulls the KEV
-  // catalog, the NSRL known-good set, and the IOC-whitelist rules from their stores when wired, so
-  // whitelisted/NSRL hits correctly read as `benign`. Powers the dashboard risk badge + risk filter.
+  // Composite IOC risk score (#63): { iocId: { score, factors } }, with KEV, NSRL and whitelist rules
+  // when wired (so those hits read as `benign`). Powers the dashboard risk badge + risk filter.
   app.get("/cases/:id/ioc-risk", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
-      const kevCatalog = options.kevStore ? await options.kevStore.loadCatalog() : undefined;
-      const nsrlHashes = options.nsrlStore ? await options.nsrlStore.load() : new Set<string>();
-      const whitelistRules = options.iocWhitelistStore ? await options.iocWhitelistStore.load() : [];
-      return res.status(200).json(scoreIocsFromState(state, { kevCatalog, nsrlHashes, whitelistRules }));
+      const state = await loadCaseOpenState(ctx, req.params.id, res);
+      if (clientGone(res)) return; // #2121: no scoring for a client that has gone
+      return res.status(200).json(scoreIocsFromState(state, await loadIocRiskInputs(options)));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -184,8 +183,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.get("/cases/:id/customer-exposure", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const state = await options.stateStore.load(req.params.id);
+      const state = await loadCaseOpenState(ctx, req.params.id, res);
       const targets = await customerStore.load(req.params.id);
+      if (clientGone(res)) return; // #2121
       return res.status(200).json({
         anyConfigured: customerExposureProviders().length > 0,
         providers: customerExposureProviders().map((p) => p.name),
@@ -194,7 +194,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         exposure: await customerExposureStore.load(req.params.id),
       });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

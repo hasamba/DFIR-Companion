@@ -1,3 +1,5 @@
+import { abortError } from "../abortable.js";
+import type { CaseStateReader } from "../hostScopeLoad.js";
 import { buildAdversaryHintsResult } from "../adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../adversaryGroupsData.js";
 import { gapOptionsFor } from "../gapHostHistory.js";
@@ -101,11 +103,15 @@ export async function knownUnknownsBlock(
 
 // Read-only: the structured evidence-gap items for a case (scope + false-positive filtered, exactly
 // as synthesis sees them). Powers the "Evidence gaps" dashboard panel and the report section.
+// `reader` is the GET panel's shared, read-only case-open state (routes/caseOpenState.ts, #2126).
 export async function knownUnknownsForCase(
   ctx: PromptBlockContext,
   caseId: string,
+  signal?: AbortSignal,
+  reader: CaseStateReader = ctx.opts.stateStore,
 ): Promise<KnownUnknownItem[]> {
-  const loaded = await ctx.opts.stateStore.load(caseId);
+  const loaded = await reader.load(caseId, { signal });
+  if (signal?.aborted) throw abortError(); // a departed client skips the scoped read (#2128)
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   return knownUnknownItems(loaded, scoped, await loadYieldWarning(ctx, caseId));
 }

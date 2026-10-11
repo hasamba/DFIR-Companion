@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import { clientGone } from "../http/requestAbort.js";
+import { loadCaseOpenState } from "./caseOpenState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { validateSensitiveLocation } from "../analysis/sensitiveLocation.js";
 import { sensitiveAccess } from "../analysis/sensitiveAccess.js";
@@ -66,11 +68,11 @@ export function registerSensitiveAccessRoutes(app: Express, ctx: RouteContext): 
     try {
       const [locations, state] = await Promise.all([
         options.sensitiveLocationStore.load(req.params.id),
-        options.stateStore.load(req.params.id),
+        loadCaseOpenState(ctx, req.params.id, res),
       ]);
-      return res.status(200).json(sensitiveAccess(state, locations));
+      return clientGone(res) ? undefined : res.status(200).json(sensitiveAccess(state, locations)); // #2121
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 }

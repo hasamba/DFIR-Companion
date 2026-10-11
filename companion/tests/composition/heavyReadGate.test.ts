@@ -22,8 +22,12 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ScopeStore } from "../../src/analysis/scope.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
-import { createApp } from "../../src/server.js";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { createApp, buildRuntimePipeline } from "../../src/server.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { HostScopeStore } from "../../src/analysis/hostScopeStore.js";
+import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
+import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDismissals.js";
 import { trackedWork } from "../../src/analysis/pendingWork.js";
 import { wholeCaseLoads } from "../../src/analysis/wholeCaseLoadLimit.js";
 
@@ -256,12 +260,17 @@ describe("heavy read gate (#1915)", () => {
   });
 
   it("normal use: one dashboard's whole fan-out of heavy reads is never refused", async () => {
-    // One case open fires 17 heavy reads (#2119): /state, plus the panel loaders asset-graph,
+    // One case open fires 33 heavy reads. 17 since #2119: /state, plus the panel loaders asset-graph,
     // evidence-graph, lateral-paths, phases, timeline-gaps, beacon-candidates, anomalies,
     // adversary-hints, host-ranking, d3fend-countermeasures, attack-mitigations, geo-map, swimlane,
-    // ioc-sources, ioc-provenance and ioc-provenance-chain. Two such fan-outs together must still
-    // fit, so an analyst never sees "server busy".
-    const DASHBOARD_FANOUT = 17;
+    // ioc-sources, ioc-provenance and ioc-provenance-chain. 16 more since #2121, the panel loaders
+    // with their own whole-case load: ioc-risk, customer-exposure, cockpit, sessions,
+    // campaign-scope, served-exposure, kerberoast-chain, tls-graph, sensitive-access,
+    // playbook-match, hypotheses, host-scope, host-duplicates, second-look/preview, known-unknowns
+    // and login-graph. compliance, handoff and intel-retirement moved to the overview load (#2127)
+    // and are no longer gated. Two such fan-outs together must still fit, so an analyst never sees
+    // "server busy".
+    const DASHBOARD_FANOUT = 33;
     expect(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT).toBeGreaterThanOrEqual(2 * DASHBOARD_FANOUT);
     const gate = new HeavyReadGate();
     const app = express();
@@ -328,11 +337,20 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       ...["/mobile-summary", "/presentation", "/present/export", "/incident-timeline.csv"],
       ...["/timeline.jsonl", "/report.docx", "/timesketch-omitted", "/ioc-provenance"],
       "/ioc-provenance-chain",
+      // #2121: the case-open panel loaders that call stateStore.load() (or scan the super-timeline).
+      ...["/ioc-risk", "/customer-exposure", "/cockpit", "/sessions"],
+      ...["/campaign-scope", "/served-exposure", "/kerberoast-chain", "/tls-graph"],
+      ...["/sensitive-access", "/playbook-match", "/hypotheses", "/host-scope", "/host-duplicates"],
+      ...["/second-look/preview", "/known-unknowns", "/login-graph"],
     ];
     for (const path of covered) expect(HEAVY_READ_PATHS, path).toContain(path);
     // A pre-generated report file is a disk read, and the super-timeline is a paged, interactive
     // query with its own count ceiling (#2069): neither waits behind the case-open fan-out.
     for (const path of ["/report/report.md", "/report/report.html", "/super-timeline"])
+      expect(HEAVY_READ_PATHS.has(path), path).toBe(false);
+    // The overview load, no forensic rows (#2127): a findings-only panel does not queue behind the
+    // case-open fan-out. Re-adding one here is a deliberate change, not drift.
+    for (const path of ["/compliance", "/handoff", "/intel-retirement"])
       expect(HEAVY_READ_PATHS.has(path), path).toBe(false);
   });
 
@@ -447,6 +465,242 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     // And the gate still serves a live caller afterwards: no slot leaked.
     expect((await get(port, "/cases/c1/geo-map").reply).status).toBe(200);
     await until(idle);
+  });
+
+  it("a case-open panel read whose client left drops its queued whole-case load and frees its slot (#2121)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-panel-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    // #2126: that read kept the case's state for the panels; an edit makes the next read load afresh.
+    await stateStore.save(emptyState("c1"));
+    const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    // Both load permits held elsewhere, so each route's whole-case load waits in the limiter.
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      for (const path of ["/sessions", "/ioc-risk", "/customer-exposure", "/cockpit"]) {
+        const gone = get(port, `/cases/c1${path}`);
+        gone.reply.catch(() => undefined);
+        await until(() => wholeCaseLoads.waiting === 1);
+        expect(gate.active, path).toBe(1);
+        gone.drop();
+        // The queued load is dropped, so the slot is free while the permits are still held.
+        await until(() => wholeCaseLoads.waiting === 0 && gate.active === 0);
+      }
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).not.toHaveBeenCalled(); // no load ever ran for a client that had gone
+    expect((await get(port, "/cases/c1/sessions").reply).status).toBe(200);
+  });
+
+  // #2128: the routes that reach the whole-case load through a helper (the host-scope loader, the
+  // second-look sweep, the known-unknowns block) dropped the request signal on the way down, so their
+  // queued load still ran for a client that had left.
+  it("an indirect case-open panel read whose client left drops its queued whole-case load too (#2128)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-indirect-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = buildRuntimePipeline({
+      stateStore,
+      store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, {
+      stateStore,
+      pipeline,
+      aiConfigured: false,
+      superTimelineStore: new SuperTimelineStore(store),
+      hostScopeStore: new HostScopeStore(store),
+      assetOverridesStore: new AssetOverridesStore(store),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    // #2126: that read kept the case's state for the panels; an edit makes the next read load afresh.
+    await stateStore.save(emptyState("c1"));
+    const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    const paths = ["/host-scope", "/host-duplicates", "/second-look/preview", "/known-unknowns"];
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      for (const path of paths) {
+        const gone = get(port, `/cases/c1${path}`);
+        gone.reply.catch(() => undefined);
+        await until(() => wholeCaseLoads.waiting === 1);
+        expect(gate.active, path).toBe(1);
+        gone.drop();
+        await until(() => wholeCaseLoads.waiting === 0 && gate.active === 0);
+      }
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).not.toHaveBeenCalled();
+    for (const path of paths) expect((await get(port, `/cases/c1${path}`).reply).status, path).toBe(200);
+  });
+
+  // #2126: the case-open panels share one full-state load. The load is tracked work on the request
+  // that STARTED it, so that request's slot is held until the load settles, client gone or not. A
+  // request that JOINED it frees its slot as soon as its own wait ends: the load is already counted.
+  it("a departed joiner frees its slot at once; the starter's slot holds until the shared load settles (#2126)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-shared-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/kerberoast-chain")).status).toBe(200);
+    await stateStore.save(emptyState("c1")); // a fresh revision: the next panel read loads afresh
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      const starter = get(port, "/cases/c1/kerberoast-chain");
+      starter.reply.catch(() => undefined);
+      await until(() => wholeCaseLoads.waiting === 1);
+      const joiner = get(port, "/cases/c1/campaign-scope");
+      joiner.reply.catch(() => undefined);
+      await until(() => gate.active === 2);
+      expect(wholeCaseLoads.waiting).toBe(1); // one shared load for both
+      joiner.drop();
+      await until(() => gate.active === 1); // the joiner's slot is free at once
+      expect(wholeCaseLoads.waiting).toBe(1); // and the load the starter waits for runs on
+      const stayer = get(port, "/cases/c1/campaign-scope");
+      await until(() => gate.active === 2);
+      starter.drop();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(2); // the starter's slot holds: its load is still queued for the stayer
+      busy.forEach((b) => b.resolve());
+      expect((await stayer.reply).status).toBe(200);
+      await until(() => gate.active === 0);
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it("tls-graph holds its slot until its super-timeline scan settles, and the scan stops for a gone client (#2128)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-tls-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore, superTimelineStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    await stateStore.save(emptyState("c1")); // #2126: a fresh revision, so tls-graph loads afresh
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    // A three-page raw record whose second page is slow to read.
+    const page = deferred();
+    let pages = 0;
+    const row = { id: "r", timestamp: "2026-06-01T00:00:00Z" } as ForensicEvent;
+    vi.spyOn(superTimelineStore, "eventBatches").mockImplementation(async function* () {
+      for (let i = 0; i < 3; i++) {
+        if (i === 1) await page.promise;
+        pages++;
+        yield [row];
+      }
+    });
+    const port = await listen(app);
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      const gone = get(port, "/cases/c1/tls-graph");
+      gone.reply.catch(() => undefined);
+      await until(() => wholeCaseLoads.waiting === 1 && pages === 1);
+      gone.drop();
+      await until(() => wholeCaseLoads.waiting === 0);
+      // The load is dropped, but the scan is still running: the slot stays held for it.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+      page.resolve();
+      await until(() => gate.active === 0);
+      expect(pages).toBe(2); // the scan stopped at the next page instead of reading the rest
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+  });
+
+  /** A real app over one case whose raw record is three pages, the second slow to read. */
+  async function slowSuperTimelineApp(prefix: string) {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, {
+      stateStore,
+      superTimelineStore,
+      hostScopeStore: new HostScopeStore(store),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    const page = deferred();
+    const scan = { pages: 0 };
+    const row = { id: "r", timestamp: "2026-06-01T00:00:00Z" } as ForensicEvent;
+    vi.spyOn(superTimelineStore, "eventBatches").mockImplementation(async function* () {
+      for (let i = 0; i < 3; i++) {
+        if (i === 1) await page.promise;
+        scan.pages++;
+        yield [row];
+      }
+    });
+    return { port: await listen(app), gate, page, scan };
+  }
+
+  it("host-scope holds its slot until the shared host-evidence scan settles (#2128)", async () => {
+    const { port, gate, page, scan } = await slowSuperTimelineApp("dfir-heavy-hostscope-");
+    const gone = get(port, "/cases/c1/host-scope");
+    gone.reply.catch(() => undefined);
+    try {
+      await until(() => scan.pages === 1);
+      gone.drop();
+      // The full-state load has settled; only the scan is running, and the slot stays held for it.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+    } finally {
+      page.resolve();
+    }
+    await until(() => gate.active === 0);
+    expect(scan.pages).toBe(3); // shared and memoized: one caller leaving never cancels it
+  });
+
+  it("login-graph holds its slot until its super-timeline scan settles, and stops for a gone client (#2128)", async () => {
+    const { port, gate, page, scan } = await slowSuperTimelineApp("dfir-heavy-login-");
+    const gone = get(port, "/cases/c1/login-graph");
+    gone.reply.catch(() => undefined);
+    try {
+      await until(() => scan.pages === 1);
+      gone.drop();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+    } finally {
+      page.resolve();
+    }
+    await until(() => gate.active === 0);
+    expect(scan.pages).toBe(2); // the scan stopped at the next page instead of reading the rest
   });
 
   it("the report-lite cache still serves the second request behind the gate", async () => {

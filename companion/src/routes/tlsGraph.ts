@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { caseOpenState } from "./caseOpenState.js";
 import { buildTlsCaseGraph, tlsCaseGraphReads } from "../analysis/tlsCaseGraph.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
@@ -19,16 +21,20 @@ export function registerTlsGraphRoutes(app: Express, ctx: RouteContext): void {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
       const caseId = req.params.id;
+      const signal = requestAbortSignal(res);
+      const pick = (e: ForensicEvent): ForensicEvent | undefined => (tlsCaseGraphReads(e) ? e : undefined);
       const [state, superEvents] = await Promise.all([
-        options.stateStore.load(caseId),
+        caseOpenState(ctx.store, options.stateStore).load(caseId, { signal }),
+        // #2128: the scan takes the signal too, so it stops with its sibling load for a gone client.
         options.superTimelineStore
-          ? options.superTimelineStore.collect(caseId, (e) => (tlsCaseGraphReads(e) ? e : undefined))
+          ? options.superTimelineStore.collect(caseId, pick, undefined, signal)
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
+      if (clientGone(res)) return; // #2121
       const graph = buildTlsCaseGraph([...state.forensicTimeline, ...superEvents]);
       return res.status(200).json({ ...graph, generated: new Date().toISOString() });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 }

@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone } from "../http/requestAbort.js";
 import { mapFindings, loadComplianceMap } from "../analysis/complianceMap.js";
 import { buildComplianceView, availableFrameworks } from "../analysis/complianceView.js";
 import type { RouteContext } from "./context.js";
@@ -29,7 +30,10 @@ export function registerComplianceRoutes(app: Express, ctx: RouteContext): void 
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
+      // Overview without IOCs (#2127): this route reads findings only and must not read the
+      // forensic timeline, which this load leaves empty. Not in the heavy-read gate for that reason.
+      const state = await options.stateStore.loadOverviewWithoutIocs(req.params.id);
+      if (clientGone(res)) return; // #2121
       const dataset = loadComplianceMap();
       const control = options.complianceControlStore
         ? await options.complianceControlStore.load(req.params.id)
@@ -52,7 +56,7 @@ export function registerComplianceRoutes(app: Express, ctx: RouteContext): void 
         results: buildComplianceView(raw, { control }),
       });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

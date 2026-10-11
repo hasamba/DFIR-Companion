@@ -8,7 +8,12 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
 import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDismissals.js";
 import { HostMergeDecisionRequired } from "../../src/analysis/hostDuplicateGate.js";
-import { loadHostScopeLedger, loadPendingHostDuplicates } from "../../src/analysis/hostScopeLoad.js";
+import {
+  loadHostDuplicatePanelCandidates,
+  loadHostScopeLedger,
+  loadPendingHostDuplicates,
+} from "../../src/analysis/hostScopeLoad.js";
+import { isAbortError } from "../../src/analysis/abortable.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -129,5 +134,49 @@ describe("duplicate-host gate reads the banner's host list", () => {
       .synthesize("c1")
       .catch(() => undefined);
     expect(analyze).toHaveBeenCalled();
+  });
+});
+
+// #2128: a departed client's ledger or panel read stops before the super-timeline host scan. The scan
+// is shared through the memo (#1881), so it never takes the signal itself; the check sits before it.
+describe("host-scope loaders stop for a departed client before the shared scan (#2128)", () => {
+  function departing() {
+    const ctl = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const scan = { eventBatches: vi.fn(), memoizeScan: vi.fn() };
+    const state = {
+      load: async (caseId: string, opts?: { signal?: AbortSignal }) => {
+        seen.push(opts?.signal);
+        ctl.abort(); // the client leaves while the load is in hand
+        return emptyState(caseId);
+      },
+    };
+    return { ctl, seen, scan, state };
+  }
+
+  it("the ledger rejects with an AbortError and never starts the scan", async () => {
+    const d = departing();
+    const err = await loadHostScopeLedger(
+      { state: d.state, superTimeline: d.scan, decisions: { load: async () => [] } },
+      "c1",
+      { signal: d.ctl.signal },
+    ).catch((e: unknown) => e);
+    expect(isAbortError(err)).toBe(true);
+    expect(d.seen).toEqual([d.ctl.signal]);
+    expect(d.scan.memoizeScan).not.toHaveBeenCalled();
+    expect(d.scan.eventBatches).not.toHaveBeenCalled();
+  });
+
+  it("the duplicate panel rejects with an AbortError and never starts the scan", async () => {
+    const d = departing();
+    const err = await loadHostDuplicatePanelCandidates(
+      { state: d.state, superTimeline: d.scan, dismissals: { load: async () => [] } },
+      "c1",
+      { signal: d.ctl.signal },
+    ).catch((e: unknown) => e);
+    expect(isAbortError(err)).toBe(true);
+    expect(d.seen).toEqual([d.ctl.signal]);
+    expect(d.scan.memoizeScan).not.toHaveBeenCalled();
+    expect(d.scan.eventBatches).not.toHaveBeenCalled();
   });
 });

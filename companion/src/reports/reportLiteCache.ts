@@ -18,6 +18,8 @@
 // Only the STATE is kept. Each route still computes its answer per request, so wall-clock output
 // (intel retirement, the blocklist's Generated stamp) and env thresholds stay live.
 //
+// Also the case-open panels' full-state cache (routes/caseOpenState.ts, #2126), with the same rules.
+//
 // Bounded: one case per writer, dropped after REPORT_LITE_IDLE_MS idle. The state is shared by every
 // caller and must not be modified (tests/reports/filteredStateImmutable.test.ts).
 //
@@ -153,6 +155,11 @@ export class ReportLiteCache<T> {
       this.touch();
     }
     return value;
+  }
+
+  /** Drops the kept state if it is `caseId`'s (a deleted case, #2126). */
+  forget(caseId: string): void {
+    if (this.entry?.caseId === caseId) this.clear();
   }
 
   clear(): void {

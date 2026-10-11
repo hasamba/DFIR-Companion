@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone } from "../http/requestAbort.js";
 import { intelRetirementReview, recordRetirementDecision } from "../analysis/intelRetirement.js";
 import type { RouteContext } from "./context.js";
 
@@ -13,10 +14,12 @@ export function registerIntelRetirementRoutes(app: Express, ctx: RouteContext): 
   app.get("/cases/:id/intel-retirement", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const state = await options.stateStore.load(req.params.id);
-      return res.status(200).json(intelRetirementReview(state));
+      // Overview load (#2127): the review reads IOCs and findings and must not read the forensic
+      // timeline, which this load leaves empty. The POST below keeps the full load: it saves the state.
+      const state = await options.stateStore.loadOverview(req.params.id);
+      return clientGone(res) ? undefined : res.status(200).json(intelRetirementReview(state)); // #2121
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 
