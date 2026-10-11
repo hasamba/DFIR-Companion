@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { wholeCaseLoads, type WholeCaseLoadOptions } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
+import { requestIocCandidates } from "./iocCandidatesRequest.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
@@ -687,12 +688,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     ids: readonly string[],
   ): Promise<IocProvenanceCandidates> {
     if (!(await this.ensureMigrated(caseId))) return { ...NO_IOC_CANDIDATES };
-    const found = await caseSqliteWorker.request<IocProvenanceCandidates>({
-      op: "iocCandidates",
-      dbPath: this.databasePath(caseId),
-      keys: [...keys],
-      ids: [...ids],
-    });
+    const found = await requestIocCandidates<ForensicEvent>(this.databasePath(caseId), keys, ids);
     return {
       forensic: found.forensic.map(upgradeForensicEvent),
       super: found.super.map(upgradeForensicEvent),

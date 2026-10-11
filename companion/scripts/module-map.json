@@ -527,6 +527,7 @@
     "importUndo.ts": "analysis/ingest",
     "importUndoDelta.ts": "analysis/ingest",
     "importUndoRows.ts": "analysis/ingest",
+    "iocCandidatesRequest.ts": "storage",
     "iocJournal.ts": "storage",
     "iocJournalDiff.ts": "analysis/ingest",
     "importBaseline.ts": "analysis/ingest",

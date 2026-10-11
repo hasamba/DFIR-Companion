@@ -21,6 +21,7 @@ import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDis
 import { ServedLocationStore } from "../../src/analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../../src/analysis/sensitiveLocation.js";
 import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 
 const CASE = "demo";
@@ -117,5 +118,16 @@ describe("case-open panels never write into the shared full state (#2126)", () =
       expect((await request(app).get(`/cases/${CASE}${path}`)).status, path).toBe(200);
     expect(load).toHaveBeenCalledTimes(1);
     load.mockRestore();
+  }, 60_000);
+
+  // #2131: the two IOC-provenance panels (fired on every case open, beside the shared panels) used
+  // to post the writer op iocCandidates on every GET, which moved the case read revision.
+  it("on a settled case the IOC-provenance reads never move the write sequence", async () => {
+    const provenance = ["/ioc-provenance", "/ioc-provenance-chain"];
+    (await open(provenance)).forEach((res, i) => expect(res.status, provenance[i]).toBe(200));
+    const dbPath = stateStore.databasePath(CASE);
+    const before = caseSqliteWorker.writeSequence(dbPath);
+    (await open(provenance)).forEach((res, i) => expect(res.status, provenance[i]).toBe(200));
+    expect(caseSqliteWorker.writeSequence(dbPath)).toBe(before);
   }, 60_000);
 });

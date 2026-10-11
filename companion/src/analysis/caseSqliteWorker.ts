@@ -743,6 +743,7 @@ async function dispatch(message) {
     case "superMeta": return superMeta(message.dbPath, message.hosts);
     case "superMigrateNeeded": return superMigrateNeeded(message.dbPath, message.tagsPath, message.setAsideMarkers, message.setAsideVersion);
     case "iocCandidates": return iocCandidates(message.dbPath, message.keys, message.ids);
+    case "iocCandidatesRead": return iocCandidatesRead(message.dbPath, message.keys, message.ids);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath, message.tags);
