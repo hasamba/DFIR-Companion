@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lighter loads for findings-only panels** — compliance, handoff and intel retirement skip the forensic timeline they never read (closes #2127)
 - **Departed analysts stop indirect panel loads** — host scope, host duplicates, second look, known unknowns and the TLS graph scan stop for a closed tab (closes #2128)
 - **One shared case read per case open** — case-open panels share one full read and keep it for 5 idle minutes, cleared by any change (closes #2126)
+- **Whole-case imports in chain of custody** — .dfircase and ZIP case imports record the archive's SHA-256, SHA-1 and size as a received entry on success (closes #2124)
+- **Super-timeline reads keep the case-open share** — reading a settled super-timeline no longer counts as a change, so case-open panels share one load (closes #2129)
+- **IOC provenance reads keep the case-open share** — provenance lookups on a built index no longer count as a change or wait behind imports (closes #2131)
+- **Spread-out busy retries** — dashboard retries after a server-busy refusal back off and add random delay instead of retrying in lockstep (closes #2123)
 - **Hunt event budget keeps detections** — the hunt-wide event cap counts only rows that stay in the forensic timeline, and once spent later artifacts still import their Medium-and-above rows instead of being skipped
 - **THOR repeats keep the highest grade** — a THOR finding reported several times takes its most severe copy's grade, not the first one's
 - **Login redirect stays on the companion** — a `returnTo` with a backslash, tab or newline can no longer send a signed-in analyst to another site (closes #2107)
