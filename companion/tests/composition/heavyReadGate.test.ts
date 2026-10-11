@@ -22,8 +22,12 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ScopeStore } from "../../src/analysis/scope.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
-import { createApp } from "../../src/server.js";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { createApp, buildRuntimePipeline } from "../../src/server.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { HostScopeStore } from "../../src/analysis/hostScopeStore.js";
+import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
+import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDismissals.js";
 import { trackedWork } from "../../src/analysis/pendingWork.js";
 import { wholeCaseLoads } from "../../src/analysis/wholeCaseLoadLimit.js";
 
@@ -494,6 +498,97 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     }
     expect(reads).not.toHaveBeenCalled(); // no load ever ran for a client that had gone
     expect((await get(port, "/cases/c1/sessions").reply).status).toBe(200);
+  });
+
+  // #2128: the routes that reach the whole-case load through a helper (the host-scope loader, the
+  // second-look sweep, the known-unknowns block) dropped the request signal on the way down, so their
+  // queued load still ran for a client that had left.
+  it("an indirect case-open panel read whose client left drops its queued whole-case load too (#2128)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-indirect-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const pipeline = buildRuntimePipeline({
+      stateStore,
+      store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, {
+      stateStore,
+      pipeline,
+      aiConfigured: false,
+      superTimelineStore: new SuperTimelineStore(store),
+      hostScopeStore: new HostScopeStore(store),
+      assetOverridesStore: new AssetOverridesStore(store),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    const paths = ["/host-scope", "/host-duplicates", "/second-look/preview", "/known-unknowns"];
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      for (const path of paths) {
+        const gone = get(port, `/cases/c1${path}`);
+        gone.reply.catch(() => undefined);
+        await until(() => wholeCaseLoads.waiting === 1);
+        expect(gate.active, path).toBe(1);
+        gone.drop();
+        await until(() => wholeCaseLoads.waiting === 0 && gate.active === 0);
+      }
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).not.toHaveBeenCalled();
+    for (const path of paths) expect((await get(port, `/cases/c1${path}`).reply).status, path).toBe(200);
+  });
+
+  it("tls-graph holds its slot until its super-timeline scan settles, and the scan stops for a gone client (#2128)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-tls-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore, superTimelineStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    // A three-page raw record whose second page is slow to read.
+    const page = deferred();
+    let pages = 0;
+    const row = { id: "r", timestamp: "2026-06-01T00:00:00Z" } as ForensicEvent;
+    vi.spyOn(superTimelineStore, "eventBatches").mockImplementation(async function* () {
+      for (let i = 0; i < 3; i++) {
+        if (i === 1) await page.promise;
+        pages++;
+        yield [row];
+      }
+    });
+    const port = await listen(app);
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      const gone = get(port, "/cases/c1/tls-graph");
+      gone.reply.catch(() => undefined);
+      await until(() => wholeCaseLoads.waiting === 1 && pages === 1);
+      gone.drop();
+      await until(() => wholeCaseLoads.waiting === 0);
+      // The load is dropped, but the scan is still running: the slot stays held for it.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+      page.resolve();
+      await until(() => gate.active === 0);
+      expect(pages).toBe(2); // the scan stopped at the next page instead of reading the rest
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
   });
 
   it("the report-lite cache still serves the second request behind the gate", async () => {

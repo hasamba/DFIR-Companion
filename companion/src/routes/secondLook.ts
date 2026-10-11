@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { clientGone } from "../http/requestAbort.js";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
@@ -33,7 +33,7 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
       return res.status(404).json({ error: "case not found" });
     }
     try {
-      const preview = await options.pipeline.secondLookPreview(caseId);
+      const preview = await options.pipeline.secondLookPreview(caseId, requestAbortSignal(res));
       if (clientGone(res)) return; // #2121
       if (!preview.configured) return unconfigured(res);
       return res.status(200).json(preview);

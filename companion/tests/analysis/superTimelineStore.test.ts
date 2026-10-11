@@ -11,6 +11,8 @@ import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 import { eventMatchesExclude, eventMatchesSearch } from "../../src/analysis/searchFilter.js";
 import { tagTableLabels } from "../../src/analysis/superTimeline.js";
 import { TagsStore } from "../../src/analysis/tags.js";
+import { isAbortError } from "../../src/analysis/abortable.js";
+import { WorkTracker } from "../../src/analysis/pendingWork.js";
 
 const DatabaseSync = loadDatabaseSync();
 
@@ -808,6 +810,53 @@ describe("SuperTimelineStore.collect (#1444)", () => {
 
   it("has no whole-timeline read: `all` is gone so no route can load a capped case at once", () => {
     expect((store as unknown as Record<string, unknown>).all).toBeUndefined();
+  });
+
+  // #2128: tls-graph runs collect beside its whole-case load. Untracked and unsignalled, the scan
+  // kept going for a departed client after the gate had freed the request's slot.
+  describe("abort signal and work tracking (#2128)", () => {
+    const rows = Array.from({ length: 9 }, (_, i) =>
+      ev({ id: `r${i}`, timestamp: `2026-06-0${i + 1}T00:00:00Z` }),
+    );
+
+    it("rejects with an AbortError and picks nothing when the signal is already aborted", async () => {
+      await store.append("c1", rows);
+      const ctl = new AbortController();
+      ctl.abort();
+      const pick = vi.fn(() => undefined);
+      const err = await store.collect("c1", pick, 3, ctl.signal).catch((e: unknown) => e);
+      expect(isAbortError(err)).toBe(true);
+      expect(pick).not.toHaveBeenCalled();
+    });
+
+    it("stops before the remaining batches once the signal aborts mid-scan", async () => {
+      await store.append("c1", rows);
+      const ctl = new AbortController();
+      const seen: string[] = [];
+      const err = await store
+        .collect(
+          "c1",
+          (e) => {
+            seen.push(e.id);
+            if (seen.length === 3) ctl.abort();
+            return e.id;
+          },
+          3,
+          ctl.signal,
+        )
+        .catch((e: unknown) => e);
+      expect(isAbortError(err)).toBe(true);
+      expect(seen).toHaveLength(3);
+    });
+
+    it("is counted on the ambient work tracker until it settles", async () => {
+      await store.append("c1", rows);
+      const tracker = new WorkTracker();
+      const running = tracker.run(() => store.collect("c1", (e) => e.id, 3));
+      expect(tracker.pending).toBe(1);
+      await expect(running).resolves.toHaveLength(9);
+      expect(tracker.pending).toBe(0);
+    });
   });
 });
 

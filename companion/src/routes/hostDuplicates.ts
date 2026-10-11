@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { clientGone } from "../http/requestAbort.js";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName, NEAR_DUPLICATE_BLOCKING, type NearDuplicate } from "../analysis/hostAlias.js";
 import { loadHostDuplicatePanelCandidates } from "../analysis/hostScopeLoad.js";
@@ -34,7 +34,8 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
     return true;
   }
 
-  async function pending(caseId: string): Promise<NearDuplicate[]> {
+  // Only the GET passes a signal; merge, dismiss and undo read this list around a write (#2128).
+  async function pending(caseId: string, signal?: AbortSignal): Promise<NearDuplicate[]> {
     return loadHostDuplicatePanelCandidates(
       {
         state: options.stateStore!,
@@ -44,6 +45,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
         ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
       },
       caseId,
+      { signal },
     );
   }
 
@@ -90,7 +92,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/host-duplicates", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     try {
-      const body = { pending: await pending(req.params.id) };
+      const body = { pending: await pending(req.params.id, requestAbortSignal(res)) };
       return clientGone(res) ? undefined : res.status(200).json(body); // #2121
     } catch (err) {
       return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });

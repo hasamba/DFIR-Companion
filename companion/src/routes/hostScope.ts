@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { clientGone } from "../http/requestAbort.js";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName } from "../analysis/hostAlias.js";
 import { emptyHostFingerprint, type HostScopeLedger } from "../analysis/hostScope.js";
@@ -38,7 +38,9 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
     return { window: await scopeStore.load(caseId), tactics: caseTacticsOf(state) };
   }
 
-  async function ledger(caseId: string): Promise<HostScopeLedger> {
+  // Only the GET passes a signal: the POST reads the ledger to record a decision, and a closed tab
+  // must not cut that write short (#2128).
+  async function ledger(caseId: string, signal?: AbortSignal): Promise<HostScopeLedger> {
     return loadHostScopeLedger(
       {
         state: options.stateStore!,
@@ -50,6 +52,7 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
         ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
       },
       caseId,
+      { signal },
     );
   }
 
@@ -64,7 +67,7 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/host-scope", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     try {
-      const body = await ledger(req.params.id);
+      const body = await ledger(req.params.id, requestAbortSignal(res));
       return clientGone(res) ? undefined : res.status(200).json(body); // #2121
     } catch (err) {
       return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });

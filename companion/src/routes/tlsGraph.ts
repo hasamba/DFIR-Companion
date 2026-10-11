@@ -20,10 +20,13 @@ export function registerTlsGraphRoutes(app: Express, ctx: RouteContext): void {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
       const caseId = req.params.id;
+      const signal = requestAbortSignal(res);
+      const pick = (e: ForensicEvent): ForensicEvent | undefined => (tlsCaseGraphReads(e) ? e : undefined);
       const [state, superEvents] = await Promise.all([
-        options.stateStore.load(caseId, { signal: requestAbortSignal(res) }),
+        options.stateStore.load(caseId, { signal }),
+        // #2128: the scan takes the signal too, so it stops with its sibling load for a gone client.
         options.superTimelineStore
-          ? options.superTimelineStore.collect(caseId, (e) => (tlsCaseGraphReads(e) ? e : undefined))
+          ? options.superTimelineStore.collect(caseId, pick, undefined, signal)
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
       if (clientGone(res)) return; // #2121

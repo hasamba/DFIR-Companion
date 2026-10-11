@@ -1,3 +1,4 @@
+import { abortError } from "../abortable.js";
 import { buildAdversaryHintsResult } from "../adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../adversaryGroupsData.js";
 import { gapOptionsFor } from "../gapHostHistory.js";
@@ -104,8 +105,10 @@ export async function knownUnknownsBlock(
 export async function knownUnknownsForCase(
   ctx: PromptBlockContext,
   caseId: string,
+  signal?: AbortSignal,
 ): Promise<KnownUnknownItem[]> {
-  const loaded = await ctx.opts.stateStore.load(caseId);
+  const loaded = await ctx.opts.stateStore.load(caseId, { signal });
+  if (signal?.aborted) throw abortError(); // a departed client skips the scoped read (#2128)
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   return knownUnknownItems(loaded, scoped, await loadYieldWarning(ctx, caseId));
 }

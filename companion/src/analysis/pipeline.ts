@@ -570,8 +570,8 @@ export class AnalysisPipeline {
     return analystQueries.explainEvent(this.aiCtx, caseId, eventId);
   }
 
-  knownUnknownsForCase(caseId: string): Promise<KnownUnknownItem[]> {
-    return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId);
+  knownUnknownsForCase(caseId: string, signal?: AbortSignal): Promise<KnownUnknownItem[]> {
+    return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId, signal);
   }
 
   cloudCoverageForCase(caseId: string): Promise<CloudCoverageSummary> {
@@ -678,8 +678,8 @@ export class AnalysisPipeline {
     return synthesis.synthesize(this.aiCtx, ...args);
   }
 
-  secondLookPreview(caseId: string): Promise<SecondLookPreview> {
-    return secondLookRun.secondLookPreview(this.aiCtx, caseId);
+  secondLookPreview(caseId: string, signal?: AbortSignal): Promise<SecondLookPreview> {
+    return secondLookRun.secondLookPreview(this.aiCtx, caseId, signal);
   }
 
   secondLook(...args: AiArgs<typeof secondLookRun.secondLookRun>): Promise<SecondLookRunResult | null> {
