@@ -497,12 +497,15 @@ export class SuperTimelineStore {
     reduce: (batches: AsyncIterable<ForensicEvent[]>) => Promise<T>,
     opts: { cacheable?: (value: T) => boolean } = {},
   ): Promise<T> {
-    return this.scanMemo.get(
-      caseId,
-      name,
-      async () => (await this.meta(caseId)).version,
-      () => reduce(this.eventBatches(caseId)),
-      opts.cacheable,
+    // Tracked like collect (#2128), but never cancelled: the result is shared by every caller.
+    return trackedWork(() =>
+      this.scanMemo.get(
+        caseId,
+        name,
+        async () => (await this.meta(caseId)).version,
+        () => reduce(this.eventBatches(caseId)),
+        opts.cacheable,
+      ),
     );
   }
 

@@ -29,6 +29,7 @@ import type { ScopeWindow } from "./scope.js";
 import type { AssetOverrides } from "./assetOverrides.js";
 import type { VeloClientInventory } from "./velociraptorClientStore.js";
 import { abortError } from "./abortable.js";
+import { trackedWork } from "./pendingWork.js";
 
 // One place that turns the case's stores into a HostScopeLedger, so the route and the report writer
 // derive it identically. Everything it needs is injected, which keeps the two callers from growing
@@ -86,16 +87,20 @@ async function collectRaw(batches: AsyncIterable<ForensicEvent[]>): Promise<RawH
 // Per-host evidence from the super-timeline. The raw per-spelling totals are cached until the rows
 // change (#1881), and the alias index is applied afterwards, so a fleet refresh or an analyst merge
 // never forces a rescan. The fold returns fresh sets, so the caller may mutate the result.
+// Tracked, never cancelled: admission control holds the starting request's slot until the scan
+// settles, while a departed caller cannot cut short a scan other callers share (#2128).
 export async function loadHostEvidence(
   source: HostEvidenceSource,
   caseId: string,
   index: HostAliasIndex,
 ): Promise<HostEvidenceMap> {
-  if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
-  const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
-    cacheable: smallEnoughToCache,
+  return trackedWork(async () => {
+    if (!source.memoizeScan) return aggregateHostEvidence(source, caseId, index);
+    const raw = await source.memoizeScan(caseId, HOST_EVIDENCE_SCAN, collectRaw, {
+      cacheable: smallEnoughToCache,
+    });
+    return foldRawHostEvidence(raw, index);
   });
-  return foldRawHostEvidence(raw, index);
 }
 
 // The tactics this case has actually confirmed, from its findings' techniques. Clearance asks

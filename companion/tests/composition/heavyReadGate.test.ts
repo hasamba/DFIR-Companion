@@ -640,6 +640,69 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     }
   });
 
+  /** A real app over one case whose raw record is three pages, the second slow to read. */
+  async function slowSuperTimelineApp(prefix: string) {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, {
+      stateStore,
+      superTimelineStore,
+      hostScopeStore: new HostScopeStore(store),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate;
+    const page = deferred();
+    const scan = { pages: 0 };
+    const row = { id: "r", timestamp: "2026-06-01T00:00:00Z" } as ForensicEvent;
+    vi.spyOn(superTimelineStore, "eventBatches").mockImplementation(async function* () {
+      for (let i = 0; i < 3; i++) {
+        if (i === 1) await page.promise;
+        scan.pages++;
+        yield [row];
+      }
+    });
+    return { port: await listen(app), gate, page, scan };
+  }
+
+  it("host-scope holds its slot until the shared host-evidence scan settles (#2128)", async () => {
+    const { port, gate, page, scan } = await slowSuperTimelineApp("dfir-heavy-hostscope-");
+    const gone = get(port, "/cases/c1/host-scope");
+    gone.reply.catch(() => undefined);
+    try {
+      await until(() => scan.pages === 1);
+      gone.drop();
+      // The full-state load has settled; only the scan is running, and the slot stays held for it.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+    } finally {
+      page.resolve();
+    }
+    await until(() => gate.active === 0);
+    expect(scan.pages).toBe(3); // shared and memoized: one caller leaving never cancels it
+  });
+
+  it("login-graph holds its slot until its super-timeline scan settles, and stops for a gone client (#2128)", async () => {
+    const { port, gate, page, scan } = await slowSuperTimelineApp("dfir-heavy-login-");
+    const gone = get(port, "/cases/c1/login-graph");
+    gone.reply.catch(() => undefined);
+    try {
+      await until(() => scan.pages === 1);
+      gone.drop();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(gate.active).toBe(1);
+    } finally {
+      page.resolve();
+    }
+    await until(() => gate.active === 0);
+    expect(scan.pages).toBe(2); // the scan stopped at the next page instead of reading the rest
+  });
+
   it("the report-lite cache still serves the second request behind the gate", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-heavy-gate-"));
     const store = new CaseStore(root);
