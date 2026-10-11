@@ -182,7 +182,9 @@ function iocCandidatesRead(dbPath, keys, ids) {
   try {
     const table = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE name='event_terms'").get();
     const version = readEventTermsVersion(db);
-    if (!table || version === null || version < EVENT_TERMS_VERSION) return { needsIndex: true };
+    // The exact complement of ensureEventTerms' early return, so a NaN (malformed) stamp rebuilds
+    // here as it does there.
+    if (!table || !(version !== null && version >= EVENT_TERMS_VERSION)) return { needsIndex: true };
     return queryIocCandidates(db, keys, ids);
   } finally {
     db.close();

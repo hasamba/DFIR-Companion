@@ -98,6 +98,21 @@ describe("a settled IOC-candidates read keeps the case write sequence (#2131)", 
     expect(caseSqliteWorker.writeSequence(dbPath)).toBe(settled);
   });
 
+  // A malformed stamp (an imported or restored database) reads back as NaN. The writer rebuilds on
+  // NaN, so the read op must too — otherwise an incomplete index silently drops matches.
+  it("a malformed term-index version takes the writer and recovers missing candidates", async () => {
+    await seed();
+    const first = await read();
+    withDb(dbPath, (db) => {
+      db.exec("DELETE FROM event_terms");
+      db.exec("UPDATE storage_meta SET value='garbage' WHERE key='event_terms_version'");
+    });
+    const before = caseSqliteWorker.writeSequence(dbPath);
+    expect(await read()).toEqual(first);
+    expect(caseSqliteWorker.writeSequence(dbPath)).toBeGreaterThan(before);
+    expect(termsVersion(dbPath)).toBe("1");
+  });
+
   it("a database from before the term index (no event_terms table) does not throw", async () => {
     await seed();
     const first = await read();
