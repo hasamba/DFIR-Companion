@@ -256,16 +256,17 @@ describe("heavy read gate (#1915)", () => {
   });
 
   it("normal use: one dashboard's whole fan-out of heavy reads is never refused", async () => {
-    // One case open fires 36 heavy reads. 17 since #2119: /state, plus the panel loaders asset-graph,
+    // One case open fires 33 heavy reads. 17 since #2119: /state, plus the panel loaders asset-graph,
     // evidence-graph, lateral-paths, phases, timeline-gaps, beacon-candidates, anomalies,
     // adversary-hints, host-ranking, d3fend-countermeasures, attack-mitigations, geo-map, swimlane,
-    // ioc-sources, ioc-provenance and ioc-provenance-chain. 19 more since #2121, the panel loaders
-    // with their own whole-case load: ioc-risk, customer-exposure, cockpit, compliance, sessions,
-    // intel-retirement, campaign-scope, served-exposure, kerberoast-chain, tls-graph, handoff,
-    // sensitive-access, playbook-match, hypotheses, host-scope, host-duplicates, second-look/preview,
-    // known-unknowns and login-graph. Two such fan-outs together must still fit, so an analyst never
-    // sees "server busy".
-    const DASHBOARD_FANOUT = 36;
+    // ioc-sources, ioc-provenance and ioc-provenance-chain. 16 more since #2121, the panel loaders
+    // with their own whole-case load: ioc-risk, customer-exposure, cockpit, sessions,
+    // campaign-scope, served-exposure, kerberoast-chain, tls-graph, sensitive-access,
+    // playbook-match, hypotheses, host-scope, host-duplicates, second-look/preview, known-unknowns
+    // and login-graph. compliance, handoff and intel-retirement moved to the overview load (#2127)
+    // and are no longer gated. Two such fan-outs together must still fit, so an analyst never sees
+    // "server busy".
+    const DASHBOARD_FANOUT = 33;
     expect(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT).toBeGreaterThanOrEqual(2 * DASHBOARD_FANOUT);
     const gate = new HeavyReadGate();
     const app = express();
@@ -333,8 +334,8 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       ...["/timeline.jsonl", "/report.docx", "/timesketch-omitted", "/ioc-provenance"],
       "/ioc-provenance-chain",
       // #2121: the case-open panel loaders that call stateStore.load() (or scan the super-timeline).
-      ...["/ioc-risk", "/customer-exposure", "/cockpit", "/compliance", "/sessions", "/intel-retirement"],
-      ...["/campaign-scope", "/served-exposure", "/kerberoast-chain", "/tls-graph", "/handoff"],
+      ...["/ioc-risk", "/customer-exposure", "/cockpit", "/sessions"],
+      ...["/campaign-scope", "/served-exposure", "/kerberoast-chain", "/tls-graph"],
       ...["/sensitive-access", "/playbook-match", "/hypotheses", "/host-scope", "/host-duplicates"],
       ...["/second-look/preview", "/known-unknowns", "/login-graph"],
     ];
@@ -342,6 +343,10 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     // A pre-generated report file is a disk read, and the super-timeline is a paged, interactive
     // query with its own count ceiling (#2069): neither waits behind the case-open fan-out.
     for (const path of ["/report/report.md", "/report/report.html", "/super-timeline"])
+      expect(HEAVY_READ_PATHS.has(path), path).toBe(false);
+    // The overview load, no forensic rows (#2127): a findings-only panel does not queue behind the
+    // case-open fan-out. Re-adding one here is a deliberate change, not drift.
+    for (const path of ["/compliance", "/handoff", "/intel-retirement"])
       expect(HEAVY_READ_PATHS.has(path), path).toBe(false);
   });
 
@@ -474,7 +479,7 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     const busy = [deferred(), deferred()];
     const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
     try {
-      for (const path of ["/sessions", "/ioc-risk", "/compliance", "/cockpit"]) {
+      for (const path of ["/sessions", "/ioc-risk", "/customer-exposure", "/cockpit"]) {
         const gone = get(port, `/cases/c1${path}`);
         gone.reply.catch(() => undefined);
         await until(() => wholeCaseLoads.waiting === 1);

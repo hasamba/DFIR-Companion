@@ -18,7 +18,7 @@
  * never held past HEAVY_READ_ABANDONED_MAX_HOLD_MS, so a hung load cannot leak it. The handlers stop
  * early on their own (http/requestAbort.ts).
  *
- * NORMAL USE NEVER SEES A 503. One case open fires 36 of these reads (#2119, #2121); the caps hold
+ * NORMAL USE NEVER SEES A 503. One case open fires 33 of these reads (#2119, #2121, #2127); the caps hold
  * two such fan-outs together (tests/composition/heavyReadGate.test.ts pins it). The numbers are
  * constants, not settings, for the same reason as READ_WORKER_COUNT: they size the server, not the
  * analyst's workflow.
@@ -30,7 +30,8 @@
  * the case-open fan-out). /login-graph IS gated although it reads only the super-timeline: it is a
  * case-open panel load that streams every super-timeline row, not an analyst's interactive search
  * (#2121). /ioc-provenance(-chain) are gated by path only: their scan is shared per case (#1447), and
- * one caller leaving must never cancel it.
+ * one caller leaving must never cancel it. Panels on the overview load (no forensic rows) are left out
+ * too: /compliance, /handoff, /intel-retirement (#2127).
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import { requestAbortSignal } from "../http/requestAbort.js";
@@ -84,14 +85,11 @@ export const HEAVY_READ_PATHS: ReadonlySet<string> = new Set([
   "/ioc-risk",
   "/customer-exposure",
   "/cockpit",
-  "/compliance",
   "/sessions",
-  "/intel-retirement",
   "/campaign-scope",
   "/served-exposure",
   "/kerberoast-chain",
   "/tls-graph",
-  "/handoff",
   "/sensitive-access",
   "/playbook-match",
   "/hypotheses",

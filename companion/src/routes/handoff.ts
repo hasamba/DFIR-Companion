@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
+import { clientGone } from "../http/requestAbort.js";
 import { buildHandoffBrief } from "../analysis/handoffBrief.js";
 import { renderHandoffMarkdown } from "../reports/handoffMarkdown.js";
 import type { RouteContext } from "./context.js";
@@ -19,8 +19,10 @@ export function registerHandoffRoutes(app: Express, ctx: RouteContext): void {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
       const caseId = req.params.id;
+      // Overview load (#2127): the brief must not read the forensic timeline, which this load leaves
+      // empty. It does count IOCs, so the IOC-less overview is not an option here.
       const [state, notebook, hypotheses, workflow, importMeta] = await Promise.all([
-        options.stateStore.load(caseId, { signal: requestAbortSignal(res) }),
+        options.stateStore.loadOverview(caseId),
         options.notebookStore?.load(caseId),
         options.hypothesisStore?.load(caseId),
         options.findingWorkflowStore?.load(caseId),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ComplianceControlStore } from "../../src/analysis/complianceControl.js";
-import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
+import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 
 // Route-level coverage for the compliance mapping. mapFindings has its own unit tests; what is
@@ -72,6 +72,33 @@ describe("GET /cases/:id/compliance", () => {
     expect(res.body.disclaimer).toMatch(/not legal advice/i);
     expect(res.body.frameworkVersions["ISO 27001"]).toContain("2022");
     expect(res.body.generated).toBeTruthy();
+  });
+
+  it("reads the overview without IOCs, never the forensic timeline, and maps the same findings (#2127)", async () => {
+    const event = {
+      id: "e1",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      description: "vssadmin delete shadows",
+      severity: "High",
+      mitreTechniques: ["T1490"],
+      relatedFindingIds: ["f-confirmed"],
+      sourceScreenshots: [],
+    } as ForensicEvent;
+    await stateStore.save({ ...(await stateStore.load("c1")), forensicTimeline: [event] });
+    const full = vi.spyOn(stateStore, "load");
+    const overview = vi.spyOn(stateStore, "loadOverviewWithoutIocs");
+    const res = await request(app).get("/cases/c1/compliance");
+    expect(full).not.toHaveBeenCalled();
+    expect(overview).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(200);
+    // Same mapping as before the switch: one confirmed finding, its technique, nothing from the event.
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({ technique: "T1486", findingId: "f-confirmed" });
+    expect(res.body.availableFrameworks).toEqual(
+      expect.arrayContaining(["NIST 800-53", "PCI-DSS", "HIPAA", "GDPR", "SEC", "ISO 27001"]),
+    );
+    full.mockRestore();
+    overview.mockRestore();
   });
 
   it("404s for a case that does not exist instead of reporting no obligations", async () => {
