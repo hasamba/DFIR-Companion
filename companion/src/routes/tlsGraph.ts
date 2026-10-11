@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { buildTlsCaseGraph, tlsCaseGraphReads } from "../analysis/tlsCaseGraph.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
@@ -20,15 +21,16 @@ export function registerTlsGraphRoutes(app: Express, ctx: RouteContext): void {
     try {
       const caseId = req.params.id;
       const [state, superEvents] = await Promise.all([
-        options.stateStore.load(caseId),
+        options.stateStore.load(caseId, { signal: requestAbortSignal(res) }),
         options.superTimelineStore
           ? options.superTimelineStore.collect(caseId, (e) => (tlsCaseGraphReads(e) ? e : undefined))
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
+      if (clientGone(res)) return; // #2121
       const graph = buildTlsCaseGraph([...state.forensicTimeline, ...superEvents]);
       return res.status(200).json({ ...graph, generated: new Date().toISOString() });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 }

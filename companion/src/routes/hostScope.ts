@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone } from "../http/requestAbort.js";
 import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName } from "../analysis/hostAlias.js";
 import { emptyHostFingerprint, type HostScopeLedger } from "../analysis/hostScope.js";
@@ -63,9 +64,10 @@ export function registerHostScopeRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/host-scope", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     try {
-      return res.status(200).json(await ledger(req.params.id));
+      const body = await ledger(req.params.id);
+      return clientGone(res) ? undefined : res.status(200).json(body); // #2121
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

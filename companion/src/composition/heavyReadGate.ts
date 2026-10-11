@@ -18,7 +18,7 @@
  * never held past HEAVY_READ_ABANDONED_MAX_HOLD_MS, so a hung load cannot leak it. The handlers stop
  * early on their own (http/requestAbort.ts).
  *
- * NORMAL USE NEVER SEES A 503. One case open fires 17 of these reads (#2119); the caps hold
+ * NORMAL USE NEVER SEES A 503. One case open fires 36 of these reads (#2119, #2121); the caps hold
  * two such fan-outs together (tests/composition/heavyReadGate.test.ts pins it). The numbers are
  * constants, not settings, for the same reason as READ_WORKER_COUNT: they size the server, not the
  * analyst's workflow.
@@ -27,9 +27,10 @@
  * every light read, passes straight through. /health is never covered. Left out on purpose:
  * report/:file (a pre-generated file read from disk, no case load), and the super-timeline (a paged
  * worker-pool query with its own count ceiling, #2069; if gated, an analyst's search would queue behind
- * the case-open fan-out). Routes that call stateStore.load() directly (ioc-risk, cockpit, sessions,
- * ...) are a separate follow-up. /ioc-provenance(-chain) are gated by path only: their scan is shared
- * per case (#1447), and one caller leaving must never cancel it.
+ * the case-open fan-out). /login-graph IS gated although it reads only the super-timeline: it is a
+ * case-open panel load that streams every super-timeline row, not an analyst's interactive search
+ * (#2121). /ioc-provenance(-chain) are gated by path only: their scan is shared per case (#1447), and
+ * one caller leaving must never cancel it.
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import { requestAbortSignal } from "../http/requestAbort.js";
@@ -38,7 +39,7 @@ import { WorkTracker } from "../analysis/pendingWork.js";
 /** Heavy reads running at once, across every case. Two read workers, plus room for cheap cache hits. */
 export const HEAVY_READ_CONCURRENCY = 4;
 /** Heavy reads waiting for a slot before the next one is refused with 503. */
-export const HEAVY_READ_QUEUE_LIMIT = 40;
+export const HEAVY_READ_QUEUE_LIMIT = 68;
 /** What a refused client is told to wait, in seconds. */
 export const HEAVY_READ_RETRY_AFTER_SECONDS = 2;
 /** Safety net: the longest a disconnected request's slot waits for its abandoned work to settle. */
@@ -79,6 +80,26 @@ export const HEAVY_READ_PATHS: ReadonlySet<string> = new Set([
   "/timesketch-omitted",
   "/ioc-provenance",
   "/ioc-provenance-chain",
+  // #2121: the case-open panel loaders with their own whole-case load (or super-timeline scan).
+  "/ioc-risk",
+  "/customer-exposure",
+  "/cockpit",
+  "/compliance",
+  "/sessions",
+  "/intel-retirement",
+  "/campaign-scope",
+  "/served-exposure",
+  "/kerberoast-chain",
+  "/tls-graph",
+  "/handoff",
+  "/sensitive-access",
+  "/playbook-match",
+  "/hypotheses",
+  "/host-scope",
+  "/host-duplicates",
+  "/second-look/preview",
+  "/known-unknowns",
+  "/login-graph",
 ]);
 
 export interface HeavyReadLimits {

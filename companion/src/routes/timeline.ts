@@ -119,9 +119,10 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/known-unknowns", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
     try {
-      return res.status(200).json({ items: await options.pipeline.knownUnknownsForCase(req.params.id) });
+      const items = await options.pipeline.knownUnknownsForCase(req.params.id);
+      return clientGone(res) ? undefined : res.status(200).json({ items }); // #2121
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

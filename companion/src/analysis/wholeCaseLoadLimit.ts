@@ -102,5 +102,13 @@ export class LoadLimiter {
   }
 }
 
+/** What a StateStore.load caller may ask of its whole-case load. */
+export interface WholeCaseLoadOptions {
+  /** #2057: the slim canonical form, for report routes only (see reports/filteredState.ts). */
+  slimCanonical?: boolean;
+  /** #2121: the caller's request signal. A load still waiting for a permit when it aborts never reads. */
+  signal?: AbortSignal;
+}
+
 /** The one limiter every StateStore.load in this process goes through. */
 export const wholeCaseLoads = new LoadLimiter(MAX_CONCURRENT_WHOLE_CASE_LOADS);

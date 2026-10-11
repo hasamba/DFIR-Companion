@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { buildPlaybookMatchResult, playbookMatchEnvOptions } from "../analysis/playbookMatch.js";
 import { loadKnownPlaybooks } from "../analysis/knownPlaybooksData.js";
 import type { RouteContext } from "./context.js";
@@ -25,7 +26,8 @@ export function registerPlaybookMatchRoutes(app: Express, ctx: RouteContext): vo
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
+      const state = await options.stateStore.load(req.params.id, { signal: requestAbortSignal(res) });
+      if (clientGone(res)) return; // #2121
       const dataset = loadKnownPlaybooks();
       const defaults = playbookMatchEnvOptions();
       const topN = Math.max(1, Math.floor(Number(req.query.topN) || defaults.topN));
@@ -34,7 +36,7 @@ export function registerPlaybookMatchRoutes(app: Express, ctx: RouteContext): vo
       const result = buildPlaybookMatchResult(state.forensicTimeline, dataset, { topN, minScore });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 }

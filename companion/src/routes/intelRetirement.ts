@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { intelRetirementReview, recordRetirementDecision } from "../analysis/intelRetirement.js";
 import type { RouteContext } from "./context.js";
 
@@ -13,10 +14,10 @@ export function registerIntelRetirementRoutes(app: Express, ctx: RouteContext): 
   app.get("/cases/:id/intel-retirement", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const state = await options.stateStore.load(req.params.id);
-      return res.status(200).json(intelRetirementReview(state));
+      const state = await options.stateStore.load(req.params.id, { signal: requestAbortSignal(res) });
+      return clientGone(res) ? undefined : res.status(200).json(intelRetirementReview(state)); // #2121
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

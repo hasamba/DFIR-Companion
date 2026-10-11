@@ -256,12 +256,16 @@ describe("heavy read gate (#1915)", () => {
   });
 
   it("normal use: one dashboard's whole fan-out of heavy reads is never refused", async () => {
-    // One case open fires 17 heavy reads (#2119): /state, plus the panel loaders asset-graph,
+    // One case open fires 36 heavy reads. 17 since #2119: /state, plus the panel loaders asset-graph,
     // evidence-graph, lateral-paths, phases, timeline-gaps, beacon-candidates, anomalies,
     // adversary-hints, host-ranking, d3fend-countermeasures, attack-mitigations, geo-map, swimlane,
-    // ioc-sources, ioc-provenance and ioc-provenance-chain. Two such fan-outs together must still
-    // fit, so an analyst never sees "server busy".
-    const DASHBOARD_FANOUT = 17;
+    // ioc-sources, ioc-provenance and ioc-provenance-chain. 19 more since #2121, the panel loaders
+    // with their own whole-case load: ioc-risk, customer-exposure, cockpit, compliance, sessions,
+    // intel-retirement, campaign-scope, served-exposure, kerberoast-chain, tls-graph, handoff,
+    // sensitive-access, playbook-match, hypotheses, host-scope, host-duplicates, second-look/preview,
+    // known-unknowns and login-graph. Two such fan-outs together must still fit, so an analyst never
+    // sees "server busy".
+    const DASHBOARD_FANOUT = 36;
     expect(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT).toBeGreaterThanOrEqual(2 * DASHBOARD_FANOUT);
     const gate = new HeavyReadGate();
     const app = express();
@@ -328,6 +332,11 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       ...["/mobile-summary", "/presentation", "/present/export", "/incident-timeline.csv"],
       ...["/timeline.jsonl", "/report.docx", "/timesketch-omitted", "/ioc-provenance"],
       "/ioc-provenance-chain",
+      // #2121: the case-open panel loaders that call stateStore.load() (or scan the super-timeline).
+      ...["/ioc-risk", "/customer-exposure", "/cockpit", "/compliance", "/sessions", "/intel-retirement"],
+      ...["/campaign-scope", "/served-exposure", "/kerberoast-chain", "/tls-graph", "/handoff"],
+      ...["/sensitive-access", "/playbook-match", "/hypotheses", "/host-scope", "/host-duplicates"],
+      ...["/second-look/preview", "/known-unknowns", "/login-graph"],
     ];
     for (const path of covered) expect(HEAVY_READ_PATHS, path).toContain(path);
     // A pre-generated report file is a disk read, and the super-timeline is a paged, interactive
@@ -447,6 +456,39 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     // And the gate still serves a live caller afterwards: no slot leaked.
     expect((await get(port, "/cases/c1/geo-map").reply).status).toBe(200);
     await until(idle);
+  });
+
+  it("a case-open panel read whose client left drops its queued whole-case load and frees its slot (#2121)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-heavy-panel-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
+    const app = createApp(store, { stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    expect((await request(app).get("/cases/c1/sessions")).status).toBe(200);
+    const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+    const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    const port = await listen(app);
+    // Both load permits held elsewhere, so each route's whole-case load waits in the limiter.
+    const busy = [deferred(), deferred()];
+    const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
+    try {
+      for (const path of ["/sessions", "/ioc-risk", "/compliance", "/cockpit"]) {
+        const gone = get(port, `/cases/c1${path}`);
+        gone.reply.catch(() => undefined);
+        await until(() => wholeCaseLoads.waiting === 1);
+        expect(gate.active, path).toBe(1);
+        gone.drop();
+        // The queued load is dropped, so the slot is free while the permits are still held.
+        await until(() => wholeCaseLoads.waiting === 0 && gate.active === 0);
+      }
+    } finally {
+      busy.forEach((b) => b.resolve());
+      await Promise.all(holders);
+    }
+    expect(reads).not.toHaveBeenCalled(); // no load ever ran for a client that had gone
+    expect((await get(port, "/cases/c1/sessions").reply).status).toBe(200);
   });
 
   it("the report-lite cache still serves the second request behind the gate", async () => {

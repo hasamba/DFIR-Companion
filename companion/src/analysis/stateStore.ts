@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { wholeCaseLoads } from "./wholeCaseLoadLimit.js";
+import { wholeCaseLoads, type WholeCaseLoadOptions } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -288,9 +288,9 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     );
   }
 
-  async load(caseId: string, opts: { slimCanonical?: boolean } = {}): Promise<InvestigationState> {
-    // #1915: capped across the process. slimCanonical (#2057): report routes only, see filteredState.ts.
-    return wholeCaseLoads.run(() => this.loadState(caseId, [], opts.slimCanonical === true));
+  async load(caseId: string, opts: WholeCaseLoadOptions = {}): Promise<InvestigationState> {
+    // #1915: capped across the process; see WholeCaseLoadOptions for slimCanonical and signal.
+    return wholeCaseLoads.run(() => this.loadState(caseId, [], opts.slimCanonical === true), opts.signal);
   }
 
   async loadOverview(caseId: string): Promise<InvestigationState> {

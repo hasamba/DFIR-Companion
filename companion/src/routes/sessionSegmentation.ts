@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { segmentSessions, sessionEnvOptions } from "../analysis/sessionSegmentation.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -37,11 +38,12 @@ export function registerSessionSegmentationRoutes(app: Express, ctx: RouteContex
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
+      const state = await options.stateStore.load(req.params.id, { signal: requestAbortSignal(res) });
+      if (clientGone(res)) return; // #2121
       const sessions = segmentSessions(state.forensicTimeline, sessionEnvOptions());
       return res.status(200).json({ sessions });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

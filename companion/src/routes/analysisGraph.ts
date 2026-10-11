@@ -105,10 +105,13 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
       const raw = Number(s(req.query.maxEdges));
       const maxEdges = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_EDGES;
       const builder = new LoginGraphBuilder();
-      for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) builder.add(batch);
+      for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) {
+        if (clientGone(res)) return; // #2121: stop streaming the super-timeline for a gone client
+        builder.add(batch);
+      }
       return res.status(200).json({ ...builder.build(maxEdges), generatedAt: new Date().toISOString() });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 

@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { buildHandoffBrief } from "../analysis/handoffBrief.js";
 import { renderHandoffMarkdown } from "../reports/handoffMarkdown.js";
 import type { RouteContext } from "./context.js";
@@ -19,12 +20,13 @@ export function registerHandoffRoutes(app: Express, ctx: RouteContext): void {
     try {
       const caseId = req.params.id;
       const [state, notebook, hypotheses, workflow, importMeta] = await Promise.all([
-        options.stateStore.load(caseId),
+        options.stateStore.load(caseId, { signal: requestAbortSignal(res) }),
         options.notebookStore?.load(caseId),
         options.hypothesisStore?.load(caseId),
         options.findingWorkflowStore?.load(caseId),
         options.importMetaStore?.load(caseId),
       ]);
+      if (clientGone(res)) return; // #2121
       const brief = buildHandoffBrief(state, {
         ...(notebook ? { notebook } : {}),
         ...(hypotheses ? { hypotheses } : {}),
@@ -33,7 +35,7 @@ export function registerHandoffRoutes(app: Express, ctx: RouteContext): void {
       });
       return res.status(200).json({ brief, markdown: renderHandoffMarkdown(brief) });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return clientGone(res) ? undefined : res.status(500).json({ error: (err as Error).message });
     }
   });
 }
