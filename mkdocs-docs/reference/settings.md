@@ -102,6 +102,10 @@ from the dashboard. Set them in `.env` or the deployment's secret store and rest
 - `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
 - `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup; required in team mode while no identity exists, on any bind address. At least 32 characters, or the server refuses to start. Wrong guesses are rate-limited and audited.
 - `DFIR_AUTH_DATA_DIR` — optional identity/session database location
+- `DFIR_ALLOW_UNAUTHENTICATED_REMOTE` — lets single-user mode bind a non-loopback address;
+  `container-loopback-proxy` (Docker port published to host loopback only) or `public-demo` (really
+  exposed on purpose) only. See
+  [Public Demo and Network Exposure](advanced.md#public-demo-and-network-exposure).
 - `DFIR_AUTH_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, `_SCOPES` — optional
   organization sign-in
 
