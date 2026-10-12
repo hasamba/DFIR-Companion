@@ -53,6 +53,40 @@ describe("IOC exclude list routes (per-case)", () => {
     expect(after.iocs.map((i) => i.value)).toEqual(["keep.example.com"]);
   });
 
+  it("rewrites findings that cited a purged IOC: id dropped, marker kept (#2151)", async () => {
+    const { app, stateStore } = await harness();
+    const finding = (id: string, relatedIocs: string[]) => ({
+      id,
+      severity: "Low" as const,
+      title: "t",
+      description: "d",
+      relatedIocs,
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      firstSeen: "2026-01-01T00:00:00Z",
+      lastUpdated: "2026-01-01T00:00:00Z",
+      status: "open" as const,
+    });
+    await stateStore.save({
+      ...emptyState("c1"),
+      iocs: [
+        { id: "i005", type: "domain", value: "host.lan", firstSeen: "2026-01-01T00:00:00Z" },
+        { id: "i006", type: "ip", value: "10.0.0.9", firstSeen: "2026-01-01T00:00:00Z" },
+      ],
+      findings: [finding("f1", ["i005", "i006"]), finding("f2", ["i006"])],
+    });
+    const add = await request(app).post("/cases/c1/ioc-exclude").send({ match: "suffix", pattern: "lan" });
+    expect(add.status).toBe(201);
+    expect(add.body.findingsUpdated).toBe(1);
+    const state = await stateStore.load("c1");
+    const f1 = state.findings.find((f) => f.id === "f1")!;
+    const f2 = state.findings.find((f) => f.id === "f2")!;
+    expect(f1.relatedIocs).toEqual(["i006"]);
+    expect(f1.excludedIocRefs).toEqual([{ value: "host.lan", type: "domain", ruleId: add.body.rule.id }]);
+    expect(f2.relatedIocs).toEqual(["i006"]);
+    expect(f2.excludedIocRefs).toBeUndefined();
+  });
+
   it("rejects an invalid rule (400) and a missing rule on delete (404)", async () => {
     const { app } = await harness();
     expect(

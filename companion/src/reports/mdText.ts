@@ -139,3 +139,18 @@ export function codeSpanMd(value: string): string {
   const fence = "`".repeat(longest + 1);
   return `${fence} ${text} ${fence}`;
 }
+
+/**
+ * A finding's IOC lines: the ids it cites, then the indicators it cited that the IOC exclude list
+ * removed (#2151), so the report says why a link is gone instead of printing an id that resolves to
+ * nothing. Excluded values are untrusted text: code spans.
+ */
+export function findingIocsMd(f: Finding): string[] {
+  const out = f.relatedIocs.length ? [`- IOCs: ${f.relatedIocs.join(", ")}`] : [];
+  const refs = f.excludedIocRefs ?? [];
+  if (refs.length)
+    out.push(
+      `- Indicators removed by the IOC exclude list: ${refs.map((r) => codeSpanMd(r.value)).join(", ")}`,
+    );
+  return out;
+}

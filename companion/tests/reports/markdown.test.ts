@@ -26,6 +26,40 @@ describe("renderMarkdownReport uncertainty ledger (#73)", () => {
   });
 });
 
+describe("renderMarkdownReport — indicators removed by the IOC exclude list (#2151)", () => {
+  const finding = (extra: Record<string, unknown> = {}) => ({
+    id: "f1",
+    severity: "High" as const,
+    title: "Beacon",
+    description: "d",
+    relatedIocs: [],
+    mitreTechniques: [],
+    sourceScreenshots: [],
+    firstSeen: "2026-05-28T10:00:00.000Z",
+    lastUpdated: "2026-05-28T10:00:00.000Z",
+    status: "open" as const,
+    ...extra,
+  });
+
+  it("names each removed indicator on its own line, flattened onto that line", () => {
+    const state = emptyState("c1");
+    state.findings.push(
+      finding({ excludedIocRefs: [{ value: "host.lan\n# injected", type: "domain", ruleId: "r1" }] }),
+    );
+    const md = renderMarkdownReport(state);
+    const line = md.split("\n").find((l) => l.startsWith("- Indicators removed by the IOC exclude list:"));
+    expect(line).toBeDefined();
+    expect(line).toContain("host.lan");
+    expect(md).not.toMatch(/^# injected/m);
+  });
+
+  it("adds nothing for a finding without removed indicators", () => {
+    const state = emptyState("c1");
+    state.findings.push(finding());
+    expect(renderMarkdownReport(state)).not.toContain("IOC exclude list:");
+  });
+});
+
 describe("renderMarkdownReport", () => {
   it("cites each finding's supporting forensic events as a numbered footnote list (#222)", () => {
     const state = emptyState("c1");

@@ -11,7 +11,7 @@ import { mergeEnrichedSubset } from "../analysis/iocBulkOps.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { createIocProvenanceReads, type IocProvenanceReads } from "../analysis/iocProvenanceRead.js";
 import { parseWhitelistText, toWhitelistCsv, validateRuleInput } from "../analysis/iocWhitelist.js";
-import { validateExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
+import { validateExcludeRuleInput, purgeExcluded, type IocExcludeRule } from "../analysis/iocExclude.js";
 import { ingestNsrlFiles, splitNsrlPaths } from "../analysis/nsrlStore.js";
 import { parseNsrlText } from "../analysis/nsrl.js";
 import { NsrlDb, saveNsrlDbPath, removeNsrlDbPath } from "../analysis/nsrlDb.js";
@@ -498,7 +498,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   });
 
   // Add one rule and immediately purge any matching IOCs already in this case. Body:
-  // { match: "exact"|"suffix"|"regex", pattern, iocType?, note? }. Returns { rule, purged }.
+  // { match: "exact"|"suffix"|"regex", pattern, iocType?, note? }. Returns { rule, purged, findingsUpdated }.
   app.post("/cases/:id/ioc-exclude", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const checked = validateExcludeRuleInput(req.body ?? {});
@@ -508,16 +508,16 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     const stateStore = options.stateStore;
     let rule: IocExcludeRule | undefined;
     let purged = 0;
+    let findingsUpdated = 0;
     try {
       await runStateExclusive(caseId, async () => {
         const state = await stateStore.load(caseId);
         rule = { id: randomUUID(), addedAt: new Date().toISOString(), ...input };
         const nextRules = [...state.iocExcludeRules, rule];
-        const keptIocs = state.iocs.filter((ioc) => !matchIocToExclude(ioc, nextRules));
-        purged = state.iocs.length - keptIocs.length;
+        const out = purgeExcluded(state, nextRules); // #2151: citing findings keep a marker, not a dead id
+        ({ purged, findingsUpdated } = out);
         const next = {
-          ...state,
-          iocs: keptIocs,
+          ...out.state,
           iocExcludeRules: nextRules,
           updatedAt: new Date().toISOString(),
         };
@@ -525,7 +525,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         options.onState?.(next);
       });
       logLine(`[ioc-exclude] ${caseId} added rule ${rule!.match}:${rule!.pattern} — purged ${purged} IOC(s)`);
-      return res.status(201).json({ rule, purged });
+      return res.status(201).json({ rule, purged, findingsUpdated });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
