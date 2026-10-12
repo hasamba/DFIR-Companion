@@ -15,8 +15,11 @@ on:
         description: "Tag to attach artifacts to (e.g. v0.9.0). Defaults to the workflow ref."
         required: false
 
+# Read-only by default (#2156). Only the two jobs that write to the GitHub Release — `release`
+# and `chocolatey` — get `contents: write`, on the job itself. The store-upload jobs hold
+# third-party secrets and must not also hold a writable repo token.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows-exe:
@@ -464,7 +467,8 @@ jobs:
         # Web Store publish" step is the real safety net: it checks the store's live version
         # against manifest.json and fails the job for real if the upload didn't actually land.
         continue-on-error: true
-        uses: mnao305/chrome-extension-upload@v5.0.0
+        # Pinned to a commit, not a moving ref (#817)
+        uses: mnao305/chrome-extension-upload@4008e29e13c144d0f6725462cbd49b7c291b4928 # v5.0.0
         with:
           file-path: ${{ steps.zip.outputs.path }}
           extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
@@ -551,6 +555,9 @@ jobs:
     if: >-
       !cancelled() &&
       (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '')
+    # Needs write to create the GitHub Release and upload its assets (#2156).
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -624,7 +631,8 @@ jobs:
           cat release-notes.md
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
+        # Pinned to a commit, not a moving ref (#817)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           body_path: release-notes.md
@@ -696,6 +704,9 @@ jobs:
     # set, so it's safe to merge beforehand (#137).
     needs: [windows-exe, extension-zip, release]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+    # Needs write to attach the .nupkg to the GitHub Release (#2156).
+    permissions:
+      contents: write
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -734,7 +745,8 @@ jobs:
           if-no-files-found: error
 
       - name: Attach nupkg to release
-        uses: softprops/action-gh-release@v2
+        # Pinned to a commit, not a moving ref (#817)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: companion/dist-choco/*.nupkg
