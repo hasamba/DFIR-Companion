@@ -41,6 +41,15 @@ Findings against these come up in every automated review; they are design decisi
   background capture or a SIEM webhook must keep recording while the analyst is away. Both routes
   are write-only and return nothing about the case. `/push` additionally requires its shared
   secret; in team mode both require an authenticated session holding write on the case.
+- **Anyone who can write to the cases folder on disk is trusted, and backups are not
+  content-authenticated.** That includes each case's `state/backups/` directory. Restoring a
+  backup checks the filename, allows only the known state files, and runs a SQLite integrity
+  check on the database copy, but it does not verify that the content was written by this
+  installation. Someone who can write `state/backups/` can also overwrite the live `state/`
+  files directly and read the instance secret, which sits in the same folder. A signature keyed
+  by that instance secret would therefore be forgeable by the very writer it is meant to stop,
+  and it would make older unsigned backups and the backups inside imported cases unrestorable.
+  Protect the cases folder with file-system permissions instead.
 
 ## Reporting a vulnerability
 
