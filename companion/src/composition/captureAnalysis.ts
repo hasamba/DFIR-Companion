@@ -324,6 +324,23 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
+  // The pending_analysis.json failure marker the diagnostics report counts. Shared by the live
+  // window (flush) and the AI off→on catch-up (backfill) — #2179: backfill used to write none.
+  // #2152: atomic (never torn JSON) and best-effort — it never throws, so a failed marker write
+  // cannot swallow the caller's error status. No `pending` list: backfill re-derives it from
+  // lastAnalyzedSeq.
+  async function recordFailureMarker(caseId: string, err: unknown): Promise<void> {
+    const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
+    const marker = JSON.stringify({ error: (err as Error).message, at: new Date().toISOString() }, null, 2);
+    try {
+      await atomicWrite(markerPath, marker); // carries the #1855 case guard itself
+    } catch (writeErr) {
+      warnLine(
+        `[capture-analysis] ${caseId}: could not record failure marker: ${(writeErr as Error).message}`,
+      );
+    }
+  }
+
   function flush(caseId: string): Promise<void> {
     return runInCaseScope(store.casesRoot, caseId, () => flushInScope(caseId));
   }
@@ -350,17 +367,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
       recordAiError(caseId, "extracting", err);
-      // #2152: atomic (never torn JSON) and best-effort — a failed marker write must not swallow
-      // the error status below. No `pending` list: backfill re-derives it from lastAnalyzedSeq.
-      const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
-      const marker = JSON.stringify({ error: (err as Error).message, at: new Date().toISOString() }, null, 2);
-      try {
-        await atomicWrite(markerPath, marker); // carries the #1855 case guard itself
-      } catch (writeErr) {
-        warnLine(
-          `[capture-analysis] ${caseId}: could not record failure marker: ${(writeErr as Error).message}`,
-        );
-      }
+      await recordFailureMarker(caseId, err);
       options.onAiStatus?.(caseId, {
         status: "error",
         at: new Date().toISOString(),
@@ -494,6 +501,8 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       scheduleSynthesis(caseId);
     } catch (err) {
+      recordAiError(caseId, "extracting", err);
+      await recordFailureMarker(caseId, err); // #2179 — never throws, so the terminal status still goes out
       options.onAiStatus?.(caseId, {
         status: "error",
         at: new Date().toISOString(),
