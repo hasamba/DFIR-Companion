@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
+import {
+  enrichIocs,
+  hasEnrichableWork,
+  countEnrichableWork,
+  type EnrichLookupEvent,
+} from "../../src/enrichment/enrichService.js";
 import { ProviderHealthCache } from "../../src/enrichment/providerHealth.js";
 import {
   RateLimitError,
@@ -701,5 +706,53 @@ describe("hasEnrichableWork", () => {
 
   it("is false when there are no IOCs at all", () => {
     expect(hasEnrichableWork([], [vt, misp])).toBe(false);
+  });
+});
+
+// #2148: the SSRF guard in enrichIocs (and its per-IOC twin behind hasEnrichableWork /
+// countEnrichableWork) had no direct test, so removing it failed nothing. These pin it: an IOC whose
+// value is a private/internal literal is never handed to a provider, and the pre-checks agree.
+// The guard is literal-only ON PURPOSE (no DNS resolution: resolving attacker domains from the
+// analyst's machine leaks the investigation to the attacker's nameserver). The structural
+// "an IOC value never becomes a connection host" rule lives in providerHostInvariant.test.ts.
+describe("SSRF guard (#2148)", () => {
+  const internal = [
+    ioc({ value: "169.254.169.254", type: "ip" }),
+    ioc({ value: "10.0.0.1", type: "ip" }),
+    ioc({ value: "http://169.254.169.254/latest/meta-data/", type: "url" }),
+    ioc({ value: "http://[::ffff:127.0.0.1]/", type: "url" }),
+    ioc({ value: "foo.localhost", type: "domain" }),
+  ];
+  const publicControl = ioc({ value: "8.8.8.8", type: "ip" });
+  const allKinds: IocKind[] = ["hash", "ip", "domain", "url", "process"];
+
+  it("never hands an internal-target IOC to a provider; the public control is queried", async () => {
+    const calls: string[] = [];
+    const rec = fakeProvider("Rec", allKinds, null, calls);
+    const { summary } = await enrichIocs([...internal, publicControl], {
+      providers: [rec],
+      sleep: noSleep,
+      now,
+    });
+    expect(calls).toEqual(["Rec:ip:8.8.8.8"]);
+    expect(summary.attemptedValues).toEqual(["8.8.8.8"]);
+    for (const i of internal) expect(summary.attemptedValues).not.toContain(i.value);
+  });
+
+  it("queries nothing when every IOC is an internal target", async () => {
+    const calls: string[] = [];
+    const rec = fakeProvider("Rec", allKinds, null, calls);
+    const { summary } = await enrichIocs(internal, { providers: [rec], sleep: noSleep, now });
+    expect(calls).toEqual([]);
+    expect(summary.queried).toBe(0);
+    expect(summary.attemptedValues).toEqual([]);
+  });
+
+  it("hasEnrichableWork / countEnrichableWork agree with the run's candidate filter", () => {
+    const rec = fakeProvider("Rec", allKinds, null, []);
+    expect(hasEnrichableWork(internal, [rec])).toBe(false);
+    expect(countEnrichableWork(internal, [rec])).toBe(0);
+    expect(hasEnrichableWork([...internal, publicControl], [rec])).toBe(true);
+    expect(countEnrichableWork([...internal, publicControl], [rec])).toBe(1);
   });
 });
