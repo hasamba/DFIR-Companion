@@ -134,7 +134,10 @@ Open the profile icon, then **Account & team**, to:
 - grant or remove case roles;
 - inspect the authentication audit (global administrators).
 
-Passwords are stored with salted scrypt hashes. Session and service-token secrets are stored only
+Passwords are stored with salted scrypt hashes, at a cost tuned for rate-limited online checks;
+see "Stored passwords" in
+[SECURITY.md](https://github.com/hasamba/DFIR-Companion/blob/master/SECURITY.md#stored-passwords)
+for the parameters and why they differ from encrypted case archives. Session and service-token secrets are stored only
 as SHA-256 digests. Disabling a user revokes their sessions. Local password attempts are rate
 limited.
 
