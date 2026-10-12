@@ -6,9 +6,16 @@ DFIR Companion is a **localhost** tool. The server binds `127.0.0.1` by default,
 stays on disk, threat-intel enrichment is **off by default** and only sends indicators
 externally after a per-case opt-in, and AI input is anonymized in transit (see the
 Anonymization section of [`companion/README.md`](companion/README.md)). It is intended to run
-on a trusted analyst workstation or a trusted LAN segment; there is **no built-in
-authentication** — if you expose it beyond localhost (`DFIR_HOST=0.0.0.0`), put it behind your
-own auth/reverse proxy.
+on a trusted analyst workstation or a trusted LAN segment.
+
+The default **single-user mode** (`DFIR_AUTH_MODE=single-user`) has **no sign-in**, so the server
+refuses to start on a non-loopback address (for example `DFIR_HOST=0.0.0.0`) in that mode. To
+share one Companion between several investigators, use **team mode** (`DFIR_AUTH_MODE=team`).
+It adds local accounts, optional OpenID Connect sign-in, per-case roles and CSRF-protected
+sessions — see [Team Accounts and Case Roles](mkdocs-docs/reference/team-authentication.md).
+`DFIR_ALLOW_UNAUTHENTICATED_REMOTE` is the documented opt-out for two cases only: a container
+whose port is published only on host loopback (`container-loopback-proxy`), and a throwaway
+public demo that anyone who finds the URL can use (`public-demo`).
 
 ## Trust boundaries that are deliberate
 
