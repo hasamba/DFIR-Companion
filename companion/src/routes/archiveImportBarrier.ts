@@ -5,6 +5,7 @@ import {
   beginArchive,
   CaseArchivingError,
   hasIngestReservation,
+  isCaseArchiving,
 } from "../analysis/caseIngestAdmission.js";
 
 /** How long an archive waits for in-flight ingest before it answers 409. */
@@ -62,6 +63,19 @@ export function archiveBusyMessage(caseId: string): string {
 }
 
 /**
+ * For a route that moves or removes the case folder OUTSIDE the barrier — restore, and a delete with
+ * archiveFirst "none" (which skips it so it can abort running imports, #1831): answers 409 and returns
+ * true while an archive or export is walking the folder (#2145). An archive or export that starts after
+ * this check is held off by the delete reservation and `store.isDeleting` in the barrier; restore holds
+ * metaLock only briefly.
+ */
+export function refusedWhileArchiving(casesRoot: string, caseId: string, res: Response): boolean {
+  if (!isCaseArchiving(casesRoot, caseId)) return false;
+  res.status(409).json({ error: archiveBusyMessage(caseId) });
+  return true;
+}
+
+/**
  * Wraps a route that zips the whole case: 409 while an import runs, else run it inside the section.
  * `zips` says whether THIS request builds an archive: a delete with archiveFirst "none" builds none,
  * and must still be able to delete a case whose imports are running — it aborts them (#1831).
@@ -72,7 +86,21 @@ export function withArchiveBarrier(
   zips: (req: Request) => boolean = () => true,
 ): Handler {
   return async (req, res) => {
-    if (!zips(req)) return handler(req, res);
+    if (!zips(req)) {
+      // No archive to build, so no wait — but never remove the folder under a running walk (#2145).
+      const key = deleteKey(ctx.store.casesRoot, String(req.params.id));
+      if (refusedWhileArchiving(ctx.store.casesRoot, String(req.params.id), res)) return;
+      // Reserved in the same tick as the check: an export arriving while the handler awaits (getCaseMeta,
+      // before deleteCaseFolder sets isDeleting) is held off and cannot walk the folder being removed.
+      deleteReservations.set(key, (deleteReservations.get(key) ?? 0) + 1);
+      try {
+        return await handler(req, res);
+      } finally {
+        const left = (deleteReservations.get(key) ?? 1) - 1;
+        if (left > 0) deleteReservations.set(key, left);
+        else deleteReservations.delete(key);
+      }
+    }
     const caseId = String(req.params.id);
     const deadline = Date.now() + archiveWaitMs(ctx.options.archiveIngestWaitMs);
     let endArchive: (() => void) | null = null;
@@ -93,8 +121,15 @@ export function withArchiveBarrier(
   };
 }
 
+/** Delete requests (archiveFirst "none") between their 409 check and their end, per case (#2145). */
+const deleteReservations = new Map<string, number>();
+const deleteKey = (casesRoot: string, caseId: string) => `${casesRoot}\u0000${caseId}`;
+
 function ingestInFlight(ctx: RouteContext, caseId: string): boolean {
   return (
+    // A delete (archiveFirst "none" skips this barrier) removing the folder this walk would read (#2145).
+    deleteReservations.has(deleteKey(ctx.store.casesRoot, caseId)) ||
+    ctx.store.isDeleting(caseId) ||
     hasIngestReservation(ctx.store.casesRoot, caseId) ||
     ctx.importLock.isBusy(caseId) ||
     (ctx.options.jobManager?.hasActive(caseId, "import") ?? false) ||

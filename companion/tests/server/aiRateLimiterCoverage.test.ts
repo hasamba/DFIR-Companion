@@ -43,6 +43,13 @@ async function fireManyPost(path: string, count: number, body?: unknown): Promis
   return out;
 }
 
+// fireManyPost spends the whole budget before it sends anything, so EVERY request must be a 429.
+// "At least one 429" would stay green on a limiter that leaks requests past an exhausted budget
+// (#2172) — and that limiter is a cost and DoS control.
+function expectAllThrottled(statuses: number[]): void {
+  expect(statuses).toEqual(Array(statuses.length).fill(429));
+}
+
 async function fireManyGet(path: string, count: number): Promise<number[]> {
   const out: number[] = [];
   for (let i = 0; i < count; i++) {
@@ -55,27 +62,27 @@ async function fireManyGet(path: string, count: number): Promise<number[]> {
 describe("AI rate limiter coverage", () => {
   it("throttles POST /cases/:id/synthesize after 20 req/min (existing coverage, no regression)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/synthesize", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("throttles POST /cases/:id/second-opinion (previously unthrottled — bug #25)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/second-opinion", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("throttles POST /cases/:id/ask (previously unthrottled — bug #25)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/ask", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("throttles POST /cases/:id/executive-summary (previously unthrottled — bug #25)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/executive-summary", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("throttles POST /cases/:id/events/:eid/explain (dynamic segment, previously unthrottled — bug #25)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/events/ev1/explain", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   // Express routes case-insensitively, so /SYNTHESIZE reaches the same handler as /synthesize. The
@@ -83,12 +90,12 @@ describe("AI rate limiter coverage", () => {
   // through to next(), and ran the AI call unthrottled. The whole cap was one shift key from off.
   it("throttles POST /cases/:id/SYNTHESIZE — Express folds case, so the gate must too", async () => {
     const statuses = await fireManyPost("/cases/nosuch/SYNTHESIZE", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("throttles POST /cases/:id/Events/:eid/Explain (the dynamic pattern folds case too)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/Events/ev1/Explain", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   // The routes the set had drifted past. Each issues an LLM call and each was unthrottled, so the
@@ -105,20 +112,20 @@ describe("AI rate limiter coverage", () => {
   for (const path of MISSING) {
     it(`throttles POST /cases/:id${path}`, async () => {
       const statuses = await fireManyPost(`/cases/nosuch${path}`, 25);
-      expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+      expectAllThrottled(statuses);
     });
   }
 
   it("throttles POST /cases/:id/sessions/:sid/summary (dynamic segment)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/sessions/s1/summary", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   // Same non-strict-routing hazard as the case-folding one above, and the same consequence: the
   // handler runs, the Set lookup misses, the AI call goes out uncapped.
   it("throttles POST /cases/:id/synthesize/ (trailing slash)", async () => {
     const statuses = await fireManyPost("/cases/nosuch/synthesize/", 25);
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expectAllThrottled(statuses);
   });
 
   it("does NOT throttle GET /cases/:id/import/undo-stack (non-AI read — prefix-mount bug #23)", async () => {

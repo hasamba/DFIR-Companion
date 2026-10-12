@@ -7,6 +7,16 @@ import type { InvestigationState } from "./stateTypes.js";
 // rest as a count — the full set still lives in state and feeds synthesis.
 const MAX_FINDINGS = 40;
 const MAX_IOCS = 80;
+/** How many of the latest forensic events the summary shows the model (and it may extend by id). */
+export const SUMMARY_EVENT_COUNT = 12;
+
+/**
+ * The ids of the events `buildStateSummary` shows the model — the only ids a screenshot window is
+ * allowed to "extend by id" (#2175).
+ */
+export function summarizedEventIds(state: Pick<InvestigationState, "forensicTimeline">): ReadonlySet<string> {
+  return new Set(state.forensicTimeline.slice(-SUMMARY_EVENT_COUNT).map((e) => e.id));
+}
 
 function withMore<T>(items: readonly T[], max: number, render: (t: T) => string): string {
   const shown = items.slice(-max).map(render).join("\n");
@@ -35,7 +45,7 @@ export function buildStateSummary(state: InvestigationState): string {
   const iocs = extraIocs > 0 ? `${shownIocs} (+${extraIocs} more)` : shownIocs;
   // Show the most recent dated events so the model extends (not duplicates) the timeline.
   const events = state.forensicTimeline
-    .slice(-12)
+    .slice(-SUMMARY_EVENT_COUNT)
     .map((e) => `- [${e.id}] ${e.timestamp || "(undated)"} ${e.description}`)
     .join("\n");
 

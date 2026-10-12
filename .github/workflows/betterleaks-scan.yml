@@ -18,6 +18,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Read-only: the scan only checks out and reads history; never inherit a writable default token.
+permissions:
+  contents: read
+
 jobs:
   betterleaks-scan:
     runs-on: ubuntu-latest
@@ -29,9 +33,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The SHA-256 is the betterleaks_1.6.1_linux_x64.tar.gz line of the release's published
+      # checksums.txt, committed here (#2157). It is never fetched at runtime from the same release
+      # (one trust root). Bump the version and the hash together.
       - name: Install betterleaks
+        env:
+          BETTERLEAKS_SHA256: fbefc700a0bd4522cc952dd2a8f259cdb80526d7e60114aca19bb2d6fdc80f81
         run: |
           curl -fsSL https://github.com/betterleaks/betterleaks/releases/download/v1.6.1/betterleaks_1.6.1_linux_x64.tar.gz -o betterleaks.tar.gz
+          echo "${BETTERLEAKS_SHA256}  betterleaks.tar.gz" | sha256sum -c -
           tar -xzf betterleaks.tar.gz
           chmod +x betterleaks
           sudo mv betterleaks /usr/local/bin/

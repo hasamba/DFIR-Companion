@@ -1,4 +1,4 @@
-import type { IocExcludeRule } from "./iocExclude.js";
+import type { ExcludedIocRef, IocExcludeRule } from "./iocExclude.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 
@@ -399,11 +399,11 @@ export interface Finding {
   semanticKey?: string;
   description: string;
   relatedIocs: string[]; // IOC ids
+  excludedIocRefs?: ExcludedIocRef[]; // #2151: cited indicators the IOC exclude list removed
   sourceScreenshots: string[]; // screenshot filenames
   mitreTechniques: string[]; // technique ids, e.g. "T1059"
-  // Forensic-event ids this finding cites as its supporting evidence (issue #222 — cited AI
-  // answers). Only synthesis populates it (extraction can't know finding ids yet); optional so
-  // findings persisted before this field existed still validate.
+  // Forensic-event ids this finding cites as its supporting evidence (issue #222 — cited AI answers). Only
+  // synthesis populates it (extraction can't know finding ids yet); optional so older findings validate.
   relatedEventIds?: string[];
   firstSeen: string;
   lastUpdated: string;

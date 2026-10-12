@@ -68,7 +68,9 @@ function buildPipeline(stateStore: StateStore) {
             relatedIocs: ["i1"],
             mitreTechniques: ["T1059"],
             status: "open",
-            relatedEventIds: ["e-from-capture"],
+            // The screenshot pass renumbers model-chosen ids to s<capture seq>e<n> (#2175), and
+            // synthesis cites the stored id — so this is the first capture's first event.
+            relatedEventIds: ["s1e1"],
           },
         ],
         iocs: [
@@ -266,13 +268,11 @@ describe("full-pipeline integration (capture → import → synthesis → report
       const archiveBase64 = (exportRes.body as Buffer).toString("base64");
 
       // 8. Restore the archive into a new case
-      const restore = await request(app)
-        .post("/cases/import/encrypted")
-        .send({
-          data: archiveBase64,
-          password: "correct horse battery staple",
-          targetCaseId: "pipeline-1-restored",
-        });
+      const restore = await request(app).post("/cases/import/encrypted").send({
+        data: archiveBase64,
+        password: "correct horse battery staple",
+        targetCaseId: "pipeline-1-restored",
+      });
       expect(restore.status).toBe(201);
       expect(restore.body.caseId).toBe("pipeline-1-restored");
       expect(restore.body.counts.forensicEvents).toBeGreaterThanOrEqual(2);

@@ -738,6 +738,11 @@ Download `dfir-companion-<version>-win-x64.zip` from the
 threat-intel config, all optional). Keep the folder somewhere you can write to. Override with
 `DFIR_CASES_ROOT` (absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
 
+**The EXE is not code-signed**, so Windows SmartScreen warns on first run. Before you allow it,
+check the download against `SHA256SUMS.txt` from the same release:
+`Get-FileHash dfir-companion-*-win-x64.zip -Algorithm SHA256`, then compare the hash with the
+matching line.
+
 For the capture extension, use the Chrome Web Store or load the extension zip from the same release
 (see [Capture extension](#capture-extension-and-first-case)).
 
@@ -785,6 +790,9 @@ No Node required — it bundles the server, dashboard, and image tooling. **Your
 directory you run it from:** `cases/` (evidence + state) and an optional `.env` (AI / threat-intel
 config) are created/read next to where you launch the AppImage. Override with `DFIR_CASES_ROOT`
 (absolute path) and `DFIR_ENV_FILE` (absolute path to a config file).
+
+**The AppImage is not code-signed.** Verify it against `SHA256SUMS.txt` from the same release:
+run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder.
 
 ## Option 3 — Docker / Docker Compose
 

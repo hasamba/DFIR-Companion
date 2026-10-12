@@ -8,6 +8,8 @@ Choose one option. Windows and Linux users should start with the release downloa
 
     Download `dfir-companion-<version>-win-x64.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), extract it, and run `dfir-companion.exe`. No Node.js required. Cases and an optional `.env` live next to the EXE.
 
+    The EXE is not code-signed, so Windows SmartScreen warns on first run. Check the zip against `SHA256SUMS.txt` from the same release first: run `Get-FileHash dfir-companion-*-win-x64.zip -Algorithm SHA256` and compare the hash with the matching line.
+
 === "Windows — Chocolatey (optional)"
 
     ```powershell
@@ -27,10 +29,15 @@ Choose one option. Windows and Linux users should start with the release downloa
 
     Set `DFIR_ENV_FILE` to point to your `.env` if you need the config file outside the AppImage mount.
 
+    The AppImage is not code-signed. Verify it against `SHA256SUMS.txt` from the same release: run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder.
+
 === "Docker"
 
     ```bash
     docker run -p 127.0.0.1:4773:4773 \
+      --security-opt no-new-privileges:true \
+      --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
+      --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
       -v /your/cases:/cases \
       -e DFIR_CASES_ROOT=/cases \
       -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
@@ -38,6 +45,10 @@ Choose one option. Windows and Linux users should start with the release downloa
     ```
 
     Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
+
+    The `--security-opt` and `--cap-*` flags are optional hardening: the container keeps only the
+    permissions it needs to hand your case folder to an unprivileged user, and the server can never
+    get root back. The bundled `docker-compose.yml` sets the same options.
 
 === "From source (developers)"
 

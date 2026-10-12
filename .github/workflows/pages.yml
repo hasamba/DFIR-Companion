@@ -7,6 +7,7 @@ on:
       - 'mkdocs-docs/**'
       - 'mkdocs.yml'
       - 'docs/**'
+      - 'requirements-docs.txt'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -30,10 +31,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          # Fixed minor version: requirements-docs.txt is resolved for it, and a moving '3.x'
+          # could pick a Python the pinned wheels do not support.
+          python-version: '3.12'
 
-      - name: Install MkDocs Material
-        run: pip install mkdocs-material
+      # Exact == pins for mkdocs-material and its whole dependency tree (#2157): this job runs
+      # with pages: write + id-token: write, so an unpinned install would let a hijacked upstream
+      # release publish on the docs domain.
+      - name: Install MkDocs Material (pinned)
+        run: pip install -r requirements-docs.txt
 
       - name: Build MkDocs site
         run: mkdocs build

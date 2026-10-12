@@ -158,7 +158,9 @@ export async function enrichIocs(
     .filter((c): c is { ioc: IOC; idx: number; kind: IocKind } => c.kind !== undefined)
     // SSRF guard: never enrich an IOC whose value points at a private/internal target
     // (169.254.169.254 cloud metadata, RFC1918, loopback, link-local IPv6). A crafted log line
-    // or prompt-injected AI response can plant such a value as an IOC.
+    // or prompt-injected AI response can plant such a value as an IOC. Literal-only on purpose: no
+    // DNS resolution (it would leak the probe to the attacker's nameserver); "an IOC value never
+    // becomes a connection host" is enforced by tests/enrichment/providerHostInvariant.test.ts.
     .filter((c) => !isInternalTarget(c.ioc.value, c.ioc.type))
     // Already covered by an earlier batch of this chain — see EnrichOptions.skipValues.
     .filter((c) => !opts.skipValues?.has(c.ioc.value))

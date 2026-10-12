@@ -93,6 +93,38 @@ describe("dedupeAppend", () => {
     const out = dedupeAppend(sweep("1"), sweep("2"));
     expect(out.map((e) => e.id)).toEqual(["1e0", "1e1"]);
   });
+
+  // #2140: sourceRecordId names one physical log record, so two rows that share time, text and
+  // host but carry different record ids are two observations, not one.
+  const rec = (id: string, recordId?: string) =>
+    ev({
+      id,
+      timestamp: "2026-06-01T00:00:00Z",
+      description: "Network connection detected",
+      asset: "WS-01",
+      ...(recordId ? { sourceRecordId: recordId } : {}),
+    });
+
+  it("#2140: keeps rows with the same time, text and host but different sourceRecordIds", () => {
+    const out = dedupeAppend([], [rec("a", "evtx:Sysmon:1"), rec("b", "evtx:Sysmon:2")]);
+    expect(out.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("#2140: still drops a re-import of those records (new ids, same sourceRecordIds)", () => {
+    const first = [rec("1a", "evtx:Sysmon:1"), rec("1b", "evtx:Sysmon:2")];
+    const out = dedupeAppend(first, [rec("2a", "evtx:Sysmon:1"), rec("2b", "evtx:Sysmon:2")]);
+    expect(out.map((e) => e.id)).toEqual(["1a", "1b"]);
+  });
+
+  it("#2140: still folds same-key rows that carry no sourceRecordId", () => {
+    const out = dedupeAppend([], [rec("a"), rec("b")]);
+    expect(out.map((e) => e.id)).toEqual(["a"]);
+  });
+
+  it("#2140: a record-id'd row matches an existing row stored without one (legacy key)", () => {
+    const out = dedupeAppend([rec("old")], [rec("new", "evtx:Sysmon:1")]);
+    expect(out.map((e) => e.id)).toEqual(["old"]);
+  });
 });
 
 describe("capEvents", () => {

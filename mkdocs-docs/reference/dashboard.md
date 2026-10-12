@@ -493,7 +493,9 @@ above). Every indicator extracted from all evidence:
 from this case: exact-value, suffix, or regex rules, scopable to a specific IOC type (e.g. only
 domains). Matching IOCs are purged immediately and never re-imported or re-enriched afterward — unlike
 the corroboration lens or noise-reduction toggles above, this doesn't just hide items, it deletes them
-from the case.
+from the case. A finding that cited a removed indicator does not keep a broken link to it: the link is
+dropped, and the finding keeps a note naming the removed indicator. The Markdown report shows that
+note as "Indicators removed by the IOC exclude list".
 
 Each IOC shows:
 
@@ -917,6 +919,8 @@ different constructions, so compare output hashes only under the same id.
 The integrity banner verifies both every manifest hash and the case's append-only hash chain.
 Changing or deleting a historical manifest makes that check fail. The ledger is included in the
 generated report folder and whole-case archives, whose own integrity manifest covers it as well.
+The ledger is never pruned: it grows by one small manifest with each run, and restoring a state
+backup leaves it as it is.
 
 **Replay** first checks that the original artifact, evidence, importer/rules, prompt/template, and
 provider/model are still available and unchanged. If anything is missing, it names the blockers and

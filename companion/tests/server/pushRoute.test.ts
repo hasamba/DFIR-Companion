@@ -215,9 +215,10 @@ describe("POST /cases/:id/push — generic push ingest", () => {
       .post("/cases/c1/push")
       .set("X-DFIR-Key", "secret")
       .send({ source: "x", events: [] });
-    // empty events array → empty payload "[]" still detects as something? assert it's a 4xx either way
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(res.status).toBeLessThan(500);
+    // "[]" is not empty text, so it reaches detection and is refused as undetectable. A bare
+    // "any 4xx" range let a 404 / 423 / 409 regression pass as this refusal (#2172).
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/could not detect the payload type/i);
   });
 
   it(

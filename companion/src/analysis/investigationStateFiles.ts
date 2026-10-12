@@ -3,6 +3,11 @@
 // account/transient config (AI run status, external-enrichment opt-in, anonymization config, remote
 // export ids, in-flight hunts, forensic-gate display preference). Used by BackupManager to decide
 // which files to snapshot before synthesis/import so a bad run can be rolled back.
+//
+// The state/analysis-runs/ ledger is deliberately NOT listed (#2143). It is an append-only,
+// hash-chained audit record of every run; a restore rewinds state, and rewinding the ledger would
+// erase the record of the very run being rolled back. It travels with the case in .dfircase
+// archives instead, which walk the whole case directory.
 export const SNAPSHOT_STATE_FILES = [
   "investigation.json", // legacy pre-SQLite core; retained in snapshots while a case still has one
   "false-positive.json", // analyst false-positive / known-good markers

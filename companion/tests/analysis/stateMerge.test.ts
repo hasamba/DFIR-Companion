@@ -381,35 +381,120 @@ describe("mergeDelta", () => {
     expect(next.iocs[0].value).toBe("10.0.0.5");
   });
 
-  it("a finding referencing an excluded IOC's id doesn't throw — the reference just dangles harmlessly", () => {
-    const state = {
-      ...emptyState("c1"),
-      iocExcludeRules: [
-        { id: "r1", match: "exact" as const, pattern: "client01.lan", addedAt: "2026-01-01T00:00:00Z" },
-      ],
+  describe("a finding citing an excluded IOC (#2151)", () => {
+    const rule = {
+      id: "r1",
+      match: "exact" as const,
+      pattern: "client01.lan",
+      addedAt: "2026-01-01T00:00:00Z",
     };
-    const next = mergeDelta(
-      state,
-      {
-        ...baseDelta,
-        iocs: [{ id: "i1", type: "domain", value: "client01.lan" }],
-        findings: [
-          {
-            id: "f1",
-            severity: "Low",
-            title: "t",
-            description: "d",
-            relatedIocs: ["i1"],
-            mitreTechniques: [],
-            status: "open",
-          },
-        ],
-      },
-      { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] },
-    );
+    const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+    const finding = (relatedIocs: string[], id = "f1") => ({
+      id,
+      severity: "Low" as const,
+      title: "t",
+      description: "d",
+      relatedIocs,
+      mitreTechniques: [],
+      status: "open" as const,
+    });
+    const marker = { value: "client01.lan", type: "domain", ruleId: "r1" };
 
-    expect(next.iocs).toHaveLength(0);
-    expect(next.findings[0].relatedIocs).toEqual(["i1"]); // dangling id, but no crash
+    it("drops the dangling id and records which excluded indicator it cited", () => {
+      const state = { ...emptyState("c1"), iocExcludeRules: [rule] };
+      const next = mergeDelta(
+        state,
+        {
+          ...baseDelta,
+          iocs: [{ id: "i1", type: "domain", value: "client01.lan" }],
+          findings: [finding(["i1"])],
+        },
+        ctx,
+      );
+      expect(next.iocs).toHaveLength(0);
+      expect(next.findings[0].relatedIocs).toEqual([]);
+      expect(next.findings[0].excludedIocRefs).toEqual([marker]);
+    });
+
+    it("never resolves an excluded delta id onto an unrelated stored IOC with the same id", () => {
+      const state = {
+        ...emptyState("c1"),
+        iocExcludeRules: [rule],
+        iocs: [{ id: "i003", type: "ip" as const, value: "8.8.4.4", firstSeen: "2026-01-01T00:00:00Z" }],
+      };
+      const next = mergeDelta(
+        state,
+        {
+          ...baseDelta,
+          iocs: [{ id: "i003", type: "domain", value: "client01.lan" }],
+          findings: [finding(["i003"])],
+        },
+        ctx,
+      );
+      expect(next.findings[0].relatedIocs).not.toContain("i003");
+      expect(next.findings[0].excludedIocRefs).toEqual([marker]);
+    });
+
+    it("still passes through a canonical id the delta did not declare", () => {
+      const state = {
+        ...emptyState("c1"),
+        iocExcludeRules: [rule],
+        iocs: [{ id: "i002", type: "ip" as const, value: "8.8.4.4", firstSeen: "2026-01-01T00:00:00Z" }],
+      };
+      const next = mergeDelta(state, { ...baseDelta, findings: [finding(["i002"])] }, ctx);
+      expect(next.findings[0].relatedIocs).toEqual(["i002"]);
+      expect(next.findings[0].excludedIocRefs).toBeUndefined();
+    });
+
+    it("keeps the kept IOC and marks the excluded one when a finding cites both", () => {
+      const state = { ...emptyState("c1"), iocExcludeRules: [rule] };
+      const next = mergeDelta(
+        state,
+        {
+          ...baseDelta,
+          iocs: [
+            { id: "i1", type: "domain", value: "client01.lan" },
+            { id: "i2", type: "ip", value: "10.0.0.5" },
+          ],
+          findings: [finding(["i1", "i2"])],
+        },
+        ctx,
+      );
+      expect(next.findings[0].relatedIocs).toEqual([next.iocs[0].id]);
+      expect(next.findings[0].excludedIocRefs).toEqual([marker]);
+    });
+
+    it("unions the marker onto an existing finding without duplicates", () => {
+      const state = { ...emptyState("c1"), iocExcludeRules: [rule] };
+      const delta = {
+        ...baseDelta,
+        iocs: [{ id: "i1", type: "domain" as const, value: "client01.lan" }],
+        findings: [finding(["i1"])],
+      };
+      const once = mergeDelta(state, delta, ctx);
+      const twice = mergeDelta(
+        once,
+        { ...delta, iocs: [{ id: "i1", type: "domain" as const, value: "CLIENT01.lan" }] },
+        { ...ctx, windowSequence: 2 },
+      );
+      expect(twice.findings).toHaveLength(1);
+      expect(twice.findings[0].excludedIocRefs).toEqual([marker]);
+    });
+
+    it("strips a reference to a value that cannot be an indicator, without a marker", () => {
+      const next = mergeDelta(
+        emptyState("c1"),
+        {
+          ...baseDelta,
+          iocs: [{ id: "i1", type: "ip", value: "line one\nline two" }],
+          findings: [finding(["i1"])],
+        },
+        ctx,
+      );
+      expect(next.iocs).toHaveLength(0);
+      expect(next.findings[0].relatedIocs).toEqual([]);
+      expect(next.findings[0].excludedIocRefs).toBeUndefined();
+    });
   });
 
   it("assigns canonical 3-digit ids and remaps finding.relatedIocs even when the model reuses ids", () => {

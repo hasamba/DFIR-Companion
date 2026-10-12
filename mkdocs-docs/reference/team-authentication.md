@@ -29,9 +29,11 @@ DFIR_HOST=127.0.0.1
 ```
 
 No setup or sign-in is required. The server refuses to start if this unauthenticated mode is bound
-to a non-loopback address. The supplied Docker Compose file remains safe because its container
-port is published only on the host's `127.0.0.1`; its narrowly scoped override documents that
-proxy boundary.
+to a non-loopback address, unless `DFIR_ALLOW_UNAUTHENTICATED_REMOTE` is set to one of two
+values. The supplied Docker Compose file sets `container-loopback-proxy`, which is safe because its
+container port is published only on the host's `127.0.0.1`. `public-demo` is for a server that is
+really exposed on purpose; pair it with `DFIR_DEMO_MODE=1` for a read-only public demo. See
+[Public Demo and Network Exposure](advanced.md#public-demo-and-network-exposure).
 
 ### Team mode
 
@@ -71,7 +73,9 @@ One server process starts in one mode. To switch, stop the server, change `DFIR_
 restart it. Switching to `single-user` does not delete team accounts, case roles, tokens, or the
 authentication audit; switching back to `team` makes that data active again.
 
-Single-user mode bypasses all team roles, so the server only permits it on a loopback address. Use
+Single-user mode bypasses all team roles, so the server only permits it on a loopback address,
+unless you set one of the two documented opt-outs (see
+[Public Demo and Network Exposure](advanced.md#public-demo-and-network-exposure)). Use
 single-user mode for one analyst working locally and team mode whenever another person or machine
 can reach the Companion.
 
@@ -130,7 +134,10 @@ Open the profile icon, then **Account & team**, to:
 - grant or remove case roles;
 - inspect the authentication audit (global administrators).
 
-Passwords are stored with salted scrypt hashes. Session and service-token secrets are stored only
+Passwords are stored with salted scrypt hashes, at a cost tuned for rate-limited online checks;
+see "Stored passwords" in
+[SECURITY.md](https://github.com/hasamba/DFIR-Companion/blob/master/SECURITY.md#stored-passwords)
+for the parameters and why they differ from encrypted case archives. Session and service-token secrets are stored only
 as SHA-256 digests. Disabling a user revokes their sessions. Local password attempts are rate
 limited.
 

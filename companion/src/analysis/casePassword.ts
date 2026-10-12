@@ -9,13 +9,25 @@ export const MIN_CASE_PASSWORD_LENGTH = 6;
 const SALT_LEN = 16;
 const HASH_LEN = 32;
 
+/**
+ * The scrypt N for case-lock password hashes — Node's default, made explicit (#2167). N=2^14 on
+ * purpose: the case-lock password is checked online behind the unlock rate limiter, and a higher N
+ * would make each admitted guess a bigger CPU lever. A .dfircase file faces unlimited offline
+ * guessing and uses 2^17 instead. See SECURITY.md "Stored passwords". r=8 and p=1 are also Node's
+ * defaults, so stored hashes stay valid; changing any of these makes every existing hash unverifiable.
+ */
+export const CASE_PASSWORD_SCRYPT_N = 16_384;
+const CASE_PASSWORD_SCRYPT_OPTIONS = { N: CASE_PASSWORD_SCRYPT_N, r: 8, p: 1 } as const;
+
 // The async form, on libuv's threadpool. scryptSync ran the derivation on the event loop, so every
 // unlock attempt — including each wrong guess the limiter still admits — stalled every other
 // request, WebSocket frame and timer for the derivation's duration (#863). Same cost, same output;
 // only the thread it runs on changes, so stored hashes stay valid.
 function scryptAsync(password: string, salt: Buffer, keyLen: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    scrypt(password, salt, keyLen, (err, key) => (err ? reject(err) : resolve(key)));
+    scrypt(password, salt, keyLen, CASE_PASSWORD_SCRYPT_OPTIONS, (err, key) =>
+      err ? reject(err) : resolve(key),
+    );
   });
 }
 

@@ -258,6 +258,45 @@ describe("incremental importer merge — same result as the full merge", () => {
     expect(state.iocs.find((i) => i.id === "i002")?.aliasValues).toEqual(["evil-alias.example.com"]);
   });
 
+  it("a finding citing an excluded IOC drops the id and keeps a marker, as in the full merge (#2151)", async () => {
+    await importBoth(delta(batch("a", 5)));
+    await both(async (c) => {
+      const s = await store.load(c);
+      await store.save({
+        ...s,
+        iocExcludeRules: [
+          { id: "x1", match: "suffix", pattern: ".lan", addedAt: "2026-09-30T00:00:00.000Z" },
+        ],
+      });
+    });
+    const finding = {
+      id: "f1",
+      severity: "Low",
+      title: "t",
+      description: "d",
+      relatedIocs: ["b1", "b2"],
+      mitreTechniques: [],
+      status: "open",
+    };
+    expect(
+      await importBoth(
+        delta(batch("b", 5), {
+          iocs: [
+            { id: "b1", type: "domain", value: "printer.lan" },
+            { id: "b2", type: "ip", value: "10.2.2.2" },
+          ],
+          findings: [finding],
+        }),
+      ),
+    ).toBe(true);
+    const state = await expectSame();
+    const kept = state.iocs.find((i) => i.value === "10.2.2.2")!;
+    expect(state.findings[0].relatedIocs).toEqual([kept.id]);
+    expect(state.findings[0].excludedIocRefs).toEqual([
+      { value: "printer.lan", type: "domain", ruleId: "x1" },
+    ]);
+  });
+
   it("carries the host rename ledger and collector names", async () => {
     await importBoth(delta(batch("a", 5)));
     const renames = [{ formerName: "OLD-PC", currentName: "HOST-1", until: day(2), basis: "6011" as const }];

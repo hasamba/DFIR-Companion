@@ -47,6 +47,8 @@ This environment has a pre-loaded demo case with:
 > 2. Enter your API key and select a model (OpenAI, Anthropic, or any OpenRouter-compatible provider)
 > 3. Save — AI features activate immediately, no restart needed
 >
+> **The session link is public while the session runs.** Anyone who has it can open this dashboard and use the key you saved. Use a throwaway or spend-limited key, and do not share the link.
+>
 > Without a key, all pre-computed results remain fully visible; only the live AI buttons will return an error.
 
 ---

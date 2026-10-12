@@ -6,9 +6,53 @@ import {
   sanitizeExcludeRuleInput,
   validateExcludeRuleInput,
   normalizeSuffixPattern,
+  purgeExcluded,
   type IocExcludeRule,
 } from "../../src/analysis/iocExclude.js";
-import type { IOC } from "../../src/analysis/stateTypes.js";
+import { unionExcludedRefs } from "../../src/analysis/iocMergeSupport.js";
+import type { Finding, IOC } from "../../src/analysis/stateTypes.js";
+
+describe("purgeExcluded (#2151)", () => {
+  const f = (id: string, relatedIocs: string[], extra: Partial<Finding> = {}): Finding => ({
+    id,
+    severity: "Low",
+    title: "t",
+    description: "d",
+    relatedIocs,
+    sourceScreenshots: [],
+    mitreTechniques: [],
+    firstSeen: "2026-01-01T00:00:00Z",
+    lastUpdated: "2026-01-01T00:00:00Z",
+    status: "open",
+    ...extra,
+  });
+  const iocs: IOC[] = [
+    { id: "i001", type: "domain", value: "pc.lan", firstSeen: "2026-01-01T00:00:00Z" },
+    { id: "i002", type: "ip", value: "10.0.0.1", firstSeen: "2026-01-01T00:00:00Z" },
+  ];
+  const r = { id: "r9", match: "suffix" as const, pattern: ".lan", addedAt: "2026-01-01T00:00:00Z" };
+
+  it("removes matching IOCs and rewrites only the findings that cited them, without mutating input", () => {
+    const findings = [f("f1", ["i001", "i002"]), f("f2", ["i002"])];
+    const out = purgeExcluded({ iocs, findings }, [r]);
+    expect(out.purged).toBe(1);
+    expect(out.findingsUpdated).toBe(1);
+    expect(out.state.iocs.map((i) => i.id)).toEqual(["i002"]);
+    expect(out.state.findings[0]).toMatchObject({
+      relatedIocs: ["i002"],
+      excludedIocRefs: [{ value: "pc.lan", type: "domain", ruleId: "r9" }],
+    });
+    expect(out.state.findings[1]).toBe(findings[1]);
+    expect(findings[0].relatedIocs).toEqual(["i001", "i002"]);
+  });
+
+  it("unions with a marker the finding already holds, case-insensitively", () => {
+    const prior = [{ value: "PC.lan", type: "domain" as const, ruleId: "r1" }];
+    const out = purgeExcluded({ iocs, findings: [f("f1", ["i001"], { excludedIocRefs: prior })] }, [r]);
+    expect(out.state.findings[0].excludedIocRefs).toEqual(prior);
+    expect(unionExcludedRefs(undefined, [...prior, ...prior])).toEqual(prior);
+  });
+});
 
 const rule = (over: Partial<IocExcludeRule> & Pick<IocExcludeRule, "match" | "pattern">): IocExcludeRule => ({
   id: "r1",

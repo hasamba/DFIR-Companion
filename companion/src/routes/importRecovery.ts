@@ -49,202 +49,224 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         await options.jobManager?.warn(job.id, `${action}: ${message}`);
       };
       const artifactPath = join(store.importsDir(job.caseId), parameters.storedName);
-      const before = await options.stateStore.load(job.caseId);
-      const startBatch = Math.max(
-        job.lastCheckpoint?.progress.done ?? 0,
-        lastCommittedImportBatch(before.timeline, parameters.storedName),
-      );
-      // This attempt's own recorder (#1736): the kind is the saved one, so nothing was sniffed.
-      const recorder = createImportDebugRecorder();
-      recorder.detected(parameters.kind, { confident: true, decision: "resumed_job" });
-      const base: ImportBase = {
-        label: parameters.storedName,
-        debug: recorder,
-        idPrefix: String(parameters.sequence),
-        importedAt: parameters.importedAt,
-        ...(minSeverity ? { minSeverity } : {}),
-        ...(assetHost ? { assetHost } : {}), // the same declaration the interrupted import ran with (#1496)
-        ...(signal ? { signal } : {}),
-        startBatch,
-        onProgress: async (done, total) => {
-          // The same status every live import route emits, so a resumed import gets the throttled
-          // `[import]` progress line through the shared onAiStatus handler (#1438).
-          options.onAiStatus?.(caseId, {
-            status: "analyzing",
-            phase: "extracting",
-            at: new Date().toISOString(),
-            detail: `${parameters.kind} import — ${done}/${total}`,
-          });
-          await options.jobManager?.checkpoint(job.id, {
-            done,
-            total,
-            detail: `${parameters.kind} import — committed batch ${done}/${total}`,
-          });
-        },
-        onParseProgress: (done, total, detail = "reading Windows events") => {
-          options.jobManager?.progress(job.id, done, total, detail);
-        },
+      // #2144: the case's import section, held from the baseline load through the import-meta and
+      // run records. Without it a live import (/import, /push, a Velociraptor ingest) could write
+      // between `before` and the diff, and its rows were credited to this resumed file. Taken after
+      // the job slot (analysis/importLock.ts order). Released before the case-wide appliers and the
+      // re-synthesis, as the live routes do, and in the finally on every failure and cancel path.
+      const releaseLock = await ctx.importLock.acquire(caseId);
+      let held = true;
+      const releaseSection = (): void => {
+        if (!held) return;
+        held = false;
+        releaseLock();
       };
-
-      options.onAiStatus?.(job.caseId, {
-        status: "analyzing",
-        phase: "extracting",
-        at: new Date().toISOString(),
-        detail: `resuming ${parameters.kind} import after committed batch ${startBatch}`,
-      });
-      // #1735: counts and kinds only — the always-on debug log keeps these at any live level.
-      const debug = (step: string): void =>
-        ctx.serverLogger.debug(`[import-debug] ${caseId}: resume kind=${safeKind(parameters.kind)} ${step}`, {
-          caseId,
-        });
-      debug(
-        `start startBatch=${startBatch} streaming=${parameters.streaming} ` +
-          `forensicBefore=${before.forensicTimeline.length}`,
-      );
       try {
-        let text: string | undefined;
-        if (parameters.streaming && parameters.kind === "plaso") {
-          await importPlasoFileLogged(ctx, job.caseId, artifactPath, parameters.storedName, base);
-        } else {
-          text = decodeImportedText(await readFile(artifactPath)); // BOM-aware, as the first run read it
-          await ctx.dispatchImport(parameters.kind, job.caseId, text, base);
-        }
+        const before = await options.stateStore.load(job.caseId);
+        const startBatch = Math.max(
+          job.lastCheckpoint?.progress.done ?? 0,
+          lastCommittedImportBatch(before.timeline, parameters.storedName),
+        );
+        // This attempt's own recorder (#1736): the kind is the saved one, so nothing was sniffed.
+        const recorder = createImportDebugRecorder();
+        recorder.detected(parameters.kind, { confident: true, decision: "resumed_job" });
+        const base: ImportBase = {
+          label: parameters.storedName,
+          debug: recorder,
+          idPrefix: String(parameters.sequence),
+          importedAt: parameters.importedAt,
+          ...(minSeverity ? { minSeverity } : {}),
+          ...(assetHost ? { assetHost } : {}), // the same declaration the interrupted import ran with (#1496)
+          ...(signal ? { signal } : {}),
+          startBatch,
+          onProgress: async (done, total) => {
+            // The same status every live import route emits, so a resumed import gets the throttled
+            // `[import]` progress line through the shared onAiStatus handler (#1438).
+            options.onAiStatus?.(caseId, {
+              status: "analyzing",
+              phase: "extracting",
+              at: new Date().toISOString(),
+              detail: `${parameters.kind} import — ${done}/${total}`,
+            });
+            await options.jobManager?.checkpoint(job.id, {
+              done,
+              total,
+              detail: `${parameters.kind} import — committed batch ${done}/${total}`,
+            });
+          },
+          onParseProgress: (done, total, detail = "reading Windows events") => {
+            options.jobManager?.progress(job.id, done, total, detail);
+          },
+        };
 
-        const imported = await options.stateStore.load(job.caseId);
-        const allArtifactEvents = imported.forensicTimeline.filter((event) =>
-          event.sourceScreenshots.includes(parameters.storedName),
-        );
+        options.onAiStatus?.(job.caseId, {
+          status: "analyzing",
+          phase: "extracting",
+          at: new Date().toISOString(),
+          detail: `resuming ${parameters.kind} import after committed batch ${startBatch}`,
+        });
+        // #1735: counts and kinds only — the always-on debug log keeps these at any live level.
+        const debug = (step: string): void =>
+          ctx.serverLogger.debug(
+            `[import-debug] ${caseId}: resume kind=${safeKind(parameters.kind)} ${step}`,
+            {
+              caseId,
+            },
+          );
         debug(
-          `parsed artifactEvents=${allArtifactEvents.length} forensicNow=${imported.forensicTimeline.length}`,
+          `start startBatch=${startBatch} streaming=${parameters.streaming} ` +
+            `forensicBefore=${before.forensicTimeline.length}`,
         );
-        let superTimelineAddedCount = 0;
-        let superTimelineEvicted: SuperEviction | undefined;
-        if (options.superTimelineStore) {
+        try {
+          let text: string | undefined;
+          if (parameters.streaming && parameters.kind === "plaso") {
+            await importPlasoFileLogged(ctx, job.caseId, artifactPath, parameters.storedName, base);
+          } else {
+            text = decodeImportedText(await readFile(artifactPath)); // BOM-aware, as the first run read it
+            await ctx.dispatchImport(parameters.kind, job.caseId, text, base);
+          }
+
+          const imported = await options.stateStore.load(job.caseId);
+          const allArtifactEvents = imported.forensicTimeline.filter((event) =>
+            event.sourceScreenshots.includes(parameters.storedName),
+          );
+          debug(
+            `parsed artifactEvents=${allArtifactEvents.length} forensicNow=${imported.forensicTimeline.length}`,
+          );
+          let superTimelineAddedCount = 0;
+          let superTimelineEvicted: SuperEviction | undefined;
+          if (options.superTimelineStore) {
+            if (allArtifactEvents.length) {
+              try {
+                const appended = await options.superTimelineStore.appendReporting(
+                  job.caseId,
+                  allArtifactEvents,
+                );
+                superTimelineAddedCount = appended.retained;
+                superTimelineEvicted = appended.evicted;
+                options.onSuperTimeline?.(job.caseId);
+              } catch (error) {
+                await warn("super-timeline copy failed", error);
+              }
+            }
+          }
           if (allArtifactEvents.length) {
             try {
-              const appended = await options.superTimelineStore.appendReporting(
+              await autoTagNewEvents(
+                {
+                  taggerStore: options.taggerStore,
+                  tagsStore: options.tagsStore,
+                  stateStore: options.stateStore,
+                  analysisRunStore: options.analysisRunStore,
+                  onTags: options.onTags,
+                  onState: options.onState,
+                  runStateExclusive: ctx.runStateExclusive,
+                  logLine: (message) => ctx.serverLogger.info(message),
+                },
                 job.caseId,
                 allArtifactEvents,
               );
-              superTimelineAddedCount = appended.retained;
-              superTimelineEvicted = appended.evicted;
-              options.onSuperTimeline?.(job.caseId);
             } catch (error) {
-              await warn("super-timeline copy failed", error);
+              await warn("automatic tagging failed", error);
             }
           }
-        }
-        if (allArtifactEvents.length) {
-          try {
-            await autoTagNewEvents(
-              {
-                taggerStore: options.taggerStore,
-                tagsStore: options.tagsStore,
-                stateStore: options.stateStore,
-                analysisRunStore: options.analysisRunStore,
-                onTags: options.onTags,
-                onState: options.onState,
-                runStateExclusive: ctx.runStateExclusive,
-                logLine: (message) => ctx.serverLogger.info(message),
-              },
-              job.caseId,
-              allArtifactEvents,
-            );
-          } catch (error) {
-            await warn("automatic tagging failed", error);
+          const finalState = await ctx.demoteForensicForCase(job.caseId);
+          debug(
+            `settled superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
+              `forensicAfterDemote=${finalState.forensicTimeline.length}`,
+          );
+          const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
+          const iocDiff = diffIocs(before.iocs, finalState.iocs);
+          // This handler settles inline, inside the case's import section, rather than through
+          // settleForensicImport: it re-selects the pre-crash batches by stored name, because those
+          // rows are already in the forensic timeline but were never settled. The done line is the
+          // same one (#1438).
+          logImportSettled(job.caseId, parameters.storedName, {
+            forensicAdded: timelineDiff.added.length,
+            forensicRemoved: timelineDiff.removed.length,
+            superAdded: superTimelineAddedCount,
+            superEvicted: superTimelineEvicted?.count ?? 0,
+            iocsAdded: iocDiff.added.length,
+            iocsRemoved: iocDiff.removed.length,
+          });
+          if (options.importMetaStore) {
+            try {
+              await options.importMetaStore.record(job.caseId, {
+                kind: parameters.kind,
+                file: parameters.storedName,
+                diff: timelineDiff,
+                superTimelineAddedCount,
+                superTimelineEvicted,
+                iocsDiff: iocDiff,
+                linesIn: text ? text.split(/\r?\n/).length : 0,
+                path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
+                fpPropagation: [],
+                truncation: null,
+              });
+              options.onImportMeta?.(job.caseId);
+            } catch (error) {
+              await warn("import summary recording failed", error);
+            }
           }
-        }
-        const finalState = await ctx.demoteForensicForCase(job.caseId);
-        debug(
-          `settled superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
-            `forensicAfterDemote=${finalState.forensicTimeline.length}`,
-        );
-        const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
-        const iocDiff = diffIocs(before.iocs, finalState.iocs);
-        // This handler settles inline rather than through settleForensicImport; the done line is
-        // the same one (#1438).
-        logImportSettled(job.caseId, parameters.storedName, {
-          forensicAdded: timelineDiff.added.length,
-          forensicRemoved: timelineDiff.removed.length,
-          superAdded: superTimelineAddedCount,
-          superEvicted: superTimelineEvicted?.count ?? 0,
-          iocsAdded: iocDiff.added.length,
-          iocsRemoved: iocDiff.removed.length,
-        });
-        if (options.importMetaStore) {
+          await recordImportRun(ctx, {
+            caseId: job.caseId,
+            kind: parameters.kind,
+            storedName: parameters.storedName,
+            startedAt: parameters.importedAt,
+            baseline: before,
+            minSeverity,
+            ...(assetHost ? { assetHost } : {}),
+            path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
+          });
+          releaseSection(); // the appliers and re-synthesis run outside the section, as on the live routes
           try {
-            await options.importMetaStore.record(job.caseId, {
-              kind: parameters.kind,
-              file: parameters.storedName,
-              diff: timelineDiff,
-              superTimelineAddedCount,
-              superTimelineEvicted,
-              iocsDiff: iocDiff,
-              linesIn: text ? text.split(/\r?\n/).length : 0,
-              path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
-              fpPropagation: [],
-              truncation: null,
-            });
-            options.onImportMeta?.(job.caseId);
+            await ctx.applyWhitelistToCase(job.caseId);
           } catch (error) {
-            await warn("import summary recording failed", error);
+            await warn("whitelist pass failed", error);
           }
-        }
-        await recordImportRun(ctx, {
-          caseId: job.caseId,
-          kind: parameters.kind,
-          storedName: parameters.storedName,
-          startedAt: parameters.importedAt,
-          baseline: before,
-          minSeverity,
-          ...(assetHost ? { assetHost } : {}),
-          path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
-        });
-        try {
-          await ctx.applyWhitelistToCase(job.caseId);
+          try {
+            await ctx.applyNsrlToCase(job.caseId);
+          } catch (error) {
+            await warn("known-good hash pass failed", error);
+          }
+          try {
+            await ctx.applyDeobfuscationToCase(job.caseId);
+          } catch (error) {
+            await warn("deobfuscation pass failed", error);
+          }
+          ctx.resynthesizeInBackground(job.caseId);
+          options.onAiStatus?.(job.caseId, {
+            status: "idle",
+            at: new Date().toISOString(),
+            detail:
+              `resumed ${parameters.kind} import committed ` +
+              `${addedForensicEvents(finalState.forensicTimeline, timelineDiff).length} new event(s)`,
+          });
         } catch (error) {
-          await warn("whitelist pass failed", error);
+          const cancelled = signal?.aborted || (error as Error).name === "AbortError";
+          // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
+          // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
+          // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
+          if (!cancelled)
+            ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error, recorder);
+          options.onAiStatus?.(
+            job.caseId,
+            cancelled
+              ? {
+                  status: "idle",
+                  at: new Date().toISOString(),
+                  detail: "import processing cancelled; stored evidence retained",
+                }
+              : {
+                  status: "error",
+                  at: new Date().toISOString(),
+                  detail: (error as Error).message,
+                },
+          );
+          throw error;
         }
-        try {
-          await ctx.applyNsrlToCase(job.caseId);
-        } catch (error) {
-          await warn("known-good hash pass failed", error);
-        }
-        try {
-          await ctx.applyDeobfuscationToCase(job.caseId);
-        } catch (error) {
-          await warn("deobfuscation pass failed", error);
-        }
-        ctx.resynthesizeInBackground(job.caseId);
-        options.onAiStatus?.(job.caseId, {
-          status: "idle",
-          at: new Date().toISOString(),
-          detail:
-            `resumed ${parameters.kind} import committed ` +
-            `${addedForensicEvents(finalState.forensicTimeline, timelineDiff).length} new event(s)`,
-        });
-      } catch (error) {
-        const cancelled = signal?.aborted || (error as Error).name === "AbortError";
-        // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
-        // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
-        // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
-        if (!cancelled)
-          ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error, recorder);
-        options.onAiStatus?.(
-          job.caseId,
-          cancelled
-            ? {
-                status: "idle",
-                at: new Date().toISOString(),
-                detail: "import processing cancelled; stored evidence retained",
-              }
-            : {
-                status: "error",
-                at: new Date().toISOString(),
-                detail: (error as Error).message,
-              },
-        );
-        throw error;
+      } finally {
+        releaseSection();
       }
     },
     {

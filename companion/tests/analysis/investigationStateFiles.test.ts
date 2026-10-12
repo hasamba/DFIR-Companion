@@ -10,6 +10,10 @@ describe("SNAPSHOT_STATE_FILES", () => {
     expect(SNAPSHOT_STATE_FILES).toContain("evidence-attestations.json");
   });
 
+  it("never snapshots the analysis-run ledger, so a restore cannot rewind the audit chain (#2143)", () => {
+    expect(SNAPSHOT_STATE_FILES.some((name) => name.startsWith("analysis-runs"))).toBe(false);
+  });
+
   it("lists every file exactly once", () => {
     expect(new Set(SNAPSHOT_STATE_FILES).size).toBe(SNAPSHOT_STATE_FILES.length);
   });

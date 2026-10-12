@@ -17,6 +17,7 @@ import {
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { pollFor, pollBudget } from "../helpers/poll.js";
 
 async function harness() {
   const root = await mkdtemp(join(tmpdir(), "dfir-lifecycle-race-"));
@@ -200,6 +201,12 @@ describe("a create racing a delete of the same id (#1826)", () => {
     const opened = new Promise<void>((resolve) => (open = resolve));
     return { open, opened };
   };
+  // A deadline, not a bare busy-wait: if the delete never reaches its cleanup hook, the test fails
+  // with a named error instead of an anonymous vitest timeout (#2172).
+  const untilCleanupEntered = (entered: () => boolean) =>
+    pollFor("the delete's cleanup hook to be entered", async () => (entered() ? true : undefined), {
+      timeoutMs: pollBudget(5_000),
+    });
 
   it("CaseStore refuses the id while the delete's cleanup is pending, then allows it", async () => {
     const { store, root } = await harness();
@@ -212,7 +219,7 @@ describe("a create racing a delete of the same id (#1826)", () => {
         await cleanup.opened;
       },
     });
-    while (!cleanupEntered) await sleep(2);
+    await untilCleanupEntered(() => cleanupEntered);
     expect(await exists(join(root, "d1"))).toBe(false); // the folder is gone, the cleanup is not done
     const err = await store
       .createCase({ caseId: "d1", name: "new", investigator: "bob", aiProvider: null })
@@ -257,7 +264,7 @@ describe("a create racing a delete of the same id (#1826)", () => {
       .post("/cases/d2/delete")
       .send({ archiveFirst: "none" })
       .then((r) => r);
-    while (!cleanupEntered) await sleep(2);
+    await untilCleanupEntered(() => cleanupEntered);
     const racing = await request(app)
       .post("/cases")
       .send({ caseId: "d2", name: "New", investigator: "bob", aiProvider: "mock" });

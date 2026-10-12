@@ -99,7 +99,9 @@ currently unlocked and has a password set.
 **☰ Case lifecycle → 🗑️ Delete…** removes a case's directory for good — this cannot be undone. The
 dialog offers an optional ZIP/encrypted archive taken first, so you can keep an off-disk copy before
 the case is wiped. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
-delete an already-archived case's live folder out from under its archive.
+delete an already-archived case's live folder out from under its archive. While an archive or an
+encrypted export of the case is still being built, Delete and Restore are refused with "an import or
+an archive in progress — try again" until it finishes.
 
 ## ZIP Case Archive (Restore)
 

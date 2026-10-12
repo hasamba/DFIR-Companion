@@ -18,6 +18,13 @@ import { isAnalystWorkLog } from "./workLogFilter.js";
 import { remapAbsorbedEventIds } from "./absorbedCitations.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
+import {
+  firstMatchIndex,
+  nextIocSeq,
+  padIocId,
+  unionExcludedRefs,
+  type ExcludedIocRef,
+} from "./iocMergeSupport.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalMerge.js";
@@ -104,68 +111,14 @@ export interface WindowContext {
 // The IOC stage of mergeDelta (#1874: its own module so the incremental merge runs the SAME code over
 // the IOCs it fetched, instead of a copy that could drift).
 
-function padIocId(n: number): string {
-  return `i${String(n).padStart(3, "0")}`;
-}
-
-// Highest existing IOC sequence in the canonical i### form; ids in other formats
-// (legacy "i1", model-supplied junk) are ignored so we never collide with them.
-export function nextIocSeq(iocs: readonly Pick<IOC, "id">[]): number {
-  let max = 0;
-  for (const i of iocs) {
-    const m = /^i(\d+)$/.exec(i.id);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max + 1;
-}
-
-/**
- * `iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias))`,
- * answered from first-index maps built on first use and caught up with every IOC appended since
- * (the next lookup indexes them). A stored
- * IOC whose value is not a string (corrupt data) switches to the linear scan, so even that case
- * behaves exactly as the scan did.
- */
-function firstMatchIndex(iocs: IOC[]): {
-  find(lower: string, alias: string | undefined): IOC | undefined;
-} {
-  let byValue: Map<string, number> | null = null;
-  let byId: Map<string, number> | null = null;
-  let indexed = 0;
-  let linear = false;
-  const extend = (): void => {
-    for (; indexed < iocs.length; indexed++) {
-      const { value, id } = iocs[indexed];
-      if (typeof value !== "string") {
-        linear = true;
-        return;
-      }
-      const lower = value.toLowerCase();
-      if (!byValue!.has(lower)) byValue!.set(lower, indexed);
-      if (!byId!.has(id)) byId!.set(id, indexed);
-    }
-  };
-  return {
-    find(lower, alias) {
-      if (!byValue) {
-        byValue = new Map();
-        byId = new Map();
-      }
-      if (!linear) extend();
-      if (linear)
-        return iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias));
-      const v = byValue.get(lower);
-      const a = alias !== undefined ? byId!.get(alias) : undefined;
-      const at = v === undefined ? a : a === undefined ? v : Math.min(v, a);
-      return at === undefined ? undefined : iocs[at];
-    },
-  };
-}
+export { nextIocSeq } from "./iocMergeSupport.js";
 
 export interface IocMergeResult {
   iocs: IOC[];
   /** A finding's relatedIocs, rewritten to the canonical ids this merge assigned. */
   remapIocRefs: (ids: string[]) => string[];
+  /** The excluded-indicator markers for the ids a finding cited (#2151); [] when none. */
+  excludedRefsFor: (ids: string[]) => ExcludedIocRef[];
 }
 
 /**
@@ -184,6 +137,10 @@ export function mergeIocs(
   const iocs: IOC[] = existing.map((i) => ({ ...i }));
   const lookup = firstMatchIndex(iocs);
   const iocIdRemap = new Map<string, string>();
+  // Delta ids whose IOC was dropped (#2151): a marker when an exclude rule removed it, null when the
+  // value was not an indicator at all. First occurrence wins, as for iocIdRemap below.
+  const droppedIds = new Map<string, ExcludedIocRef | null>();
+  const claimed = (id: string): boolean => iocIdRemap.has(id) || droppedIds.has(id);
   let nextSeq = startSeq ?? nextIocSeq(iocs);
   for (const rawIncoming of delta.iocs) {
     // Split any human annotation out of the value BEFORE anything keys on it (#177): the AI
@@ -193,13 +150,21 @@ export function mergeIocs(
     // values that cannot be an indicator at all (empty, multi-line, absurdly long — e.g. a whole
     // PowerShell help page mis-typed as an "ip"); those are dropped rather than persisted as noise.
     const repaired = repairIocValue(rawIncoming);
-    if (!repaired) continue;
+    if (!repaired) {
+      if (!claimed(rawIncoming.id)) droppedIds.set(rawIncoming.id, null);
+      continue;
+    }
     const incoming = { ...rawIncoming, value: repaired.value };
     // Permanently excluded (per-case IOC Exclude List — e.g. ".lan"-style client hostname noise):
     // never create it, so it can never be enriched either (enrichIocs only ever sees state.iocs).
-    // The id is deliberately never added to iocIdRemap; a finding's relatedIocs reference falls
-    // back to the raw id via remapIocRefs's `?? id`, a harmless dangling reference.
-    if (matchIocToExclude({ type: incoming.type, value: incoming.value }, excludeRules)) continue;
+    // A finding citing it loses the id (it would resolve to nothing, or to an unrelated stored IOC
+    // that happens to share the model's id) and keeps a marker naming the removed indicator (#2151).
+    const rule = matchIocToExclude({ type: incoming.type, value: incoming.value }, excludeRules);
+    if (rule) {
+      if (!claimed(incoming.id))
+        droppedIds.set(incoming.id, { value: incoming.value, type: incoming.type, ruleId: rule.id });
+      continue;
+    }
     // Case-insensitive: the same indicator (a hostname/domain especially) routinely arrives with
     // different casing across importers/rows (e.g. "DESKTOP-X" vs "desktop-x"), and an exact-match
     // comparison let those through as separate rows instead of collapsing into one (matches
@@ -225,7 +190,7 @@ export function mergeIocs(
       // Routed here via an alias, not an exact-value match: record the incoming value too, so
       // value-keyed lookups (assetGraph's byValue) resolve it without a second manual merge.
       if (
-        dup.value.toLowerCase() !== incomingLower &&
+        (typeof dup.value !== "string" || dup.value.toLowerCase() !== incomingLower) &&
         !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)
       ) {
         dup.aliasValues = [...(dup.aliasValues ?? []), incoming.value];
@@ -252,10 +217,17 @@ export function mergeIocs(
     // First occurrence wins: when the model reuses an id (e.g. "i2") across
     // multiple distinct IOCs, a finding's `relatedIocs: ["i2"]` should refer to
     // the first one it emitted, not whichever happened to be last.
-    if (!iocIdRemap.has(incoming.id)) iocIdRemap.set(incoming.id, canonical);
+    if (!claimed(incoming.id)) iocIdRemap.set(incoming.id, canonical);
   }
-  const remapIocRefs = (ids: string[]): string[] => uniq(ids.map((id) => iocIdRemap.get(id) ?? id));
-  return { iocs, remapIocRefs };
+  // An id the delta neither kept nor dropped passes through: synthesis cites existing canonical ids.
+  const remapIocRefs = (ids: string[]): string[] =>
+    uniq(ids.filter((id) => iocIdRemap.has(id) || !droppedIds.has(id)).map((id) => iocIdRemap.get(id) ?? id));
+  const excludedRefsFor = (ids: string[]): ExcludedIocRef[] =>
+    unionExcludedRefs(
+      [],
+      ids.flatMap((id) => (iocIdRemap.has(id) ? [] : (droppedIds.get(id) ?? []))),
+    );
+  return { iocs, remapIocRefs, excludedRefsFor };
 }
 
 /** The copy mergeDelta works on: each event and its three arrays copied, so the input is never mutated. */
@@ -571,13 +543,19 @@ export function mergeDelta(
   // IOCs first — we need the id remap before processing findings so their
   // relatedIocs cross-references (e.g. the model's "i1") can be rewritten to
   // our canonical ids ("i001", "i002", ...).
-  const { iocs, remapIocRefs } = mergeIocs(state.iocs, delta, ctx, state.iocExcludeRules);
+  const { iocs, remapIocRefs, excludedRefsFor } = mergeIocs(state.iocs, delta, ctx, state.iocExcludeRules);
   // Forensic timeline: dedupe by id, accumulate evidence, run the deterministic correlation chain,
   // fold correlated events and keep sorted by real time (stateMergeEvents.ts).
   const forensicTimeline = copyTimeline(state.forensicTimeline);
   upsertForensicEvents(forensicTimeline, delta, ctx);
   const { events, absorbedInto } = correlateAndSort(runTimelineChain(forensicTimeline, iocs, ctx.timestamp));
-  return assembleMerge(state, delta, ctx, { iocs, remapIocRefs, forensicTimeline: events, absorbedInto });
+  return assembleMerge(state, delta, ctx, {
+    iocs,
+    remapIocRefs,
+    excludedRefsFor,
+    forensicTimeline: events,
+    absorbedInto,
+  });
 }
 
 /** The lowercased value mergeIocs matches an incoming IOC on; null when it drops the IOC (#1874). */
@@ -588,6 +566,7 @@ export const iocMatchKey = (ioc: AnalysisDelta["iocs"][number]): string | null =
 export interface MergedParts {
   iocs: IOC[];
   remapIocRefs: (ids: string[]) => string[];
+  excludedRefsFor?: (ids: string[]) => ExcludedIocRef[];
   forensicTimeline: ForensicEvent[];
   absorbedInto: ReadonlyMap<string, string>;
 }
@@ -605,6 +584,7 @@ export function assembleMerge(
   parts: MergedParts,
 ): InvestigationState {
   const { iocs, remapIocRefs, absorbedInto } = parts;
+  const excludedRefsFor = parts.excludedRefsFor ?? ((): ExcludedIocRef[] => []);
   const correlatedOnly = parts.forensicTimeline;
   const findings: Finding[] = state.findings.map((f) => ({ ...f }));
 
@@ -618,6 +598,8 @@ export function assembleMerge(
       existing.description = incoming.description;
       existing.status = incoming.status;
       existing.relatedIocs = uniq([...existing.relatedIocs, ...remapIocRefs(incoming.relatedIocs)]);
+      const excluded = excludedRefsFor(incoming.relatedIocs);
+      if (excluded.length) existing.excludedIocRefs = unionExcludedRefs(existing.excludedIocRefs, excluded);
       existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
       if (incoming.relatedEventIds !== undefined) {
         existing.relatedEventIds = uniq([...(existing.relatedEventIds ?? []), ...incoming.relatedEventIds]);
@@ -625,6 +607,7 @@ export function assembleMerge(
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
       existing.lastUpdated = ctx.timestamp;
     } else {
+      const excluded = excludedRefsFor(incoming.relatedIocs);
       findings.push({
         id: incoming.id,
         severity: incoming.severity,
@@ -633,6 +616,7 @@ export function assembleMerge(
         title: incoming.title,
         description: incoming.description,
         relatedIocs: remapIocRefs(incoming.relatedIocs),
+        ...(excluded.length ? { excludedIocRefs: excluded } : {}),
         mitreTechniques: uniq(incoming.mitreTechniques),
         ...(incoming.relatedEventIds !== undefined
           ? { relatedEventIds: uniq(incoming.relatedEventIds) }

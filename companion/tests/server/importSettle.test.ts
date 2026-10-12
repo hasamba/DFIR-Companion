@@ -4,6 +4,7 @@ import type { ForensicEvent, InvestigationState } from "../../src/analysis/state
 import { LoggerImpl, type LogWriter } from "../../src/logging/logger.js";
 import { getServerLogger, setServerLogger } from "../../src/logging/serverLogger.js";
 import { memoryRowStore } from "../helpers/memoryRowStore.js";
+import { pollFor, pollBudget } from "../helpers/poll.js";
 
 // The one seam every import crosses: dual-write the ADDED rows → tag them → demote → diff against
 // the post-demote state. Pinned here so a route can neither skip a step nor run them out of order.
@@ -225,7 +226,13 @@ describe("settleForensicImport — importedAt / importBatchId (#1157)", () => {
       return (await store.load()).forensicTimeline[0];
     };
     const first = await run("a");
-    await new Promise((r) => setTimeout(r, 2));
+    // importedAt is a millisecond ISO stamp: wait until the clock has visibly moved past the first
+    // one, rather than trusting a 2 ms timer to have advanced it (#2172).
+    await pollFor(
+      "the clock to advance past the first importedAt",
+      async () => (new Date().toISOString() !== first.importedAt ? true : undefined),
+      { intervalMs: 1, timeoutMs: pollBudget(2_000) },
+    );
     const second = await run("b");
     expect(second.importBatchId).not.toBe(first.importBatchId);
     expect(second.importedAt).not.toBe(first.importedAt);

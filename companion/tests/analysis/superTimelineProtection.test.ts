@@ -264,6 +264,37 @@ describe("SuperTimelineStore protection (#958)", () => {
     expect(await small.protectedIds("c1")).toEqual(["keep"]);
   });
 
+  it("#2140: migration keeps distinct record ids apart and transfers a star across a record-id duplicate", async () => {
+    // "keep" and "dup" are the same physical record (same sourceRecordId), so dup folds into keep and
+    // its star follows; "other" shares time/text/host but is a different record and must survive.
+    const same = { timestamp: "2026-06-01T00:00:00Z", description: "same", asset: "WS-01" };
+    await writeFile(
+      join(cases.stateDir("c1"), "super-timeline.json"),
+      JSON.stringify([
+        ev({ id: "keep", ...same, sourceRecordId: "evtx:Sysmon:1" }),
+        ev({ id: "dup", ...same, sourceRecordId: "evtx:Sysmon:1" }),
+        ev({ id: "other", ...same, sourceRecordId: "evtx:Sysmon:2" }),
+      ]),
+    );
+    await writeFile(
+      join(cases.stateDir("c1"), "tags.json"),
+      JSON.stringify([
+        {
+          id: "t1",
+          targetType: "event",
+          targetId: "dup",
+          label: "starred",
+          author: "analyst",
+          createdAt: "2026-06-04T00:00:00Z",
+        },
+      ]),
+    );
+    const small = new SuperTimelineStore(cases, 10);
+    const r = await small.query("c1", {});
+    expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["keep", "other"]));
+    expect(await small.protectedIds("c1")).toEqual(["keep"]);
+  });
+
   it("a case indexed before #958 backfills protection from its analyst tags once", async () => {
     const small = new SuperTimelineStore(cases, 2);
     await small.append("c1", [dated("a", 1), dated("b", 2)]);

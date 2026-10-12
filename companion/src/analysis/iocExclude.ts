@@ -11,7 +11,8 @@
 // lives in stateMerge.ts's mergeDelta.
 
 import { checkRegexSafety, EMPTY_MATCH_REASON, regexMatchesEmptyString } from "./regexSafety.js";
-import type { IOC } from "./stateTypes.js";
+import { stripPurgedIocRefs } from "./iocMergeSupport.js";
+import type { Finding, IOC } from "./stateTypes.js";
 
 export const EXCLUDE_MATCH_MODES = ["exact", "suffix", "regex"] as const;
 export type ExcludeMatchMode = (typeof EXCLUDE_MATCH_MODES)[number];
@@ -25,6 +26,16 @@ export interface IocExcludeRule {
   iocType?: IOC["type"]; // optional: only apply to this IOC type; unset = any type
   note?: string; // why it's excluded (e.g. "client's internal AD domain")
   addedAt: string; // ISO time the rule was added
+}
+
+/**
+ * An indicator a finding cited that an exclude rule removed (#2151): kept on the finding in place of
+ * a relatedIocs id that would resolve to nothing. Optional on Finding, so older stored findings load.
+ */
+export interface ExcludedIocRef {
+  value: string;
+  type: IOC["type"];
+  ruleId: string;
 }
 
 // The validated core of a rule, before the caller assigns an id + addedAt.
@@ -79,6 +90,30 @@ export function matchIocToExclude(
 export function excludeMatches(iocs: readonly IOC[], rules: readonly IocExcludeRule[]): IOC[] {
   if (rules.length === 0) return [];
   return iocs.filter((ioc) => matchIocToExclude(ioc, rules) !== null);
+}
+
+/**
+ * The purge an added rule performs (#2151): a copy of `state` holding only the IOCs no rule matches,
+ * with every finding reference to a removed IOC replaced by a marker naming the indicator and the
+ * rule that removed it. Inputs are never mutated.
+ */
+export function purgeExcluded<T extends { iocs: readonly IOC[]; findings: readonly Finding[] }>(
+  state: T,
+  rules: readonly IocExcludeRule[],
+): { state: T & { iocs: IOC[]; findings: Finding[] }; purged: number; findingsUpdated: number } {
+  const iocs: IOC[] = [];
+  const removed = new Map<string, ExcludedIocRef>();
+  for (const ioc of state.iocs) {
+    const rule = matchIocToExclude(ioc, rules);
+    if (!rule) iocs.push(ioc);
+    else if (!removed.has(ioc.id)) removed.set(ioc.id, { value: ioc.value, type: ioc.type, ruleId: rule.id });
+  }
+  const stripped = stripPurgedIocRefs(state.findings, removed);
+  return {
+    state: { ...state, iocs, findings: stripped.findings },
+    purged: state.iocs.length - iocs.length,
+    findingsUpdated: stripped.updated,
+  };
 }
 
 // ── validation ───────────────────────────────────────────────────────────────────────────────

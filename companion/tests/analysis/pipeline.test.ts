@@ -113,6 +113,30 @@ describe("AnalysisPipeline", () => {
     expect(received).toBe("c1");
   });
 
+  it("a later screenshot window reusing an event id does not overwrite an earlier event (#2175)", async () => {
+    const windowDelta = (description: string, severity: string, timestamp: string): string =>
+      JSON.stringify({
+        ...JSON.parse(validDelta),
+        findings: [],
+        forensicEvents: [{ id: "e1", timestamp, description, severity, mitreTechniques: [] }],
+      });
+    const run = (raw: string, seq: number) =>
+      new AnalysisPipeline({
+        provider: new MockProvider("mock", raw),
+        stateStore,
+        imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      }).analyzeWindow("c1", [capture(seq)]);
+
+    await run(windowDelta("mimikatz.exe executed on HOST-A", "Critical", "2026-05-20T10:00:00Z"), 1);
+    const state = await run(windowDelta("user logon on HOST-B", "Low", "2026-05-21T09:00:00Z"), 2);
+
+    expect(state.forensicTimeline).toHaveLength(2);
+    expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
+    const first = state.forensicTimeline.find((e) => e.description.includes("mimikatz"));
+    expect(first).toMatchObject({ severity: "Critical", timestamp: "2026-05-20T10:00:00Z" });
+    expect(first?.sourceScreenshots).toEqual([capture(1).screenshotFile]);
+  });
+
   it("synthesis prompt asks for granular per-technique findings (not one campaign finding)", async () => {
     const { SYNTHESIS_PROMPT } = await import("../../src/analysis/pipeline.js");
     expect(SYNTHESIS_PROMPT).toContain("SEPARATE finding for EACH distinct");

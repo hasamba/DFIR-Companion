@@ -75,7 +75,10 @@ That last field is what makes the log a chain rather than a list. Editing or rem
 Two questions get asked, and both matter:
 
 - **Did the evidence change?** Every stored artifact is re-hashed and compared (SHA-256, and SHA-1 when the record has one). `received` entries have no stored file and are skipped, so a rejected import never shows as missing.
-- **Did the log change?** The chain is walked link by link.
+- **Did the log change?** The chain is walked link by link, and its end is compared against the **pinned head** — the record count and the hash of the last line, saved next to the log (`metadata/custody-head.json`) every time an entry is written. If entries are cut off the end, or the last entries are rewritten, the check reports a `head-regression` break. A log that is *longer* than its pin is fine: that is what an interrupted write leaves behind. Once a regression is detected, later entries are still recorded but the pin is not moved, so the break keeps being reported after every later append instead of being hidden by the next import.
+
+!!! note "Limits of the pinned head"
+    Cases recorded before this check existed have no pin yet; they are pinned from their next custody entry and are not flagged until then. The pin sits in the same case folder as the log, so it catches sync-client rollbacks, partial writes and naive edits — not someone who deliberately rewrites both files. The [signed manifest](#the-signed-manifest) remains the record held outside the folder.
 
 Checking one without the other misses a whole class of tampering: swapping a file leaves the chain intact, and rewriting who collected an artifact leaves every hash intact.
 
@@ -109,7 +112,7 @@ The **Chain of Custody** panel (see [Dashboard Panels](dashboard.md)) has a **Ve
 
 `custody-manifest.json` lists every artifact with its full chain, and is signed with this installation's secret (HMAC-SHA256 — the same secret that signs case-unlock cookies).
 
-It exists to close a gap the chain cannot close on its own: **chopping entries off the end of the log leaves a shorter chain that verifies perfectly.** Nothing inside the file can detect that, because the file is exactly what an attacker controls. So the manifest records where the chain *ends* — the record count, the final `seq`, and the hash of the last line — and signs that along with the records.
+It exists to close a gap the chain cannot close on its own: **chopping entries off the end of the log leaves a shorter chain that verifies perfectly.** The pinned head (see [Verification](#verification)) catches that at rest, but it lives in the same folder, which an attacker with write access controls. So the manifest records where the chain *ends* — the record count, the final `seq`, and the hash of the last line — and signs that along with the records.
 
 **Version 2** (current) adds `sha1` to each artifact and lists receipt-only artifacts with `"stored": false`. Manifests written before this change are version 1 and still verify unchanged; a manifest with any other version is reported as unverifiable.
 

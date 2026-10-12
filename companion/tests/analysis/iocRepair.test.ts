@@ -1,6 +1,52 @@
 import { describe, it, expect } from "vitest";
 import { emptyState } from "../../src/analysis/stateTypes.js";
-import { dedupeIocsById } from "../../src/analysis/iocRepair.js";
+import type { IOC } from "../../src/analysis/stateTypes.js";
+import { coerceIocValues, dedupeIocsById } from "../../src/analysis/iocRepair.js";
+
+describe("coerceIocValues (#2178)", () => {
+  const row = (id: string, value: unknown): IOC =>
+    ({ id, type: "other", value, firstSeen: "2026-01-01T00:00:00Z" }) as unknown as IOC;
+
+  it("turns every non-string value into a string and reports each row", () => {
+    const input = [
+      row("a", 12345),
+      row("b", true),
+      row("c", null),
+      row("d", { a: 1 }),
+      row("e", ["x"]),
+      row("f", undefined),
+    ];
+    const snapshot = JSON.stringify(input);
+    const { iocs, coerced } = coerceIocValues(input);
+    expect(iocs.map((i) => i.value)).toEqual(["12345", "true", "", '{"a":1}', '["x"]', ""]);
+    expect(iocs.map((i) => i.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
+    expect(coerced).toEqual([
+      { id: "a", from: "number" },
+      { id: "b", from: "boolean" },
+      { id: "c", from: "null" },
+      { id: "d", from: "object" },
+      { id: "e", from: "array" },
+      { id: "f", from: "undefined" },
+    ]);
+    expect(JSON.stringify(input)).toBe(snapshot);
+    expect(input[0].value).toBe(12345);
+  });
+
+  it("returns the same array when every value is already a string", () => {
+    const input = [row("a", "1.2.3.4"), row("b", "evil.example")];
+    const { iocs, coerced } = coerceIocValues(input);
+    expect(iocs).toBe(input);
+    expect(coerced).toEqual([]);
+  });
+
+  it("keeps healthy rows as the same objects in a mixed list and drops nothing", () => {
+    const healthy = row("a", "1.2.3.4");
+    const { iocs } = coerceIocValues([healthy, row("b", 7)]);
+    expect(iocs).toHaveLength(2);
+    expect(iocs[0]).toBe(healthy);
+    expect(iocs[1].value).toBe("7");
+  });
+});
 
 describe("dedupeIocsById", () => {
   it("collapses rows sharing the same id, keeping the first occurrence", () => {

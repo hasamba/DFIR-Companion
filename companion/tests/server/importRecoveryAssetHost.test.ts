@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
 import { registerImportResumeHandler } from "../../src/routes/importRecovery.js";
 import type { RouteContext, ImportBase } from "../../src/routes/context.js";
 
@@ -35,6 +36,7 @@ async function harness() {
   );
   const ctx = {
     store,
+    importLock: new ImportLock(),
     options: { pipeline: {}, stateStore, jobManager },
     dispatchImport,
     demoteForensicForCase: async (caseId: string) => stateStore.load(caseId),

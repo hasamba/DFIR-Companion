@@ -63,3 +63,6 @@ export function repairIocValues(state: InvestigationState): IocValueRepairResult
   if (changed.length === 0) return { state, changed };
   return { state: { ...state, iocs }, changed };
 }
+
+// Load-time value coercion (#2178) lives in the storage layer so StateStore can call it.
+export { coerceIocValues, withStringIocValues, type IocValueCoercion } from "./iocValueCoerce.js";

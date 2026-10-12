@@ -1,7 +1,16 @@
 import { randomBytes, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
 
 const VERSION = "scrypt-v1";
+// scrypt N=2^14 is deliberate, and lower than the 2^17 a .dfircase archive uses (#2167). A local
+// password is verified ONLINE: every attempt goes through the login rate limiter and lockout
+// (authRoutes.ts, http/rateLimiter.ts), and the scrypt derivation itself is the CPU cost each
+// admitted attempt buys — a higher N multiplies that DoS lever. A .dfircase file faces unlimited
+// OFFLINE guessing, so it gets the higher bar. See SECURITY.md "Stored passwords". Changing this
+// value locks out every existing account (verifyLocalPassword rejects any other cost) and must
+// move authStore.ts's DUMMY_PASSWORD_HASH with it.
 const COST = 16_384;
+/** The scrypt N for team-mode local account hashes. SECURITY.md's table is tested against it. */
+export const LOCAL_PASSWORD_SCRYPT_N = COST;
 const BLOCK_SIZE = 8;
 const PARALLELISM = 1;
 const SALT_BYTES = 16;

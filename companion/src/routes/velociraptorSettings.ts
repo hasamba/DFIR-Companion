@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { downloadLatestVelociraptor } from "../analysis/velociraptorDownload.js";
 import type { RouteContext } from "./context.js";
+import { fetchOutbound, OutboundUrlBlockedError } from "./outboundFetchGuard.js";
 
 /**
  * Two settings-page routes for the Velociraptor binary/API-config path fields:
@@ -57,13 +58,21 @@ export function registerVelociraptorSettingsRoutes(app: Express, ctx: RouteConte
       const result = await downloadLatestVelociraptor({
         destDir,
         fetchFn: fetch,
+        // The asset bytes become an executable, so they go through the SSRF guard (every redirect
+        // hop https + public + connection-pinned); the downloader adds the GitHub host pin and the
+        // published-digest check on top (#2133).
+        fetchAsset: (url, timeoutMs) => fetchOutbound(url, { timeoutMs }),
         platform: process.platform,
         arch: process.arch,
       });
       return res.json({ ok: true, path: result.path, version: result.version, assetName: result.assetName });
     } catch (err) {
-      errLine(`POST /settings/velociraptor/download-latest failed: ${(err as Error).message}`);
-      return res.status(500).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      errLine(`POST /settings/velociraptor/download-latest failed: ${message}`);
+      // A refused or tampered download is an upstream problem, not a server fault.
+      const upstream =
+        err instanceof OutboundUrlBlockedError || /unexpected host|checksum mismatch/.test(message);
+      return res.status(upstream ? 502 : 500).json({ error: message });
     }
   });
 }

@@ -6,9 +6,16 @@ DFIR Companion is a **localhost** tool. The server binds `127.0.0.1` by default,
 stays on disk, threat-intel enrichment is **off by default** and only sends indicators
 externally after a per-case opt-in, and AI input is anonymized in transit (see the
 Anonymization section of [`companion/README.md`](companion/README.md)). It is intended to run
-on a trusted analyst workstation or a trusted LAN segment; there is **no built-in
-authentication** — if you expose it beyond localhost (`DFIR_HOST=0.0.0.0`), put it behind your
-own auth/reverse proxy.
+on a trusted analyst workstation or a trusted LAN segment.
+
+The default **single-user mode** (`DFIR_AUTH_MODE=single-user`) has **no sign-in**, so the server
+refuses to start on a non-loopback address (for example `DFIR_HOST=0.0.0.0`) in that mode. To
+share one Companion between several investigators, use **team mode** (`DFIR_AUTH_MODE=team`).
+It adds local accounts, optional OpenID Connect sign-in, per-case roles and CSRF-protected
+sessions — see [Team Accounts and Case Roles](mkdocs-docs/reference/team-authentication.md).
+`DFIR_ALLOW_UNAUTHENTICATED_REMOTE` is the documented opt-out for two cases only: a container
+whose port is published only on host loopback (`container-loopback-proxy`), and a throwaway
+public demo that anyone who finds the URL can use (`public-demo`).
 
 ## Trust boundaries that are deliberate
 
@@ -34,6 +41,15 @@ Findings against these come up in every automated review; they are design decisi
   background capture or a SIEM webhook must keep recording while the analyst is away. Both routes
   are write-only and return nothing about the case. `/push` additionally requires its shared
   secret; in team mode both require an authenticated session holding write on the case.
+- **Anyone who can write to the cases folder on disk is trusted, and backups are not
+  content-authenticated.** That includes each case's `state/backups/` directory. Restoring a
+  backup checks the filename, allows only the known state files, and runs a SQLite integrity
+  check on the database copy, but it does not verify that the content was written by this
+  installation. Someone who can write `state/backups/` can also overwrite the live `state/`
+  files directly and read the instance secret, which sits in the same folder. A signature keyed
+  by that instance secret would therefore be forgeable by the very writer it is meant to stop,
+  and it would make older unsigned backups and the backups inside imported cases unrestorable.
+  Protect the cases folder with file-system permissions instead.
 
 ## Reporting a vulnerability
 
@@ -67,6 +83,26 @@ re-key it.
 The parameters of an existing version are never changed. Raising the cost always means adding a
 new version, because re-keying an existing one would make every archive already written under it
 unopenable while reporting itself as a wrong password.
+
+## Stored passwords
+
+Two kinds of password are stored on the server as salted scrypt hashes, at a lower cost than a
+`.dfircase` archive:
+
+| Password | Stored in | scrypt `N` | `r`, `p` | How it is checked |
+| --- | --- | --- | --- | --- |
+| Team-mode local account | `<dataDir>/auth.sqlite` | 2^14 (16,384) | 8, 1 | online, rate-limited, with lockout |
+| Case-lock password | the case's `case.json` | 2^14 (16,384) | 8, 1 (Node defaults) | online, rate-limited, with lockout |
+
+This is deliberate, not an oversight of the `.dfircase` bar above. A `.dfircase` file faces
+unlimited **offline** guessing, so its cost is the only thing slowing an attacker. These two are
+checked **online**: every attempt goes through the server's rate limiter and lockout, which bounds
+the guesses an attacker gets. And the scrypt derivation is the CPU each admitted attempt costs the
+server, so a higher `N` would make every wrong guess a stronger CPU-exhaustion lever.
+
+The hashes are only exposed to offline guessing if the files that hold them leak. **Treat
+`auth.sqlite` and the data directory as a credential store**: restrict who can read them, and do
+not copy them anywhere less protected than the server itself.
 
 ## Known dependency advisories (tracked, deferred)
 

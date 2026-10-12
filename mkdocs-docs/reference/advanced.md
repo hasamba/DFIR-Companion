@@ -122,11 +122,15 @@ See also [Deep Pass](dashboard.md#deep-pass) for the analyst-triggered batched r
 
 ## State Backups & Restore
 
-The server automatically backs up all per-case state (findings, timeline, IOCs, playbook, etc.) before each synthesis run and every hour.
+The server automatically backs up the case's investigation state (findings, timeline, IOCs, playbook, analyst decisions, etc.) before each synthesis run and every hour.
+
+The [analysis-run ledger](dashboard.md#analysis-run-ledger) is not in these backups, and a restore does not roll it back. The ledger is an append-only audit record, so it keeps the record of every run — including the one you are rolling back.
 
 View and restore backups in **Settings → Diagnostics → Per-case backup list**. One click restores to any saved state.
 
 A restore overwrites the live state wholesale, so it is refused while an import, synthesis, enrichment, or deep pass is running for that case — the job would save over the restored state moments later. Cancel the job from the **jobs badge in the top toolbar** (or let it finish), then restore.
+
+Each restore is written to the case's activity log with the backup file name and the files it restored, and is included in the audit export. A refused or failed restore writes no entry. The activity log is not in the backups, so a restore cannot erase it.
 
 Configure in the same tab: `DFIR_STATE_BACKUP_RETAIN` (max backups kept per case, oldest pruned; default 24 — 0 asks for no limit but is capped at 100, since each backup is a full copy of the case state and an uncapped dir will fill the disk), `DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN` (how many pre-synthesis backups are preserved on top of that cap, so interval backups can't crowd them out; default 10), `DFIR_STATE_BACKUP_INTERVAL_MS` (time-based backup interval; default 1h, 0 = off), `DFIR_STATE_BACKUP_MAX_BYTES` (disk budget for one case's backups; default 10 GiB, 0 = no byte cap).
 
@@ -279,9 +283,75 @@ Enable in **Settings → KEV**. CVEs mentioned in findings and events are cross-
 
 ---
 
-## Demo Mode
+## Public Demo and Network Exposure
 
-Set `DFIR_DEMO_MODE=true` in `.env`. All mutating routes are blocked. A demo case is pre-seeded. The demo case auto-resets hourly (`DFIR_DEMO_RESET_HOURS`). Useful for training or public demonstrations.
+Single-user mode has no sign-in. So when `DFIR_HOST` is anything other than a loopback address
+(for example `0.0.0.0`, which the Docker image uses) and `DFIR_AUTH_MODE` is not `team`, the server
+refuses to start with:
+
+```text
+refusing to bind without authentication in single-user mode to 0.0.0.0; set DFIR_AUTH_MODE=team, bind to 127.0.0.1, or set DFIR_ALLOW_UNAUTHENTICATED_REMOTE to the documented container-loopback-proxy or public-demo value
+```
+
+There are three ways out:
+
+1. **Use team mode** — see [Team Accounts and Case Roles](team-authentication.md). This is the
+   right choice whenever another person or machine can reach the Companion and the data is real.
+2. **Bind to `127.0.0.1`** — the default for a local install.
+3. **Set `DFIR_ALLOW_UNAUTHENTICATED_REMOTE`** to one of exactly two values. Any other value is
+   ignored and the server still refuses to start.
+
+### `container-loopback-proxy`
+
+Use this only when the container port is published to the host's loopback address
+(`-p 127.0.0.1:4773:4773`), as in the supplied `docker-compose.yml` and the
+[Getting Started](../getting-started.md) Docker example. The server binds `0.0.0.0` inside the
+container, but nothing outside your machine can reach it.
+
+!!! warning
+    This value is a claim about your network. If you publish the port as `-p 4773:4773` (without
+    the `127.0.0.1:` prefix), the claim is false: you expose a server with no sign-in to your whole
+    network. For a deployment that is really reachable from other machines, use team mode or
+    `public-demo`.
+
+The server cannot see how Docker publishes the port, so it cannot check this claim. Instead, every
+start with this value logs an `[auth] WARNING` line that names the bind address and says that no
+sign-in is enforced. The startup line also shows the real bind address, for example
+`http://127.0.0.1:4773 (bound to 0.0.0.0)`. The warning is a reminder, not an error: the
+`127.0.0.1:` prefix in `-p 127.0.0.1:4773:4773` is what makes `container-loopback-proxy` true.
+
+### `public-demo`
+
+Use this when the exposure is real and you accept it on purpose: anyone who has the URL can use the
+server with no sign-in. Pair it with `DFIR_DEMO_MODE=1` for a read-only public demo. Without demo
+mode, every visitor has full single-user access, so put only throwaway data behind it.
+
+At every start with this value, the server logs an `[auth] WARNING` line that says the exposure is
+real. If `DFIR_DEMO_MODE` is off, the warning also says that anyone with the URL can import, change
+and delete cases. The server still starts. The warning does not stop it.
+
+### Demo Mode
+
+Set `DFIR_DEMO_MODE=true` (or `1`) in `.env`. Demo mode:
+
+- Blocks every mutating request **except** `POST /cases/seed-demo`. That one stays open so visitors
+  can seed and reseed the demo case — and it takes a case name and a force flag from the caller, so
+  a visitor can create and reseed cases with a name they choose.
+- Blocks the server-filesystem browser in **Settings** (the one blocked read).
+- Seeds a demo case at startup and resets it every `DFIR_DEMO_RESET_HOURS` hours (default and
+  minimum 1).
+
+Never put real case data on a demo deployment. A deployment that holds real cases uses team mode.
+Demo mode is useful for training and public demonstrations.
+
+### Which setting do I need?
+
+| I am running … | Set |
+|---|---|
+| The Companion on my own workstation | Nothing — the default `DFIR_HOST=127.0.0.1` |
+| Docker on this machine, port published to `127.0.0.1` only | `DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy` |
+| A public demo anyone may use | `DFIR_ALLOW_UNAUTHENTICATED_REMOTE=public-demo` with `DFIR_DEMO_MODE=1`, throwaway data only |
+| A shared server for my team with real cases | `DFIR_AUTH_MODE=team` (see [Team Accounts and Case Roles](team-authentication.md)) |
 
 ---
 

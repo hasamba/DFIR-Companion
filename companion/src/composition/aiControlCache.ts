@@ -9,10 +9,16 @@
  *
  * Deliberately NOT invalidated by anything: the file has exactly one writer (this cache), because
  * the routes that change the toggle all go through setControl.
+ *
+ * #2153: setControl is a read-modify-write, so it runs under a per-case StateLock. Unserialized, a
+ * capture flush writing lastAnalyzedSeq at the moment the analyst paused AI read the old base and
+ * wrote `enabled: true` back. The cache is updated only after the save succeeds, so a failed save
+ * cannot leave the cache ahead of the disk. getControl stays unlocked — free reads are the point.
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import { AiControlStore, type AiControl } from "../analysis/aiControl.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { StateLock } from "../analysis/stateLock.js";
 
 export interface AiControlCache {
   getControl(caseId: string): Promise<AiControl>;
@@ -25,6 +31,7 @@ export function createAiControlCache(store: CaseStore): AiControlCache {
   // inherits the deleted case's toggle or lastAnalyzedSeq, and an old run's setControl (its save
   // refused) cannot poison the successor's entry.
   const cache = new CaseKeyedMap<AiControl>(() => store.casesRoot);
+  const lock = new StateLock();
 
   async function getControl(caseId: string): Promise<AiControl> {
     let c = cache.get(caseId);
@@ -37,11 +44,13 @@ export function createAiControlCache(store: CaseStore): AiControlCache {
 
   return {
     getControl,
-    async setControl(caseId, patch) {
-      const next = { ...(await getControl(caseId)), ...patch };
-      cache.set(caseId, next);
-      await aiControl.save(caseId, next);
-      return next;
+    setControl(caseId, patch) {
+      return lock.runExclusive(caseId, async () => {
+        const next = { ...(await getControl(caseId)), ...patch };
+        await aiControl.save(caseId, next);
+        cache.set(caseId, next);
+        return next;
+      });
     },
   };
 }

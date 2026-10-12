@@ -74,7 +74,7 @@ describe("withArchiveBarrier with a bad wait option (#1927)", () => {
     const release = await lock.acquire("c1");
     vi.useFakeTimers();
     const ctx = {
-      store: { casesRoot: root },
+      store: { casesRoot: root, isDeleting: () => false },
       importLock: lock,
       options: { archiveIngestWaitMs: NaN },
     } as unknown as RouteContext;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { assertRemoteBindingSafe, resolveTeamAuthConfig } from "../../src/auth/authConfig.js";
+import {
+  assertRemoteBindingSafe,
+  describeUnauthenticatedExposure,
+  resolveTeamAuthConfig,
+} from "../../src/auth/authConfig.js";
 import { caseRoleAllows, resolveRequestPolicy } from "../../src/auth/policy.js";
 
 describe("team-auth configuration and policy", () => {
@@ -32,6 +36,59 @@ describe("team-auth configuration and policy", () => {
     expect(() => assertRemoteBindingSafe("0.0.0.0", single, { DFIR_DEMO_MODE: "1" })).toThrow(
       /refusing to bind/,
     );
+  });
+
+  // The server cannot see how Docker publishes its port, so accepting an opt-out is an operator
+  // assertion it cannot verify. It must say so out loud at startup instead of accepting silently
+  // (#2161) — a `docker run -p 4773:4773` copy of the compose block is otherwise invisible.
+  describe("describeUnauthenticatedExposure", () => {
+    const single = resolveTeamAuthConfig({});
+
+    it("warns that no login is enforced for container-loopback-proxy on a non-loopback bind", () => {
+      const text = describeUnauthenticatedExposure("0.0.0.0", single, {
+        DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "container-loopback-proxy",
+      });
+      expect(text).toMatch(/no login/i);
+      expect(text).toMatch(/0\.0\.0\.0/);
+      expect(text).toMatch(/127\.0\.0\.1:4773:4773/);
+      expect(text).toMatch(/DFIR_AUTH_MODE=team/);
+    });
+
+    it("warns more strongly for public-demo when demo mode is off", () => {
+      const text = describeUnauthenticatedExposure("0.0.0.0", single, {
+        DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "public-demo",
+      });
+      expect(text).toMatch(/no login/i);
+      expect(text).toMatch(/DFIR_DEMO_MODE is off/);
+    });
+
+    it("still states the real exposure for public-demo with demo mode on", () => {
+      const text = describeUnauthenticatedExposure("0.0.0.0", single, {
+        DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "public-demo",
+        DFIR_DEMO_MODE: "1",
+      });
+      expect(text).toMatch(/no login/i);
+      expect(text).not.toMatch(/DFIR_DEMO_MODE is off/);
+    });
+
+    it("stays quiet on loopback binds, in team mode, and without an opt-out", () => {
+      for (const host of ["127.0.0.1", "::1", "[::1]", "localhost"]) {
+        for (const value of ["container-loopback-proxy", "public-demo"]) {
+          expect(
+            describeUnauthenticatedExposure(host, single, {
+              DFIR_ALLOW_UNAUTHENTICATED_REMOTE: value,
+            }),
+          ).toBeUndefined();
+        }
+      }
+      const team = resolveTeamAuthConfig({ DFIR_AUTH_MODE: "team" });
+      expect(
+        describeUnauthenticatedExposure("0.0.0.0", team, {
+          DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "public-demo",
+        }),
+      ).toBeUndefined();
+      expect(describeUnauthenticatedExposure("0.0.0.0", single, {})).toBeUndefined();
+    });
   });
 
   it("keeps reviewer separation of duties instead of treating roles as a rank", () => {
