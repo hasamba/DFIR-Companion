@@ -76,6 +76,10 @@ COPY docker-entrypoint.sh /usr/local/bin/dfir-entrypoint
 RUN chmod +x /usr/local/bin/dfir-entrypoint \
   && mkdir -p /data/cases /data/ocr-cache /out \
   && chown -R node:node /data /out
+# Strip SUID/SGID bits from the base image (su, mount, passwd, …). Nothing at runtime needs them,
+# and a compromised server must not be able to exec one to regain root (#2155). The entrypoint's
+# setpriv --no-new-privs closes the same path; this removes the binaries' privilege outright.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
 # tesseract.js would otherwise cache its OCR language model into the root-owned working
 # directory; point it at a node-writable location instead (ocrRedact.ts honors this).
 ENV DFIR_OCR_CACHE=/data/ocr-cache

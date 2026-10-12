@@ -31,6 +31,9 @@ Choose one option. Windows and Linux users should start with the release downloa
 
     ```bash
     docker run -p 127.0.0.1:4773:4773 \
+      --security-opt no-new-privileges:true \
+      --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
+      --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
       -v /your/cases:/cases \
       -e DFIR_CASES_ROOT=/cases \
       -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
@@ -38,6 +41,10 @@ Choose one option. Windows and Linux users should start with the release downloa
     ```
 
     Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
+
+    The `--security-opt` and `--cap-*` flags are optional hardening: the container keeps only the
+    permissions it needs to hand your case folder to an unprivileged user, and the server can never
+    get root back. The bundled `docker-compose.yml` sets the same options.
 
 === "From source (developers)"
 

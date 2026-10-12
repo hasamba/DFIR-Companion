@@ -234,7 +234,7 @@ if [ "$(id -u)" = "0" ]; then
   # cp that follows one just gets EACCES on the root-owned target).
   if [ -d /out ]; then
     chown_tree /out
-    setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
+    setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups --no-new-privs \
       sh -c 'if [ -d /opt/dfir-extension ]; then cp -R /opt/dfir-extension/. /out/ 2>/dev/null || true; fi' || true
   fi
 
@@ -307,10 +307,14 @@ if [ "$(id -u)" = "0" ]; then
   # explicitly (env, preserving DFIR_* config) — otherwise `~/…` paths would resolve under the
   # now-inaccessible /root. HOME stays /home/node so ~ expansion matches this entrypoint's; it is
   # only READ for path resolution (never written), so it is valid even when run_uid is not node.
-  exec setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups \
+  # --no-new-privs sets PR_SET_NO_NEW_PRIVS, so a SUID binary exec'd by a compromised server cannot
+  # regain root. It needs no capability, so it holds on plain `docker run` and Railway, where the
+  # compose security_opt does not apply.
+  exec setpriv --reuid="$run_uid" --regid="$run_gid" --clear-groups --no-new-privs \
     env HOME=/home/node USER=node LOGNAME=node node dist/server.js
 fi
 
 # Already unprivileged (e.g. a compose `user:` override): the operator owns mount
-# permissions; hand off to the Node server as PID 1 so signals stop it cleanly.
-exec node dist/server.js
+# permissions; hand off to the Node server as PID 1 (setpriv execs in place) so docker stop
+# signals Node directly. --no-new-privs needs no capability, so it works unprivileged too.
+exec setpriv --no-new-privs node dist/server.js

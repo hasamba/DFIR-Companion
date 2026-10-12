@@ -55,6 +55,22 @@ services:
     # pre-create ./cases (and ./addon) as your own user, the container uses your UID and your
     # files stay yours; a fresh, Docker-created (root-owned) mount instead falls back to the
     # image's `node` user. Either way the server never parses evidence as root.
+    # Hardening (#2155): no-new-privileges stops a SUID binary from regaining root after the drop.
+    # Every capability is dropped except the five the ROOT entrypoint needs before it drops
+    # privileges: CHOWN + FOWNER + DAC_OVERRIDE to hand ./cases and ./addon (which may be owned by
+    # your host user) to the run user, SETUID + SETGID for setpriv to switch to it. Once setpriv
+    # runs, the server's effective capability set is empty. `cap_drop: [ALL]` without these
+    # cap_add entries stops the container from starting.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     volumes:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
