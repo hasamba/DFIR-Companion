@@ -268,13 +268,11 @@ describe("full-pipeline integration (capture → import → synthesis → report
       const archiveBase64 = (exportRes.body as Buffer).toString("base64");
 
       // 8. Restore the archive into a new case
-      const restore = await request(app)
-        .post("/cases/import/encrypted")
-        .send({
-          data: archiveBase64,
-          password: "correct horse battery staple",
-          targetCaseId: "pipeline-1-restored",
-        });
+      const restore = await request(app).post("/cases/import/encrypted").send({
+        data: archiveBase64,
+        password: "correct horse battery staple",
+        targetCaseId: "pipeline-1-restored",
+      });
       expect(restore.status).toBe(201);
       expect(restore.body.caseId).toBe("pipeline-1-restored");
       expect(restore.body.counts.forensicEvents).toBeGreaterThanOrEqual(2);
