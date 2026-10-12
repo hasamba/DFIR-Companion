@@ -24,6 +24,7 @@ import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
 import { setCaseWriteRefusalReporter } from "./storage/caseIncarnation.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
+import { installGracefulShutdown } from "./composition/gracefulShutdown.js";
 import {
   mountRequestPipeline,
   createUnlockStateReader,
@@ -655,6 +656,23 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
     allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
+  });
+
+  // A stop signal drains instead of dying mid-write — and in a container, where Node is PID 1 and
+  // ignores an unhandled signal, it is what makes `docker stop` stop at all (#2142).
+  installGracefulShutdown({
+    server,
+    stopTransports: async () => {
+      await app.locals.telegramPoller?.stop();
+      await app.locals.slackSocketMode?.stop();
+    },
+    closeLogger: async () => {
+      // The dashboard's Logging toggle can swap the server logger at runtime; close both.
+      const current = getServerLogger();
+      await current.close();
+      if (current !== logger) await logger.close();
+    },
+    log: (m) => getServerLogger().info(m),
   });
 }
 
