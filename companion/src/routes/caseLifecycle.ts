@@ -18,6 +18,7 @@ import {
   attachmentContentDisposition,
 } from "../analysis/caseExportArchive.js";
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
+import { registerStateBackupRoutes } from "./stateBackups.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
 import { deleteArchivesFirst, refusedWhileArchiving, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
@@ -37,7 +38,6 @@ import {
   RELOADABLE_ENV_PREFIXES,
   LIVE_FROM_ENV_PREFIXES,
 } from "../settings/envManager.js";
-import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { ImportMetadata } from "../types.js";
 import {
@@ -56,7 +56,8 @@ import type { RouteContext } from "./context.js";
  *   - case lifecycle — GET/POST /cases (list/create), POST /cases/seed-demo, PATCH /cases/:id/status,
  *     POST /cases/:id/{archive,restore,delete}, GET /cases/:id/{state,stats}.
  *   - whole-case archives — GET /cases/:id/export/ioc-blocklist, POST /cases/:id/export/encrypted,
- *     POST /cases/import/encrypted, GET /cases/:id/backups, POST /cases/:id/restore-backup.
+ *     POST /cases/import/encrypted. State backups (GET /cases/:id/backups, POST
+ *     /cases/:id/restore-backup) moved to routes/stateBackups.ts (#2177).
  *   - integration pushes + status/reconnect — MOVED to routes/casePush.ts. They were the largest
  *     cohesive block here and the least related to the rest: this module is about a case's OWN
  *     lifecycle, while every push route is about a third-party API, its credentials and its failure
@@ -519,74 +520,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // (routes/encryptedImport.ts).
   registerEncryptedImportRoutes(app, ctx);
 
-  // ── State backups (#180) ─────────────────────────────────────────────────────────────────────
-  // Automatic snapshots of SNAPSHOT_STATE_FILES before synthesis + on a timer.
-  // List: GET /cases/:id/backups → { backups: BackupInfo[], summary: BackupSummary }
-  // Restore: POST /cases/:id/restore-backup { filename } → { restored: string[] }
-  // Both 404 when backupManager is absent (opt-in feature).
-
-  app.get("/cases/:id/backups", async (req: Request, res: Response) => {
-    if (!options.backupManager)
-      return res.status(404).json({ error: "backup not configured — restart the server" });
-    const caseId = req.params.id;
-    if (!(await store.caseExists(caseId)))
-      return res.status(404).json({ error: `case ${caseId} does not exist` });
-    try {
-      const [backups, summary] = await Promise.all([
-        options.backupManager.listBackups(caseId),
-        options.backupManager.summary(caseId),
-      ]);
-      return res.status(200).json({ backups, summary });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
-  app.post("/cases/:id/restore-backup", async (req: Request, res: Response) => {
-    if (!options.backupManager)
-      return res.status(404).json({ error: "backup not configured — restart the server" });
-    const caseId = req.params.id;
-    if (!(await store.caseExists(caseId)))
-      return res.status(404).json({ error: `case ${caseId} does not exist` });
-    const filename = (req.body as { filename?: unknown })?.filename;
-    if (typeof filename !== "string" || !filename.trim()) {
-      return res.status(400).json({ error: "filename is required" });
-    }
-    try {
-      // A restore replaces the investigation database, so it must not land on top of another
-      // writer (#251). Two guards, because they close different windows:
-      //   - runStateExclusive serializes against the short load→save critical sections (manual
-      //     event/IOC adds, enrichment saves) that hold the same per-case lock.
-      //   - Background jobs release that lock between their critical sections — synthesis holds it
-      //     to save, not across the AI call — so a restore can slot into a gap and then be
-      //     clobbered by the job's next save. No lock can serialize against that, so refuse while
-      //     any job is in flight for this case and let the operator cancel it or wait it out.
-      //     Every kind writes case state, hence the check is on all of them, not just synthesis.
-      const outcome = await runStateExclusive(
-        caseId,
-        async (): Promise<{ busy: Job } | { restored: string[] }> => {
-          const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
-          if (busy) return { busy };
-          return await options.backupManager!.restoreBackup(caseId, filename.trim());
-        },
-      );
-      if ("busy" in outcome) {
-        const { kind, id, label } = outcome.busy;
-        return res.status(409).json({
-          error: `a ${kind}${label ? ` (${label})` : ""} job is in progress for this case — cancel it or wait for it to finish, then restore`,
-          jobId: id,
-          kind,
-        });
-      }
-      return res.status(200).json(outcome);
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (msg.includes("not found") || msg.includes("invalid backup")) {
-        return res.status(404).json({ error: msg });
-      }
-      return res.status(500).json({ error: msg });
-    }
-  });
+  // State backups (#180) — GET /cases/:id/backups, POST /cases/:id/restore-backup (routes/stateBackups.ts).
+  registerStateBackupRoutes(app, ctx);
   // Outbound pushes to systems of record (IRIS, Timesketch, MISP, Notion, ClickUp, Jira,
   // ServiceNow) live in routes/casePush.ts — see that file for why they are not here.
   registerCasePushRoutes(app, ctx);

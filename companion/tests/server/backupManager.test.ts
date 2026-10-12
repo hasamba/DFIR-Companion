@@ -20,6 +20,7 @@ import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import type { AnalysisRunRecordInput } from "../../src/analysis/analysisRunTypes.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
+import { ActivityLogStore, type ActivityLogEntry } from "../../src/analysis/activityLog.js";
 
 // ── Pure unit tests ───────────────────────────────────────────────────────────
 
@@ -533,13 +534,28 @@ describe("BackupManager.summary", () => {
 async function makeAppWithBackup(
   config: Partial<BackupConfig> = {},
   extra: { jobManager?: JobManager; stateLock?: StateLock } = {},
-): Promise<{ app: ReturnType<typeof createApp>; store: CaseStore }> {
+): Promise<{ app: ReturnType<typeof createApp>; store: CaseStore; activityLogStore: ActivityLogStore }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-route-"));
   const store = new CaseStore(root);
   const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes: 0, ...config };
   const backupManager = new BackupManager(store, cfg);
-  const app = createApp(store, { backupManager, ...extra });
-  return { app, store };
+  const activityLogStore = new ActivityLogStore(store);
+  const app = createApp(store, { backupManager, activityLogStore, ...extra });
+  return { app, store, activityLogStore };
+}
+
+// The restore's activity entry is written fire-and-forget (#2177), so poll briefly for it.
+async function restoreEntries(
+  log: ActivityLogStore,
+  caseId: string,
+  waitMs = 0,
+): Promise<ActivityLogEntry[]> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const found = (await log.load(caseId)).filter((e) => e.action === "backup-restore");
+    if (found.length > 0 || Date.now() >= deadline) return found;
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 // Seed a case with a backup, then corrupt the live state so a successful restore is observable.
@@ -700,5 +716,52 @@ describe("POST /cases/:id/restore-backup", () => {
     const res = await pending;
     expect(res.status).toBe(200);
     expect((await readState(store, caseId)).corrupted).toBeUndefined();
+  });
+});
+
+// #2177: a restore rolls the whole case back, so it must leave an audit trail; refusals must not.
+describe("POST /cases/:id/restore-backup activity log", () => {
+  it("writes one backup-restore entry naming the backup file on success", async () => {
+    const { app, store, activityLogStore } = await makeAppWithBackup();
+    const { caseId, filename } = await seedRestorable(store);
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(200);
+
+    const entries = await restoreEntries(activityLogStore, caseId, 1000);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].targetId).toBe(filename);
+    expect(entries[0].targetType).toBe("backup");
+    expect(entries[0].detail).toContain(filename);
+    expect(entries[0].detail).toContain("investigation.json");
+    expect(entries[0].outcome).toBe("success");
+
+    const listed = await request(app).get(`/cases/${caseId}/activity-log`);
+    expect(listed.status).toBe(200);
+    expect((listed.body as ActivityLogEntry[]).filter((e) => e.action === "backup-restore")).toHaveLength(1);
+  });
+
+  it("writes no entry when the restore is refused with 409", async () => {
+    const jobManager = new JobManager();
+    const { app, store, activityLogStore } = await makeAppWithBackup({}, { jobManager });
+    const { caseId, filename } = await seedRestorable(store);
+    jobManager.register({ caseId, kind: "synthesis" });
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(409);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await restoreEntries(activityLogStore, caseId)).toHaveLength(0);
+  });
+
+  it("writes no entry when the backup file does not exist (404)", async () => {
+    const { app, store, activityLogStore } = await makeAppWithBackup();
+    const caseId = await makeCase(store);
+
+    const res = await request(app)
+      .post(`/cases/${caseId}/restore-backup`)
+      .send({ filename: "2026-06-28T10-00-00-000Z_pre-synthesis.json" });
+    expect(res.status).toBe(404);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await restoreEntries(activityLogStore, caseId)).toHaveLength(0);
   });
 });
