@@ -810,6 +810,7 @@
     "incrementalMergeRows.ts": "analysis/timeline",
     "mergeIndex.ts": "analysis/timeline",
     "stateStore.ts": "storage",
+    "iocValueCoerce.ts": "storage",
     "stateTypes.ts": "shared",
     "substringIndex.ts": "shared",
     "summary.ts": "analysis/workflow",

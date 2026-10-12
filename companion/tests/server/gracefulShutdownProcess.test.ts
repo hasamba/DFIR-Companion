@@ -76,7 +76,7 @@ describe.skipIf(process.platform === "win32")("graceful shutdown (real process)"
       expect(tookMs).toBeLessThan(6000);
       const sessionLogs = readdirSync(logDir).filter((f) => f.startsWith("session-"));
       expect(sessionLogs).toHaveLength(1);
-      const text = readFileSync(join(logDir, sessionLogs[0]!), "utf8");
+      const text = readFileSync(join(logDir, sessionLogs[0]), "utf8");
       expect(text.endsWith("\n")).toBe(true);
       const last = text.trimEnd().split("\n").at(-1) ?? "";
       expect(last).toContain("[shutdown] complete");

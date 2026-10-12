@@ -4,8 +4,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // whole-list algorithms over the same raw rows. StateStore.load's #2178 repair (a non-string value
 // becomes text) would make the oracle see different rows from the journal, so it is off here; it
 // has its own tests in iocRepair.test.ts and stateStore.test.ts.
-vi.mock("../../src/analysis/iocRepair.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../src/analysis/iocRepair.js")>()),
+vi.mock("../../src/analysis/iocValueCoerce.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/analysis/iocValueCoerce.js")>()),
   withStringIocValues: <S>(state: S): S => state,
 }));
 import { mkdtemp, rm } from "node:fs/promises";

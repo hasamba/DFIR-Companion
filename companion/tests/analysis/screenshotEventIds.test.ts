@@ -18,7 +18,7 @@ function stored(id: string, timestamp: string): ForensicEvent {
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: ["s1.png"],
-  } as ForensicEvent;
+  };
 }
 
 type DeltaEvent = NonNullable<AnalysisDelta["forensicEvents"]>[number];
@@ -31,7 +31,7 @@ function incoming(id: string, timestamp: string): DeltaEvent {
     severity: "Low",
     mitreTechniques: [],
     relatedFindingIds: [],
-  } as DeltaEvent;
+  };
 }
 
 function delta(events: DeltaEvent[], extra: Partial<AnalysisDelta> = {}): AnalysisDelta {

@@ -39,12 +39,12 @@ const KINDS = Object.keys(SENTINELS) as IocKind[];
 // Records every requested URL and answers with a generic JSON body (enough for token exchanges to
 // succeed so the lookup request itself is made); parsing failures after that are irrelevant here.
 function recordingFetch(urls: string[]): FetchFn {
-  return (async (input: Parameters<FetchFn>[0]) => {
+  return async (input: Parameters<FetchFn>[0]) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     urls.push(url);
     const body = JSON.stringify({ access_token: "t", expires_in: 1799, data: {}, resources: [] });
     return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
-  }) as FetchFn;
+  };
 }
 
 interface Case {
