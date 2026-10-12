@@ -305,4 +305,63 @@ describe("CustodyStore.verifyChain — pinned head (#2150)", () => {
 
     expect(await store.verifyChain("c1")).toEqual([{ line: 0, seq: null, reason: "head-regression" }]);
   });
+
+  it("keeps reporting a truncation after the next append, instead of re-pinning over it", async () => {
+    await recordN(5);
+    const pinBefore = await readFile(headPath(), "utf8");
+    await writeFile(logPath, (await lines()).slice(0, 3).join("\n") + "\n", "utf8");
+
+    await store.record("c1", input());
+
+    expect(await lines()).toHaveLength(4); // the new evidence is still recorded
+    expect(await readFile(headPath(), "utf8")).toBe(pinBefore);
+    expect(await store.verifyChain("c1")).toEqual([{ line: 5, seq: 5, reason: "head-regression" }]);
+  });
+
+  it("keeps reporting a truncation after appends that bring the log back to the pinned length", async () => {
+    await recordN(5);
+    await writeFile(logPath, (await lines()).slice(0, 3).join("\n") + "\n", "utf8");
+
+    await store.record("c1", input());
+    await store.record("c1", input());
+    await store.record("c1", input());
+
+    expect(await lines()).toHaveLength(6);
+    expect(await store.verifyChain("c1")).toEqual([{ line: 5, seq: 5, reason: "head-regression" }]);
+  });
+
+  it("keeps reporting a corrupt pin after the next append", async () => {
+    await recordN(1);
+    await writeFile(headPath(), "{not json", "utf8");
+
+    await store.record("c1", input());
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 0, seq: null, reason: "head-regression" }]);
+  });
+
+  it("advances the pin past a log that is ahead of it (a crash between append and pin write)", async () => {
+    await recordN(2);
+    const all = await lines();
+    const next = { ...input(), event: "collected", seq: 3, prevHash: sha(all[1]) };
+    await appendFile(logPath, JSON.stringify(next) + "\n", "utf8");
+
+    await store.record("c1", input());
+    const after = await lines();
+
+    expect(JSON.parse(await readFile(headPath(), "utf8"))).toMatchObject({
+      records: 4,
+      headHash: sha(after[3]),
+    });
+    expect(await store.verifyChain("c1")).toEqual([]);
+  });
+
+  it("advances an empty pin normally on the first append", async () => {
+    await mkdir(join(casesRoot, "c1", "metadata"), { recursive: true });
+    await writeFile(headPath(), JSON.stringify({ records: 0, headSeq: null, headHash: "" }), "utf8");
+
+    await recordN(2);
+
+    expect(JSON.parse(await readFile(headPath(), "utf8"))).toMatchObject({ records: 2 });
+    expect(await store.verifyChain("c1")).toEqual([]);
+  });
 });

@@ -357,9 +357,18 @@ export class CustodyStore {
         records.push(record);
       }
 
+      // A log that has already regressed past its pin keeps that pin (#2150). Re-pinning from the
+      // truncated log would make the next routine import erase the evidence of missing records. The
+      // new records are still appended — custody append never fails an import — and because the log
+      // is append-only, the old pin keeps mismatching (line missing, or a different line in its
+      // place), so verifyChain reports the regression on every later append too. No pin, a pin of
+      // 0, or a log ahead of its pin (a crash between the two writes) is not a regression.
+      const regressed = headRegression(await this.pinnedHead(caseId), lines) !== null;
+
       await this.cases.withCaseWrite(this.path(caseId), async () => {
         await mkdir(this.cases.metadataDir(caseId), { recursive: true }); // refused for a deleted case (#1855)
         await appendFile(this.path(caseId), pending.join("\n") + "\n", "utf8");
+        if (regressed) return;
         // Log FIRST, pin second: a crash between them leaves the log ahead of its pin, which
         // verifyChain treats as benign. The reverse order would read as a truncation (#2150).
         const head: CustodyChainHead = {
