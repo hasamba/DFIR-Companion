@@ -1,0 +1,35 @@
+# Pinned toolchain for building the user manual (mkdocs-docs/ -> GitHub Pages).
+# Installed by .github/workflows/pages.yml with `pip install -r requirements-docs.txt`.
+# Every line is an exact `==` pin (mkdocs-material plus its resolved dependency tree, for the
+# Python version pages.yml sets up) so a hijacked upstream release cannot reach the Pages runner,
+# which holds `pages: write` and `id-token: write`. To bump: resolve in a clean venv
+# (`pip install mkdocs-material==X.Y.Z && pip freeze`), review the diff, and update these lines.
+# Enforced by companion/tests/architecture/supplyChainPins.test.ts.
+babel==2.18.0
+backrefs==8.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+click==8.5.0
+ghp-import==2.1.0
+idna==3.20
+jinja2==3.1.6
+markdown==3.11
+markupsafe==3.0.4
+mergedeep==1.3.4
+mkdocs==1.6.1
+mkdocs-get-deps==0.2.2
+mkdocs-material==9.7.7
+mkdocs-material-extensions==1.3.1
+packaging==26.3
+paginate==0.5.7
+pathspec==1.1.1
+platformdirs==4.13.0
+pygments==2.21.0
+pymdown-extensions==12.2
+python-dateutil==2.9.0.post0
+pyyaml==6.0.3
+pyyaml-env-tag==1.1
+requests==2.34.2
+six==1.17.0
+urllib3==2.8.0
+watchdog==6.0.0

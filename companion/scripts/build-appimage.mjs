@@ -3,7 +3,8 @@
 // is redirected by AppRun to the directory the user launches from (the squashfs is read-only).
 //
 // Run with:  npm run package:appimage   (on Linux; CI runs it on ubuntu-latest)
-import { mkdir, rm, writeFile, copyFile, cp, chmod, stat } from "node:fs/promises";
+import { mkdir, rm, writeFile, readFile, copyFile, cp, chmod, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
@@ -19,10 +20,34 @@ const APPDIR = join(BUILD_DIR, "DFIR-Companion.AppDir");
 const OUT_DIR = join(COMPANION_DIR, "dist-appimage");
 const OUT_FILE = join(OUT_DIR, "DFIR-Companion-x86_64.AppImage");
 const APPIMAGETOOL = join(BUILD_DIR, "appimagetool-x86_64.AppImage");
-// "continuous" is appimagetool's rolling latest — there is no stable release tag to pin to
-// (this is what AppImage's own docs recommend for CI).
+// Pinned to appimagetool release 1.9.1 with a SHA-256 check (#2157). The binary is executed in the
+// release job that builds the shipped AppImage, so it must never come from the moving `continuous`
+// tag unverified. The hash is the release asset's published sha256 digest. Bump BOTH together.
 const APPIMAGETOOL_URL =
-  "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage";
+  "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage";
+const APPIMAGETOOL_SHA256 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0";
+
+function sha256Hex(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+// Download appimagetool, verify it, and only then write + chmod it. A cached copy is re-checked
+// and replaced if it does not match.
+async function ensureAppimagetool() {
+  if (existsSync(APPIMAGETOOL) && sha256Hex(await readFile(APPIMAGETOOL)) === APPIMAGETOOL_SHA256) {
+    return;
+  }
+  console.log("[appimage] downloading appimagetool");
+  const resp = await fetch(APPIMAGETOOL_URL);
+  if (!resp.ok) throw new Error(`appimagetool download failed: ${resp.status}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+  const got = sha256Hex(buf);
+  if (got !== APPIMAGETOOL_SHA256) {
+    throw new Error(`appimagetool checksum mismatch: expected ${APPIMAGETOOL_SHA256} got ${got}`);
+  }
+  await writeFile(APPIMAGETOOL, buf);
+  await chmod(APPIMAGETOOL, 0o755);
+}
 
 function run(cmd, args, opts = {}) {
   return new Promise((res, rej) => {
@@ -84,14 +109,8 @@ async function main() {
   await writeFile(join(APPDIR, "AppRun"), appRun);
   await chmod(join(APPDIR, "AppRun"), 0o755);
 
-  // 3. Fetch appimagetool if absent.
-  if (!existsSync(APPIMAGETOOL)) {
-    console.log("[appimage] downloading appimagetool");
-    const resp = await fetch(APPIMAGETOOL_URL);
-    if (!resp.ok) throw new Error(`appimagetool download failed: ${resp.status}`);
-    await writeFile(APPIMAGETOOL, Buffer.from(await resp.arrayBuffer()));
-    await chmod(APPIMAGETOOL, 0o755);
-  }
+  // 3. Fetch appimagetool (pinned + SHA-256 verified before it is written or run).
+  await ensureAppimagetool();
 
   // 4. Build the AppImage (extract-and-run avoids the FUSE requirement on CI runners).
   await mkdir(OUT_DIR, { recursive: true });
