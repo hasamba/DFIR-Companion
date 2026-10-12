@@ -18,6 +18,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Read-only: the scan only checks out and reads history; never inherit a writable default token.
+permissions:
+  contents: read
+
 jobs:
   betterleaks-scan:
     runs-on: ubuntu-latest
