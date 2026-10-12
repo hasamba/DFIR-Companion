@@ -68,7 +68,9 @@ function buildPipeline(stateStore: StateStore) {
             relatedIocs: ["i1"],
             mitreTechniques: ["T1059"],
             status: "open",
-            relatedEventIds: ["e-from-capture"],
+            // The screenshot pass renumbers model-chosen ids to s<capture seq>e<n> (#2175), and
+            // synthesis cites the stored id — so this is the first capture's first event.
+            relatedEventIds: ["s1e1"],
           },
         ],
         iocs: [
