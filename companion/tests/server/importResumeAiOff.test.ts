@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
 import { registerImportResumeHandler } from "../../src/routes/importRecovery.js";
 import type { RouteContext } from "../../src/routes/context.js";
 
@@ -23,6 +24,7 @@ async function harness(enabled: boolean) {
   const dispatchImport = vi.fn(async () => undefined);
   const ctx = {
     store,
+    importLock: new ImportLock(),
     options: {
       pipeline: {},
       stateStore,
