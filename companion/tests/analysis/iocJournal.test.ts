@@ -1,4 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// The journal works on the raw stored IOC rows by design, and these tests compare it with the
+// whole-list algorithms over the same raw rows. StateStore.load's #2178 repair (a non-string value
+// becomes text) would make the oracle see different rows from the journal, so it is off here; it
+// has its own tests in iocRepair.test.ts and stateStore.test.ts.
+vi.mock("../../src/analysis/iocRepair.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/analysis/iocRepair.js")>()),
+  withStringIocValues: <S>(state: S): S => state,
+}));
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

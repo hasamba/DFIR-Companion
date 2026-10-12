@@ -7,6 +7,7 @@ import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { requestIocCandidates } from "./iocCandidatesRequest.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import { withStringIocValues } from "./iocRepair.js";
 import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
 import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
 import { IocJournalReader, type IocOutline } from "./iocJournal.js";
@@ -328,7 +329,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         caseId,
       });
     }
-    const state = { ...emptyState(caseId), ...(parsed ?? {}), caseId };
+    const state = withStringIocValues({ ...emptyState(caseId), ...(parsed ?? {}), caseId });
     const result = state.forensicTimeline.length
       ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
       : state;

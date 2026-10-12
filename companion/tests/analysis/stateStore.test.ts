@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent, type IOC } from "../../src/analysis/stateTypes.js";
+import { buildAssetGraph } from "../../src/analysis/assetGraph.js";
+import { applyFalsePositive, type FalsePositiveMarker } from "../../src/analysis/falsePositive.js";
+import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import {
   CANONICAL_EVENT_SCHEMA_VERSION,
   canonicalConformanceIssues,
@@ -32,6 +35,31 @@ describe("StateStore", () => {
       name: "AbortError",
     });
     expect(reads).not.toHaveBeenCalled();
+  });
+
+  it("a stored IOC with a non-string value loads as a string and readers do not throw (#2178)", async () => {
+    const state = emptyState("c1");
+    state.iocs = [
+      { id: "ioc-1", type: "ip", value: "10.0.0.5", firstSeen: "2026-01-01T00:00:00Z" },
+      { id: "ioc-2", type: "other", value: 12345 as unknown as string, firstSeen: "2026-01-01T00:00:00Z" },
+    ] as IOC[];
+    await stateStore.save(state);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const loaded = await stateStore.load("c1");
+      expect(loaded.iocs.map((i) => i.id)).toEqual(["ioc-1", "ioc-2"]);
+      expect(loaded.iocs.every((i) => typeof i.value === "string")).toBe(true);
+      expect(loaded.iocs[1].value).toBe("12345");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain("c1");
+      expect(String(warn.mock.calls[0][0])).not.toContain("12345");
+      const marker = { kind: "ioc", ref: "10.0.0.5" } as FalsePositiveMarker;
+      expect(() => buildAssetGraph(loaded)).not.toThrow();
+      expect(() => applyFalsePositive(loaded, [marker])).not.toThrow();
+      expect(() => renderMarkdownReport(loaded)).not.toThrow();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("returns empty state when none saved", async () => {
