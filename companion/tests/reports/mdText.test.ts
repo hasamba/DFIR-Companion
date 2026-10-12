@@ -168,19 +168,21 @@ describe("cellMd escapes backslash runs in linear time (#2117)", () => {
   // retried the rest of the run from every position, so 80,000 backslashes took ~7 s and one hostile
   // evidence field could block the event loop.
   const RUN = 200_000;
+  // The budget is 1 s, not 100 ms (#2172): the regression was ~7 s at 80k characters, so 1 s
+  // still catches it with margin on a loaded Windows runner, where 100 ms was a flake source.
 
   it("handles a long backslash run with no pipe quickly and leaves it unchanged", () => {
     const input = "\\".repeat(RUN);
     const start = performance.now();
     const out = cellMd(input);
-    expect(performance.now() - start).toBeLessThan(100);
+    expect(performance.now() - start).toBeLessThan(1000);
     expect(out).toBe(input);
   });
 
   it("handles a long backslash run before a pipe quickly and doubles it", () => {
     const start = performance.now();
     const out = cellMd(`${"\\".repeat(RUN)}|`);
-    expect(performance.now() - start).toBeLessThan(100);
+    expect(performance.now() - start).toBeLessThan(1000);
     expect(out).toBe(`${"\\".repeat(RUN * 2)}\\|`);
   });
 
