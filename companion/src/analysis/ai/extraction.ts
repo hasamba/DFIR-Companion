@@ -11,10 +11,11 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { InvestigationState, Severity } from "../stateTypes.js";
 import { tagNaiveAsUtc } from "../naiveTimestamp.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
-import { buildStateSummary } from "../summary.js";
+import { buildStateSummary, summarizedEventIds } from "../summary.js";
 import { detectTool } from "../toolDetect.js";
 import { getCsvPrompt, getLogPrompt, getSystemPrompt } from "./prompts/index.js";
 import { type AiCallContext } from "./aiContext.js";
+import { renumberScreenshotEvents } from "./screenshotEventIds.js";
 import {
   buildImportAnonContext,
   presidioPreScan,
@@ -103,7 +104,15 @@ export async function analyzeWindow(
     );
 
     const last = analyzable[analyzable.length - 1];
-    const next = await ctx.mergeWithAliases(state, tagScreenshotSources(delta, analyzable), {
+    // Renumber model-chosen event ids like the CSV/log path below does (#2175): a reused id would
+    // otherwise overwrite an unrelated stored event. Only ids shown to this window may extend by id.
+    const ided = renumberScreenshotEvents(
+      delta,
+      state.forensicTimeline,
+      summarizedEventIds(state),
+      `s${last.sequenceNumber}`,
+    );
+    const next = await ctx.mergeWithAliases(state, tagScreenshotSources(ided, analyzable), {
       windowSequence: last.sequenceNumber,
       timestamp: last.timestamp,
       sourceScreenshots: analyzable.map((c) => c.screenshotFile),
