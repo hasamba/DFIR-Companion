@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, writeFile, readFile, appendFile, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, appendFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -130,7 +130,11 @@ describe("CustodyStore.verifyChain", () => {
 
     await writeFile(logPath, first + "\n" + third + "\n", "utf8");
 
-    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: 3, reason: "prev-hash-mismatch" }]);
+    // The log is also now shorter than its pinned head (#2150): line 3, seq 3 is gone.
+    expect(await store.verifyChain("c1")).toEqual([
+      { line: 2, seq: 3, reason: "prev-hash-mismatch" },
+      { line: 3, seq: 3, reason: "head-regression" },
+    ]);
   });
 
   it("flags a record whose seq does not advance", async () => {
@@ -157,9 +161,7 @@ describe("CustodyStore.verifyChain", () => {
   it("flags a line that will not parse instead of skipping it", async () => {
     // A custody log is a tamper-EVIDENCE record. Skipping a line the parser cannot read means a
     // corrupted or overwritten entry verifies as an intact chain, and the route logs "chain intact"
-    // over it. Truncating the tail is still undetectable here by design (see the doc comment on
-    // verifyChain — that is the signed manifest's job), but a line that is PRESENT and unreadable
-    // is a break this walk can see.
+    // over it. A truncated tail is caught separately, against the pinned head (#2150).
     await store.record("c1", input());
     await appendFile(logPath, "not json\n", "utf8");
 
@@ -197,5 +199,110 @@ describe("CustodyStore.verifyChain", () => {
 
     expect(next.prevHash).toBe(sha(JSON.stringify(legacy)));
     expect(await store.verifyChain("c1")).toEqual([]);
+  });
+});
+
+describe("CustodyStore.verifyChain — pinned head (#2150)", () => {
+  const headPath = () => join(casesRoot, "c1", "metadata", "custody-head.json");
+  const recordN = async (n: number) => {
+    for (let i = 0; i < n; i++) await store.record("c1", input());
+  };
+
+  it("pins the chain head on every append", async () => {
+    await recordN(2);
+    const all = await lines();
+
+    expect(JSON.parse(await readFile(headPath(), "utf8"))).toEqual({
+      records: 2,
+      headSeq: 2,
+      headHash: sha(all[1]),
+    });
+  });
+
+  it("flags tail truncation, which leaves an otherwise valid shorter chain", async () => {
+    await recordN(5);
+    const all = await lines();
+
+    await writeFile(logPath, all.slice(0, 3).join("\n") + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 5, seq: 5, reason: "head-regression" }]);
+  });
+
+  it("flags a truncated tail re-chained with forged lines of the same length", async () => {
+    await recordN(5);
+    const kept = (await lines()).slice(0, 3);
+    let prev = sha(kept[2]);
+    const forged: string[] = [];
+    for (const seq of [4, 5]) {
+      const line = JSON.stringify({
+        ...input(),
+        collectedBy: "mallory",
+        event: "collected",
+        seq,
+        prevHash: prev,
+      });
+      forged.push(line);
+      prev = sha(line);
+    }
+
+    await writeFile(logPath, [...kept, ...forged].join("\n") + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 5, seq: 5, reason: "head-regression" }]);
+  });
+
+  it("does not flag a legacy log with no pin, and pins it from the next append", async () => {
+    const legacy = { ...input(), artifactPath: "/tmp/legacy.dd" };
+    await mkdir(join(casesRoot, "c1", "metadata"), { recursive: true });
+    await appendFile(logPath, JSON.stringify(legacy) + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([]);
+
+    await store.record("c1", input());
+    const last = await store.record("c1", input());
+    const all = await lines();
+    await writeFile(logPath, all.slice(0, 2).join("\n") + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 3, seq: last.seq, reason: "head-regression" }]);
+  });
+
+  it("does not flag a log that is ahead of its pin (a crash between append and pin write)", async () => {
+    await recordN(2);
+    const all = await lines();
+    const next = { ...input(), event: "collected", seq: 3, prevHash: sha(all[1]) };
+
+    await appendFile(logPath, JSON.stringify(next) + "\n", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([]);
+  });
+
+  it("does not flag an empty pin over an empty log", async () => {
+    await mkdir(join(casesRoot, "c1", "metadata"), { recursive: true });
+    await writeFile(headPath(), JSON.stringify({ records: 0, headSeq: null, headHash: "" }), "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([]);
+  });
+
+  it("flags a pinned log that has been deleted outright", async () => {
+    await recordN(2);
+
+    await rm(logPath);
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 2, seq: 2, reason: "head-regression" }]);
+  });
+
+  it("flags a corrupt pin as one break instead of throwing or reading clean", async () => {
+    await recordN(1);
+
+    await writeFile(headPath(), "{not json", "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 0, seq: null, reason: "head-regression" }]);
+  });
+
+  it("flags a pin with the wrong shape the same way as a corrupt one", async () => {
+    await recordN(1);
+
+    await writeFile(headPath(), JSON.stringify({ records: "lots" }), "utf8");
+
+    expect(await store.verifyChain("c1")).toEqual([{ line: 0, seq: null, reason: "head-regression" }]);
   });
 });

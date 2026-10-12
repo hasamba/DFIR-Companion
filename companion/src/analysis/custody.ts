@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { StateLock } from "./stateLock.js";
 import { authenticatedActorFields } from "../auth/identityContext.js";
 import { openServerPath, type ServerPathPolicy } from "../storage/serverPathGuard.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 // Evidence here is disk images, memory dumps and Plaso super-timelines — routinely 400 MB+, and
 // past V8's ~512 MB string ceiling. readFile() would OOM on exactly the artifacts custody matters
@@ -160,7 +161,12 @@ export interface CustodyChainBreak {
   /** 1-indexed position in custody.jsonl, so the break is findable even if seq itself was forged. */
   line: number;
   seq: number | null;
-  reason: "prev-hash-mismatch" | "seq-out-of-order" | "unparseable";
+  /**
+   * `head-regression` (#2150): the log no longer reaches the head pinned at the last append — lines
+   * were cut off the end, or the pinned head line and everything after it was rewritten. `line` and
+   * `seq` name the pinned head that is gone; `line: 0` means the pin itself is unreadable.
+   */
+  reason: "prev-hash-mismatch" | "seq-out-of-order" | "unparseable" | "head-regression";
 }
 
 /** Where the custody chain currently ends. Signed into the manifest to pin the log's length. */
@@ -169,6 +175,35 @@ export interface CustodyChainHead {
   headSeq: number | null;
   /** Hash of the last stored line; "" when nothing has been recorded. */
   headHash: string;
+}
+
+/** File name of the pinned chain head, in the case's metadata dir next to custody.jsonl (#2150). */
+export const CUSTODY_HEAD_FILENAME = "custody-head.json";
+
+function isChainHead(value: unknown): value is CustodyChainHead {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    Number.isInteger(v.records) &&
+    (v.records as number) >= 0 &&
+    (v.headSeq === null || typeof v.headSeq === "number") &&
+    typeof v.headHash === "string"
+  );
+}
+
+/**
+ * Compare the log against the head pinned at the last append (#2150). Only a REGRESSION is a break:
+ * a log AHEAD of its pin is what a crash between the append and the pin write leaves, and is benign.
+ * A missing pin is a case recorded before pinning existed — it gets one on its next append. A pin
+ * that is present but unreadable is reported (line 0), never treated as clean.
+ */
+function headRegression(pin: unknown, lines: readonly string[]): CustodyChainBreak | null {
+  if (pin === undefined) return null;
+  if (!isChainHead(pin)) return { line: 0, seq: null, reason: "head-regression" };
+  if (pin.records === 0) return null;
+  const atHead = lines[pin.records - 1];
+  if (atHead !== undefined && hashLine(atHead) === pin.headHash) return null;
+  return { line: pin.records, seq: pin.headSeq, reason: "head-regression" };
 }
 
 /** Hash of one stored line, exactly as it sits in the file — the unit the chain links together. */
@@ -204,6 +239,30 @@ export class CustodyStore {
 
   private path(caseId: string): string {
     return this.cases.custodyLogPath(caseId);
+  }
+
+  /** The chain head pinned beside the log on every append, so a cut-off tail shows (#2150). */
+  private headPath(caseId: string): string {
+    return join(this.cases.metadataDir(caseId), CUSTODY_HEAD_FILENAME);
+  }
+
+  /**
+   * The pinned head as stored: undefined when there is no pin yet (a legacy case), the parsed JSON
+   * otherwise, and null when the file will not parse — headRegression() reports that as a break.
+   */
+  private async pinnedHead(caseId: string): Promise<unknown> {
+    let text: string;
+    try {
+      text = await readFile(this.headPath(caseId), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw err;
+    }
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
   }
 
   /** The stored lines of custody.jsonl, verbatim; [] when the log does not exist yet. */
@@ -243,8 +302,8 @@ export class CustodyStore {
 
   /**
    * Where the chain currently ends: how many records, the last seq, and the hash of the last stored
-   * line. Signing these into the manifest is what makes tail truncation detectable — lopping lines
-   * off the end otherwise leaves a shorter but perfectly valid chain (see verifyChain).
+   * line. Signed into the manifest so the log's length is pinned outside the case folder; the same
+   * shape is also pinned beside the log on every append (#2150), which verifyChain checks at rest.
    */
   async chainHead(caseId: string): Promise<CustodyChainHead> {
     const lines = await this.storedLines(caseId);
@@ -301,6 +360,14 @@ export class CustodyStore {
       await this.cases.withCaseWrite(this.path(caseId), async () => {
         await mkdir(this.cases.metadataDir(caseId), { recursive: true }); // refused for a deleted case (#1855)
         await appendFile(this.path(caseId), pending.join("\n") + "\n", "utf8");
+        // Log FIRST, pin second: a crash between them leaves the log ahead of its pin, which
+        // verifyChain treats as benign. The reverse order would read as a truncation (#2150).
+        const head: CustodyChainHead = {
+          records: lines.length + pending.length,
+          headSeq: records[records.length - 1].seq,
+          headHash: prevHash,
+        };
+        await atomicWrite(this.headPath(caseId), JSON.stringify(head));
       });
       // Callers get back the absolute form — the relative one never leaves this class.
       return records;
@@ -463,11 +530,16 @@ export class CustodyStore {
    * jump in seq is fine — nextCustodySeq burns a number on a failed append by design, so gaps are
    * expected. Only a seq that fails to ADVANCE is a break: that is a replay or a rewrite.
    *
-   * What this cannot catch on its own is truncation of the tail — lopping off the last N lines leaves
-   * a perfectly valid shorter chain. Detecting that needs the head seq + hash recorded somewhere the
-   * log itself cannot reach, which is the signed manifest's job (#231 item 2).
+   * The links alone cannot catch truncation of the tail — lopping off the last N lines leaves a
+   * perfectly valid shorter chain. So the walk also compares the log against the head pinned beside
+   * it on every append (#2150). That pin sits in the same case folder, so it catches sync rollbacks,
+   * partial writes and naive tampering, not an actor who rewrites both; the signed manifest
+   * (#231 item 2) remains the record held outside the folder.
    */
   async verifyChain(caseId: string): Promise<CustodyChainBreak[]> {
+    // Pin BEFORE log: an append landing between the two reads then shows a log ahead of its pin
+    // (benign), never a pin ahead of the log (which would read as a truncation).
+    const pin = await this.pinnedHead(caseId);
     const lines = await this.storedLines(caseId);
     const breaks: CustodyChainBreak[] = [];
     let lastSeq: number | null = null;
@@ -496,7 +568,8 @@ export class CustodyStore {
       }
       if (seq !== null) lastSeq = seq;
     }
-    return breaks;
+    const regression = headRegression(pin, lines);
+    return regression ? [...breaks, regression] : breaks;
   }
 
   async verifyIntegrity(caseId: string): Promise<CustodyMismatch[]> {
