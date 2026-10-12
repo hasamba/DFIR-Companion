@@ -2,12 +2,16 @@ import type { CompanionClient } from "./companionClient.js";
 import type { CaptureQueue, QueueSendResult } from "./captureQueue.js";
 import type { CapturePayload, ConnectionStatus, TriggerType } from "./types.js";
 
-// Is this HTTP status worth retrying later? A 4xx is the companion's considered answer about THIS
-// capture (404 case gone, 423 case closed, 410 deleted) and will say the same thing tomorrow, so a
-// queued capture that gets one must be discarded rather than retried forever. Everything else —
-// 5xx, and 0 for "fetch threw / companion unreachable" — is transient (#215).
+// Is this HTTP status worth retrying later? A 4xx is normally the companion's considered answer
+// about THIS capture (404 case gone, 423 case closed, 410 deleted) and will say the same thing
+// tomorrow, so a queued capture that gets one must be discarded rather than retried forever.
+// The exceptions are 408 (request timeout) and 429 (rate limited — e.g. a case-password lockout,
+// which rejects even a valid capture until the window passes): those mean "try again later", so
+// they are transient like 5xx and 0 for "fetch threw / companion unreachable" (#215, #2174).
+const TRANSIENT_4XX: ReadonlySet<number> = new Set([408, 429]);
+
 function isPermanent(status: number): boolean {
-  return status >= 400 && status < 500;
+  return status >= 400 && status < 500 && !TRANSIENT_4XX.has(status);
 }
 
 export interface TabSnapshot {
@@ -53,11 +57,12 @@ export class CaptureController {
 
     // The companion responded but rejected the capture (4xx — typically 404, the case
     // doesn't exist, or 423 — the case is closed). Retrying won't help, so don't queue.
+    // 408/429 are not rejections and fall through to the queue below (#2174).
     if (isPermanent(result.status)) {
       return { online: true, queued: await this.queue.size(), rejected: result.status, rejectedMessage: result.errorMessage };
     }
 
-    // Transient failure (unreachable / 5xx) — queue for retry when the companion is back.
+    // Transient failure (unreachable / 5xx / 408 / 429) — queue for retry when the companion is back.
     await this.queue.enqueue(payload);
     return { online: false, queued: await this.queue.size() };
   }

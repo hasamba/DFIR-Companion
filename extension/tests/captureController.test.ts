@@ -38,6 +38,18 @@ describe("CaptureController", () => {
     expect(await queue.size()).toBe(0);
   });
 
+  // A 429 (case-password lockout) or 408 is a "try again later", not a verdict on the capture —
+  // dropping it lost the screenshot outright (#2174).
+  it.each([408, 429])("queues a capture whose first POST gets a transient %i", async (code) => {
+    const client = new CompanionClient("http://x", vi.fn(async () => new Response("{}", { status: code })));
+    const controller = new CaptureController(client, queue);
+    const status = await controller.capture("c1", "timer", snapshot);
+    expect(status.rejected).toBeUndefined();
+    expect(status.online).toBe(false);
+    expect(status.queued).toBe(1);
+    expect(await queue.size()).toBe(1);
+  });
+
   it("flushes the queue once the companion is back", async () => {
     let online = false;
     const client = new CompanionClient("http://x",

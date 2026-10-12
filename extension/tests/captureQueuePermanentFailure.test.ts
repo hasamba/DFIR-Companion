@@ -80,16 +80,16 @@ describe("CaptureQueue permanent failures (#215)", () => {
 });
 
 describe("CaptureController surfaces dropped captures (#215)", () => {
-  it("reports what the drain discarded so the popup can warn the analyst", async () => {
+  it.each([404, 410, 423])("reports what the drain discarded (%i) so the popup can warn the analyst", async (code) => {
     const queue2 = new CaptureQueue(`dfir-${Math.random().toString(36).slice(2)}`);
     await queue2.clear();
     await queue2.enqueue(payload(1)); // stale: its case is gone
 
-    // The live capture succeeds (201); the queued one gets a permanent 410.
+    // The live capture succeeds (201); the queued one gets a permanent 4xx.
     let call = 0;
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
       call += 1;
-      return call === 1 ? new Response("{}", { status: 201 }) : new Response(JSON.stringify({ error: "case deleted" }), { status: 410 });
+      return call === 1 ? new Response("{}", { status: 201 }) : new Response(JSON.stringify({ error: "case gone" }), { status: code });
     });
     const controller = new CaptureController(new CompanionClient("http://x", fetchFn), queue2);
 
@@ -98,7 +98,7 @@ describe("CaptureController surfaces dropped captures (#215)", () => {
     expect(status.online).toBe(true);
     expect(status.queued).toBe(0); // the unsendable entry was cleared, not left blocking
     expect(status.dropped).toHaveLength(1);
-    expect(status.dropped![0].status).toBe(410);
+    expect(status.dropped![0].status).toBe(code);
   });
 
   it("keeps a queued capture when the companion is merely down", async () => {
@@ -117,5 +117,30 @@ describe("CaptureController surfaces dropped captures (#215)", () => {
 
     expect(status.queued).toBe(1);
     expect(status.dropped ?? []).toHaveLength(0);
+  });
+
+  it("keeps a queued capture that gets a 429 lockout, and sends it on a later drain (#2174)", async () => {
+    const queue2 = new CaptureQueue(`dfir-${Math.random().toString(36).slice(2)}`);
+    await queue2.clear();
+    await queue2.enqueue(payload(1));
+
+    let locked = true;
+    let call = 0;
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      call += 1;
+      // Odd calls are the live capture (always accepted); even calls drain the queued entry.
+      if (call % 2 === 1) return new Response("{}", { status: 201 });
+      return locked ? new Response(JSON.stringify({ error: "locked" }), { status: 429 }) : new Response("{}", { status: 201 });
+    });
+    const controller = new CaptureController(new CompanionClient("http://x", fetchFn), queue2);
+
+    const first = await controller.capture("c1", "timer", { url: "u", tabTitle: "t", imageBase64: "AAAA" });
+    expect(first.queued).toBe(1);
+    expect(first.dropped ?? []).toHaveLength(0);
+
+    locked = false;
+    const second = await controller.capture("c1", "timer", { url: "u", tabTitle: "t", imageBase64: "AAAA" });
+    expect(second.queued).toBe(0);
+    expect(second.dropped ?? []).toHaveLength(0);
   });
 });
