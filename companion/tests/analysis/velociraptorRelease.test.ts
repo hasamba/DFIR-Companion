@@ -1,6 +1,11 @@
 // companion/tests/analysis/velociraptorRelease.test.ts
 import { describe, it, expect } from "vitest";
-import { parseReleaseAssets, pickVelociraptorAsset } from "../../src/analysis/velociraptorRelease.js";
+import {
+  isAllowedAssetUrl,
+  parseReleaseAssets,
+  pickVelociraptorAsset,
+  VELOCIRAPTOR_ASSET_HOSTS,
+} from "../../src/analysis/velociraptorRelease.js";
 
 // Older releases published plain (uncompressed) binaries. Kept so the picker stays backward
 // compatible and still prefers a plain binary when one exists.
@@ -149,5 +154,69 @@ describe("pickVelociraptorAsset (gzip-compressed binaries, current releases — 
       url: "https://example.com/velociraptor-v0.77.3-linux-amd64",
       compressed: false,
     });
+  });
+});
+
+// #2133: the asset URL comes verbatim from the GitHub API JSON, and its bytes become an executable
+// the companion later spawns. Only GitHub's own release hosts over https are accepted.
+describe("isAllowedAssetUrl (#2133)", () => {
+  it("accepts every pinned GitHub release host over https", () => {
+    for (const host of VELOCIRAPTOR_ASSET_HOSTS) {
+      expect(isAllowedAssetUrl(`https://${host}/Velocidex/velociraptor/releases/download/v0.77.3/x.gz`)).toBe(
+        true,
+      );
+    }
+    expect(isAllowedAssetUrl("https://GitHub.com/Velocidex/velociraptor/releases/download/v1/x")).toBe(true);
+  });
+
+  it("refuses http, other hosts, look-alike hosts, userinfo tricks, ports and non-URLs", () => {
+    for (const raw of [
+      "http://github.com/Velocidex/velociraptor/releases/download/v1/x",
+      "http://169.254.169.254/latest/meta-data",
+      "https://evil.example/velociraptor-v0.77.3-linux-amd64.gz",
+      "https://github.com.evil.example/x",
+      "https://evil.example/github.com",
+      "https://github.com@evil.example/",
+      "https://user:pass@github.com/x",
+      "https://github.com:8443/x",
+      "https://api.github.com/x",
+      "ftp://github.com/x",
+      "not a url",
+      "",
+    ]) {
+      expect(isAllowedAssetUrl(raw), raw).toBe(false);
+    }
+  });
+});
+
+describe("parseReleaseAssets digest (#2133)", () => {
+  const hex = "a".repeat(64);
+
+  it("keeps a well-formed sha256 digest and carries it to the picked asset as lower-case hex", () => {
+    const parsed = parseReleaseAssets({
+      tag_name: "v0.77.3",
+      assets: [
+        {
+          name: "velociraptor-v0.77.3-linux-amd64.gz",
+          browser_download_url: "https://github.com/x.gz",
+          digest: `sha256:${hex.toUpperCase()}`,
+        },
+      ],
+    });
+    expect(parsed?.assets[0].digest).toBe(`sha256:${hex.toUpperCase()}`);
+    expect(pickVelociraptorAsset(parsed!.assets, "linux", "x64")?.sha256).toBe(hex);
+  });
+
+  it("drops a malformed or non-sha256 digest", () => {
+    for (const digest of ["sha256:xyz", `sha1:${hex}`, `sha256:${hex}0`, 42, null]) {
+      const parsed = parseReleaseAssets({
+        tag_name: "v0.77.3",
+        assets: [
+          { name: "velociraptor-v0.77.3-linux-amd64", browser_download_url: "https://github.com/x", digest },
+        ],
+      });
+      expect("digest" in parsed!.assets[0]).toBe(false);
+      expect(pickVelociraptorAsset(parsed!.assets, "linux", "x64")?.sha256).toBeUndefined();
+    }
   });
 });

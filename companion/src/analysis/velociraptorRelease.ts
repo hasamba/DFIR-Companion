@@ -4,9 +4,25 @@
 
 export const VELOCIRAPTOR_REPO = "Velocidex/velociraptor";
 
+// The only hosts a release asset may come from (#2133). The asset URL is copied verbatim out of the
+// GitHub API JSON and its bytes become an executable the companion later spawns, so a response that
+// names any other host — or plain http — is refused. `release-assets.githubusercontent.com` is
+// GitHub's current redirect target for release downloads; `objects.githubusercontent.com` the older
+// one. Leaving either out would break the button rather than harden it.
+export const VELOCIRAPTOR_ASSET_HOSTS = [
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+] as const;
+
+const SHA256_DIGEST = /^sha256:([0-9a-f]{64})$/i;
+
 export interface ReleaseAsset {
   name: string;
   browser_download_url: string;
+  // GitHub's per-asset digest ("sha256:<hex>"), kept only when well-formed. Absent on releases
+  // GitHub did not digest — the downloader then relies on host pinning alone.
+  digest?: string;
 }
 
 export interface PickedAsset {
@@ -14,6 +30,22 @@ export interface PickedAsset {
   url: string;
   // True when the asset is the gzip-compressed binary (`….gz`); the downloader gunzips it.
   compressed: boolean;
+  // Lower-case hex SHA-256 of the asset AS PUBLISHED (the compressed bytes), when GitHub supplied one.
+  sha256?: string;
+}
+
+// https, an exact host from VELOCIRAPTOR_ASSET_HOSTS, the default port, and no userinfo. Pure, so it
+// is applied both to the URL the API named and to the last hop a redirect chain landed on.
+export function isAllowedAssetUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "")
+    return false;
+  return (VELOCIRAPTOR_ASSET_HOSTS as readonly string[]).includes(url.hostname.toLowerCase());
 }
 
 export interface ParsedRelease {
@@ -34,6 +66,7 @@ export function parseReleaseAssets(json: unknown): ParsedRelease | null {
     .map((a) => ({
       name: typeof a.name === "string" ? a.name : "",
       browser_download_url: typeof a.browser_download_url === "string" ? a.browser_download_url : "",
+      ...(typeof a.digest === "string" && SHA256_DIGEST.test(a.digest) ? { digest: a.digest } : {}),
     }))
     .filter((a) => a.name && a.browser_download_url);
   return { version: tag.replace(/^v/i, ""), assets };
@@ -58,9 +91,14 @@ export function pickVelociraptorAsset(
   );
   const candidates = assets.filter((a) => pattern.test(a.name));
   const match = candidates.find((a) => !isGzipName(a.name)) ?? candidates[0];
-  return match
-    ? { name: match.name, url: match.browser_download_url, compressed: isGzipName(match.name) }
-    : null;
+  if (!match) return null;
+  const sha256 = match.digest ? SHA256_DIGEST.exec(match.digest)?.[1]?.toLowerCase() : undefined;
+  return {
+    name: match.name,
+    url: match.browser_download_url,
+    compressed: isGzipName(match.name),
+    ...(sha256 ? { sha256 } : {}),
+  };
 }
 
 function isGzipName(name: string): boolean {

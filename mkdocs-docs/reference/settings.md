@@ -197,6 +197,10 @@ connected case, so they live on the dashboard's
 Run your **own locally-installed** external tools against raw evidence the Companion can't parse
 (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. The Companion never
 downloads or bundles a binary — install and update it yourself (repo links are shown per tool).
+The one exception is the Velociraptor binary path's **Download latest release** button, which runs
+only when you click it: it accepts only https downloads from GitHub's own release hosts, and it
+checks the file against GitHub's published SHA-256 when the release has one. If either check fails,
+it refuses and saves nothing.
 
 - **Hayabusa / Velociraptor CLI** — EVTX → csv/json-timeline / artifact JSON
 - **Suricata / Snort** — PCAP → alerts (Snort uses your own rules file); see
