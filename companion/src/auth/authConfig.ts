@@ -133,3 +133,39 @@ export function assertRemoteBindingSafe(
       "documented container-loopback-proxy or public-demo value",
   );
 }
+
+/**
+ * The startup warning for an accepted unauthenticated-remote opt-out (#2161). The server cannot
+ * see how a container publishes its port, so `assertRemoteBindingSafe` accepting an opt-out is an
+ * operator assertion it cannot verify. This states that assertion out loud. It fires on every
+ * opted-out non-loopback bind by design — a reminder, never a refusal. Undefined when the bind is
+ * loopback, team mode is on, or no opt-out applies (the gate has already thrown in that case).
+ */
+export function describeUnauthenticatedExposure(
+  host: string,
+  config: TeamAuthConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (isLoopbackBinding(host) || config.enabled) return undefined;
+  const optOut = env.DFIR_ALLOW_UNAUTHENTICATED_REMOTE;
+  const base = `[auth] WARNING: no login is enforced and the server is bound to ${host}.`;
+  if (optOut === "container-loopback-proxy") {
+    return (
+      `${base} DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy asserts the host ` +
+      "publishes this port on 127.0.0.1 only (e.g. -p 127.0.0.1:4773:4773). If it is published on " +
+      "all interfaces (-p 4773:4773), anyone who can reach it can read, change and delete cases " +
+      "— set DFIR_AUTH_MODE=team."
+    );
+  }
+  if (optOut === "public-demo") {
+    const demoMode = env.DFIR_DEMO_MODE === "1" || env.DFIR_DEMO_MODE === "true";
+    const demoClause = demoMode
+      ? "DFIR_DEMO_MODE is on, so mutating routes are blocked except demo seeding."
+      : "DFIR_DEMO_MODE is off, so anyone who finds the URL can import, change and delete cases.";
+    return (
+      `${base} DFIR_ALLOW_UNAUTHENTICATED_REMOTE=public-demo accepts that this exposure is real. ` +
+      `${demoClause} Keep only throwaway data here.`
+    );
+  }
+  return undefined;
+}

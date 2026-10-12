@@ -310,11 +310,21 @@ container, but nothing outside your machine can reach it.
     network. For a deployment that is really reachable from other machines, use team mode or
     `public-demo`.
 
+The server cannot see how Docker publishes the port, so it cannot check this claim. Instead, every
+start with this value logs an `[auth] WARNING` line that names the bind address and says that no
+sign-in is enforced. The startup line also shows the real bind address, for example
+`http://127.0.0.1:4773 (bound to 0.0.0.0)`. The warning is a reminder, not an error: the
+`127.0.0.1:` prefix in `-p 127.0.0.1:4773:4773` is what makes `container-loopback-proxy` true.
+
 ### `public-demo`
 
 Use this when the exposure is real and you accept it on purpose: anyone who has the URL can use the
 server with no sign-in. Pair it with `DFIR_DEMO_MODE=1` for a read-only public demo. Without demo
 mode, every visitor has full single-user access, so put only throwaway data behind it.
+
+At every start with this value, the server logs an `[auth] WARNING` line that says the exposure is
+real. If `DFIR_DEMO_MODE` is off, the warning also says that anyone with the URL can import, change
+and delete cases. The server still starts. The warning does not stop it.
 
 ### Demo Mode
 

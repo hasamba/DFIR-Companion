@@ -18,6 +18,11 @@ import type { ForensicEvent } from "./analysis/stateTypes.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "./http/originGuard.js";
 import { listenProxySafe } from "./http/keepAlive.js";
+import {
+  describeUnauthenticatedExposure,
+  isLoopbackBinding,
+  resolveTeamAuthConfig,
+} from "./auth/authConfig.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
@@ -576,7 +581,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // socket the server is closing (#2038).
   const server = listenProxySafe(app, port, host, () => {
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
-    logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
+    const boundTo = isLoopbackBinding(host) ? "" : ` (bound to ${host})`;
+    logLine(`DFIR companion on http://${shownHost}:${port}${boundTo} (dashboard at /dashboard)`);
+    // An accepted unauthenticated-remote opt-out is an assertion the server cannot verify (#2161).
+    const exposure = describeUnauthenticatedExposure(host, resolveTeamAuthConfig(process.env));
+    if (exposure) warnLine(exposure);
     // Name the live bootstrap guard so an operator can see it without reading the code (#945).
     if (teamAuth) {
       const bootstrap =
