@@ -92,6 +92,12 @@ function buildManifest(
   return { ...base, manifestHash: manifestHash(base) };
 }
 
+/**
+ * Append-only, hash-chained ledger of analysis runs, one manifest per run under
+ * state/analysis-runs/. There is no retention cap or pruning by design (#2143): verify() expects
+ * the chain to start at sequence 1, report releases and Replay pin historical run ids, and
+ * deleting any manifest must make the integrity check fail. Backup restores leave it untouched.
+ */
 export class AnalysisRunStore {
   private readonly lock = new StateLock();
 

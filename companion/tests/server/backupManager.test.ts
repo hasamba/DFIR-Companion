@@ -16,6 +16,8 @@ import {
   type BackupTrigger,
 } from "../../src/storage/backupManager.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
+import type { AnalysisRunRecordInput } from "../../src/analysis/analysisRunTypes.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 
@@ -310,6 +312,33 @@ describe("BackupManager.restoreBackup", () => {
     const result = await mgr.restoreBackup(caseId, info.filename);
     expect(result.restored).toContain("investigation.sqlite");
     expect(await new StateStore(store).load(caseId)).toEqual(before);
+  });
+  it("leaves the analysis-run ledger untouched on restore — it is append-only, never rewound (#2143)", async () => {
+    const { mgr, store } = await makeManager();
+    const caseId = await makeCase(store);
+    const runs = new AnalysisRunStore(store, { appVersion: "test" });
+    const run = (id: string, at: string): AnalysisRunRecordInput => ({
+      id,
+      kind: "deterministic",
+      startedAt: at,
+      finishedAt: at,
+      versions: {},
+      input: { artifacts: [], eventIds: [], entityIds: [] },
+      output: { entityIds: [], hashes: [], claims: [] },
+    });
+    await runs.record(caseId, run("run-before-backup", "2026-07-30T09:00:00.000Z"));
+    const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-07-30T10:00:00.000Z");
+    await runs.record(caseId, run("run-after-backup", "2026-07-30T11:00:00.000Z"));
+
+    const { restored } = await mgr.restoreBackup(caseId, info.filename);
+
+    expect(restored.some((name) => name.startsWith("analysis-runs"))).toBe(false);
+    expect((await runs.list(caseId)).map((r) => r.id).sort()).toEqual([
+      "run-after-backup",
+      "run-before-backup",
+    ]);
+    const integrity = await runs.verify(caseId);
+    expect(integrity).toMatchObject({ ok: true, manifests: 2, problems: [] });
   });
 });
 

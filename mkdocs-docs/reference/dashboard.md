@@ -919,6 +919,8 @@ different constructions, so compare output hashes only under the same id.
 The integrity banner verifies both every manifest hash and the case's append-only hash chain.
 Changing or deleting a historical manifest makes that check fail. The ledger is included in the
 generated report folder and whole-case archives, whose own integrity manifest covers it as well.
+The ledger is never pruned: it grows by one small manifest with each run, and restoring a state
+backup leaves it as it is.
 
 **Replay** first checks that the original artifact, evidence, importer/rules, prompt/template, and
 provider/model are still available and unchanged. If anything is missing, it names the blockers and

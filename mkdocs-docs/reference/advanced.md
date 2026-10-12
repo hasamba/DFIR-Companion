@@ -122,7 +122,9 @@ See also [Deep Pass](dashboard.md#deep-pass) for the analyst-triggered batched r
 
 ## State Backups & Restore
 
-The server automatically backs up all per-case state (findings, timeline, IOCs, playbook, etc.) before each synthesis run and every hour.
+The server automatically backs up the case's investigation state (findings, timeline, IOCs, playbook, analyst decisions, etc.) before each synthesis run and every hour.
+
+The [analysis-run ledger](dashboard.md#analysis-run-ledger) is not in these backups, and a restore does not roll it back. The ledger is an append-only audit record, so it keeps the record of every run — including the one you are rolling back.
 
 View and restore backups in **Settings → Diagnostics → Per-case backup list**. One click restores to any saved state.
 
