@@ -286,4 +286,39 @@ describe("movers vs a building archive or export (#2145)", () => {
     );
     expect((await request(app).post("/cases/c1/archive")).status).toBe(409);
   });
+
+  // Codex on #2145: delete-none passed the 409 check, then awaited getCaseMeta before deleteCaseFolder
+  // set isDeleting. An export arriving in that gap took the case and walked a folder about to vanish.
+  it("an export that arrives while delete-none is still reading the case meta does not start", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-archive-lock-"));
+    const ctx = fakeCtx(root, new ImportLock());
+    const metaRead = deferred();
+    const deleteEntered = deferred();
+    let walked = false;
+    const deleteHandler = async (_req: Request, res: Response) => {
+      deleteEntered.resolve();
+      await metaRead.promise; // store.getCaseMeta, before deleteCaseFolder marks isDeleting
+      return res.status(200).json({ deleted: true });
+    };
+    const exportHandler = async (_req: Request, res: Response) => {
+      walked = true;
+      return res.status(200).json({ ok: true });
+    };
+    const app = express()
+      .post(
+        "/cases/:id/delete",
+        withArchiveBarrier(ctx, deleteHandler, () => false),
+      )
+      .post("/cases/:id/archive", withArchiveBarrier(ctx, exportHandler));
+    const deleting = request(app)
+      .post("/cases/c1/delete")
+      .then((r) => r);
+    await deleteEntered.promise;
+    expect((await request(app).post("/cases/c1/archive")).status).toBe(409);
+    expect(walked).toBe(false);
+    metaRead.resolve();
+    expect((await deleting).status).toBe(200);
+    expect((await request(app).post("/cases/c1/archive")).status).toBe(200); // the reservation is released
+    expect(walked).toBe(true);
+  });
 });
