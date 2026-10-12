@@ -20,8 +20,9 @@
  * the early returns below all route through `idle()` or `catchUpSynthesis()`.
  */
 import { join } from "node:path";
-import { writeFile, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { warnLine } from "../logging/serverLogger.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
@@ -349,10 +350,17 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
       recordAiError(caseId, "extracting", err);
-      const seqs = buf.map((c) => c.sequenceNumber);
+      // #2152: atomic (never torn JSON) and best-effort — a failed marker write must not swallow
+      // the error status below. No `pending` list: backfill re-derives it from lastAnalyzedSeq.
       const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
-      const marker = JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2);
-      await store.withCaseWrite(markerPath, () => writeFile(markerPath, marker, "utf8")); // #1855
+      const marker = JSON.stringify({ error: (err as Error).message, at: new Date().toISOString() }, null, 2);
+      try {
+        await atomicWrite(markerPath, marker); // carries the #1855 case guard itself
+      } catch (writeErr) {
+        warnLine(
+          `[capture-analysis] ${caseId}: could not record failure marker: ${(writeErr as Error).message}`,
+        );
+      }
       options.onAiStatus?.(caseId, {
         status: "error",
         at: new Date().toISOString(),
