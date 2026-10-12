@@ -20,7 +20,7 @@ import {
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
-import { deleteArchivesFirst, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
+import { deleteArchivesFirst, refusedWhileArchiving, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
@@ -281,6 +281,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (meta.status !== "archived" && !store.isInArchive(id))
         return res.status(400).json({ error: `case ${id} is not archived` });
+      if (refusedWhileArchiving(store.casesRoot, id, res)) return; // never move it under an export (#2145)
       const updated = await store.restoreCaseFolder(id, "closed"); // move + status in one locked step
       logLine(`[restore] case=${id} restored from _archived/`);
       return res.status(200).json(updated);

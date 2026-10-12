@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import express from "express";
 import type { Request, Response } from "express";
 import { mkdtemp, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -11,7 +12,7 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { withArchiveBarrier } from "../../src/routes/archiveImportBarrier.js";
-import { admitIngest, isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
+import { admitIngest, beginArchive, isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
 import { registerImportCaseGuard } from "../../src/routes/importCaseGuard.js";
 import type { RouteContext } from "../../src/routes/context.js";
 
@@ -47,9 +48,10 @@ function fakeCtx(
   casesRoot: string,
   importLock: ImportLock,
   activeJob: false | "import" | "mcp" = false,
+  deleting = false,
 ): RouteContext {
   return {
-    store: { casesRoot },
+    store: { casesRoot, isDeleting: () => deleting },
     importLock,
     options: {
       archiveIngestWaitMs: SHORT_WAIT_MS,
@@ -238,5 +240,50 @@ describe("archive vs a running import (#1903)", () => {
     const res = { status: () => res, json: () => res } as unknown as Response;
     await expect(barrier({ params: { id: "c1" } } as unknown as Request, res)).rejects.toThrow("disk full");
     expect(isCaseArchiving(root, "c1")).toBe(false);
+  });
+});
+
+// #2145: a delete with no archive and a restore skip the barrier, so either could move or remove the
+// case folder while an archive or an encrypted export was still walking it. Both now answer 409 while
+// an archive holds the case, and an archive/export waits while a delete of the case is in flight.
+describe("movers vs a building archive or export (#2145)", () => {
+  it("delete-none answers 409 while an archive builds, and deletes once it is done", async () => {
+    const { root, store, app } = await setup();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    const end = beginArchive(root, "c1");
+    expect(end).not.toBeNull();
+    const refused = await request(app).post("/cases/c1/delete").send({ archiveFirst: "none" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/archive in progress/);
+    expect(existsSync(store.caseDir("c1"))).toBe(true);
+    end?.();
+    const ok = await request(app).post("/cases/c1/delete").send({ archiveFirst: "none" });
+    expect(ok.body).toMatchObject({ deleted: true });
+  });
+
+  it("restore answers 409 while an archive builds, and restores once it is done", async () => {
+    const { root, app } = await setup();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    const archived = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
+    expect(archived.status).toBe(200);
+    expect(existsSync(join(root, "_archived", "c1"))).toBe(true);
+    const end = beginArchive(root, "c1");
+    const refused = await request(app).post("/cases/c1/restore").send({});
+    expect(refused.status).toBe(409);
+    expect(existsSync(join(root, "_archived", "c1"))).toBe(true);
+    end?.();
+    const ok = await request(app).post("/cases/c1/restore").send({});
+    expect(ok.status).toBe(200);
+    expect(existsSync(join(root, "c1"))).toBe(true);
+  });
+
+  it("an archive or export waits while a delete of the case is in flight", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-archive-lock-"));
+    const handler = async (_req: Request, res: Response) => res.status(200).json({ ok: true });
+    const app = express().post(
+      "/cases/:id/archive",
+      withArchiveBarrier(fakeCtx(root, new ImportLock(), false, true), handler),
+    );
+    expect((await request(app).post("/cases/c1/archive")).status).toBe(409);
   });
 });

@@ -217,11 +217,11 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
     if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) {
       return res.status(400).json({ error: "invalid evidence filename" });
     }
-    const candidates = [
-      join(store.screenshotsDir(req.params.id), file),
-      join(store.importsDir(req.params.id), file),
-    ];
-    const scope = { casesRoot: store.casesRoot, caseDir: store.caseDir(req.params.id) };
+    // Resolve the case folder ONCE (#2145): candidates and scope looked it up separately, so an
+    // archive move between the two put them in different folders and the read answered a false 403.
+    const dir = store.caseDir(req.params.id);
+    const candidates = [join(dir, "screenshots", file), join(dir, "imports", file)];
+    const scope = { casesRoot: store.casesRoot, caseDir: dir };
     for (const path of candidates) {
       try {
         // The check and the read are ONE operation on ONE descriptor (storage/caseFileRead.ts). The
