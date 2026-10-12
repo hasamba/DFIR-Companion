@@ -610,6 +610,30 @@ jobs:
           fi
           printf 'files<<PICK_EOF\n%s\nPICK_EOF\n' "$(printf '%s\n' "${files[@]}")" >> "$GITHUB_OUTPUT"
 
+      # The binaries are not code-signed, so the release page is the only place a downloader can
+      # check integrity (#2158). Hash exactly what "Decide what to publish" picked, by bare
+      # basename, so `sha256sum -c SHA256SUMS.txt --ignore-missing` works next to the download.
+      # The "Enforce the extension pair" step below may later delete an orphan zip that was
+      # ALREADY on the release; pick never selects half a pair, so that leaves no stale line here.
+      - name: Checksum the published files
+        shell: bash
+        env:
+          PICKED: ${{ steps.pick.outputs.files }}
+        run: |
+          : > SHA256SUMS.txt
+          while IFS= read -r pattern; do
+            [ -n "$pattern" ] || continue
+            for f in $pattern; do
+              [ -f "$f" ] || continue
+              (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> SHA256SUMS.txt
+            done
+          done <<< "$PICKED"
+          if [ ! -s SHA256SUMS.txt ]; then
+            echo "::error::SHA256SUMS.txt is empty — no picked file could be hashed"
+            exit 1
+          fi
+          cat SHA256SUMS.txt
+
       - name: Extract changelog section
         id: changelog
         shell: bash
@@ -628,6 +652,20 @@ jobs:
           if [ ! -s release-notes.md ]; then
             echo "See CHANGELOG.md for details." > release-notes.md
           fi
+          # Appended after the fallback so EVERY release page carries it, not just the README (#2158).
+          cat >> release-notes.md <<'NOTES_EOF'
+
+          ---
+
+          **Verifying downloads.** Every release carries `SHA256SUMS.txt`. On Linux run
+          `sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder. On Windows run
+          `Get-FileHash <file> -Algorithm SHA256` and compare the hash with the matching line in
+          `SHA256SUMS.txt`.
+
+          **Signing status.** The Windows EXE and the Linux AppImage are not code-signed, so Windows
+          SmartScreen warns on first run. The Firefox extension zip is unsigned until it is installed
+          from addons.mozilla.org. The Chrome extension is signed when installed from the Chrome Web Store.
+          NOTES_EOF
           cat release-notes.md
 
       - name: Upload to release
@@ -638,7 +676,10 @@ jobs:
           body_path: release-notes.md
           # Exactly what the "Decide what to publish" step judged coherent — never a fixed list,
           # so a half-built extension cannot reach the release by being globbed in.
-          files: ${{ steps.pick.outputs.files }}
+          # SHA256SUMS.txt is built from that same pick, so it always matches what is attached.
+          files: |
+            ${{ steps.pick.outputs.files }}
+            SHA256SUMS.txt
           # false, because a missing platform must not abort the upload of the platforms that DID
           # build. The "Decide what to publish" step above is what makes the gap visible, and it
           # already fails the job if nothing built at all.

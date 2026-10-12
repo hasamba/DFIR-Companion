@@ -8,6 +8,8 @@ Choose one option. Windows and Linux users should start with the release downloa
 
     Download `dfir-companion-<version>-win-x64.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest), extract it, and run `dfir-companion.exe`. No Node.js required. Cases and an optional `.env` live next to the EXE.
 
+    The EXE is not code-signed, so Windows SmartScreen warns on first run. Check the zip against `SHA256SUMS.txt` from the same release first: run `Get-FileHash dfir-companion-*-win-x64.zip -Algorithm SHA256` and compare the hash with the matching line.
+
 === "Windows — Chocolatey (optional)"
 
     ```powershell
@@ -26,6 +28,8 @@ Choose one option. Windows and Linux users should start with the release downloa
     ```
 
     Set `DFIR_ENV_FILE` to point to your `.env` if you need the config file outside the AppImage mount.
+
+    The AppImage is not code-signed. Verify it against `SHA256SUMS.txt` from the same release: run `sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder.
 
 === "Docker"
 
