@@ -4,16 +4,38 @@
 // (openDatabase, withTransaction, createEntityWriter, entityProjection, scalarText, readFileSync,
 // existsSync). Keep it backtick-free: the fragment is a String.raw template.
 export const SUPER_WORKER_SOURCE = String.raw`
-function superContentKey(event) {
+// The pre-#2140 content key: timestamp + description + host. Still what a row WITHOUT a source
+// record id is keyed on, and what every row stored before #2140 holds in content_key.
+function superBaseContentKey(event) {
   const description = String((event && event.description) || "")
     .replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").trim();
   const host = (event && event.asset) || "(no host)";
   return String((event && event.timestamp) || "") + " " + description + " " + host;
 }
 
+// The event's source record id, trimmed, or "" when it has none.
+function superRecordId(event) {
+  const rec = event && event.sourceRecordId;
+  return typeof rec === "string" ? rec.trim() : "";
+}
+
+// A unit-separator char (0x1F) cannot appear in a cleaned description, so the record suffix can
+// never be forged by row text.
+const SUPER_RECORD_SEP = String.fromCharCode(31) + "rec:";
+
+// The content key (#26, #345, #2140). sourceRecordId names one physical log record, so two rows that
+// share time, text and host but carry different record ids are two observations and keep two keys.
+// A re-import of the same file carries the same record ids, so the #26 idempotence still holds.
+function superContentKey(event) {
+  const base = superBaseContentKey(event);
+  const rec = superRecordId(event);
+  return rec ? base + SUPER_RECORD_SEP + rec : base;
+}
+
 // Protect the given ids (#958): a row is protected only when it exists, so the relation never names an
 // evicted or unknown id. An id the batch carried but content-dedup dropped transfers its
 // protection to the retained row with the same content key — that row now stands for the evidence.
+// The base key is the fallback: a record-id'd row folds into a stored row keyed without one (#2140).
 function protectSuperRows(db, ids, incomingById) {
   const exists = db.prepare("SELECT 1 AS x FROM entities WHERE kind='superTimeline' AND entity_id=? LIMIT 1");
   const byContent = db.prepare(
@@ -25,7 +47,8 @@ function protectSuperRows(db, ids, incomingById) {
     if (typeof id !== "string" || !id) continue;
     let target = exists.get(id) ? id : null;
     if (!target && incomingById && incomingById.has(id)) {
-      const row = byContent.get(superContentKey(incomingById.get(id)));
+      const event = incomingById.get(id);
+      const row = byContent.get(superContentKey(event)) || byContent.get(superBaseContentKey(event));
       target = row ? row.entity_id : null;
     }
     if (!target) continue;
@@ -251,24 +274,33 @@ function superMeta(dbPath, hostLimit) {
   }
 }
 
+// The subset of the given content keys the store already holds.
+function storedSuperContentKeys(db, keys) {
+  const unique = [...new Set(keys)];
+  if (!unique.length) return new Set();
+  return new Set(db.prepare(
+    "SELECT content_key FROM entities WHERE kind='superTimeline' " +
+    "AND content_key IN (SELECT value FROM json_each(?))"
+  ).all(JSON.stringify(unique)).map((row) => row.content_key));
+}
+
 function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
   return withTransaction(db, () => {
     const writer = createEntityWriter(db);
     const incoming = events || [];
     const incomingIds = [...new Set(incoming.map((event) => scalarText(event && event.id)).filter(Boolean))];
-    const incomingContent = [...new Set(incoming.map(superContentKey))];
     const existingIds = incomingIds.length
       ? new Set(db.prepare(
         "SELECT entity_id FROM entities WHERE kind='superTimeline' " +
         "AND entity_id IN (SELECT value FROM json_each(?))"
       ).all(JSON.stringify(incomingIds)).map((row) => row.entity_id))
       : new Set();
-    const existingContent = incomingContent.length
-      ? new Set(db.prepare(
-        "SELECT content_key FROM entities WHERE kind='superTimeline' " +
-        "AND content_key IN (SELECT value FROM json_each(?))"
-      ).all(JSON.stringify(incomingContent)).map((row) => row.content_key))
-      : new Set();
+    const existingContent = storedSuperContentKeys(db, incoming.map(superContentKey));
+    // A record-id'd row also matches a STORED row under the base key (#2140): a row written before
+    // #2140, or one stored without a record id. That keeps a re-import after the upgrade from
+    // doubling every row already in the store. Checked against stored rows only, never the batch,
+    // so two distinct records in one batch both insert.
+    const existingBase = storedSuperContentKeys(db, incoming.filter(superRecordId).map(superBaseContentKey));
     let ordinal = Number(db.prepare(
       "SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind='superTimeline'"
     ).get().n) + 1;
@@ -280,7 +312,8 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
       const id = scalarText(event && event.id);
       const contentKey = superContentKey(event);
       if ((id && (seenIds.has(id) || existingIds.has(id))) ||
-          seenContent.has(contentKey) || existingContent.has(contentKey)) continue;
+          seenContent.has(contentKey) || existingContent.has(contentKey) ||
+          (superRecordId(event) && existingBase.has(superBaseContentKey(event)))) continue;
       if (id) seenIds.add(id);
       seenContent.add(contentKey);
       const rowId = writer.insert(entityProjection("superTimeline", event, ordinal++, contentKey), event);
@@ -293,8 +326,9 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
     // Claim this batch's set-aside rows BEFORE the cap runs, so the rows it just inserted are
     // already behind ordinary telemetry in the eviction order rather than one append too late.
     // A row that content-dedups against one the store already holds inserts nothing and needs
-    // nothing: the content key is timestamp + description + host, so the retained row carries the
-    // same stated reason and was claimed on its own append.
+    // nothing: the content key is timestamp + description + host (plus the source record id when
+    // the row has one, #2140), so the retained row carries the same stated reason and was claimed
+    // on its own append.
     if (firstRowId !== null) markSetAsideRows(db, setAsideMarkers, { fromRowId: firstRowId });
     if (added > 0) stampSuperContent(db);
     const evicted = enforceSuperCap(db, max);

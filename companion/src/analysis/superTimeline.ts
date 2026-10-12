@@ -97,13 +97,27 @@ export function dedupeAppend(existing: ForensicEvent[], incoming: ForensicEvent[
   // observations as there are machines. Key on time+text alone and a 200-host sweep collapses to
   // one row here — silently deleting the lateral-movement picture. A re-import always carries the
   // same asset, so the dedup this exists for is unaffected.
-  const contentKey = (e: ForensicEvent): string =>
+  //
+  // (#2140) sourceRecordId discriminates distinct records: it names one physical log record, so
+  // rows that share time, text and host but carry different record ids are distinct observations.
+  // A re-import carries the same record ids, so #26 still holds. A record-id'd row also matches an
+  // EXISTING row under the base key (one stored without a record id, or before #2140) — never a row
+  // earlier in the same batch. Mirrors superContentKey in caseSqliteWorkerSuper.ts.
+  const baseKey = (e: ForensicEvent): string =>
     `${e.timestamp} ${cleanDescription(e.description)} ${superHostOf(e)}`;
+  const recordId = (e: ForensicEvent): string =>
+    typeof e.sourceRecordId === "string" ? e.sourceRecordId.trim() : "";
+  const contentKey = (e: ForensicEvent): string => {
+    const rec = recordId(e);
+    return rec ? `${baseKey(e)}\u001frec:${rec}` : baseKey(e);
+  };
   const seenContent = new Set(existing.map(contentKey));
+  const existingBase = new Set(existing.map(baseKey));
   const fresh = incoming.filter((e) => {
     if (seenIds.has(e.id)) return false;
     const ck = contentKey(e);
     if (seenContent.has(ck)) return false;
+    if (recordId(e) && existingBase.has(baseKey(e))) return false;
     seenContent.add(ck);
     return true;
   });

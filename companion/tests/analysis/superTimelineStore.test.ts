@@ -773,6 +773,45 @@ describe("SuperTimelineStore", () => {
     for await (const batch of store.eventBatches("c1", 73)) batched += batch.length;
     expect(batched).toBe(650);
   });
+
+  describe("#2140 sourceRecordId discriminates distinct records", () => {
+    const rec = (id: string, recordId?: string) =>
+      ev({
+        id,
+        timestamp: "2026-06-01T00:00:00Z",
+        description: "Network connection detected",
+        asset: "WS-01",
+        ...(recordId ? { sourceRecordId: recordId } : {}),
+      });
+
+    it("keeps two rows with the same time, text and host but different record ids", async () => {
+      await store.append("c1", [rec("a", "evtx:Sysmon:1"), rec("b", "evtx:Sysmon:2")]);
+      const r = await store.query("c1", {});
+      expect(r.total).toBe(2);
+      expect(r.events.map((e) => e.id).sort()).toEqual(["a", "b"]);
+    });
+
+    it("a re-import of those records with fresh ids does not double them (#26)", async () => {
+      await store.append("c1", [rec("1a", "evtx:Sysmon:1"), rec("1b", "evtx:Sysmon:2")]);
+      await store.append("c1", [rec("2a", "evtx:Sysmon:1"), rec("2b", "evtx:Sysmon:2")]);
+      const r = await store.query("c1", {});
+      expect(r.total).toBe(2);
+      expect(r.events.map((e) => e.id).sort()).toEqual(["1a", "1b"]);
+    });
+
+    it("still folds same-key rows that carry no record id", async () => {
+      await store.append("c1", [rec("a"), rec("b")]);
+      expect((await store.query("c1", {})).total).toBe(1);
+    });
+
+    it("a row stored without a record id (pre-#2140 key) is not duplicated by a re-import that has one", async () => {
+      await store.append("c1", [rec("old")]);
+      await store.append("c1", [rec("new", "evtx:Sysmon:1")]);
+      const r = await store.query("c1", {});
+      expect(r.total).toBe(1);
+      expect(r.events.map((e) => e.id)).toEqual(["old"]);
+    });
+  });
 });
 
 describe("SuperTimelineStore.collect (#1444)", () => {
