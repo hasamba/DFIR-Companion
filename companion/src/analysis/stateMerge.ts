@@ -122,9 +122,8 @@ export function nextIocSeq(iocs: readonly Pick<IOC, "id">[]): number {
 /**
  * `iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias))`,
  * answered from first-index maps built on first use and caught up with every IOC appended since
- * (the next lookup indexes them). A stored
- * IOC whose value is not a string (corrupt data) switches to the linear scan, so even that case
- * behaves exactly as the scan did.
+ * (the next lookup indexes them). A stored IOC whose value is not a string (corrupt data) is
+ * skipped for value matching but stays reachable by its alias-target id, and never throws (#2162).
  */
 function firstMatchIndex(iocs: IOC[]): {
   find(lower: string, alias: string | undefined): IOC | undefined;
@@ -132,17 +131,13 @@ function firstMatchIndex(iocs: IOC[]): {
   let byValue: Map<string, number> | null = null;
   let byId: Map<string, number> | null = null;
   let indexed = 0;
-  let linear = false;
   const extend = (): void => {
     for (; indexed < iocs.length; indexed++) {
       const { value, id } = iocs[indexed];
-      if (typeof value !== "string") {
-        linear = true;
-        return;
-      }
+      if (!byId!.has(id)) byId!.set(id, indexed);
+      if (typeof value !== "string") continue;
       const lower = value.toLowerCase();
       if (!byValue!.has(lower)) byValue!.set(lower, indexed);
-      if (!byId!.has(id)) byId!.set(id, indexed);
     }
   };
   return {
@@ -151,9 +146,7 @@ function firstMatchIndex(iocs: IOC[]): {
         byValue = new Map();
         byId = new Map();
       }
-      if (!linear) extend();
-      if (linear)
-        return iocs.find((i) => i.value.toLowerCase() === lower || (alias !== undefined && i.id === alias));
+      extend();
       const v = byValue.get(lower);
       const a = alias !== undefined ? byId!.get(alias) : undefined;
       const at = v === undefined ? a : a === undefined ? v : Math.min(v, a);
@@ -225,7 +218,7 @@ export function mergeIocs(
       // Routed here via an alias, not an exact-value match: record the incoming value too, so
       // value-keyed lookups (assetGraph's byValue) resolve it without a second manual merge.
       if (
-        dup.value.toLowerCase() !== incomingLower &&
+        (typeof dup.value !== "string" || dup.value.toLowerCase() !== incomingLower) &&
         !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)
       ) {
         dup.aliasValues = [...(dup.aliasValues ?? []), incoming.value];

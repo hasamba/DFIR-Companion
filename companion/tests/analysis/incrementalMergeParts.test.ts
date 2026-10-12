@@ -84,6 +84,69 @@ describe("mergeIocs' first-match index", () => {
     );
     expect(iocs.map((i) => i.id)).toEqual(["i042"]);
   });
+
+  // #2162: a stored row whose value is not a string (hand-edited state, a foreign backup) used to
+  // throw a TypeError out of the merge, failing every import on that case.
+  describe("with a corrupt stored row (non-string value)", () => {
+    const corrupt = (): IOC[] => [
+      { id: "i001", type: "domain", value: "a.example.com", firstSeen: "t" },
+      { id: "i002", type: "domain", value: 12345 as unknown as string, firstSeen: "t" },
+      { id: "i003", type: "domain", value: "c.example.com", firstSeen: "t", extractedFrom: ["ev0"] },
+    ];
+
+    it("adds a new value without throwing", () => {
+      const { iocs } = mergeIocs(
+        corrupt(),
+        { iocs: [{ id: "n", type: "domain", value: "new.example.com" }] },
+        { timestamp: "t" },
+        [],
+      );
+      expect(iocs).toHaveLength(4);
+    });
+
+    it("folds a value onto a valid row stored after the corrupt one", () => {
+      const { iocs } = mergeIocs(
+        corrupt(),
+        { iocs: [{ id: "n", type: "domain", value: "C.Example.com", extractedFrom: ["ev1"] }] },
+        { timestamp: "t" },
+        [],
+      );
+      expect(iocs).toHaveLength(3);
+      expect(iocs.find((i) => i.id === "i003")?.extractedFrom).toEqual(["ev0", "ev1"]);
+    });
+
+    it("still routes an alias onto the corrupt row's id", () => {
+      const { iocs } = mergeIocs(
+        corrupt(),
+        { iocs: [{ id: "n", type: "domain", value: "foo.example", extractedFrom: ["ev2"] }] },
+        { timestamp: "t", iocAliases: { "foo.example": "i002" } },
+        [],
+      );
+      expect(iocs).toHaveLength(3);
+      const target = iocs.find((i) => i.id === "i002");
+      expect(target?.extractedFrom).toEqual(["ev2"]);
+      expect(target?.aliasValues).toEqual(["foo.example"]);
+    });
+
+    it("completes a large merge with the corrupt row first", () => {
+      const existing: IOC[] = [
+        { id: "i001", type: "domain", value: 7 as unknown as string, firstSeen: "t" },
+        ...Array.from({ length: 5000 }, (_, k) => ({
+          id: `i${String(k + 2).padStart(3, "0")}`,
+          type: "domain" as const,
+          value: `h${k}.example.com`,
+          firstSeen: "t",
+        })),
+      ];
+      const incoming = Array.from({ length: 2000 }, (_, k) => ({
+        id: `n${k}`,
+        type: "domain" as const,
+        value: `${k % 2 ? "h" : "z"}${k}.example.com`,
+      }));
+      const { iocs } = mergeIocs(existing, { iocs: incoming }, { timestamp: "t" }, []);
+      expect(iocs).toHaveLength(5001 + 1000);
+    });
+  });
 });
 
 describe("the dominant year from a histogram", () => {
