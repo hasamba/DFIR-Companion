@@ -468,7 +468,7 @@ describe("server analysis wiring", () => {
                 relatedIocs: [],
                 mitreTechniques: [],
                 status: "open",
-                relatedEventIds: ["e1"],
+                relatedEventIds: ["s1e1"], // the screenshot pass renumbers model ids to s<seq>e<n> (#2175)
               },
             ],
             iocs: [],
