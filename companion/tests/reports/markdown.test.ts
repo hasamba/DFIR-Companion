@@ -1306,3 +1306,42 @@ describe("#1474 -- the IOC table never marks a mention as corroborated", () => {
     expect(row).toContain("| Chainsaw, Hayabusa (⊕ 2) |");
   });
 });
+
+describe("renderMarkdownReport — changed after first recorded (#2141)", () => {
+  const base = {
+    timestamp: "2026-05-20T09:00:00Z",
+    severity: "Medium" as const,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
+  const timelineRows = (md: string) => md.split("\n").filter((l) => l.startsWith("| 2026-05-20"));
+  const cells = (row: string) => row.split(/(?<!\\)\|/).length;
+
+  it("notes the prior text on the Event cell, escaped inside that one cell", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(
+      { ...base, id: "e0", description: "never revised" },
+      {
+        ...base,
+        id: "e1",
+        description: "text B",
+        revisions: [
+          {
+            at: "2026-10-13T09:00:00Z",
+            source: "fileB.csv",
+            description: { from: "a|b\n<script>x</script>" },
+            severity: { from: "High", to: "Medium" },
+          },
+        ],
+      },
+    );
+    const [plain, revised] = timelineRows(renderMarkdownReport(state));
+    expect(plain).not.toContain("changed after first recorded");
+    expect(revised).toContain("text B [changed after first recorded: 1 change");
+    expect(revised).toContain("fileB.csv");
+    expect(revised).toContain("a\\|b");
+    expect(revised).not.toContain("\n");
+    expect(cells(revised)).toBe(cells(plain));
+  });
+});

@@ -199,6 +199,26 @@ function yearClampChip(e) {
   return `<div class="ev-yearclamp" title="This source carries no year of its own, so the import guessed one and the merge re-anchored it onto the case's dominant year. Imported as: ${escAttr(e.yearClampedFrom)}">📅 year adjusted from ${esc(e.yearClampedFrom)}</div>`;
 }
 
+// "Changed after first recorded" (#2141). A later import, AI pass or MCP agent rewrote this row's
+// text or grade; the merge kept a short record of what it said before (companion/src/analysis/
+// eventRevision.ts). Warning-coloured like the year chip: a finding may cite the earlier wording.
+// The prior text is adversary-controlled, so every piece goes through esc/escAttr.
+function revisedChip(e) {
+  const list = (e && Array.isArray(e.revisions) && e.revisions) || [];
+  if (!list.length) return "";
+  const lines = list.map((r) => {
+    const parts = [`${r.at || "?"} by ${r.source || "unknown source"}`];
+    if (r.severity) parts.push(`severity ${r.severity.from} → ${r.severity.to}`);
+    if (r.description) parts.push(`was: "${r.description.from}"`);
+    return parts.join(" — ");
+  });
+  const dropped = Number(e.revisionsDropped) || 0;
+  if (dropped) lines.splice(1, 0, `(${dropped} earlier change${dropped === 1 ? "" : "s"} not kept)`);
+  const title = `A later merge changed this row after it was first recorded:\n${lines.join("\n")}`;
+  const n = list.length + dropped;
+  return `<div class="ev-revised" title="${escAttr(title)}">✎ changed after first recorded (${esc(String(n))}×)</div>`;
+}
+
 // Non-AI finding origins. Two DETERMINISTIC backfill passes run after AI synthesis and mint
 // findings of their own, each with a prefixed, idempotent id minted in exactly one place:
 //
@@ -302,6 +322,7 @@ function deriveMitreRows(findings, forensicTimeline, table, names) {
 window.DfirFilters = {
   realSourceCount,
   yearClampChip,
+  revisedChip,
   _canonValues,
   _evSearchParts,
   _evMatchesSearch,

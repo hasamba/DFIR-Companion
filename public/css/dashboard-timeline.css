@@ -26,6 +26,7 @@
 /* Year-clamp (#739): the time this event was IMPORTED as, before the merge re-anchored its guessed
    year. Warning-coloured rather than dim, because unlike the skew projection above it is persisted. */
 #forensicTimeline .ev-yearclamp { color: var(--sev-medium); font-size: 10.5px; white-space: nowrap; }
+#forensicTimeline .ev-revised { color: var(--sev-medium); font-size: 10.5px; white-space: nowrap; cursor: help; } /* #2141 */
 /* Severity column: coloured square + label, colour driven by the .sev-<level> class. */
 .ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
 .ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }

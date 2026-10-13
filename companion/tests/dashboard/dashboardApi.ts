@@ -147,6 +147,8 @@ export interface FiltersApi {
   originFacets(ft: EventLike[] | null): string[];
   isLowSignalEvent(e: EventLike): boolean;
   lowSignalChip(e: EventLike): string;
+  /** #2141: the "changed after first recorded" chip; "" for a row never revised. */
+  revisedChip(e: EventLike & { revisions?: unknown[]; revisionsDropped?: number }): string;
   /**
    * `findings` is the FALSE-POSITIVE-FILTERED list, never raw state.findings — the server's own
    * order is withEventTechniques(applyFalsePositive(...)), and passing the raw list here is #917.

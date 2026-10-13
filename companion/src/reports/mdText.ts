@@ -1,4 +1,5 @@
-import type { Finding } from "../analysis/stateTypes.js";
+import type { Finding, ForensicEvent } from "../analysis/stateTypes.js";
+import { revisionSuffix } from "../analysis/eventRevision.js";
 import { mdControlPictures } from "./controlChars.js";
 
 // One home for "untrusted text → safe Markdown fragment".
@@ -44,6 +45,13 @@ export function cellMd(value: string): string {
   return mdControlPictures(
     value.replace(BACKSLASH_RUN_OR_PIPE, escapeRunBeforePipe).replace(/[\r\n]+/g, " "),
   );
+}
+
+/** A forensic-timeline row's Event cell: its text plus its "changed after first recorded" note (#2141). */
+export function eventCellMd(
+  e: Pick<ForensicEvent, "description" | "revisions" | "revisionsDropped">,
+): string {
+  return cellMd(e.description + revisionSuffix(e));
 }
 
 /**

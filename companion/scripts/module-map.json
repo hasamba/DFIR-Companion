@@ -369,6 +369,8 @@
     "deobfuscate.ts": "analysis/privacy",
     "deobfuscateLayers.ts": "analysis/privacy",
     "derivedNote.ts": "analysis/timeline",
+    "eventRevision.ts": "analysis/timeline",
+    "eventRevisionTypes.ts": "shared",
     "destinationFacts.ts": "analysis/timeline",
     "detectionStackPaths.ts": "analysis/detect",
     "diagnostics.ts": "analysis/case",

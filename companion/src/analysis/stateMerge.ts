@@ -64,6 +64,7 @@ import { correlateAwsFlowSensitiveData } from "./awsFlowSensitiveDataJoin.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { markJndiInjection } from "./jndiInjection.js";
+import { nextRevisions, revisionSource } from "./eventRevision.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -106,6 +107,8 @@ export interface WindowContext {
   // and resolving again against the whole timeline would link an out-of-window or analyst-rejected
   // event the fold deliberately left unresolved.
   knownEventIds?: ReadonlySet<string>;
+  // Who made this merge's changes, for a row's revision record (#2141) when no import label says so.
+  changeSource?: string;
 }
 
 // The IOC stage of mergeDelta (#1874: its own module so the incremental merge runs the SAME code over
@@ -249,7 +252,7 @@ export function copyTimeline(events: readonly ForensicEvent[]): ForensicEvent[] 
 export function upsertForensicEvents(
   forensicTimeline: ForensicEvent[],
   delta: Pick<AnalysisDelta, "forensicEvents">,
-  ctx: Pick<WindowContext, "sourceScreenshots">,
+  ctx: Pick<WindowContext, "sourceScreenshots" | "timestamp" | "changeSource">,
 ): void {
   // Index by id for O(1) dedup lookup. A linear `forensicTimeline.find(...)` per incoming event is
   // O(n²) and melts down on large deterministic imports (e.g. a full MFT/USN with DFIR_MAX_EVENTS
@@ -269,6 +272,9 @@ export function upsertForensicEvents(
     const endTs = incoming.endTimestamp !== undefined ? toUtcIso(incoming.endTimestamp) : undefined;
     const existing = byId.get(incoming.id);
     if (existing) {
+      // Recorded before the overwrite, which still happens (#2141): a NEW list, never a push.
+      const revised = nextRevisions(existing, incoming, ctx.timestamp, revisionSource(ctx, incoming));
+      if (revised) Object.assign(existing, revised);
       existing.timestamp = ts || existing.timestamp;
       existing.description = incoming.description;
       existing.severity = incoming.severity;

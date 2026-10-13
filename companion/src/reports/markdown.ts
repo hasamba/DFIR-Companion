@@ -18,7 +18,7 @@ import { handoffBriefSection } from "./handoffSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
-import { blockMd, cellMd, findingIocsMd, oneLineMd, sessionCommandsMd } from "./mdText.js";
+import { blockMd, cellMd, eventCellMd, findingIocsMd, oneLineMd, sessionCommandsMd } from "./mdText.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -308,7 +308,7 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
     const recorded = aligned.length > 0 ? ` ${cellMd(e.originalTimestamp ?? "")} |` : "";
     lines.push(
-      `| ${cellMd(time)} |${recorded} ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
+      `| ${cellMd(time)} |${recorded} ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${eventCellMd(e)} | ` +
         `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }

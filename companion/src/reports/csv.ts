@@ -8,6 +8,7 @@ import { caseTime, intelTemporal } from "../analysis/intelTemporal.js";
 import { assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
 import type { GeoMapData } from "../analysis/geoMap.js";
 import { csvNulPicture } from "./controlChars.js";
+import { revisionSummary } from "../analysis/eventRevision.js";
 
 function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
@@ -102,22 +103,21 @@ export function timelineCsv(state: InvestigationState): string {
 // chronological attack story, suitable for a master-timeline export.
 export function forensicTimelineCsv(state: InvestigationState): string {
   const header =
-    "timestamp,endTimestamp,count,severity,description,mitreTechniques,sources,relatedFindingIds,sourceScreenshots";
-  const rows = [...state.forensicTimeline]
-    .sort(byEventTime)
-    .map((e) =>
-      row([
-        e.timestamp,
-        e.endTimestamp ?? "",
-        String(e.count ?? 1),
-        e.severity,
-        e.description,
-        e.mitreTechniques.join("|"),
-        (e.sources ?? []).join("|"),
-        e.relatedFindingIds.join("|"),
-        e.sourceScreenshots.join("|"),
-      ]),
-    );
+    "timestamp,endTimestamp,count,severity,description,mitreTechniques,sources,relatedFindingIds,sourceScreenshots,revisions";
+  const rows = [...state.forensicTimeline].sort(byEventTime).map((e) =>
+    row([
+      e.timestamp,
+      e.endTimestamp ?? "",
+      String(e.count ?? 1),
+      e.severity,
+      e.description,
+      e.mitreTechniques.join("|"),
+      (e.sources ?? []).join("|"),
+      e.relatedFindingIds.join("|"),
+      e.sourceScreenshots.join("|"),
+      revisionSummary(e), // #2141: what the row said before a later merge changed it
+    ]),
+  );
   return [header, ...rows].join("\n") + "\n";
 }
 

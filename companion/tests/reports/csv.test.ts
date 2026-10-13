@@ -113,7 +113,7 @@ describe("CSV renderers", () => {
   it("forensicTimelineCsv emits a header and rows ordered by event time", () => {
     const state = emptyState("c1");
     expect(forensicTimelineCsv(state).trim()).toBe(
-      "timestamp,endTimestamp,count,severity,description,mitreTechniques,sources,relatedFindingIds,sourceScreenshots",
+      "timestamp,endTimestamp,count,severity,description,mitreTechniques,sources,relatedFindingIds,sourceScreenshots,revisions",
     );
     state.forensicTimeline.push(
       {
@@ -142,6 +142,35 @@ describe("CSV renderers", () => {
     expect(rows[1]).toContain(`,"1",`); // default count = 1 when absent
     expect(rows[2]).toContain("later");
     expect(rows[2]).toContain(`,"12",`); // aggregated count surfaced
+    expect(rows[1].endsWith(`,""`)).toBe(true); // never revised: an empty revisions cell
+  });
+
+  it("forensicTimelineCsv names a row's changes after first recorded in a guarded last column (#2141)", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "text B",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      revisions: [
+        {
+          at: "2026-10-13T09:00:00Z",
+          source: "=cmd|' /C calc'!A0",
+          description: { from: '=HYPERLINK("https://example.com","x")' },
+          severity: { from: "High", to: "Medium" },
+        },
+      ],
+    });
+    const [header, row] = forensicTimelineCsv(state).trim().split("\n");
+    expect(header.split(",").at(-1)).toBe("revisions");
+    const last = row.slice(row.lastIndexOf(',"changed') + 1);
+    expect(last.startsWith('"changed after first recorded: 1 change')).toBe(true);
+    expect(last).toContain('first recorded as ""=HYPERLINK(');
+    // The adversary text sits inside the cell, never at its start, so no spreadsheet reads a formula.
+    expect(row.split(/,(?=")/).every((c) => !c.startsWith('"='))).toBe(true);
   });
 });
 

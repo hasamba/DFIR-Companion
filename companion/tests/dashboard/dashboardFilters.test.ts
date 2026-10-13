@@ -271,6 +271,40 @@ describe("isLowSignalEvent", () => {
   });
 });
 
+// #2141: a later merge that rewrote a row's text or grade is marked on the row.
+describe("revisedChip", () => {
+  // The chip escapes through dashboard-escape.js's globals, as the page loads them before this file.
+  const f = loadDashboardModule<FiltersApi>("dashboard-filters.js", ["dashboard-escape.js"]);
+
+  it("is empty for a row that was never revised", () => {
+    expect(f.revisedChip({ severity: "High" })).toBe("");
+    expect(f.revisedChip({ severity: "High", revisions: [] })).toBe("");
+  });
+
+  it("marks a revised row and keeps adversary text inert", () => {
+    const chip = f.revisedChip({
+      severity: "Medium",
+      revisions: [
+        {
+          at: "2026-10-13T09:00:00Z",
+          source: 'fileB.csv"><img src=x onerror=alert(1)>',
+          description: { from: "<img src=x onerror=alert(2)>" },
+          severity: { from: "High", to: "Medium" },
+        },
+      ],
+      revisionsDropped: 1,
+    });
+    expect(chip).toContain('class="ev-revised"');
+    expect(chip).toContain("changed after first recorded");
+    expect(chip).toContain("2026-10-13T09:00:00Z");
+    expect(chip).toContain("High → Medium");
+    expect(chip).toContain("1 earlier change not kept");
+    expect(chip).toContain("&lt;img src=x onerror=alert(2)&gt;");
+    expect(chip).not.toContain("<img");
+    expect(chip).not.toContain('"><');
+  });
+});
+
 // Substring matching in BOTH directions, which is much looser than it looks: a false-positive
 // entry for "powershell" suppresses "Encoded PowerShell", and an entry for "Encoded PowerShell
 // launched from Word" is also suppressed by a finding titled "Encoded PowerShell".
