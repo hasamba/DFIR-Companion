@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, it, expect, vi } from "vitest";
 import type { Dispatcher } from "undici";
 import { dispatchEvent, createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
@@ -190,5 +191,43 @@ describe("createNodeSmtpConnect — resolve, check, connect to the checked addre
       host: "10.0.0.25",
       servername: "mail.lan",
     });
+  });
+
+  // Codex review: pinning to the first answer dropped Node's address fallback, so a relay listening
+  // on 127.0.0.1 only was unreachable when "localhost" answered ::1 first.
+  it("falls back to the next checked address when the first refuses the connection", async () => {
+    const tried: string[] = [];
+    const createConnection = vi.fn((o: { host: string }, onConnect: () => void) => {
+      tried.push(o.host);
+      const sock = new EventEmitter() as EventEmitter & { destroy: () => void; setEncoding: () => void };
+      sock.destroy = () => {};
+      sock.setEncoding = () => {};
+      if (o.host === "::1") setImmediate(() => sock.emit("error", new Error("ECONNREFUSED")));
+      else setImmediate(onConnect);
+      return sock;
+    });
+    const connect = createNodeSmtpConnect({
+      resolveHost: resolver({ localhost: ["::1", "127.0.0.1"] }),
+      createConnection: createConnection as never,
+    });
+    await expect(connect({ ...base, host: "localhost" })).resolves.toBeDefined();
+    expect(tried).toEqual(["::1", "127.0.0.1"]);
+  });
+
+  it("reports the last failure when every checked address refuses", async () => {
+    const createConnection = vi.fn(() => {
+      const sock = new EventEmitter() as EventEmitter & { destroy: () => void };
+      sock.destroy = () => {};
+      setImmediate(() => sock.emit("error", new Error("ECONNREFUSED")));
+      return sock;
+    });
+    const connect = createNodeSmtpConnect({
+      resolveHost: resolver({ "mail.lan": ["10.0.0.25", "10.0.0.26"] }),
+      createConnection: createConnection as never,
+    });
+    const err = await connect({ ...base, host: "mail.lan" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SmtpError);
+    expect((err as SmtpError).message).toMatch(/ECONNREFUSED/);
+    expect(createConnection).toHaveBeenCalledTimes(2);
   });
 });

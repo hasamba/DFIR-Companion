@@ -313,19 +313,31 @@ export interface NodeSmtpConnectDeps {
 // The host is resolved and checked FIRST (#2146): a cloud-metadata or link-local answer is refused,
 // and the socket is opened to the checked address rather than the name, so a second lookup cannot
 // answer differently (DNS rebinding). The name stays the TLS servername, so the certificate is still
-// verified against what the admin typed.
+// verified against what the admin typed. Every checked address is tried in turn under one shared
+// deadline, so pinning keeps Node's address fallback (localhost answering ::1 before 127.0.0.1).
 export function createNodeSmtpConnect(deps: NodeSmtpConnectDeps = {}): SmtpConnect {
   return async (opts) => {
-    let address: string;
+    const deadline = Date.now() + opts.timeoutMs;
+    let addresses: { address: string }[];
     try {
-      [{ address }] = await resolveLanHost(opts.host, {
+      addresses = await resolveLanHost(opts.host, {
         resolveHost: deps.resolveHost,
         timeoutMs: opts.timeoutMs,
       });
     } catch (err) {
       throw new SmtpError(`connect refused: ${(err as Error).message}`, "connect");
     }
-    return openSocket({ ...opts, address }, deps);
+    let lastError: unknown = new SmtpError("connect timed out", "timeout");
+    for (const { address } of addresses) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        return await openSocket({ ...opts, address, timeoutMs: remaining }, deps);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError;
   };
 }
 
