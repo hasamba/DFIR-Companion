@@ -1,6 +1,12 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 import { readBoundedText, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 import type { AuditDestination, AuditEvent, SyslogConfig } from "../../analysis/auditExport.js";
+import {
+  isMetadataOrLinkLocalHost,
+  metadataTargetError,
+  urlHostIsMetadataOrLinkLocal,
+} from "../../analysis/metadataTarget.js";
+import { createGuardedFetch, type GuardedFetchOptions } from "../../routes/outboundGuardedFetch.js";
 import { formatSplunkHec, type AuditHttpRequest } from "./splunkHecFormat.js";
 import { formatElasticBulk } from "./elasticBulkFormat.js";
 import { formatSyslog } from "./syslogFormat.js";
@@ -28,6 +34,45 @@ export interface AuditSendResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+/**
+ * The fetch Splunk HEC and Elasticsearch sends go through in the server (#2147): the pinned
+ * outbound guard in "lan" mode. A collector on the LAN or on this machine works; a cloud-metadata or
+ * link-local target is refused for the URL and for every address its name resolves to, and the
+ * connection goes to the checked address. Redirects are refused — a 307 would re-POST the audit
+ * trail and its credential to wherever it points. DFIR_AUDIT_CA / _INSECURE ride in as `tls`, on
+ * the guard's one pinned connection. The body cap is the same one postJson reads with, because an
+ * Elasticsearch bulk answer for a full batch is far larger than the guard's 64 KiB default, and a
+ * truncated one reads as "delivery unconfirmed" forever.
+ */
+export function createAuditHttpFetch(
+  opts: Omit<GuardedFetchOptions, "policy" | "maxRedirects" | "allowInternal" | "maxBodyBytes"> = {},
+): FetchFn {
+  return createGuardedFetch({
+    ...opts,
+    policy: "lan",
+    maxRedirects: 0,
+    maxBodyBytes: RESPONSE_SIZE_LIMITS.text,
+  });
+}
+
+/** The cloud-metadata / link-local refusal for a stored destination, or undefined. A destination
+ *  saved before the save-time rule, or hand-edited into config.json, is caught here (#2147). */
+function storedTargetError(destination: AuditDestination): string | undefined {
+  const url = destination.splunk?.url ?? destination.elastic?.url;
+  if (destination.type !== "syslog" && url && urlHostIsMetadataOrLinkLocal(url)) {
+    return metadataTargetError(new URL(url).hostname);
+  }
+  const host = destination.syslog?.host;
+  if (destination.type === "syslog" && host && isMetadataOrLinkLocalHost(host)) {
+    return metadataTargetError(host);
+  }
+  return undefined;
+}
+
+function isRedirect(status: number): boolean {
+  return status >= 300 && status < 400;
+}
 
 const REDACTED = "[redacted]";
 
@@ -102,7 +147,14 @@ async function postJson(
     headers: request.headers,
     body: request.body,
     signal: AbortSignal.timeout(transport.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    // Never followed (#2147), whatever fetch is wired: the guard refuses one itself, and a plain
+    // fetch hands the 3xx back here instead of re-POSTing the batch to the Location.
+    redirect: "manual",
   });
+  if (isRedirect(res.status)) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`the server answered with a redirect (HTTP ${res.status}), which is not followed`);
+  }
   const raw = await readBoundedText(res, {
     maxBytes: RESPONSE_SIZE_LIMITS.text,
     context: "audit export",
@@ -167,6 +219,8 @@ export async function sendAuditBatch(
   transport: AuditTransport,
 ): Promise<AuditSendResult> {
   if (events.length === 0) return { ok: true, sent: 0 };
+  const targetError = storedTargetError(destination);
+  if (targetError) return { ok: false, sent: 0, error: targetError };
 
   try {
     if (destination.type === "splunk") {

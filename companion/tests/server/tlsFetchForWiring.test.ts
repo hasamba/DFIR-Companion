@@ -19,6 +19,7 @@ const ENV_KEYS = [
   "DFIR_MISP_INSECURE",
   "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
   "DFIR_NOTIFY_INSECURE",
+  "DFIR_AUDIT_INSECURE",
 ];
 const saved: Record<string, string | undefined> = {};
 let originalLogger: Logger;
@@ -122,5 +123,27 @@ describe("tlsConnectFor(NOTIFY) — connect options for the pinned guard", () =>
 
   it("is undefined when nothing is configured", () => {
     expect(tlsConnectFor("NOTIFY")).toBeUndefined();
+  });
+});
+
+// #2147: audit-export HTTP destinations (Splunk HEC, Elasticsearch) also go through the pinned
+// guard now, so DFIR_AUDIT_* must reach it as connect options with the same refusal.
+describe("tlsConnectFor(AUDIT) — connect options for the pinned guard", () => {
+  it("refuses DFIR_AUDIT_INSECURE alone and falls back to verified TLS", () => {
+    process.env.DFIR_AUDIT_INSECURE = "1";
+    const warn = vi.fn();
+    setServerLogger({ ...originalLogger, warn });
+    expect(tlsConnectFor("AUDIT")).toBeUndefined();
+    expect(warn.mock.calls.some(([m]) => /non-loopback/i.test(m as string))).toBe(true);
+  });
+
+  it("honours DFIR_AUDIT_INSECURE with the external opt-in", () => {
+    process.env.DFIR_AUDIT_INSECURE = "1";
+    process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL = "true";
+    expect(tlsConnectFor("AUDIT")).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("is undefined when nothing is configured", () => {
+    expect(tlsConnectFor("AUDIT")).toBeUndefined();
   });
 });

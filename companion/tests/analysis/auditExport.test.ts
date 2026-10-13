@@ -270,3 +270,80 @@ describe("testAuditEvent", () => {
     expect(e.actorVerified).toBe(false);
   });
 });
+
+// Issue #2147: an audit destination may live on the LAN or on this machine, but never at a
+// cloud-metadata or link-local address.
+describe("parseDestinationInput — cloud-metadata and link-local targets (#2147)", () => {
+  const blocked = /blocked because it is a cloud-metadata or link-local address/;
+
+  it("refuses a splunk collector at the metadata address", () => {
+    const r = parseDestinationInput({
+      type: "splunk",
+      splunk: { url: "http://169.254.169.254/services/collector", token: "t" },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(blocked);
+  });
+
+  it("refuses an elastic cluster at an IPv4-mapped link-local address", () => {
+    const r = parseDestinationInput({
+      type: "elastic",
+      elastic: { url: "http://[::ffff:a9fe:a9fe]:9200", index: "dfir-audit" },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(blocked);
+  });
+
+  it("refuses a syslog host at the metadata address, AWS's IPv6 one, or a metadata name", () => {
+    for (const host of ["169.254.169.254", "fd00:ec2::254", "metadata.google.internal"]) {
+      const r = parseDestinationInput({ type: "syslog", syslog: { host } });
+      expect(r.ok, host).toBe(false);
+      expect(r.error).toMatch(blocked);
+    }
+  });
+
+  it("keeps LAN and loopback destinations working", () => {
+    expect(
+      parseDestinationInput({
+        type: "splunk",
+        splunk: { url: "http://10.1.2.3:8088/services/collector", token: "t" },
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseDestinationInput({ type: "elastic", elastic: { url: "http://127.0.0.1:9200", index: "a" } }).ok,
+    ).toBe(true);
+    expect(parseDestinationInput({ type: "syslog", syslog: { host: "127.0.0.1", port: 514 } }).ok).toBe(true);
+  });
+
+  it("still lets a destination saved before the rule be switched off", () => {
+    // The dashboard toggle re-sends the saved URL/host. Refusing it would leave an operator unable
+    // to stop a destination that cannot send anyway (the send-time guard refuses it).
+    const savedSplunk = dest({ splunk: { url: "http://169.254.169.254", token: "t" } });
+    const off = parseDestinationInput(
+      { type: "splunk", enabled: false, splunk: { url: "http://169.254.169.254" } },
+      savedSplunk,
+    );
+    expect(off.ok).toBe(true);
+    expect(off.draft?.enabled).toBe(false);
+
+    const savedSyslog = dest({
+      type: "syslog",
+      splunk: undefined,
+      syslog: { host: "169.254.169.254", port: 514, protocol: "udp" },
+    });
+    const sysOff = parseDestinationInput(
+      { type: "syslog", enabled: false, syslog: { host: "169.254.169.254", port: 514, protocol: "udp" } },
+      savedSyslog,
+    );
+    expect(sysOff.ok).toBe(true);
+  });
+
+  it("refuses an edit that MOVES a saved destination to a metadata address", () => {
+    const r = parseDestinationInput(
+      { type: "splunk", splunk: { url: "http://169.254.169.254/services/collector", token: "t" } },
+      dest(),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(blocked);
+  });
+});

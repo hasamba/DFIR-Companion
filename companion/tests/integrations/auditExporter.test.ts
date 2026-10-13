@@ -174,6 +174,31 @@ describe("createAuditExporter — failure", () => {
     expect(await cursors.get(destination.id, "case-1")).toBe(2);
   });
 
+  it("refuses a hand-edited metadata destination without sending or advancing (#2147)", async () => {
+    const store = new AuditExportStore(join(root, "audit-export", "config.json"));
+    const cursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
+    // Straight into the store, past the save-time rule — as a config.json edit would be.
+    const destination = await store.add({
+      type: "splunk",
+      name: "SOC",
+      enabled: true,
+      splunk: { url: "http://169.254.169.254/services/collector", token: "t" },
+    });
+    const fetchFn = vi.fn(async () => okResponse());
+    const exporter = createAuditExporter({
+      store,
+      cursors,
+      activity: fakeActivity({ "case-1": [entry("e1")] }),
+      listCaseIds: async () => ["case-1"],
+      transport: { fetchFn: fetchFn, syslogSend: async () => {}, hostname: "h" },
+    });
+    const [r] = await exporter.exportCase("case-1");
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/cloud-metadata or link-local/);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(await cursors.get(destination.id, "case-1")).toBe(0);
+  });
+
   it("stops that destination at the first failed batch instead of sending later ones out of order", async () => {
     const store = new AuditExportStore(join(root, "audit-export", "config.json"));
     const cursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
