@@ -1,7 +1,17 @@
-import { lookup } from "node:dns/promises";
 import { Agent, type Dispatcher } from "undici";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import { isGloballyRoutable } from "./publicAddress.js";
+import {
+  OutboundUrlBlockedError,
+  assertLanAddresses,
+  assertLanHostLiteral,
+  resolveViaDns,
+  type OutboundPolicy,
+  type OutboundTlsOptions,
+  type PinnedAddress,
+} from "./outboundTargetPolicy.js";
+
+export { OutboundUrlBlockedError, type OutboundPolicy, type OutboundTlsOptions, type PinnedAddress };
 
 // Guarded outbound fetch for routes that take a URL from the caller (issue #760).
 //
@@ -50,34 +60,37 @@ import { isGloballyRoutable } from "./publicAddress.js";
 // The deadline covers resolution too. A lookup takes no AbortSignal, so an earlier version left the
 // one step whose duration the far side chooses outside the budget it advertised — see withDeadline.
 
-/** The URL was refused before any bytes left the host. The message names the rule that refused it,
- *  never an address it resolved to — that is the internal detail the guard exists to withhold. */
-export class OutboundUrlBlockedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "OutboundUrlBlockedError";
-  }
-}
-
-/** One resolved address, and the family net.connect needs to use it. */
-export interface PinnedAddress {
-  address: string;
-  family: number;
-}
+// POLICY "lan" (issue #2146). For senders whose destination is normally on the LAN or this machine
+// (notification webhooks; audit export in #2147), checks 1-3 are replaced by the "LAN yes,
+// metadata no" rule in outboundTargetPolicy.ts: http: is allowed, private and loopback addresses are
+// allowed, and only cloud-metadata and link-local targets are refused — as a literal and for every
+// resolved address. Check 4, the pin, is unchanged: it is what makes the resolved-address check
+// mean anything. `tls` merges a custom CA / verification setting into the SAME pinned Agent,
+// because a second, TLS-only dispatcher would replace the pinned one and send unpinned.
 
 export interface OutboundFetchOptions {
   /** Budget for the WHOLE redirect chain, not per hop. Default 30s. */
   timeoutMs?: number;
   /** Hops followed before giving up. Default 5. */
   maxRedirects?: number;
-  /** Operator opt-in: permit http:// and private/loopback/link-local targets (an internal mirror). */
+  /** Operator opt-in: permit http:// and private/loopback/link-local targets (an internal mirror).
+   *  Disables EVERY address check, metadata included — a sender that only needs the LAN uses
+   *  `policy: "lan"` instead. Takes precedence over `policy`. */
   allowInternal?: boolean;
+  /** Which targets are acceptable. Default "public". See the module header. */
+  policy?: OutboundPolicy;
+  /** TLS trust for the pinned connection (custom CA, or verification off). */
+  tls?: OutboundTlsOptions;
+  /** Method, headers and body. Redirect mode, signal and dispatcher stay the guard's. */
+  request?: Pick<RequestInit, "method" | "headers" | "body">;
+  /** The caller's own abort signal, combined with the guard's deadline. */
+  signal?: AbortSignal;
   /** Injected by tests so they never touch real DNS. Defaults to a DNS A/AAAA lookup. */
   resolveHost?: (host: string) => Promise<PinnedAddress[]>;
   /** Injected by tests. Defaults to the global fetch. */
   fetchImpl?: typeof fetch;
   /** Injected by tests to observe what the connection was pinned to. Defaults to an undici Agent. */
-  agentFactory?: (pins: PinnedAddress[]) => Dispatcher;
+  agentFactory?: (pins: PinnedAddress[], tls?: OutboundTlsOptions) => Dispatcher;
 }
 
 export interface OutboundFetchResult {
@@ -91,10 +104,6 @@ export interface OutboundFetchResult {
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REDIRECTS = 5;
-
-async function resolveViaDns(host: string): Promise<PinnedAddress[]> {
-  return (await lookup(host, { all: true })).map((r) => ({ address: r.address, family: r.family }));
-}
 
 // The address test lives in routes/publicAddress.ts: an ALLOWLIST of the space IANA has delegated,
 // because every denylist shape this was tried in permitted some range nobody had thought of. See
@@ -134,9 +143,10 @@ export function pinnedLookup(
   };
 }
 
-function defaultAgent(pins: PinnedAddress[]): Dispatcher {
+function defaultAgent(pins: PinnedAddress[], tls?: OutboundTlsOptions): Dispatcher {
   return new Agent({
-    connect: { lookup: pinnedLookup(pins) },
+    // ONE agent carries the pin AND the TLS trust; only the address is overridden.
+    connect: { ...(tls ?? {}), lookup: pinnedLookup(pins) },
     // One-shot fetch, not a pool: do not hold the socket open for a reuse that never comes.
     keepAliveTimeout: 1,
     keepAliveMaxTimeout: 1,
@@ -189,6 +199,7 @@ async function validateAndResolve(
   }
 
   const scheme = parsed.protocol.toLowerCase();
+  if (opts.policy === "lan" && opts.allowInternal !== true) return validateLan(parsed, scheme, opts, signal);
   const schemeOk = scheme === "https:" || (scheme === "http:" && opts.allowInternal === true);
   if (!schemeOk) {
     throw new OutboundUrlBlockedError(`the URL must use https: (got ${scheme})`);
@@ -238,6 +249,31 @@ async function validateAndResolve(
   return { url: parsed, pins: addresses };
 }
 
+/** policy "lan": http(s), any address except cloud-metadata and link-local, always pinned. */
+async function validateLan(
+  parsed: URL,
+  scheme: string,
+  opts: OutboundFetchOptions,
+  signal: AbortSignal,
+): Promise<ValidatedTarget> {
+  if (scheme !== "https:" && scheme !== "http:") {
+    throw new OutboundUrlBlockedError(`the URL must use http: or https: (got ${scheme})`);
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  assertLanHostLiteral(host);
+  const resolve = opts.resolveHost ?? resolveViaDns;
+  let addresses: PinnedAddress[];
+  try {
+    addresses = await withDeadline(resolve(host), signal, `resolving "${host}"`);
+  } catch (err) {
+    if (err instanceof OutboundUrlBlockedError) throw err;
+    // Fail closed, as the public policy does — the attacker picks when this happens.
+    throw new OutboundUrlBlockedError(`the host "${host}" could not be resolved`);
+  }
+  assertLanAddresses(host, addresses);
+  return { url: parsed, pins: addresses };
+}
+
 /**
  * Parses and checks one URL. Returns the parsed URL when it is allowed; throws
  * OutboundUrlBlockedError when it is not. Call it for the URL the caller supplied AND for every
@@ -267,7 +303,8 @@ export async function fetchOutbound(
   // AbortSignal.timeout() per hop would let five hops spend five times the budget the caller asked
   // for; a signal that reached only the fetches would leave the step whose duration the far side
   // controls — resolution — outside the budget entirely.
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const deadline = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = opts.signal ? AbortSignal.any([deadline, opts.signal]) : deadline;
 
   const agents: Dispatcher[] = [];
   const dispose = async (): Promise<void> => {
@@ -277,9 +314,10 @@ export async function fetchOutbound(
   try {
     let target = await validateAndResolve(raw, opts, signal);
     for (let hop = 0; ; hop += 1) {
-      const init: RequestInit & { dispatcher?: Dispatcher } = { redirect: "manual", signal };
+      // The caller's method/body ride along; redirect mode and signal are always the guard's.
+      const init: RequestInit & { dispatcher?: Dispatcher } = { ...opts.request, redirect: "manual", signal };
       if (target.pins) {
-        const agent = makeAgent(target.pins);
+        const agent = makeAgent(target.pins, opts.tls);
         agents.push(agent);
         init.dispatcher = agent;
       } else if (opts.allowInternal !== true) {
@@ -294,6 +332,12 @@ export async function fetchOutbound(
       const location = response.headers.get("location");
       // Tear the hop down rather than leaving its body to be drained or to sit on the connection.
       await response.body?.cancel().catch(() => {});
+      if (maxRedirects === 0) {
+        // A sender that never follows redirects (webhooks): the redirect itself is the failure.
+        throw new OutboundUrlBlockedError(
+          `the server answered with a redirect (HTTP ${response.status}), which is not followed`,
+        );
+      }
       if (!location) {
         throw new OutboundUrlBlockedError(`redirect (HTTP ${response.status}) carried no Location header`);
       }

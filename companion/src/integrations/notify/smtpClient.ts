@@ -1,6 +1,7 @@
 import net from "node:net";
 import tls from "node:tls";
 import type { SmtpChannelConfig } from "../../analysis/notifications.js";
+import { resolveLanHost, type ResolveHost } from "../../routes/outboundTargetPolicy.js";
 
 // A minimal, dependency-free SMTP client. The DIALOG (`sendSmtp`) is driven through an injectable
 // `SmtpConnect`, so the whole state machine — EHLO, opportunistic STARTTLS, AUTH LOGIN, MAIL/RCPT/
@@ -298,15 +299,53 @@ class NodeSmtpSocket implements SmtpSocketLike {
   }
 }
 
+export interface NodeSmtpConnectDeps {
+  /** Injected by tests so they never touch real DNS. */
+  resolveHost?: ResolveHost;
+  /** Injected by tests so they never open a socket. */
+  createConnection?: typeof net.createConnection;
+  tlsConnect?: typeof tls.connect;
+}
+
 // Open a real connection. Implicit TLS when `secure`, else a plain socket (STARTTLS handled by the
 // dialog). Times out the initial connect.
-export const nodeSmtpConnect: SmtpConnect = (opts) =>
-  new Promise<SmtpSocketLike>((resolve, reject) => {
+//
+// The host is resolved and checked FIRST (#2146): a cloud-metadata or link-local answer is refused,
+// and the socket is opened to the checked address rather than the name, so a second lookup cannot
+// answer differently (DNS rebinding). The name stays the TLS servername, so the certificate is still
+// verified against what the admin typed.
+export function createNodeSmtpConnect(deps: NodeSmtpConnectDeps = {}): SmtpConnect {
+  return async (opts) => {
+    let address: string;
+    try {
+      [{ address }] = await resolveLanHost(opts.host, {
+        resolveHost: deps.resolveHost,
+        timeoutMs: opts.timeoutMs,
+      });
+    } catch (err) {
+      throw new SmtpError(`connect refused: ${(err as Error).message}`, "connect");
+    }
+    return openSocket({ ...opts, address }, deps);
+  };
+}
+
+export const nodeSmtpConnect: SmtpConnect = createNodeSmtpConnect();
+
+function openSocket(
+  opts: Parameters<SmtpConnect>[0] & { address: string },
+  deps: NodeSmtpConnectDeps,
+): Promise<SmtpSocketLike> {
+  const connectTls = deps.tlsConnect ?? tls.connect;
+  const connectPlain = deps.createConnection ?? net.createConnection;
+  // SNI may not carry an IP literal (RFC 6066); a literal host is verified against itself.
+  const servername = net.isIP(opts.host.replace(/^\[|\]$/g, "")) ? undefined : opts.host;
+  return new Promise<SmtpSocketLike>((resolve, reject) => {
     const onError = (err: Error): void => reject(new SmtpError(`connect failed: ${err.message}`, "connect"));
     if (opts.secure) {
-      const socket = tls.connect(
+      const socket = connectTls(
         {
-          host: opts.host,
+          host: opts.address,
+          ...(servername ? { servername } : {}),
           port: opts.port,
           rejectUnauthorized: opts.rejectUnauthorized,
           timeout: opts.timeoutMs,
@@ -319,7 +358,7 @@ export const nodeSmtpConnect: SmtpConnect = (opts) =>
         reject(new SmtpError("connect timed out", "timeout"));
       });
     } else {
-      const socket = net.createConnection({ host: opts.host, port: opts.port, timeout: opts.timeoutMs }, () =>
+      const socket = connectPlain({ host: opts.address, port: opts.port, timeout: opts.timeoutMs }, () =>
         resolve(new NodeSmtpSocket(socket, false)),
       );
       socket.once("error", onError);
@@ -329,3 +368,4 @@ export const nodeSmtpConnect: SmtpConnect = (opts) =>
       });
     }
   });
+}

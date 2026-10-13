@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchMock } from "../helpers/fetchMock.js";
-import { buildTlsFetch } from "../../src/enrichment/tlsFetch.js";
+import { buildTlsConnect, buildTlsFetch } from "../../src/enrichment/tlsFetch.js";
 
 // Construction-level tests: no disk, no network — the file reader, dispatcher factory, and
 // underlying fetch are all injectable so we assert WHAT gets configured, not real TLS.
@@ -52,5 +52,29 @@ describe("buildTlsFetch", () => {
     );
     expect(f).toBeTypeOf("function");
     expect(makeDispatcher).toHaveBeenCalledWith({ ca: "CA", rejectUnauthorized: false });
+  });
+});
+
+// #2146: the outbound guard pins its OWN undici Agent, so a TLS fetch chained in front of it would
+// replace that dispatcher and send unpinned. The connect options are exported instead, for the
+// guard to merge into its one Agent.
+describe("buildTlsConnect", () => {
+  it("returns undefined when no TLS customization is requested", () => {
+    expect(buildTlsConnect({})).toBeUndefined();
+  });
+
+  it("returns the CA bundle and the verification flag as plain connect options", () => {
+    const readFile = vi.fn(() => "PEM");
+    expect(buildTlsConnect({ caCertPath: "ca.pem" }, { readFile })).toEqual({ ca: "PEM" });
+    expect(buildTlsConnect({ caCertPath: "ca.pem", insecureSkipVerify: true }, { readFile })).toEqual({
+      ca: "PEM",
+      rejectUnauthorized: false,
+    });
+  });
+
+  it("keeps the insecure-for-non-loopback refusal", () => {
+    expect(() =>
+      buildTlsConnect({ insecureSkipVerify: true, hostUrl: "https://notify-webhook.invalid" }),
+    ).toThrow(/non-loopback/);
   });
 });

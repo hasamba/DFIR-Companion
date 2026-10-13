@@ -59,7 +59,8 @@ import { AuditCursorStore } from "../analysis/auditExportCursor.js";
 import { createAuditExporter } from "../integrations/audit/auditExporter.js";
 import { syslogSend } from "../integrations/audit/syslogTransport.js";
 import { nodeSmtpConnect } from "../integrations/notify/smtpClient.js";
-import { tlsFetchFor } from "./tlsFetch.js";
+import { tlsConnectFor, tlsFetchFor } from "./tlsFetch.js";
+import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
@@ -282,6 +283,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const notifier = createNotifier({
     store: notificationStore,
     fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
+    // Incoming-webhook channels go through the pinned outbound guard (#2146): LAN and loopback
+    // allowed, cloud-metadata and link-local refused for the URL and every address it resolves to,
+    // redirects refused. DFIR_NOTIFY_CA/_INSECURE ride on the guard's ONE pinned Agent as connect
+    // options — tlsFetchFor's fetch would replace that Agent and send unpinned.
+    webhookFetch: createGuardedFetch({ policy: "lan", maxRedirects: 0, tls: tlsConnectFor("NOTIFY") }),
     smtpConnect: nodeSmtpConnect,
     // Telegram channels with no token of their own borrow the war-room bot's, and every telegram
     // channel reaches Telegram the way the war-room bot does. Thunks, so both are read per send

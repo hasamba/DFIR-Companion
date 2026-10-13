@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildEnrichmentProviders, tlsFetchFor, setServerLogger, getServerLogger } from "../../src/server.js";
+import {
+  buildEnrichmentProviders,
+  tlsConnectFor,
+  tlsFetchFor,
+  setServerLogger,
+  getServerLogger,
+} from "../../src/server.js";
 import type { Logger } from "../../src/logging/logger.js";
 
 // #246's insecureSkipVerify guard is unreachable from the real server unless tlsFetchFor() passes
@@ -94,5 +100,27 @@ describe("tlsFetchFor(NOTIFY) — the guard must apply to webhooks too", () => {
 
   it("builds no custom fetch at all when insecure is not requested", () => {
     expect(tlsFetchFor("NOTIFY")).toBeUndefined();
+  });
+});
+
+// #2146: webhooks now go through the pinned outbound guard, which takes TLS CONNECT OPTIONS rather
+// than a fetch. The same NOTIFY sentinel must keep the insecure-external refusal on that path.
+describe("tlsConnectFor(NOTIFY) — connect options for the pinned guard", () => {
+  it("refuses DFIR_NOTIFY_INSECURE alone and falls back to verified TLS", () => {
+    process.env.DFIR_NOTIFY_INSECURE = "1";
+    const warn = vi.fn();
+    setServerLogger({ ...originalLogger, warn });
+    expect(tlsConnectFor("NOTIFY")).toBeUndefined();
+    expect(warn.mock.calls.some(([m]) => /non-loopback/i.test(m as string))).toBe(true);
+  });
+
+  it("honours DFIR_NOTIFY_INSECURE with the external opt-in", () => {
+    process.env.DFIR_NOTIFY_INSECURE = "1";
+    process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL = "true";
+    expect(tlsConnectFor("NOTIFY")).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("is undefined when nothing is configured", () => {
+    expect(tlsConnectFor("NOTIFY")).toBeUndefined();
   });
 });

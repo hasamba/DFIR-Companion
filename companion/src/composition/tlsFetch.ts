@@ -1,4 +1,9 @@
-import { buildTlsFetch } from "../enrichment/tlsFetch.js";
+import {
+  buildTlsConnect,
+  buildTlsFetch,
+  type TlsConnectOptions,
+  type TlsFetchOptions,
+} from "../enrichment/tlsFetch.js";
 import { warnLine } from "../logging/serverLogger.js";
 import { isEnvFlag } from "./env.js";
 
@@ -64,10 +69,23 @@ export type TlsIntegration =
   | "SERVICENOW";
 
 export function tlsFetchFor(name: TlsIntegration) {
+  return fromEnv(name, buildTlsFetch);
+}
+
+/**
+ * The same per-integration TLS trust as tlsFetchFor, as plain connect options for the pinned
+ * outbound guard (#2146), which must merge them into its own Agent rather than chain a TLS fetch
+ * that would replace it. Same env, same sentinel host, same insecure-external refusal.
+ */
+export function tlsConnectFor(name: TlsIntegration): TlsConnectOptions | undefined {
+  return fromEnv(name, (opts) => buildTlsConnect(opts));
+}
+
+function fromEnv<T>(name: TlsIntegration, build: (opts: TlsFetchOptions) => T | undefined): T | undefined {
   const hostSource = TLS_HOST_URL[name];
   const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
   try {
-    return buildTlsFetch({
+    return build({
       caCertPath: process.env[`DFIR_${name}_CA`],
       insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
       hostUrl,

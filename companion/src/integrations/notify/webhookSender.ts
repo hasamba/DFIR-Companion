@@ -1,5 +1,6 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 import { readBoundedText, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
+import { OutboundUrlBlockedError } from "../../routes/outboundTargetPolicy.js";
 
 // POST a JSON payload to a Slack/Teams incoming webhook. Injectable `fetchFn` (tests pass a mock —
 // no real network), bounded by a timeout. Slack replies "ok" / Teams replies "1" on success; we
@@ -22,11 +23,18 @@ function safeHost(url: string): string {
   }
 }
 
+export interface PostWebhookOptions {
+  /** Do not follow a 3xx; report it as the failure (#2146). A 307/308 would re-POST the case
+   *  detail to wherever the redirect points, which no check on the first URL covers. */
+  refuseRedirects?: boolean;
+}
+
 export async function postWebhook(
   fetchFn: FetchFn,
   url: string,
   payload: unknown,
   timeoutMs = 15_000,
+  opts: PostWebhookOptions = {},
 ): Promise<WebhookResult> {
   let res: Response;
   try {
@@ -35,9 +43,21 @@ export async function postWebhook(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs),
+      ...(opts.refuseRedirects ? { redirect: "manual" as const } : {}),
     });
   } catch (err) {
+    // A guard refusal is a policy decision, not a network fault — show it as written.
+    if (err instanceof OutboundUrlBlockedError) return { ok: false, status: 0, error: err.message };
     return { ok: false, status: 0, error: `network error: ${(err as Error).message}` };
+  }
+
+  if (opts.refuseRedirects && res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => {});
+    return {
+      ok: false,
+      status: res.status,
+      error: `the server answered with a redirect (HTTP ${res.status}), which is not followed`,
+    };
   }
 
   if (!res.ok) {

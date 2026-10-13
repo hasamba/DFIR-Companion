@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { Finding, Severity, StepPriority } from "./stateTypes.js";
 import type { FindingsDiff } from "./findingsDiff.js";
 import type { PlaybookTask } from "./playbook.js";
+import {
+  isMetadataOrLinkLocalHost,
+  metadataTargetError,
+  urlHostIsMetadataOrLinkLocal,
+} from "./metadataTarget.js";
 
 // Notification channels (issue #58). The Companion can push three classes of investigation
 // signal — (1) new/escalated findings, (2) playbook updates, (3) lifecycle milestones — to
@@ -426,6 +431,14 @@ export function parseChannelInput(
           : `${v.type} channel requires an http(s) webhook URL`,
       };
     }
+    // Cloud-metadata / link-local targets are refused (#2146). Only a URL TYPED in this request is
+    // checked: a blank box keeps the saved URL, and the enable/disable toggle PUTs a blank box, so
+    // checking the inherited one would make a channel saved before this rule impossible to switch
+    // off. It cannot send either way — the send-time guard refuses it and Test says why.
+    const typed = (v.webhookUrl ?? "").trim();
+    if (typed && urlHostIsMetadataOrLinkLocal(typed)) {
+      return { ok: false, error: metadataTargetError(new URL(typed).hostname) };
+    }
     draft.webhookUrl = url;
   } else if (v.type === "telegram") {
     // Blank token on update → keep the saved one (same redacted-round-trip pattern as webhookUrl).
@@ -450,6 +463,9 @@ export function parseChannelInput(
   } else {
     if (!v.smtp) return { ok: false, error: "email channel requires smtp { host, port, from, to }" };
     if (!v.smtp.to.length) return { ok: false, error: "email channel requires at least one recipient (to)" };
+    // Same rule for the SMTP host (#2146); the connect re-checks what a name resolves to.
+    if (isMetadataOrLinkLocalHost(v.smtp.host))
+      return { ok: false, error: metadataTargetError(v.smtp.host.trim()) };
     draft.smtp = {
       host: v.smtp.host.trim(),
       port: v.smtp.port,
