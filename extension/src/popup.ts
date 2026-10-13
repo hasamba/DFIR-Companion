@@ -19,6 +19,7 @@ import type {
   SetAdapterOverrideMessage,
 } from "./types.js";
 import { browserApi, isFirefox } from "./browser.js";
+import { onCaseSelectionChanged, refreshCasePasswordField, wireCasePasswordField } from "./casePasswordField.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
@@ -33,6 +34,8 @@ interface PopupTab {
 }
 
 let currentTab: PopupTab | null = null;
+// Case ids GET /cases reported as password-locked (`hasPassword`) — they get the password field.
+let lockedCases = new Set<string>();
 
 async function activeTab(): Promise<PopupTab | null> {
   const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
@@ -245,7 +248,8 @@ async function loadCases(
     });
     status = res.status;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const cases = (await res.json()) as Array<{ caseId: string; name: string }>;
+    const cases = (await res.json()) as Array<{ caseId: string; name: string; hasPassword?: boolean }>;
+    lockedCases = new Set(cases.filter((c) => c.hasPassword === true).map((c) => c.caseId));
     sel.innerHTML = "";
     if (cases.length === 0) {
       sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
@@ -253,7 +257,8 @@ async function loadCases(
     }
     sel.appendChild(new Option("— no case (push button hidden) —", ""));
     for (const c of cases) {
-      const label = c.name && c.name !== c.caseId ? `${c.caseId} — ${c.name}` : c.caseId;
+      const named = c.name && c.name !== c.caseId ? `${c.caseId} — ${c.name}` : c.caseId;
+      const label = c.hasPassword ? `${named} (locked)` : named;
       sel.appendChild(new Option(label, c.caseId));
     }
     sel.value = cases.some((c) => c.caseId === selectedId) ? selectedId : "";
@@ -315,6 +320,11 @@ async function init() {
   $("intervalSeconds").value = String(s.intervalSeconds);
   $("dedupThreshold").value = String(s.dedupThreshold);
   await loadCases(s.companionUrl, s.caseId, s.serviceToken);
+  await refreshCasePasswordField(caseSelect().value, lockedCases.has(caseSelect().value));
+  wireCasePasswordField(() => {
+    const f = readForm(false);
+    return { caseId: f.caseId, companionUrl: f.companionUrl, serviceToken: f.serviceToken };
+  });
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
@@ -331,6 +341,10 @@ async function init() {
   for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds", "dedupThreshold"]) {
     document.getElementById(id)!.addEventListener("change", () => void persistForm());
   }
+  caseSelect().addEventListener("change", () => {
+    const caseId = caseSelect().value;
+    void onCaseSelectionChanged(caseId, lockedCases.has(caseId));
+  });
 
   // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
   // pointing Companion URL at a different instance.
@@ -343,6 +357,7 @@ async function init() {
     // the token is scoped elsewhere), which blanks the dropdown. Without this the service worker
     // would keep capturing into a case the analyst can no longer see.
     const settled = await persistForm();
+    await refreshCasePasswordField(settled.caseId, lockedCases.has(settled.caseId));
     statusEl().textContent = result.ok
       ? "case list refreshed"
       : `${result.failure} (${settled.companionUrl})`;

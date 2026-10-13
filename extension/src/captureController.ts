@@ -1,6 +1,7 @@
 import type { CompanionClient } from "./companionClient.js";
 import type { CaptureQueue, QueueSendResult } from "./captureQueue.js";
 import type { CapturePayload, ConnectionStatus, TriggerType } from "./types.js";
+import { isLockedRejection } from "./casePasswordSession.js";
 
 // Is this HTTP status worth retrying later? A 4xx is normally the companion's considered answer
 // about THIS capture (404 case gone, 423 case closed, 410 deleted) and will say the same thing
@@ -42,6 +43,8 @@ export class CaptureController {
       const drained = await this.queue.drain(async (p): Promise<QueueSendResult> => {
         const r = await this.client.postCapture(p);
         if (r.ok) return { outcome: "sent" };
+        // Still waiting for its case password (#2135) — keep it, never drop evidence for this.
+        if (isLockedRejection(r.status, r.errorMessage)) return { outcome: "retry", status: r.status };
         return {
           outcome: isPermanent(r.status) ? "drop" : "retry",
           status: r.status,
@@ -53,6 +56,13 @@ export class CaptureController {
         queued: await this.queue.size(),
         ...(drained.dropped.length ? { dropped: drained.dropped } : {}),
       };
+    }
+
+    // The case is password-locked and the capture carried no (or a wrong) password (#2135). Not a
+    // verdict on the screenshot: queue it, so it uploads once the analyst enters the password.
+    if (isLockedRejection(result.status, result.errorMessage)) {
+      await this.queue.enqueue(payload);
+      return { online: true, queued: await this.queue.size(), locked: true };
     }
 
     // The companion responded but rejected the capture (4xx — typically 404, the case

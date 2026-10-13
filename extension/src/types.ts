@@ -53,6 +53,16 @@ export interface ConnectionStatus {
   rejectedMessage?: string;
   // Previously-queued captures discarded during this drain (see DroppedCapture).
   dropped?: DroppedCapture[];
+  // The case is password-locked and this capture carried no (or a wrong) case password (#2135).
+  // The capture is KEPT in the queue — it uploads once the analyst enters the password.
+  locked?: boolean;
+}
+
+// The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in
+// browser.storage.session only (see casePasswordSession.ts) and never in a queued payload.
+export interface CaseCredential {
+  caseId: string;
+  password: string;
 }
 
 // ── Automated artifact fetching (issue #102) ──────────────────────────────────────────────────

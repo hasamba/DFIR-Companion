@@ -5,6 +5,10 @@ import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { browserApi } from "./browser.js";
 import {
+  forgetCaseCredential, isLockedRejection, lockedQueueMessage, pushErrorMessage, readCaseCredential,
+  type SessionArea,
+} from "./casePasswordSession.js";
+import {
   appendAuditEntry,
   hasSiteAccess,
   isCapturableTab,
@@ -17,7 +21,7 @@ import {
   DEFAULT_SETTINGS,
   type ContextPushResultMessage, type ContextTableResult,
   type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
-  type Settings, type SiteAccessChangedMessage, type TriggerType,
+  type CaseCredential, type Settings, type SiteAccessChangedMessage, type TriggerType,
 } from "./types.js";
 
 const ALARM = "dfir-capture-timer";
@@ -33,11 +37,13 @@ async function getSettings(): Promise<Settings> {
   return { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
 }
 
-function controllerFor(settings: Settings): CaptureController {
-  return new CaptureController(
-    new CompanionClient(settings.companionUrl, undefined, settings.serviceToken),
-    queue,
-  );
+// The locked-case password (#2135): browser.storage.session only — see casePasswordSession.ts.
+function sessionArea(): SessionArea | undefined {
+  return browserApi.storage.session as unknown as SessionArea | undefined;
+}
+
+function clientFor(settings: Settings, credential?: CaseCredential): CompanionClient {
+  return new CompanionClient(settings.companionUrl, undefined, settings.serviceToken, credential);
 }
 
 async function tabHasPersistentAccess(tab: chrome.tabs.Tab): Promise<boolean> {
@@ -76,7 +82,9 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
   }
   const imageBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
 
-  const status = await controllerFor(settings).capture(settings.caseId, trigger, {
+  const credential = await readCaseCredential(sessionArea(), settings.caseId);
+  const controller = new CaptureController(clientFor(settings, credential), queue);
+  const status = await controller.capture(settings.caseId, trigger, {
     url: tab.url,
     tabTitle: tab.title ?? "",
     imageBase64,
@@ -89,8 +97,14 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
     ? ` · ${status.dropped.length} queued capture(s) discarded — case gone/closed (HTTP ${[...new Set(status.dropped.map((d) => d.status))].join(", ")})`
     : "";
 
+  // A wrong password is tried ONCE: forget it on the first locked answer, so auto-capture cannot burn
+  // the case's shared lockout and shut the analyst out of their own dashboard (#2135).
+  if (status.locked && credential) await forgetCaseCredential(sessionArea());
+
   // Record the last capture outcome so the popup can surface it.
-  const diag = (status.rejected
+  const diag = (status.locked
+    ? `${lockedQueueMessage(status.queued)}${credential ? " (the password was not accepted)" : ""}`
+    : status.rejected
     ? status.rejectedMessage
       ? `rejected (HTTP ${status.rejected}) — ${status.rejectedMessage}`
       : `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
@@ -101,7 +115,11 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
     lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
   });
 
-  if (status.rejected || status.dropped?.length) {
+  if (status.locked) {
+    // Amber with the count — evidence is waiting, not lost (#2135).
+    await browserApi.action.setBadgeText({ text: String(status.queued) });
+    await browserApi.action.setBadgeBackgroundColor({ color: "#d18616" });
+  } else if (status.rejected || status.dropped?.length) {
     await browserApi.action.setBadgeText({ text: "!" });
     // Amber — this capture was rejected, and/or queued captures had to be discarded (#215).
     await browserApi.action.setBadgeBackgroundColor({ color: "#d18616" });
@@ -109,7 +127,7 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
     await browserApi.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
     await browserApi.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
   }
-  return status.rejected
+  return status.rejected || status.locked
     ? { ok: false, error: diag }
     : { ok: true };
 }
@@ -198,7 +216,8 @@ async function pushArtifact(
   // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
   // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
   const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
-  const client = new CompanionClient(settings.companionUrl, undefined, settings.serviceToken);
+  const credential = await readCaseCredential(sessionArea(), settings.caseId);
+  const client = clientFor(settings, credential);
   // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
   // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
   // an uploaded file, so no format hint beyond the filename is needed.
@@ -215,11 +234,9 @@ async function pushArtifact(
   });
 
   if (result.ok) return { ok: true, status: result.status, rows: rowCount, caseId: settings.caseId };
-  const error = result.status === 0 ? `Companion offline at ${settings.companionUrl}`
-    : result.status === 404 ? `Case "${settings.caseId}" not found — re-select it in the popup`
-    : result.status === 400 ? "Companion couldn't detect the artifact format"
-    : result.status === 501 ? "Companion has no AI provider configured for this artifact type"
-    : `Import rejected (HTTP ${result.status})`;
+  // One attempt per typed password — see captureActiveTab (#2135).
+  if (credential && isLockedRejection(result.status, result.errorMessage)) await forgetCaseCredential(sessionArea());
+  const error = pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl);
   return { ok: false, status: result.status, error };
 }
 

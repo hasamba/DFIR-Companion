@@ -83,3 +83,41 @@ describe("CompanionClient", () => {
     expect(JSON.parse((init as RequestInit).body as string)).toEqual(payload);
   });
 });
+
+// #2135: a locked case needs its password on every evidence write. The extension holds it in
+// session memory and adds it at SEND time — it is never part of a queued payload.
+describe("CompanionClient — case password for locked cases (#2135)", () => {
+  const ok201 = () =>
+    vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 201 }));
+  const bodyOf = (fetchFn: ReturnType<typeof ok201>) =>
+    JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string) as Record<string, unknown>;
+
+  it("adds casePassword to a capture for the case the password belongs to", async () => {
+    const fetchFn = ok201();
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", password: "pw-123456" });
+    await client.postCapture(payload);
+    expect(bodyOf(fetchFn).casePassword).toBe("pw-123456");
+    expect(payload).not.toHaveProperty("casePassword"); // the caller's payload is not mutated
+  });
+
+  it("does not send the password with a capture for a different case", async () => {
+    const fetchFn = ok201();
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "other", password: "pw-123456" });
+    await client.postCapture(payload);
+    expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
+  });
+
+  it("adds casePassword to an artifact import for the matching case", async () => {
+    const fetchFn = ok201();
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", password: "pw-123456" });
+    await client.postImport("c1", { json: "[]", filename: "f.json" });
+    expect(bodyOf(fetchFn).casePassword).toBe("pw-123456");
+  });
+
+  it("postImport returns the companion's error field", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ error: "locked", caseId: "c1" }), { status: 401 }));
+    const client = new CompanionClient("http://x", fetchFn);
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" }))
+      .toEqual({ ok: false, status: 401, errorMessage: "locked" });
+  });
+});

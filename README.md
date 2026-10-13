@@ -228,7 +228,7 @@ list of known compromised hosts and users.
 - **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike/VolWeb injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table; the popup shows the auto-detected console with a dropdown to force a different adapter (or none) per tab
 - **Right-click "Send to DFIR-Companion"** — send a page's selected text, a nearby table, or a link's URL straight to the connected case from any page, not just recognized consoles
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected
-- **Case password protection** — 🔒 Password… locks a case in the dashboard, enforced server-side; capture ingestion keeps working while locked
+- **Case password protection** — 🔒 Password… locks a case in the dashboard, enforced server-side for reads and imports; the extension asks for the case password and keeps screenshots queued until it has it; push-key webhooks keep working
 - **Permanently delete a case** — 🗑️ Delete… in the case lifecycle menu removes a case's directory for good, with an optional ZIP/encrypted archive taken first; refuses to touch a directory that isn't a real case and won't delete an already-archived case's live folder out from under its archive
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **"Which host did this file come from?"** — a log export that names no collector asks for its host; old names fold in as former names

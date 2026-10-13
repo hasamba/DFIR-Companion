@@ -118,8 +118,14 @@ screenshot capture. The server auto-detects the format and routes it into the ti
 button shows the result (`✓ Pushed N rows to "<case>"` or the error). On an unrecognized site the
 extension does nothing extra. No content script is injected at all until the origin is approved.
 
-> Pick a case in the popup first (the artifact push uses it). The push reuses the localhost,
-> unauthenticated import path — no token needed (unlike the server's external `/push` webhook).
+> Pick a case in the popup first (the artifact push uses it). The push reuses the localhost
+> import path — no token needed in single-user mode (unlike the server's external `/push` webhook).
+
+**Locked cases.** When the selected case has a password, the popup shows a **Case password** field.
+Press **Check** to verify it; the extension then keeps it in browser session memory only (never on
+disk, never in the capture queue) and sends it with each screenshot and push for that case. Without
+it, screenshots wait in the queue and the badge turns amber with the count. A rejected password is
+forgotten at once, so a wrong one costs a single attempt against the case's lockout.
 
 ## Capture interval note
 

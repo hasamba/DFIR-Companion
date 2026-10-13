@@ -280,6 +280,7 @@
     "caseZipReader.ts": "analysis/case",
     "caseIdGate.ts": "analysis/case",
     "caseLockGate.ts": "analysis/case",
+    "caseWriteCredential.ts": "analysis/case",
     "casePassword.ts": "analysis/case",
     "cfurlBookmarkReader.ts": "analysis/ingest",
     "caseSqliteSchema.ts": "storage",

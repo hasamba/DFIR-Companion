@@ -7,13 +7,7 @@ import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { detectImageFormat } from "../ingest/imageFormat.js";
 import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
-import {
-  parseCookieHeader,
-  unlockCookieName,
-  verifyUnlockToken,
-  verifyCasePassword,
-} from "../analysis/casePassword.js";
-import { getUnlockLimiter } from "../http/rateLimiter.js";
+import { checkCaseWriteCredential, sendCaseWriteRefusal } from "../analysis/caseWriteCredential.js";
 import type { RouteContext } from "./context.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 
@@ -109,52 +103,19 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
             error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots`,
           });
         }
-        // Case-password gate: when a case has a password, verify the unlock cookie OR the
-        // case password in the request body. The browser extension sends the password the
-        // analyst entered in the popup; the dashboard sends the unlock cookie. This prevents
-        // a third party from injecting screenshots into a password-protected case.
+        // Case-password gate: the unlock cookie (dashboard) OR the case password in the body (the
+        // browser extension, which keeps it in session memory once the analyst types it in the
+        // popup). One shared check with the case-lock gate's /import, one shared lockout counter
+        // with /unlock — see caseWriteCredential.ts. Stops a third party injecting screenshots.
         if (caseMeta?.password) {
-          // Rate-limit brute-force attempts on this second online-entry point too. /captures
-          // accepts a casePassword in the body and runs verifyCasePassword on it, so without
-          // this gate an attacker could hammer /captures thousands of times per hour with no
-          // lockout (the unlock limiter only covered POST /cases/:id/unlock). The scrypt KDF
-          // was kept weak (N=2^14) on the documented assumption that online attempts are
-          // rate-limited — so leaving /captures unthrottled defeated that assumption too.
-          //
-          // The lockout check, the derivation and the count run as ONE serialized step per case
-          // through the SHARED limiter (AttemptLimiter.attempt), so /captures and /unlock guesses
-          // count together toward lockout and a burst split across the two endpoints cannot slip
-          // past the check before its failures are counted.
-          const limiter = getUnlockLimiter();
-          const cookies = parseCookieHeader(req.headers.cookie);
-          const token = cookies[unlockCookieName(rawCaseId)];
-          const stored = caseMeta.password;
-          const cookieOk = token && verifyUnlockToken(token, rawCaseId, stored.salt, ctx.instanceSecret);
-          const bodyPassword = typeof req.body?.casePassword === "string" ? req.body.casePassword : "";
-          // A valid unlock cookie is proof already; only a body password costs a derivation.
-          const outcome = await limiter.attempt(rawCaseId, () =>
-            cookieOk
-              ? Promise.resolve(true)
-              : bodyPassword
-                ? verifyCasePassword(bodyPassword, stored)
-                : Promise.resolve(false),
-          );
-          if (outcome.kind === "locked") {
-            res.setHeader("Retry-After", String(Math.ceil(outcome.retryAfterMs / 1000)));
-            return res.status(429).json({
-              error: "too many failed attempts, try again later",
-              retryAfterMs: outcome.retryAfterMs,
-            });
-          }
-          if (outcome.kind === "failed") {
-            if (outcome.lockoutMs > 0) {
-              res.setHeader("Retry-After", String(Math.ceil(outcome.lockoutMs / 1000)));
-              return res
-                .status(429)
-                .json({ error: "too many failed attempts, locked out", retryAfterMs: outcome.lockoutMs });
-            }
-            return res.status(401).json({ error: "locked", caseId: rawCaseId });
-          }
+          const decision = await checkCaseWriteCredential({
+            caseId: rawCaseId,
+            stored: caseMeta.password,
+            cookieHeader: req.headers.cookie,
+            bodyPassword: req.body?.casePassword,
+            secret: ctx.instanceSecret,
+          });
+          if (!decision.ok) return sendCaseWriteRefusal(res, decision);
         }
       }
       const metadata = await ingestCapture(store, req.body);

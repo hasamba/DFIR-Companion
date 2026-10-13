@@ -1,19 +1,23 @@
 import type { Request, Response, NextFunction } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { unlockCookieName, verifyUnlockToken, parseCookieHeader } from "./casePassword.js";
+import { checkCaseWriteCredential, sendCaseWriteRefusal } from "./caseWriteCredential.js";
 import { CSP_NONCE_PLACEHOLDER, withNonce } from "../http/securityHeaders.js";
 
 // Routes that must stay reachable on a locked case:
 //  - lock-status / unlock / lock: how a client checks/clears/re-locks in the first place.
 //    "lock" specifically must work even when ALREADY locked, so the dashboard can forget a
 //    non-remembered unlock on page unload without racing the gate.
-//  - import: the capture extension's evidence-ingestion route. A background capture
-//    session should keep recording evidence even while the dashboard is locked — it's
-//    write-only and never exposes case content back to the caller.
-//  - push: the generic push-ingest route for external SIEM webhooks / Velociraptor
-//    pollers. Same rationale as import — write-only evidence ingestion must continue
-//    while the dashboard is locked.
-const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/lock", "/import", "/push"];
+//  - push: the generic push-ingest route for external SIEM webhooks / Velociraptor pollers. It is
+//    not open: the route demands its own push key (X-DFIR-Key, see pushAuth.ts) and refuses a
+//    request without one. The shared all-cases key keeps working on a locked case by owner
+//    decision (#2135) — it is a secret only the companion's operator hands out.
+const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/lock", "/push"];
+
+// Evidence-write routes that also accept the case password in the JSON body, for a client that
+// cannot hold the dashboard's httpOnly unlock cookie (the browser extension's console push). Before
+// #2135 /import was EXEMPT, so anyone who knew a locked case's id could add evidence to it.
+const BODY_PASSWORD_SUFFIXES = ["/import"];
 
 function pathOnly(url: string): string {
   const q = url.indexOf("?");
@@ -68,6 +72,19 @@ export function createCaseLockGate(store: CaseStore, secret: Buffer) {
     const token = cookies[unlockCookieName(caseId)];
     if (token && verifyUnlockToken(token, caseId, meta.password.salt, secret)) {
       next();
+      return;
+    }
+
+    if (BODY_PASSWORD_SUFFIXES.some((suffix) => path === `/cases/${caseId}${suffix}`)) {
+      const decision = await checkCaseWriteCredential({
+        caseId,
+        stored: meta.password,
+        cookieHeader: req.headers.cookie,
+        bodyPassword: (req.body as { casePassword?: unknown } | undefined)?.casePassword,
+        secret,
+      });
+      if (decision.ok) next();
+      else sendCaseWriteRefusal(res, decision);
       return;
     }
 
