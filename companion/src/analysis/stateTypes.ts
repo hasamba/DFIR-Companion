@@ -1,6 +1,7 @@
 import type { ExcludedIocRef, IocExcludeRule } from "./iocExclude.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
+import type { EventRevisionFields } from "./eventRevisionTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
@@ -450,10 +451,9 @@ export interface TimelineEntry {
   sourceScreenshots: string[];
 }
 
-// A real-world event reconstructed from the evidence (e.g. a process execution,
-// logon, file write) with the timestamp it actually happened — distinct from the
-// capture/analysis timeline above. These form the chronological attack story.
-export interface ForensicEvent {
+// A real-world event reconstructed from the evidence (e.g. a process execution, logon, file write) with the
+// time it actually happened — the chronological attack story. `revisions`: eventRevision.ts (#2141).
+export interface ForensicEvent extends EventRevisionFields {
   id: string;
   timestamp: string; // the event's real time as observed in the artifact (best effort)
   description: string;

@@ -20,6 +20,11 @@
 <body>
   <strong>DFIR Capture</strong>
   <label>Case <select id="caseId"></select></label>
+  <div id="casePasswordRow" hidden>
+    <label>Case password <input id="casePassword" type="password" autocomplete="off" /></label>
+    <div class="row"><button id="checkCasePassword" type="button">Check</button></div>
+    <div id="casePasswordHint" class="hint"></div>
+  </div>
   <div id="siteAccessPanel" class="access">
     <div class="access-title">Site access: <span id="siteAccessState">checking…</span></div>
     <div id="siteOrigin"></div>

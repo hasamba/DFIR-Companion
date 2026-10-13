@@ -325,6 +325,19 @@ Collapses to a thin sparkline on mobile.
 
 **Settings → General → Timeline row display** lets you choose which sub-elements appear on each row (action icons, tag pills, badges, host chip, MITRE, related findings, evidence links). Timestamp and message always show. Per-browser, applies immediately.
 
+### Changed After First Recorded
+
+A later import, AI pass or MCP agent can rewrite the text or severity of an event the case already holds. The new text and severity replace the old. The row then shows an amber **✎ changed after first recorded (N×)** note under its timestamp. Hover the note to see each change: when it happened, which import file or agent made it, the earlier text and the severity before and after.
+
+- A finding written before the change may quote the earlier text. Use the note to check it.
+- The row keeps up to 5 changes: the first one and the 4 most recent. The note says how many changes were not kept.
+- The earlier text is cut at 280 characters.
+- Re-importing the same file with the same content adds nothing.
+- A severity that a build-time or lab-setup cap lowered is not counted as a change.
+- A re-import or AI pass does not lower a severity that the content tagger raised. The event keeps the tagger's severity and stays in the forensic timeline. An MCP agent can still lower it, and the note records that change. Events the tagger raised before this release do not have this protection until the tagger runs on them again.
+- A re-import that only removes a correlation note (for example `[initial access: …]`) is not counted. The correlation check adds the note again.
+- When correlation merges two rows into one, the merged row keeps only its own change history.
+
 ---
 
 ## Host & Account Ranking

@@ -147,8 +147,8 @@ Archive, restore and delete are case-administrator actions. They are in the
 
 ### Locked cases
 
-A case with a password refuses most requests with `401 {"error": "locked"}`. `/import` and `/push`
-work without an unlock. For everything else, unlock first and keep the cookie:
+A case with a password refuses requests with `401 {"error": "locked"}`, including
+`POST /cases/:id/import`. Unlock first and keep the cookie:
 
 ```bash
 curl -s -c jar.txt -X POST http://127.0.0.1:4773/cases/IR-2026-001/unlock \
@@ -156,6 +156,19 @@ curl -s -c jar.txt -X POST http://127.0.0.1:4773/cases/IR-2026-001/unlock \
 
 curl -s -b jar.txt http://127.0.0.1:4773/cases/IR-2026-001/state
 ```
+
+A script that imports without a cookie can send the password in the body instead, as a
+`casePassword` field (the browser extension does this). The password is not stored with the
+evidence:
+
+```bash
+curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/import \
+  -H 'Content-Type: application/json' \
+  -d '{"filename": "alerts.csv", "text": "...", "casePassword": "case-password"}'
+```
+
+`POST /cases/:id/push` is the one exception: it needs no unlock. It authenticates with its push key
+only, and both the shared key and the case's own key work on a locked case.
 
 Five wrong passwords start a lockout (`429` with a `Retry-After` header).
 

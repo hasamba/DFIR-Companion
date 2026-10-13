@@ -150,8 +150,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   }
 
   /**
-   * Merge an agent's delta into case state, with an undo checkpoint.
-   *
+   * Merge an agent's delta into case state, with an undo checkpoint. A row it rewrites names the agent (#2141).
    * Goes through mergeDelta — the same path every other AI response takes — rather than the import
    * chain, because a delta is already findings/IOCs/events and has no file format to detect. The
    * delta was schema-validated and stripped of `extractedFrom` in the runner: everything the agent
@@ -170,6 +169,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       windowSequence: 0,
       timestamp: new Date().toISOString(),
       sourceScreenshots: [],
+      changeSource: `MCP agent: ${serverLabel}`,
     });
     await options.stateStore.save(merged);
     const counts = {

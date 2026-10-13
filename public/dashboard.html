@@ -5281,7 +5281,7 @@
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
 
         let span = ((e.endTimestamp && e.endTimestamp !== e.timestamp)
-          ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)")) + yearClampChip(e);
+          ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)")) + yearClampChip(e) + revisedChip(e);
         // Clock-skew alignment (#228): this row's time has been corrected for its host's clock. The
         // RECORDED time is the evidence, so it stays on screen underneath rather than being replaced.
         if (e.originalTimestamp) {

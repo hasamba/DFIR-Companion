@@ -65,3 +65,75 @@ describe("CaptureController", () => {
     expect(status.queued).toBe(0);
   });
 });
+
+// #2135: a locked case answers 401 {error:"locked"}. That is "waiting for the case password", not a
+// verdict on the screenshot — it used to be discarded. Evidence-first: keep it queued.
+describe("CaptureController — locked case (#2135)", () => {
+  const lockedResponse = () => new Response(JSON.stringify({ error: "locked", caseId: "c1" }), { status: 401 });
+
+  it("queues a capture the companion refuses as locked and reports locked", async () => {
+    const client = new CompanionClient("http://x", vi.fn(async () => lockedResponse()));
+    const controller = new CaptureController(client, queue);
+    const status = await controller.capture("c1", "timer", snapshot);
+    expect(status.locked).toBe(true);
+    expect(status.rejected).toBeUndefined();
+    expect(status.queued).toBe(1);
+    expect(await queue.size()).toBe(1);
+  });
+
+  it("never writes the case password into the persistent capture queue", async () => {
+    const client = new CompanionClient("http://x", vi.fn(async () => lockedResponse()), "", {
+      caseId: "c1", companionUrl: "http://x", password: "pw-123456",
+    });
+    await new CaptureController(client, queue).capture("c1", "timer", snapshot);
+    const seen: unknown[] = [];
+    await queue.drain(async (p) => { seen.push(p); return { outcome: "retry" }; });
+    expect(seen).toHaveLength(1);
+    expect(JSON.stringify(seen[0])).not.toContain("pw-123456");
+    expect(seen[0]).not.toHaveProperty("casePassword");
+  });
+
+  it("keeps a plain 401 (bad team token) permanent — not queued", async () => {
+    const client = new CompanionClient(
+      "http://x",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
+    );
+    const controller = new CaptureController(client, queue);
+    const status = await controller.capture("c1", "timer", snapshot);
+    expect(status.rejected).toBe(401);
+    expect(status.locked).toBeUndefined();
+    expect(await queue.size()).toBe(0);
+  });
+
+  it("uploads the waiting captures once the password is accepted", async () => {
+    let locked = true;
+    const client = new CompanionClient(
+      "http://x",
+      vi.fn(async () => (locked ? lockedResponse() : new Response("{}", { status: 201 }))),
+    );
+    const controller = new CaptureController(client, queue);
+    await controller.capture("c1", "timer", snapshot);
+    await controller.capture("c1", "timer", snapshot);
+    expect(await queue.size()).toBe(2);
+    locked = false; // the analyst entered the password
+    const status = await controller.capture("c1", "timer", snapshot);
+    expect(status.locked).toBeUndefined();
+    expect(status.queued).toBe(0);
+    expect(status.dropped).toBeUndefined();
+  });
+
+  it("stops the drain (retry, not drop) when a queued capture is still locked", async () => {
+    await queue.enqueue({
+      caseId: "locked-case", timestamp: "t", url: "u", tabTitle: "t", triggerType: "timer", imageBase64: "AAAA",
+    });
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as { caseId: string };
+      return body.caseId === "locked-case" ? lockedResponse() : new Response("{}", { status: 201 });
+    });
+    const controller = new CaptureController(new CompanionClient("http://x", fetchFn), queue);
+    const status = await controller.capture("open-case", "timer", snapshot);
+    expect(status.online).toBe(true);
+    expect(status.dropped).toBeUndefined();
+    expect(await queue.size()).toBe(1);
+  });
+});

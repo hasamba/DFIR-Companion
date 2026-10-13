@@ -158,11 +158,15 @@ describe("case password lifecycle", () => {
     expect(staleRes.status).toBe(401);
   });
 
-  it("the capture-ingestion route stays reachable while locked", async () => {
+  // #2135: the lock now gates imports too. Without the case password the gate refuses; with it the
+  // request reaches the route (no AI pipeline here, so the route itself 501s — not the gate's 401).
+  it("the capture-ingestion route needs the case password while locked", async () => {
     await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
-    // No AI pipeline configured in this test app, so the route itself 501s — the point is
-    // that it's NOT the lock gate rejecting it with 401.
-    const res = await request(app).post("/cases/c1/import").send({ text: "irrelevant", filename: "x.csv" });
+    const bare = await request(app).post("/cases/c1/import").send({ text: "irrelevant", filename: "x.csv" });
+    expect(bare.status).toBe(401);
+    const res = await request(app)
+      .post("/cases/c1/import")
+      .send({ text: "irrelevant", filename: "x.csv", casePassword: "correct horse" });
     expect(res.status).not.toBe(401);
   });
 

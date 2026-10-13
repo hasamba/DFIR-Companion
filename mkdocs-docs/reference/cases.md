@@ -88,9 +88,16 @@ requires that password. A **"remember on this computer"** checkbox skips the pro
 from the same browser; leave it unchecked and the case re-locks the moment you switch away, refresh,
 or close the tab.
 
-Enforced server-side — an unlock cookie gates every `/cases/:id/*` route, not just a UI prompt — but
-the capture extension's evidence ingestion keeps working while a case is locked, so screenshots aren't
-lost while you're away. Setting or changing a password does not auto-unlock the browser that set it;
+Enforced server-side — an unlock cookie gates every `/cases/:id/*` route, not just a UI prompt. That
+includes adding evidence: an import into a locked case needs the unlock or the case password.
+
+The capture extension shows a **Case password** field when you pick a locked case. Type the password
+once and press **Check**. The extension keeps it in memory until the browser closes, and screenshots
+and console pushes then go in as normal. Without the password, screenshots are not thrown away: they
+wait in the extension, and the toolbar badge turns amber with a count ("Case is locked — 12 captures
+waiting for the case password"). They upload after you enter the password, with the next capture. A
+wrong password is tried only once, so the extension cannot lock you out of your own case. Webhooks
+that use a push key keep working on a locked case. Setting or changing a password does not auto-unlock the browser that set it;
 you're prompted the same as anyone else. **Remove password** is only available when the case is
 currently unlocked and has a password set.
 

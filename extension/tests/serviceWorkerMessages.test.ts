@@ -35,3 +35,19 @@ describe("service-worker message handlers", () => {
     expect(activate).toContain("() => sendResponse(false)");
   });
 });
+
+// Codex review of #2135: the cached case password must not survive a change of companion server,
+// whichever page (popup or options) saved the new URL.
+describe("service-worker case-password binding", () => {
+  it("clears the cached case password when the stored companion URL changes", () => {
+    expect(sw).toMatch(
+      /storage\.onChanged\.addListener\([\s\S]{0,200}forgetCredentialOnServerChange\(sessionArea\(\), changes\)/,
+    );
+  });
+
+  it("reads the credential for the configured companion, not by case id alone", () => {
+    const reads = sw.match(/readCaseCredential\(sessionArea\(\),[^)]*\)/g) ?? [];
+    expect(reads.length).toBeGreaterThan(0);
+    for (const call of reads) expect(call).toContain("settings.companionUrl");
+  });
+});

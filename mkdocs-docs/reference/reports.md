@@ -80,7 +80,7 @@ Multiple templates can be saved (e.g. "Executive" with fewer sections vs. "Techn
 1. Cover page (title, date, classification, investigator)
 2. Executive summary (AI-generated or analyst-written)
 3. Investigation narrative (attacker path, written prose)
-4. Forensic timeline (with severity colour coding)
+4. Forensic timeline (with severity colour coding). An event that a later merge rewrote ends its Event cell with a note: `[changed after first recorded: N changes, latest <time> by <source>; first recorded as "<text>"; first severity <level>]`. See [Dashboard → Changed After First Recorded](dashboard.md#changed-after-first-recorded). The forensic-timeline CSV has the same note in its last column, `revisions`. That cell is empty for a row that never changed.
 5. Findings (each with evidence and MITRE techniques)
 6. MITRE ATT&CK coverage matrix
 7. IOCs (all indicators, with enrichment verdicts)

@@ -157,6 +157,26 @@ describe("incremental importer merge — same result as the full merge", () => {
     await expectSame();
   });
 
+  it("records the same revision as the full merge when a re-import changes a held row (#2141)", async () => {
+    await importBoth(delta(batch("a", 40)));
+    const changed = batch("a", 40).map((e, i) =>
+      i === 7 ? { ...e, description: "Service installed (parser fix)", severity: "High" as const } : e,
+    );
+    expect(await importBoth(delta(changed))).toBe(true);
+    const state = await expectSame();
+    const row = state.forensicTimeline.find((e) => e.id === "ae8");
+    expect(row?.description).toBe("Service installed (parser fix)");
+    expect(row?.revisions).toEqual([
+      {
+        at: "2026-09-30T10:02:00.000Z",
+        source: "import-2.json",
+        description: { from: "Service installed a-7" },
+        severity: { from: "Medium", to: "High" },
+      },
+    ]);
+    expect(state.forensicTimeline.filter((e) => e.revisions).length).toBe(1);
+  });
+
   it("folds a re-import of the same rows under new ids onto the stored rows", async () => {
     await importBoth(delta(batch("a", 40)));
     expect(await importBoth(delta(batch("b", 40)))).toBe(true);

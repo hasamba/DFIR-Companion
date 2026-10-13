@@ -209,7 +209,10 @@ export function applyToForensicEvent(input: ForensicEvent, result: EventTagResul
   if (severity === event.severity && mitreTechniques.length === event.mitreTechniques.length) {
     return event; // nothing to change — preserve identity so callers can skip the write
   }
-  return { ...event, severity, mitreTechniques };
+  // Remember the import grade it raised from, so a re-import cannot drop the row back (#2182).
+  const raisedFrom = severityRank(severity) < severityRank(event.severity) ? event.severity : undefined;
+  const taggerRaisedFrom = event.taggerRaisedFrom ?? raisedFrom;
+  return { ...event, severity, mitreTechniques, ...(taggerRaisedFrom ? { taggerRaisedFrom } : {}) };
 }
 
 /** The tagger's evaluation scope (mirrors readTaggerSettings() in taggerRun.ts). */

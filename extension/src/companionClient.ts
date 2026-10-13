@@ -1,4 +1,5 @@
-import type { CapturePayload, ImportPayload } from "./types.js";
+import { credentialMatches } from "./casePasswordSession.js";
+import type { CaseCredential, CapturePayload, ImportPayload } from "./types.js";
 
 type FetchFn = typeof fetch;
 
@@ -19,7 +20,20 @@ export class CompanionClient {
     private readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (input, init) => fetch(input, init),
     private readonly serviceToken = "",
+    // The password of a password-locked case (#2135), added to the request body at SEND time for
+    // that case on the companion it was entered for only — queued payloads never carry it.
+    private readonly caseCredential?: CaseCredential,
   ) {}
+
+  private withCasePassword<T extends object>(caseId: string, body: T): T | (T & { casePassword: string }) {
+    const cred = this.caseCredential;
+    return cred && credentialMatches(cred, caseId, this.baseUrl) ? { ...body, casePassword: cred.password } : body;
+  }
+
+  private static async errorOf(res: Response): Promise<string | undefined> {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : undefined;
+  }
 
   private headers(contentType = false): Record<string, string> {
     return {
@@ -33,11 +47,11 @@ export class CompanionClient {
       const res = await this.fetchFn(`${this.baseUrl}/captures`, {
         method: "POST",
         headers: this.headers(true),
-        body: JSON.stringify(payload),
+        body: JSON.stringify(this.withCasePassword(payload.caseId, payload)),
       });
       if (res.status === 201) return { ok: true, status: 201 };
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      return { ok: false, status: res.status, errorMessage: body.error };
+      const errorMessage = await CompanionClient.errorOf(res);
+      return { ok: false, status: res.status, ...(errorMessage ? { errorMessage } : {}) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }
@@ -50,9 +64,11 @@ export class CompanionClient {
       const res = await this.fetchFn(`${this.baseUrl}/cases/${encodeURIComponent(caseId)}/import`, {
         method: "POST",
         headers: this.headers(true),
-        body: JSON.stringify(payload),
+        body: JSON.stringify(this.withCasePassword(caseId, payload)),
       });
-      return { ok: res.status === 202, status: res.status };
+      if (res.status === 202) return { ok: true, status: 202 };
+      const errorMessage = await CompanionClient.errorOf(res);
+      return { ok: false, status: res.status, ...(errorMessage ? { errorMessage } : {}) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }

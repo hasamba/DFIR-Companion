@@ -36,11 +36,17 @@ Findings against these come up in every automated review; they are design decisi
   (`companion/src/http/originGuard.ts`) before any route runs, the unlock cookie is
   `SameSite=Strict`, and a request with no `Origin` header is by definition not a browser page.
   Team mode adds a per-session CSRF token on top (`X-DFIR-CSRF`).
-- **A locked case still accepts evidence.** `POST /cases/:id/import` and `POST /cases/:id/push`
-  are exempt from the case-lock gate on purpose: the lock is a dashboard read gate, and a
-  background capture or a SIEM webhook must keep recording while the analyst is away. Both routes
-  are write-only and return nothing about the case. `/push` additionally requires its shared
-  secret; in team mode both require an authenticated session holding write on the case.
+- **A locked case is a read and a write gate, with one exception: the push key.** Since #2135,
+  `POST /cases/:id/import` and `POST /captures` into a locked case need the unlock cookie or the
+  case password in the request body, and a wrong password counts toward the same lockout as
+  `/unlock`. `POST /cases/:id/push` is the exception by design: it still authenticates only with a
+  push key, and the shared all-cases key keeps working on a locked case. That key is a secret the
+  operator hands out; anyone who holds it can still add events to a locked case. A per-case push
+  key made before the password was set also keeps working, so rotate the case's push key when you
+  lock a case you suspect. The browser extension holds a case password in browser session memory
+  only (never on disk, never in its capture queue), and forgets it after one rejection so a wrong
+  password costs one attempt. In team mode every route also requires an authenticated session
+  holding write on the case.
 - **Anyone who can write to the cases folder on disk is trusted, and backups are not
   content-authenticated.** That includes each case's `state/backups/` directory. Restoring a
   backup checks the filename, allows only the known state files, and runs a SQLite integrity

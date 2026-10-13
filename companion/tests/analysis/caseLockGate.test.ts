@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createCaseLockGate } from "../../src/analysis/caseLockGate.js";
 import { hashCasePassword, signUnlockToken, unlockCookieName } from "../../src/analysis/casePassword.js";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
 
 let store: CaseStore;
 let secret: Buffer;
@@ -37,13 +38,75 @@ describe("createCaseLockGate", () => {
     expect((await request(app).get("/cases/c1/present")).status).toBe(200);
   });
 
-  it("always exempts lock-status, unlock, lock, import, and push even when a password is set", async () => {
+  it("always exempts lock-status, unlock, lock and push even when a password is set", async () => {
     await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
     expect((await request(app).get("/cases/c1/lock-status")).status).toBe(200);
     expect((await request(app).post("/cases/c1/unlock")).status).toBe(200);
     expect((await request(app).post("/cases/c1/lock")).status).toBe(200);
-    expect((await request(app).post("/cases/c1/import")).status).toBe(202);
+    // /push authenticates with its own push key inside the route (#2135 owner decision).
     expect((await request(app).post("/cases/c1/push")).status).toBe(202);
+  });
+
+  describe("/import on a locked case (#2135)", () => {
+    beforeEach(async () => {
+      resetLimiters();
+      await store.updateCaseMeta("c1", { password: await hashCasePassword("secret123") });
+    });
+
+    it("refuses an import with no cookie and no case password", async () => {
+      const res = await request(app).post("/cases/c1/import").send({ text: "a,b" });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("locked");
+    });
+
+    it("lets an import through with the right case password in the body", async () => {
+      const res = await request(app)
+        .post("/cases/c1/import")
+        .send({ text: "a,b", casePassword: "secret123" });
+      expect(res.status).toBe(202);
+    });
+
+    it("lets an import through with a valid unlock cookie", async () => {
+      const meta = await store.getCaseMeta("c1");
+      const token = signUnlockToken("c1", meta!.password!.salt, secret, 60_000, false);
+      const res = await request(app)
+        .post("/cases/c1/import")
+        .set("Cookie", `${unlockCookieName("c1")}=${token}`)
+        .send({ text: "a,b" });
+      expect(res.status).toBe(202);
+    });
+
+    it("refuses a wrong case password and counts it toward the shared unlock lockout", async () => {
+      const statuses: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = await request(app)
+          .post("/cases/c1/import")
+          .send({ text: "a,b", casePassword: "wrong-pw" });
+        statuses.push(res.status);
+      }
+      expect(statuses[0]).toBe(401);
+      expect(statuses).toContain(429);
+      // Same counter as /unlock and /captures: the right password is now refused too.
+      const right = await request(app)
+        .post("/cases/c1/import")
+        .send({ text: "a,b", casePassword: "secret123" });
+      expect(right.status).toBe(429);
+    });
+
+    it("does not count a request that carries no password at all as a guess", async () => {
+      for (let i = 0; i < 8; i++) {
+        expect((await request(app).post("/cases/c1/import").send({ text: "a,b" })).status).toBe(401);
+      }
+      const right = await request(app)
+        .post("/cases/c1/import")
+        .send({ text: "a,b", casePassword: "secret123" });
+      expect(right.status).toBe(202);
+    });
+
+    it("never accepts a body password on a read route", async () => {
+      const res = await request(app).get("/cases/c1/state").send({ casePassword: "secret123" });
+      expect(res.status).toBe(401);
+    });
   });
 
   it("blocks a gated route with a 401 JSON error when locked", async () => {
