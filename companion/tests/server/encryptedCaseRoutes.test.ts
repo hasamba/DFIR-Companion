@@ -420,6 +420,34 @@ describe("POST /cases/import/encrypted", () => {
     expect(receivedAt).toBeLessThan(records.findIndex((r) => r.event === "transferred"));
   });
 
+  // #2176: the receipt names the .dfircase the analyst picked, not a generic label.
+  it("records the .dfircase file name in the receipt, and falls back to the label without one", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    const named = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-2", filename: "/home/a/INC-1 export.dfircase" });
+    expect(named.status).toBe(201);
+    const unnamed = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data, password: PASSWORD, targetCaseId: "INC-3" });
+    expect(unnamed.status).toBe(201);
+
+    const recordsOf = async (caseId: string) =>
+      (await readFile(store.custodyLogPath(caseId), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const namedRecords = await recordsOf("INC-2");
+    const received = namedRecords.find((r) => r.event === "received");
+    expect(received.source).toBe("INC-1 export.dfircase");
+    expect(String(received.artifactPath)).toContain("/INC-1 export.dfircase@");
+    expect(namedRecords.find((r) => r.event === "transferred").source).toContain(".dfircase archive");
+    expect((await recordsOf("INC-3")).find((r) => r.event === "received").source).toBe(".dfircase archive");
+  });
+
   // #2124: a rejected archive has no case to hold a chain, so nothing is written for it.
   it("writes no custody entry for an archive rejected by a wrong password", async () => {
     const { app, stateStore, store } = await harness();

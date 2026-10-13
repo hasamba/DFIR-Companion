@@ -101,6 +101,46 @@ describe("POST /cases/import/zip", () => {
     expect(receivedAt).toBeLessThan(records.findIndex((r) => r.event === "transferred"));
   });
 
+  // #2176: the receipt names the archive the analyst picked, not a generic label.
+  describe("receipt file name", () => {
+    async function receivedFor(filename?: unknown): Promise<Record<string, unknown>> {
+      const { app, store, stateStore } = await harness();
+      const zip = await seedAndArchive(app, stateStore);
+      const res = await request(app)
+        .post("/cases/import/zip")
+        .send({
+          data: zip.toString("base64"),
+          targetCaseId: "INC-2",
+          ...(filename === undefined ? {} : { filename }),
+        });
+      expect(res.status).toBe(201);
+      const records = (await readFile(store.custodyLogPath("INC-2"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(records.find((r) => r.event === "transferred")?.source).toBe("ZIP archive of case INC-1");
+      const received = records.find((r) => r.event === "received");
+      expect(received).toBeDefined();
+      return received as Record<string, unknown>;
+    }
+
+    it("records the archive's own file name, basename only", async () => {
+      const received = await receivedFor("C:\\evidence\\INC-1 (archive).zip");
+      expect(received.source).toBe("INC-1 (archive).zip");
+      expect(String(received.artifactPath)).toContain("/INC-1 (archive).zip@");
+    });
+
+    it("falls back to the generic label when no file name is sent", async () => {
+      const received = await receivedFor();
+      expect(received.source).toBe("ZIP archive");
+    });
+
+    it("strips path traversal and control characters from the file name", async () => {
+      const received = await receivedFor("../../etc/ev\u0000il\u001f.zip");
+      expect(received.source).toBe("evil.zip");
+    });
+  });
+
   // #2124: the case is already published when the receipt is written, so a failed write is logged,
   // never turned into a 500 for an import that succeeded.
   it("still answers 201 when the archive receipt cannot be written", async () => {
