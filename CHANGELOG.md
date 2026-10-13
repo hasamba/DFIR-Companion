@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case lock gates imports** — a locked case refuses imports without the case password; extension screenshots for a locked case wait in the queue for the password instead of being discarded; push keys still work (closes #2135)
+- **Changed-after-recorded marker** — when a merge changes an event's description or severity, the event keeps a capped history shown on the timeline, in reports and as a CSV column (closes #2141)
+- **Re-import keeps tagger grades** — re-importing the same file no longer drops a tagger-raised severity to Info and out of the forensic timeline; an MCP agent can still lower it (closes #2182)
 - **Whole-case import receipt names the archive** — the custody `received` entry for a .dfircase or ZIP import records the real file name instead of a generic label (closes #2176)
 - **Notification targets guarded** — webhook URLs and the email server host refuse cloud-metadata and link-local addresses, and webhook redirects are not followed; LAN targets keep working (closes #2146)
 - **Audit-export targets guarded** — Splunk, Elastic and syslog destinations refuse cloud-metadata and link-local addresses, and redirects are not followed; LAN and loopback keep working (closes #2147)
