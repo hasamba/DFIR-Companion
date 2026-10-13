@@ -18,7 +18,12 @@
 // So the merge keeps the higher of the restated grade and the tagger's grade. An MCP agent's explicit
 // update (the merge names a change source) still lands, and is recorded like any other change.
 
-import { splitDerivedNotes } from "./derivedNote.js";
+import {
+  DERIVED_NOTE_DOWNGRADES,
+  DERIVED_NOTE_NAMES,
+  DESCRIPTION_BASE_MAX,
+  splitDerivedNotes,
+} from "./derivedNote.js";
 import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import type { EventRevision, EventRevisionFields } from "./eventRevisionTypes.js";
 
@@ -65,15 +70,42 @@ export function mergedSeverity(
 }
 
 // A correlation pass appends a registered "[name: …]" note and may re-grade the row AFTER the merge.
-// A re-import restates the raw text and grade, and the pass re-applies; that is not a change.
-function restatesAnnotatedRow(existing: ForensicEvent, incoming: Incoming): boolean {
+// A re-import restates the raw text and grade, and the pass re-applies; that alone is not a change.
+// Only an exact restatement qualifies: an incoming text that ADDS to the stored base is new content.
+// The one exception is a base the pass clipped at its own cap (appendDerivedNote slices the base to
+// `baseMax` and trims the end): the stored copy then cannot show the rest, so the full raw text is
+// recognised by clipping it the same way. These are the caps the chain's passes clip at (the default
+// DESCRIPTION_BASE_MAX, and jndiInjection / containerEscape at 1600).
+const PASS_BASE_CLIPS: readonly number[] = [DESCRIPTION_BASE_MAX, 1600];
+
+function restatesRawText(heldBase: string, nextBase: string): boolean {
+  if (!heldBase) return false;
+  if (nextBase === heldBase) return true;
+  return PASS_BASE_CLIPS.some((c) => nextBase.length > c && nextBase.slice(0, c).trimEnd() === heldBase);
+}
+
+type Restatement = { sameText: boolean; raises: boolean; lowers: boolean };
+
+/** How `incoming` relates to an annotated `existing`; undefined when the comparison is plain. */
+function annotatedRestatement(existing: ForensicEvent, incoming: Incoming): Restatement | undefined {
   const held = splitDerivedNotes(existing.description);
   const next = splitDerivedNotes(incoming.description);
-  if (!held.notes || next.notes) return false;
-  const heldBase = held.base.trim();
-  const nextBase = next.base.trim();
-  // The pass clips the base before appending its note, so a long raw text extends the held base.
-  return heldBase.length > 0 && nextBase.startsWith(heldBase);
+  if (!held.notes || next.notes) return undefined;
+  const named = DERIVED_NOTE_NAMES.filter((n) => held.notes.includes(`[${n}:`));
+  const lowers = named.some((n) => DERIVED_NOTE_DOWNGRADES.includes(n));
+  const raises = named.some((n) => !DERIVED_NOTE_DOWNGRADES.includes(n));
+  return { sameText: restatesRawText(held.base.trim(), next.base.trim()), raises, lowers };
+}
+
+// Severity is judged on its own. The grade before the passes ran is not stored, so the baseline is
+// the stored grade (before a build-time or lab-setup cap), and a difference is set aside only in the
+// direction a note on the row explains: a raw grade BELOW the stored one under a raising note, or
+// ABOVE it under a lowering note. The pass re-applies after the merge. Any other move is recorded.
+function severityMoved(baseline: Severity, to: Severity, why: Restatement | undefined): boolean {
+  if (to === baseline) return false;
+  if (!why) return true;
+  const lower = SEVERITY_RANK[to] > SEVERITY_RANK[baseline]; // SEVERITY_RANK: 0 = Critical
+  return lower ? !why.raises : !why.lowers;
 }
 
 function capped(list: EventRevision[], dropped: number): EventRevisionFields {
@@ -85,22 +117,23 @@ function capped(list: EventRevision[], dropped: number): EventRevisionFields {
 
 /**
  * The row's revision record after `incoming` overwrites `existing`, or undefined when the merge
- * changes neither the description nor the severity. Returns a NEW list; `existing.revisions` is
+ * changes neither the description nor the severity. An MCP agent's update (`changeSource`) is an
+ * explicit edit and is never set aside as a restatement. Returns a NEW list; `existing.revisions` is
  * never touched (copyTimeline does not deep-copy it).
  */
 export function nextRevisions(
   existing: ForensicEvent,
   incoming: Incoming,
-  at: string,
+  ctx: { timestamp: string; changeSource?: string },
   source: string,
 ): EventRevisionFields | undefined {
-  if (restatesAnnotatedRow(existing, incoming)) return undefined;
+  const why = ctx.changeSource ? undefined : annotatedRestatement(existing, incoming);
   const baseline = preCapSeverity(existing);
-  const descChanged = incoming.description !== existing.description;
-  const sevChanged = incoming.severity !== baseline;
+  const descChanged = incoming.description !== existing.description && !why?.sameText;
+  const sevChanged = severityMoved(baseline, incoming.severity, why);
   if (!descChanged && !sevChanged) return undefined;
   const entry: EventRevision = {
-    at,
+    at: ctx.timestamp,
     source,
     ...(descChanged ? { description: { from: clip(existing.description ?? "") } } : {}),
     ...(sevChanged ? { severity: { from: baseline, to: incoming.severity } } : {}),

@@ -9,6 +9,11 @@ import {
 } from "../../src/analysis/eventRevision.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { readBack } from "../../src/analysis/incrementalMergeRows.js";
+import {
+  appendDerivedNote,
+  DESCRIPTION_BASE_MAX,
+  splitDerivedNotes,
+} from "../../src/analysis/derivedNote.js";
 
 // #2141: a merge that overwrites a held row's description or severity keeps a short, capped record
 // of what the row said before — the overwrite still happens.
@@ -27,27 +32,28 @@ function ev(over: Partial<ForensicEvent> = {}): ForensicEvent {
 }
 
 const AT = "2026-10-13T09:00:00.000Z";
+const CTX = { timestamp: AT };
 
 describe("nextRevisions", () => {
   it("records nothing when the description and severity are unchanged", () => {
-    expect(nextRevisions(ev(), ev(), AT, "fileB.csv")).toBeUndefined();
+    expect(nextRevisions(ev(), ev(), CTX, "fileB.csv")).toBeUndefined();
   });
 
   it("records a description change with the prior text only", () => {
-    const out = nextRevisions(ev(), ev({ description: "text B" }), AT, "fileB.csv");
+    const out = nextRevisions(ev(), ev({ description: "text B" }), CTX, "fileB.csv");
     expect(out?.revisions).toEqual([{ at: AT, source: "fileB.csv", description: { from: "text A" } }]);
     expect(out?.revisionsDropped).toBeUndefined();
   });
 
   it("records a severity change as from → to", () => {
-    const out = nextRevisions(ev(), ev({ severity: "Medium" }), AT, "fileB.csv");
+    const out = nextRevisions(ev(), ev({ severity: "Medium" }), CTX, "fileB.csv");
     expect(out?.revisions).toEqual([
       { at: AT, source: "fileB.csv", severity: { from: "High", to: "Medium" } },
     ]);
   });
 
   it("records both changes in one entry", () => {
-    const out = nextRevisions(ev(), ev({ description: "text B", severity: "Low" }), AT, "s");
+    const out = nextRevisions(ev(), ev({ description: "text B", severity: "Low" }), CTX, "s");
     expect(out?.revisions).toEqual([
       { at: AT, source: "s", description: { from: "text A" }, severity: { from: "High", to: "Low" } },
     ]);
@@ -55,7 +61,7 @@ describe("nextRevisions", () => {
 
   it("cuts a long prior description at the limit with an ellipsis", () => {
     const long = "x".repeat(REVISION_DESC_MAX + 50);
-    const out = nextRevisions(ev({ description: long }), ev({ description: "short" }), AT, "s");
+    const out = nextRevisions(ev({ description: long }), ev({ description: "short" }), CTX, "s");
     const from = out?.revisions?.[0].description?.from ?? "";
     expect(from.length).toBe(REVISION_DESC_MAX);
     expect(from.endsWith("…")).toBe(true);
@@ -65,7 +71,7 @@ describe("nextRevisions", () => {
     let row = ev({ description: "v0" });
     for (let i = 1; i <= 7; i++) {
       const incoming = ev({ description: `v${i}` });
-      const out = nextRevisions(row, incoming, `t${i}`, `import-${i}`);
+      const out = nextRevisions(row, incoming, { timestamp: `t${i}` }, `import-${i}`);
       row = { ...incoming, ...out };
     }
     expect(row.revisions).toHaveLength(MAX_EVENT_REVISIONS);
@@ -80,7 +86,7 @@ describe("nextRevisions", () => {
       Object.freeze({ at: "t0", source: "s", description: Object.freeze({ from: "v" }) }),
     ]) as EventRevision[];
     const held = ev({ revisions: prior });
-    const out = nextRevisions(held, ev({ description: "text B" }), AT, "s");
+    const out = nextRevisions(held, ev({ description: "text B" }), CTX, "s");
     expect(out?.revisions).toHaveLength(2);
     expect(held.revisions).toBe(prior);
     expect(prior).toHaveLength(1);
@@ -91,8 +97,8 @@ describe("nextRevisions", () => {
       severity: "Low",
       buildTime: { marker: "m", window: "a/b", cappedFrom: "High" },
     });
-    expect(nextRevisions(capped, ev({ severity: "High" }), AT, "s")).toBeUndefined();
-    const raised = nextRevisions(capped, ev({ severity: "Critical" }), AT, "s");
+    expect(nextRevisions(capped, ev({ severity: "High" }), CTX, "s")).toBeUndefined();
+    const raised = nextRevisions(capped, ev({ severity: "Critical" }), CTX, "s");
     expect(raised?.revisions?.[0].severity).toEqual({ from: "High", to: "Critical" });
   });
 
@@ -101,7 +107,7 @@ describe("nextRevisions", () => {
       ...ev({ severity: "Medium" }),
       labSetup: { tag: "lab-setup", folder: "\\vmwarednd\\", cappedFrom: "High" },
     } as ForensicEvent;
-    expect(nextRevisions(capped, ev({ severity: "High" }), AT, "s")).toBeUndefined();
+    expect(nextRevisions(capped, ev({ severity: "High" }), CTX, "s")).toBeUndefined();
   });
 
   it("does not read a raw restatement of a row a correlation pass annotated as a change", () => {
@@ -112,10 +118,87 @@ describe("nextRevisions", () => {
       severity: "Medium",
     });
     const raw = ev({ description: "Ran payload.exe", severity: "Low" });
-    expect(nextRevisions(annotated, raw, AT, "s")).toBeUndefined();
+    expect(nextRevisions(annotated, raw, CTX, "s")).toBeUndefined();
     // A real change of the base text on that row is still recorded.
-    const changed = nextRevisions(annotated, ev({ description: "Ran other.exe", severity: "Low" }), AT, "s");
+    const changed = nextRevisions(annotated, ev({ description: "Ran other.exe", severity: "Low" }), CTX, "s");
     expect(changed?.revisions?.[0].description?.from).toBe(annotated.description);
+  });
+});
+
+describe("nextRevisions — annotated rows record everything but a raw restatement", () => {
+  const NOTE = "[initial access: host contacted email-delivered domain example.com]";
+  const annotated = ev({ description: `Ran payload.exe ${NOTE}`, severity: "Medium" });
+
+  it("records an incoming text that extends the stored base with new content (Codex repro)", () => {
+    const incoming = ev({ description: "Ran payload.exe --dump-credentials", severity: "Critical" });
+    const out = nextRevisions(annotated, incoming, CTX, "s");
+    expect(out?.revisions).toEqual([
+      {
+        at: AT,
+        source: "s",
+        description: { from: annotated.description },
+        severity: { from: "Medium", to: "Critical" },
+      },
+    ]);
+  });
+
+  it("records the extension even when the grade is only the raw one the pass raised", () => {
+    const incoming = ev({ description: "Ran payload.exe --dump-credentials", severity: "Low" });
+    const out = nextRevisions(annotated, incoming, CTX, "s");
+    expect(out?.revisions?.[0].description?.from).toBe(annotated.description);
+    expect(out?.revisions?.[0].severity).toBeUndefined();
+  });
+
+  it("does not record the full raw text of a base the pass clipped at its length cap", () => {
+    const raw = `Ran ${"a".repeat(DESCRIPTION_BASE_MAX + 200)}`;
+    const held = ev({ description: appendDerivedNote(raw, "[initial access:", "x"), severity: "Medium" });
+    expect(splitDerivedNotes(held.description).base.length).toBe(DESCRIPTION_BASE_MAX);
+    expect(nextRevisions(held, ev({ description: raw, severity: "Low" }), CTX, "s")).toBeUndefined();
+  });
+
+  it("records an extension of a stored base that was never clipped", () => {
+    const base = `Ran ${"a".repeat(DESCRIPTION_BASE_MAX - 100)}`;
+    const held = ev({ description: appendDerivedNote(base, "[initial access:", "x"), severity: "Medium" });
+    const out = nextRevisions(held, ev({ description: `${base} --extra`, severity: "Medium" }), CTX, "s");
+    expect(out?.revisions?.[0].description?.from.startsWith("Ran aaa")).toBe(true);
+  });
+
+  it("records a severity rise on an unchanged raw text: no pass raise explains it", () => {
+    const out = nextRevisions(
+      annotated,
+      ev({ description: "Ran payload.exe", severity: "Critical" }),
+      CTX,
+      "s",
+    );
+    expect(out?.revisions).toEqual([{ at: AT, source: "s", severity: { from: "Medium", to: "Critical" } }]);
+  });
+
+  it("does not record a raw grade under a lowering note, which the pass re-applies", () => {
+    const lowered = ev({ description: "svchost.exe started [normal OS behaviour: x]", severity: "Info" });
+    const raw = ev({ description: "svchost.exe started", severity: "Medium" });
+    expect(nextRevisions(lowered, raw, CTX, "s")).toBeUndefined();
+    // Lower still than the lowered grade: no lowering note explains that, so it is recorded.
+    const held = ev({ description: lowered.description, severity: "Low" });
+    const out = nextRevisions(held, ev({ description: "svchost.exe started", severity: "Info" }), CTX, "s");
+    expect(out?.revisions).toEqual([{ at: AT, source: "s", severity: { from: "Low", to: "Info" } }]);
+  });
+
+  it("never suppresses an explicit MCP agent update", () => {
+    const raw = ev({ description: "Ran payload.exe", severity: "Low" });
+    const out = nextRevisions(
+      annotated,
+      raw,
+      { timestamp: AT, changeSource: "MCP agent: vt" },
+      "MCP agent: vt",
+    );
+    expect(out?.revisions).toEqual([
+      {
+        at: AT,
+        source: "MCP agent: vt",
+        description: { from: annotated.description },
+        severity: { from: "Medium", to: "Low" },
+      },
+    ]);
   });
 });
 

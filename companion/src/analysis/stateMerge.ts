@@ -276,7 +276,7 @@ export function upsertForensicEvents(
       // A tagger-raised grade survives a re-import that restates the raw grade (#2182).
       const { severity, taggerRaisedFrom } = mergedSeverity(existing, incoming, ctx);
       const restated = { description: incoming.description, severity };
-      const revised = nextRevisions(existing, restated, ctx.timestamp, revisionSource(ctx, incoming));
+      const revised = nextRevisions(existing, restated, ctx, revisionSource(ctx, incoming));
       if (revised) Object.assign(existing, revised);
       existing.timestamp = ts || existing.timestamp;
       existing.description = incoming.description;

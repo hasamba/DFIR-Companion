@@ -15,7 +15,7 @@ const baseDelta: AnalysisDelta = {
   summary: "",
 };
 
-const ev = (description: string, severity: "High" | "Medium") => ({
+const ev = (description: string, severity: "Critical" | "High" | "Medium" | "Low") => ({
   id: "e1",
   timestamp: "2026-07-01T10:00:00.000Z",
   description,
@@ -68,5 +68,49 @@ describe("mergeDelta — changed after first recorded (#2141)", () => {
     const snapshot = JSON.parse(JSON.stringify(before));
     mergeDelta(before, { ...baseDelta, forensicEvents: [ev("text C", "Medium")] }, second);
     expect(before).toEqual(snapshot);
+  });
+
+  describe("a row a correlation pass annotated (Codex review of #2141)", () => {
+    const annotated = "Ran payload.exe [initial access: host contacted email-delivered domain example.com]";
+    const held = () =>
+      mergeDelta(emptyState("c1"), { ...baseDelta, forensicEvents: [ev(annotated, "Medium")] }, first);
+
+    it("records an incoming text that only starts with the stored base, and still overwrites", () => {
+      const incoming = ev("Ran payload.exe --dump-credentials", "Critical");
+      const next = mergeDelta(held(), { ...baseDelta, forensicEvents: [incoming] }, second);
+      const [row] = next.forensicTimeline;
+      expect(row.description).toBe("Ran payload.exe --dump-credentials");
+      expect(row.severity).toBe("Critical");
+      expect(row.revisions).toEqual([
+        {
+          at: second.timestamp,
+          source: "fileB.csv",
+          description: { from: annotated },
+          severity: { from: "Medium", to: "Critical" },
+        },
+      ]);
+    });
+
+    it("records nothing for a re-import that restates the raw text and grade", () => {
+      const next = mergeDelta(
+        held(),
+        { ...baseDelta, forensicEvents: [ev("Ran payload.exe", "Low")] },
+        second,
+      );
+      expect(next.forensicTimeline[0].revisions).toBeUndefined();
+    });
+
+    it("records an MCP agent's restatement of the raw text, which is an explicit edit", () => {
+      const next = mergeDelta(
+        held(),
+        { ...baseDelta, forensicEvents: [ev("Ran payload.exe", "Low")] },
+        { ...second, sourceScreenshots: [], changeSource: "MCP agent: vt" },
+      );
+      expect(next.forensicTimeline[0].revisions?.[0]).toMatchObject({
+        source: "MCP agent: vt",
+        description: { from: annotated },
+        severity: { from: "Medium", to: "Low" },
+      });
+    });
   });
 });
