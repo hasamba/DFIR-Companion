@@ -334,6 +334,7 @@ A later import, AI pass or MCP agent can rewrite the text or severity of an even
 - The earlier text is cut at 280 characters.
 - Re-importing the same file with the same content adds nothing.
 - A severity that a build-time or lab-setup cap lowered is not counted as a change.
+- A re-import or AI pass does not lower a severity that the content tagger raised. The event keeps the tagger's severity and stays in the forensic timeline. An MCP agent can still lower it, and the note records that change. Events the tagger raised before this release do not have this protection until the tagger runs on them again.
 - A re-import that only removes a correlation note (for example `[initial access: …]`) is not counted. The correlation check adds the note again.
 - When correlation merges two rows into one, the merged row keeps only its own change history.
 

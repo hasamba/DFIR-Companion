@@ -12,9 +12,14 @@
 // keeps only its own record, as it does for `importedAt` and `originalTimestamp`.
 //
 // Only forensic-timeline rows carry it, and no AI prompt renders it: the model never reads prior text.
+//
+// A row the content tagger raised (#2182) is the exception to the overwrite: a re-import restates the
+// raw import grade, which the tagger had already raised, and the demote gate would then drop the row.
+// So the merge keeps the higher of the restated grade and the tagger's grade. An MCP agent's explicit
+// update (the merge names a change source) still lands, and is recorded like any other change.
 
 import { splitDerivedNotes } from "./derivedNote.js";
-import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import type { EventRevision, EventRevisionFields } from "./eventRevisionTypes.js";
 
 export type { EventRevision, EventRevisionFields } from "./eventRevisionTypes.js";
@@ -41,9 +46,22 @@ function clip(text: string): string {
 }
 
 /** The grade the row carried before a build-time or lab-setup cap; those caps re-run after the merge. */
-function preCapSeverity(e: ForensicEvent): Severity {
+export function preCapSeverity(e: ForensicEvent): Severity {
   const lab = (e as ForensicEvent & LabSetupCap).labSetup;
   return e.buildTime?.cappedFrom ?? (lab?.tag === "lab-setup" ? lab.cappedFrom : undefined) ?? e.severity;
+}
+
+/** The severity and tagger marker a merge writes onto `existing` when `incoming` restates it (#2182). */
+export function mergedSeverity(
+  existing: ForensicEvent,
+  incoming: Pick<ForensicEvent, "severity">,
+  ctx: { changeSource?: string },
+): { severity: Severity; taggerRaisedFrom?: Severity } {
+  if (!existing.taggerRaisedFrom || ctx.changeSource) return { severity: incoming.severity };
+  const held = preCapSeverity(existing);
+  // SEVERITY_RANK: 0 = Critical. A grade at or above the tagger's one is the importer's own call.
+  if (SEVERITY_RANK[incoming.severity] <= SEVERITY_RANK[held]) return { severity: incoming.severity };
+  return { severity: held, taggerRaisedFrom: incoming.severity };
 }
 
 // A correlation pass appends a registered "[name: …]" note and may re-grade the row AFTER the merge.

@@ -10,10 +10,13 @@ export interface EventRevision {
   severity?: { from: Severity; to: Severity };
 }
 
-/** The two optional fields a ForensicEvent carries for this record. */
+/** The optional fields a ForensicEvent carries for this record. */
 export interface EventRevisionFields {
   // Capped: the oldest entry pinned plus the newest four (eventRevision.ts). When correlation folds
   // one row into another, the survivor keeps only its own record.
   revisions?: EventRevision[];
   revisionsDropped?: number; // middle entries the cap dropped
+  // The import grade the content tagger raised this row from (#2182). A re-import restates that raw
+  // grade; the merge keeps the tagger's higher grade instead of dropping the row back to it.
+  taggerRaisedFrom?: Severity;
 }

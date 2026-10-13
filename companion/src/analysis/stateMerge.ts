@@ -64,7 +64,7 @@ import { correlateAwsFlowSensitiveData } from "./awsFlowSensitiveDataJoin.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { markJndiInjection } from "./jndiInjection.js";
-import { nextRevisions, revisionSource } from "./eventRevision.js";
+import { mergedSeverity, nextRevisions, revisionSource } from "./eventRevision.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -273,11 +273,16 @@ export function upsertForensicEvents(
     const existing = byId.get(incoming.id);
     if (existing) {
       // Recorded before the overwrite, which still happens (#2141): a NEW list, never a push.
-      const revised = nextRevisions(existing, incoming, ctx.timestamp, revisionSource(ctx, incoming));
+      // A tagger-raised grade survives a re-import that restates the raw grade (#2182).
+      const { severity, taggerRaisedFrom } = mergedSeverity(existing, incoming, ctx);
+      const restated = { description: incoming.description, severity };
+      const revised = nextRevisions(existing, restated, ctx.timestamp, revisionSource(ctx, incoming));
       if (revised) Object.assign(existing, revised);
       existing.timestamp = ts || existing.timestamp;
       existing.description = incoming.description;
-      existing.severity = incoming.severity;
+      existing.severity = severity;
+      if (taggerRaisedFrom) existing.taggerRaisedFrom = taggerRaisedFrom;
+      else delete existing.taggerRaisedFrom;
       existing.mitreTechniques = uniq([...existing.mitreTechniques, ...incoming.mitreTechniques]);
       existing.relatedFindingIds = uniq([...existing.relatedFindingIds, ...incoming.relatedFindingIds]);
       existing.sourceScreenshots = uniq([...existing.sourceScreenshots, ...ctx.sourceScreenshots]);
