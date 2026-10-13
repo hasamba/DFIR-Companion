@@ -94,7 +94,7 @@ describe("CompanionClient — case password for locked cases (#2135)", () => {
 
   it("adds casePassword to a capture for the case the password belongs to", async () => {
     const fetchFn = ok201();
-    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", password: "pw-123456" });
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", companionUrl: "http://x", password: "pw-123456" });
     await client.postCapture(payload);
     expect(bodyOf(fetchFn).casePassword).toBe("pw-123456");
     expect(payload).not.toHaveProperty("casePassword"); // the caller's payload is not mutated
@@ -102,14 +102,14 @@ describe("CompanionClient — case password for locked cases (#2135)", () => {
 
   it("does not send the password with a capture for a different case", async () => {
     const fetchFn = ok201();
-    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "other", password: "pw-123456" });
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "other", companionUrl: "http://x", password: "pw-123456" });
     await client.postCapture(payload);
     expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
   });
 
   it("adds casePassword to an artifact import for the matching case", async () => {
     const fetchFn = ok201();
-    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", password: "pw-123456" });
+    const client = new CompanionClient("http://x", fetchFn, "", { caseId: "c1", companionUrl: "http://x", password: "pw-123456" });
     await client.postImport("c1", { json: "[]", filename: "f.json" });
     expect(bodyOf(fetchFn).casePassword).toBe("pw-123456");
   });
@@ -119,5 +119,39 @@ describe("CompanionClient — case password for locked cases (#2135)", () => {
     const client = new CompanionClient("http://x", fetchFn);
     expect(await client.postImport("c1", { json: "[]", filename: "f.json" }))
       .toEqual({ ok: false, status: 401, errorMessage: "locked" });
+  });
+
+  // Codex review of #2135: the password was keyed by case id alone, so pointing the extension at a
+  // different companion while keeping the selected case sent server A's case password to server B.
+  it("does not send the password to a different companion that has a case with the same id", async () => {
+    const fetchFn = ok201();
+    const cred = { caseId: "c1", companionUrl: "http://server-a:4773", password: "pw-123456" };
+    const client = new CompanionClient("http://server-b:4773", fetchFn, "", cred);
+    await client.postCapture(payload);
+    await client.postImport("c1", { json: "[]", filename: "f.json" });
+    expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
+    const importBody = JSON.parse((fetchFn.mock.calls[1][1] as RequestInit).body as string);
+    expect(importBody).not.toHaveProperty("casePassword");
+  });
+
+  it("does not send the password to another port on the same host", async () => {
+    const fetchFn = ok201();
+    const cred = { caseId: "c1", companionUrl: "http://127.0.0.1:4773", password: "pw-123456" };
+    await new CompanionClient("http://127.0.0.1:4774", fetchFn, "", cred).postCapture(payload);
+    expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
+  });
+
+  it("still sends the password to the same companion written differently (case, trailing slash)", async () => {
+    const fetchFn = ok201();
+    const cred = { caseId: "c1", companionUrl: "http://127.0.0.1:4773", password: "pw-123456" };
+    await new CompanionClient("HTTP://127.0.0.1:4773/", fetchFn, "", cred).postCapture(payload);
+    expect(bodyOf(fetchFn).casePassword).toBe("pw-123456");
+  });
+
+  it("never sends a password whose companion is missing or unparseable", async () => {
+    const fetchFn = ok201();
+    const cred = { caseId: "c1", companionUrl: "", password: "pw-123456" };
+    await new CompanionClient("http://x", fetchFn, "", cred).postCapture(payload);
+    expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
   });
 });

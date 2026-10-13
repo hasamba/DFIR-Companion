@@ -39,19 +39,30 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 /** Show or hide the field for the selected case, with the right hint. */
-export async function refreshCasePasswordField(caseId: string, locked: boolean): Promise<void> {
+export async function refreshCasePasswordField(caseId: string, companionUrl: string, locked: boolean): Promise<void> {
   const row = el<HTMLDivElement>("casePasswordRow");
   row.hidden = !caseId || !locked;
   if (row.hidden) return;
-  const held = await readCaseCredential(area(), caseId).catch(() => undefined);
+  const held = await readCaseCredential(area(), caseId, companionUrl).catch(() => undefined);
   el<HTMLDivElement>("casePasswordHint").textContent = held ? HELD_HINT : LOCKED_HINT;
 }
 
 /** A different case was picked: a password never follows the analyst to another case. */
-export async function onCaseSelectionChanged(caseId: string, locked: boolean): Promise<void> {
+export async function onCaseSelectionChanged(caseId: string, companionUrl: string, locked: boolean): Promise<void> {
   await forgetCaseCredential(area()).catch(() => undefined);
   el<HTMLInputElement>("casePassword").value = "";
-  await refreshCasePasswordField(caseId, locked);
+  await refreshCasePasswordField(caseId, companionUrl, locked);
+}
+
+/**
+ * The Companion URL was edited: a password entered for another companion is forgotten, so it can
+ * never be sent to the new server (the service worker's storage listener does the same for a URL
+ * saved from the options page). Re-typing the same server keeps it.
+ */
+export async function onCompanionUrlChanged(caseId: string, companionUrl: string, locked: boolean): Promise<void> {
+  const held = await readCaseCredential(area(), caseId, companionUrl).catch(() => undefined);
+  if (!held) await forgetCaseCredential(area()).catch(() => undefined);
+  await refreshCasePasswordField(caseId, companionUrl, locked);
 }
 
 /** Wire the Check button. `target` reads the popup's current case / companion settings. */
@@ -69,7 +80,7 @@ export function wireCasePasswordField(target: () => CasePasswordTarget): void {
     );
     if (outcome === "ok") {
       try {
-        await storeCaseCredential(area(), { caseId, password: input.value });
+        await storeCaseCredential(area(), { caseId, companionUrl, password: input.value });
       } catch (error) {
         hint.textContent = (error as Error).message;
         return;

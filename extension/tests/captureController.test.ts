@@ -83,7 +83,7 @@ describe("CaptureController — locked case (#2135)", () => {
 
   it("never writes the case password into the persistent capture queue", async () => {
     const client = new CompanionClient("http://x", vi.fn(async () => lockedResponse()), "", {
-      caseId: "c1", password: "pw-123456",
+      caseId: "c1", companionUrl: "http://x", password: "pw-123456",
     });
     await new CaptureController(client, queue).capture("c1", "timer", snapshot);
     const seen: unknown[] = [];

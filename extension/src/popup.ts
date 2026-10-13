@@ -19,7 +19,9 @@ import type {
   SetAdapterOverrideMessage,
 } from "./types.js";
 import { browserApi, isFirefox } from "./browser.js";
-import { onCaseSelectionChanged, refreshCasePasswordField, wireCasePasswordField } from "./casePasswordField.js";
+import {
+  onCaseSelectionChanged, onCompanionUrlChanged, refreshCasePasswordField, wireCasePasswordField,
+} from "./casePasswordField.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
@@ -320,7 +322,7 @@ async function init() {
   $("intervalSeconds").value = String(s.intervalSeconds);
   $("dedupThreshold").value = String(s.dedupThreshold);
   await loadCases(s.companionUrl, s.caseId, s.serviceToken);
-  await refreshCasePasswordField(caseSelect().value, lockedCases.has(caseSelect().value));
+  await refreshCasePasswordField(caseSelect().value, s.companionUrl, lockedCases.has(caseSelect().value));
   wireCasePasswordField(() => {
     const f = readForm(false);
     return { caseId: f.caseId, companionUrl: f.companionUrl, serviceToken: f.serviceToken };
@@ -343,7 +345,12 @@ async function init() {
   }
   caseSelect().addEventListener("change", () => {
     const caseId = caseSelect().value;
-    void onCaseSelectionChanged(caseId, lockedCases.has(caseId));
+    void onCaseSelectionChanged(caseId, readForm(false).companionUrl, lockedCases.has(caseId));
+  });
+  // A case password never follows the analyst to another companion (#2135).
+  $("companionUrl").addEventListener("change", () => {
+    const f = readForm(false);
+    void onCompanionUrlChanged(f.caseId, f.companionUrl, lockedCases.has(f.caseId));
   });
 
   // Re-fetch the case list — e.g. after creating a case in the dashboard, or after
@@ -357,7 +364,7 @@ async function init() {
     // the token is scoped elsewhere), which blanks the dropdown. Without this the service worker
     // would keep capturing into a case the analyst can no longer see.
     const settled = await persistForm();
-    await refreshCasePasswordField(settled.caseId, lockedCases.has(settled.caseId));
+    await refreshCasePasswordField(settled.caseId, settled.companionUrl, lockedCases.has(settled.caseId));
     statusEl().textContent = result.ok
       ? "case list refreshed"
       : `${result.failure} (${settled.companionUrl})`;

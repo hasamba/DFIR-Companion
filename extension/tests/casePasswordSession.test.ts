@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import {
   CASE_PASSWORD_SESSION_KEY,
   checkCasePassword,
+  companionServerChanged,
+  companionServerKey,
   forgetCaseCredential,
+  forgetCredentialOnServerChange,
   isLockedRejection,
   LOCKED_PUSH_ERROR,
   lockedQueueMessage,
@@ -27,28 +30,98 @@ function memoryArea(): SessionArea & { data: Record<string, unknown> } {
 describe("case password session storage", () => {
   it("returns the stored password only for the case it belongs to", async () => {
     const area = memoryArea();
-    await storeCaseCredential(area, { caseId: "c1", password: "pw-123456" });
-    expect(await readCaseCredential(area, "c1")).toEqual({ caseId: "c1", password: "pw-123456" });
-    expect(await readCaseCredential(area, "c2")).toBeUndefined();
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
+    expect(await readCaseCredential(area, "c1", "http://a:4773"))
+      .toEqual({ caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
+    expect(await readCaseCredential(area, "c2", "http://a:4773")).toBeUndefined();
   });
 
   it("forgets the password", async () => {
     const area = memoryArea();
-    await storeCaseCredential(area, { caseId: "c1", password: "pw-123456" });
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
     await forgetCaseCredential(area);
     expect(area.data[CASE_PASSWORD_SESSION_KEY]).toBeUndefined();
-    expect(await readCaseCredential(area, "c1")).toBeUndefined();
+    expect(await readCaseCredential(area, "c1", "http://a:4773")).toBeUndefined();
   });
 
   it("degrades to no password when session storage is unavailable", async () => {
-    expect(await readCaseCredential(undefined, "c1")).toBeUndefined();
+    expect(await readCaseCredential(undefined, "c1", "http://a:4773")).toBeUndefined();
     await expect(forgetCaseCredential(undefined)).resolves.toBeUndefined();
   });
 
   it("ignores a malformed stored value", async () => {
     const area = memoryArea();
-    area.data[CASE_PASSWORD_SESSION_KEY] = { caseId: "c1", password: 42 };
-    expect(await readCaseCredential(area, "c1")).toBeUndefined();
+    area.data[CASE_PASSWORD_SESSION_KEY] = { caseId: "c1", companionUrl: "http://a:4773", password: 42 };
+    expect(await readCaseCredential(area, "c1", "http://a:4773")).toBeUndefined();
+  });
+
+  // Codex review of #2135: a password keyed by case id alone followed the analyst to another server.
+  it("binds the password to the companion it was entered for", async () => {
+    const area = memoryArea();
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773/", password: "pw-123456" });
+    expect(await readCaseCredential(area, "c1", "http://b:4773")).toBeUndefined();
+    expect(await readCaseCredential(area, "c1", "HTTP://A:4773")).toBeDefined();
+  });
+
+  it("ignores a credential stored without a companion (written before the binding existed)", async () => {
+    const area = memoryArea();
+    area.data[CASE_PASSWORD_SESSION_KEY] = { caseId: "c1", password: "pw-123456" };
+    expect(await readCaseCredential(area, "c1", "http://a:4773")).toBeUndefined();
+  });
+
+  it("refuses to store a password for an unparseable companion URL", async () => {
+    await expect(storeCaseCredential(memoryArea(), { caseId: "c1", companionUrl: "not a url", password: "pw" }))
+      .rejects.toThrow(/companion url/i);
+  });
+});
+
+describe("companion server binding", () => {
+  it("normalizes the companion URL to scheme, host, port and path", () => {
+    expect(companionServerKey("HTTP://127.0.0.1:4773/")).toBe("http://127.0.0.1:4773");
+    expect(companionServerKey("https://host.example/companion/")).toBe("https://host.example/companion");
+    expect(companionServerKey("http://host:80")).toBe("http://host");
+    expect(companionServerKey("not a url")).toBe("");
+    expect(companionServerKey("")).toBe("");
+  });
+
+  it("detects a change of server but not a cosmetic rewrite", () => {
+    expect(companionServerChanged("http://a:4773", "http://b:4773")).toBe(true);
+    expect(companionServerChanged("http://a:4773", "http://a:4774")).toBe(true);
+    expect(companionServerChanged("http://a:4773", "https://a:4773")).toBe(true);
+    expect(companionServerChanged("http://a:4773", "http://a:4773/")).toBe(false);
+    expect(companionServerChanged(undefined, undefined)).toBe(false);
+  });
+
+  it("clears the stored password when the companion URL setting changes", async () => {
+    const area = memoryArea();
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
+    await forgetCredentialOnServerChange(area, {
+      settings: {
+        oldValue: { companionUrl: "http://a:4773", caseId: "c1" },
+        newValue: { companionUrl: "http://b:4773", caseId: "c1" },
+      },
+    });
+    expect(area.data[CASE_PASSWORD_SESSION_KEY]).toBeUndefined();
+  });
+
+  it("keeps the password when other settings change", async () => {
+    const area = memoryArea();
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
+    await forgetCredentialOnServerChange(area, {
+      settings: {
+        oldValue: { companionUrl: "http://a:4773", running: false },
+        newValue: { companionUrl: "http://a:4773", running: true },
+      },
+    });
+    await forgetCredentialOnServerChange(area, { lastCapture: { newValue: {} } });
+    expect(area.data[CASE_PASSWORD_SESSION_KEY]).toBeDefined();
+  });
+
+  it("clears the password when the settings are removed altogether", async () => {
+    const area = memoryArea();
+    await storeCaseCredential(area, { caseId: "c1", companionUrl: "http://a:4773", password: "pw-123456" });
+    await forgetCredentialOnServerChange(area, { settings: { oldValue: { companionUrl: "http://a:4773" } } });
+    expect(area.data[CASE_PASSWORD_SESSION_KEY]).toBeUndefined();
   });
 });
 

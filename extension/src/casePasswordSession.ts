@@ -17,31 +17,90 @@ export interface SessionArea {
   remove(key: string): Promise<void>;
 }
 
-function isCredential(value: unknown): value is CaseCredential {
-  const v = value as Partial<CaseCredential> | null;
-  return typeof v?.caseId === "string" && typeof v.password === "string" && v.password.length > 0;
+// The password is bound to the companion it was entered for as well as the case: case ids are only
+// unique within one companion, so a password keyed by case id alone followed the analyst to another
+// server when they changed the Companion URL and kept the selected case (Codex review of #2135).
+
+/**
+ * The companion a URL points at — scheme, host, port and path, lowercased and without a trailing
+ * slash — or "" when it is not an http(s) URL. Two spellings of one companion compare equal; a
+ * different host, port, scheme or path prefix does not.
+ */
+export function companionServerKey(url: string): string {
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "";
+  }
 }
 
-/** The stored password when it belongs to `caseId`; undefined otherwise (or with no session area). */
+export function companionServerChanged(before: string | undefined, after: string | undefined): boolean {
+  return companionServerKey(before ?? "") !== companionServerKey(after ?? "");
+}
+
+/** True when `credential` belongs to `caseId` on the companion at `companionUrl`. */
+export function credentialMatches(credential: CaseCredential, caseId: string, companionUrl: string): boolean {
+  const server = companionServerKey(companionUrl);
+  return Boolean(caseId) && credential.caseId === caseId && server !== "" && credential.companionUrl === server;
+}
+
+function isCredential(value: unknown): value is CaseCredential {
+  const v = value as Partial<CaseCredential> | null;
+  return typeof v?.caseId === "string" && typeof v.companionUrl === "string"
+    && typeof v.password === "string" && v.password.length > 0;
+}
+
+/** The stored password when it belongs to `caseId` on this companion; undefined otherwise. */
 export async function readCaseCredential(
   area: SessionArea | undefined,
   caseId: string,
+  companionUrl: string,
 ): Promise<CaseCredential | undefined> {
   if (!area || !caseId) return undefined;
   const stored = (await area.get(CASE_PASSWORD_SESSION_KEY))[CASE_PASSWORD_SESSION_KEY];
-  return isCredential(stored) && stored.caseId === caseId
-    ? { caseId: stored.caseId, password: stored.password }
+  return isCredential(stored) && credentialMatches(stored, caseId, companionUrl)
+    ? { caseId: stored.caseId, companionUrl: stored.companionUrl, password: stored.password }
     : undefined;
 }
 
 export async function storeCaseCredential(area: SessionArea | undefined, credential: CaseCredential): Promise<void> {
   if (!area) throw new Error("this browser has no session storage — update it to keep a case password");
-  await area.set({ [CASE_PASSWORD_SESSION_KEY]: { caseId: credential.caseId, password: credential.password } });
+  const companionUrl = companionServerKey(credential.companionUrl);
+  if (!companionUrl) throw new Error("the Companion URL is not valid — fix it before entering a case password");
+  await area.set({
+    [CASE_PASSWORD_SESSION_KEY]: { caseId: credential.caseId, companionUrl, password: credential.password },
+  });
 }
 
 export async function forgetCaseCredential(area: SessionArea | undefined): Promise<void> {
   if (!area) return;
   await area.remove(CASE_PASSWORD_SESSION_KEY);
+}
+
+/** The shape of a storage.onChanged `changes` argument, as far as this module reads it. */
+export type StorageChanges = Record<string, { oldValue?: unknown; newValue?: unknown } | undefined>;
+
+function companionUrlOf(settings: unknown): string | undefined {
+  const url = (settings as { companionUrl?: unknown } | null | undefined)?.companionUrl;
+  return typeof url === "string" ? url : undefined;
+}
+
+/**
+ * Forget the case password when the stored Companion URL now names a different server — saved from
+ * the popup or the options page alike. The send-time check already refuses a mismatched server;
+ * this keeps the password from waiting in memory for the analyst to switch back.
+ */
+export async function forgetCredentialOnServerChange(
+  area: SessionArea | undefined,
+  changes: StorageChanges,
+): Promise<void> {
+  const change = changes.settings;
+  if (!change) return;
+  if (companionServerChanged(companionUrlOf(change.oldValue), companionUrlOf(change.newValue))) {
+    await forgetCaseCredential(area);
+  }
 }
 
 /** The companion's answer for a password-locked case — distinct from a 401 for a bad team token. */

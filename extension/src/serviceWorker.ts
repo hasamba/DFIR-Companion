@@ -5,7 +5,8 @@ import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { browserApi } from "./browser.js";
 import {
-  forgetCaseCredential, isLockedRejection, lockedQueueMessage, pushErrorMessage, readCaseCredential,
+  forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, lockedQueueMessage, pushErrorMessage,
+  readCaseCredential,
   type SessionArea,
 } from "./casePasswordSession.js";
 import {
@@ -82,7 +83,7 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
   }
   const imageBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
 
-  const credential = await readCaseCredential(sessionArea(), settings.caseId);
+  const credential = await readCaseCredential(sessionArea(), settings.caseId, settings.companionUrl);
   const controller = new CaptureController(clientFor(settings, credential), queue);
   const status = await controller.capture(settings.caseId, trigger, {
     url: tab.url,
@@ -216,7 +217,7 @@ async function pushArtifact(
   // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
   // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
   const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
-  const credential = await readCaseCredential(sessionArea(), settings.caseId);
+  const credential = await readCaseCredential(sessionArea(), settings.caseId, settings.companionUrl);
   const client = clientFor(settings, credential);
   // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
   // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
@@ -429,6 +430,11 @@ browserApi.runtime.onStartup.addListener(() => void rescheduleAlarm());
 browserApi.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
 browserApi.permissions.onAdded.addListener((change) => void handlePermissionChange("granted", change));
 browserApi.permissions.onRemoved.addListener((change) => void handlePermissionChange("revoked", change));
+// A case password belongs to the companion it was entered for (#2135): a new Companion URL, saved
+// from the popup or the options page, forgets it rather than letting it travel to another server.
+browserApi.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local") void forgetCredentialOnServerChange(sessionArea(), changes).catch(() => undefined);
+});
 // Keyboard shortcut (default Ctrl+Shift+S / Cmd+Shift+S) to toggle capture on/off.
 browserApi.commands?.onCommand.addListener((command) => {
   if (command === "toggle-capture") void toggleCapture();

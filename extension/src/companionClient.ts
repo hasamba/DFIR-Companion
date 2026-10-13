@@ -1,3 +1,4 @@
+import { credentialMatches } from "./casePasswordSession.js";
 import type { CaseCredential, CapturePayload, ImportPayload } from "./types.js";
 
 type FetchFn = typeof fetch;
@@ -20,13 +21,13 @@ export class CompanionClient {
     private readonly fetchFn: FetchFn = (input, init) => fetch(input, init),
     private readonly serviceToken = "",
     // The password of a password-locked case (#2135), added to the request body at SEND time for
-    // that case only — queued payloads never carry it.
+    // that case on the companion it was entered for only — queued payloads never carry it.
     private readonly caseCredential?: CaseCredential,
   ) {}
 
   private withCasePassword<T extends object>(caseId: string, body: T): T | (T & { casePassword: string }) {
     const cred = this.caseCredential;
-    return cred && cred.caseId === caseId ? { ...body, casePassword: cred.password } : body;
+    return cred && credentialMatches(cred, caseId, this.baseUrl) ? { ...body, casePassword: cred.password } : body;
   }
 
   private static async errorOf(res: Response): Promise<string | undefined> {
