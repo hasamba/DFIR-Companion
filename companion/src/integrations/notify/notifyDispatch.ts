@@ -8,6 +8,11 @@ import {
   type NotificationEvent,
 } from "../../analysis/notifications.js";
 import type { NotificationConfigStore } from "../../analysis/notificationStore.js";
+import {
+  isMetadataOrLinkLocalHost,
+  metadataTargetError,
+  urlHostIsMetadataOrLinkLocal,
+} from "../../analysis/metadataTarget.js";
 import { formatSlack } from "./slackFormat.js";
 import { formatTeams } from "./teamsFormat.js";
 import { formatMattermost } from "./mattermostFormat.js";
@@ -35,6 +40,11 @@ const WEBHOOK_FORMATTERS: Partial<Record<NotificationChannelType, (e: Notificati
 
 export interface NotifyTransport {
   fetchFn: FetchFn;
+  // The fetch the incoming-webhook channels (Slack/Teams/Mattermost/Discord) go through: in the
+  // server, the pinned outbound guard in "lan" mode with redirects refused (#2146), built in
+  // composition. Absent → fetchFn, which still gets the literal metadata check and the
+  // no-redirect rule below but not the resolve-and-pin. Telegram keeps fetchFn.
+  webhookFetch?: FetchFn;
   smtpConnect?: SmtpConnect; // absent → email channels are skipped with a clear reason
   // The war-room bot's DFIR_TELEGRAM_BOT_TOKEN, injected rather than read here so this module stays
   // env-free. Used by telegram channels that carry no token of their own.
@@ -85,11 +95,16 @@ async function sendToChannel(
     const formatter = WEBHOOK_FORMATTERS[channel.type];
     if (formatter) {
       if (!channel.webhookUrl) return { ...base, ok: false, error: "no webhook URL configured" };
+      // A channel saved before the save-time rule, or edited by hand in config.json (#2146).
+      if (urlHostIsMetadataOrLinkLocal(channel.webhookUrl)) {
+        return { ...base, ok: false, error: metadataTargetError(new URL(channel.webhookUrl).hostname) };
+      }
       const r = await postWebhook(
-        transport.fetchFn,
+        transport.webhookFetch ?? transport.fetchFn,
         channel.webhookUrl,
         formatter(event),
         transport.timeoutMs,
+        { refuseRedirects: true },
       );
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
@@ -109,6 +124,10 @@ async function sendToChannel(
     }
     // email
     if (!channel.smtp) return { ...base, ok: false, error: "no SMTP config" };
+    // Literal check here; nodeSmtpConnect re-checks what a name resolves to (#2146).
+    if (isMetadataOrLinkLocalHost(channel.smtp.host)) {
+      return { ...base, ok: false, error: metadataTargetError(channel.smtp.host) };
+    }
     if (!transport.smtpConnect)
       return { ...base, ok: false, error: "SMTP transport not available on this server" };
     const content = formatEmail(event);
@@ -132,6 +151,7 @@ async function sendToChannel(
 export interface NotifierDeps {
   store?: NotificationConfigStore; // absent → notifier is a no-op (notifications not configured)
   fetchFn: FetchFn;
+  webhookFetch?: FetchFn; // see NotifyTransport.webhookFetch
   smtpConnect?: SmtpConnect;
   // THUNKS, not values: the notifier is built once at startup, so capturing these would pin them to
   // boot-time values. The token is on the /settings/reload allowlist and therefore rotates without a
@@ -155,6 +175,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
   // Rebuilt per send so the telegram thunks are re-read rather than captured at startup.
   const transportNow = (): NotifyTransport => ({
     fetchFn: deps.fetchFn,
+    webhookFetch: deps.webhookFetch,
     smtpConnect: deps.smtpConnect,
     telegramBotToken: deps.telegramBotToken?.(),
     telegramApiBase: deps.telegramApiBase?.(),

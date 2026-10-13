@@ -155,6 +155,7 @@
           const body = {
             data: base64,
             password,
+            filename: file.name, // names the custody receipt (#2176)
             ...(targetCaseId ? { targetCaseId } : {}),
           };
           return fetch("/cases/import/encrypted", {
@@ -249,7 +250,8 @@
         fetch("/cases/import/zip", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ data, ...(targetCaseId ? { targetCaseId } : {}) }),
+          // filename names the custody receipt (#2176).
+          body: JSON.stringify({ data, filename: file.name, ...(targetCaseId ? { targetCaseId } : {}) }),
         });
       status.textContent = "importing " + file.name + "…";
       let res = await importInto(undefined);

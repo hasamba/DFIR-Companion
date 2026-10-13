@@ -561,6 +561,7 @@
     "iocRepair.ts": "analysis/findings",
     "iocRiskScore.ts": "analysis/findings",
     "iocValue.ts": "analysis/findings",
+    "metadataTarget.ts": "analysis/findings",
     "iocWhitelist.ts": "analysis/findings",
     "iocWhitelistStore.ts": "analysis/findings",
     "iocsDiff.ts": "analysis/findings",

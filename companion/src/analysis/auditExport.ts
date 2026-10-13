@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { ActivityCategory, ActivityLogEntry } from "./activityLog.js";
+import {
+  isMetadataOrLinkLocalHost,
+  metadataTargetError,
+  urlHostIsMetadataOrLinkLocal,
+} from "./metadataTarget.js";
 
 // Audit-log export to a SIEM (issue #929). This module is the PURE core: the destination model,
 // input validation, secret redaction, and the mapping from a stored activity entry to the record
@@ -195,6 +200,17 @@ function sameEndpointUrl(a: string | undefined, b: string | undefined): boolean 
 }
 
 /**
+ * The cloud-metadata / link-local refusal for a URL destination (#2147), or undefined. Only a
+ * target that is NEW or CHANGED is refused: the dashboard's enable toggle re-sends the saved URL, so
+ * refusing an unchanged one would make a destination saved before this rule impossible to switch
+ * off. It cannot send either way — the send-time guard refuses it and Test says why.
+ */
+function metadataUrlError(url: string, savedUrl: string | undefined): string | undefined {
+  if (sameEndpointUrl(savedUrl, url) || !urlHostIsMetadataOrLinkLocal(url)) return undefined;
+  return metadataTargetError(new URL(url).hostname);
+}
+
+/**
  * Validate a destination submitted by the Settings form.
  *
  * A blank secret on an edit keeps the saved one — but ONLY when the credential still points at the
@@ -232,6 +248,8 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
     const prev = sameType ? existing?.splunk : undefined;
     const url = (v.splunk?.url ?? "").trim() || (prev?.url ?? "");
     if (!isHttpUrl(url)) return { ok: false, error: "splunk requires an http(s) collector URL" };
+    const splunkTarget = metadataUrlError(url, prev?.url);
+    if (splunkTarget) return { ok: false, error: splunkTarget };
     // The token may be inherited only when it would go back to the collector it was issued for.
     const sameCollector = sameEndpointUrl(prev?.url, url);
     const token = (v.splunk?.token ?? "").trim() || (sameCollector ? (prev?.token ?? "") : "");
@@ -259,6 +277,8 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
     const prev = sameType ? existing?.elastic : undefined;
     const url = (v.elastic?.url ?? "").trim() || (prev?.url ?? "");
     if (!isHttpUrl(url)) return { ok: false, error: "elastic requires an http(s) cluster URL" };
+    const elasticTarget = metadataUrlError(url, prev?.url);
+    if (elasticTarget) return { ok: false, error: elasticTarget };
     const index = (v.elastic?.index ?? "").trim() || (prev?.index ?? "");
     if (!index) return { ok: false, error: "elastic requires an index name" };
     // No credential is legitimate — a security-only cluster on a closed network may not need one,
@@ -280,6 +300,10 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
     const prev = sameType ? existing?.syslog : undefined;
     const host = (v.syslog?.host ?? "").trim() || (prev?.host ?? "");
     if (!host) return { ok: false, error: "syslog requires a host" };
+    // Same rule as the URL destinations (#2147); the send re-checks what a name resolves to.
+    if (host !== prev?.host && isMetadataOrLinkLocalHost(host)) {
+      return { ok: false, error: metadataTargetError(host) };
+    }
     const port = v.syslog?.port ?? prev?.port ?? DEFAULT_SYSLOG_PORT;
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       return { ok: false, error: "syslog port must be an integer between 1 and 65535" };

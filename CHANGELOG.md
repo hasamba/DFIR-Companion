@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Whole-case import receipt names the archive** — the custody `received` entry for a .dfircase or ZIP import records the real file name instead of a generic label (closes #2176)
+- **Notification targets guarded** — webhook URLs and the email server host refuse cloud-metadata and link-local addresses, and webhook redirects are not followed; LAN targets keep working (closes #2146)
+- **Audit-export targets guarded** — Splunk, Elastic and syslog destinations refuse cloud-metadata and link-local addresses, and redirects are not followed; LAN and loopback keep working (closes #2147)
 - **Velociraptor download pinned and verified** — the "Download latest" button accepts only GitHub release hosts over https and checks GitHub's SHA-256 digest before making the file executable (closes #2133)
 - **Killercoda lab exposure** — the lab now declares `public-demo` instead of the loopback-only value, and the intro warns that a pasted AI key is usable by anyone holding the live session link (closes #2137)
 - **Super-timeline keeps distinct records** — rows sharing a time, description and host but with different source record ids are no longer folded into one (closes #2140)

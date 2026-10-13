@@ -58,8 +58,10 @@ import { AuditExportStore } from "../analysis/auditExportStore.js";
 import { AuditCursorStore } from "../analysis/auditExportCursor.js";
 import { createAuditExporter } from "../integrations/audit/auditExporter.js";
 import { syslogSend } from "../integrations/audit/syslogTransport.js";
+import { createAuditHttpFetch } from "../integrations/audit/auditSend.js";
 import { nodeSmtpConnect } from "../integrations/notify/smtpClient.js";
-import { tlsFetchFor } from "./tlsFetch.js";
+import { tlsConnectFor, tlsFetchFor } from "./tlsFetch.js";
+import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
@@ -282,6 +284,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const notifier = createNotifier({
     store: notificationStore,
     fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
+    // Incoming-webhook channels go through the pinned outbound guard (#2146): LAN and loopback
+    // allowed, cloud-metadata and link-local refused for the URL and every address it resolves to,
+    // redirects refused. DFIR_NOTIFY_CA/_INSECURE ride on the guard's ONE pinned Agent as connect
+    // options — tlsFetchFor's fetch would replace that Agent and send unpinned.
+    webhookFetch: createGuardedFetch({ policy: "lan", maxRedirects: 0, tls: tlsConnectFor("NOTIFY") }),
     smtpConnect: nodeSmtpConnect,
     // Telegram channels with no token of their own borrow the war-room bot's, and every telegram
     // channel reaches Telegram the way the war-room bot does. Thunks, so both are read per send
@@ -339,8 +346,12 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     transport: {
       // Destinations are arbitrary operator-named hosts known only at send time, exactly like the
       // notification webhooks — so DFIR_AUDIT_CA / DFIR_AUDIT_INSECURE are scoped the same way and
-      // fail closed against the non-loopback TLS-MITM guard (see tlsFetch.ts).
-      fetchFn: tlsFetchFor("AUDIT") ?? fetch,
+      // fail closed against the non-loopback TLS-MITM guard (see tlsFetch.ts). Splunk/Elastic go
+      // through the pinned outbound guard (#2147): LAN and loopback allowed, cloud-metadata and
+      // link-local refused for the URL and every resolved address, redirects refused. The TLS
+      // options ride on the guard's ONE pinned Agent — tlsFetchFor's fetch would replace it.
+      fetchFn: createAuditHttpFetch({ tls: tlsConnectFor("AUDIT") }),
+      // Resolves, checks and sends to the checked address under the same rule.
       syslogSend,
       hostname: hostname(),
     },

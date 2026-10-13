@@ -64,7 +64,7 @@ import { createConclusionsOutOfDate } from "./composition/conclusionsOutOfDate.j
 // Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
 // tests keep importing them from `src/server.js` — the extraction moved the definitions, not the
 // public surface (#384).
-export { tlsFetchFor } from "./composition/tlsFetch.js";
+export { tlsConnectFor, tlsFetchFor } from "./composition/tlsFetch.js";
 export {
   buildClickUpClient,
   buildIrisClient,

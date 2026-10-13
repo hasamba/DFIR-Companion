@@ -122,11 +122,12 @@ const EL_IDS = [
 
 function importHarness(responseBody: Record<string, unknown>) {
   const els = new Map(EL_IDS.map((id) => [id, stubEl(id)]));
-  const seen = { connected: 0, url: "" };
+  const seen = { connected: 0, url: "", body: "" };
   const globals: DashboardGlobals = {
     document: { getElementById: (id: string) => els.get(id) ?? null },
-    fetch: async (url: string) => {
+    fetch: async (url: string, init?: { body?: string }) => {
       seen.url = url;
+      seen.body = init?.body ?? "";
       return { status: 201, json: async () => responseBody };
     },
     arrayBufferToBase64: () => "AAAA",
@@ -159,7 +160,7 @@ async function runImport(responseBody: Record<string, unknown>) {
   els.get("ipPassword")!.value = "correct horse battery staple"; // the handler refuses an empty one
   await els.get("ipImport")!.onclick!();
 
-  return { els, connected: seen.connected };
+  return { els, connected: seen.connected, body: seen.body };
 }
 
 /** Pick a .zip through the Import case modal and let the import finish. */
@@ -333,5 +334,23 @@ describe("ZIP case import", () => {
   it("says so when the archive had no manifest", async () => {
     const { els } = await runZipImport({ caseId: "INC-1", counts: {}, verified: false });
     expect(els.get("importCaseHint")!.textContent).toContain("no archive manifest, hashes not verified");
+  });
+});
+
+// #2176: the custody receipt names the archive, so the dashboard has to send the file's name.
+describe("whole-case import sends the archive's file name", () => {
+  it("includes the .dfircase file name in the encrypted import body", async () => {
+    const { body } = await runImport({
+      caseId: "INC-1",
+      counts: {},
+      formatVersion: 2,
+      currentFormatVersion: 2,
+    });
+    expect(JSON.parse(body).filename).toBe("case.dfircase");
+  });
+
+  it("includes the ZIP file name in the ZIP import body", async () => {
+    const { seen } = await runZipImport({ caseId: "INC-1", counts: {}, verified: true });
+    expect(JSON.parse(seen.body).filename).toBe("INC-1 (no password).zip");
   });
 });

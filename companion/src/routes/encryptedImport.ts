@@ -11,7 +11,7 @@ import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { hashFile, RECEIVED_PATH_PREFIX } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
 import { importedCaseIdClaim } from "./caseIdentity.js";
-import { receivedOf } from "./importReceipt.js";
+import { receiptName, receivedOf } from "./importReceipt.js";
 
 /**
  * Whole-case import — POST /cases/import/encrypted (a `.dfircase` package) and POST
@@ -55,7 +55,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
           .json({ error: "too many failed imports, try again later", retryAfterMs: remaining });
       }
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const { data, password, targetCaseId } = body;
+      const { data, password, targetCaseId, filename } = body;
       if (typeof data !== "string" || !data.trim()) {
         return res.status(400).json({ error: "data (base64) is required" });
       }
@@ -92,7 +92,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         },
       );
       options.teamAuth?.grantCreator(req, meta.caseId);
-      await recordReceipt(ctx, meta.caseId, DFIRCASE_ARRIVAL, fileBuffer);
+      await recordReceipt(ctx, meta.caseId, DFIRCASE_ARRIVAL, fileBuffer, filename);
       await recordArrival(ctx, meta.caseId, DFIRCASE_ARRIVAL, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
@@ -146,7 +146,7 @@ const INVALID_ARCHIVE_MESSAGE =
 
 /**
  * Import the plain ZIP that "Archive to ZIP" writes into a NEW case (#1784). Body:
- * { data: base64, targetCaseId? }. Same answers as the encrypted route: 201, 409 with the
+ * { data: base64, targetCaseId?, filename? }. Same answers as the encrypted route: 201, 409 with the
  * conflicting caseId (the dashboard re-prompts), 400 for a malformed or unverifiable archive.
  *
  * There is no password, so there is no derivation to protect and no failure limiter. The per-IP
@@ -156,7 +156,7 @@ function registerZipImportRoute(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
   app.post("/cases/import/zip", async (req: Request, res: Response) => {
     try {
-      const { data, targetCaseId } = (req.body ?? {}) as Record<string, unknown>;
+      const { data, targetCaseId, filename } = (req.body ?? {}) as Record<string, unknown>;
       if (typeof data !== "string" || !data.trim()) {
         return res.status(400).json({ error: "data (base64) is required" });
       }
@@ -172,7 +172,7 @@ function registerZipImportRoute(app: Express, ctx: RouteContext): void {
       });
       const { meta, verified, sourceCaseId } = result;
       options.teamAuth?.grantCreator(req, meta.caseId);
-      await recordReceipt(ctx, meta.caseId, ZIP_ARRIVAL, archive);
+      await recordReceipt(ctx, meta.caseId, ZIP_ARRIVAL, archive, filename);
       await recordArrival(ctx, meta.caseId, ZIP_ARRIVAL, sourceCaseId);
       const counts = await countsFromState(ctx, meta.caseId, result.counts);
       // sanitizeCaseMeta for the same reason as above: case.json travels byte-for-byte, lock hash included.
@@ -218,6 +218,8 @@ const ZIP_ARRIVAL: ArrivalWording = { label: "ZIP archive", trigger: "zip-case-i
 
 /**
  * Receipt the archive the analyst handed over — its SHA-256, SHA-1 and size — as a `received` entry
+ * named after the file the client sent (`filename`, sanitised to a basename; the generic label when
+ * none was sent, #2176)
  * in the new case's chain, ahead of the `transferred` arrival (#2124), so the case can be tied to the
  * exact `.dfircase`/ZIP file received. Success path only: no case exists until the archive opens, so
  * a rejected archive has no chain to write into. Never throws, for the reason recordArrival gives.
@@ -227,10 +229,11 @@ async function recordReceipt(
   caseId: string,
   wording: ArrivalWording,
   archive: Buffer,
+  rawName?: unknown,
 ): Promise<void> {
   const custody = ctx.options.custodyStore;
   if (!custody) return;
-  const got = receivedOf(archive, wording.label);
+  const got = receivedOf(archive, receiptName(rawName, wording.label));
   try {
     await custody.record(caseId, {
       artifactPath: `${RECEIVED_PATH_PREFIX}${wording.trigger}/${got.name}@${got.sha256.slice(0, 12)}`,

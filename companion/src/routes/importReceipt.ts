@@ -17,8 +17,9 @@ import { setReceiptedFile, type ReceiptedFile } from "./receiptedFile.js";
 //
 // Whole-case imports (POST /cases/import/encrypted for a `.dfircase`, POST /cases/import/zip) are
 // NOT covered here: custody is per case, and no case exists until the archive opens. They are
-// receipted on success only — routes/encryptedImport.ts records the archive's SHA-256, SHA-1 and
-// size as a `received` entry in the new case's chain, ahead of its `transferred` arrival (#2124).
+// receipted on success only — routes/encryptedImport.ts records the archive's file name, SHA-256,
+// SHA-1 and size as a `received` entry in the new case's chain, ahead of its `transferred` arrival
+// (#2124, #2176).
 // A rejected archive (wrong password, corrupt) has no chain to write into and leaves no entry.
 
 /** The body fields the routes read their payload from, in the priority they use. */
@@ -37,7 +38,7 @@ export interface Received {
 const digest = (algo: "sha256" | "sha1", data: Buffer): string => createHash(algo).update(data).digest("hex");
 
 /** A label for the file, never a path: basename, control characters and path separators removed. */
-function receiptName(raw: unknown, fallback: string): string {
+export function receiptName(raw: unknown, fallback: string): string {
   const base = typeof raw === "string" ? basename(raw.replace(/\\/g, "/")) : "";
   const clean = base.replace(/[\x00-\x1f\x7f]/g, "").slice(0, MAX_NAME);
   return clean || fallback;

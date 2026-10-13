@@ -26,7 +26,7 @@ export interface TlsFetchOptions {
   onWarn?: (message: string) => void;
 }
 
-interface TlsConnectOptions {
+export interface TlsConnectOptions {
   ca?: string;
   rejectUnauthorized?: boolean;
 }
@@ -41,7 +41,24 @@ export interface TlsFetchDeps {
 // Build a fetch bound to a custom TLS trust config, or undefined when no customization is
 // requested (the caller then falls back to the global fetch — see each provider's
 // `opts.fetchFn ?? fetch`). undici's Agent is the same engine that powers global fetch.
+//
+// NOT for a caller that brings its own dispatcher: the returned fetch sets its dispatcher AFTER
+// spreading init, so it replaces the caller's. The pinned outbound guard (routes/outboundFetchGuard)
+// takes buildTlsConnect's options instead and merges them into its own Agent (#2146).
 export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): FetchFn | undefined {
+  const connect = buildTlsConnect(opts, deps);
+  if (!connect) return undefined;
+  const dispatcher = (deps.makeDispatcher ?? ((c) => new Agent({ connect: c })))(connect);
+  const base = deps.baseFetch ?? (undiciFetch as unknown as FetchFn);
+  return (input, init) => base(input, { ...(init ?? {}), dispatcher } as RequestInit);
+}
+
+// The same TLS trust as plain undici connect options, or undefined when none is requested. Throws
+// on insecureSkipVerify toward a non-loopback host without DFIR_TLS_ALLOW_INSECURE_EXTERNAL.
+export function buildTlsConnect(
+  opts: TlsFetchOptions,
+  deps: Pick<TlsFetchDeps, "readFile"> = {},
+): TlsConnectOptions | undefined {
   const read = deps.readFile ?? ((p: string) => readFileSync(p, "utf8"));
   const connect: TlsConnectOptions = {};
 
@@ -66,8 +83,5 @@ export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): F
   }
 
   if (connect.ca === undefined && connect.rejectUnauthorized === undefined) return undefined;
-
-  const dispatcher = (deps.makeDispatcher ?? ((c) => new Agent({ connect: c })))(connect);
-  const base = deps.baseFetch ?? (undiciFetch as unknown as FetchFn);
-  return (input, init) => base(input, { ...(init ?? {}), dispatcher } as RequestInit);
+  return connect;
 }

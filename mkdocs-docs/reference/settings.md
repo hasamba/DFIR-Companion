@@ -373,6 +373,19 @@ Each channel has:
 !!! info
     Notification configs are stored in a global config file (not `.env`) and webhook URLs are redacted in all API responses.
 
+!!! warning "Blocked destinations: cloud metadata and link-local addresses"
+    A webhook URL or SMTP host that points at a cloud instance-metadata service or a link-local address is refused.
+    This covers `169.254.0.0/16`, `fe80::/10`, their IPv4-mapped IPv6 spellings, `fd00:ec2::254` (AWS),
+    `100.100.100.200` (Alibaba), and names such as `metadata.google.internal`. You see the error when you save the
+    channel. A host name that *resolves* to one of these addresses is refused when a message is sent, and **Test** shows
+    why. The connection then goes to the address that was checked.
+
+    Webhooks and mail servers on your own network or on this machine (`10.x`, `192.168.x`, `127.0.0.1`, an internal
+    host name) still work, over `http://` too.
+
+    Webhook redirects are not followed. A webhook that answers with a redirect (HTTP 3xx) is reported as a failed send.
+    Use the final URL in the channel instead.
+
 !!! tip "Telegram: leave the bot token blank to reuse the war-room bot's"
     A Telegram channel with no token of its own falls back to `DFIR_TELEGRAM_BOT_TOKEN` from `.env`, and the token field
     shows *(already set)*. Fill in only the chat ID. The token is never copied into the notification config, so rotating
@@ -414,6 +427,20 @@ and a **Send history** button.
 !!! warning "This sends case content off the box"
     Case identifiers, analyst names, and what each analyst did go to a third-party system. Off by
     default — each destination is opt-in, and the list starts empty.
+
+!!! warning "Blocked destinations: cloud metadata and link-local addresses"
+    A Splunk or Elasticsearch URL, or a syslog host, that points at a cloud instance-metadata service or a link-local
+    address is refused. This covers `169.254.0.0/16`, `fe80::/10`, their IPv4-mapped IPv6 spellings, `fd00:ec2::254`
+    (AWS), `100.100.100.200` (Alibaba), and names such as `metadata.google.internal`. You see the error when you save
+    the destination. A host name that *resolves* to one of these addresses is refused when records are sent, and
+    **Test** shows why. The connection then goes to the address that was checked. A destination saved before this rule
+    can still be switched off, but it does not send.
+
+    Collectors on your own network or on this machine (`10.x`, `192.168.x`, a syslog forwarder on `127.0.0.1:514`, an
+    internal host name) still work, over `http://` too.
+
+    Redirects are not followed. A Splunk or Elasticsearch endpoint that answers with a redirect (HTTP 3xx) is reported
+    as a failed send, and the records stay queued for the next attempt. Use the final URL in the destination instead.
 
 ### Changing the collector asks for the credential again
 
