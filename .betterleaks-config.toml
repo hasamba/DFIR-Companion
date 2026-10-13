@@ -58,7 +58,11 @@ regexes = [
   # and the original is in history. Narrow on purpose: `example.` is reserved, so this cannot
   # collide with a real internal FQDN, and the rule stays live for anything that is not fake by
   # construction.
-  '''(?i)\bexample\.internal\b''',
+  '''(?i)\bexample\.internal\b''',  # Invented LAN targets in the #2146/#2147 outbound-guard tests; exact labels only.
+  '''(?i)\b(?:x|mail|mattermost|nowhere|splunk|es|syslog)\.lan\b''',
+  '''(?i)\bforwarder\.local\b''',
+  # AWS's public, documented metadata hostname, the EC2 twin of metadata.google.internal (#2146).
+  '''(?i)\binstance-data\.ec2\.internal\b''',
 ]
 
 # The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe
