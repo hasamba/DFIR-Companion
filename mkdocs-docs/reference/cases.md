@@ -95,7 +95,9 @@ The capture extension shows a **Case password** field when you pick a locked cas
 once and press **Check**. The extension keeps it in memory until the browser closes, and screenshots
 and console pushes then go in as normal. Without the password, screenshots are not thrown away: they
 wait in the extension, and the toolbar badge turns amber with a count ("Case is locked — 12 captures
-waiting for the case password"). They upload after you enter the password, with the next capture. A
+waiting for the case password"). The badge stays amber after you switch to another case, and the
+message then names the locked case. They upload after you select that case, enter its password, and
+take the next capture. A
 wrong password is tried only once, so the extension cannot lock you out of your own case. Webhooks
 that use a push key keep working on a locked case. Setting or changing a password does not auto-unlock the browser that set it;
 you're prompted the same as anyone else. **Remove password** is only available when the case is

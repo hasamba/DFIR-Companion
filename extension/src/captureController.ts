@@ -40,11 +40,17 @@ export class CaptureController {
       // Online: opportunistically drain anything queued during an outage. Each queued capture is
       // classified rather than reduced to a boolean, so one that has become permanently
       // unsendable is discarded (and reported) instead of blocking the queue behind it.
+      // A locked answer here is always for ANOTHER case: a queued capture for the selected case
+      // carries the same, just-accepted password. Record which case, for the amber badge (#2185).
+      let lockedQueuedCaseId: string | undefined;
       const drained = await this.queue.drain(async (p): Promise<QueueSendResult> => {
         const r = await this.client.postCapture(p);
         if (r.ok) return { outcome: "sent" };
         // Still waiting for its case password (#2135) — keep it, never drop evidence for this.
-        if (isLockedRejection(r.status, r.errorMessage)) return { outcome: "retry", status: r.status };
+        if (isLockedRejection(r.status, r.errorMessage)) {
+          lockedQueuedCaseId = p.caseId;
+          return { outcome: "retry", status: r.status };
+        }
         return {
           outcome: isPermanent(r.status) ? "drop" : "retry",
           status: r.status,
@@ -55,6 +61,7 @@ export class CaptureController {
         online: true,
         queued: await this.queue.size(),
         ...(drained.dropped.length ? { dropped: drained.dropped } : {}),
+        ...(lockedQueuedCaseId ? { lockedQueuedCaseId } : {}),
       };
     }
 
