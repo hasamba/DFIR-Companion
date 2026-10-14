@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case-password guessing capped per client** — one client gets at most 20 wrong case-password guesses a minute across all cases, on unlock and on evidence writes; correct passwords never use up the budget (closes #2184)
+- **Derived-note clip caps shared** — the event-history check reads the same description caps the detection passes use, so changing a cap can no longer write false "changed after first recorded" entries (closes #2186)
+- **Locked queued captures shown** — when queued screenshots wait for another, locked case, the extension badge turns amber and the popup names the locked case and asks for its password (closes #2185)
 - **Case lock gates imports** — a locked case refuses imports without the case password; extension screenshots for a locked case wait in the queue for the password instead of being discarded; push keys still work (closes #2135)
 - **Changed-after-recorded marker** — when a merge changes an event's description or severity, the event keeps a capped history shown on the timeline, in reports and as a CSV column (closes #2141)
 - **Re-import keeps tagger grades** — re-importing the same file no longer drops a tagger-raised severity to Info and out of the forensic timeline; an MCP agent can still lower it (closes #2182)
