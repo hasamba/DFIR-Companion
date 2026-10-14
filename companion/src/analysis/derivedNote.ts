@@ -13,6 +13,14 @@
 // reads every *_MARKER constant under src/analysis and fails when one is missing from this list.
 
 export const DESCRIPTION_BASE_MAX = 700;
+// The wider base cap for passes that run on every merged event and read the description as a command
+// line (jndiInjection, containerEscape): it must cover the widest description an importer emits.
+export const WIDE_DESCRIPTION_BASE_MAX = 1600;
+// Every base cap a timeline pass passes to appendDerivedNote MUST be one of these. eventRevision clips
+// a re-imported raw text at each of them to recognise a restatement of a clipped base; a pass clipping
+// at any other cap makes a plain re-import write a false revision entry (#2186). derivedNote.test.ts
+// fails when a pass under src/analysis passes a cap that is not one of these shared constants.
+export const DERIVED_NOTE_BASE_CLIPS: readonly number[] = [DESCRIPTION_BASE_MAX, WIDE_DESCRIPTION_BASE_MAX];
 
 export const DERIVED_NOTE_NAMES: readonly string[] = [
   "confirmed exfiltration",
