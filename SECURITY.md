@@ -103,7 +103,10 @@ Two kinds of password are stored on the server as salted scrypt hashes, at a low
 This is deliberate, not an oversight of the `.dfircase` bar above. A `.dfircase` file faces
 unlimited **offline** guessing, so its cost is the only thing slowing an attacker. These two are
 checked **online**: every attempt goes through the server's rate limiter and lockout, which bounds
-the guesses an attacker gets. And the scrypt derivation is the CPU each admitted attempt costs the
+the guesses an attacker gets. For case-lock passwords that bound is two limits: each case locks
+after 5 wrong guesses (30 seconds, doubling up to 10 minutes), and each client (per client IP) may
+make at most 20 wrong case-password guesses a minute across all cases, so knowing many case ids
+does not multiply the budget. Correct passwords do not count toward the per-client limit. And the scrypt derivation is the CPU each admitted attempt costs the
 server, so a higher `N` would make every wrong guess a stronger CPU-exhaustion lever.
 
 The hashes are only exposed to offline guessing if the files that hold them leak. **Treat

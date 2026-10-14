@@ -170,7 +170,9 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/import \
 `POST /cases/:id/push` is the one exception: it needs no unlock. It authenticates with its push key
 only, and both the shared key and the case's own key work on a locked case.
 
-Five wrong passwords start a lockout (`429` with a `Retry-After` header).
+Five wrong passwords start a lockout (`429` with a `Retry-After` header). A second limit applies
+per client: more than 20 wrong case passwords in a minute, across all cases, also return `429`
+until the minute ends. Correct passwords do not count toward it.
 
 ---
 

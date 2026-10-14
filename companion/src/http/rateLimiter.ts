@@ -349,6 +349,8 @@ let _bootstrapLimiter: AttemptLimiter | null = null;
 let _bootstrapSweepTimer: NodeJS.Timeout | null = null;
 let _slashSecretLimiter: AttemptLimiter | null = null;
 let _slashSecretSweepTimer: NodeJS.Timeout | null = null;
+let _unlockIpLimiter: SlidingWindowLimiter | null = null;
+let _unlockIpSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -419,6 +421,27 @@ export function getImportIpLimiter(): SlidingWindowLimiter {
     _importIpSweepTimer.unref?.();
   }
   return _importIpLimiter;
+}
+
+/** Most FAILED case-password guesses one client may make per {@link UNLOCK_IP_WINDOW_MS}, summed
+ *  across every case and every password-checking route (#2184). Above the per-case budget of 5,
+ *  so the per-case lockout still bites first on a single case. */
+export const UNLOCK_IP_MAX_FAILURES = 20;
+export const UNLOCK_IP_WINDOW_MS = 60_000;
+
+/** Per-CLIENT ceiling on failed case-password guesses, keyed by client IP (#2184). The unlock
+ *  limiter is keyed by case id, so a client that knew N case ids got N budgets and N concurrent
+ *  derivations. This bounds the total. Only FAILED derivations count: a caller reserves a slot
+ *  before deriving and refunds it on success (see attemptCasePassword), because the browser
+ *  extension sends the case password with every capture. */
+export function getUnlockIpLimiter(): SlidingWindowLimiter {
+  if (!_unlockIpLimiter) {
+    const limiter = new SlidingWindowLimiter(UNLOCK_IP_MAX_FAILURES, UNLOCK_IP_WINDOW_MS);
+    _unlockIpLimiter = limiter;
+    _unlockIpSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _unlockIpSweepTimer.unref?.();
+  }
+  return _unlockIpLimiter;
 }
 
 /** Per-ACCOUNT failed-login limiter for POST /auth/local/login, keyed by client IP + username.
@@ -522,6 +545,7 @@ export function resetLimiters(): void {
   if (_oidcStartSweepTimer) clearInterval(_oidcStartSweepTimer);
   if (_bootstrapSweepTimer) clearInterval(_bootstrapSweepTimer);
   if (_slashSecretSweepTimer) clearInterval(_slashSecretSweepTimer);
+  if (_unlockIpSweepTimer) clearInterval(_unlockIpSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
@@ -542,4 +566,6 @@ export function resetLimiters(): void {
   _bootstrapLimiter = null;
   _slashSecretSweepTimer = null;
   _slashSecretLimiter = null;
+  _unlockIpSweepTimer = null;
+  _unlockIpLimiter = null;
 }
