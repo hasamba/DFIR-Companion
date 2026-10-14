@@ -114,6 +114,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
             cookieHeader: req.headers.cookie,
             bodyPassword: req.body?.casePassword,
             secret: ctx.instanceSecret,
+            clientIp: req.ip,
           });
           if (!decision.ok) return sendCaseWriteRefusal(res, decision);
         }

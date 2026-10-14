@@ -82,6 +82,7 @@ export function createCaseLockGate(store: CaseStore, secret: Buffer) {
         cookieHeader: req.headers.cookie,
         bodyPassword: (req.body as { casePassword?: unknown } | undefined)?.casePassword,
         secret,
+        clientIp: req.ip,
       });
       if (decision.ok) next();
       else sendCaseWriteRefusal(res, decision);

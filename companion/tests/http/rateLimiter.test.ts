@@ -6,6 +6,7 @@ import {
   getUnlockLimiter,
   getAiLimiter,
   getDeterministicImportLimiter,
+  getUnlockIpLimiter,
 } from "../../src/http/rateLimiter.js";
 
 describe("AttemptLimiter", () => {
@@ -369,6 +370,13 @@ describe("limiter singletons", () => {
     resetLimiters();
     const b = getUnlockLimiter();
     expect(a).not.toBe(b);
+  });
+
+  it("getUnlockIpLimiter returns a shared instance that resetLimiters clears (#2184)", () => {
+    const a = getUnlockIpLimiter();
+    expect(getUnlockIpLimiter()).toBe(a);
+    resetLimiters();
+    expect(getUnlockIpLimiter()).not.toBe(a);
   });
 
   it("getDeterministicImportLimiter returns a shared instance that resetLimiters clears", () => {

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CASE_PASSWORD_SCRYPT_N, hashCasePassword } from "../../src/analysis/casePassword.js";
 import { hashLocalPassword, LOCAL_PASSWORD_SCRYPT_N } from "../../src/auth/password.js";
+import { UNLOCK_IP_MAX_FAILURES } from "../../src/http/rateLimiter.js";
 
 // STORED-PASSWORD SCRYPT COST MUST BE DOCUMENTED WHERE THE .dfircase BAR IS (#2167).
 //
@@ -45,6 +46,12 @@ describe("SECURITY.md documents the stored-password scrypt cost (#2167)", () => 
     expect(section).toMatch(/rate-limited/i);
     expect(section).toMatch(/offline/i);
     expect(section).toContain("auth.sqlite");
+  });
+
+  it("states the per-client ceiling on failed case-password guesses across all cases (#2184)", () => {
+    expect(section).toMatch(/per client/i);
+    expect(section).toMatch(/across all cases/i);
+    expect(section).toContain(String(UNLOCK_IP_MAX_FAILURES));
   });
 });
 

@@ -11,9 +11,13 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { readBack } from "../../src/analysis/incrementalMergeRows.js";
 import {
   appendDerivedNote,
+  DERIVED_NOTE_BASE_CLIPS,
   DESCRIPTION_BASE_MAX,
   splitDerivedNotes,
+  WIDE_DESCRIPTION_BASE_MAX,
 } from "../../src/analysis/derivedNote.js";
+import { JNDI_INJECTION_MARKER } from "../../src/analysis/jndiInjection.js";
+import { ESCAPE_MARKER } from "../../src/analysis/containerEscape.js";
 
 // #2141: a merge that overwrites a held row's description or severity keeps a short, capped record
 // of what the row said before — the overwrite still happens.
@@ -154,6 +158,40 @@ describe("nextRevisions — annotated rows record everything but a raw restateme
     const held = ev({ description: appendDerivedNote(raw, "[initial access:", "x"), severity: "Medium" });
     expect(splitDerivedNotes(held.description).base.length).toBe(DESCRIPTION_BASE_MAX);
     expect(nextRevisions(held, ev({ description: raw, severity: "Low" }), CTX, "s")).toBeUndefined();
+  });
+
+  // #2186: the jndi and container-escape passes clip at the wide cap, not the default one.
+  it.each([
+    ["jndi injection", JNDI_INJECTION_MARKER],
+    ["container escape", ESCAPE_MARKER],
+  ])("does not record a re-import of a long row the %s pass clipped", (_name, marker) => {
+    const raw = `java ${"a".repeat(WIDE_DESCRIPTION_BASE_MAX + 200)}`;
+    const held = ev({
+      description: appendDerivedNote(raw, marker, "x", WIDE_DESCRIPTION_BASE_MAX),
+      severity: "High",
+    });
+    expect(splitDerivedNotes(held.description).base.length).toBe(WIDE_DESCRIPTION_BASE_MAX);
+    expect(nextRevisions(held, ev({ description: raw, severity: "High" }), CTX, "s")).toBeUndefined();
+  });
+
+  it("records a re-import of a wide-clipped row whose text differs inside the clip", () => {
+    const raw = `java ${"a".repeat(WIDE_DESCRIPTION_BASE_MAX + 200)}`;
+    const held = ev({
+      description: appendDerivedNote(raw, JNDI_INJECTION_MARKER, "x", WIDE_DESCRIPTION_BASE_MAX),
+      severity: "High",
+    });
+    const changed = `javb ${"a".repeat(WIDE_DESCRIPTION_BASE_MAX + 200)}`;
+    const out = nextRevisions(held, ev({ description: changed, severity: "High" }), CTX, "s");
+    expect(out?.revisions?.[0].description?.from.startsWith("java aaa")).toBe(true);
+  });
+
+  it.each(DERIVED_NOTE_BASE_CLIPS)("round-trips a re-import of a base clipped at the %i cap", (cap) => {
+    const raw = `Ran ${"a".repeat(cap + 200)}`;
+    const held = ev({
+      description: appendDerivedNote(raw, "[initial access:", "x", cap),
+      severity: "Medium",
+    });
+    expect(nextRevisions(held, ev({ description: raw, severity: "Medium" }), CTX, "s")).toBeUndefined();
   });
 
   it("records an extension of a stored base that was never clipped", () => {

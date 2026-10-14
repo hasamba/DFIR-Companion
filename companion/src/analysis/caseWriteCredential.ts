@@ -6,7 +6,35 @@ import {
   verifyCasePassword,
 } from "./casePassword.js";
 import type { CasePasswordHash } from "../types.js";
-import { getUnlockLimiter } from "../http/rateLimiter.js";
+import { getUnlockIpLimiter, getUnlockLimiter, type AttemptOutcome } from "../http/rateLimiter.js";
+
+/** A per-case {@link AttemptOutcome}, or a refusal by the per-client ceiling (no derivation ran). */
+export type CasePasswordAttempt = AttemptOutcome | { kind: "ip-limited"; retryAfterMs: number };
+
+/**
+ * The one way to check a case password: the per-client ceiling on failed guesses across all cases
+ * (#2184), then the per-case lockout (#2135). Shared by POST /cases/:id/unlock and every evidence
+ * write, so a client that knows many case ids does not get many budgets.
+ *
+ * The client's slot is reserved BEFORE deriving and refunded unless the derivation failed: a
+ * success, or a per-case lockout refusal that derived nothing, gives it back. Reserving first keeps
+ * a concurrent burst across N cases from all passing the ceiling before any failure is counted.
+ */
+export async function attemptCasePassword(
+  clientIp: string | undefined,
+  caseId: string,
+  derive: () => Promise<boolean>,
+): Promise<CasePasswordAttempt> {
+  const ipLimiter = getUnlockIpLimiter();
+  const key = clientIp || "unknown";
+  const at = Date.now();
+  if (!ipLimiter.tryAcquire(key, at)) {
+    return { kind: "ip-limited", retryAfterMs: Math.max(1, ipLimiter.retryAfterMs(key, at)) };
+  }
+  const outcome = await getUnlockLimiter().attempt(caseId, derive);
+  if (outcome.kind !== "failed") ipLimiter.refund(key, at);
+  return outcome;
+}
 
 /** What a write into a password-protected case presented as proof (#2135). */
 export interface CaseWriteCredentialInput {
@@ -15,6 +43,8 @@ export interface CaseWriteCredentialInput {
   cookieHeader: string | undefined;
   bodyPassword: unknown;
   secret: Buffer;
+  /** The requesting client's IP (req.ip), the key of the per-client failed-guess ceiling (#2184). */
+  clientIp: string | undefined;
 }
 
 export type CaseWriteDecision =
@@ -27,7 +57,9 @@ export type CaseWriteDecision =
  * password in the request body (the browser extension's path). Shared by POST /captures and the
  * case-lock gate's POST /cases/:id/import, so both run through the SAME unlock limiter as POST
  * /cases/:id/unlock: guesses on any of the three count toward one lockout, and the lockout check,
- * the derivation and the count run as one serialized step per case (AttemptLimiter.attempt).
+ * the derivation and the count run as one serialized step per case (AttemptLimiter.attempt). A body
+ * password also counts toward the per-client ceiling across all cases (attemptCasePassword, #2184);
+ * a valid cookie derives nothing and does not.
  *
  * A request that carries neither a cookie nor a password is refused WITHOUT counting: it guesses
  * nothing, and counting it would let a client with no password (an extension still waiting for the
@@ -41,12 +73,13 @@ export async function checkCaseWriteCredential(input: CaseWriteCredentialInput):
   const refused = { ok: false as const, status: 401 as const, body: { error: "locked" as const, caseId } };
   if (!cookieOk && !bodyPassword) return refused;
 
-  // A valid unlock cookie is proof already; only a body password costs a derivation.
-  const outcome = await getUnlockLimiter().attempt(caseId, () =>
-    cookieOk ? Promise.resolve(true) : verifyCasePassword(bodyPassword, stored),
-  );
+  // A valid unlock cookie is proof already; only a body password costs a derivation, so only a
+  // body password goes through the per-client ceiling.
+  const outcome = cookieOk
+    ? await getUnlockLimiter().attempt(caseId, () => Promise.resolve(true))
+    : await attemptCasePassword(input.clientIp, caseId, () => verifyCasePassword(bodyPassword, stored));
   if (outcome.kind === "ok") return { ok: true };
-  if (outcome.kind === "locked") {
+  if (outcome.kind === "locked" || outcome.kind === "ip-limited") {
     return {
       ok: false,
       status: 429,

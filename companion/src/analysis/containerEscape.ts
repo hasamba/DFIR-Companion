@@ -31,7 +31,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { judgePayload } from "./linuxPayload.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendDerivedNote, WIDE_DESCRIPTION_BASE_MAX } from "./derivedNote.js";
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const ESCAPE_MARKER = "[container escape:";
@@ -489,7 +489,8 @@ const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Cr
 // — gcpServiceAccountJoin and gwsDriveExposure emit 1600; sqliteRowStateImport, awsComputeState
 // and six more emit 1400. At 600 a crafted sqlite-dissect upload filename shaped like
 // `docker run --privileged` cut the row's `; report <fp>` tag and `[undated:` clause (#1340).
-const DESCRIPTION_MAX = 1600;
+// The cap is the shared WIDE_DESCRIPTION_BASE_MAX, so eventRevision's restatement check clips the same
+// way (#2186).
 
 export function commandOf(e: ForensicEvent): string {
   // Each half is bounded BEFORE they are joined. Concatenating two unbounded imported fields and
@@ -521,7 +522,7 @@ export function markContainerEscape(events: readonly ForensicEvent[]): ForensicE
         ...e,
         severity: RANK.High > RANK[e.severity] ? "High" : e.severity,
         mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...behaviors.flatMap((b) => b.mitre)])],
-        description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, DESCRIPTION_MAX),
+        description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, WIDE_DESCRIPTION_BASE_MAX),
       };
     }
 
@@ -541,7 +542,7 @@ export function markContainerEscape(events: readonly ForensicEvent[]): ForensicE
       // estate would bury the behaviours that are the real finding.
       severity: RANK.Medium > RANK[e.severity] ? "Medium" : e.severity,
       mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...risks.flatMap((r) => r.mitre)])],
-      description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, DESCRIPTION_MAX),
+      description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, WIDE_DESCRIPTION_BASE_MAX),
     };
   });
 

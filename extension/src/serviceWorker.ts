@@ -1,11 +1,12 @@
 import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
+import { describeCaptureOutcome } from "./captureOutcome.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { browserApi } from "./browser.js";
 import {
-  forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, lockedQueueMessage, pushErrorMessage,
+  forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, pushErrorMessage,
   readCaseCredential,
   type SessionArea,
 } from "./casePasswordSession.js";
@@ -91,46 +92,20 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
     imageBase64,
   });
 
-  // Captures that had been waiting in the offline queue but which the companion has now refused
-  // for good (their case was deleted/closed while they waited). They are removed so they cannot
-  // block the queue — which means their loss has to be SAID, not swallowed (#215).
-  const droppedNote = status.dropped?.length
-    ? ` · ${status.dropped.length} queued capture(s) discarded — case gone/closed (HTTP ${[...new Set(status.dropped.map((d) => d.status))].join(", ")})`
-    : "";
+  // Badge, popup line, and whether to forget the password — see captureOutcome.ts (#215, #2135, #2185).
+  const outcome = describeCaptureOutcome(status, Boolean(credential));
 
   // A wrong password is tried ONCE: forget it on the first locked answer, so auto-capture cannot burn
   // the case's shared lockout and shut the analyst out of their own dashboard (#2135).
-  if (status.locked && credential) await forgetCaseCredential(sessionArea());
+  if (outcome.forgetCredential) await forgetCaseCredential(sessionArea());
 
   // Record the last capture outcome so the popup can surface it.
-  const diag = (status.locked
-    ? `${lockedQueueMessage(status.queued)}${credential ? " (the password was not accepted)" : ""}`
-    : status.rejected
-    ? status.rejectedMessage
-      ? `rejected (HTTP ${status.rejected}) — ${status.rejectedMessage}`
-      : `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
-    : status.online
-      ? `ok (online=true, queued=${status.queued})`
-      : `offline — capture queued for retry (queued=${status.queued})`) + droppedNote;
   await browserApi.storage.local.set({
-    lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
+    lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag: outcome.diag },
   });
-
-  if (status.locked) {
-    // Amber with the count — evidence is waiting, not lost (#2135).
-    await browserApi.action.setBadgeText({ text: String(status.queued) });
-    await browserApi.action.setBadgeBackgroundColor({ color: "#d18616" });
-  } else if (status.rejected || status.dropped?.length) {
-    await browserApi.action.setBadgeText({ text: "!" });
-    // Amber — this capture was rejected, and/or queued captures had to be discarded (#215).
-    await browserApi.action.setBadgeBackgroundColor({ color: "#d18616" });
-  } else {
-    await browserApi.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
-    await browserApi.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
-  }
-  return status.rejected || status.locked
-    ? { ok: false, error: diag }
-    : { ok: true };
+  await browserApi.action.setBadgeText({ text: outcome.badgeText });
+  await browserApi.action.setBadgeBackgroundColor({ color: outcome.badgeColor });
+  return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 
 // Inject the MAIN-world fetch/XHR hook (pageHook.js) into a tab the content script recognized as a

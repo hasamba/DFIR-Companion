@@ -8,7 +8,7 @@ import {
   unlockCookieName,
   MIN_CASE_PASSWORD_LENGTH,
 } from "../analysis/casePassword.js";
-import { getUnlockLimiter } from "../http/rateLimiter.js";
+import { attemptCasePassword } from "../analysis/caseWriteCredential.js";
 import type { RouteContext } from "./context.js";
 
 // Cookie TTLs for a case-unlock token. Moved verbatim from createApp (they were used only by the
@@ -80,18 +80,18 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       // Rate-limit brute-force attempts: after 5 failures, lockout with exponential backoff. The
       // lockout check, the derivation and the count are ONE serialized step per case (see
-      // AttemptLimiter.attempt) — a burst of guesses cannot all slip past the check together.
-      const limiter = getUnlockLimiter();
+      // AttemptLimiter.attempt) — a burst of guesses cannot all slip past the check together. Failed
+      // guesses also count toward the per-client ceiling across all cases (#2184).
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
       const password = (req.body as { password?: unknown })?.password;
       const remember = (req.body as { remember?: unknown })?.remember === true;
       const stored = meta.password;
-      const outcome = await limiter.attempt(id, () =>
+      const outcome = await attemptCasePassword(req.ip, id, () =>
         typeof password === "string" ? verifyCasePassword(password, stored) : Promise.resolve(false),
       );
-      if (outcome.kind === "locked") {
+      if (outcome.kind === "locked" || outcome.kind === "ip-limited") {
         res.setHeader("Retry-After", String(Math.ceil(outcome.retryAfterMs / 1000)));
         return res
           .status(429)

@@ -135,5 +135,33 @@ describe("CaptureController — locked case (#2135)", () => {
     expect(status.online).toBe(true);
     expect(status.dropped).toBeUndefined();
     expect(await queue.size()).toBe(1);
+    // #2185: the drain reports WHICH case is still locked, without claiming the current capture was.
+    expect(status.lockedQueuedCaseId).toBe("locked-case");
+    expect(status.locked).toBeUndefined();
+    expect(status.queued).toBe(1);
+  });
+
+  it("reports no locked queued case when every queued capture sends", async () => {
+    await queue.enqueue({
+      caseId: "other-case", timestamp: "t", url: "u", tabTitle: "t", triggerType: "timer", imageBase64: "AAAA",
+    });
+    const client = new CompanionClient("http://x", vi.fn(async () => new Response("{}", { status: 201 })));
+    const status = await new CaptureController(client, queue).capture("open-case", "timer", snapshot);
+    expect(status.queued).toBe(0);
+    expect(status.lockedQueuedCaseId).toBeUndefined();
+  });
+
+  it("reports no locked queued case when a queued capture gets a transient 503", async () => {
+    await queue.enqueue({
+      caseId: "busy-case", timestamp: "t", url: "u", tabTitle: "t", triggerType: "timer", imageBase64: "AAAA",
+    });
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as { caseId: string };
+      return new Response("{}", { status: body.caseId === "busy-case" ? 503 : 201 });
+    });
+    const status = await new CaptureController(new CompanionClient("http://x", fetchFn), queue)
+      .capture("open-case", "timer", snapshot);
+    expect(status.queued).toBe(1);
+    expect(status.lockedQueuedCaseId).toBeUndefined();
   });
 });

@@ -56,6 +56,10 @@ export interface ConnectionStatus {
   // The case is password-locked and this capture carried no (or a wrong) case password (#2135).
   // The capture is KEPT in the queue — it uploads once the analyst enters the password.
   locked?: boolean;
+  // A previously-queued capture for ANOTHER case was refused during this drain because THAT case
+  // is password-locked (#2185). It stays queued. Distinct from `locked`: this capture was saved,
+  // and the selected case's password (if any) was accepted, so it must not be forgotten.
+  lockedQueuedCaseId?: string;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

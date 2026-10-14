@@ -65,7 +65,7 @@ const INTERVALS: Record<string, { count: number; kind: "global" | "per-case"; wh
       "session sweep, delivery-staging sweep, update check: global; integrity sweep: reads only; " +
       "backup: runInCaseScope with the listed generation; demo reseed: CaseStore.withSeedSlot",
   },
-  "http/rateLimiter.ts": { count: 10, kind: "global", why: "in-memory limiter sweeps" },
+  "http/rateLimiter.ts": { count: 11, kind: "global", why: "in-memory limiter sweeps" },
   "integrations/mcp/mcpDelivery.ts": {
     count: 2,
     kind: "global",

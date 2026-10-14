@@ -30,7 +30,7 @@
 // minute is the residual false positive, and the note says it is a shape, not proof.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendDerivedNote, WIDE_DESCRIPTION_BASE_MAX } from "./derivedNote.js";
 import { addressReach } from "./publicAddress.js";
 import { shortHost } from "./correlate.js";
 
@@ -45,7 +45,6 @@ const JVM_RE = /^(?:java|javaw|tomcat\d*w?|catalina)$/i;
 const SHELL_RE = /^(?:bash|sh|dash|zsh|ksh|cmd|powershell|pwsh|curl|wget|python[\d.]*|perl|nc|ncat)$/i;
 const UNKNOWN_IMAGE_RE = /^<?unknown/i;
 const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
-const DESCRIPTION_MAX = 1600;
 const MAX_FIELD = 4096;
 const OWN_NOTE = /\[jndi injection: JVM [\s\S]{0,1200}?Log4Shell shape/;
 
@@ -192,7 +191,7 @@ function raise(e: ForensicEvent, note: string): ForensicEvent {
     ...e,
     severity: RANK.High > RANK[e.severity] ? "High" : e.severity,
     mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1190", "T1203"])],
-    description: appendDerivedNote(e.description, JNDI_INJECTION_MARKER, note, DESCRIPTION_MAX),
+    description: appendDerivedNote(e.description, JNDI_INJECTION_MARKER, note, WIDE_DESCRIPTION_BASE_MAX),
   };
 }
 

@@ -3,8 +3,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   appendDerivedNote,
+  DERIVED_NOTE_BASE_CLIPS,
   DERIVED_NOTE_NAMES,
   DESCRIPTION_BASE_MAX,
+  WIDE_DESCRIPTION_BASE_MAX,
 } from "../../src/analysis/derivedNote.js";
 
 describe("appendDerivedNote", () => {
@@ -64,5 +66,63 @@ describe("persistence executed note (#2082)", () => {
     const first = appendDerivedNote("x".repeat(5000), "[persistence executed:", "runs the Run value 'u'");
     const second = appendDerivedNote(first, "[unexpected parent:", "started by winword.exe");
     expect(second).toContain("[persistence executed: runs the Run value 'u']");
+  });
+});
+
+// #2186: eventRevision recognises a re-import of a row whose base a pass clipped by clipping the raw
+// text at each registered cap. A pass that clips at an unregistered cap makes every plain re-import
+// of a long annotated row look like a change, and writes a false "changed after first recorded"
+// entry into the forensic record. So every cap a timeline pass passes must be a shared constant.
+const CAP_NAMES = ["DESCRIPTION_BASE_MAX", "WIDE_DESCRIPTION_BASE_MAX"];
+
+/** The top-level comma-separated arguments of the call whose "(" is at `open`. */
+function callArgs(src: string, open: number): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) {
+        args.push(src.slice(start, i).trim());
+        break;
+      }
+    } else if (ch === "," && depth === 1) {
+      args.push(src.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  return args.filter(Boolean);
+}
+
+describe("DERIVED_NOTE_BASE_CLIPS registry (#2186)", () => {
+  it("lists the default and the wide cap", () => {
+    expect(DERIVED_NOTE_BASE_CLIPS).toEqual([DESCRIPTION_BASE_MAX, WIDE_DESCRIPTION_BASE_MAX]);
+  });
+
+  it("every appendDerivedNote cap under src/analysis is a registered shared constant", () => {
+    const dir = join(__dirname, "../../src/analysis");
+    // binaryRenameImport clips at 600 at import time: the incoming row already carries its note, so
+    // eventRevision compares the text plainly, and its base is pre-sliced to 600, so the clip is
+    // idempotent. Registering 600 would widen the restatement match and hide a real extension.
+    const exempt = new Set(["derivedNote.ts", "binaryRenameImport.ts"]);
+    const bad: string[] = [];
+    let checked = 0;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".ts") || exempt.has(f)) continue;
+      const src = readFileSync(join(dir, f), "utf8");
+      for (const m of src.matchAll(/appendDerivedNote\(/g)) {
+        const args = callArgs(src, m.index + m[0].length - 1);
+        if (args.length < 4) continue;
+        checked++;
+        const cap = args[3];
+        const shared = CAP_NAMES.includes(cap) && !new RegExp(`const ${cap}\\b`).test(src);
+        if (!shared) bad.push(`${f}: ${cap}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(bad).toEqual([]);
   });
 });

@@ -113,6 +113,13 @@ export function lockedQueueMessage(queued: number): string {
   return `Case is locked — ${queued} ${noun} waiting for the case password`;
 }
 
+/** Queued captures wait for ANOTHER case's password (#2185) — name it, it is not the selected case. */
+export function lockedQueuedMessage(queued: number, caseId: string): string {
+  const noun = queued === 1 ? "capture" : "captures";
+  return `Case "${caseId}" is locked — ${queued} ${noun} waiting for the case password; `
+    + "select it in the popup and enter its password";
+}
+
 export const LOCKED_PUSH_ERROR = "Case is locked — enter the case password in the extension popup, then push again";
 
 /** The analyst-facing reason a console artifact push failed. */

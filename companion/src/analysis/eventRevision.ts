@@ -19,9 +19,9 @@
 // update (the merge names a change source) still lands, and is recorded like any other change.
 
 import {
+  DERIVED_NOTE_BASE_CLIPS,
   DERIVED_NOTE_DOWNGRADES,
   DERIVED_NOTE_NAMES,
-  DESCRIPTION_BASE_MAX,
   splitDerivedNotes,
 } from "./derivedNote.js";
 import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
@@ -74,14 +74,15 @@ export function mergedSeverity(
 // Only an exact restatement qualifies: an incoming text that ADDS to the stored base is new content.
 // The one exception is a base the pass clipped at its own cap (appendDerivedNote slices the base to
 // `baseMax` and trims the end): the stored copy then cannot show the rest, so the full raw text is
-// recognised by clipping it the same way. These are the caps the chain's passes clip at (the default
-// DESCRIPTION_BASE_MAX, and jndiInjection / containerEscape at 1600).
-const PASS_BASE_CLIPS: readonly number[] = [DESCRIPTION_BASE_MAX, 1600];
+// recognised by clipping it the same way. DERIVED_NOTE_BASE_CLIPS is the shared list of caps the
+// chain's passes clip at, owned by derivedNote.ts, so retuning a pass's cap cannot desync it (#2186).
 
 function restatesRawText(heldBase: string, nextBase: string): boolean {
   if (!heldBase) return false;
   if (nextBase === heldBase) return true;
-  return PASS_BASE_CLIPS.some((c) => nextBase.length > c && nextBase.slice(0, c).trimEnd() === heldBase);
+  return DERIVED_NOTE_BASE_CLIPS.some(
+    (c) => nextBase.length > c && nextBase.slice(0, c).trimEnd() === heldBase,
+  );
 }
 
 type Restatement = { sameText: boolean; raises: boolean; lowers: boolean };

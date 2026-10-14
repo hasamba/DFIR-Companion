@@ -9,6 +9,7 @@ import {
   isLockedRejection,
   LOCKED_PUSH_ERROR,
   lockedQueueMessage,
+  lockedQueuedMessage,
   pushErrorMessage,
   readCaseCredential,
   storeCaseCredential,
@@ -135,6 +136,16 @@ describe("locked-case messages", () => {
   it("counts the captures waiting for the password", () => {
     expect(lockedQueueMessage(1)).toBe("Case is locked — 1 capture waiting for the case password");
     expect(lockedQueueMessage(12)).toBe("Case is locked — 12 captures waiting for the case password");
+  });
+
+  // #2185: queued captures for ANOTHER case are waiting — name that case, since it is not the selected one.
+  it("names the locked case when queued captures for another case are waiting", () => {
+    expect(lockedQueuedMessage(1, "case-a")).toBe(
+      'Case "case-a" is locked — 1 capture waiting for the case password; select it in the popup and enter its password',
+    );
+    expect(lockedQueuedMessage(3, "case-a")).toBe(
+      'Case "case-a" is locked — 3 captures waiting for the case password; select it in the popup and enter its password',
+    );
   });
 
   it("tells the analyst how to recover a locked artifact push", () => {
