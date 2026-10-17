@@ -61,13 +61,24 @@ export function tileTemplate(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * A path segment that is exactly a small non-negative integer, or null.
+ * Digits in the largest tile index at {@link MAX_ZOOM} (2^19 - 1 = 524287, so 6). Derived rather
+ * than written down: a hardcoded 3 once refused every tile with x or y >= 1000 (#2188).
+ */
+const MAX_TILE_DIGITS = String(2 ** MAX_ZOOM - 1).length;
+
+/** A whole path segment of plain decimal digits, no longer than the deepest tile index. */
+const TILE_INT_RE = new RegExp(`^\\d{1,${MAX_TILE_DIGITS}}$`);
+
+/**
+ * A path segment that is exactly a non-negative integer of at most {@link MAX_TILE_DIGITS} digits,
+ * or null. This is only the "is it a plain integer" gate; the per-zoom range check (0 <= x, y < 2^z)
+ * lives in {@link buildTileUrl}.
  *
  * NOT `parseInt`: it reads "12abc" as 12 and "0x10" as 0, so a segment carrying a payload would be
  * silently accepted and echoed back into a cache key. Match the whole segment or reject it.
  */
 function parseTileInt(raw: string): number | null {
-  if (!/^\d{1,3}$/.test(raw)) return null;
+  if (!TILE_INT_RE.test(raw)) return null;
   return Number(raw);
 }
 

@@ -96,6 +96,20 @@ describe("GET /geo-tiles/:z/:x/:y.png — the basemap the CSP allows", () => {
     expect(requested).toEqual([]);
   });
 
+  // #2188: the parser capped every segment at 3 digits, so from zoom 10 up any tile with x or y
+  // >= 1000 got a 400 and the map went gray past zoom 9. The per-zoom bound lives in buildTileUrl.
+  it("serves a tile whose coordinates have four digits (#2188)", async () => {
+    const res = await request(app).get("/geo-tiles/10/1000/400.png");
+    expect(res.status).toBe(200);
+    expect(requested).toEqual(["https://c.tile.openstreetmap.org/10/1000/400.png"]);
+  });
+
+  it("serves the deepest tile at the deepest zoom (#2188)", async () => {
+    const res = await request(app).get("/geo-tiles/19/524287/524287.png");
+    expect(res.status).toBe(200);
+    expect(requested).toEqual(["https://c.tile.openstreetmap.org/19/524287/524287.png"]);
+  });
+
   it("reports an unreachable tile server rather than serving a blank tile", async () => {
     const dead = await appWith(async () => {
       throw new Error("ENOTFOUND");
