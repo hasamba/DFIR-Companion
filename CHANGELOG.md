@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Geographic Map tiles at high zoom** — the map basemap loads at every zoom level instead of going gray from zoom 10 (closes #2188)
+- **High-zoom tile tests** — regression tests pin the tile-coordinate limits at every zoom level, so the gray-map bug cannot return unnoticed (closes #2190)
 - **Case-password guessing capped per client** — one client gets at most 20 wrong case-password guesses a minute across all cases, on unlock and on evidence writes; correct passwords never use up the budget (closes #2184)
 - **Derived-note clip caps shared** — the event-history check reads the same description caps the detection passes use, so changing a cap can no longer write false "changed after first recorded" entries (closes #2186)
 - **Locked queued captures shown** — when queued screenshots wait for another, locked case, the extension badge turns amber and the popup names the locked case and asks for its password (closes #2185)
