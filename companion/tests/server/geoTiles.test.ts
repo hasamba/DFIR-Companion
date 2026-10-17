@@ -110,6 +110,46 @@ describe("GET /geo-tiles/:z/:x/:y.png — the basemap the CSP allows", () => {
     expect(requested).toEqual(["https://c.tile.openstreetmap.org/19/524287/524287.png"]);
   });
 
+  // #2190: until then every route test used single-digit coordinates, so the 3-digit cap passed CI.
+  it("serves a city-zoom tile with four-digit coordinates (#2190)", async () => {
+    const res = await request(app).get("/geo-tiles/12/2180/1450.png");
+    expect(res.status).toBe(200);
+    expect(requested).toEqual(["https://a.tile.openstreetmap.org/12/2180/1450.png"]);
+  });
+
+  it("serves the last tile on each axis at zoom 10, 2^10 - 1 (#2190)", async () => {
+    const res = await request(app).get("/geo-tiles/10/1023/1023.png");
+    expect(res.status).toBe(200);
+    expect(requested).toHaveLength(1);
+  });
+
+  it.each(["10/1024/0", "19/524288/0", "20/0/0"])(
+    "rejects %s, one past the tile span or the zoom range, without fetching (#2190)",
+    async (zxy) => {
+      const res = await request(app).get(`/geo-tiles/${zxy}.png`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(`no such tile: ${zxy}`);
+      expect(requested).toEqual([]);
+    },
+  );
+
+  it.each(["12/2180abc/1450", "12/0x10/0", "12/-1/0", "12/1e3/0", "12/99999999999/0"])(
+    "rejects the non-integer or overlong segment in %s without fetching (#2190)",
+    async (zxy) => {
+      const res = await request(app).get(`/geo-tiles/${zxy}.png`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("tile coordinates must be integers");
+      expect(requested).toEqual([]);
+    },
+  );
+
+  it("answers a repeat high-zoom request from cache (#2190)", async () => {
+    await request(app).get("/geo-tiles/12/2180/1450.png");
+    const res = await request(app).get("/geo-tiles/12/2180/1450.png");
+    expect(res.status).toBe(200);
+    expect(requested).toHaveLength(1);
+  });
+
   it("reports an unreachable tile server rather than serving a blank tile", async () => {
     const dead = await appWith(async () => {
       throw new Error("ENOTFOUND");
@@ -177,6 +217,15 @@ describe("buildTileUrl", () => {
   it("rejects a zoom past the raster range and a negative coordinate", () => {
     expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 20, 0, 0)).toBeNull();
     expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 3, -1, 0)).toBeNull();
+  });
+
+  // Pins the per-zoom bound the route relies on now that the parser accepts up to 6 digits (#2190).
+  it("bounds x and y by 2^z at high zoom", () => {
+    expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 12, 2180, 1450)).toMatch(/\/12\/2180\/1450\.png$/);
+    expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 10, 1023, 0)).not.toBeNull();
+    expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 10, 1024, 0)).toBeNull();
+    expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 19, 524287, 524287)).not.toBeNull();
+    expect(buildTileUrl(DEFAULT_TILE_TEMPLATE, 19, 524288, 0)).toBeNull();
   });
 
   // The template is operator config, so this catches a typo rather than an attack — but a file:
