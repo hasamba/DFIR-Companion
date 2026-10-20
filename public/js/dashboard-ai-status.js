@@ -78,6 +78,7 @@
         "blocked",
         "on hold — " + (evt.detail || "waiting on your decision"),
       );
+      window.setJobsGateCleared?.(activeCaseId, false);
       clearTransientStatus();
       // Refresh BOTH pending lists rather than parse the detail text: the two gates share this
       // status, each list is a cheap request, and whichever one is empty simply hides its chip.
@@ -251,7 +252,9 @@
   }
 
   /** Render a derived AiState (see companion/src/analysis/aiState.ts) onto the pill. */
-  function paintAiState(s) {
+  function paintAiState(s, caseId) {
+    // The jobs menu offers Re-run on a held job only once no gate holds the case.
+    window.setJobsGateCleared?.(caseId, !(s.holds && s.holds.length));
     // A hold rides ALONGSIDE the state: a running import is real work even while synthesis is held,
     // so the pill names the work and appends the hold rather than hiding either one.
     const heldNote = s.holds && s.holds.length ? " (analysis on hold)" : "";
@@ -290,7 +293,7 @@
       if (!r.ok) return; // leave the pill as it is; a failed correction must not invent a state
       const s = await r.json();
       if (seq !== aiStateSeq || caseId !== activeCaseId) return;
-      paintAiState(s);
+      paintAiState(s, caseId);
     } catch {
       // Never let the corrector be the thing that breaks the page it exists to fix.
     }

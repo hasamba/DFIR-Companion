@@ -1356,6 +1356,9 @@ export const FEATURES: Feature[] = [
       // The cancel path's counterpart to pollCount: stopCount only pauses, this forgets the case.
       "retireCount",
       "scheduleJobUiRefresh",
+      // dashboard-ai-status.js tells the menu whether a gate still holds the case, so a held job
+      // offers Re-run only once nothing does.
+      "setJobsGateCleared",
     ],
     // countTimer is NOT here: it lives in the page's state block with the other shared bindings.
     private: ["_jobsCache", "_jobsMenuShape"],

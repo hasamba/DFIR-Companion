@@ -116,7 +116,13 @@ function toolsForExt(ext, status) {
   return ((status && status.tools) || []).filter((t) => t.configured && (t.extensions || []).includes(ext));
 }
 
-function jobMenuView(j) {
+// The kinds of held job the dashboard can start again from the jobs menu. Each one maps to a
+// button the analyst already has (see rerunJob in js/dashboard-jobs.js).
+const RERUN_JOB_KINDS = ["synthesis", "deep-pass", "second-opinion"];
+
+// opts.gateCleared: no gate holds the case now. opts.newestOfKind: no later job of the same kind
+// exists. Both default to false, so a caller that does not know offers no Re-run.
+function jobMenuView(j, opts = {}) {
   const cancel = (j.status === "running" || j.status === "queued") && j.cancellable;
   const resume = j.resumable && (j.status === "interrupted" || (j.status === "failed" && j.failure && j.failure.retryable));
   const progress = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
@@ -131,7 +137,12 @@ function jobMenuView(j) {
   const detail = name || progress || j.error ? `${name || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}`.trim() : "";
   // #1801: a gate hold ends `cancelled`, but nobody pressed Cancel — the row says what happened.
   const held = j.status === "cancelled" && !!j.failure && j.failure.code === "held_for_analyst";
-  return { job: j, cancel, resume, detail, when: jobWhen(j), statusText: held ? "held for analyst" : j.status };
+  // A hold is final: the job never resumes. Once the gate clears, the row says so, and the newest
+  // held run of a kind the dashboard can start offers Re-run. #1599: the analyst starts it.
+  const cleared = held && opts.gateCleared === true;
+  const rerun = cleared && opts.newestOfKind === true && RERUN_JOB_KINDS.includes(j.kind);
+  const statusText = cleared ? "was held — gate cleared" : held ? "held for analyst" : j.status;
+  return { job: j, cancel, resume, rerun, detail, when: jobWhen(j), statusText };
 }
 
 // A job timestamp as the analyst reads it: date and time to the second, local zone. "" for a

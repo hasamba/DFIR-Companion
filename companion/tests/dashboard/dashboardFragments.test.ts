@@ -408,12 +408,19 @@ describe("jobRowHtml", () => {
     expect(f.jobRowHtml(held)).toContain('<span class="job-st job-cancelled">held for analyst</span>');
   });
 
+  it("offers Re-run on a held job whose gate cleared", () => {
+    const html = f.jobRowHtml({ ...view, cancel: false, rerun: true });
+    expect(html).toContain('<button class="job-rerun" data-job="j1"');
+    expect(html).toContain("Re-run");
+  });
+
   it("renders the job's identity and offers only the actions the view allows", () => {
     const html = f.jobRowHtml(view);
     expect(html).toContain('data-job-id="j1"');
     expect(html).toContain("job-running");
     expect(html).toContain("Cancel");
     expect(html).not.toContain("Resume");
+    expect(html).not.toContain("Re-run");
   });
 
   // A drop sweep covers many files; the row lists them all behind a fold, escaped.

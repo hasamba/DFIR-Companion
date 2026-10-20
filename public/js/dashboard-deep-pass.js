@@ -204,9 +204,10 @@
   }
   function deepPassBusy() { return deepPassPosting || !!deepPassJob(); }
 
-  function runDeepPass() {
+  // floorOverride: the jobs menu's Re-run passes the held run's floor. A click passes an Event.
+  function runDeepPass(floorOverride) {
     const cid = deepPassCaseId();
-    const floor = selectedDeepPassFloor();
+    const floor = typeof floorOverride === "string" ? floorOverride : selectedDeepPassFloor();
     // No floor → no request. The server refuses an unrecognised floor rather than reading
     // everything, and the UI must not paper over that with a default of its own.
     if (!cid || !floor) { deepPassGuidance("Pick a severity floor from the table first — no floor is right for every case."); return; }

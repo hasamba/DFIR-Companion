@@ -242,6 +242,7 @@ export interface JobView {
   };
   cancel?: boolean;
   resume?: boolean;
+  rerun?: boolean;
   detail: string;
   when?: string;
   /** What the status badge says: the status, or "held for analyst" for a gate hold (#1801). */
@@ -260,7 +261,7 @@ export interface ValuesApi {
   toolForExt(ext: string, status: unknown): string | null;
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
-  jobMenuView(j: Record<string, unknown>): JobView;
+  jobMenuView(j: Record<string, unknown>, opts?: { gateCleared?: boolean; newestOfKind?: boolean }): JobView;
   jobBarPercent(j: JobProgressLike): number | null;
   jobTime(iso: string | undefined): string;
   jobWhen(j: Record<string, unknown>): string;
