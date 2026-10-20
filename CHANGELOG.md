@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Re-run a held job** — once the Presidio or duplicate-host gate clears, the held job row reads "was held — gate cleared" and offers Re-run for synthesis, deep pass and second opinion
 - **Geographic Map tiles at high zoom** — the map basemap loads at every zoom level instead of going gray from zoom 10 (closes #2188)
 - **High-zoom tile tests** — regression tests pin the tile-coordinate limits at every zoom level, so the gray-map bug cannot return unnoticed (closes #2190)
 - **Case-password guessing capped per client** — one client gets at most 20 wrong case-password guesses a minute across all cases, on unlock and on evidence writes; correct passwords never use up the budget (closes #2184)

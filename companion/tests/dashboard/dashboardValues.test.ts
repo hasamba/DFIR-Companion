@@ -261,6 +261,53 @@ describe("lastSynthesisLine", () => {
     expect(v.jobMenuView(held).statusText).toBe("held for analyst");
   });
 
+  // A held job is history: it never resumes. Once the gate clears, the row says so and offers to
+  // start the same kind of run again — but only on the newest job of that kind.
+  describe("a held job after its gate clears", () => {
+    const held = (kind: string) => ({
+      id: "h1",
+      kind,
+      status: "cancelled",
+      endedAt: E,
+      failure: { code: "held_for_analyst" },
+    });
+
+    it.each(["synthesis", "deep-pass", "second-opinion"])("offers Re-run for a cleared %s hold", (kind) => {
+      const view = v.jobMenuView(held(kind), { gateCleared: true, newestOfKind: true });
+      expect(view.statusText).toBe("was held — gate cleared");
+      expect(view.rerun).toBe(true);
+      expect(view.resume).toBeFalsy();
+    });
+
+    it("keeps the hold wording and no button while the gate still holds", () => {
+      const view = v.jobMenuView(held("synthesis"), { gateCleared: false, newestOfKind: true });
+      expect(view.statusText).toBe("held for analyst");
+      expect(view.rerun).toBe(false);
+    });
+
+    it("treats an unknown gate state as still holding", () => {
+      expect(v.jobMenuView(held("synthesis")).rerun).toBe(false);
+      expect(v.jobMenuView(held("synthesis")).statusText).toBe("held for analyst");
+    });
+
+    it("offers no Re-run on an older hold a newer run of the same kind replaced", () => {
+      const view = v.jobMenuView(held("synthesis"), { gateCleared: true, newestOfKind: false });
+      expect(view.statusText).toBe("was held — gate cleared");
+      expect(view.rerun).toBe(false);
+    });
+
+    it("offers no Re-run for a kind the dashboard cannot start again", () => {
+      expect(v.jobMenuView(held("import"), { gateCleared: true, newestOfKind: true }).rerun).toBe(false);
+    });
+
+    it("offers no Re-run on the analyst's own Cancel", () => {
+      const cancelled = { kind: "synthesis", status: "cancelled", endedAt: E };
+      const view = v.jobMenuView(cancelled, { gateCleared: true, newestOfKind: true });
+      expect(view.rerun).toBe(false);
+      expect(view.statusText).toBe("cancelled");
+    });
+  });
+
   it("says so when the job history holds no synthesis", () => {
     expect(v.lastSynthesisLine([{ kind: "import", status: "succeeded" }])).toBe(
       "Last synthesis: none in this case's job history",

@@ -66,6 +66,7 @@ function jobRowHtml(view) {
   const j = view.job;
   const cancel = view.cancel ? `<button class="job-cancel" data-job="${esc(j.id)}" title="Cancel this job">✕ Cancel</button>` : "";
   const resume = view.resume ? `<button class="job-resume" data-job="${esc(j.id)}" title="Resume from the last durable checkpoint">↻ Resume</button>` : "";
+  const rerun = view.rerun ? `<button class="job-rerun" data-job="${esc(j.id)}" title="The decision that held this run is made. Start the same run again.">↻ Re-run</button>` : "";
   // Always emitted, hidden when empty — see updateJobRow. The popover patches rows in place far
   // more often than it rebuilds them, and a span conditional on the FIRST render is a node the
   // patch path cannot find. Placed after the status and its buttons so the header line is exactly
@@ -85,7 +86,7 @@ function jobRowHtml(view) {
   return `<div class="job-row" data-job-id="${esc(j.id)}"><span class="job-kind">${esc(j.kind)}</span>`
     + `<span class="job-label">${esc(j.label || "")}</span>`
     + `<span class="job-st job-${esc(j.status)}">${esc(view.statusText || j.status)}</span>`
-    + cancel + resume + model + bar
+    + cancel + resume + rerun + model + bar
     + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span>`
     // Always the LAST line of the row, below the detail, so every row reads the same way.
     + `<span class="job-when"${view.when ? "" : ' data-safe-style="display:none"'}>${esc(view.when || "")}</span>`

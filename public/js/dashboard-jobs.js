@@ -32,6 +32,18 @@
   let _jobUiRefreshRunning = false;
   let _jobUiRefreshQueued = false;
   let _jobUiRefreshCaseId = "";
+  // Does any gate (Presidio, duplicate host) still hold the case? Fed by the AI pill's derived
+  // state (js/dashboard-ai-status.js). Unknown counts as holding, so no Re-run is offered on a guess.
+  let _gateClearedCaseId = "";
+  function setJobsGateCleared(caseId, cleared) {
+    const next = cleared ? caseId : "";
+    if (next === _gateClearedCaseId) return;
+    _gateClearedCaseId = next;
+    renderJobs();
+  }
+  function gateCleared() {
+    return !!_gateClearedCaseId && _gateClearedCaseId === jobsCaseId();
+  }
   // Resolve the connected case id from the input element. NOTE: a bare `caseId` at this outer
   // script scope resolves to the #caseId DOM ELEMENT (browsers expose id'd elements as window
   // globals), NOT the string — so we must read `.value` here rather than trust any argument.
@@ -158,6 +170,11 @@
       .forEach((b) =>
         b.addEventListener("click", () => resumeJob(b.dataset.job, b)),
       );
+    menu
+      .querySelectorAll(".job-rerun")
+      .forEach((b) =>
+        b.addEventListener("click", () => rerunJob(b.dataset.job, b)),
+      );
   }
   function renderJobs() {
     const badge = document.getElementById("jobsBadge");
@@ -197,9 +214,17 @@
       if (shown.size >= JOBS_MENU_ROWS) break;
       shown.add(j.id);
     }
-    const views = cached.filter((j) => shown.has(j.id)).map(jobMenuView);
+    const cleared = gateCleared();
+    // The list is newest first, so the first job of a kind is the newest one.
+    const newest = new Map();
+    for (const j of cached) if (!newest.has(j.kind)) newest.set(j.kind, j.id);
+    const views = cached
+      .filter((j) => shown.has(j.id))
+      .map((j) =>
+        jobMenuView(j, { gateCleared: cleared, newestOfKind: newest.get(j.kind) === j.id }),
+      );
     const shape = JSON.stringify(
-      views.map((v) => [v.job.id, v.cancel, v.resume]),
+      views.map((v) => [v.job.id, v.cancel, v.resume, v.rerun]),
     );
     if (shape !== _jobsMenuShape) rebuildJobsMenu(menu, views, synthLine);
     else {
@@ -240,6 +265,31 @@
       })
       .catch(() => {})
       .finally(() => loadJobs());
+  }
+
+  // Start a held run again, once its gate has cleared. A hold is final on the server, so this is a
+  // NEW run, started by the same control the analyst would press — its own locks and checks apply.
+  function rerunJob(id, btn) {
+    const job = jobsForCurrentCase().find((j) => j.id === id);
+    if (!job) return;
+    const say = (text) => (document.getElementById("status").textContent = text);
+    const press = (buttonId) => {
+      const b = document.getElementById(buttonId);
+      if (!b || b.disabled) return say(`Cannot re-run the ${job.kind} now — ${b && b.title ? b.title : "another AI job is running"}.`);
+      if (btn) btn.disabled = true;
+      b.click();
+    };
+    if (job.kind === "synthesis") return press("synthesize");
+    if (job.kind === "second-opinion") return press("secondOpinion");
+    if (job.kind === "deep-pass") {
+      const floor = job.parameters && job.parameters.minSeverity;
+      if (typeof floor !== "string" || !floor) return say("Cannot re-run this deep pass — its severity floor is unknown. Open Deep pass and pick one.");
+      if (deepPassBusy() || runningJob("synthesis")) return say("Cannot re-run the deep pass now — a heavy AI job is already running for this case.");
+      if (btn) btn.disabled = true;
+      // Show the panel, so the run's progress and result are on screen.
+      document.getElementById("deepPassBtn")?.click();
+      runDeepPass(floor);
+    }
   }
 
   // Deep pass (#282) moved to js/dashboard-deep-pass.js (#415 tier 3). Its guarded wiring
@@ -386,6 +436,7 @@
   window.applyHeavyAiJobLock = applyHeavyAiJobLock;
   window.cancelJob = cancelJob;
   window.loadJobs = loadJobs;
+  window.setJobsGateCleared = setJobsGateCleared;
   window.pollCount = pollCount;
   window.retireCount = retireCount;
   window.scheduleJobUiRefresh = scheduleJobUiRefresh;
