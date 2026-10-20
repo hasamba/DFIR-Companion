@@ -885,9 +885,16 @@ describe("dashboard.html — deep pass", () => {
     const html = await load();
     // The server refuses an unrecognised floor rather than reading everything; the UI must not
     // paper over that with a default of its own.
-    expect(matches(html, /function runDeepPass\(\)[\s\S]{0,1000}minSeverity/), "posts the floor").toBe(true);
+    // The jobs menu's Re-run passes the held run's floor as the one argument; no floor is still refused.
     expect(
-      matches(html, /function runDeepPass\(\)[\s\S]{0,600}if \(!cid \|\| !floor\)[\s\S]{0,200}return;/),
+      matches(html, /function runDeepPass\(floorOverride\)[\s\S]{0,1000}minSeverity/),
+      "posts the floor",
+    ).toBe(true);
+    expect(
+      matches(
+        html,
+        /function runDeepPass\(floorOverride\)[\s\S]{0,600}if \(!cid \|\| !floor\)[\s\S]{0,200}return;/,
+      ),
       "no floor → no request",
     ).toBe(true);
   });
