@@ -14,15 +14,86 @@ Presidio scans only text that anonymisation has already masked. With anonymisati
 
 This still means Presidio receives the shape and content of your case: the timeline text, minus the values the built-in anonymizer already knows how to catch. **The Presidio URL must therefore be local** — a container on this machine or your own LAN, never a public/hosted endpoint. The Settings panel warns when the configured URL doesn't look like `localhost` / `127.0.0.1` / `::1` / `0.0.0.0`.
 
-## Running the container
+## Running the analyzer
 
-The Companion never starts, stops, or manages the container — that's yours to run:
+The Companion never starts, stops, or manages the analyzer — that's yours to run. There are three ways to run it. All three give the same `/analyze` endpoint, and the Companion cannot tell them apart.
+
+| You run the Companion… | Run the analyzer with | Set `DFIR_PRESIDIO_URL` to |
+|---|---|---|
+| with Docker Compose | the Compose profile | `http://presidio-analyzer:3000` |
+| on the host, and you have Docker | the Compose profile (analyzer only) or `docker run` | `http://localhost:5002` |
+| on the host, without Docker | Python | `http://localhost:5002` |
+
+Whichever way you choose, starting the analyzer does **not** turn scanning on. Set `DFIR_PRESIDIO_URL` too — in `.env` or in **Settings → AI → Presidio** — and restart the Companion. Then press **Test connection**.
+
+Every recipe below publishes the analyzer on `127.0.0.1` only. Presidio reads your case text, so do not publish it on all interfaces.
+
+### With Docker Compose
+
+`docker-compose.yml` ships an optional `presidio-analyzer` service. It is off by default, so a plain `docker compose up -d` does not download its ~1 GB image. Turn it on with the `presidio` profile:
 
 ```bash
-docker run -d --name presidio-analyzer -p 5002:3000 mcr.microsoft.com/presidio-analyzer:latest
+# Companion and analyzer, both in containers
+docker compose --profile presidio up -d
+
+# Analyzer only, for a Companion you run on the host with npm
+docker compose --profile presidio up -d presidio-analyzer
 ```
 
-This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`.
+Stop it with `docker compose --profile presidio down`. A later `docker compose up -d` without the flag does not stop an analyzer that is already running. Setting `COMPOSE_PROFILES=presidio` in your shell or a `.env` next to the compose file has the same effect as the flag.
+
+The service publishes `127.0.0.1:5002` on the host. The containerised Companion reaches it by its service name, `http://presidio-analyzer:3000`. The **not local** warning in Settings accepts that one name, because inside the Compose network it is the sibling container. Outside a Compose network the same name could resolve to another machine, so use it only from the containerised Companion.
+
+### With `docker run`
+
+```bash
+docker run -d --name presidio-analyzer -p 127.0.0.1:5002:3000 \
+  -e GUNICORN_CMD_ARGS="--timeout 120" \
+  mcr.microsoft.com/presidio-analyzer:2.2.362
+```
+
+This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`. `GUNICORN_CMD_ARGS` is explained under [Configuration](#configuration).
+
+### Without Docker (Python)
+
+Use this when Docker is not available — for example on a Windows workstation where Docker Desktop is blocked or not licensed. You need Python **3.10 to 3.13**; Presidio 2.2.362 does not install on 3.14. Plan for about 1–2 GB of RAM and about 1 GB of disk for the language model.
+
+The pip package contains the detection engine but **not** the small web server that the Docker image runs. That server is two files, `app.py` and `logging.ini`, in the Presidio repository. Download them from the release tag that matches the package.
+
+**Linux / macOS:**
+
+```bash
+mkdir presidio-analyzer && cd presidio-analyzer
+python3 -m venv venv
+./venv/bin/pip install "presidio-analyzer[server]==2.2.362"
+./venv/bin/python -m spacy download en_core_web_lg
+curl -fLO https://raw.githubusercontent.com/microsoft/presidio/2.2.362/presidio-analyzer/app.py
+curl -fLO https://raw.githubusercontent.com/microsoft/presidio/2.2.362/presidio-analyzer/logging.ini
+./venv/bin/gunicorn -w 1 --timeout 120 -b 127.0.0.1:5002 "app:create_app()"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+mkdir presidio-analyzer; cd presidio-analyzer
+py -3.13 -m venv venv
+.\venv\Scripts\pip install "presidio-analyzer[server]==2.2.362"
+.\venv\Scripts\python -m spacy download en_core_web_lg
+curl.exe -fLO https://raw.githubusercontent.com/microsoft/presidio/2.2.362/presidio-analyzer/app.py
+curl.exe -fLO https://raw.githubusercontent.com/microsoft/presidio/2.2.362/presidio-analyzer/logging.ini
+.\venv\Scripts\waitress-serve --listen=127.0.0.1:5002 --call app:create_app
+```
+
+The first start loads the language model and takes from several seconds to about a minute. Leave the window open: the analyzer stops when you close it. On Windows the `[server]` extra installs waitress instead of gunicorn, because gunicorn does not run on Windows. Waitress has no worker timeout, so the `--timeout` note below does not apply to it.
+
+To check the analyzer before you configure the Companion:
+
+```bash
+curl -s http://127.0.0.1:5002/health
+curl -s -H "Content-Type: application/json" -d '{"text":"Contact John Smith today","language":"en"}' http://127.0.0.1:5002/analyze
+```
+
+The second command should return a `PERSON` finding with `"start": 8, "end": 18`.
 
 ## Configuration
 
@@ -39,6 +110,8 @@ It also matters that aborting a scan does not stop it. An HTTP client giving up 
 A timeout says it timed out, and deliberately does **not** claim the analyzer is reachable. The same budget expires whether the analyzer is merely busy or the connection is hanging — a wrong port, a black-holing firewall — and the client has no evidence either way, so the message names both possibilities instead of sending you to the wrong one.
 
 Raise `DFIR_PRESIDIO_TIMEOUT_MS` if you run the analyzer on a slow box, share one between analysts, or see timeouts in the log. Giving the container more workers addresses the same problem from the other end.
+
+The analyzer has a timeout of its own. gunicorn — the web server in the Docker image and in the Linux Python recipe — stops a worker that spends more than **30 seconds** on one request, by default. That is shorter than the Companion's 60-second budget, so a slow scan can die on the analyzer side and reach the Companion as a broken connection. Every recipe on this page sets `--timeout 120` for that reason. Keep the analyzer's timeout above `DFIR_PRESIDIO_TIMEOUT_MS`: if you raise one, raise the other.
 
 Both are also editable in **Settings → AI → Presidio**, alongside a **Test connection** button. It sends a fixed, synthetic sample string (never anything from your case) to the currently-typed URL and reports **Connected** or **Failed** with the reason — nothing more. It answers only "can the Companion reach this analyzer", which is the question you have when you're setting the URL.
 

@@ -395,17 +395,24 @@
   // Presidio receives case text — masked, but still the timeline. Warn when the typed URL isn't
   // local (the container the analyst runs isn't necessarily on this machine), mirroring the
   // screenshot-provider local/external warning in openAnonModal.
+  // Compares the PARSED hostname, never the raw string (#2197): a whole-URL regex let
+  // `http://remote.example/x//localhost` and `http://localhost@remote.example` pass as local.
+  // `presidio-analyzer` is the docker-compose.yml service name — inside the Compose network it is
+  // the sibling container. Blank = the layer is off, so there is nothing to warn about.
+  const LOCAL_PRESIDIO_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "presidio-analyzer"]);
+  function isLocalPresidioUrl(raw) {
+    const url = String(raw || "").trim();
+    if (!url) return true;
+    let parsed;
+    try { parsed = new URL(url); } catch { return false; }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return LOCAL_PRESIDIO_HOSTS.has(parsed.hostname.toLowerCase());
+  }
   function renderPresidioLocalWarning() {
-    const url = (document.getElementById("env-DFIR_PRESIDIO_URL")?.value || "")
-      .trim()
-      .toLowerCase();
+    const url = document.getElementById("env-DFIR_PRESIDIO_URL")?.value || "";
     const warn = document.getElementById("presidioLocalWarning");
     if (!warn) return;
-    const isLocal =
-      !url ||
-      /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(
-        url,
-      );
+    const isLocal = isLocalPresidioUrl(url);
     warn.style.display = isLocal ? "none" : "block";
     warn.textContent =
       "⚠ This Presidio URL is not local. Presidio receives your case text — masked, but still " +
@@ -710,6 +717,7 @@
   window.saveSettings = saveSettings;
   window.wireAiModelPicker = wireAiModelPicker;
   window.initEnvSettings = initEnvSettings;
+  window.isLocalPresidioUrl = isLocalPresidioUrl;
 
   // The Jev key hint, told by the server rather than assumed (#1547).
   //

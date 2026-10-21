@@ -1055,8 +1055,16 @@ export const FEATURES: Feature[] = [
     // box as Settings → AI instead of carrying a second copy of it.
     file: "dashboard-env-settings.js",
     initializer: "initEnvSettings",
-    publish: ["initEnvSettings", "fetchEnvSettings", "saveSettings", "wireAiModelPicker"],
-    private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES"],
+    // isLocalPresidioUrl is published so the setup wizard's Presidio step warns on exactly the
+    // same hosts as Settings → AI (#2197).
+    publish: [
+      "initEnvSettings",
+      "fetchEnvSettings",
+      "saveSettings",
+      "wireAiModelPicker",
+      "isLocalPresidioUrl",
+    ],
+    private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES", "LOCAL_PRESIDIO_HOSTS"],
   },
   {
     // Memory Next Steps (#101). No initializer — the only load-time statement in its range was a
