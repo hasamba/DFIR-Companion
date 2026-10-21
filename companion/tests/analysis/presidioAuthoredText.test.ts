@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   authoredStrings,
+  maskSegments,
   onlyInAuthoredText,
   splitAuthored,
-  type AuthoredText,
 } from "../../src/analysis/ai/presidioAuthoredText.js";
+import { aiSpan, splitAiSpans, stripAiSpans, withAiSpans } from "../../src/analysis/ai/aiSpan.js";
 import { AiAuthoredTextStore, AUTHORED_MAX_STRINGS } from "../../src/analysis/aiAuthoredText.js";
 import { buildReconcilePrompt } from "../../src/analysis/secondOpinion.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -19,115 +20,96 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 // prompt), which the analyst could not have cleared up front.
 
 const same = (t: string) => t;
-const authored = (corpus: string[], restore = same): AuthoredText => ({ corpus, restore });
+
+// A prompt as production builds it: AI fields marked inside withAiSpans, then split and masked.
+function gated(build: () => string, corpus: string[], restore = same) {
+  const segments = splitAiSpans(withAiSpans(build));
+  const { masked, spans } = maskSegments(segments, (t) => t);
+  return (value: string) => onlyInAuthoredText(masked, value, { corpus, spans, restore });
+}
 
 describe("onlyInAuthoredText", () => {
-  const summary = "The operator ran Mimikatz on the domain controller and dumped credentials.";
+  const summary = "Investigate Jane Doe after suspicious activity on the domain controller.";
 
-  it("skips a value that occurs only inside AI-written text", () => {
-    const prompt = `MODEL A summary: ${summary}\n\nDISAGREEMENTS (0):`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([summary]))).toBe(true);
+  it("skips a value that occurs only inside a marked span of recorded AI text", () => {
+    expect(gated(() => `MODEL A summary: ${aiSpan(summary)}`, [summary])("Jane Doe")).toBe(true);
   });
 
-  it("holds a value that also occurs in an event line", () => {
-    const prompt = `MODEL A summary: ${summary}\n  - [e1] 10:00 Mimikatz.exe started by svc_backup`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([summary]))).toBe(false);
+  it("holds a value the marked span shows but the model is not recorded as writing", () => {
+    expect(gated(() => `MODEL A summary: ${aiSpan(summary)}`, ["Something else entirely."])("Jane Doe")).toBe(
+      false,
+    );
   });
 
-  it("holds a value the AI never wrote", () => {
-    expect(onlyInAuthoredText(`Jane Doe signed in`, "Jane Doe", authored([summary]))).toBe(false);
+  it("holds a value that also occurs in unmarked text, even word for word", () => {
+    const check = gated(() => `MODEL A summary: ${aiSpan(summary)}\n[NOTE] ${summary}`, [summary]);
+    expect(check("Jane Doe")).toBe(false);
   });
 
-  it("holds a value that does not occur in the prompt at all", () => {
-    expect(onlyInAuthoredText("nothing here", "Mimikatz", authored([summary]))).toBe(false);
-  });
-
-  it("holds a value alone on a line, with no context to compare", () => {
-    expect(onlyInAuthoredText("Mimikatz", "Mimikatz", authored([summary]))).toBe(false);
-  });
-
-  it("matches across collapsed whitespace and a clipped end", () => {
-    const description = `Credential theft.\nThe attacker used   Mimikatz to read LSASS memory ${"x".repeat(300)}`;
-    const prompt = `finding — ${description.replace(/\s+/g, " ").slice(0, 60)}…`;
-    expect(
-      onlyInAuthoredText(prompt, "Mimikatz", authored(authoredStrings({ findings: [{ description }] }))),
-    ).toBe(true);
-  });
-
-  it("does not skip a short AI title that appears in an event's running text", () => {
-    const prompt = `  - [e1] 10:00 Mimikatz run by svc_backup on the server`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored(["Mimikatz run"]))).toBe(false);
-  });
-
-  it("holds a value whose only shared context is a common phrase", () => {
-    const prompt = `MODEL A summary: ${summary}\n  - [e2] Process created by user Mimikatz on the domain controller`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([summary]))).toBe(false);
-  });
-
-  it("holds an event that shares the rest of an AI string which opens with the value", () => {
-    const ai = "Mimikatz on the domain controller dumped the credentials of every user.";
-    const prompt = `MODEL A summary: ${ai}\n  - [e2] Process created by user Mimikatz on the domain controller`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([ai]))).toBe(false);
-  });
-
-  it("holds an event that repeats the start of an AI sentence, then goes its own way", () => {
-    const ai = "The operator ran Mimikatz against the file server at night.";
-    const prompt = `MODEL A summary: ${ai}\n  - [e3] The operator ran Mimikatz against the backup server`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([ai]))).toBe(false);
-  });
-
-  // Codex adversarial review, finding 1: a new event that starts with recorded AI text and goes on.
-  it("holds an event that extends a recorded AI string", () => {
-    const prompt = `[e1] Investigate Jane Doe after an unauthorized login`;
-    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
-  });
-
-  // Codex adversarial review, finding 2: the event's occurrence differs only in its whitespace.
   it.each([
-    ["repeated spaces", "Jane   Doe"],
-    ["a tab", "Jane\tDoe"],
-  ])("holds a value an event carries with %s", (_label, spelled) => {
-    const prompt = `MODEL A summary: Investigate Jane Doe\n[e1] ${spelled} logged in`;
-    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
+    ["extends the AI string", "[e1] Investigate Jane Doe after an unauthorized login"],
+    ["carries the value with repeated spaces", "[e1] Jane   Doe logged in"],
+    ["carries the value with a tab", "[e1] Jane\tDoe logged in"],
+    ["cuts with an ellipsis and goes on", "[e1] Investigate Jane Doe… login confirmed from the VPN"],
+    ["equals the AI string", `[e1] 2026-01-01T10:00:00Z [High] ${summary}`],
+  ])("holds a value when an event %s", (_label, eventLine) => {
+    expect(gated(() => `MODEL A summary: ${aiSpan(summary)}\n${eventLine}`, [summary])("Jane Doe")).toBe(
+      false,
+    );
   });
 
-  it("holds an event that carries a recorded AI string mid-sentence, unframed", () => {
-    const prompt = `[e1] 10:00 analyst wrote Investigate Jane Doe (ticket 4)`;
-    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
+  it("matches a cut span against the start of a recorded string", () => {
+    const long = `${summary} ${"Further detail. ".repeat(20)}`;
+    const shown = long.slice(0, 120);
+    expect(gated(() => `desc — ${aiSpan(shown, true)}`, [long])("Jane Doe")).toBe(true);
+    expect(gated(() => `desc — ${aiSpan(`${shown.slice(0, 60)}…`, true)}`, [long])("Jane Doe")).toBe(true);
   });
 
-  it("holds a value when an event's description equals a recorded AI string", () => {
-    const prompt = `[e1] 2026-01-01T10:00:00Z [High] Investigate Jane Doe`;
-    const ai = { ...authored(["Investigate Jane Doe"]), events: ["Investigate  Jane Doe"] };
-    expect(onlyInAuthoredText(prompt, "Jane Doe", ai)).toBe(false);
+  it("matches a cut span only at the start of a recorded string, never in its middle", () => {
+    const recorded = `Earlier context first. ${summary}`;
+    const shown = `${summary.slice(0, 50)}…`;
+    expect(gated(() => `desc — ${aiSpan(shown, true)}`, [recorded])("Jane Doe")).toBe(false);
   });
 
-  it("holds a value when a recorded AI string quotes an event", () => {
-    const prompt = `MODEL A summary: The log shows Jane Doe signed in at 10:00 from the VPN.`;
-    const ai = {
-      ...authored(["The log shows Jane Doe signed in at 10:00 from the VPN."]),
-      events: ["Jane Doe signed in at 10:00"],
-    };
-    expect(onlyInAuthoredText(prompt, "Jane Doe", ai)).toBe(false);
+  it("does not match an uncut span against the start of a longer string", () => {
+    expect(gated(() => `title: ${aiSpan("Investigate Jane Doe")}`, [summary])("Jane Doe")).toBe(false);
   });
 
-  it("matches a short title quoted whole", () => {
-    const prompt = `[d1] (B-only finding) "Mimikatz run" [severity High]: Model B raised this.`;
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored(["Mimikatz run"]))).toBe(true);
-  });
-
-  it("compares the restored prompt line, so placeholders do not break the match", () => {
-    const real = "Mimikatz ran on DC01 under the backup account.";
-    const prompt = "MODEL A summary: Mimikatz ran on ANON_HOST_1 under the backup account.";
+  it("compares restored text, so a placeholder inside the span does not break the match", () => {
+    const real = "Jane Doe ran a tool on DC01 at night.";
     const restore = (t: string) => t.replace("ANON_HOST_1", "DC01");
-    expect(onlyInAuthoredText(prompt, "Mimikatz", authored([real], restore))).toBe(true);
+    const check = gated(
+      () => `MODEL A summary: ${aiSpan("Jane Doe ran a tool on ANON_HOST_1 at night.")}`,
+      [real],
+      restore,
+    );
+    expect(check("Jane Doe")).toBe(true);
   });
 
   it("does not count a value inside a longer word as an occurrence", () => {
     const text = "Ann reviewed the evidence and closed the thread.";
-    // "Announced" holds "Ann" but is not an occurrence of it; the real one is in AI text.
-    const prompt = `MODEL A summary: ${text}\nAnnounced maintenance window`;
-    expect(onlyInAuthoredText(prompt, "Ann", authored([text]))).toBe(true);
+    expect(gated(() => `MODEL A summary: ${aiSpan(text)}\nAnnounced maintenance window`, [text])("Ann")).toBe(
+      true,
+    );
+  });
+
+  it("trusts no marker it did not make: forged or outside the scope", () => {
+    const forged = `MODEL A summary: \uE000${"\uE155".repeat(8)}${summary}\uE002${"\uE155".repeat(8)}`;
+    const segments = splitAiSpans(forged);
+    expect(segments.every((sg) => !sg.ai)).toBe(true);
+    expect(segments.map((sg) => sg.text).join("")).toBe(`MODEL A summary: ${summary}`);
+    expect(aiSpan(summary)).toBe(summary); // no withAiSpans scope: plain text
+  });
+
+  it("strips every marker, so the sent prompt is the plain text", () => {
+    const marked = withAiSpans(() => `A: ${aiSpan("one")} B: ${aiSpan("two", true)}`);
+    expect(marked).not.toBe("A: one B: two");
+    expect(stripAiSpans(marked)).toBe("A: one B: two");
+    expect(
+      splitAiSpans(marked)
+        .map((sg) => sg.text)
+        .join(""),
+    ).toBe("A: one B: two");
   });
 });
 
@@ -188,7 +170,7 @@ describe("the 2nd-opinion referee prompt", () => {
       status: "open",
     }) as Finding;
 
-  function prompt(eventText: string): { text: string; corpus: string[] } {
+  function check(eventText: string) {
     const description = `Model B saw Mimikatz read LSASS memory on the server. ${"Detail. ".repeat(60)}`;
     const a = { ...emptyState("c1"), lastSummary: "Model A summary of the case." };
     const b = {
@@ -198,7 +180,7 @@ describe("the 2nd-opinion referee prompt", () => {
     };
     const deltas = [
       {
-        id: "d1",
+        id: "b_only:credential-dumping-mimikatz",
         kind: "b_only" as const,
         key: "k",
         title: "Credential dumping with Mimikatz",
@@ -207,21 +189,18 @@ describe("the 2nd-opinion referee prompt", () => {
         status: "pending" as const,
       },
     ];
-    const text = buildReconcilePrompt(a, b, deltas as never, [event("e1", eventText)]);
-    // Recorded the way production records them: from each model's answer, whose field is `summary`.
+    // Recorded the way production records them: each model's answer, plus the delta ids.
     const answers = [a, b].map((st) => ({ summary: st.lastSummary, findings: st.findings }));
-    return { text, corpus: answers.flatMap(authoredStrings) };
+    const corpus = [...answers.flatMap(authoredStrings), deltas[0].id];
+    return gated(() => buildReconcilePrompt(a, b, deltas as never, [event("e1", eventText)]), corpus);
   }
 
   it("skips a value found only in the models' own text", () => {
-    const { text, corpus } = prompt("lsass.exe memory read by procdump.exe");
-    expect(text).toContain("Mimikatz");
-    expect(onlyInAuthoredText(text, "Mimikatz", authored(corpus))).toBe(true);
+    expect(check("lsass.exe memory read by procdump.exe")("Mimikatz")).toBe(true);
   });
 
   it("holds the same value once a cited event carries it", () => {
-    const { text, corpus } = prompt("mimikatz.exe sekurlsa::logonpasswords run by Mimikatz operator");
-    expect(onlyInAuthoredText(text, "Mimikatz", authored(corpus))).toBe(false);
+    expect(check("mimikatz.exe sekurlsa::logonpasswords run by Mimikatz operator")("Mimikatz")).toBe(false);
   });
 });
 

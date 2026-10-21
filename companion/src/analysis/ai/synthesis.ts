@@ -70,6 +70,7 @@ import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
+import { withAiSpans } from "./aiSpan.js";
 
 /**
  * Synthesis: the AI call that turns the case's timeline into its conclusions (#418).
@@ -580,7 +581,16 @@ function logNoteFor(call: SynthesisCall, carried: number): { logNote?: string } 
   return notes.length ? { logNote: notes.join(" · ") } : {};
 }
 
-export async function synthesize(
+/**
+ * Synthesize the case. The whole run builds its prompt inside withAiSpans, so the summary and the
+ * findings it echoes are marked as the model's own text for the Presidio gate (ai/aiSpan.ts); the
+ * markers are removed before the prompt is sent.
+ */
+export function synthesize(...args: Parameters<typeof synthesizeInScope>): Promise<InvestigationState> {
+  return withAiSpans(() => synthesizeInScope(...args));
+}
+
+async function synthesizeInScope(
   ctx: SynthesisContext,
   caseId: string,
   opts: {

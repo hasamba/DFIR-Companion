@@ -220,3 +220,108 @@ describe("a 2nd opinion whose model B names a tool Presidio tags as a person", (
     expect(pending).toEqual([{ value: "Velkor", category: "PERSON" }]);
   });
 });
+
+// Every bypass the two Codex adversarial reviews reproduced, through the real gate: the model wrote a
+// summary naming "Jane Doe", and the case then gains other text that carries the same value.
+describe("Presidio holds a value that event or analyst text carries (Codex reviews)", () => {
+  const AI_SUMMARY = "Investigate Jane Doe after suspicious activity on the domain controller.";
+
+  /** Flags every "Jane Doe", whatever whitespace separates the words, as Presidio would slice it. */
+  const janeDoe: PresidioClient = {
+    analyze: async (text) =>
+      [...text.matchAll(/Jane\s+Doe/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+  };
+
+  class JaneProvider extends SummaryProvider {
+    override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      const r = await super.analyze(req);
+      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(AI_SUMMARY)) };
+    }
+  }
+
+  async function caseWith(extra: { events?: string[]; notes?: string[] } = {}) {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-codex-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline = [event("e1", "lsass.exe memory read by procdump.exe")];
+    await stateStore.save(s);
+    const provider = new JaneProvider();
+    const notes: string[] = []; // filled after run 1, like the events
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      anonStore: new AnonControlStore(cases),
+      presidioPendingStore: new PresidioPendingStore(cases),
+      presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
+      aiAuthoredStore: new AiAuthoredTextStore(cases),
+      // The notebook block renders "[NOTE] text" — the shape Codex showed passing the old matcher.
+      notebookStore: {
+        load: async () => notes.map((text, i) => ({ id: `n${i}`, type: "note", text })),
+      } as never,
+      aiControlStore: { load: async () => ({ includeNotebook: notes.length > 0 }) } as never,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    // Run 1 writes the summary; then the case gains the extra text; run 2 must decide on it.
+    await pipeline.synthesize("c1", { force: true });
+    notes.push(...(extra.notes ?? []));
+    const after = await stateStore.load("c1");
+    await stateStore.save({
+      ...after,
+      forensicTimeline: [...after.forensicTimeline, ...(extra.events ?? []).map((d, i) => event(`x${i}`, d))],
+    });
+    return { second: () => pipeline.synthesize("c1", { force: true }), provider };
+  }
+
+  it("skips the value when only the model's summary carries it", async () => {
+    const { second, provider } = await caseWith();
+    await expect(second()).resolves.toBeDefined();
+    expect(provider.prompts[1]).toContain("Jane Doe");
+  });
+
+  it("sends every prompt without a marker when anonymization is off for the case", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-off-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({ ...emptyState("c1"), forensicTimeline: [event("e1", "lsass.exe memory read")] });
+    const anonStore = new AnonControlStore(cases);
+    await anonStore.save("c1", { ...(await anonStore.load("c1")), enabled: false });
+    const provider = new JaneProvider();
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      anonStore,
+      aiAuthoredStore: new AiAuthoredTextStore(cases),
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    await pipeline.synthesize("c1", { force: true });
+    await pipeline.synthesize("c1", { force: true });
+    expect(provider.prompts[1]).toContain(AI_SUMMARY);
+    for (const p of provider.prompts) expect(p).not.toMatch(/[\uE000-\uE002\uE100-\uE1FF]/);
+  });
+
+  it("sends every prompt without a marker", async () => {
+    const { second, provider } = await caseWith();
+    await second();
+    for (const p of provider.prompts) expect(p).not.toMatch(/[--]/);
+  });
+
+  it.each([
+    ["round 1: an event that extends the AI string", "Investigate Jane Doe after an unauthorized login"],
+    ["round 1: an event with repeated spaces", "Jane   Doe logged in from the VPN"],
+    ["round 1: an event with a tab", "Jane\tDoe logged in from the VPN"],
+    [
+      "round 2: an event cut with an ellipsis that goes on",
+      "Investigate Jane Doe… login confirmed from the VPN",
+    ],
+    ["an event identical to the AI summary", AI_SUMMARY],
+  ])("holds the value for %s", async (_label, description) => {
+    const { second } = await caseWith({ events: [description] });
+    await expect(second()).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  it("holds the value for round 2: an analyst note that repeats the AI summary", async () => {
+    const { second } = await caseWith({ notes: [AI_SUMMARY] });
+    await expect(second()).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});

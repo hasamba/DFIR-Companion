@@ -11,6 +11,8 @@ import {
   type SecondOpinion,
   type SecondOpinionDelta,
 } from "../secondOpinion.js";
+import { stripAiSpans, withAiSpans } from "./aiSpan.js";
+import { normalizeAuthored } from "./presidioAuthoredText.js";
 import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import {
@@ -171,8 +173,9 @@ async function reconcileDeltas(
   // be the last evidence for one; the verdicts then pass the same check in code.
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
-  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
   await recordDeltaIds(ctx, caseId, record);
+  // Marked as the models' own text for the Presidio gate; the markers never leave the process.
+  const userPrompt = withAiSpans(() => buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope));
   const asked = askedReferee(referee);
   try {
     const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
@@ -193,10 +196,14 @@ async function recordDeltaIds(
   caseId: string,
   record: SecondOpinion,
 ): Promise<void> {
+  const store = ctx.opts.aiAuthoredStore;
+  if (!store) return;
   try {
-    await ctx.opts.aiAuthoredStore?.record(
+    // Only ids built from a title the model wrote: a backfill finding's title comes from an event.
+    const written = new Set((await store.load(caseId)).map((t) => normalizeAuthored(t).toLowerCase()));
+    await store.record(
       caseId,
-      record.deltas.map((d) => d.id),
+      record.deltas.filter((d) => written.has(normalizeAuthored(d.title).toLowerCase())).map((d) => d.id),
     );
   } catch (err) {
     ctx.log.warn(
@@ -294,7 +301,8 @@ function withRefereeFailure(
   const message = flattenRefereeError(err);
   ctx.log.warn(`[second-opinion] reconcile pass failed: ${message}`, { caseId });
   const refereeError = { referee: referee.label, message, at: new Date().toISOString() };
-  return { ...record, refereeError, refereePrompt: userPrompt };
+  // Saved, shown to the analyst and re-sent by a referee-only re-run: never with the markers in it.
+  return { ...record, refereeError, refereePrompt: stripAiSpans(userPrompt) };
 }
 
 /**

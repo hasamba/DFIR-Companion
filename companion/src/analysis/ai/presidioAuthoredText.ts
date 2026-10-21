@@ -1,4 +1,7 @@
 import type { CustomEntity } from "../anonymize.js";
+import type { Logger } from "../../logging/logger.js";
+import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
+import type { PromptSegment } from "./aiSpan.js";
 
 /**
  * Presidio skips text the synthesis model wrote (summary, attacker path, finding titles and
@@ -12,36 +15,22 @@ import type { CustomEntity } from "../anonymize.js";
  * name the model learned: the model only ever sees masked text, and every value it saw passed the gate
  * in the prompt that carried it.
  *
- * HOW. Decided per value, not by cutting text out of the prompt: the referee prompt clips a finding
- * description at 240 characters and collapses its whitespace, so the AI text is not in the prompt
- * word for word. A value is skipped only when EVERY occurrence of it in the prompt sits inside text
- * the model wrote — the characters around the occurrence agree with a recorded AI string. One
- * occurrence anywhere else (an event, an analyst note, a scaffold line) and the value is held as before.
- *
- * EVENTS ARE NEVER AI TEXT. A recorded string that an event's description contains, or that
- * contains an event's description, is not used at all: the two texts cannot be told apart in a
- * prompt, so the value is held.
+ * HOW. Two facts, both required. WHERE: the prompt builders mark each AI field they print (aiSpan.ts),
+ * so the gate knows a span's position without reading its text. WHAT: the span's text must equal a
+ * string the synthesis model wrote, recorded when it answered — or begin one, where the builder cut
+ * it. A field the code wrote (a backfill finding built from an event) is marked but not recorded, so it
+ * is not trusted. A value is skipped only when every occurrence of it in the prompt is inside such a
+ * span. An event or an analyst note is never marked, so any occurrence there holds the value — even
+ * when it repeats AI prose word for word.
  */
 
 /** Recorded AI strings shorter than this carry too little context to tell apart from other text. */
 export const AUTHORED_MIN_CHARS = 8;
 /** Longer strings are cut before they are recorded; agreement only needs the text near a value. */
 export const AUTHORED_MAX_CHARS = 4000;
-/** Characters of agreement around an occurrence, at least, for it to count as AI-written. */
-const MIN_CONTEXT = 8;
-/** A whole short AI string — a finding title — counts with fewer, where the prompt frames it. */
-const MIN_WHOLE_CONTEXT = 4;
-// How the prompt builders frame AI text: quoted, inside or after a bracketed tag ("[F1] (severity:
-// High) ", the referee's "[b_only:…]" id), after a label ("MODEL A summary: ") or after a dash (" — ").
-const FRAMED_BEFORE = /(?:["“'[]|[\])] |: |— )$/;
-const FRAMED_AFTER = /^(?:["”'\]]|$| — | \()/;
-// The referee prompt cuts a long description and marks the cut.
+/** A cut span must hold at least this much text to stand for the start of a recorded string. */
+const CLIPPED_MIN_CHARS = 24;
 const CLIP_MARK = "…";
-/**
- * A cut with no mark (the referee's 240-character description) counts only after this many matching
- * characters. Shorter, and a line that merely starts like AI text — an event — would pass.
- */
-const UNMARKED_CLIP_MIN = 200;
 
 /** Whitespace collapsed and trimmed — the form the prompt builders print AI text in. */
 export function normalizeAuthored(text: string): string {
@@ -68,85 +57,62 @@ export function authoredStrings(delta: {
   return [...out];
 }
 
-/** What the gate needs to tell AI text apart: the recorded strings and the call's restore. */
+/** One AI-marked span of the masked prompt, as prepareCall found it. */
+export interface AuthoredSpan {
+  start: number;
+  end: number;
+  /** The builder cut the field, so its text is the start of a recorded string. */
+  clipped: boolean;
+}
+
+/** What the gate needs: where the AI fields are, what the model wrote, and the call's restore. */
 export interface AuthoredText {
   /** Recorded AI strings, as recorded (real values, whitespace collapsed). */
   corpus: readonly string[];
+  /** The AI-marked spans of the masked prompt. */
+  spans: readonly AuthoredSpan[];
   /** The call's anonymizer restore: masked prompt text back to real values, like the corpus. */
   restore: (masked: string) => string;
-  /** The case's event descriptions (real values). A recorded string that overlaps one is not used. */
-  events?: readonly string[];
 }
 
-const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
-
-/** Start offsets of `v` in `line` that stand on their own — "ann" is not an occurrence in "announce". */
-function boundedOccurrences(line: string, v: string): number[] {
-  const out: number[] = [];
-  const guardLeft = isWordChar(v[0]);
-  const guardRight = isWordChar(v[v.length - 1]);
-  for (let i = line.indexOf(v); i >= 0; i = line.indexOf(v, i + 1)) {
-    if (guardLeft && isWordChar(line[i - 1])) continue;
-    if (guardRight && isWordChar(line[i + v.length])) continue;
-    out.push(i);
-  }
-  return out;
+/** The spans whose text the synthesis model is recorded as having written. */
+function confirmedSpans(maskedText: string, authored: AuthoredText): AuthoredSpan[] {
+  const corpus = authored.corpus.map((c) => c.toLowerCase());
+  const whole = new Set(corpus);
+  return authored.spans.filter((sp) => {
+    const shown = normalizeAuthored(authored.restore(maskedText.slice(sp.start, sp.end))).toLowerCase();
+    if (whole.has(shown)) return true;
+    if (!sp.clipped) return false;
+    const head = shown.endsWith(CLIP_MARK) ? shown.slice(0, -CLIP_MARK.length).trimEnd() : shown;
+    return head.length >= CLIPPED_MIN_CHARS && corpus.some((c) => c.startsWith(head));
+  });
 }
+
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const WORD = "[\\p{L}\\p{N}_]";
 
 /**
- * Is the occurrence at `line[s]` inside a copy of a recorded AI string?
- *
- * AI text sits in a prompt as one unbroken piece, framed by prompt structure: a label, a quote, a
- * bracketed tag or a dash before it; a quote, a dash, a bracket or the line end after it. So the
- * line must agree with the AI string all the way back to that string's start, with a frame before
- * it, and all the way forward to the string's end with a frame after it — or to a clip. An event
- * that shares a phrase with AI prose (" on the domain controller") stops agreeing next to the
- * value; one that starts like AI text and goes on ("Investigate Jane Doe after a login") has no
- * frame after the string.
+ * Every occurrence of the value in the prompt: any case, any run of whitespace between its words
+ * ("Jane   Doe" is "Jane Doe"), and standing on its own — "Ann" does not occur in "Announce".
  */
-function occurrenceAuthored(line: string, s: number, v: string, corpus: readonly string[]): boolean {
-  const e = s + v.length;
-  for (const c of corpus) {
-    for (let p = c.indexOf(v); p >= 0; p = c.indexOf(v, p + 1)) {
-      if (s < p || line.slice(s - p, s) !== c.slice(0, p)) continue; // back to the AI string's start
-      const q = p + v.length;
-      let right = 0;
-      while (e + right < line.length && q + right < c.length && line[e + right] === c[q + right]) right++;
-      const end = e + right;
-      const matched = p + right;
-      if (!FRAMED_BEFORE.test(line.slice(0, s - p))) continue;
-      const framedEnd = q + right === c.length && FRAMED_AFTER.test(line.slice(end));
-      const clipped = line[end] === CLIP_MARK || (end === line.length && matched >= UNMARKED_CLIP_MIN);
-      if (!framedEnd && !clipped) continue;
-      if (matched >= MIN_CONTEXT) return true;
-      if (framedEnd && matched >= MIN_WHOLE_CONTEXT) return true;
-    }
-  }
-  return false;
+function occurrences(text: string, value: string): { start: number; end: number }[] {
+  const words = normalizeAuthored(value).split(" ").map(escapeRegExp);
+  const left = new RegExp(`^${WORD}`, "u").test(words[0] ?? "") ? `(?<!${WORD})` : "";
+  const right = new RegExp(`${WORD}$`, "u").test(words[words.length - 1] ?? "") ? `(?!${WORD})` : "";
+  const re = new RegExp(`${left}${words.join("\\s+")}${right}`, "giu");
+  return [...text.matchAll(re)].map((m) => ({ start: m.index, end: m.index + m[0].length }));
 }
 
-/** True only when the value occurs in the prompt and every occurrence is inside AI-written text. */
+/** True only when the value occurs in the prompt and every occurrence is inside a confirmed span. */
 export function onlyInAuthoredText(maskedText: string, value: string, authored: AuthoredText): boolean {
-  const v = normalizeAuthored(value).toLowerCase();
-  if (!v) return false;
-  const events = (authored.events ?? [])
-    .map((t) => normalizeAuthored(t).toLowerCase())
-    .filter((t) => t.includes(v));
-  const corpus = authored.corpus
-    .map((c) => c.toLowerCase())
-    .filter((c) => c.includes(v) && !events.some((t) => t.includes(c) || c.includes(t)));
-  if (corpus.length === 0) return false;
-  let seen = false;
-  for (const masked of maskedText.split("\n")) {
-    // Normalized BEFORE the check: "Jane   Doe" in an event is an occurrence of "Jane Doe".
-    if (!normalizeAuthored(masked).toLowerCase().includes(v)) continue;
-    const line = normalizeAuthored(authored.restore(masked)).toLowerCase();
-    for (const s of boundedOccurrences(line, v)) {
-      if (!occurrenceAuthored(line, s, v, corpus)) return false;
-      seen = true;
-    }
-  }
-  return seen;
+  if (!normalizeAuthored(value)) return false;
+  return onlyInSpans(maskedText, value, confirmedSpans(maskedText, authored));
+}
+
+function onlyInSpans(maskedText: string, value: string, spans: readonly AuthoredSpan[]): boolean {
+  if (spans.length === 0) return false;
+  const found = occurrences(maskedText, value);
+  return found.length > 0 && found.every((o) => spans.some((sp) => o.start >= sp.start && o.end <= sp.end));
 }
 
 /** Split fresh Presidio values into those still held and those found only in AI-written text. */
@@ -155,9 +121,53 @@ export function splitAuthored(
   maskedText: string,
   authored: AuthoredText | undefined,
 ): { held: CustomEntity[]; skipped: CustomEntity[] } {
-  if (!authored || authored.corpus.length === 0) return { held: [...fresh], skipped: [] };
+  if (!authored || authored.corpus.length === 0 || authored.spans.length === 0)
+    return { held: [...fresh], skipped: [] };
+  const spans = confirmedSpans(maskedText, authored);
   const held: CustomEntity[] = [];
   const skipped: CustomEntity[] = [];
-  for (const e of fresh) (onlyInAuthoredText(maskedText, e.value, authored) ? skipped : held).push(e);
+  for (const e of fresh)
+    (normalizeAuthored(e.value) && onlyInSpans(maskedText, e.value, spans) ? skipped : held).push(e);
   return { held, skipped };
+}
+
+/**
+ * Mask a split prompt one segment at a time, so each AI span keeps exact offsets in the masked text.
+ * One anonymizer serves every segment, so a value gets the same token wherever it appears. A prompt
+ * with no AI spans is one segment — masked whole, exactly as before.
+ */
+export function maskSegments(
+  segments: readonly PromptSegment[],
+  apply: (text: string) => string,
+): { masked: string; spans: AuthoredSpan[] } {
+  let masked = "";
+  const spans: AuthoredSpan[] = [];
+  for (const sg of segments) {
+    const m = apply(sg.text);
+    if (sg.ai) spans.push({ start: masked.length, end: masked.length + m.length, clipped: sg.clipped });
+    masked += m;
+  }
+  return { masked, spans };
+}
+
+/** The gate's view of the AI text. Nothing to skip, or a record that cannot be read: undefined. */
+export async function authoredFor(
+  store: AiAuthoredTextStore | undefined,
+  log: Logger,
+  caseId: string,
+  call: Pick<AuthoredText, "spans" | "restore">,
+): Promise<AuthoredText | undefined> {
+  if (!store || call.spans.length === 0) return undefined;
+  try {
+    const corpus = await store.load(caseId);
+    return corpus.length > 0 ? { ...call, corpus } : undefined;
+  } catch (err) {
+    log.warn(
+      `[presidio] could not read the AI-written text record — every value is held: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
+    return undefined;
+  }
 }

@@ -34,7 +34,8 @@ import {
 } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
-import { splitAuthored, type AuthoredText } from "./presidioAuthoredText.js";
+import { authoredFor, maskSegments, splitAuthored, type AuthoredText } from "./presidioAuthoredText.js";
+import { splitAiSpans } from "./aiSpan.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
 import { noteAiCallStarted } from "../../http/rateLimiter.js";
@@ -619,12 +620,15 @@ async function prepareCall(
 ): Promise<PreparedCall> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
+  // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
+  const segments = splitAiSpans(req.userPrompt);
+  const plainPrompt = segments.map((sg) => sg.text).join("");
   ctx.log.debug(
-    `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${req.userPrompt.length} ` +
+    `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${plainPrompt.length} ` +
       `anonymize=${policy.enabled ? "on" : "off"}`,
     { caseId },
   );
-  if (!policy.enabled) return { req, anon: null };
+  if (!policy.enabled) return { req: { ...req, userPrompt: plainPrompt }, anon: null };
   const known = await knownEntitiesFor(ctx, caseId, state);
   const anon = createAnonymizer(policy, known);
   ctx.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
@@ -636,7 +640,7 @@ async function prepareCall(
 
   // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
   // username, email, SID or secret — only what our own detectors could not find.
-  const maskedPrompt = anon.apply(req.userPrompt);
+  const { masked: maskedPrompt, spans } = maskSegments(segments, (t) => anon.apply(t));
   // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
   // pass their coverage so the loop that calls this per-chunk doesn't re-gate (and re-approve)
   // the same import one chunk at a time.
@@ -647,33 +651,12 @@ async function prepareCall(
       maskedPrompt,
       known,
       control,
-      await authoredFor(ctx, caseId, anon, state),
+      await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, {
+        spans,
+        restore: (t) => anon.restore(t),
+      }),
     );
   return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
-}
-
-/** The recorded AI text for the gate. A read failure skips nothing: the gate then holds every value. */
-async function authoredFor(
-  ctx: ProviderCallContext,
-  caseId: string,
-  anon: Anonymizer,
-  state: InvestigationState,
-): Promise<AuthoredText | undefined> {
-  if (!ctx.opts.presidio || !ctx.opts.aiAuthoredStore) return undefined;
-  try {
-    const corpus = await ctx.opts.aiAuthoredStore.load(caseId);
-    if (corpus.length === 0) return undefined;
-    const events = state.forensicTimeline.map((e) => e.description ?? "");
-    return { corpus, restore: (t) => anon.restore(t), events };
-  } catch (err) {
-    ctx.log.warn(
-      `[presidio] could not read the AI-written text record — every value is held: ${(err as Error).message}`,
-      {
-        caseId,
-      },
-    );
-    return undefined;
-  }
 }
 
 // Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema
