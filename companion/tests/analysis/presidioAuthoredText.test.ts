@@ -266,20 +266,19 @@ describe("the 2nd-opinion referee prompt", () => {
     relatedFindingIds: [],
     sourceScreenshots: [],
   });
-  const finding = (description: string): Finding =>
-    ({
-      id: "F1",
-      severity: "High",
-      title: "Credential dumping with Mimikatz",
-      description,
-      relatedIocs: [],
-      sourceScreenshots: [],
-      mitreTechniques: ["T1003"],
-      relatedEventIds: ["e1"],
-      firstSeen: "2026-01-01T10:00:00Z",
-      lastUpdated: "2026-01-01T10:00:00Z",
-      status: "open",
-    }) as Finding;
+  const finding = (description: string): Finding => ({
+    id: "F1",
+    severity: "High",
+    title: "Credential dumping with Mimikatz",
+    description,
+    relatedIocs: [],
+    sourceScreenshots: [],
+    mitreTechniques: ["T1003"],
+    relatedEventIds: ["e1"],
+    firstSeen: "2026-01-01T10:00:00Z",
+    lastUpdated: "2026-01-01T10:00:00Z",
+    status: "open",
+  });
 
   function check(eventText: string) {
     const description = `Model B saw Mimikatz read LSASS memory on the server. ${"Detail. ".repeat(60)}`;
