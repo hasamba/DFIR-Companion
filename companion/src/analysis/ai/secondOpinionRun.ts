@@ -13,6 +13,7 @@ import {
 } from "../secondOpinion.js";
 import { stripAiSpans, withAiSpans } from "./aiSpan.js";
 import { neutralAuthored } from "./presidioAuthoredText.js";
+import { anonRevision } from "../anonRevision.js";
 import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import {
@@ -190,6 +191,8 @@ async function reconcileDeltas(
  * ("b_only:lateral-movement-velkor"). The Presidio gate matches values without regard to case, so
  * the slug is an occurrence of the model's own word; record the ids as AI-written text with the
  * answers they came from. Best effort: a failed write only means the gate holds that value.
+ * An analyst decision that lands after the titles are read makes the snapshot stale (a Leave visible
+ * forgets the titles that hold the value), so no id is recorded from it — as for a synthesis answer.
  */
 async function recordDeltaIds(
   ctx: SecondOpinionContext,
@@ -198,6 +201,8 @@ async function recordDeltaIds(
 ): Promise<void> {
   const store = ctx.opts.aiAuthoredStore;
   if (!store) return;
+  const readAt = anonRevision(caseId); // read BEFORE the titles are loaded
+  const stillValid = () => anonRevision(caseId) === readAt;
   try {
     // Only ids built from a title the model wrote: a backfill finding's title comes from an event.
     // Compared token-neutral: a title holding a restored value never matches the masked record.
@@ -207,7 +212,7 @@ async function recordDeltaIds(
     );
     for (const d of record.deltas) {
       const visible = written.get(neutralAuthored(d.title));
-      if (visible) await store.record(caseId, [d.id], { visible });
+      if (visible) await store.record(caseId, [d.id], { visible, stillValid });
     }
   } catch (err) {
     ctx.log.warn(

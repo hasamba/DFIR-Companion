@@ -223,6 +223,71 @@ describe("a 2nd opinion whose model B names a tool Presidio tags as a person", (
     expect(record.refereeError).toBeDefined();
     expect(pending).toEqual([{ value: "Velkor", category: "PERSON" }]);
   });
+
+  // Codex adversarial review, round 15: a Leave visible that lands after the referee step read the
+  // recorded titles, and before it recorded the ids built from them. The title held "Jane Doe" and
+  // was forgotten; its id "b_only:doe-jane-lateral-movement" must not bring the name back as the
+  // model's own word, where Presidio flags the slug "doe-jane".
+  it("records no id from titles read before a Leave visible, so the referee holds the slug", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-so-race-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [event("e1", "lsass.exe memory read by procdump.exe")],
+    });
+    const discovered = new DiscoveredEntitiesStore(cases);
+    let armed = true;
+    class RacingStore extends AiAuthoredTextStore {
+      override async loadEntries(caseId: string) {
+        const entries = await super.loadEntries(caseId);
+        if (armed && /recordDeltaIds/.test(new Error().stack ?? "")) {
+          armed = false; // the analyst's Leave visible, through the route's own order of writes
+          await forgetAround(this, caseId, "Jane Doe", () => discovered.suppress(caseId, "Jane Doe"));
+        }
+        return entries;
+      }
+    }
+    const authoredStore = new RacingStore(cases);
+    const janeOrSlug: PresidioClient = {
+      analyze: async (text) =>
+        [...text.matchAll(/jane[\s-]+doe|doe-jane/gi)].map((m) => ({
+          entityType: "PERSON",
+          value: m[0],
+          score: 0.9,
+        })),
+    };
+    const modelB2: AIProvider = {
+      name: "b",
+      model: "b-model",
+      analyze: async () => ({
+        rawText: B_ANSWER.replace(/Lateral movement with Velkor/g, "Lateral movement by Jane Doe"),
+      }),
+    };
+    const pendingStore = new PresidioPendingStore(cases);
+    const modelA = new ModelA();
+    const pipeline = new AnalysisPipeline({
+      provider: modelA,
+      synthesisProvider: modelA,
+      stateStore,
+      secondOpinionStore: new SecondOpinionStore(cases),
+      secondOpinionProvider: modelB2,
+      anonStore: new AnonControlStore(cases),
+      discoveredStore: discovered,
+      presidioPendingStore: pendingStore,
+      presidio: { client: janeOrSlug, url: "http://localhost:5002", minScore: 0.6 },
+      aiAuthoredStore: authoredStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+      retries: 0,
+      backoffMs: 0,
+    });
+    await pipeline.synthesize("c1", { force: true });
+    const record = await pipeline.secondOpinion("c1");
+    expect(armed).toBe(false); // the decision did land between the snapshot and the id write
+    expect((await authoredStore.load("c1")).some((t) => /doe-jane/i.test(t))).toBe(false);
+    expect(record.refereeError).toBeDefined();
+    expect((await pendingStore.load("c1")).map((e) => e.value.toLowerCase())).toContain("doe-jane");
+  });
 });
 
 // Every bypass the two Codex adversarial reviews reproduced, through the real gate: the model wrote a
