@@ -130,6 +130,11 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
  */
 const VISIBLE_PART_SUBSTRING_CHARS = 3;
 const CASELESS_LETTER = /\p{Lo}/u;
+/**
+ * A letter or a digit: the same set the value is split on, so "_" ends a word on both sides —
+ * "Li" stands as a word in "Li_backup", as it does when "Li_backup" is the value split into parts.
+ */
+const WORD_CHAR = "[\\p{L}\\p{N}]";
 
 /**
  * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
@@ -145,7 +150,7 @@ export function withoutVisible(strings: readonly string[], suppressed: readonly 
   const long = [...new Set([...whole, ...parts.filter(anywhere)])];
   const short = parts
     .filter((p) => !anywhere(p))
-    .map((p) => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(p)}(?![\\p{L}\\p{N}_])`, "iu"));
+    .map((p) => new RegExp(`(?<!${WORD_CHAR})${escapeRegExp(p)}(?!${WORD_CHAR})`, "iu"));
   return strings.filter(
     (s) => !long.some((v) => occurrences(s, v).length > 0) && !short.some((re) => re.test(s)),
   );
@@ -168,22 +173,38 @@ export function splitAuthored(
 }
 
 /**
- * Mask a split prompt one segment at a time, so each AI span keeps exact offsets in the masked text.
- * One anonymizer serves every segment, so a value gets the same token wherever it appears. A prompt
- * with no AI spans is one segment — masked whole, exactly as before.
+ * Mask a split prompt. The prompt is masked WHOLE, exactly as it would be with no AI spans, and that
+ * is what is sent: a hidden value that crosses a span boundary ("Running notes: Jane Doe") is masked
+ * as one value. The spans come from masking each segment too (one anonymizer, so a value keeps its
+ * token) and lining the results up against the whole: a span counts only where its segment's
+ * masked text sits in the whole at that place. Where a boundary changed the masking, the segments
+ * on each side no longer line up, and the spans there are dropped: their values are held.
  */
 export function maskSegments(
   segments: readonly PromptSegment[],
   apply: (text: string) => string,
 ): { masked: string; spans: AuthoredSpan[] } {
-  let masked = "";
+  const masked = apply(segments.map((sg) => sg.text).join(""));
+  const parts = segments.map((sg) => ({ ...sg, m: apply(sg.text) }));
   const spans: AuthoredSpan[] = [];
-  for (const sg of segments) {
-    const m = apply(sg.text);
-    if (sg.ai) spans.push({ start: masked.length, end: masked.length + m.length, clipped: sg.clipped });
-    masked += m;
+  const push = (p: (typeof parts)[number], start: number) => {
+    if (p.ai) spans.push({ start, end: start + p.m.length, clipped: p.clipped });
+  };
+  // From the front, then from the back up to the first segment that did not line up.
+  let head = 0;
+  let at = 0;
+  for (; head < parts.length && masked.startsWith(parts[head].m, at); head++) {
+    push(parts[head], at);
+    at += parts[head].m.length;
   }
-  return { masked, spans };
+  let end = masked.length;
+  for (let i = parts.length - 1; i > head && end - parts[i].m.length >= at; i--) {
+    const start = end - parts[i].m.length;
+    if (!masked.startsWith(parts[i].m, start)) break;
+    push(parts[i], start);
+    end = start;
+  }
+  return { masked, spans: spans.sort((a, b) => a.start - b.start) };
 }
 
 /** The gate's view of the AI text. Nothing to skip, or a record that cannot be read: undefined. */

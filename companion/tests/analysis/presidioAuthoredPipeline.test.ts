@@ -633,6 +633,43 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
 
+  // Codex adversarial review, round 11: "_" ends a short word, as it does when the value is split.
+  it.each([
+    ["Wei Li", "Li_backup accessed the sensitive archive on the file server."],
+    ["J Smith", "J_backup accessed the sensitive archive on the file server."],
+  ])("holds a short word of %s beside an underscore, once its event is gone", async (name, summary) => {
+    const [first, last] = name.split(" ");
+    const short = first.length < last.length ? first : last;
+    const re = new RegExp(`${first}(?:\\s+${last})?(?![A-Za-z])|${short}(?![A-Za-z])`, "g");
+    const client: PresidioClient = {
+      analyze: async (text) =>
+        [...text.matchAll(re)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+    };
+    const { pipeline, provider, decisions, authoredStore, dropSource } = await setupCase(
+      `User ${name} signed in`,
+      client,
+    );
+    provider.summary = summary;
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", name)).applied).toBe(true); // Leave visible, and it stays
+    await pipeline.synthesize("c1", { force: true }); // the model saw the name, wrote only one word
+    expect(await authoredStore.load("c1")).not.toContain(summary);
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  // Codex adversarial review, round 11: a hidden value that starts before an AI span and ends in it.
+  it("masks a hidden value that crosses into the AI summary, and sends it masked", async () => {
+    const { pipeline, provider, custom, authoredStore } = await setupCase(
+      "lsass.exe memory read by procdump.exe",
+    );
+    await pipeline.synthesize("c1", { force: true }); // a quiet, protected call records the summary
+    expect(await authoredStore.load("c1")).toContain(COPIED);
+    await custom.save("c1", [{ value: "Running notes: Jane Doe", category: "PERSON" }]); // Hide
+    await expect(pipeline.synthesize("c1", { force: true })).resolves.toBeDefined();
+    expect(provider.prompts[1]).not.toContain("Jane Doe");
+  });
+
   it("records nothing from a call an analyst decision landed during", async () => {
     const run = async (during: () => void) => {
       const { pipeline, provider, authoredStore, dropSource } = await setupCase("User Jane Doe signed in");

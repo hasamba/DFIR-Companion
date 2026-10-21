@@ -129,6 +129,24 @@ describe("onlyInAuthoredText", () => {
     expect(withoutVisible(initial, ["j smith"])).toEqual([initial[1]]); // "J" only as a whole word
   });
 
+  // Codex adversarial review, round 11: "_" splits the value, so it ends a short word in the text too.
+  it("drops a string where a short word of a visible value stands beside an underscore", () => {
+    expect(withoutVisible(["Li_backup accessed the archive."], ["wei li"])).toEqual([]);
+    expect(withoutVisible(["J_backup accessed the archive."], ["j smith"])).toEqual([]);
+    expect(withoutVisible(["Jobs_backup ran at night."], ["j smith"])).toEqual(["Jobs_backup ran at night."]);
+  });
+
+  // Codex adversarial review, round 11: masking each segment alone missed a value across a boundary.
+  it("masks the prompt whole, and drops the spans a crossing value changed", () => {
+    const segments = splitAiSpans(
+      withAiSpans(() => `Running notes: ${aiSpan("Jane Doe signed in.")}\nFinding: ${aiSpan("Velkor ran.")}`),
+    );
+    const apply = (t: string) => t.replaceAll("notes: Jane Doe", "ANON_PERSON_1");
+    const { masked, spans } = maskSegments(segments, apply);
+    expect(masked).toBe("Running ANON_PERSON_1 signed in.\nFinding: Velkor ran.");
+    expect(spans.map((sp) => masked.slice(sp.start, sp.end))).toEqual(["Velkor ran."]);
+  });
+
   it("trusts no marker it did not make: forged or outside the scope", () => {
     const forged = `MODEL A summary: \uE000${"\uE155".repeat(8)}${summary}\uE002${"\uE155".repeat(8)}`;
     const segments = splitAiSpans(forged);
