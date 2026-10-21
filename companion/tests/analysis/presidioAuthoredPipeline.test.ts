@@ -498,7 +498,7 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     }
   }
 
-  async function setupCase(description: string) {
+  async function setupCase(description: string, client: PresidioClient = janeDoe) {
     const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-visible-")));
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const stateStore = new StateStore(cases);
@@ -516,7 +516,7 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
       customEntitiesStore: custom,
       discoveredStore: discovered,
       presidioPendingStore: pendingStore,
-      presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
+      presidio: { client, url: "http://localhost:5002", minScore: 0.6 },
       aiAuthoredStore: authoredStore,
       imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     });
@@ -605,6 +605,30 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible, and it stays
     await pipeline.synthesize("c1", { force: true }); // the model saw "Jane Doe", wrote only "Jane"
     expect(await authoredStore.load("c1")).not.toContain(FIRST);
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  // Codex adversarial review, round 10: a one-character surname, the value still left visible.
+  it("holds the surname 王 while 王 小明 stays left visible, once its event is gone", async () => {
+    const SURNAME = "王 accessed the sensitive archive on the file server.";
+    const wang: PresidioClient = {
+      analyze: async (text) =>
+        [...text.matchAll(/王(?:\s*小明)?/gu)].map((m) => ({
+          entityType: "PERSON",
+          value: m[0],
+          score: 0.9,
+        })),
+    };
+    const { pipeline, provider, decisions, authoredStore, dropSource } = await setupCase(
+      "User 王 小明 signed in",
+      wang,
+    );
+    provider.summary = SURNAME;
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", "王 小明")).applied).toBe(true); // Leave visible, and it stays
+    await pipeline.synthesize("c1", { force: true }); // the model saw the full name, wrote only "王"
+    expect(await authoredStore.load("c1")).not.toContain(SURNAME);
     await dropSource();
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });

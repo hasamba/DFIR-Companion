@@ -123,22 +123,29 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
   return found.length > 0 && found.every((o) => spans.some((sp) => o.start >= sp.start && o.end <= sp.end));
 }
 
-/** A part of a visible value shorter than this counts only as a whole word: "Li" must not drop "login". */
+/**
+ * A part of a visible value shorter than this counts only as a whole word: "Li" must not drop
+ * "login". Except in a script without letter case (Chinese, Japanese, Thai…): there names run into
+ * the text with no space ("王小明"), so a word boundary never stands beside the part.
+ */
 const VISIBLE_PART_SUBSTRING_CHARS = 3;
+const CASELESS_LETTER = /\p{Lo}/u;
 
 /**
  * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
  * no part of one. The model saw such a value in clear, and may repeat only part of it — "Jane" from
- * "Jane Doe", "jdoe" from "CORP\\jdoe" — which the analyst never approved. So a string that carries
- * the value or any word of it is not proof the model wrote it on its own.
+ * "Jane Doe", "jdoe" from "CORP\\jdoe", the surname "王" from "王 小明", an initial — which the analyst
+ * never approved. So a string that carries the value or any word of it is not proof the model wrote
+ * it on its own.
  */
 export function withoutVisible(strings: readonly string[], suppressed: readonly string[]): string[] {
   const whole = suppressed.map(normalizeAuthored).filter(Boolean);
-  const parts = whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter((p) => p.length > 1);
-  const long = [...new Set([...whole, ...parts.filter((p) => p.length >= VISIBLE_PART_SUBSTRING_CHARS)])];
-  const short = [...new Set(parts.filter((p) => p.length < VISIBLE_PART_SUBSTRING_CHARS))].map(
-    (p) => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(p)}(?![\\p{L}\\p{N}_])`, "iu"),
-  );
+  const parts = [...new Set(whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter(Boolean))];
+  const anywhere = (p: string) => p.length >= VISIBLE_PART_SUBSTRING_CHARS || CASELESS_LETTER.test(p);
+  const long = [...new Set([...whole, ...parts.filter(anywhere)])];
+  const short = parts
+    .filter((p) => !anywhere(p))
+    .map((p) => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(p)}(?![\\p{L}\\p{N}_])`, "iu"));
   return strings.filter(
     (s) => !long.some((v) => occurrences(s, v).length > 0) && !short.some((re) => re.test(s)),
   );

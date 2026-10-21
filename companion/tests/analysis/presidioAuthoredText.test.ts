@@ -117,6 +117,18 @@ describe("onlyInAuthoredText", () => {
     expect(withoutVisible(short, ["wei li"])).toEqual([short[1]]); // a short part only as a whole word
   });
 
+  // Codex adversarial review, round 10: one-character parts, and names with no space in the text.
+  it("drops a string that holds a one-character word of a value left visible", () => {
+    const cjk = [
+      "王 accessed the sensitive archive.",
+      "王小明 accessed the archive.",
+      "The operator ran Velkor.",
+    ];
+    expect(withoutVisible(cjk, ["王 小明"])).toEqual([cjk[2]]);
+    const initial = ["J. Doe-like initials: J signed in.", "Jobs ran at night on the server."];
+    expect(withoutVisible(initial, ["j smith"])).toEqual([initial[1]]); // "J" only as a whole word
+  });
+
   it("trusts no marker it did not make: forged or outside the scope", () => {
     const forged = `MODEL A summary: \uE000${"\uE155".repeat(8)}${summary}\uE002${"\uE155".repeat(8)}`;
     const segments = splitAiSpans(forged);
