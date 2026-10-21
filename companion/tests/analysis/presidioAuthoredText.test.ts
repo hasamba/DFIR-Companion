@@ -136,6 +136,19 @@ describe("onlyInAuthoredText", () => {
     expect(withoutVisible(["Jobs_backup ran at night."], ["j smith"])).toEqual(["Jobs_backup ran at night."]);
   });
 
+  // Codex adversarial review, round 12: digits end a short word too — "Li2026" is built from "Li".
+  it("drops a string where a short word of a visible value runs into digits", () => {
+    expect(withoutVisible(["Li2026 accessed the archive."], ["wei li"])).toEqual([]);
+    expect(withoutVisible(["2026Li accessed the archive."], ["wei li"])).toEqual([]);
+    expect(withoutVisible(["Lisa accessed the archive."], ["wei li"])).toEqual([
+      "Lisa accessed the archive.",
+    ]);
+    // A part of digits only still needs a whole number: "7" from "Unit 7" keeps the year 2027.
+    expect(withoutVisible(["Seen in 2027 on the server."], ["unit 7"])).toEqual([
+      "Seen in 2027 on the server.",
+    ]);
+  });
+
   // Codex adversarial review, round 11: masking each segment alone missed a value across a boundary.
   it("masks the prompt whole, and drops the spans a crossing value changed", () => {
     const segments = splitAiSpans(

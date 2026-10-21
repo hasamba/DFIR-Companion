@@ -131,10 +131,17 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
 const VISIBLE_PART_SUBSTRING_CHARS = 3;
 const CASELESS_LETTER = /\p{Lo}/u;
 /**
- * A letter or a digit: the same set the value is split on, so "_" ends a word on both sides —
- * "Li" stands as a word in "Li_backup", as it does when "Li_backup" is the value split into parts.
+ * What may not stand beside a short part for it to count as a word. For a part with a letter, only
+ * another letter: "_" and digits end it, so "Li" counts in "Li_backup" and in "Li2026", identifiers
+ * the model may build from the name. For a part of digits only, a digit too: "7" from "Unit 7" must
+ * not drop every string with a year in it.
  */
-const WORD_CHAR = "[\\p{L}\\p{N}]";
+const LETTER = "\\p{L}";
+const LETTER_OR_DIGIT = "[\\p{L}\\p{N}]";
+const shortPart = (p: string): RegExp => {
+  const edge = /\p{L}/u.test(p) ? LETTER : LETTER_OR_DIGIT;
+  return new RegExp(`(?<!${edge})${escapeRegExp(p)}(?!${edge})`, "iu");
+};
 
 /**
  * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
@@ -148,9 +155,7 @@ export function withoutVisible(strings: readonly string[], suppressed: readonly 
   const parts = [...new Set(whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter(Boolean))];
   const anywhere = (p: string) => p.length >= VISIBLE_PART_SUBSTRING_CHARS || CASELESS_LETTER.test(p);
   const long = [...new Set([...whole, ...parts.filter(anywhere)])];
-  const short = parts
-    .filter((p) => !anywhere(p))
-    .map((p) => new RegExp(`(?<!${WORD_CHAR})${escapeRegExp(p)}(?!${WORD_CHAR})`, "iu"));
+  const short = parts.filter((p) => !anywhere(p)).map(shortPart);
   return strings.filter(
     (s) => !long.some((v) => occurrences(s, v).length > 0) && !short.some((re) => re.test(s)),
   );

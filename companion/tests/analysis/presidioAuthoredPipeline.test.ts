@@ -637,10 +637,12 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
   it.each([
     ["Wei Li", "Li_backup accessed the sensitive archive on the file server."],
     ["J Smith", "J_backup accessed the sensitive archive on the file server."],
-  ])("holds a short word of %s beside an underscore, once its event is gone", async (name, summary) => {
+    // Codex adversarial review, round 12: digits end a short word too.
+    ["Wei Li", "Li2026 accessed the sensitive archive on the file server."],
+  ])("holds a short word of %s in %s, once its event is gone", async (name, summary) => {
     const [first, last] = name.split(" ");
     const short = first.length < last.length ? first : last;
-    const re = new RegExp(`${first}(?:\\s+${last})?(?![A-Za-z])|${short}(?![A-Za-z])`, "g");
+    const re = new RegExp(`${first}(?:\\s+${last})?(?![A-Za-z])|${short}\\d*(?![A-Za-z])`, "g"); // "Li2026" as one value
     const client: PresidioClient = {
       analyze: async (text) =>
         [...text.matchAll(re)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
