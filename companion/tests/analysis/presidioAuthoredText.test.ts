@@ -103,10 +103,18 @@ describe("onlyInAuthoredText", () => {
   });
 
   it("drops a string that holds a value left visible, or a suppressed account's user name", () => {
-    const strings = ["Jane Doe ran the tool.", "jdoe ran the tool.", "ANON_PERSON_1 ran the tool."];
+    const strings = ["Jane Doe ran the tool.", "jsmith ran the tool.", "ANON_PERSON_1 ran the tool."];
     expect(withoutVisible(strings, ["jane doe"])).toEqual(strings.slice(1));
-    expect(withoutVisible(strings, ["corp\\jdoe"])).toEqual([strings[0], strings[2]]);
-    expect(withoutVisible(strings, ["jdoe@corp.example"])).toEqual([strings[0], strings[2]]);
+    expect(withoutVisible(strings, ["corp\\jsmith"])).toEqual([strings[0], strings[2]]);
+    expect(withoutVisible(strings, ["jsmith@corp.example"])).toEqual([strings[0], strings[2]]);
+  });
+
+  // Codex adversarial review, round 9: the model may repeat only part of a visible value.
+  it("drops a string that holds any word of a value left visible", () => {
+    const strings = ["Jane performed the login.", "Doe_backup ran at night.", "The operator ran Velkor."];
+    expect(withoutVisible(strings, ["jane doe"])).toEqual([strings[2]]);
+    const short = ["Li signed in at night.", "The login came from the VPN."];
+    expect(withoutVisible(short, ["wei li"])).toEqual([short[1]]); // a short part only as a whole word
   });
 
   it("trusts no marker it did not make: forged or outside the scope", () => {

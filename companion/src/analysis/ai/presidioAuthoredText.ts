@@ -123,16 +123,25 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
   return found.length > 0 && found.every((o) => spans.some((sp) => o.start >= sp.start && o.end <= sp.end));
 }
 
+/** A part of a visible value shorter than this counts only as a whole word: "Li" must not drop "login". */
+const VISIBLE_PART_SUBSTRING_CHARS = 3;
+
 /**
- * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list).
- * The model saw such a value in clear, so a string that carries it is not proof of anything once the
- * value is masked or un-suppressed again. A suppressed account ("CORP\\jdoe", "jdoe@corp.example")
- * leaves its bare user name visible too, so that name counts as well.
+ * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
+ * no part of one. The model saw such a value in clear, and may repeat only part of it — "Jane" from
+ * "Jane Doe", "jdoe" from "CORP\\jdoe" — which the analyst never approved. So a string that carries
+ * the value or any word of it is not proof the model wrote it on its own.
  */
 export function withoutVisible(strings: readonly string[], suppressed: readonly string[]): string[] {
-  const values = suppressed.flatMap((v) => [v, v.split("\\").pop() ?? "", v.split("@")[0] ?? ""]);
-  const visible = [...new Set(values.map(normalizeAuthored).filter(Boolean))];
-  return strings.filter((s) => !visible.some((v) => occurrences(s, v).length > 0));
+  const whole = suppressed.map(normalizeAuthored).filter(Boolean);
+  const parts = whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter((p) => p.length > 1);
+  const long = [...new Set([...whole, ...parts.filter((p) => p.length >= VISIBLE_PART_SUBSTRING_CHARS)])];
+  const short = [...new Set(parts.filter((p) => p.length < VISIBLE_PART_SUBSTRING_CHARS))].map(
+    (p) => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(p)}(?![\\p{L}\\p{N}_])`, "iu"),
+  );
+  return strings.filter(
+    (s) => !long.some((v) => occurrences(s, v).length > 0) && !short.some((re) => re.test(s)),
+  );
 }
 
 /** Split fresh Presidio values into those still held and those found only in AI-written text. */

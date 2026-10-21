@@ -587,9 +587,23 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
     expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible
     await pipeline.synthesize("c1", { force: true }); // the model saw "Jane Doe", wrote only "Jane"
-    expect(await authoredStore.load("c1")).toContain(FIRST); // nothing in the text names the full value
+    expect(await authoredStore.load("c1")).not.toContain(FIRST); // it holds part of a visible value
     // The un-suppress route's write, in the same order.
     await forgetAround(authoredStore, "c1", "Jane Doe", () => discovered.unsuppress("c1", "Jane Doe"));
+    expect(await authoredStore.load("c1")).not.toContain(FIRST);
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  // Codex adversarial review, round 9: no visibility change at all — the value stays left visible.
+  it("holds the first name while Jane Doe stays left visible, once its event is gone", async () => {
+    const FIRST = "Jane performed the suspicious login on the domain controller.";
+    const { pipeline, provider, decisions, authoredStore, dropSource } =
+      await setupCase("User Jane Doe signed in");
+    provider.summary = FIRST;
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible, and it stays
+    await pipeline.synthesize("c1", { force: true }); // the model saw "Jane Doe", wrote only "Jane"
     expect(await authoredStore.load("c1")).not.toContain(FIRST);
     await dropSource();
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
