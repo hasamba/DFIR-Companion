@@ -33,6 +33,8 @@ import {
   type PresidioFinding,
 } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
+import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
+import { splitAuthored, type AuthoredText } from "./presidioAuthoredText.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
 import { noteAiCallStarted } from "../../http/rateLimiter.js";
@@ -65,6 +67,8 @@ export interface ProviderCallContext {
     ocrRunner?: OcrRunner;
     presidio?: { client: PresidioClient; url: string; minScore: number };
     presidioPendingStore?: PresidioPendingStore;
+    /** Text the synthesis model wrote, which the gate skips. Absent → the gate skips nothing. */
+    aiAuthoredStore?: AiAuthoredTextStore;
     presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
     aiCostStore?: AiCostStore;
     operationalMetrics?: OperationalMetricsStore;
@@ -282,6 +286,7 @@ export async function presidioGate(
   maskedText: string,
   known: KnownEntities,
   control: AnonControl | null,
+  authored?: AuthoredText,
 ): Promise<void> {
   const presidio = ctx.opts.presidio;
   if (!presidio || !presidioEnabledFor(control)) return;
@@ -310,7 +315,15 @@ export async function presidioGate(
   if (found.length === 0) return;
 
   const alreadyKnown = alreadyApproved(known);
-  const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+  const unknown = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+  // Values that occur only in text the synthesis model wrote are not held (see presidioAuthoredText.ts).
+  const { held: fresh, skipped } = splitAuthored(unknown, maskedText, authored);
+  if (skipped.length > 0)
+    ctx.log.info(
+      `[presidio] ${skipped.length} value(s) found only in AI-written text — not held ` +
+        `(${[...new Set(skipped.map((e) => e.category))].join(", ")})`,
+      { caseId },
+    );
   if (fresh.length === 0) return;
 
   ctx.log.warn(`[presidio] ${fresh.length} new PII value(s) need approval before this case can call the AI`, {
@@ -627,8 +640,30 @@ async function prepareCall(
   // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
   // pass their coverage so the loop that calls this per-chunk doesn't re-gate (and re-approve)
   // the same import one chunk at a time.
-  if (!skipPresidioGate) await presidioGate(ctx, caseId, maskedPrompt, known, control);
+  if (!skipPresidioGate)
+    await presidioGate(ctx, caseId, maskedPrompt, known, control, await authoredFor(ctx, caseId, anon));
   return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
+}
+
+/** The recorded AI text for the gate. A read failure skips nothing: the gate then holds every value. */
+async function authoredFor(
+  ctx: ProviderCallContext,
+  caseId: string,
+  anon: Anonymizer,
+): Promise<AuthoredText | undefined> {
+  if (!ctx.opts.presidio || !ctx.opts.aiAuthoredStore) return undefined;
+  try {
+    const corpus = await ctx.opts.aiAuthoredStore.load(caseId);
+    return corpus.length > 0 ? { corpus, restore: (t) => anon.restore(t) } : undefined;
+  } catch (err) {
+    ctx.log.warn(
+      `[presidio] could not read the AI-written text record — every value is held: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
+    return undefined;
+  }
 }
 
 // Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Presidio skips AI-written text** — values found only in the case summary, attacker path or finding text the AI wrote no longer stop the next run; events and analyst notes are still scanned
 - **Re-run a held job** — once the Presidio or duplicate-host gate clears, the held job row reads "was held — gate cleared" and offers Re-run for synthesis, deep pass and second opinion
 - **Geographic Map tiles at high zoom** — the map basemap loads at every zoom level instead of going gray from zoom 10 (closes #2188)
 - **High-zoom tile tests** — regression tests pin the tile-coordinate limits at every zoom level, so the gray-map bug cannot return unnoticed (closes #2190)

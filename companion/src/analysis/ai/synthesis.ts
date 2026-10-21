@@ -69,6 +69,7 @@ import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js"
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
+import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 
 /**
  * Synthesis: the AI call that turns the case's timeline into its conclusions (#418).
@@ -116,6 +117,7 @@ export interface SynthesisContext
       synthesisModelLabel?: string;
       synthesisFallback?: SynthesisFallback; // #1734
       synthesisSafetyRetries?: number; // #1740
+      aiAuthoredStore?: AiAuthoredTextStore; // what the Presidio gate skips (presidioAuthoredText.ts)
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;

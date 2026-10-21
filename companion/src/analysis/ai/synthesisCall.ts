@@ -13,6 +13,7 @@ import {
 import { needsCitationRetry, uncitedFindingIds, type CitationCounts } from "./findingCitations.js";
 import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
+import { authoredStrings } from "./presidioAuthoredText.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
 // safety-stop fallback pushed that file past its size budget. synthesis.ts is the only caller.
@@ -172,6 +173,7 @@ export async function callSynthesisModel(
     attempt: () => attempt,
     setNote: (note) => (citationNote = note),
   });
+  await recordAuthored(ctx, caseId, answer.delta);
   return {
     delta: answer.delta,
     thinkingTokens,
@@ -186,6 +188,25 @@ export async function callSynthesisModel(
     ...(retriedAfter ? { citationRetriedAfter: retriedAfter } : {}),
     citationRetries: retriedAfter ? 1 : 0,
   };
+}
+
+/**
+ * Record the accepted answer's own text so the Presidio gate skips it in later prompts. Every
+ * synthesis answer passes here: model A's, model B's 2nd-opinion pass (never saved to the case) and
+ * the deep pass's closing synthesis. Extraction, hunt and next-step answers are deliberately NOT
+ * recorded — an extraction answer becomes timeline events, and the gate must keep scanning those.
+ * Best effort: a failed write only means the gate holds that text's values again.
+ */
+async function recordAuthored(
+  ctx: SynthesisContext,
+  caseId: string,
+  delta: SynthesisCall["delta"],
+): Promise<void> {
+  try {
+    await ctx.opts.aiAuthoredStore?.record(caseId, authoredStrings(delta));
+  } catch (err) {
+    ctx.log.warn(`[presidio] could not record the AI-written text: ${(err as Error).message}`, { caseId });
+  }
 }
 
 /**

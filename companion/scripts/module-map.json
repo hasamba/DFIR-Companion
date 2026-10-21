@@ -140,6 +140,7 @@
     "adversaryHints.ts": "analysis/intel",
     "adversaryTechniques.ts": "analysis/intel",
     "aggKey.ts": "analysis/ingest",
+    "aiAuthoredText.ts": "analysis/ai",
     "aiControl.ts": "analysis/ai",
     "aiCost.ts": "analysis/ai",
     "aiState.ts": "analysis/workflow",

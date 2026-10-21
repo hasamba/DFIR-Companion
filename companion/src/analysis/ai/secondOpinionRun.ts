@@ -172,12 +172,39 @@ async function reconcileDeltas(
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
   const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
+  await recordDeltaIds(ctx, caseId, record);
   const asked = askedReferee(referee);
   try {
     const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
     return flagRefereeDismissals(foldVerdicts(record, parsed, asked.current()), guard);
   } catch (err) {
     return withRefereeFailure(ctx, caseId, record, asked.current(), userPrompt, err);
+  }
+}
+
+/**
+ * The referee prompt tags each disagreement with an id built from the models' titles
+ * ("b_only:lateral-movement-velkor"). The Presidio gate matches values without regard to case, so
+ * the slug is an occurrence of the model's own word; record the ids as AI-written text with the
+ * answers they came from. Best effort: a failed write only means the gate holds that value.
+ */
+async function recordDeltaIds(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  record: SecondOpinion,
+): Promise<void> {
+  try {
+    await ctx.opts.aiAuthoredStore?.record(
+      caseId,
+      record.deltas.map((d) => d.id),
+    );
+  } catch (err) {
+    ctx.log.warn(
+      `[presidio] could not record the 2nd-opinion ids as AI-written text: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
   }
 }
 

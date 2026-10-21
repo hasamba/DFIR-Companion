@@ -1,0 +1,222 @@
+import { describe, it, expect } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import { AnonControlStore } from "../../src/analysis/anonControl.js";
+import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
+import { AiAuthoredTextStore } from "../../src/analysis/aiAuthoredText.js";
+import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
+import { PresidioApprovalRequired, type PresidioClient } from "../../src/analysis/presidio.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+
+// The approval loop, end to end through a real synthesis: the model's summary rides in the next
+// synthesis prompt, and Presidio tags a tool name in it as a PERSON. Before the fix, that second run
+// stopped on a value no analyst could have cleared before the first run wrote it.
+
+const SUMMARY = "The operator ran Velkor on the server to read cached credentials.";
+
+class SummaryProvider implements AIProvider {
+  readonly name = "stub";
+  readonly model = "stub-model";
+  prompts: string[] = [];
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    this.prompts.push(req.userPrompt);
+    return {
+      rawText: JSON.stringify({
+        findings: [],
+        iocs: [],
+        mitreTechniques: [],
+        attackerPath: "",
+        summary: SUMMARY,
+        threadsOpened: [],
+        threadsClosed: [],
+        keyQuestions: [],
+        nextSteps: [],
+        forensicEvents: [],
+        timelineNote: "",
+      }),
+    };
+  }
+}
+
+/**
+ * Flags every bounded "Velkor" as a PERSON — a made-up tool name. A real one such as Mimikatz is
+ * already dropped by the DFIR-vocabulary filter (presidioPersonFilter.ts), so it would test nothing.
+ */
+const toolNameAsPerson: PresidioClient = {
+  analyze: async (text) =>
+    /\bVelkor\b/.test(text) ? [{ entityType: "PERSON", value: "Velkor", score: 0.9 }] : [],
+};
+
+const event = (id: string, description: string): ForensicEvent => ({
+  id,
+  timestamp: "2026-01-01T00:00:00Z",
+  description,
+  severity: "High",
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+});
+
+async function setup(withAuthoredStore = true) {
+  const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-pipe-")));
+  await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  const stateStore = new StateStore(cases);
+  const s = emptyState("c1");
+  s.forensicTimeline = [event("e1", "lsass.exe memory read by procdump.exe")];
+  await stateStore.save(s);
+  const provider = new SummaryProvider();
+  const authoredStore = new AiAuthoredTextStore(cases);
+  const pendingStore = new PresidioPendingStore(cases);
+  const pipeline = new AnalysisPipeline({
+    provider,
+    stateStore,
+    anonStore: new AnonControlStore(cases),
+    presidioPendingStore: pendingStore,
+    presidio: { client: toolNameAsPerson, url: "http://localhost:5002", minScore: 0.6 },
+    ...(withAuthoredStore ? { aiAuthoredStore: authoredStore } : {}),
+    imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+  });
+  return { pipeline, provider, stateStore, authoredStore, pendingStore };
+}
+
+describe("Presidio and AI-written text", () => {
+  it("records the synthesis answer's own text", async () => {
+    const { pipeline, authoredStore } = await setup();
+    await pipeline.synthesize("c1", { force: true });
+    expect(await authoredStore.load("c1")).toContain(SUMMARY);
+  });
+
+  it("does not hold the next run on a value found only in the model's summary", async () => {
+    const { pipeline, provider, pendingStore } = await setup();
+    await pipeline.synthesize("c1", { force: true });
+    await pipeline.synthesize("c1", { force: true });
+    expect(provider.prompts).toHaveLength(2);
+    expect(provider.prompts[1]).toContain("Velkor"); // the summary did ride in the second prompt
+    expect(await pendingStore.load("c1")).toEqual([]);
+  });
+
+  it("still holds the value once an event carries it", async () => {
+    const { pipeline, stateStore, pendingStore } = await setup();
+    await pipeline.synthesize("c1", { force: true });
+    const s = await stateStore.load("c1");
+    await stateStore.save({
+      ...s,
+      forensicTimeline: [...s.forensicTimeline, event("e2", "Process created by user Velkor on the server")],
+    });
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect(await pendingStore.load("c1")).toEqual([{ value: "Velkor", category: "PERSON" }]);
+  });
+
+  it("holds every value when no AI-written text is recorded — the old behaviour", async () => {
+    const { pipeline } = await setup(false);
+    await pipeline.synthesize("c1", { force: true });
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});
+
+// The reported loop itself: a 2nd opinion whose referee prompt quotes model B's finding. B wrote
+// "Velkor" during the run, so no analyst could have cleared it before the run started.
+describe("a 2nd opinion whose model B names a tool Presidio tags as a person", () => {
+  const synthesisAnswer = (findings: unknown[], summary: string) =>
+    JSON.stringify({
+      findings,
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary,
+      forensicEvents: [],
+    });
+  const finding = (id: string, title: string, description: string) => ({
+    id,
+    severity: "High",
+    title,
+    description,
+    relatedIocs: [],
+    mitreTechniques: [],
+    status: "open",
+    relatedEventIds: ["e1"],
+  });
+  const A_ANSWER = synthesisAnswer(
+    [finding("f1", "Credential access on the server", "LSASS memory was read by procdump.")],
+    "Credential access on the server.",
+  );
+  const B_ANSWER = synthesisAnswer(
+    [
+      finding("f1", "Credential access on the server", "LSASS memory was read by procdump."),
+      finding("g2", "Lateral movement with Velkor", "The operator used Velkor to move to the file server."),
+    ],
+    "Credential access, then lateral movement with Velkor.",
+  );
+  const isReferee = (req: AnalyzeRequest) => req.systemPrompt.includes("RECONCILING");
+
+  /** Model A: writes the synthesis and judges every disagreement in the referee prompt. */
+  class ModelA implements AIProvider {
+    readonly name = "a";
+    readonly model = "a-model";
+    refereePrompts: string[] = [];
+    async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      if (!isReferee(req)) return { rawText: A_ANSWER };
+      this.refereePrompts.push(req.userPrompt);
+      const ids = [...new Set(req.userPrompt.match(/\b[a-z_]+:[a-z0-9-]+/g) ?? [])];
+      return {
+        rawText: JSON.stringify({
+          summary: "judged",
+          verdicts: ids.map((id) => ({ id, rationale: "r", recommendation: "review" })),
+        }),
+      };
+    }
+  }
+  const modelB: AIProvider = {
+    name: "b",
+    model: "b-model",
+    analyze: async () => ({ rawText: B_ANSWER }),
+  };
+
+  async function run(withAuthoredStore: boolean) {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-so-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline = [event("e1", "lsass.exe memory read by procdump.exe")];
+    await stateStore.save(s);
+    const modelA = new ModelA();
+    const pendingStore = new PresidioPendingStore(cases);
+    const pipeline = new AnalysisPipeline({
+      provider: modelA,
+      synthesisProvider: modelA,
+      stateStore,
+      secondOpinionStore: new SecondOpinionStore(cases),
+      secondOpinionProvider: modelB,
+      anonStore: new AnonControlStore(cases),
+      presidioPendingStore: pendingStore,
+      presidio: { client: toolNameAsPerson, url: "http://localhost:5002", minScore: 0.6 },
+      ...(withAuthoredStore ? { aiAuthoredStore: new AiAuthoredTextStore(cases) } : {}),
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+      retries: 0,
+      backoffMs: 0,
+    });
+    await pipeline.synthesize("c1", { force: true });
+    const record = await pipeline.secondOpinion("c1");
+    return { record, modelA, pending: await pendingStore.load("c1") };
+  }
+
+  it("lets the referee judge without a Presidio stop", async () => {
+    const { record, modelA, pending } = await run(true);
+    expect(modelA.refereePrompts.join("\n")).toContain("Velkor"); // B's finding did reach the referee
+    expect(record.refereeError).toBeUndefined();
+    expect(pending).toEqual([]);
+  });
+
+  it("stopped at the referee before the fix", async () => {
+    const { record, pending } = await run(false);
+    expect(record.refereeError).toBeDefined();
+    expect(pending).toEqual([{ value: "Velkor", category: "PERSON" }]);
+  });
+});

@@ -66,6 +66,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get presidioPendingStore() {
       return opts.presidioPendingStore;
     },
+    get aiAuthoredStore() {
+      return opts.aiAuthoredStore;
+    },
     get presidioScanCapsOverride() {
       return opts.presidioScanCapsOverride;
     },
