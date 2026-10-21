@@ -16,11 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Custody at receipt with SHA-1** — every import is hashed (SHA-256 and SHA-1) into chain of custody before any parser runs, rejected files included; custody manifests are now version 2 (closes #2111)
+- **Presidio without the manual container** — `docker compose --profile presidio up -d` starts the analyzer, and the manual documents a Python install for machines without Docker (closes #2197)
+- **More secrets redacted before AI** — anonymization now one-way redacts vendor API keys, tokens, CLI password flags and secret-named fields (logtotal-sanitizer patterns) while hashes, SIDs and IPs stay readable (closes #2198)
 - **LOLBIN chains filter** — an Evidence Chain toggle shows only LOLBIN processes started by an unusual launcher or graded Medium+, with their parents and children (closes #2113)
 
 ### Fixed
 
 - **Presidio skips AI-written text** — values found only in the case summary, attacker path or finding text the AI wrote no longer stop the next run; events and analyst notes are still scanned
+- **Presidio "not local" warning** — the Settings and setup-wizard warning now checks only the URL's hostname, so a remote analyzer with `localhost` in its path or user name no longer passes as local (part of #2197)
 - **Re-run a held job** — once the Presidio or duplicate-host gate clears, the held job row reads "was held — gate cleared" and offers Re-run for synthesis, deep pass and second opinion
 - **Geographic Map tiles at high zoom** — the map basemap loads at every zoom level instead of going gray from zoom 10 (closes #2188)
 - **High-zoom tile tests** — regression tests pin the tile-coordinate limits at every zoom level, so the gray-map bug cannot return unnoticed (closes #2190)
