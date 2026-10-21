@@ -963,7 +963,7 @@ single-writer process model.
 | `DFIR_AI_AUTO_SYNTHESIZE_MS` | `8000` | Debounce window before auto-synthesis fires (ms) |
 | `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
 | `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
-| `DFIR_PRESIDIO_URL` | _(unset)_ | Optional: base URL of a self-run [Presidio](mkdocs-docs/reference/presidio.md) Analyzer container (e.g. `http://localhost:5002`) that scans already-masked text for names and other PII regex can't catch. Unset = feature off. |
+| `DFIR_PRESIDIO_URL` | _(unset)_ | Optional: base URL of a self-run [Presidio](mkdocs-docs/reference/presidio.md) Analyzer — Docker Compose profile, `docker run`, or Python (e.g. `http://localhost:5002`) that scans already-masked text for names and other PII regex can't catch. Unset = feature off. |
 | `DFIR_PRESIDIO_MIN_SCORE` | `0.6` | Confidence floor (0–1) for Presidio findings; blank/non-numeric falls back to the default, out-of-range values are clamped |
 | `DFIR_PRESIDIO_TIMEOUT_MS` | `60000` | Budget for one `/analyze` request (scans are chunked; each chunk gets the full budget). Raise it for a slow or shared analyzer; blank/non-numeric/≤0 falls back to the default |
 

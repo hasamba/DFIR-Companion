@@ -11,6 +11,7 @@
 #   docker compose build         # build from source
 #   docker compose up -d         # start → http://127.0.0.1:4773/dashboard
 #   docker compose pull          # OR pull the prebuilt image from GHCR instead of building
+#   docker compose --profile presidio up -d   # ALSO start the optional Presidio analyzer (#2197)
 
 services:
   companion:
@@ -44,6 +45,8 @@ services:
       # Reach an AI endpoint on the host (Docker Desktop): http://host.docker.internal:PORT/v1
       # e.g. a local Ollama:  DFIR_VISION_PROVIDER=ollama  DFIR_VISION_BASE_URL=http://host.docker.internal:11434/v1
       # DFIR_VISION_BASE_URL: "http://host.docker.internal:11434/v1"
+      # --- Real-name masking (optional). Start the analyzer with `--profile presidio`, then: ---
+      # DFIR_PRESIDIO_URL: "http://presidio-analyzer:3000"
     # Prefer a file for config? Copy companion/.env.example to .env and uncomment:
     # env_file:
     #   - .env
@@ -85,3 +88,42 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # Optional Microsoft Presidio Analyzer (#2197) — finds real names, non-Israeli national IDs and
+  # IBANs that the built-in masking cannot. OFF unless you ask for it: the `presidio` profile keeps
+  # a plain `docker compose up -d` from pulling this ~1 GB image. Start it with
+  #   docker compose --profile presidio up -d                      # alongside the containerised companion
+  #   docker compose --profile presidio up -d presidio-analyzer    # analyzer only (companion run with npm)
+  # and stop it with `docker compose --profile presidio down` — dropping the flag does not stop it.
+  # Starting the analyzer does not turn scanning on: set DFIR_PRESIDIO_URL as well (above, or in
+  # Settings → AI → Presidio), to http://presidio-analyzer:3000 from the containerised companion or
+  # http://localhost:5002 from a companion run on the host. The companion has no depends_on here on
+  # purpose: a dependency on a service whose profile is off makes the whole file invalid.
+  presidio-analyzer:
+    # Pinned, like the companion image: `latest` would change the detector under a running case.
+    image: mcr.microsoft.com/presidio-analyzer:2.2.362
+    # No container_name: the old manual's `docker run --name presidio-analyzer` would collide with
+    # it. The companion reaches this service by its service name, which Compose DNS resolves anyway.
+    profiles: ["presidio"]
+    restart: unless-stopped
+    # Presidio reads case text — masked, but still the timeline — so its port is host-loopback only.
+    ports:
+      - "127.0.0.1:5002:3000"
+    environment:
+      # gunicorn kills a worker after 30 s by default, which is shorter than the companion's 60 s
+      # per-request budget (DFIR_PRESIDIO_TIMEOUT_MS). Keep this above that budget, or a slow scan
+      # dies on the analyzer side and reads as a connection failure.
+      GUNICORN_CMD_ARGS: "--timeout 120"
+    # The image already runs as an unprivileged user (UID 1001) with no root entrypoint, so it needs
+    # no capabilities at all.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # spaCy loads a ~500 MB model before the first answer.
+      start_period: 60s

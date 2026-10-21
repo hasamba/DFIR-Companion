@@ -378,15 +378,11 @@
   }
   // The same warning Settings → AI shows, for the same reason: Presidio reads the case text —
   // masked, but still the timeline — so a non-local analyzer sends that text off this machine.
+  // One hostname check for both screens, published by js/dashboard-env-settings.js (#2197).
   function wizPresidioLocalWarning() {
     const warn = wizEl("wizPresidioWarn");
     if (!warn) return;
-    const url = wizPresidioUrl().toLowerCase();
-    const isLocal =
-      !url ||
-      /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(
-        url,
-      );
+    const isLocal = window.isLocalPresidioUrl(wizPresidioUrl());
     warn.style.display = isLocal ? "none" : "block";
     warn.textContent =
       "⚠ This Presidio URL is not local. Presidio reads your case text — masked, but still " +
