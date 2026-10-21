@@ -23,6 +23,7 @@ import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
 import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
+import { aiSpan } from "./aiSpan.js";
 import {
   adversaryHintBlock,
   cloudCoverageBlock,
@@ -194,7 +195,7 @@ export function buildFindingsEcho(state: InvestigationState): string {
     echoed
       .map((f) => {
         const corr = corroborationLabel(f);
-        const head = `[${f.id}] (severity: ${echoRank(f)}) ${f.title}${corr ? ` — ${corr}` : ""}`;
+        const head = `[${f.id}] (severity: ${echoRank(f)}) ${aiSpan(f.title)}${corr ? ` — ${corr}` : ""}`;
         return detailed.has(f.id) ? head + findingDetail(f) : head;
       })
       .join("\n") || "(none yet)";
@@ -251,13 +252,19 @@ function findingDetail(f: Finding): string {
   // techniques from the title and dropped ones the unchanged evidence still supported.
   const tags = f.mitreTechniques ?? [];
   return (
-    (said ? `\n    said: ${promptDescription(said, FINDING_DETAIL_CHARS)}` : "") +
+    (said ? `\n    said: ${saidText(said)}` : "") +
     (cited.length ? `\n    cites: ${cited.join(", ")}` : "") +
     (tags.length ? `\n    tags: ${tags.join(", ")}` : "")
   );
 }
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** The description as the model sees it; marked as AI text only when the renderer kept it whole. */
+function saidText(said: string): string {
+  const shown = promptDescription(said, FINDING_DETAIL_CHARS);
+  return shown === said ? aiSpan(shown) : shown;
+}
 
 /** Blocks end with a blank line so the next one starts cleanly; "" stays "". */
 const withBreak = (block: string): string => (block ? `${block}\n\n` : "");
@@ -423,6 +430,6 @@ export function assembleUserPrompt(b: SynthesisBlocks, t: TimelineSection): stri
     (b.emulationAgentBlock ? `${b.emulationAgentBlock}\n\n` : "") +
     (b.entryCandidatesBlock ? `${b.entryCandidatesBlock}\n\n` : "") +
     (b.learnedPatternsBlock ? `${b.learnedPatternsBlock}\n\n` : "") +
-    `Running notes: ${t.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`
+    `Running notes: ${t.lastSummary ? aiSpan(t.lastSummary) : "(none)"}\n\nReturn the JSON conclusions.`
   );
 }

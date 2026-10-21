@@ -36,6 +36,7 @@ import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
+import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 import { AiCostStore } from "../analysis/aiCost.js";
 import { CorrelationProfileStore } from "../analysis/correlationProfile.js";
@@ -294,6 +295,7 @@ export interface RuntimePipelineParams {
   // for every one of the 27 AI call sites that funnel through analyzeRestored.
   presidio?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidio"];
   presidioPendingStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidioPendingStore"];
+  aiAuthoredStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["aiAuthoredStore"];
   // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
   logger?: Logger;
   // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
@@ -399,6 +401,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     ocrRunner: params.ocrRunner,
     presidio: params.presidio,
     presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),
+    aiAuthoredStore: params.aiAuthoredStore ?? new AiAuthoredTextStore(params.store),
     logger: params.logger,
     kevStore: params.kevStore,
     iocAliasStore: new IocAliasStore(params.store), // #82: keep analyst IOC merges applied across re-synthesis

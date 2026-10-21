@@ -5,6 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { AiAuthoredTextStore } from "../../src/analysis/aiAuthoredText.js";
 import { createApp } from "../../src/server.js";
 import { postAnonControl } from "../helpers/anonControl.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
@@ -198,5 +199,22 @@ describe("/cases/:id/anon-entities", () => {
       .send({ value: "config\\PowershellInfo.log" });
     expect(u.status).toBe(200);
     expect(u.body.suppressed).toEqual([]);
+  });
+
+  // Codex adversarial review, round 6: AI text recorded while a value was visible may carry it.
+  it("suppress forgets the AI-written text that holds the value", async () => {
+    const authored = new AiAuthoredTextStore(cases);
+    await authored.record("c1", ["Jane Doe signed in to the domain controller.", "Velkor ran at night."]);
+    await request(app).post("/cases/c1/anon-entities/suppress").send({ value: "Jane Doe" });
+    expect(await authored.load("c1")).toEqual(["Velkor ran at night."]);
+  });
+
+  it("unsuppress drops the AI-written text record, so the Presidio gate scans it again", async () => {
+    const authored = new AiAuthoredTextStore(cases);
+    await authored.record("c1", ["Jane Doe signed in to the domain controller."]);
+    await request(app).post("/cases/c1/anon-entities/suppress").send({ value: "Jane Doe" });
+    const u = await request(app).post("/cases/c1/anon-entities/unsuppress").send({ value: "Jane Doe" });
+    expect(u.status).toBe(200);
+    expect(await authored.load("c1")).toEqual([]);
   });
 });

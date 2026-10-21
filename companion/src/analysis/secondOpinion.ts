@@ -21,6 +21,7 @@ import { stateEventResolver } from "./eventAliasLookup.js";
 import { rejectedTechniqueIds, withRejectedTechniqueIds } from "./rejectedTechniques.js";
 import { projectScope } from "./scopeProject.js";
 import type { ScopeWindow } from "./scope.js";
+import { aiSpan } from "./ai/aiSpan.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -355,15 +356,23 @@ function renderDelta(d: SecondOpinionDelta, hint?: string): string {
   return hint ? `${line}\n  ${hint}` : line;
 }
 
+// The id (built from a title), the title and the description are the models' own text, marked for
+// the Presidio gate (ai/aiSpan.ts). The ATT&CK lines carry a technique id, not prose, and stay plain.
+const DELTA_DESC_CHARS = 240;
+
 function renderDeltaLine(d: SecondOpinionDelta): string {
-  const desc = d.finding?.description ? ` — ${d.finding.description.slice(0, 240)}` : "";
+  const full = d.finding?.description ?? "";
+  const shown = full.slice(0, DELTA_DESC_CHARS);
+  const desc = full ? ` — ${aiSpan(shown, shown.length < full.length)}` : "";
+  const id = aiSpan(d.id);
+  const title = aiSpan(d.title);
   switch (d.kind) {
     case "b_only":
-      return `[${d.id}] (B-only finding) "${d.title}" [severity ${sevLabel(d.bSeverity)}]: Model B raised this; Model A did NOT.${desc}`;
+      return `[${id}] (B-only finding) "${title}" [severity ${sevLabel(d.bSeverity)}]: Model B raised this; Model A did NOT.${desc}`;
     case "a_only":
-      return `[${d.id}] (A-only finding) "${d.title}" [severity ${sevLabel(d.aSeverity)}]: Model A has this; Model B DROPPED it (B may judge it unsupported/benign).${desc}`;
+      return `[${id}] (A-only finding) "${title}" [severity ${sevLabel(d.aSeverity)}]: Model A has this; Model B DROPPED it (B may judge it unsupported/benign).${desc}`;
     case "severity":
-      return `[${d.id}] (severity disagreement) "${d.title}": Model A says ${sevLabel(d.aSeverity)}, Model B says ${sevLabel(d.bSeverity)}.${desc}`;
+      return `[${id}] (severity disagreement) "${title}": Model A says ${sevLabel(d.aSeverity)}, Model B says ${sevLabel(d.bSeverity)}.${desc}`;
     case "mitre_added":
       return `[${d.id}] (ATT&CK technique) ${d.title}${d.techniqueName ? ` (${d.techniqueName})` : ""}: Model B maps this technique; Model A does not.`;
     case "mitre_removed":
@@ -467,11 +476,12 @@ function clipText(text: string): string {
 // `textShown` is the prompt builder's run-wide record of findings already printed in full.
 function renderCarriers(c: TechniqueCarriers, textShown: Set<string>): string[] {
   const lines = c.shown.map((f) => {
-    const head = `${FINDING_INDENT}Model ${c.side} finding [${f.id}] "${f.title}" [severity ${f.severity}]`;
+    const head = `${FINDING_INDENT}Model ${c.side} finding [${f.id}] "${aiSpan(f.title)}" [severity ${f.severity}]`;
     const key = `${c.side}:${f.id}`;
     if (textShown.has(key)) return `${head} — text shown above`;
     textShown.add(key);
-    return `${head}: ${clipText(f.description ?? "")}`;
+    const clipped = clipText(f.description ?? "");
+    return `${head}: ${aiSpan(clipped, clipped.endsWith("…"))}`;
   });
   if (c.more > 0)
     lines.push(`${FINDING_INDENT}… +${c.more} more Model ${c.side} findings carry this technique`);
@@ -551,9 +561,9 @@ export function buildReconcilePrompt(
     return out.text;
   });
   return [
-    `MODEL A summary: ${aSummary}`,
+    `MODEL A summary: ${aiSpan(aSummary)}`,
     "",
-    `MODEL B summary: ${bSummary}`,
+    `MODEL B summary: ${aiSpan(bSummary)}`,
     "",
     `DISAGREEMENTS (${deltas.length}) — each followed by the forensic events the finding cites:`,
     ...rendered,

@@ -33,6 +33,16 @@ import {
   type PresidioFinding,
 } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
+import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
+import {
+  authoredFor,
+  maskSegments,
+  reportAnswer,
+  reportGate,
+  splitAuthored,
+  type AuthoredText,
+} from "./presidioAuthoredText.js";
+import { splitAiSpans } from "./aiSpan.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
 import { noteAiCallStarted } from "../../http/rateLimiter.js";
@@ -65,6 +75,8 @@ export interface ProviderCallContext {
     ocrRunner?: OcrRunner;
     presidio?: { client: PresidioClient; url: string; minScore: number };
     presidioPendingStore?: PresidioPendingStore;
+    /** Text the synthesis model wrote, which the gate skips. Absent → the gate skips nothing. */
+    aiAuthoredStore?: AiAuthoredTextStore;
     presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
     aiCostStore?: AiCostStore;
     operationalMetrics?: OperationalMetricsStore;
@@ -282,6 +294,7 @@ export async function presidioGate(
   maskedText: string,
   known: KnownEntities,
   control: AnonControl | null,
+  authored?: AuthoredText,
 ): Promise<void> {
   const presidio = ctx.opts.presidio;
   if (!presidio || !presidioEnabledFor(control)) return;
@@ -310,7 +323,15 @@ export async function presidioGate(
   if (found.length === 0) return;
 
   const alreadyKnown = alreadyApproved(known);
-  const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+  const unknown = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+  // Values that occur only in text the synthesis model wrote are not held (see presidioAuthoredText.ts).
+  const { held: fresh, skipped } = splitAuthored(unknown, maskedText, authored);
+  if (skipped.length > 0)
+    ctx.log.info(
+      `[presidio] ${skipped.length} value(s) found only in AI-written text — not held ` +
+        `(${[...new Set(skipped.map((e) => e.category))].join(", ")})`,
+      { caseId },
+    );
   if (fresh.length === 0) return;
 
   ctx.log.warn(`[presidio] ${fresh.length} new PII value(s) need approval before this case can call the AI`, {
@@ -606,12 +627,18 @@ async function prepareCall(
 ): Promise<PreparedCall> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
+  // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
+  const segments = splitAiSpans(req.userPrompt);
+  const plainPrompt = segments.map((sg) => sg.text).join("");
   ctx.log.debug(
-    `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${req.userPrompt.length} ` +
+    `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${plainPrompt.length} ` +
       `anonymize=${policy.enabled ? "on" : "off"}`,
     { caseId },
   );
-  if (!policy.enabled) return { req, anon: null };
+  if (!policy.enabled) {
+    reportGate(false); // the model sees clear text: its answer may not be recorded as AI text
+    return { req: { ...req, userPrompt: plainPrompt }, anon: null };
+  }
   const known = await knownEntitiesFor(ctx, caseId, state);
   const anon = createAnonymizer(policy, known);
   ctx.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
@@ -623,11 +650,21 @@ async function prepareCall(
 
   // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
   // username, email, SID or secret — only what our own detectors could not find.
-  const maskedPrompt = anon.apply(req.userPrompt);
+  const { masked: maskedPrompt, spans } = maskSegments(segments, (t) => anon.apply(t));
   // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
   // pass their coverage so the loop that calls this per-chunk doesn't re-gate (and re-approve)
   // the same import one chunk at a time.
-  if (!skipPresidioGate) await presidioGate(ctx, caseId, maskedPrompt, known, control);
+  if (!skipPresidioGate)
+    await presidioGate(
+      ctx,
+      caseId,
+      maskedPrompt,
+      known,
+      control,
+      await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, { spans }),
+    );
+  // Protected only when the gate ran on THIS call: an import pre-scan's coverage is not a synthesis.
+  reportGate(!skipPresidioGate && Boolean(ctx.opts.presidio) && presidioEnabledFor(control));
   return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
 }
 
@@ -692,7 +729,9 @@ async function sendPrepared(
   await recordAiCost(ctx, caseId, label, provider, result);
   const anon = prepared.anon;
   if (!anon) return parseAnswer(result.rawText, (t) => t);
-  return anon.restoreDeep(parseAnswer(result.rawText, (t) => anon.restore(t)));
+  const masked = parseAnswer(result.rawText, (t) => anon.restore(t));
+  reportAnswer(masked); // the model's own words, placeholders kept (presidioAuthoredText.ts)
+  return anon.restoreDeep(masked);
 }
 
 /**

@@ -34,6 +34,7 @@ import type { OperationalMetricsStore } from "../operationalMetrics.js";
 import type { SafetyStopCapture } from "./safetyStopCapture.js";
 import type { PresidioClient } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
+import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 import type { PlaybookStore } from "../playbookStore.js";
 import type { ScopeStore } from "../scope.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
@@ -169,6 +170,8 @@ export interface PipelineOptions {
   presidio?: { client: PresidioClient; url: string; minScore: number };
   // Holds findings awaiting analyst approval across the 409 round trip.
   presidioPendingStore?: PresidioPendingStore;
+  // Text the synthesis model wrote, which the Presidio gate skips (ai/presidioAuthoredText.ts).
+  aiAuthoredStore?: AiAuthoredTextStore;
   // TEST-ONLY override for the import pre-scan's character-count caps (see
   // AnalysisPipeline.presidioPreScan). Production code never sets this — the real caps are the
   // PRESIDIO_SCAN_CHUNK_CHARS / PRESIDIO_SCAN_MAX_CHARS constants. Exists so a test can force the

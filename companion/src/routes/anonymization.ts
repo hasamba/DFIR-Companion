@@ -4,7 +4,8 @@ import { AnonControlStore, anonControlVersion, type AnonControl } from "../analy
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
-import { PresidioDecisions } from "../analysis/presidioDecisions.js";
+import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
+import { PresidioDecisions, forgetAround } from "../analysis/presidioDecisions.js";
 import { isLocalAiProvider, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "../analysis/redactedExport.js";
@@ -55,11 +56,13 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
+  const aiAuthoredText = new AiAuthoredTextStore(store);
   const presidioDecisions = new PresidioDecisions(
     customEntities,
     discoveredEntities,
     presidioPending,
     anonControl,
+    aiAuthoredText,
   );
 
   /**
@@ -272,7 +275,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     try {
       const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
       if (!value) return res.status(400).json({ error: "value is required" });
-      const next = await discoveredEntities.suppress(req.params.id, value);
+      // The model will see the value in clear: no AI text that carries it may excuse it later.
+      const next = await forgetAround(aiAuthoredText, req.params.id, value, () =>
+        discoveredEntities.suppress(req.params.id, value),
+      );
       return res.status(200).json({ suppressed: next.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -282,7 +288,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     try {
       const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
       if (!value) return res.status(400).json({ error: "value is required" });
-      const next = await discoveredEntities.unsuppress(req.params.id, value);
+      // AI text recorded while the value was visible may carry it; the Presidio gate must scan it again.
+      const next = await forgetAround(aiAuthoredText, req.params.id, value, () =>
+        discoveredEntities.unsuppress(req.params.id, value),
+      );
       return res.status(200).json({ suppressed: next.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

@@ -11,6 +11,9 @@ import {
   type SecondOpinion,
   type SecondOpinionDelta,
 } from "../secondOpinion.js";
+import { stripAiSpans, withAiSpans } from "./aiSpan.js";
+import { neutralAuthored } from "./presidioAuthoredText.js";
+import { anonRevision } from "../anonRevision.js";
 import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import {
@@ -171,13 +174,53 @@ async function reconcileDeltas(
   // be the last evidence for one; the verdicts then pass the same check in code.
   const guard = guardCaseOf(a, scoped);
   const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
-  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope);
+  await recordDeltaIds(ctx, caseId, record);
+  // Marked as the models' own text for the Presidio gate; the markers never leave the process.
+  const userPrompt = withAiSpans(() => buildReconcilePrompt(a, b, record.deltas, scoped, guardText, scope));
   const asked = askedReferee(referee);
   try {
     const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
     return flagRefereeDismissals(foldVerdicts(record, parsed, asked.current()), guard);
   } catch (err) {
     return withRefereeFailure(ctx, caseId, record, asked.current(), userPrompt, err);
+  }
+}
+
+/**
+ * The referee prompt tags each disagreement with an id built from the models' titles
+ * ("b_only:lateral-movement-velkor"). The Presidio gate matches values without regard to case, so
+ * the slug is an occurrence of the model's own word; record the ids as AI-written text with the
+ * answers they came from. Best effort: a failed write only means the gate holds that value.
+ * An analyst decision that lands after the titles are read makes the snapshot stale (a Leave visible
+ * forgets the titles that hold the value), so no id is recorded from it — as for a synthesis answer.
+ */
+async function recordDeltaIds(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  record: SecondOpinion,
+): Promise<void> {
+  const store = ctx.opts.aiAuthoredStore;
+  if (!store) return;
+  const readAt = anonRevision(caseId); // read BEFORE the titles are loaded
+  const stillValid = () => anonRevision(caseId) === readAt;
+  try {
+    // Only ids built from a title the model wrote: a backfill finding's title comes from an event.
+    // Compared token-neutral: a title holding a restored value never matches the masked record.
+    // An id carries the visible values its title was recorded with, so it is forgotten with it.
+    const written = new Map(
+      (await store.loadEntries(caseId)).map((e) => [neutralAuthored(e.text), e.visible]),
+    );
+    for (const d of record.deltas) {
+      const visible = written.get(neutralAuthored(d.title));
+      if (visible) await store.record(caseId, [d.id], { visible, stillValid });
+    }
+  } catch (err) {
+    ctx.log.warn(
+      `[presidio] could not record the 2nd-opinion ids as AI-written text: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
   }
 }
 
@@ -267,7 +310,8 @@ function withRefereeFailure(
   const message = flattenRefereeError(err);
   ctx.log.warn(`[second-opinion] reconcile pass failed: ${message}`, { caseId });
   const refereeError = { referee: referee.label, message, at: new Date().toISOString() };
-  return { ...record, refereeError, refereePrompt: userPrompt };
+  // Saved, shown to the analyst and re-sent by a referee-only re-run: never with the markers in it.
+  return { ...record, refereeError, refereePrompt: stripAiSpans(userPrompt) };
 }
 
 /**

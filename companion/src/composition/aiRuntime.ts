@@ -29,6 +29,7 @@ import type { VelociraptorClientStore } from "../analysis/velociraptorClientStor
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
+import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import {
   HttpPresidioClient,
   resolvePresidioMinScore,
@@ -176,6 +177,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     bulkImportSink: deps.bulkImportSink,
     presidio,
     presidioPendingStore: new PresidioPendingStore(store),
+    aiAuthoredStore: new AiAuthoredTextStore(store),
     secondOpinionProvider,
     secondOpinionStore,
     synthesisModelLabel,

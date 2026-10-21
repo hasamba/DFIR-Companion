@@ -13,6 +13,8 @@ import {
 import { needsCitationRetry, uncitedFindingIds, type CitationCounts } from "./findingCitations.js";
 import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
+import { authoredStrings, withGateProbe, withoutVisible } from "./presidioAuthoredText.js";
+import { anonRevision } from "../anonRevision.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
 // safety-stop fallback pushed that file past its size budget. synthesis.ts is the only caller.
@@ -165,13 +167,19 @@ export async function callSynthesisModel(
       fallbackFrom: choice.fallbackFrom,
     };
   };
-  const { answer, retriedAfter } = await answerWithCitations(ctx, caseId, {
-    answerOnce,
-    shown: opts.shownEventIds,
-    signal: opts.signal,
-    attempt: () => attempt,
-    setNote: (note) => (citationNote = note),
-  });
+  const maskedAt = anonRevision(caseId); // read BEFORE any call loads the entity lists
+  const gated = await withGateProbe(() =>
+    answerWithCitations(ctx, caseId, {
+      answerOnce,
+      shown: opts.shownEventIds,
+      signal: opts.signal,
+      attempt: () => attempt,
+      setNote: (note) => (citationNote = note),
+    }),
+  );
+  const { answer, retriedAfter } = gated.value;
+  // Only an answer from protected calls: with masking or Presidio off the model saw clear text.
+  if (gated.protectedOnly) await recordAuthored(ctx, caseId, gated.answers, maskedAt);
   return {
     delta: answer.delta,
     thinkingTokens,
@@ -186,6 +194,44 @@ export async function callSynthesisModel(
     ...(retriedAfter ? { citationRetriedAfter: retriedAfter } : {}),
     citationRetries: retriedAfter ? 1 : 0,
   };
+}
+
+/**
+ * Record the model's own text so the Presidio gate skips it in later prompts. Every synthesis
+ * answer passes here: model A's, model B's 2nd-opinion pass (never saved to the case) and the deep
+ * pass's closing synthesis. Extraction, hunt and next-step answers are deliberately NOT recorded —
+ * an extraction answer becomes timeline events, and the gate must keep scanning those.
+ *
+ * The answers are the ones the model sent, still masked: a placeholder stays a placeholder, so a
+ * real value restored into the case's copy is never recorded as the model's word. Every answer of
+ * the call is recorded, a retried one too — all of them are the model's own text from protected
+ * calls. Best effort: a failed write only means the gate holds that text's values again.
+ *
+ * A string that holds a value the analyst left visible is not recorded: the model saw that value in
+ * clear. And nothing is recorded when an analyst decision (Hide, Leave visible, un-suppress, a custom
+ * list save) landed during the call: the answer was written under lists that no longer hold, and the
+ * un-suppress route clears the record — this write must not bring it back.
+ */
+async function recordAuthored(
+  ctx: SynthesisContext,
+  caseId: string,
+  answers: readonly unknown[],
+  maskedAt: number,
+): Promise<void> {
+  const store = ctx.opts.aiAuthoredStore;
+  if (!store) return;
+  try {
+    const { suppressed } = ctx.opts.discoveredStore
+      ? await ctx.opts.discoveredStore.load(caseId)
+      : { suppressed: [] as string[] };
+    const strings = withoutVisible(answers.flatMap(authoredStrings), suppressed);
+    await store.record(caseId, strings, {
+      stillValid: () => anonRevision(caseId) === maskedAt,
+      visible: suppressed, // the model may have learned from these: forgotten when one changes
+    });
+  } catch (err) {
+    ctx.log.warn(`[presidio] could not record the AI-written text: ${(err as Error).message}`, { caseId });
+  }
 }
 
 /**
