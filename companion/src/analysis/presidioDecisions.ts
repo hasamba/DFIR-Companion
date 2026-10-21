@@ -37,6 +37,30 @@ export type ApproveOutcome =
 
 const decisionLock = new StateLock();
 
+/** The part of the AI-written text record a decision needs (aiAuthoredText.ts). */
+export interface AuthoredRecord {
+  clear(caseId: string): Promise<void>;
+  forget(caseId: string, value: string): Promise<void>;
+}
+
+/**
+ * Change whether `value` is visible, and forget the AI-written text that holds it, race-safe. Forgot
+ * FIRST, so a failed forget writes no decision. Forgot AGAIN after the write: a synthesis call that
+ * recorded in between is wiped, and one that records later sees the revision the write bumped and
+ * records nothing (synthesisCall.ts).
+ */
+export async function forgetAround<T>(
+  authored: AuthoredRecord | undefined,
+  caseId: string,
+  value: string,
+  write: () => Promise<T>,
+): Promise<T> {
+  await authored?.forget(caseId, value);
+  const out = await write();
+  await authored?.forget(caseId, value);
+  return out;
+}
+
 const key = (value: string): string => value.trim().toLowerCase();
 
 export class PresidioDecisions {
@@ -46,7 +70,7 @@ export class PresidioDecisions {
     private readonly pending: PresidioPendingStore,
     private readonly control?: AnonControlStore,
     // The AI-written text the Presidio gate skips (ai/presidioAuthoredText.ts), cleared below.
-    private readonly authored?: { clear(caseId: string): Promise<void> },
+    private readonly authored?: AuthoredRecord,
   ) {}
 
   /**
@@ -64,8 +88,11 @@ export class PresidioDecisions {
       }
       // Saved even when already present: the save bumps the list's version, so an editor window
       // that loaded the list before this Hide — and may be about to remove the value — is stale (#1839).
+      // Hide lifts a Leave-visible veto: the model saw the value in clear while it stood.
+      const wasVisible = (await this.discovered.load(caseId)).suppressed.includes(k);
+      const lift = () => this.discovered.unsuppress(caseId, entity.value);
       await this.custom.save(caseId, present ? existing : [...existing, entity]);
-      await this.discovered.unsuppress(caseId, entity.value);
+      await (wasVisible ? forgetAround(this.authored, caseId, entity.value, lift) : lift());
       const rest = (await this.pending.load(caseId)).filter((e) => key(e.value) !== k);
       await this.pending.save(caseId, rest);
       return { applied: true, pending: rest };
@@ -84,7 +111,7 @@ export class PresidioDecisions {
       if ([...custom, ...disc.discovered].some((e) => key(e.value) === k)) {
         return { applied: false, reason: "already_hidden", pending };
       }
-      await this.discovered.suppress(caseId, value);
+      await forgetAround(this.authored, caseId, value, () => this.discovered.suppress(caseId, value));
       const rest = pending.filter((e) => key(e.value) !== k);
       await this.pending.save(caseId, rest);
       return { applied: true, pending: rest };
@@ -131,8 +158,10 @@ export class PresidioDecisions {
       const next = build(cur);
       // Masking or Presidio off: the model will see clear text, so nothing it writes from now on —
       // and nothing recorded before — may excuse a value. Cleared FIRST: a failed clear saves nothing.
-      if (!next.enabled || !next.presidio) await this.authored?.clear(caseId);
+      const off = !next.enabled || !next.presidio;
+      if (off) await this.authored?.clear(caseId);
       await control.save(caseId, next);
+      if (off) await this.authored?.clear(caseId); // again: a call that recorded in between
       return { applied: true, control: next, previous: cur, version: anonControlVersion(next) };
     });
   }

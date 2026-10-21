@@ -16,6 +16,10 @@ import { AiAuthoredTextStore, AUTHORED_MAX_STRINGS } from "../../src/analysis/ai
 import { buildReconcilePrompt } from "../../src/analysis/secondOpinion.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
+import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
+import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
+import { PresidioDecisions, forgetAround } from "../../src/analysis/presidioDecisions.js";
 
 // Presidio skips text the synthesis model wrote, and still scans events and analyst notes. Reported
 // as: a 2nd opinion stopped on Presidio three times in a row, each time on values from text the
@@ -271,5 +275,54 @@ describe("AiAuthoredTextStore", () => {
     const kept = await s.load("c1");
     expect(kept).toHaveLength(AUTHORED_MAX_STRINGS);
     expect(kept[0]).toBe("summary number 5");
+  });
+});
+
+// Codex adversarial review, round 7: every change to whether a value is visible forgets the AI text
+// that holds it — and only that text, so the approval loop does not come back for other values.
+describe("PresidioDecisions forgets AI text that holds a value whose visibility changes", () => {
+  const WITH = "Jane Doe signed in to the domain controller.";
+  const WITHOUT = "Velkor ran on ANON_HOST_1 at night.";
+  async function setup() {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-decisions-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const authored = new AiAuthoredTextStore(cases);
+    const pending = new PresidioPendingStore(cases);
+    await pending.save("c1", [{ value: "Jane Doe", category: "PERSON" }]);
+    await authored.record("c1", [WITH, WITHOUT]);
+    const decisions = new PresidioDecisions(
+      new CustomEntitiesStore(cases),
+      new DiscoveredEntitiesStore(cases),
+      pending,
+      undefined,
+      authored,
+    );
+    return { authored, decisions };
+  }
+
+  it("Leave visible forgets the strings that hold the value, and keeps the rest", async () => {
+    const { authored, decisions } = await setup();
+    await decisions.suppress("c1", "jane doe");
+    expect(await authored.load("c1")).toEqual([WITHOUT]);
+  });
+
+  it("Hide forgets them when it lifts a Leave visible veto", async () => {
+    const { authored, decisions } = await setup();
+    await decisions.suppress("c1", "Jane Doe");
+    await authored.record("c1", [WITH]); // recorded again while the veto stood
+    await decisions.approve("c1", { value: "Jane Doe", category: "PERSON" });
+    expect(await authored.load("c1")).toEqual([WITHOUT]);
+  });
+
+  it("Hide of a value that was never left visible keeps the record", async () => {
+    const { authored, decisions } = await setup();
+    await decisions.approve("c1", { value: "Jane Doe", category: "PERSON" });
+    expect(await authored.load("c1")).toEqual([WITH, WITHOUT]);
+  });
+
+  it("wipes a string a call recorded while the decision was being written", async () => {
+    const { authored } = await setup();
+    await forgetAround(authored, "c1", "Jane Doe", () => authored.record("c1", [WITH]));
+    expect(await authored.load("c1")).toEqual([WITHOUT]);
   });
 });

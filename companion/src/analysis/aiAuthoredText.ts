@@ -3,7 +3,12 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
-import { AUTHORED_MAX_CHARS, AUTHORED_MIN_CHARS, normalizeAuthored } from "./ai/presidioAuthoredText.js";
+import {
+  AUTHORED_MAX_CHARS,
+  AUTHORED_MIN_CHARS,
+  normalizeAuthored,
+  withoutVisible,
+} from "./ai/presidioAuthoredText.js";
 
 /** Newest strings kept per case. Enough for many synthesis runs of a large case. */
 export const AUTHORED_MAX_STRINGS = 3000;
@@ -42,6 +47,20 @@ export class AiAuthoredTextStore {
   /** Forget everything recorded for the case — masking or Presidio was switched off, or a value un-suppressed. */
   async clear(caseId: string): Promise<void> {
     await lock.runExclusive(caseId, () => atomicWrite(this.path(caseId), JSON.stringify({ strings: [] })));
+  }
+
+  /**
+   * Forget every string that holds `value` — the analyst left it visible, or took that back. The model
+   * may have seen the value in clear, so no string that carries it is proof of anything. Only those
+   * strings go: clearing the whole record would bring the approval loop back for every other value.
+   */
+  async forget(caseId: string, value: string): Promise<void> {
+    await lock.runExclusive(caseId, async () => {
+      const strings = await this.load(caseId);
+      const kept = withoutVisible(strings, [value]);
+      if (kept.length !== strings.length)
+        await atomicWrite(this.path(caseId), JSON.stringify({ strings: kept }));
+    });
   }
 
   /**

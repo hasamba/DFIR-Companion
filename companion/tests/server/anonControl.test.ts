@@ -202,6 +202,13 @@ describe("/cases/:id/anon-entities", () => {
   });
 
   // Codex adversarial review, round 6: AI text recorded while a value was visible may carry it.
+  it("suppress forgets the AI-written text that holds the value", async () => {
+    const authored = new AiAuthoredTextStore(cases);
+    await authored.record("c1", ["Jane Doe signed in to the domain controller.", "Velkor ran at night."]);
+    await request(app).post("/cases/c1/anon-entities/suppress").send({ value: "Jane Doe" });
+    expect(await authored.load("c1")).toEqual(["Velkor ran at night."]);
+  });
+
   it("unsuppress drops the AI-written text record, so the Presidio gate scans it again", async () => {
     const authored = new AiAuthoredTextStore(cases);
     await authored.record("c1", ["Jane Doe signed in to the domain controller."]);

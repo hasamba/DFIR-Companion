@@ -505,24 +505,20 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     const discovered = new DiscoveredEntitiesStore(cases);
     const pendingStore = new PresidioPendingStore(cases);
     const authoredStore = new AiAuthoredTextStore(cases);
+    const custom = new CustomEntitiesStore(cases);
     const provider = new Copier();
     const pipeline = new AnalysisPipeline({
       provider,
       stateStore,
       anonStore,
+      customEntitiesStore: custom,
       discoveredStore: discovered,
       presidioPendingStore: pendingStore,
       presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
       aiAuthoredStore: authoredStore,
       imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     });
-    const decisions = new PresidioDecisions(
-      new CustomEntitiesStore(cases),
-      discovered,
-      pendingStore,
-      anonStore,
-      authoredStore,
-    );
+    const decisions = new PresidioDecisions(custom, discovered, pendingStore, anonStore, authoredStore);
     const dropSource = async () => {
       const s = await stateStore.load("c1");
       await stateStore.save({
@@ -530,7 +526,24 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
         forensicTimeline: [event("e2", "lsass.exe memory read by procdump.exe")],
       });
     };
-    return { pipeline, provider, discovered, decisions, authoredStore, stateStore, dropSource };
+    const addSource = async () => {
+      const s = await stateStore.load("c1");
+      await stateStore.save({
+        ...s,
+        forensicTimeline: [...s.forensicTimeline, event("e3", "User Jane Doe signed in")],
+      });
+    };
+    return {
+      pipeline,
+      provider,
+      discovered,
+      decisions,
+      custom,
+      authoredStore,
+      stateStore,
+      dropSource,
+      addSource,
+    };
   }
 
   it("holds the name after Leave visible → synthesis → un-suppress, once its event is gone", async () => {
@@ -543,6 +556,22 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     expect(await authoredStore.load("c1")).not.toContain(COPIED);
 
     await discovered.unsuppress("c1", "Jane Doe"); // the analyst takes Leave visible back
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  // Codex adversarial review, round 7: text recorded BEFORE the value was left visible.
+  it("holds the name after record → Leave visible → Hide → custom removal → event removal", async () => {
+    const { pipeline, decisions, custom, authoredStore, dropSource, addSource } = await setupCase(
+      "lsass.exe memory read by procdump.exe",
+    );
+    await pipeline.synthesize("c1", { force: true }); // a quiet, protected call records the summary
+    expect(await authoredStore.load("c1")).toContain(COPIED);
+    await addSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible
+    expect((await decisions.approve("c1", { value: "Jane Doe", category: "PERSON" })).applied).toBe(true); // Hide
+    await custom.save("c1", []); // the analyst removes it from the custom list
     await dropSource();
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
