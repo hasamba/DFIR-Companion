@@ -56,12 +56,13 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
+  const aiAuthoredText = new AiAuthoredTextStore(store);
   const presidioDecisions = new PresidioDecisions(
     customEntities,
     discoveredEntities,
     presidioPending,
     anonControl,
-    new AiAuthoredTextStore(store),
+    aiAuthoredText,
   );
 
   /**
@@ -285,6 +286,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
       if (!value) return res.status(400).json({ error: "value is required" });
       const next = await discoveredEntities.unsuppress(req.params.id, value);
+      // AI text recorded while the value was visible may carry it; the Presidio gate must scan it again.
+      await aiAuthoredText.clear(req.params.id);
       return res.status(200).json({ suppressed: next.suppressed });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

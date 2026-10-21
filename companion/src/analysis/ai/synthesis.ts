@@ -69,6 +69,7 @@ import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js"
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
+import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 import { withAiSpans } from "./aiSpan.js";
 
@@ -119,6 +120,7 @@ export interface SynthesisContext
       synthesisFallback?: SynthesisFallback; // #1734
       synthesisSafetyRetries?: number; // #1740
       aiAuthoredStore?: AiAuthoredTextStore; // what the Presidio gate skips (presidioAuthoredText.ts)
+      discoveredStore?: DiscoveredEntitiesStore; // its suppressed list: values the model saw in clear
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;

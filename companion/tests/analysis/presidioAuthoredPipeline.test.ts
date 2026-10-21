@@ -14,6 +14,7 @@ import { AiAuthoredTextStore } from "../../src/analysis/aiAuthoredText.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import { PresidioApprovalRequired, type PresidioClient } from "../../src/analysis/presidio.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { bumpAnonRevision } from "../../src/analysis/anonRevision.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
 // The approval loop, end to end through a real synthesis: the model's summary rides in the next
@@ -473,5 +474,88 @@ describe("a restored value is never recorded as the model's word", () => {
     const s = await stateStore.load("c1");
     await stateStore.save({ ...s, forensicTimeline: [event("e2", "lsass.exe memory read by procdump.exe")] });
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});
+
+// Codex adversarial review, round 6: "Leave visible" sends the value to the model in clear. An answer
+// that copies it must not become trusted AI text, or un-suppressing the value later would not bring
+// the gate back for it.
+describe("a value the analyst left visible is never trusted as AI text", () => {
+  const COPIED = "Jane Doe signed in to the domain controller from the VPN at night.";
+  const janeDoe: PresidioClient = {
+    analyze: async (text) =>
+      [...text.matchAll(/Jane\s+Doe/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+  };
+  class Copier extends SummaryProvider {
+    /** Runs inside each call, as an analyst click that lands mid-call would. */
+    during: () => void = () => {};
+    override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      this.during();
+      const r = await super.analyze(req);
+      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(COPIED)) };
+    }
+  }
+
+  async function setupCase(description: string) {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-visible-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({ ...emptyState("c1"), forensicTimeline: [event("e1", description)] });
+    const anonStore = new AnonControlStore(cases);
+    const discovered = new DiscoveredEntitiesStore(cases);
+    const pendingStore = new PresidioPendingStore(cases);
+    const authoredStore = new AiAuthoredTextStore(cases);
+    const provider = new Copier();
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      anonStore,
+      discoveredStore: discovered,
+      presidioPendingStore: pendingStore,
+      presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
+      aiAuthoredStore: authoredStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const decisions = new PresidioDecisions(
+      new CustomEntitiesStore(cases),
+      discovered,
+      pendingStore,
+      anonStore,
+      authoredStore,
+    );
+    const dropSource = async () => {
+      const s = await stateStore.load("c1");
+      await stateStore.save({
+        ...s,
+        forensicTimeline: [event("e2", "lsass.exe memory read by procdump.exe")],
+      });
+    };
+    return { pipeline, provider, discovered, decisions, authoredStore, stateStore, dropSource };
+  }
+
+  it("holds the name after Leave visible → synthesis → un-suppress, once its event is gone", async () => {
+    const { pipeline, discovered, decisions, authoredStore, stateStore, dropSource } =
+      await setupCase("User Jane Doe signed in");
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible
+    await pipeline.synthesize("c1", { force: true }); // the model sees the name and copies it
+    expect((await stateStore.load("c1")).lastSummary).toBe(COPIED);
+    expect(await authoredStore.load("c1")).not.toContain(COPIED);
+
+    await discovered.unsuppress("c1", "Jane Doe"); // the analyst takes Leave visible back
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  it("records nothing from a call an analyst decision landed during", async () => {
+    const run = async (during: () => void) => {
+      const { pipeline, provider, authoredStore, dropSource } = await setupCase("User Jane Doe signed in");
+      await dropSource(); // the name is only in what the model writes
+      provider.during = during;
+      await pipeline.synthesize("c1", { force: true });
+      return authoredStore.load("c1");
+    };
+    expect(await run(() => bumpAnonRevision("c1"))).toEqual([]);
+    expect(await run(() => {})).toContain(COPIED); // a quiet call still records
   });
 });

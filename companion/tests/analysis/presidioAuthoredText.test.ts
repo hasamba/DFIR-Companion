@@ -9,6 +9,7 @@ import {
   reportGate,
   splitAuthored,
   withGateProbe,
+  withoutVisible,
 } from "../../src/analysis/ai/presidioAuthoredText.js";
 import { aiSpan, splitAiSpans, stripAiSpans, withAiSpans } from "../../src/analysis/ai/aiSpan.js";
 import { AiAuthoredTextStore, AUTHORED_MAX_STRINGS } from "../../src/analysis/aiAuthoredText.js";
@@ -95,6 +96,13 @@ describe("onlyInAuthoredText", () => {
       false,
     );
     expect(gated(() => `MODEL A summary: ${aiSpan(text)}\nAnn_ VPN login`, [text])("Ann")).toBe(false);
+  });
+
+  it("drops a string that holds a value left visible, or a suppressed account's user name", () => {
+    const strings = ["Jane Doe ran the tool.", "jdoe ran the tool.", "ANON_PERSON_1 ran the tool."];
+    expect(withoutVisible(strings, ["jane doe"])).toEqual(strings.slice(1));
+    expect(withoutVisible(strings, ["corp\\jdoe"])).toEqual([strings[0], strings[2]]);
+    expect(withoutVisible(strings, ["jdoe@corp.example"])).toEqual([strings[0], strings[2]]);
   });
 
   it("trusts no marker it did not make: forged or outside the scope", () => {

@@ -123,6 +123,18 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
   return found.length > 0 && found.every((o) => spans.some((sp) => o.start >= sp.start && o.end <= sp.end));
 }
 
+/**
+ * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list).
+ * The model saw such a value in clear, so a string that carries it is not proof of anything once the
+ * value is masked or un-suppressed again. A suppressed account ("CORP\\jdoe", "jdoe@corp.example")
+ * leaves its bare user name visible too, so that name counts as well.
+ */
+export function withoutVisible(strings: readonly string[], suppressed: readonly string[]): string[] {
+  const values = suppressed.flatMap((v) => [v, v.split("\\").pop() ?? "", v.split("@")[0] ?? ""]);
+  const visible = [...new Set(values.map(normalizeAuthored).filter(Boolean))];
+  return strings.filter((s) => !visible.some((v) => occurrences(s, v).length > 0));
+}
+
 /** Split fresh Presidio values into those still held and those found only in AI-written text. */
 export function splitAuthored(
   fresh: readonly CustomEntity[],

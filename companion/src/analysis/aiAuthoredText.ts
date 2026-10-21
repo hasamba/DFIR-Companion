@@ -39,16 +39,24 @@ export class AiAuthoredTextStore {
     }
   }
 
-  /** Forget everything recorded for the case — masking or Presidio was switched off. */
+  /** Forget everything recorded for the case — masking or Presidio was switched off, or a value un-suppressed. */
   async clear(caseId: string): Promise<void> {
     await lock.runExclusive(caseId, () => atomicWrite(this.path(caseId), JSON.stringify({ strings: [] })));
   }
 
-  /** Add strings, newest last; an already-recorded string moves to the end. Oldest drop past the cap. */
-  async record(caseId: string, strings: readonly string[]): Promise<void> {
+  /**
+   * Add strings, newest last; an already-recorded string moves to the end. Oldest drop past the cap.
+   * `stillValid` is asked inside the lock, so a clear that lands first always wins over this write.
+   */
+  async record(
+    caseId: string,
+    strings: readonly string[],
+    stillValid: () => boolean = () => true,
+  ): Promise<void> {
     const added = sanitize(strings);
     if (added.length === 0) return;
     await lock.runExclusive(caseId, async () => {
+      if (!stillValid()) return;
       const fresh = new Set(added);
       const kept = (await this.load(caseId)).filter((s) => !fresh.has(s));
       const all = [...kept, ...added].slice(-AUTHORED_MAX_STRINGS);
