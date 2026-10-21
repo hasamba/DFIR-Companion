@@ -8,7 +8,7 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { AnonControlStore, anonControlVersion } from "../../src/analysis/anonControl.js";
 import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
-import { PresidioDecisions } from "../../src/analysis/presidioDecisions.js";
+import { PresidioDecisions, forgetAround } from "../../src/analysis/presidioDecisions.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { AiAuthoredTextStore } from "../../src/analysis/aiAuthoredText.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
@@ -482,17 +482,19 @@ describe("a restored value is never recorded as the model's word", () => {
 // the gate back for it.
 describe("a value the analyst left visible is never trusted as AI text", () => {
   const COPIED = "Jane Doe signed in to the domain controller from the VPN at night.";
+  /** Flags the full name, and the first name on its own, as Presidio would. */
   const janeDoe: PresidioClient = {
     analyze: async (text) =>
-      [...text.matchAll(/Jane\s+Doe/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+      [...text.matchAll(/Jane(?:\s+Doe)?/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
   };
   class Copier extends SummaryProvider {
     /** Runs inside each call, as an analyst click that lands mid-call would. */
     during: () => void = () => {};
+    summary = COPIED;
     override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
       this.during();
       const r = await super.analyze(req);
-      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(COPIED)) };
+      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(this.summary)) };
     }
   }
 
@@ -572,6 +574,23 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible
     expect((await decisions.approve("c1", { value: "Jane Doe", category: "PERSON" })).applied).toBe(true); // Hide
     await custom.save("c1", []); // the analyst removes it from the custom list
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  // Codex adversarial review, round 8: the model learns from a visible value without repeating it whole.
+  it("holds the first name after Leave visible → first-name-only synthesis → un-suppress → event removal", async () => {
+    const FIRST = "Jane performed the suspicious login on the domain controller.";
+    const { pipeline, provider, discovered, decisions, authoredStore, dropSource } =
+      await setupCase("User Jane Doe signed in");
+    provider.summary = FIRST;
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect((await decisions.suppress("c1", "Jane Doe")).applied).toBe(true); // Leave visible
+    await pipeline.synthesize("c1", { force: true }); // the model saw "Jane Doe", wrote only "Jane"
+    expect(await authoredStore.load("c1")).toContain(FIRST); // nothing in the text names the full value
+    // The un-suppress route's write, in the same order.
+    await forgetAround(authoredStore, "c1", "Jane Doe", () => discovered.unsuppress("c1", "Jane Doe"));
+    expect(await authoredStore.load("c1")).not.toContain(FIRST);
     await dropSource();
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });

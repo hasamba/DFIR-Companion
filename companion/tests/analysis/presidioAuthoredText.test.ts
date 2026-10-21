@@ -326,3 +326,31 @@ describe("PresidioDecisions forgets AI text that holds a value whose visibility 
     expect(await authored.load("c1")).toEqual([WITHOUT]);
   });
 });
+
+// Codex adversarial review, round 8: a string recorded while a value was visible carries that value.
+describe("AiAuthoredTextStore tags strings with the values left visible", () => {
+  async function store() {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-tags-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    return new AiAuthoredTextStore(cases);
+  }
+  const FIRST = "Jane performed the suspicious login.";
+  const OTHER = "Velkor ran on ANON_HOST_1 at night.";
+
+  it("forgets a string recorded while the value was visible, even when it never names it", async () => {
+    const s = await store();
+    await s.record("c1", [FIRST], { visible: ["Jane Doe"] });
+    await s.record("c1", [OTHER]);
+    await s.forget("c1", "jane doe");
+    expect(await s.load("c1")).toEqual([OTHER]);
+  });
+
+  it("keeps the tags of an earlier record when the same string is recorded again", async () => {
+    const s = await store();
+    await s.record("c1", [FIRST], { visible: ["jane doe"] });
+    await s.record("c1", [FIRST]); // the value is no longer visible; the string still came from it
+    expect((await s.loadEntries("c1"))[0]?.visible).toEqual(["jane doe"]);
+    await s.forget("c1", "Jane Doe");
+    expect(await s.load("c1")).toEqual([]);
+  });
+});

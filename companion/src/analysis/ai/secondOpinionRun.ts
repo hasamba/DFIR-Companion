@@ -201,11 +201,14 @@ async function recordDeltaIds(
   try {
     // Only ids built from a title the model wrote: a backfill finding's title comes from an event.
     // Compared token-neutral: a title holding a restored value never matches the masked record.
-    const written = new Set((await store.load(caseId)).map(neutralAuthored));
-    await store.record(
-      caseId,
-      record.deltas.filter((d) => written.has(neutralAuthored(d.title))).map((d) => d.id),
+    // An id carries the visible values its title was recorded with, so it is forgotten with it.
+    const written = new Map(
+      (await store.loadEntries(caseId)).map((e) => [neutralAuthored(e.text), e.visible]),
     );
+    for (const d of record.deltas) {
+      const visible = written.get(neutralAuthored(d.title));
+      if (visible) await store.record(caseId, [d.id], { visible });
+    }
   } catch (err) {
     ctx.log.warn(
       `[presidio] could not record the 2nd-opinion ids as AI-written text: ${(err as Error).message}`,

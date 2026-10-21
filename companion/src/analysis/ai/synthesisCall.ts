@@ -225,7 +225,10 @@ async function recordAuthored(
       ? await ctx.opts.discoveredStore.load(caseId)
       : { suppressed: [] as string[] };
     const strings = withoutVisible(answers.flatMap(authoredStrings), suppressed);
-    await store.record(caseId, strings, () => anonRevision(caseId) === maskedAt);
+    await store.record(caseId, strings, {
+      stillValid: () => anonRevision(caseId) === maskedAt,
+      visible: suppressed, // the model may have learned from these: forgotten when one changes
+    });
   } catch (err) {
     ctx.log.warn(`[presidio] could not record the AI-written text: ${(err as Error).message}`, { caseId });
   }
