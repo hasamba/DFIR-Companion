@@ -610,25 +610,30 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
   });
 
   // Codex adversarial review, round 10: a one-character surname, the value still left visible.
-  it("holds the surname 王 while 王 小明 stays left visible, once its event is gone", async () => {
-    const SURNAME = "王 accessed the sensitive archive on the file server.";
+  // Codex adversarial review, rounds 10 and 13: a one-character surname, or a given name copied from
+  // a name written with no space, the value still left visible.
+  it.each([
+    ["王 小明", "王 accessed the sensitive archive on the file server."],
+    ["王小明", "王 accessed the sensitive archive on the file server."],
+    ["王小明", "小明 accessed the sensitive archive on the file server."],
+  ])("holds part of %s in %s while it stays left visible, once its event is gone", async (name, summary) => {
     const wang: PresidioClient = {
       analyze: async (text) =>
-        [...text.matchAll(/王(?:\s*小明)?/gu)].map((m) => ({
+        [...text.matchAll(/王(?:\s*小明)?|小明/gu)].map((m) => ({
           entityType: "PERSON",
           value: m[0],
           score: 0.9,
         })),
     };
     const { pipeline, provider, decisions, authoredStore, dropSource } = await setupCase(
-      "User 王 小明 signed in",
+      `User ${name} signed in`,
       wang,
     );
-    provider.summary = SURNAME;
+    provider.summary = summary;
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
-    expect((await decisions.suppress("c1", "王 小明")).applied).toBe(true); // Leave visible, and it stays
-    await pipeline.synthesize("c1", { force: true }); // the model saw the full name, wrote only "王"
-    expect(await authoredStore.load("c1")).not.toContain(SURNAME);
+    expect((await decisions.suppress("c1", name)).applied).toBe(true); // Leave visible, and it stays
+    await pipeline.synthesize("c1", { force: true }); // the model saw the full name, wrote only part
+    expect(await authoredStore.load("c1")).not.toContain(summary);
     await dropSource();
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });

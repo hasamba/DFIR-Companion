@@ -125,6 +125,9 @@ describe("onlyInAuthoredText", () => {
       "The operator ran Velkor.",
     ];
     expect(withoutVisible(cjk, ["王 小明"])).toEqual([cjk[2]]);
+    // Codex adversarial review, round 13: the same name written with no space.
+    expect(withoutVisible(cjk, ["王小明"])).toEqual([cjk[2]]);
+    expect(withoutVisible(["小明 accessed the archive.", cjk[2]], ["王小明"])).toEqual([cjk[2]]);
     const initial = ["J. Doe-like initials: J signed in.", "Jobs ran at night on the server."];
     expect(withoutVisible(initial, ["j smith"])).toEqual([initial[1]]); // "J" only as a whole word
   });

@@ -130,6 +130,7 @@ function onlyInSpans(maskedText: string, value: string, spans: readonly Authored
  */
 const VISIBLE_PART_SUBSTRING_CHARS = 3;
 const CASELESS_LETTER = /\p{Lo}/u;
+const CASELESS_LETTERS = /\p{Lo}/gu;
 /**
  * What may not stand beside a short part for it to count as a word. For a part with a letter, only
  * another letter: "_" and digits end it, so "Li" counts in "Li_backup" and in "Li2026", identifiers
@@ -146,13 +147,16 @@ const shortPart = (p: string): RegExp => {
 /**
  * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
  * no part of one. The model saw such a value in clear, and may repeat only part of it — "Jane" from
- * "Jane Doe", "jdoe" from "CORP\\jdoe", the surname "王" from "王 小明", an initial — which the analyst
+ * "Jane Doe", "jdoe" from "CORP\\jdoe", the surname "王" from "王小明", an initial — which the analyst
  * never approved. So a string that carries the value or any word of it is not proof the model wrote
  * it on its own.
  */
 export function withoutVisible(strings: readonly string[], suppressed: readonly string[]): string[] {
   const whole = suppressed.map(normalizeAuthored).filter(Boolean);
-  const parts = [...new Set(whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter(Boolean))];
+  const words = whole.flatMap((v) => v.split(/[^\p{L}\p{N}]+/u)).filter(Boolean);
+  // A caseless script writes a name with no space ("王小明"), so no split finds its surname or given
+  // name: every caseless letter counts as a part of its own, and a copied "王" or "小明" drops the string.
+  const parts = [...new Set(words.flatMap((w) => [w, ...(w.match(CASELESS_LETTERS) ?? [])]))];
   const anywhere = (p: string) => p.length >= VISIBLE_PART_SUBSTRING_CHARS || CASELESS_LETTER.test(p);
   const long = [...new Set([...whole, ...parts.filter(anywhere)])];
   const short = parts.filter((p) => !anywhere(p)).map(shortPart);
