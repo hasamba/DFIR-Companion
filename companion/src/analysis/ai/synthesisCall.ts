@@ -13,7 +13,7 @@ import {
 import { needsCitationRetry, uncitedFindingIds, type CitationCounts } from "./findingCitations.js";
 import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
-import { authoredStrings } from "./presidioAuthoredText.js";
+import { authoredStrings, withGateProbe } from "./presidioAuthoredText.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
 // safety-stop fallback pushed that file past its size budget. synthesis.ts is the only caller.
@@ -166,14 +166,18 @@ export async function callSynthesisModel(
       fallbackFrom: choice.fallbackFrom,
     };
   };
-  const { answer, retriedAfter } = await answerWithCitations(ctx, caseId, {
-    answerOnce,
-    shown: opts.shownEventIds,
-    signal: opts.signal,
-    attempt: () => attempt,
-    setNote: (note) => (citationNote = note),
-  });
-  await recordAuthored(ctx, caseId, answer.delta);
+  const gated = await withGateProbe(() =>
+    answerWithCitations(ctx, caseId, {
+      answerOnce,
+      shown: opts.shownEventIds,
+      signal: opts.signal,
+      attempt: () => attempt,
+      setNote: (note) => (citationNote = note),
+    }),
+  );
+  const { answer, retriedAfter } = gated.value;
+  // Only an answer from protected calls: with masking or Presidio off the model saw clear text.
+  if (gated.protectedOnly) await recordAuthored(ctx, caseId, answer.delta);
   return {
     delta: answer.delta,
     thinkingTokens,

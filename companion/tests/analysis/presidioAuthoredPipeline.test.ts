@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
-import { AnonControlStore } from "../../src/analysis/anonControl.js";
+import { AnonControlStore, anonControlVersion } from "../../src/analysis/anonControl.js";
+import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
+import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
+import { PresidioDecisions } from "../../src/analysis/presidioDecisions.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { AiAuthoredTextStore } from "../../src/analysis/aiAuthoredText.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
@@ -323,5 +326,96 @@ describe("Presidio holds a value that event or analyst text carries (Codex revie
   it("holds the value for round 2: an analyst note that repeats the AI summary", async () => {
     const { second } = await caseWith({ notes: [AI_SUMMARY] });
     await expect(second()).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});
+
+// Codex adversarial review, round 3: an answer written while the model saw clear text must never
+// excuse a value. Presidio (or masking) off → the model copies a real name into its summary →
+// protection back on → the event that carried the name is gone, the summary is not.
+describe("an answer written without protection is never recorded as AI text", () => {
+  const COPIED = "Jane Doe signed in to the domain controller from the VPN at night.";
+  const janeDoe: PresidioClient = {
+    analyze: async (text) =>
+      [...text.matchAll(/Jane\s+Doe/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+  };
+  class Copier extends SummaryProvider {
+    override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      const r = await super.analyze(req);
+      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(COPIED)) };
+    }
+  }
+
+  async function setupCase() {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-unprotected-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [event("e1", "User Jane Doe signed in")],
+    });
+    const anonStore = new AnonControlStore(cases);
+    const authoredStore = new AiAuthoredTextStore(cases);
+    const pendingStore = new PresidioPendingStore(cases);
+    const pipeline = new AnalysisPipeline({
+      provider: new Copier(),
+      stateStore,
+      anonStore,
+      presidioPendingStore: pendingStore,
+      presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
+      aiAuthoredStore: authoredStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const decisions = new PresidioDecisions(
+      new CustomEntitiesStore(cases),
+      new DiscoveredEntitiesStore(cases),
+      pendingStore,
+      anonStore,
+      authoredStore,
+    );
+    /** Change the case's settings the way the Anonymization modal's Save does. */
+    const setControl = async (patch: { enabled?: boolean; presidio?: boolean }) => {
+      const cur = await anonStore.load("c1");
+      const outcome = await decisions.replaceControl(
+        "c1",
+        (c) => ({ ...c, ...patch }),
+        anonControlVersion(cur),
+      );
+      expect(outcome.applied).toBe(true);
+    };
+    /** Drop the event that carried the name; the model's summary stays in the case. */
+    const dropSource = async () => {
+      const s = await stateStore.load("c1");
+      await stateStore.save({
+        ...s,
+        forensicTimeline: [event("e2", "lsass.exe memory read by procdump.exe")],
+      });
+    };
+    return { pipeline, authoredStore, setControl, dropSource, stateStore };
+  }
+
+  it.each([
+    ["Presidio", { presidio: false }, { presidio: true }],
+    ["masking", { enabled: false }, { enabled: true }],
+  ] as const)("holds the copied name after %s comes back on", async (_label, off, on) => {
+    const { pipeline, authoredStore, setControl, dropSource, stateStore } = await setupCase();
+    await setControl(off);
+    await pipeline.synthesize("c1", { force: true }); // the model copies the name, unprotected
+    expect((await stateStore.load("c1")).lastSummary).toBe(COPIED);
+    expect(await authoredStore.load("c1")).toEqual([]); // nothing recorded from that call
+    await setControl(on);
+    await dropSource();
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+
+  it("forgets the record when Presidio is switched off, so it cannot excuse a value later", async () => {
+    const { pipeline, authoredStore, setControl, dropSource } = await setupCase();
+    await dropSource(); // the name is only in what the model will write
+    // A protected run that records its own text — here, the summary that names Jane Doe.
+    await pipeline.synthesize("c1", { force: true });
+    expect(await authoredStore.load("c1")).toContain(COPIED);
+    await setControl({ presidio: false });
+    expect(await authoredStore.load("c1")).toEqual([]);
+    await setControl({ presidio: true });
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
 });

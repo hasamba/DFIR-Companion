@@ -6,7 +6,9 @@ import {
   authoredStrings,
   maskSegments,
   onlyInAuthoredText,
+  reportGate,
   splitAuthored,
+  withGateProbe,
 } from "../../src/analysis/ai/presidioAuthoredText.js";
 import { aiSpan, splitAiSpans, stripAiSpans, withAiSpans } from "../../src/analysis/ai/aiSpan.js";
 import { AiAuthoredTextStore, AUTHORED_MAX_STRINGS } from "../../src/analysis/aiAuthoredText.js";
@@ -120,6 +122,36 @@ describe("splitAuthored", () => {
       held: fresh,
       skipped: [],
     });
+  });
+});
+
+// Codex round 3: only an answer from protected calls is recorded. A retry that ran unprotected
+// spoils the whole answer, and a call path that reports nothing counts as unprotected.
+describe("withGateProbe", () => {
+  const probe = (reports: boolean[]) =>
+    withGateProbe(async () => {
+      for (const r of reports) {
+        await Promise.resolve(); // reported across awaits, as prepareCall does
+        reportGate(r);
+      }
+    }).then((r) => r.protectedOnly);
+
+  it("is protected only when every call reported protection", async () => {
+    expect(await probe([true])).toBe(true);
+    expect(await probe([true, true])).toBe(true);
+  });
+
+  it("is not protected when any call ran unprotected", async () => {
+    expect(await probe([true, false])).toBe(false);
+    expect(await probe([false])).toBe(false);
+  });
+
+  it("is not protected when no call reported at all", async () => {
+    expect(await probe([])).toBe(false);
+  });
+
+  it("ignores a report made outside any probe", () => {
+    expect(() => reportGate(false)).not.toThrow();
   });
 });
 

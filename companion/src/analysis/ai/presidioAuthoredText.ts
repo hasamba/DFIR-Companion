@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { CustomEntity } from "../anonymize.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
@@ -170,4 +171,28 @@ export async function authoredFor(
     );
     return undefined;
   }
+}
+
+/**
+ * Which calls may be recorded as AI-written text. The premise of the skip is that the model only ever
+ * saw protected prompts, so it cannot have learned a real value that was hidden from it. An answer
+ * from a call made with masking or the Presidio gate off breaks that premise: the model saw clear
+ * text and may copy a real name into its summary. So the synthesis call runs inside a probe, every
+ * prepared call reports whether it was protected, and the answer is recorded only when all were.
+ */
+const gateProbe = new AsyncLocalStorage<{ calls: number; unprotected: number }>();
+
+/** Run `fn`; `protectedOnly` is true when at least one call ran, and every call was protected. */
+export async function withGateProbe<T>(fn: () => Promise<T>): Promise<{ value: T; protectedOnly: boolean }> {
+  const probe = { calls: 0, unprotected: 0 };
+  const value = await gateProbe.run(probe, fn);
+  return { value, protectedOnly: probe.calls > 0 && probe.unprotected === 0 };
+}
+
+/** prepareCall's report: did this call run with masking on and the Presidio gate checking it? */
+export function reportGate(protectedCall: boolean): void {
+  const probe = gateProbe.getStore();
+  if (!probe) return;
+  probe.calls++;
+  if (!protectedCall) probe.unprotected++;
 }

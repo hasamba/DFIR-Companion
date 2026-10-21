@@ -18,9 +18,11 @@ export const AUTHORED_MAX_STRINGS = 3000;
  * Holds real values, like the case state the same text already sits in. A missing or unreadable
  * file reads as empty, which means "skip nothing": the gate then holds every value, as before.
  */
-export class AiAuthoredTextStore {
-  private readonly lock = new StateLock();
+// One lock for every instance: the anonymization route clears the record through its own instance,
+// and a clear racing a pipeline instance's read-modify-write would bring the cleared strings back.
+const lock = new StateLock();
 
+export class AiAuthoredTextStore {
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -37,11 +39,16 @@ export class AiAuthoredTextStore {
     }
   }
 
+  /** Forget everything recorded for the case — masking or Presidio was switched off. */
+  async clear(caseId: string): Promise<void> {
+    await lock.runExclusive(caseId, () => atomicWrite(this.path(caseId), JSON.stringify({ strings: [] })));
+  }
+
   /** Add strings, newest last; an already-recorded string moves to the end. Oldest drop past the cap. */
   async record(caseId: string, strings: readonly string[]): Promise<void> {
     const added = sanitize(strings);
     if (added.length === 0) return;
-    await this.lock.runExclusive(caseId, async () => {
+    await lock.runExclusive(caseId, async () => {
       const fresh = new Set(added);
       const kept = (await this.load(caseId)).filter((s) => !fresh.has(s));
       const all = [...kept, ...added].slice(-AUTHORED_MAX_STRINGS);

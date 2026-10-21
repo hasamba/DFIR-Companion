@@ -4,6 +4,7 @@ import { AnonControlStore, anonControlVersion, type AnonControl } from "../analy
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
+import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import { PresidioDecisions } from "../analysis/presidioDecisions.js";
 import { isLocalAiProvider, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
@@ -60,6 +61,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     discoveredEntities,
     presidioPending,
     anonControl,
+    new AiAuthoredTextStore(store),
   );
 
   /**

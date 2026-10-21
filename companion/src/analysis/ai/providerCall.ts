@@ -34,7 +34,13 @@ import {
 } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
-import { authoredFor, maskSegments, splitAuthored, type AuthoredText } from "./presidioAuthoredText.js";
+import {
+  authoredFor,
+  maskSegments,
+  reportGate,
+  splitAuthored,
+  type AuthoredText,
+} from "./presidioAuthoredText.js";
 import { splitAiSpans } from "./aiSpan.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { servedModels } from "../servedModels.js";
@@ -628,7 +634,10 @@ async function prepareCall(
       `anonymize=${policy.enabled ? "on" : "off"}`,
     { caseId },
   );
-  if (!policy.enabled) return { req: { ...req, userPrompt: plainPrompt }, anon: null };
+  if (!policy.enabled) {
+    reportGate(false); // the model sees clear text: its answer may not be recorded as AI text
+    return { req: { ...req, userPrompt: plainPrompt }, anon: null };
+  }
   const known = await knownEntitiesFor(ctx, caseId, state);
   const anon = createAnonymizer(policy, known);
   ctx.log.debug(`anonymized prompt before [${label}] AI call`, { caseId });
@@ -656,6 +665,8 @@ async function prepareCall(
         restore: (t) => anon.restore(t),
       }),
     );
+  // Protected only when the gate ran on THIS call: an import pre-scan's coverage is not a synthesis.
+  reportGate(!skipPresidioGate && Boolean(ctx.opts.presidio) && presidioEnabledFor(control));
   return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
 }
 

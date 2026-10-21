@@ -45,6 +45,8 @@ export class PresidioDecisions {
     private readonly discovered: DiscoveredEntitiesStore,
     private readonly pending: PresidioPendingStore,
     private readonly control?: AnonControlStore,
+    // The AI-written text the Presidio gate skips (ai/presidioAuthoredText.ts), cleared below.
+    private readonly authored?: { clear(caseId: string): Promise<void> },
   ) {}
 
   /**
@@ -127,6 +129,9 @@ export class PresidioDecisions {
         return { applied: false, reason: "stale", control: cur, version: anonControlVersion(cur) };
       }
       const next = build(cur);
+      // Masking or Presidio off: the model will see clear text, so nothing it writes from now on —
+      // and nothing recorded before — may excuse a value. Cleared FIRST: a failed clear saves nothing.
+      if (!next.enabled || !next.presidio) await this.authored?.clear(caseId);
       await control.save(caseId, next);
       return { applied: true, control: next, previous: cur, version: anonControlVersion(next) };
     });
