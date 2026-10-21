@@ -665,6 +665,39 @@ describe("a value the analyst left visible is never trusted as AI text", () => {
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
 
+  // Codex adversarial review, round 14: the model shortens the visible name instead of copying a word.
+  it.each([
+    [
+      "Alexander Smith",
+      "Alex accessed the sensitive archive on the file server.",
+      /Alexander Smith|Alex(?![a-z])/g,
+    ],
+    ["Jane Doe", "J. D. accessed the sensitive archive on the file server.", /Jane Doe|J\. D\./g],
+  ])(
+    "holds a shortened %s in %s while it stays left visible, once its event is gone",
+    async (name, summary, re) => {
+      const client: PresidioClient = {
+        analyze: async (text) =>
+          [...text.matchAll(re)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+      };
+      const { pipeline, provider, decisions, authoredStore, dropSource } = await setupCase(
+        `User ${name} signed in`,
+        client,
+      );
+      provider.summary = summary;
+      await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(
+        PresidioApprovalRequired,
+      );
+      expect((await decisions.suppress("c1", name)).applied).toBe(true); // Leave visible, and it stays
+      await pipeline.synthesize("c1", { force: true }); // the model saw the name, wrote a shortened form
+      expect(await authoredStore.load("c1")).not.toContain(summary);
+      await dropSource();
+      await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(
+        PresidioApprovalRequired,
+      );
+    },
+  );
+
   // Codex adversarial review, round 11: a hidden value that starts before an AI span and ends in it.
   it("masks a hidden value that crosses into the AI summary, and sends it masked", async () => {
     const { pipeline, provider, custom, authoredStore } = await setupCase(

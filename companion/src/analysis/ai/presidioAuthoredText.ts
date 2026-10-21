@@ -145,11 +145,39 @@ const shortPart = (p: string): RegExp => {
 };
 
 /**
+ * Shortened forms of a visible value the model may write instead of a whole word. Each is only a
+ * guess at how a name is cut, so a nickname ("Bob" from "Robert") or a misspelling still passes:
+ * - the start of a longer word, at the start of a word in the text: "Alex" from "Alexander";
+ * - the initials of a value with two or more words, written with dots: "J. D." or "J.D." from
+ *   "Jane Doe". Without dots a single capital is too common a word ("A", "I") to count.
+ */
+const VISIBLE_PREFIX_CHARS = 4;
+const CASED_WORD = /^(?=.*\p{L})[^\p{Lo}]+$/u;
+
+function shortenedForms(whole: readonly string[]): RegExp[] {
+  const out: RegExp[] = [];
+  for (const v of whole) {
+    const cased = v.split(/[^\p{L}\p{N}]+/u).filter((w) => CASED_WORD.test(w));
+    for (const w of cased) {
+      const chars = [...w];
+      if (chars.length > VISIBLE_PREFIX_CHARS)
+        out.push(
+          new RegExp(`(?<!${LETTER})${escapeRegExp(chars.slice(0, VISIBLE_PREFIX_CHARS).join(""))}`, "iu"),
+        );
+    }
+    const initials = cased.filter((w) => /^\p{L}/u.test(w)).map((w) => escapeRegExp([...w][0]));
+    if (initials.length >= 2)
+      out.push(new RegExp(`(?<!${LETTER})${initials.join("\\.\\s*")}\\.?(?!${LETTER})`, "iu"));
+  }
+  return out;
+}
+
+/**
  * The strings that hold no value the analyst left visible ("Leave visible", the suppressed list), and
  * no part of one. The model saw such a value in clear, and may repeat only part of it — "Jane" from
- * "Jane Doe", "jdoe" from "CORP\\jdoe", the surname "王" from "王小明", an initial — which the analyst
- * never approved. So a string that carries the value or any word of it is not proof the model wrote
- * it on its own.
+ * "Jane Doe", "jdoe" from "CORP\\jdoe", the surname "王" from "王小明", "Alex" from "Alexander", the
+ * initials "J. D." — which the analyst never approved. So a string that carries the value, any word
+ * of it, or a shortened form of one is not proof the model wrote it on its own.
  */
 export function withoutVisible(strings: readonly string[], suppressed: readonly string[]): string[] {
   const whole = suppressed.map(normalizeAuthored).filter(Boolean);
@@ -159,7 +187,7 @@ export function withoutVisible(strings: readonly string[], suppressed: readonly 
   const parts = [...new Set(words.flatMap((w) => [w, ...(w.match(CASELESS_LETTERS) ?? [])]))];
   const anywhere = (p: string) => p.length >= VISIBLE_PART_SUBSTRING_CHARS || CASELESS_LETTER.test(p);
   const long = [...new Set([...whole, ...parts.filter(anywhere)])];
-  const short = parts.filter((p) => !anywhere(p)).map(shortPart);
+  const short = [...parts.filter((p) => !anywhere(p)).map(shortPart), ...shortenedForms(whole)];
   return strings.filter(
     (s) => !long.some((v) => occurrences(s, v).length > 0) && !short.some((re) => re.test(s)),
   );

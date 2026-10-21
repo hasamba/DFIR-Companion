@@ -152,6 +152,17 @@ describe("onlyInAuthoredText", () => {
     ]);
   });
 
+  // Codex adversarial review, round 14: the model may shorten a visible name instead of copying a word.
+  it("drops a string that holds the start of a visible word, or the value's initials with dots", () => {
+    const kept = ["A user accessed the archive.", "The operator ran Velkor at night."];
+    expect(withoutVisible(["Alex accessed the archive.", ...kept], ["alexander smith"])).toEqual(kept);
+    for (const s of ["J. D. accessed the archive.", "J.D. accessed the archive."])
+      expect(withoutVisible([s, ...kept], ["jane doe"])).toEqual(kept);
+    // Initials without dots are too common a word to count; a short word has no start to cut.
+    expect(withoutVisible(["J D accessed it."], ["jane doe"])).toEqual(["J D accessed it."]);
+    expect(withoutVisible(["The Alexa app ran."], ["al smith"])).toEqual(["The Alexa app ran."]);
+  });
+
   // Codex adversarial review, round 11: masking each segment alone missed a value across a boundary.
   it("masks the prompt whole, and drops the spans a crossing value changed", () => {
     const segments = splitAiSpans(
