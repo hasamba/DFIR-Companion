@@ -2,6 +2,7 @@ import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { escapeRegExp } from "./regexEscape.js";
+import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -111,7 +112,7 @@ export interface Anonymizer {
   discoveries(): CustomEntity[];
 }
 
-export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
+export { SECRET_PLACEHOLDER };
 
 // Exact-match tokenizing of a KNOWN value (hostname, internal domain, analyst-added or
 // Presidio-approved custom entity) needs a word boundary so "DC01" doesn't fire inside "DC01X"
@@ -276,19 +277,6 @@ const IPV6_RE =
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 
-// Private-key blocks in every armor this is likely to meet: PEM (RSA / EC / DSA / OPENSSH /
-// ENCRYPTED PKCS#8 / bare PKCS#8), the PGP form (which ends "PRIVATE KEY BLOCK", not "PRIVATE KEY"),
-// and the SSH2 export form ("---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----" — four dashes, inner spaces).
-//
-// The trailing alternation is the point. A key spilled into a log is exactly where the tail gets
-// TRUNCATED, and demanding a matching END delimiter would then redact NOTHING at all — the whole
-// body would go to the model in cleartext. When no END is found we fall back to the base64 body, so
-// the key material still goes. Both branches are length-bounded (a 4096-bit RSA PEM is ~3.2 KB):
-// that bounds the over-redaction a stray header can cause, and it keeps the scan linear, since an
-// unbounded lazy scan re-walks the rest of the input for EVERY begin marker.
-const PEM_PRIVATE_KEY =
-  /-{4,5} ?BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}(?:[\s\S]{0,8192}?-{4,5} ?END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}|[A-Za-z0-9+/=\s]{0,8192})/g;
-
 // A detector, not a validator: matches only real card GROUPINGS, plus a bare contiguous run.
 // Separators are permitted ONLY at genuine group boundaries — NOT between every digit (an
 // earlier version of this pattern allowed a separator after each digit, so two unrelated bare
@@ -388,7 +376,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
 
   // Every (real value, category) this anonymizer minted a token for. Secrets never appear here —
-  // redactSecrets() replaces them with a placeholder rather than calling assign().
+  // redactSecretText() replaces them with a placeholder rather than calling assign().
   function discoveries(): CustomEntity[] {
     const out: CustomEntity[] = [];
     const seen = new Set<string>();
@@ -403,30 +391,6 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
 
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
-  function redactSecrets(t: string): string {
-    let out = t;
-    // key/value credentials: keep the key name, redact the value.
-    out = out.replace(
-      /\b(password|passwd|pwd|secret|api[_-]?key|apikey|token|authorization|bearer)\b(\s*[:=]\s*)(?:bearer\s+|basic\s+)?["']?([^\s"'<>,;]{3,})/gi,
-      (_m, k: string, sep: string) => `${k}${sep}${SECRET_PLACEHOLDER}`,
-    );
-    // URL userinfo password (scheme://user:pass@host) — redact just the password.
-    out = out.replace(
-      /([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi,
-      (_m, a: string, _pw: string, c: string) => `${a}${SECRET_PLACEHOLDER}${c}`,
-    );
-    // Distinctive fixed-shape secrets. NOTE: deliberately NO generic high-entropy rule — it
-    // would clobber hashes (which we must keep as IOCs).
-    const fixed: RegExp[] = [
-      /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
-      /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g, // JWT
-      /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub tokens
-      /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, // Slack tokens
-      PEM_PRIVATE_KEY, // PEM/PGP/SSH2 private keys
-    ];
-    for (const re of fixed) out = out.replace(re, SECRET_PLACEHOLDER);
-    return out;
-  }
   function isInternalDomain(domain: string): boolean {
     const d = domain.toLowerCase();
     return known.internalDomains.some((kd) => d === kd || d.endsWith("." + kd));
@@ -545,6 +509,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   // left in place verbatim, so the encoded-command / host / account / email / path / SID / domain /
   // custom passes still see the text they own. Reserving on the raw detector match with no
   // validator is what silently sent base64 payloads and hostnames to the wire in cleartext.
+  const SECRET_SENTINEL = "\uE001";
+  const SECRET_SENTINEL_RE = /\uE001/g;
   const IPV6_SENTINEL = "\uE000";
   const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
@@ -634,7 +600,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   }
 
   function apply(text: string): string {
-    let t = text;
+    // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
+    let t = text.replace(SECRET_SENTINEL_RE, "");
     // Reserve IPv6 literals FIRST — before anonCustom or any other pass — so nothing can
     // substitute inside one. Only when IP masking is active: if the IP category is off, no later
     // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.
@@ -644,8 +611,11 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       t = reserved.text;
       ipv6Literals = reserved.literals;
     }
-    t = anonCustom(t); // analyst-added entities always win (outside IPv6 literals)
-    if (policy.redactSecrets) t = redactSecrets(t);
+    // One-way secrets go before anything is tokenized, so a secret that is also a known or custom
+    // entity never becomes a reversible token (restore() and discoveries() would hand it back).
+    // The placeholder then hides behind a sentinel until the last pass, so no tokenizer rewrites it.
+    if (policy.redactSecrets) t = redactSecretText(t).split(SECRET_PLACEHOLDER).join(SECRET_SENTINEL);
+    t = anonCustom(t); // analyst-added entities win over every detector (outside IPv6 literals)
     // UNC server names before accounts, or \\DC-QA-01\C$ reads as an account (#2073).
     if (policy.categories.HOST) t = replaceUncServers(t, (s) => assign("HOST", s));
     if (policy.categories.USER) t = anonAccounts(t);
@@ -663,7 +633,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);
-    return t;
+    return t.replace(SECRET_SENTINEL_RE, SECRET_PLACEHOLDER);
   }
 
   function restore(text: string): string {
