@@ -76,6 +76,41 @@ describe("onlyInAuthoredText", () => {
     expect(onlyInAuthoredText(prompt, "Mimikatz", authored([ai]))).toBe(false);
   });
 
+  // Codex adversarial review, finding 1: a new event that starts with recorded AI text and goes on.
+  it("holds an event that extends a recorded AI string", () => {
+    const prompt = `[e1] Investigate Jane Doe after an unauthorized login`;
+    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
+  });
+
+  // Codex adversarial review, finding 2: the event's occurrence differs only in its whitespace.
+  it.each([
+    ["repeated spaces", "Jane   Doe"],
+    ["a tab", "Jane\tDoe"],
+  ])("holds a value an event carries with %s", (_label, spelled) => {
+    const prompt = `MODEL A summary: Investigate Jane Doe\n[e1] ${spelled} logged in`;
+    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
+  });
+
+  it("holds an event that carries a recorded AI string mid-sentence, unframed", () => {
+    const prompt = `[e1] 10:00 analyst wrote Investigate Jane Doe (ticket 4)`;
+    expect(onlyInAuthoredText(prompt, "Jane Doe", authored(["Investigate Jane Doe"]))).toBe(false);
+  });
+
+  it("holds a value when an event's description equals a recorded AI string", () => {
+    const prompt = `[e1] 2026-01-01T10:00:00Z [High] Investigate Jane Doe`;
+    const ai = { ...authored(["Investigate Jane Doe"]), events: ["Investigate  Jane Doe"] };
+    expect(onlyInAuthoredText(prompt, "Jane Doe", ai)).toBe(false);
+  });
+
+  it("holds a value when a recorded AI string quotes an event", () => {
+    const prompt = `MODEL A summary: The log shows Jane Doe signed in at 10:00 from the VPN.`;
+    const ai = {
+      ...authored(["The log shows Jane Doe signed in at 10:00 from the VPN."]),
+      events: ["Jane Doe signed in at 10:00"],
+    };
+    expect(onlyInAuthoredText(prompt, "Jane Doe", ai)).toBe(false);
+  });
+
   it("matches a short title quoted whole", () => {
     const prompt = `[d1] (B-only finding) "Mimikatz run" [severity High]: Model B raised this.`;
     expect(onlyInAuthoredText(prompt, "Mimikatz", authored(["Mimikatz run"]))).toBe(true);

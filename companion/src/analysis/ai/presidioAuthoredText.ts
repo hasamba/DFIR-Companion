@@ -18,9 +18,9 @@ import type { CustomEntity } from "../anonymize.js";
  * the model wrote — the characters around the occurrence agree with a recorded AI string. One
  * occurrence anywhere else (an event, an analyst note, a scaffold line) and the value is held as before.
  *
- * THE ONE SOFT SPOT. If the model quoted an event line word for word, that event's occurrence agrees
- * with AI text too and is skipped. The model already received that text in an earlier prompt, which
- * passed this gate; the value was either masked, approved, or not flagged there.
+ * EVENTS ARE NEVER AI TEXT. A recorded string that an event's description contains, or that
+ * contains an event's description, is not used at all: the two texts cannot be told apart in a
+ * prompt, so the value is held.
  */
 
 /** Recorded AI strings shorter than this carry too little context to tell apart from other text. */
@@ -31,12 +31,17 @@ export const AUTHORED_MAX_CHARS = 4000;
 const MIN_CONTEXT = 8;
 /** A whole short AI string — a finding title — counts with fewer, where the prompt frames it. */
 const MIN_WHOLE_CONTEXT = 4;
-// How the prompt builders introduce AI text: quoted, after a bracketed tag ("[F1] (severity: High) "),
-// after a label ("MODEL A summary: ") or after a dash (" — ").
-const FRAMED_BEFORE = /(?:["“']|[\])] |: |— )$/;
-const FRAMED_AFTER = /^(?:["”']|$| — | \()/;
+// How the prompt builders frame AI text: quoted, inside or after a bracketed tag ("[F1] (severity:
+// High) ", the referee's "[b_only:…]" id), after a label ("MODEL A summary: ") or after a dash (" — ").
+const FRAMED_BEFORE = /(?:["“'[]|[\])] |: |— )$/;
+const FRAMED_AFTER = /^(?:["”'\]]|$| — | \()/;
 // The referee prompt cuts a long description and marks the cut.
 const CLIP_MARK = "…";
+/**
+ * A cut with no mark (the referee's 240-character description) counts only after this many matching
+ * characters. Shorter, and a line that merely starts like AI text — an event — would pass.
+ */
+const UNMARKED_CLIP_MIN = 200;
 
 /** Whitespace collapsed and trimmed — the form the prompt builders print AI text in. */
 export function normalizeAuthored(text: string): string {
@@ -69,6 +74,8 @@ export interface AuthoredText {
   corpus: readonly string[];
   /** The call's anonymizer restore: masked prompt text back to real values, like the corpus. */
   restore: (masked: string) => string;
+  /** The case's event descriptions (real values). A recorded string that overlaps one is not used. */
+  events?: readonly string[];
 }
 
 const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
@@ -89,11 +96,13 @@ function boundedOccurrences(line: string, v: string): number[] {
 /**
  * Is the occurrence at `line[s]` inside a copy of a recorded AI string?
  *
- * AI text sits in a prompt as one unbroken piece: from the start of the AI string to its end, a
- * clip mark, or the end of the line. So the line must agree with the AI string all the way back to
- * that string's start, and all the way forward to one of those ends. An event that merely shares a
- * phrase with AI prose (" on the domain controller") stops agreeing right next to the value. When
- * the value opens the AI string, nothing on the left proves anything, so the prompt must frame it.
+ * AI text sits in a prompt as one unbroken piece, framed by prompt structure: a label, a quote, a
+ * bracketed tag or a dash before it; a quote, a dash, a bracket or the line end after it. So the
+ * line must agree with the AI string all the way back to that string's start, with a frame before
+ * it, and all the way forward to the string's end with a frame after it — or to a clip. An event
+ * that shares a phrase with AI prose (" on the domain controller") stops agreeing next to the
+ * value; one that starts like AI text and goes on ("Investigate Jane Doe after a login") has no
+ * frame after the string.
  */
 function occurrenceAuthored(line: string, s: number, v: string, corpus: readonly string[]): boolean {
   const e = s + v.length;
@@ -104,13 +113,13 @@ function occurrenceAuthored(line: string, s: number, v: string, corpus: readonly
       let right = 0;
       while (e + right < line.length && q + right < c.length && line[e + right] === c[q + right]) right++;
       const end = e + right;
-      const atEnd = q + right === c.length;
-      if (!atEnd && end < line.length && line[end] !== CLIP_MARK) continue;
-      const framedBefore = FRAMED_BEFORE.test(line.slice(0, s - p));
-      if (p === 0 && !framedBefore) continue;
-      if (p + right >= MIN_CONTEXT) return true;
-      if (atEnd && framedBefore && FRAMED_AFTER.test(line.slice(end)) && p + right >= MIN_WHOLE_CONTEXT)
-        return true;
+      const matched = p + right;
+      if (!FRAMED_BEFORE.test(line.slice(0, s - p))) continue;
+      const framedEnd = q + right === c.length && FRAMED_AFTER.test(line.slice(end));
+      const clipped = line[end] === CLIP_MARK || (end === line.length && matched >= UNMARKED_CLIP_MIN);
+      if (!framedEnd && !clipped) continue;
+      if (matched >= MIN_CONTEXT) return true;
+      if (framedEnd && matched >= MIN_WHOLE_CONTEXT) return true;
     }
   }
   return false;
@@ -120,11 +129,17 @@ function occurrenceAuthored(line: string, s: number, v: string, corpus: readonly
 export function onlyInAuthoredText(maskedText: string, value: string, authored: AuthoredText): boolean {
   const v = normalizeAuthored(value).toLowerCase();
   if (!v) return false;
-  const corpus = authored.corpus.map((c) => c.toLowerCase()).filter((c) => c.includes(v));
+  const events = (authored.events ?? [])
+    .map((t) => normalizeAuthored(t).toLowerCase())
+    .filter((t) => t.includes(v));
+  const corpus = authored.corpus
+    .map((c) => c.toLowerCase())
+    .filter((c) => c.includes(v) && !events.some((t) => t.includes(c) || c.includes(t)));
   if (corpus.length === 0) return false;
   let seen = false;
   for (const masked of maskedText.split("\n")) {
-    if (!masked.toLowerCase().includes(v)) continue;
+    // Normalized BEFORE the check: "Jane   Doe" in an event is an occurrence of "Jane Doe".
+    if (!normalizeAuthored(masked).toLowerCase().includes(v)) continue;
     const line = normalizeAuthored(authored.restore(masked)).toLowerCase();
     for (const s of boundedOccurrences(line, v)) {
       if (!occurrenceAuthored(line, s, v, corpus)) return false;

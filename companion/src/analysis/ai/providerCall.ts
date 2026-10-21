@@ -641,7 +641,14 @@ async function prepareCall(
   // pass their coverage so the loop that calls this per-chunk doesn't re-gate (and re-approve)
   // the same import one chunk at a time.
   if (!skipPresidioGate)
-    await presidioGate(ctx, caseId, maskedPrompt, known, control, await authoredFor(ctx, caseId, anon));
+    await presidioGate(
+      ctx,
+      caseId,
+      maskedPrompt,
+      known,
+      control,
+      await authoredFor(ctx, caseId, anon, state),
+    );
   return { req: { ...req, userPrompt: maskedPrompt, images }, anon };
 }
 
@@ -650,11 +657,14 @@ async function authoredFor(
   ctx: ProviderCallContext,
   caseId: string,
   anon: Anonymizer,
+  state: InvestigationState,
 ): Promise<AuthoredText | undefined> {
   if (!ctx.opts.presidio || !ctx.opts.aiAuthoredStore) return undefined;
   try {
     const corpus = await ctx.opts.aiAuthoredStore.load(caseId);
-    return corpus.length > 0 ? { corpus, restore: (t) => anon.restore(t) } : undefined;
+    if (corpus.length === 0) return undefined;
+    const events = state.forensicTimeline.map((e) => e.description ?? "");
+    return { corpus, restore: (t) => anon.restore(t), events };
   } catch (err) {
     ctx.log.warn(
       `[presidio] could not read the AI-written text record — every value is held: ${(err as Error).message}`,
