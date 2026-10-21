@@ -98,17 +98,16 @@ function confirmedSpans(maskedText: string, authored: AuthoredText): AuthoredSpa
 }
 
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const WORD = "[\\p{L}\\p{N}_]";
 
 /**
- * Every occurrence of the value in the prompt: any case, any run of whitespace between its words
- * ("Jane   Doe" is "Jane Doe"), and standing on its own — "Ann" does not occur in "Announce".
+ * Every occurrence of the value in the prompt: any case, and any run of whitespace between its words
+ * ("Jane   Doe" is "Jane Doe"). Inside other text too — "Jane Doe_ VPN", even "Ann" in "Announce".
+ * Presidio's own spans are not kept, so the gate cannot know which occurrence it found; a word-boundary
+ * rule would drop one Presidio may have flagged. A false hold costs one approval; a false skip leaks.
  */
 function occurrences(text: string, value: string): { start: number; end: number }[] {
   const words = normalizeAuthored(value).split(" ").map(escapeRegExp);
-  const left = new RegExp(`^${WORD}`, "u").test(words[0] ?? "") ? `(?<!${WORD})` : "";
-  const right = new RegExp(`${WORD}$`, "u").test(words[words.length - 1] ?? "") ? `(?!${WORD})` : "";
-  const re = new RegExp(`${left}${words.join("\\s+")}${right}`, "giu");
+  const re = new RegExp(words.join("\\s+"), "giu");
   return [...text.matchAll(re)].map((m) => ({ start: m.index, end: m.index + m[0].length }));
 }
 

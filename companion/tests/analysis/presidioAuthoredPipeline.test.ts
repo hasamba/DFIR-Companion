@@ -327,6 +327,11 @@ describe("Presidio holds a value that event or analyst text carries (Codex revie
     const { second } = await caseWith({ notes: [AI_SUMMARY] });
     await expect(second()).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
+
+  it("holds the value for round 5: an analyst note where the name runs into other text", async () => {
+    const { second } = await caseWith({ notes: ["Jane Doe_ VPN login"] });
+    await expect(second()).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
 });
 
 // Codex adversarial review, round 3: an answer written while the model saw clear text must never

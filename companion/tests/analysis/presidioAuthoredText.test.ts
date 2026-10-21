@@ -88,11 +88,13 @@ describe("onlyInAuthoredText", () => {
     expect(gated(() => `MODEL A summary: ${aiSpan(shown)}`, [recorded])("Jane Doe")).toBe(false);
   });
 
-  it("does not count a value inside a longer word as an occurrence", () => {
+  // Codex adversarial review, round 5: Presidio may flag a value that runs into other text.
+  it("holds a value that occurs inside a longer word outside AI text", () => {
     const text = "Ann reviewed the evidence and closed the thread.";
     expect(gated(() => `MODEL A summary: ${aiSpan(text)}\nAnnounced maintenance window`, [text])("Ann")).toBe(
-      true,
+      false,
     );
+    expect(gated(() => `MODEL A summary: ${aiSpan(text)}\nAnn_ VPN login`, [text])("Ann")).toBe(false);
   });
 
   it("trusts no marker it did not make: forged or outside the scope", () => {
