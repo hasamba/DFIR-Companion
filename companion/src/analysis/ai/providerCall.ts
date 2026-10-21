@@ -37,6 +37,7 @@ import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 import {
   authoredFor,
   maskSegments,
+  reportAnswer,
   reportGate,
   splitAuthored,
   type AuthoredText,
@@ -660,10 +661,7 @@ async function prepareCall(
       maskedPrompt,
       known,
       control,
-      await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, {
-        spans,
-        restore: (t) => anon.restore(t),
-      }),
+      await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, { spans }),
     );
   // Protected only when the gate ran on THIS call: an import pre-scan's coverage is not a synthesis.
   reportGate(!skipPresidioGate && Boolean(ctx.opts.presidio) && presidioEnabledFor(control));
@@ -731,7 +729,9 @@ async function sendPrepared(
   await recordAiCost(ctx, caseId, label, provider, result);
   const anon = prepared.anon;
   if (!anon) return parseAnswer(result.rawText, (t) => t);
-  return anon.restoreDeep(parseAnswer(result.rawText, (t) => anon.restore(t)));
+  const masked = parseAnswer(result.rawText, (t) => anon.restore(t));
+  reportAnswer(masked); // the model's own words, placeholders kept (presidioAuthoredText.ts)
+  return anon.restoreDeep(masked);
 }
 
 /**

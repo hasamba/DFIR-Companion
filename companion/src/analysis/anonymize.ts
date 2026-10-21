@@ -67,6 +67,11 @@ const TOKEN_RE = new RegExp(`ANON_(?:${TOKEN_ALTERNATION})_\\d+`, "gi");
 /** True when the whole string is a single anonymization token. Used to drop Presidio findings
  *  that fired on a token rather than on real text. Builds a fresh non-global regex per call so
  *  it never shares lastIndex state with TOKEN_RE. */
+/** Every anonymization token in `text` replaced by `mark` — the token-neutral form of a text. */
+export function neutralizeAnonTokens(text: string, mark: string): string {
+  return text.replace(new RegExp(TOKEN_RE.source, "gi"), mark);
+}
+
 export function isAnonToken(s: string): boolean {
   return new RegExp(`^ANON_(?:${TOKEN_ALTERNATION})_\\d+$`, "i").test(s.trim());
 }

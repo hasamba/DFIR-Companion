@@ -419,3 +419,54 @@ describe("an answer written without protection is never recorded as AI text", ()
     await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
 });
+
+// Codex adversarial review, round 4: the case restores real values into the model's answer. A
+// hidden name the model only echoed as a placeholder must not become "the model's own word".
+describe("a restored value is never recorded as the model's word", () => {
+  const janeDoe: PresidioClient = {
+    analyze: async (text) =>
+      [...text.matchAll(/Jane\s+Doe/g)].map((m) => ({ entityType: "PERSON", value: m[0], score: 0.9 })),
+  };
+  /** Echoes the PERSON placeholder it was shown, as a model does. */
+  class Echoer extends SummaryProvider {
+    override async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      const r = await super.analyze(req);
+      const token = /ANON_PERSON_\d+/.exec(req.userPrompt)?.[0] ?? "nobody";
+      const summary = `${token} signed in to the domain controller from the VPN at night.`;
+      return { rawText: r.rawText.replace(JSON.stringify(SUMMARY), JSON.stringify(summary)) };
+    }
+  }
+
+  it("holds the name after it is removed from the hidden list and its event is gone", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-authored-restored-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [event("e1", "Interactive logon by Jane Doe")],
+    });
+    const custom = new CustomEntitiesStore(cases);
+    await custom.save("c1", [{ value: "Jane Doe", category: "PERSON" }]); // hidden from the AI
+    const authoredStore = new AiAuthoredTextStore(cases);
+    const pipeline = new AnalysisPipeline({
+      provider: new Echoer(),
+      stateStore,
+      anonStore: new AnonControlStore(cases),
+      customEntitiesStore: custom,
+      presidioPendingStore: new PresidioPendingStore(cases),
+      presidio: { client: janeDoe, url: "http://localhost:5002", minScore: 0.6 },
+      aiAuthoredStore: authoredStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1", { force: true });
+    const summary = (await stateStore.load("c1")).lastSummary;
+    expect(summary).toContain("Jane Doe"); // the case's copy holds the restored name
+    expect((await authoredStore.load("c1")).join("\n")).not.toContain("Jane Doe"); // the record does not
+
+    await custom.save("c1", []); // the analyst un-hides the name
+    const s = await stateStore.load("c1");
+    await stateStore.save({ ...s, forensicTimeline: [event("e2", "lsass.exe memory read by procdump.exe")] });
+    await expect(pipeline.synthesize("c1", { force: true })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+  });
+});

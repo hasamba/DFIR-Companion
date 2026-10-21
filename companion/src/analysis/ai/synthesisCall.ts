@@ -177,7 +177,7 @@ export async function callSynthesisModel(
   );
   const { answer, retriedAfter } = gated.value;
   // Only an answer from protected calls: with masking or Presidio off the model saw clear text.
-  if (gated.protectedOnly) await recordAuthored(ctx, caseId, answer.delta);
+  if (gated.protectedOnly) await recordAuthored(ctx, caseId, gated.answers);
   return {
     delta: answer.delta,
     thinkingTokens,
@@ -195,19 +195,23 @@ export async function callSynthesisModel(
 }
 
 /**
- * Record the accepted answer's own text so the Presidio gate skips it in later prompts. Every
- * synthesis answer passes here: model A's, model B's 2nd-opinion pass (never saved to the case) and
- * the deep pass's closing synthesis. Extraction, hunt and next-step answers are deliberately NOT
- * recorded — an extraction answer becomes timeline events, and the gate must keep scanning those.
- * Best effort: a failed write only means the gate holds that text's values again.
+ * Record the model's own text so the Presidio gate skips it in later prompts. Every synthesis
+ * answer passes here: model A's, model B's 2nd-opinion pass (never saved to the case) and the deep
+ * pass's closing synthesis. Extraction, hunt and next-step answers are deliberately NOT recorded —
+ * an extraction answer becomes timeline events, and the gate must keep scanning those.
+ *
+ * The answers are the ones the model sent, still masked: a placeholder stays a placeholder, so a
+ * real value restored into the case's copy is never recorded as the model's word. Every answer of
+ * the call is recorded, a retried one too — all of them are the model's own text from protected
+ * calls. Best effort: a failed write only means the gate holds that text's values again.
  */
 async function recordAuthored(
   ctx: SynthesisContext,
   caseId: string,
-  delta: SynthesisCall["delta"],
+  answers: readonly unknown[],
 ): Promise<void> {
   try {
-    await ctx.opts.aiAuthoredStore?.record(caseId, authoredStrings(delta));
+    await ctx.opts.aiAuthoredStore?.record(caseId, answers.flatMap(authoredStrings));
   } catch (err) {
     ctx.log.warn(`[presidio] could not record the AI-written text: ${(err as Error).message}`, { caseId });
   }

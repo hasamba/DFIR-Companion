@@ -12,7 +12,7 @@ import {
   type SecondOpinionDelta,
 } from "../secondOpinion.js";
 import { stripAiSpans, withAiSpans } from "./aiSpan.js";
-import { normalizeAuthored } from "./presidioAuthoredText.js";
+import { neutralAuthored } from "./presidioAuthoredText.js";
 import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import {
@@ -200,10 +200,11 @@ async function recordDeltaIds(
   if (!store) return;
   try {
     // Only ids built from a title the model wrote: a backfill finding's title comes from an event.
-    const written = new Set((await store.load(caseId)).map((t) => normalizeAuthored(t).toLowerCase()));
+    // Compared token-neutral: a title holding a restored value never matches the masked record.
+    const written = new Set((await store.load(caseId)).map(neutralAuthored));
     await store.record(
       caseId,
-      record.deltas.filter((d) => written.has(normalizeAuthored(d.title).toLowerCase())).map((d) => d.id),
+      record.deltas.filter((d) => written.has(neutralAuthored(d.title))).map((d) => d.id),
     );
   } catch (err) {
     ctx.log.warn(

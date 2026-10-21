@@ -21,13 +21,11 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 // models wrote during the run itself (the stored summary, then model B's findings in the referee
 // prompt), which the analyst could not have cleared up front.
 
-const same = (t: string) => t;
-
 // A prompt as production builds it: AI fields marked inside withAiSpans, then split and masked.
-function gated(build: () => string, corpus: string[], restore = same) {
+function gated(build: () => string, corpus: string[]) {
   const segments = splitAiSpans(withAiSpans(build));
   const { masked, spans } = maskSegments(segments, (t) => t);
-  return (value: string) => onlyInAuthoredText(masked, value, { corpus, spans, restore });
+  return (value: string) => onlyInAuthoredText(masked, value, { corpus, spans });
 }
 
 describe("onlyInAuthoredText", () => {
@@ -77,15 +75,17 @@ describe("onlyInAuthoredText", () => {
     expect(gated(() => `title: ${aiSpan("Investigate Jane Doe")}`, [summary])("Jane Doe")).toBe(false);
   });
 
-  it("compares restored text, so a placeholder inside the span does not break the match", () => {
-    const real = "Jane Doe ran a tool on DC01 at night.";
-    const restore = (t: string) => t.replace("ANON_HOST_1", "DC01");
-    const check = gated(
-      () => `MODEL A summary: ${aiSpan("Jane Doe ran a tool on ANON_HOST_1 at night.")}`,
-      [real],
-      restore,
-    );
-    expect(check("Jane Doe")).toBe(true);
+  it("matches placeholders whatever their number, since each call numbers them afresh", () => {
+    const recorded = "Velkor ran on ANON_HOST_1 under ANON_USER_2 at night.";
+    const shown = "Velkor ran on ANON_HOST_3 under ANON_USER_1 at night.";
+    expect(gated(() => `MODEL A summary: ${aiSpan(shown)}`, [recorded])("Velkor")).toBe(true);
+  });
+
+  // Codex adversarial review, round 4: a real value restored into the answer is not the model's word.
+  it("holds a real value the case restored where the model wrote a placeholder", () => {
+    const recorded = "ANON_PERSON_1 signed in to the domain controller from the VPN at night.";
+    const shown = "Jane Doe signed in to the domain controller from the VPN at night.";
+    expect(gated(() => `MODEL A summary: ${aiSpan(shown)}`, [recorded])("Jane Doe")).toBe(false);
   });
 
   it("does not count a value inside a longer word as an occurrence", () => {

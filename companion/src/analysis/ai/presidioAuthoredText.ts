@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { CustomEntity } from "../anonymize.js";
+import { neutralizeAnonTokens, type CustomEntity } from "../anonymize.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 import type { PromptSegment } from "./aiSpan.js";
@@ -19,7 +19,11 @@ import type { PromptSegment } from "./aiSpan.js";
  * HOW. Two facts, both required. WHERE: the prompt builders mark each AI field they print (aiSpan.ts),
  * so the gate knows a span's position without reading its text. WHAT: the span's text must equal a
  * string the synthesis model wrote, recorded when it answered — or begin one, where the builder cut
- * it. A field the code wrote (a backfill finding built from an event) is marked but not recorded, so it
+ * it. The record holds the answer AS THE MODEL WROTE IT, placeholders and all, and both sides are
+ * compared token-neutral: every placeholder is one mark, so ANON_HOST_1 in one call matches
+ * ANON_HOST_3 in the next. A real value restored into the answer is a placeholder in the record, so
+ * it can never pass as the model's own word — un-mask "Jane Doe" later and the prompt shows the
+ * name where the record has a placeholder, and the value is held. A field the code wrote (a backfill finding built from an event) is marked but not recorded, so it
  * is not trusted. A value is skipped only when every occurrence of it in the prompt is inside such a
  * span. An event or an analyst note is never marked, so any occurrence there holds the value — even
  * when it repeats AI prose word for word.
@@ -38,17 +42,16 @@ export function normalizeAuthored(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-/** The synthesis-answer fields the model wrote. Nothing else: an extraction answer becomes events. */
-export function authoredStrings(delta: {
-  summary?: string;
-  attackerPath?: string;
-  findings?: readonly { title?: string; description?: string }[];
-}): string[] {
-  const raw = [
-    delta.summary,
-    delta.attackerPath,
-    ...(delta.findings ?? []).flatMap((f) => [f.title, f.description]),
-  ];
+/**
+ * The synthesis-answer fields the model wrote. Nothing else: an extraction answer becomes events.
+ * Takes the answer as parsed, before validation — it is read, never trusted.
+ */
+export function authoredStrings(answer: unknown): string[] {
+  const a = (answer ?? {}) as { summary?: unknown; attackerPath?: unknown; findings?: unknown };
+  const findings = Array.isArray(a.findings)
+    ? (a.findings as { title?: unknown; description?: unknown }[])
+    : [];
+  const raw = [a.summary, a.attackerPath, ...findings.flatMap((f) => [f?.title, f?.description])];
   const out = new Set<string>();
   for (const s of raw) {
     if (typeof s !== "string") continue;
@@ -66,22 +69,27 @@ export interface AuthoredSpan {
   clipped: boolean;
 }
 
-/** What the gate needs: where the AI fields are, what the model wrote, and the call's restore. */
+/** What the gate needs: where the AI fields are, and what the model wrote. */
 export interface AuthoredText {
-  /** Recorded AI strings, as recorded (real values, whitespace collapsed). */
+  /** Recorded AI strings, as the model wrote them (placeholders kept, whitespace collapsed). */
   corpus: readonly string[];
   /** The AI-marked spans of the masked prompt. */
   spans: readonly AuthoredSpan[];
-  /** The call's anonymizer restore: masked prompt text back to real values, like the corpus. */
-  restore: (masked: string) => string;
+}
+
+const TOKEN_MARK = "\u2400";
+
+/** The form both sides are compared in: whitespace collapsed, lower case, every placeholder one mark. */
+export function neutralAuthored(text: string): string {
+  return neutralizeAnonTokens(normalizeAuthored(text), TOKEN_MARK).toLowerCase();
 }
 
 /** The spans whose text the synthesis model is recorded as having written. */
 function confirmedSpans(maskedText: string, authored: AuthoredText): AuthoredSpan[] {
-  const corpus = authored.corpus.map((c) => c.toLowerCase());
+  const corpus = authored.corpus.map(neutralAuthored);
   const whole = new Set(corpus);
   return authored.spans.filter((sp) => {
-    const shown = normalizeAuthored(authored.restore(maskedText.slice(sp.start, sp.end))).toLowerCase();
+    const shown = neutralAuthored(maskedText.slice(sp.start, sp.end));
     if (whole.has(shown)) return true;
     if (!sp.clipped) return false;
     const head = shown.endsWith(CLIP_MARK) ? shown.slice(0, -CLIP_MARK.length).trimEnd() : shown;
@@ -156,7 +164,7 @@ export async function authoredFor(
   store: AiAuthoredTextStore | undefined,
   log: Logger,
   caseId: string,
-  call: Pick<AuthoredText, "spans" | "restore">,
+  call: Pick<AuthoredText, "spans">,
 ): Promise<AuthoredText | undefined> {
   if (!store || call.spans.length === 0) return undefined;
   try {
@@ -180,13 +188,23 @@ export async function authoredFor(
  * text and may copy a real name into its summary. So the synthesis call runs inside a probe, every
  * prepared call reports whether it was protected, and the answer is recorded only when all were.
  */
-const gateProbe = new AsyncLocalStorage<{ calls: number; unprotected: number }>();
+const gateProbe = new AsyncLocalStorage<{ calls: number; unprotected: number; answers: unknown[] }>();
 
-/** Run `fn`; `protectedOnly` is true when at least one call ran, and every call was protected. */
-export async function withGateProbe<T>(fn: () => Promise<T>): Promise<{ value: T; protectedOnly: boolean }> {
-  const probe = { calls: 0, unprotected: 0 };
+/**
+ * Run `fn`; `protectedOnly` is true when at least one call ran, and every call was protected.
+ * `answers`: each answer the model gave inside, as it wrote it — before placeholders were restored.
+ */
+export async function withGateProbe<T>(
+  fn: () => Promise<T>,
+): Promise<{ value: T; protectedOnly: boolean; answers: unknown[] }> {
+  const probe = { calls: 0, unprotected: 0, answers: [] as unknown[] };
   const value = await gateProbe.run(probe, fn);
-  return { value, protectedOnly: probe.calls > 0 && probe.unprotected === 0 };
+  return { value, protectedOnly: probe.calls > 0 && probe.unprotected === 0, answers: probe.answers };
+}
+
+/** sendPrepared's report: the model's answer, parsed, still masked. */
+export function reportAnswer(masked: unknown): void {
+  gateProbe.getStore()?.answers.push(masked);
 }
 
 /** prepareCall's report: did this call run with masking on and the Presidio gate checking it? */
