@@ -14,6 +14,7 @@ import {
 } from "../../src/analysis/importUndo.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import {
   emptyState,
   type ForensicEvent,
@@ -260,5 +261,55 @@ describe("import undo/redo routes (#76)", () => {
     expect((await request(h.app).post("/cases/INC-8/import/redo")).status).toBe(200);
     const { updatedAt: _e, ...redone } = await h.stateStore.load("INC-8");
     expect(redone).toEqual(wantAfter);
+  });
+});
+
+// #2221: Undo of an import that taught the case a host rename puts the super-timeline copies back on
+// the former name too, and Redo folds them again — the two timelines never disagree on a host.
+describe("import undo/redo follow the host-rename ledger in the super-timeline (#2221)", () => {
+  const OLD = "WIN-UK1GV882OK6";
+  const NEW = "DESKTOP-16OJFO6";
+  const rename = {
+    formerName: OLD,
+    currentName: NEW,
+    until: "2026-08-26T13:49:52.000Z",
+    basis: "machine-account" as const,
+  };
+  // Each row says something of its own: the super-timeline folds rows with the same content key.
+  const row = (id: string, asset: string): ForensicEvent => ({
+    ...ev(id),
+    timestamp: "2025-12-05T03:02:24.000Z",
+    description: asset === OLD ? `${id} @ ${OLD}` : `${id} @ ${OLD} [logged under former hostname ${OLD}]`,
+    asset,
+    assetRecord: OLD,
+  });
+
+  it("undo re-homes the super-timeline to the restored ledger; redo folds it again", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-undo-rename-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const importUndoStore = new ImportUndoStore(cases, 5);
+    const superTimelineStore = new SuperTimelineStore(cases);
+    const app = createApp(cases, { stateStore, importUndoStore, superTimelineStore });
+
+    const S0: InvestigationState = { ...emptyState("c1"), forensicTimeline: [row("r0", OLD)] };
+    const S1: InvestigationState = { ...S0, hostRenames: [rename], forensicTimeline: [row("r0", NEW)] };
+    await stateStore.save(S1);
+    // r0's copy was carried with it; "info" lives only in the super-timeline (demote kept it there).
+    await superTimelineStore.append("c1", [row("r0", NEW), row("info", NEW)]);
+    await importUndoStore.save("c1", pushCheckpoint(emptyUndoStack(), deltaCheckpoint("thor", "t", S0, S1)));
+
+    const superHost = async (id: string) => (await superTimelineStore.get("c1", id))?.asset;
+    expect((await request(app).post("/cases/c1/import/undo")).status).toBe(200);
+    expect((await stateStore.load("c1")).forensicTimeline[0].asset).toBe(OLD);
+    expect(await superHost("r0")).toBe(OLD);
+    expect(await superHost("info")).toBe(OLD);
+    expect((await superTimelineStore.get("c1", "info"))?.description).toBe(`info @ ${OLD}`);
+
+    expect((await request(app).post("/cases/c1/import/redo")).status).toBe(200);
+    expect((await stateStore.load("c1")).forensicTimeline[0].asset).toBe(NEW);
+    expect(await superHost("r0")).toBe(NEW);
+    expect(await superHost("info")).toBe(NEW);
   });
 });

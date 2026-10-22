@@ -11,26 +11,15 @@
 // Nothing here reads the raw record for analysis — the pass changes which host a row is filed
 // under, never what the model sees (ARCHITECTURE.md → "The forensic / super-timeline boundary").
 
-import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
-import { rehomeEvents } from "../analysis/hostRenameCarry.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { rehomeEvents, type CarryOptions, type RenameLedger } from "../analysis/hostRenameCarry.js";
 
-type RenameLedger = Pick<InvestigationState, "hostRenames" | "collectorHostnames">;
+// Settle reads it from here; it lives beside the carry so the undo step can use it too (#2221).
+export { renameLedgerChanged } from "../analysis/hostRenameCarry.js";
 
 export interface SuperRehomeStore {
   eventBatches(caseId: string): AsyncIterable<ForensicEvent[]>;
   rehome(caseId: string, events: ForensicEvent[]): Promise<number>;
-}
-
-/**
- * True when the settle changed what the ledger says about any host: a rename learned, unlearned or
- * re-bounded, or a collector identity that now vetoes a fold. Content, not identity — the importer
- * rebuilds the state object on every save.
- */
-export function renameLedgerChanged(before: RenameLedger, after: RenameLedger): boolean {
-  return (
-    JSON.stringify(before.hostRenames ?? []) !== JSON.stringify(after.hostRenames ?? []) ||
-    JSON.stringify(before.collectorHostnames ?? []) !== JSON.stringify(after.collectorHostnames ?? [])
-  );
 }
 
 /** Re-home every stored super-timeline row the ledger moves; returns the count rewritten. */
@@ -38,11 +27,12 @@ export async function rehomeSuperTimeline(
   store: SuperRehomeStore,
   caseId: string,
   state: RenameLedger,
+  opts: CarryOptions = {},
 ): Promise<number> {
-  if (!state.hostRenames?.length) return 0;
+  if (!state.hostRenames?.length && !opts.evenWithoutLedger) return 0;
   let rewritten = 0;
   for await (const batch of store.eventBatches(caseId)) {
-    const changed = rehomeEvents(batch, state);
+    const changed = rehomeEvents(batch, state, opts);
     if (changed.length) rewritten += await store.rehome(caseId, changed);
   }
   return rewritten;

@@ -31,17 +31,41 @@
 
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
-import { shortHostName, withFormerHostSuffix } from "./hostIdentity.js";
+import { FORMER_HOST_DESCRIPTION_CAP, shortHostName, withFormerHostSuffix } from "./hostIdentity.js";
 
 const FORMER_HOST_NOTE = /\s*\[logged under former hostname [^\]]*\]/g;
+const NOTE_HEAD = "[logged under former hostname ";
+
+// A note the description cap cut short has no closing bracket, and may stop anywhere — even inside
+// its fixed words (#2221). Only a description exactly at the cap can end in one.
+function stripCutNote(text: string): string {
+  if (text.length !== FORMER_HOST_DESCRIPTION_CAP) return text;
+  const at = text.lastIndexOf(" [");
+  if (at < 0) return text;
+  const tail = text.slice(at + 1);
+  const cut = NOTE_HEAD.startsWith(tail) || (tail.startsWith(NOTE_HEAD) && !tail.includes("]"));
+  return cut ? text.slice(0, at) : text;
+}
 const SAMPLE_CORPUS_NOTE = /\s*\[detection sample corpus — [^\]]*\]/g;
 
+/**
+ * `evenWithoutLedger` re-homes against an EMPTY ledger too (#2221): Undo of the import that taught the
+ * case its first rename restores no ledger at all, and its folded rows must go back to the name they
+ * wrote. The default skips the scan, because a settle with no ledger has nothing to move.
+ */
+export interface CarryOptions {
+  evenWithoutLedger?: boolean;
+}
+
 /** Recompute every eligible row's host from the case's rename ledger. */
-export function carryHostRenames(state: InvestigationState): {
+export function carryHostRenames(
+  state: InvestigationState,
+  opts: CarryOptions = {},
+): {
   state: InvestigationState;
   changed: number;
 } {
-  if (!state.hostRenames?.length) return { state, changed: 0 };
+  if (!state.hostRenames?.length && !opts.evenWithoutLedger) return { state, changed: 0 };
   const map = HostRenameMap.from(state.hostRenames, state.collectorHostnames);
   let changed = 0;
   const forensicTimeline = state.forensicTimeline.map((e) => {
@@ -59,8 +83,9 @@ export function carryHostRenames(state: InvestigationState): {
 export function rehomeEvents(
   events: readonly ForensicEvent[],
   state: Pick<InvestigationState, "hostRenames" | "collectorHostnames">,
+  opts: CarryOptions = {},
 ): ForensicEvent[] {
-  if (!state.hostRenames?.length) return [];
+  if (!state.hostRenames?.length && !opts.evenWithoutLedger) return [];
   const map = HostRenameMap.from(state.hostRenames, state.collectorHostnames);
   const changed: ForensicEvent[] = [];
   for (const e of events) {
@@ -88,7 +113,9 @@ function rehome(e: ForensicEvent, map: HostRenameMap): ForensicEvent {
   const current = map.currentNameOf(e.assetRecord, e.timestamp);
   const folded = shortHostName(current) !== shortHostName(e.assetRecord);
   const asset = folded ? current : e.assetRecord;
-  const base = e.description.replace(FORMER_HOST_NOTE, "").replace(folded ? SAMPLE_CORPUS_NOTE : /$^/, "");
+  const base = stripCutNote(e.description)
+    .replace(FORMER_HOST_NOTE, "")
+    .replace(folded ? SAMPLE_CORPUS_NOTE : /$^/, "");
   const description = folded ? withFormerHostSuffix(base, e.assetRecord) : base;
   if (asset === e.asset && description === e.description) return e;
   const target = e.canonical?.target;
@@ -99,4 +126,18 @@ function rehome(e: ForensicEvent, map: HostRenameMap): ForensicEvent {
     description,
     ...(retarget && e.canonical ? { canonical: { ...e.canonical, target: { ...target, name: asset } } } : {}),
   };
+}
+
+export type RenameLedger = Pick<InvestigationState, "hostRenames" | "collectorHostnames">;
+
+/**
+ * True when what the ledger says about any host differs: a rename learned, unlearned or re-bounded,
+ * or a collector identity that now vetoes a fold. Content, not identity — the importer rebuilds the
+ * state object on every save.
+ */
+export function renameLedgerChanged(before: RenameLedger, after: RenameLedger): boolean {
+  return (
+    JSON.stringify(before.hostRenames ?? []) !== JSON.stringify(after.hostRenames ?? []) ||
+    JSON.stringify(before.collectorHostnames ?? []) !== JSON.stringify(after.collectorHostnames ?? [])
+  );
 }

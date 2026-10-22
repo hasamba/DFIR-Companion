@@ -238,3 +238,68 @@ describe("mergeConcurrentAdditions — re-applies the ledger an import wrote dur
     expect(merged.lastSummary).toBe("the model's summary");
   });
 });
+
+// #2221: Undo of the import that taught the case its first rename restores an EMPTY ledger. The
+// default carry does nothing on an empty ledger, so the folded rows would stay on the new name.
+describe("evenWithoutLedger — unfolding after Undo restores an empty ledger (#2221)", () => {
+  const folded = (): ForensicEvent =>
+    ev({
+      id: "f1",
+      asset: NEW,
+      assetRecord: OLD,
+      description: `Security Logon (EID 4624) - vagrant @ ${OLD} [logged under former hostname ${OLD}]`,
+      canonical: envelope({ kind: "host", name: NEW }),
+    });
+
+  it("leaves rows alone on an empty ledger by default", () => {
+    expect(rehomeEvents([folded()], { hostRenames: [] })).toEqual([]);
+    expect(carryHostRenames({ ...emptyState("C1"), forensicTimeline: [folded()] }).changed).toBe(0);
+  });
+
+  it("puts a folded row back on the name it wrote, without the note", () => {
+    for (const ledger of [{ hostRenames: [] }, {}]) {
+      const [out] = rehomeEvents([folded()], ledger, { evenWithoutLedger: true });
+      expect(out.asset).toBe(OLD);
+      expect(out.description).toBe(`Security Logon (EID 4624) - vagrant @ ${OLD}`);
+      expect(out.canonical?.target).toEqual({ kind: "host", name: OLD });
+    }
+  });
+
+  it("re-homes the whole forensic timeline the same way", () => {
+    const { state, changed } = carryHostRenames(
+      { ...emptyState("C1"), forensicTimeline: [folded()] },
+      { evenWithoutLedger: true },
+    );
+    expect(changed).toBe(1);
+    expect(state.forensicTimeline[0].asset).toBe(OLD);
+  });
+
+  it("never touches a row a collector named (no assetRecord)", () => {
+    const collector = ev({ id: "c1", asset: NEW });
+    expect(rehomeEvents([collector], {}, { evenWithoutLedger: true })).toEqual([]);
+  });
+
+  it("keeps a collector veto: a live collector name is never folded", () => {
+    const row = ev({ id: "v1", asset: OLD, assetRecord: OLD });
+    const ledger = {
+      hostRenames: [
+        {
+          formerName: OLD,
+          currentName: NEW,
+          until: "2026-08-26T13:49:52.000Z",
+          basis: "machine-account" as const,
+        },
+      ],
+      collectorHostnames: [OLD],
+    };
+    expect(rehomeEvents([row], ledger, { evenWithoutLedger: true })).toEqual([]);
+  });
+
+  it("strips a former-host note the 600-character cap cut short", () => {
+    const long = "x".repeat(580);
+    const cut = `${long} [logged under former hostname ${OLD}]`.slice(0, 600);
+    expect(cut.endsWith("]")).toBe(false);
+    const [out] = rehomeEvents([{ ...folded(), description: cut }], {}, { evenWithoutLedger: true });
+    expect(out.description).toBe(long);
+  });
+});

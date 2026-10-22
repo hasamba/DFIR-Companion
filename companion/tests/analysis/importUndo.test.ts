@@ -572,3 +572,113 @@ describe("super-timeline rows on a checkpoint (#2220)", () => {
     });
   });
 });
+
+// #2221: Undo of an import that taught the case a host rename restores the old ledger. Both
+// timelines must follow it: the forensic rows the delta keeps (one another writer added after the
+// import) are re-homed in the step, and the super-timeline is handed to a re-home pass.
+describe("host-rename carry follows Undo and Redo (#2221)", () => {
+  const OLD = "WIN-UK1GV882OK6";
+  const NEW = "DESKTOP-16OJFO6";
+  const rename = {
+    formerName: OLD,
+    currentName: NEW,
+    until: "2026-08-26T13:49:52.000Z",
+    basis: "machine-account" as const,
+  };
+  const row = (id: string, asset: string): ForensicEvent => ({
+    id,
+    timestamp: "2025-12-05T03:02:24.000Z",
+    description: asset === OLD ? `logon @ ${OLD}` : `logon @ ${OLD} [logged under former hostname ${OLD}]`,
+    severity: "Low",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset,
+    assetRecord: OLD,
+  });
+  const S0: InvestigationState = { ...emptyState("c1"), forensicTimeline: [row("r0", OLD)] };
+  const S1: InvestigationState = {
+    ...S0,
+    hostRenames: [rename],
+    forensicTimeline: [row("r0", NEW), row("r1", NEW)],
+  };
+
+  let undoStore: ImportUndoStore;
+  let state: InvestigationState;
+  let rehomeSuper: ReturnType<typeof vi.fn>;
+  const deps = () => ({
+    undoStore,
+    stateStore: {
+      load: async () => state,
+      save: async (s: InvestigationState) => {
+        state = s;
+      },
+    },
+    importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
+    runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
+    rehomeSuper: rehomeSuper as (
+      caseId: string,
+      ledger: Pick<InvestigationState, "hostRenames" | "collectorHostnames">,
+    ) => Promise<number>,
+  });
+  const hostOf = (id: string) => state.forensicTimeline.find((e) => e.id === id)?.asset;
+
+  beforeEach(async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-importundo-rename-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    undoStore = new ImportUndoStore(cases);
+    // A row another writer added after the import, already carried to the new name.
+    state = { ...S1, forensicTimeline: [...S1.forensicTimeline, row("later", NEW)] };
+    rehomeSuper = vi.fn(async () => 2);
+    await undoStore.save("c1", pushCheckpoint(emptyUndoStack(), deltaCheckpoint("thor", "t", S0, S1)));
+  });
+
+  it("undo puts the kept forensic rows back on the old name and re-homes the super-timeline", async () => {
+    const u = await runUndoStep(deps(), "c1", applyUndo);
+    expect(state.hostRenames ?? []).toEqual([]);
+    expect(hostOf("r0")).toBe(OLD);
+    expect(hostOf("later")).toBe(OLD);
+    expect(hostOf("r1")).toBeUndefined();
+    expect(rehomeSuper).toHaveBeenCalledTimes(1);
+    expect(rehomeSuper.mock.calls[0][0]).toBe("c1");
+    expect(rehomeSuper.mock.calls[0][1].hostRenames ?? []).toEqual([]);
+    expect(u.superChanged).toBe(true);
+  });
+
+  it("redo folds them again, with the ledger it restores", async () => {
+    await runUndoStep(deps(), "c1", applyUndo);
+    const r = await runUndoStep(deps(), "c1", applyRedo);
+    expect(state.hostRenames).toEqual([rename]);
+    expect(hostOf("later")).toBe(NEW);
+    expect(rehomeSuper).toHaveBeenCalledTimes(2);
+    expect(rehomeSuper.mock.calls[1][1].hostRenames).toEqual([rename]);
+    expect(r.superChanged).toBe(true);
+  });
+
+  it("does not scan the super-timeline when the step leaves the ledger alone", async () => {
+    const A = mkState("a", 1, 0);
+    const B = { ...A, forensicTimeline: [...A.forensicTimeline, ...mkState("b", 1, 0).forensicTimeline] };
+    state = B;
+    await undoStore.save("c1", pushCheckpoint(emptyUndoStack(), deltaCheckpoint("thor", "t", A, B)));
+    const u = await runUndoStep(deps(), "c1", applyUndo);
+    expect(rehomeSuper).not.toHaveBeenCalled();
+    expect(u.superChanged).toBe(false);
+  });
+
+  it("a failed super-timeline pass keeps the undo and still reports a change", async () => {
+    rehomeSuper.mockRejectedValueOnce(new Error("disk full"));
+    const u = await runUndoStep(deps(), "c1", applyUndo);
+    expect(u.summary).not.toBeNull();
+    expect(hostOf("r0")).toBe(OLD);
+    expect(u.superChanged).toBe(true);
+  });
+
+  it("never re-homes the super-timeline when the stack write fails", async () => {
+    undoStore.save = async () => {
+      throw new Error("disk full");
+    };
+    await expect(runUndoStep(deps(), "c1", applyUndo)).rejects.toThrow("disk full");
+    expect(rehomeSuper).not.toHaveBeenCalled();
+    expect(state.hostRenames).toEqual([rename]);
+  });
+});

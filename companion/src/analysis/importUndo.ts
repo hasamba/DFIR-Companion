@@ -5,6 +5,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { applyUndoDelta, computeUndoDelta, isStateDelta, type StateDelta } from "./importUndoDelta.js";
+import { carryHostRenames, renameLedgerChanged, type RenameLedger } from "./hostRenameCarry.js";
 
 // Per-case UNDO / REDO of imports (#76). A single import can flood the dashboard — it grows the
 // forensic timeline + IOCs, and the synthesis that follows rewrites the findings / MITRE / attacker
@@ -416,6 +417,12 @@ export interface UndoStepDeps {
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   /** The super-timeline store, typed by the one method a step uses (#2220). Absent: rows untouched. */
   superTimeline?: { rehome(caseId: string, events: ForensicEvent[]): Promise<number> };
+  /**
+   * Re-homes the super-timeline against the ledger a step restored (#2221). Called only when the
+   * step changed the ledger, after it committed, under the import lock but not the state lock (a
+   * full scan). Absent: the super-timeline keeps the host names it had.
+   */
+  rehomeSuper?: (caseId: string, ledger: RenameLedger) => Promise<number>;
 }
 
 // One undo or redo step, for the routes. The restored state is saved verbatim — findings, IOCs,
@@ -439,15 +446,18 @@ export async function runUndoStep(
   const { undoStore, stateStore, superTimeline } = deps;
   let next: InvestigationState | null = null;
   let superWritten: SuperRowsUndo | undefined;
-  const summary = await deps.importLock.runExclusive(caseId, () =>
-    deps.runStateExclusive(caseId, async () => {
+  let stateBefore: InvestigationState | null = null;
+  let renamedSuper = false;
+  const summary = await deps.importLock.runExclusive(caseId, async () => {
+    const stepped = await deps.runStateExclusive(caseId, async () => {
       const state = await stateStore.load(caseId);
+      stateBefore = state;
       try {
         return await undoStore.mutate(caseId, async (stack) => {
           const result = step(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
           if (!result) return { stack, result: null };
           const saved: InvestigationState = {
-            ...result.restore,
+            ...followLedger(state, result.restore),
             caseId,
             updatedAt: new Date().toISOString(),
           };
@@ -471,7 +481,32 @@ export async function runUndoStep(
         }
         throw err;
       }
-    }),
-  );
-  return { summary, next, superChanged: superWritten !== undefined };
+    });
+    if (stateBefore && next && deps.rehomeSuper && renameLedgerChanged(stateBefore, next))
+      renamedSuper = await rehomeSuperQuietly(deps.rehomeSuper, caseId, next);
+    return stepped;
+  });
+  return { summary, next, superChanged: superWritten !== undefined || renamedSuper };
+}
+
+// The forensic half of #2221: a step that changes the ledger re-homes every row the restore keeps
+// (one another writer added after the import included) against the ledger it restores, so the
+// forensic rows and their super-timeline copies follow the same ledger.
+function followLedger(before: RenameLedger, restored: InvestigationState): InvestigationState {
+  if (!renameLedgerChanged(before, restored)) return restored;
+  return carryHostRenames(restored, { evenWithoutLedger: true }).state;
+}
+
+// Non-fatal, like settle's own super re-home: the restore is already committed. A throw may follow a
+// partly written batch, so it still counts as a change and the dashboard re-reads the super-timeline.
+async function rehomeSuperQuietly(
+  rehome: NonNullable<UndoStepDeps["rehomeSuper"]>,
+  caseId: string,
+  ledger: RenameLedger,
+): Promise<boolean> {
+  try {
+    return (await rehome(caseId, ledger)) > 0;
+  } catch {
+    return true;
+  }
 }

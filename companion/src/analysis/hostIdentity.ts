@@ -155,9 +155,12 @@ export function resolveRowHost(
   return { asset: collector, formerName: record, collectorIdentity: true, ...basis };
 }
 
+/** The cap withFormerHostSuffix cuts a description to; a note it cuts short has no closing bracket. */
+export const FORMER_HOST_DESCRIPTION_CAP = 600;
+
 export function withFormerHostSuffix(description: string, formerName?: string): string {
   if (!formerName) return description;
-  return `${description} [logged under former hostname ${formerName}]`.slice(0, 600);
+  return `${description} [logged under former hostname ${formerName}]`.slice(0, FORMER_HOST_DESCRIPTION_CAP);
 }
 
 // Demote a detection that fired on a public sample corpus's host — only when the row names no
