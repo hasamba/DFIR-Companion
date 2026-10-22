@@ -1,5 +1,6 @@
 // Settings → Sigma rules (#2204): the SigmaHQ release the import-time engine runs, its settings,
-// updates (check / preview / install / install from file / roll back) and the disabled-rules list.
+// updates (check / preview / install / install from file / roll back), the disabled-rules list and
+// per-rule exclusions (#2218).
 //
 // A CLASSIC SCRIPT, like every js/dashboard-*.js file. It wires itself once the page has loaded —
 // its buttons, and its own tab button (to load the tab when opened) — so the frozen inline script in
@@ -111,20 +112,36 @@ function sigmaRenderRules(list) {
     tr.appendChild(sigmaEl("td", r.source));
     const outcome = r.outcome === "status" ? "filtered by status" : r.outcome === "disabled" ? `disabled (${r.disabledBy || "analyst"})` : r.outcome;
     tr.appendChild(sigmaEl("td", outcome));
-    tr.appendChild(sigmaEl("td", (r.reasons || []).join("; ")));
+    const why = sigmaEl("td", (r.reasons || []).join("; "));
+    sigmaAppendExclusions(why, r);
+    tr.appendChild(why);
     const act = document.createElement("td");
-    if (r.outcome === "loaded" || r.outcome === "disabled") {
-      const btn = sigmaEl("button", r.outcome === "loaded" ? "Disable" : "Enable", "btn-mini");
-      btn.type = "button";
-      btn.disabled = sigmaDemoActive();
-      if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
-      btn.addEventListener("click", () => sigmaToggleRule(r.id, r.outcome === "loaded"));
-      act.appendChild(btn);
-    }
+    if (r.outcome === "loaded") act.appendChild(sigmaRuleButton("Exclude…", () => sigmaExcludeRule(r.id)));
+    if (r.outcome === "loaded" || r.outcome === "disabled")
+      act.appendChild(sigmaRuleButton(r.outcome === "loaded" ? "Disable" : "Enable", () => sigmaToggleRule(r.id, r.outcome === "loaded")));
     tr.appendChild(act);
     body.appendChild(tr);
   }
   document.getElementById("sigmaRulesCount").textContent = `(${shown.length} rules for the log sources the Companion grades)`;
+}
+
+// A mini button for the rules table, disabled in the public demo (#2216).
+function sigmaRuleButton(label, onClick) {
+  const btn = sigmaEl("button", label, "btn-mini");
+  btn.type = "button";
+  btn.disabled = sigmaDemoActive();
+  if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+// #2218: each exclusion under its rule, as text, with a Remove button.
+function sigmaAppendExclusions(cell, r) {
+  for (const x of r.exclusions || []) {
+    const line = sigmaEl("div", `${x.field} = ${x.value} — ${x.reason}`, "sfield-hint");
+    line.appendChild(sigmaRuleButton("Remove", () => sigmaRemoveExclusion(r.id, x.field, x.value)));
+    cell.appendChild(line);
+  }
 }
 
 async function loadSigmaRules() {
@@ -259,6 +276,43 @@ async function sigmaToggleRule(id, disable) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, disabled: disable, reason }),
     });
+    await loadSigmaRules();
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+async function sigmaPutExclusion(body) {
+  await sigmaFetch("/sigma/exclusions", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// #2218: keep the rule on but skip one known-benign value. Applies from the next import only.
+async function sigmaExcludeRule(id) {
+  if (sigmaDemoActive()) return;
+  const field = prompt("Exclude records by which field? (a field the rule's log source has, for example userIdentity.arn)", "");
+  if (field === null || !field.trim()) return;
+  const value = prompt(`Skip this rule when ${field.trim()} equals… (* and ? are wildcards; letter case is ignored)`, "");
+  if (value === null || !value.trim()) return;
+  const reason = prompt("Why is this value benign here? (shown next to the rule)", "known-benign in this environment");
+  if (reason === null) return;
+  try {
+    await sigmaPutExclusion({ id, field: field.trim(), value: value.trim(), reason });
+    sigmaMsg("Exclusion saved. It applies from the next import; events already imported keep their grading.");
+    await loadSigmaRules();
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+async function sigmaRemoveExclusion(id, field, value) {
+  if (sigmaDemoActive()) return;
+  try {
+    await sigmaPutExclusion({ id, field, value, remove: true });
+    sigmaMsg("Exclusion removed. It applies from the next import; events already imported keep their grading.");
     await loadSigmaRules();
   } catch (e) {
     sigmaMsg(e.message, true);

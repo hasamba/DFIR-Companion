@@ -26,6 +26,8 @@ describe("the Sigma rules settings tab", () => {
       "sigmaInstall",
       "sigmaRollback",
       "sigmaToggleRule",
+      "sigmaExcludeRule",
+      "sigmaRemoveExclusion",
     ])
       expect(fns).toContain(name);
   });
@@ -139,11 +141,19 @@ describe("the Sigma rules settings tab", () => {
         sigmaRenderRules: (list: unknown[]) => void;
         sigmaRenderPreview: (p: unknown) => void;
         sigmaToggleRule: (id: string, disable: boolean) => Promise<void>;
+        sigmaExcludeRule: (id: string) => Promise<void>;
+        sigmaRemoveExclusion: (id: string, field: string, value: string) => Promise<void>;
       }>("dashboard-sigma-rules.js", [], { document, fetch, prompt });
       return { mod, nodes, prompt, fetch };
     }
     const RULES = [
-      { id: "r1", title: "Rule one", source: "cloudtrail", outcome: "loaded" },
+      {
+        id: "r1",
+        title: "Rule one",
+        source: "cloudtrail",
+        outcome: "loaded",
+        exclusions: [{ field: "userIdentity.arn", value: "<img src=x onerror=alert(1)>", reason: "backup" }],
+      },
       { id: "r2", title: "Rule two", source: "cloudtrail", outcome: "disabled" },
     ];
     const PREVIEW = {
@@ -154,11 +164,12 @@ describe("the Sigma rules settings tab", () => {
       loads: {},
     };
 
-    it("disables the rule Enable/Disable buttons when the demo notice shows", () => {
+    it("disables the rule Exclude, Enable/Disable and Remove buttons when the demo notice shows", () => {
       const { mod, nodes } = load(true);
       mod.sigmaRenderRules(RULES);
       const btns = buttons(nodes.sigmaRulesBody);
-      expect(btns).toHaveLength(2);
+      // r1: one Remove (under its exclusion), Exclude… and Disable; r2: Enable.
+      expect(btns.map((b) => b.textContent)).toEqual(["Remove", "Exclude…", "Disable", "Enable"]);
       for (const b of btns) {
         expect(b.disabled).toBe(true);
         expect(b.title).toBe("Not available in the public demo");
@@ -169,7 +180,7 @@ describe("the Sigma rules settings tab", () => {
       const { mod, nodes } = load(false);
       mod.sigmaRenderRules(RULES);
       const btns = buttons(nodes.sigmaRulesBody);
-      expect(btns).toHaveLength(2);
+      expect(btns).toHaveLength(4);
       for (const b of btns) expect(b.disabled).toBeFalsy();
     });
 
@@ -185,6 +196,61 @@ describe("the Sigma rules settings tab", () => {
       mod.sigmaRenderPreview(PREVIEW);
       const [install] = buttons(nodes.sigmaPreview);
       expect(install.disabled).toBe(false);
+    });
+
+    function texts(root: Node): string[] {
+      return [String(root.textContent ?? ""), ...root.children.flatMap(texts)].filter(Boolean);
+    }
+
+    it("lists each exclusion as text, never as HTML (#2218)", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRules(RULES);
+      expect(texts(nodes.sigmaRulesBody)).toContain(
+        "userIdentity.arn = <img src=x onerror=alert(1)> — backup",
+      );
+    });
+
+    it("asks nothing and sends nothing when Exclude or Remove is used in the demo", async () => {
+      const { mod, prompt, fetch } = load(true);
+      await mod.sigmaExcludeRule("r1");
+      await mod.sigmaRemoveExclusion("r1", "f", "v");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("sends the field, value and reason for Exclude, and remove: true for Remove", async () => {
+      const { mod, prompt, fetch } = load(false);
+      prompt
+        .mockReturnValueOnce("userIdentity.arn")
+        .mockReturnValueOnce("*:role/Backup")
+        .mockReturnValueOnce("job");
+      await mod.sigmaExcludeRule("r1");
+      expect(prompt).toHaveBeenCalledTimes(3);
+      const calls = fetch.mock.calls as unknown as [string, { method: string; body: string }][];
+      expect(calls[0][0]).toBe("/sigma/exclusions");
+      expect(calls[0][1].method).toBe("PUT");
+      expect(JSON.parse(calls[0][1].body)).toEqual({
+        id: "r1",
+        field: "userIdentity.arn",
+        value: "*:role/Backup",
+        reason: "job",
+      });
+      fetch.mockClear();
+      await mod.sigmaRemoveExclusion("r1", "userIdentity.arn", "*:role/Backup");
+      const removeCall = fetch.mock.calls[0] as unknown as [string, { body: string }];
+      expect(JSON.parse(removeCall[1].body)).toEqual({
+        id: "r1",
+        field: "userIdentity.arn",
+        value: "*:role/Backup",
+        remove: true,
+      });
+    });
+
+    it("sends nothing when the analyst cancels a prompt", async () => {
+      const { mod, prompt, fetch } = load(false);
+      prompt.mockReturnValueOnce(null as unknown as string);
+      await mod.sigmaExcludeRule("r1");
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it("asks nothing and sends nothing when a rule is toggled in the demo", async () => {

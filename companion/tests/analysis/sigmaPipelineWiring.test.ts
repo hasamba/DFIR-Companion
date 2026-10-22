@@ -62,7 +62,7 @@ describe("Sigma grader wiring", () => {
     expect(ev?.severity).toBe("High");
     expect(ev?.description).toMatch(/^Sigma: AWS SecurityHub Findings Evasion/);
     expect(note).toMatch(
-      /; Sigma: SigmaHQ r2026-07-01 \(content [0-9a-f]{12}\), statuses stable, test, raises at high and above, disabled list [0-9a-f]{8}, 1 row\(s\) matched$/,
+      /; Sigma: SigmaHQ r2026-07-01 \(content [0-9a-f]{12}\), statuses stable, test, raises at high and above, disabled list [0-9a-f]{8}, exclusions none, 1 row\(s\) matched$/,
     );
   });
 

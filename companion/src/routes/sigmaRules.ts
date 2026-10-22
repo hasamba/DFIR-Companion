@@ -1,6 +1,7 @@
 // Settings → Sigma rules (#2204): what the import-time Sigma engine runs, and the analyst's controls
 // over it — check SigmaHQ for a newer release, preview it (download + verify + diff, nothing
-// installed), install it, install from a file, roll back, and switch single rules off or on.
+// installed), install it, install from a file, roll back, switch single rules off or on, and keep a
+// rule on while skipping known-benign values (exclusions, #2218).
 //
 // Every mutating route is POST/PUT, so the demo's read-only gate refuses all of them. Downloads go
 // through the SSRF-guarded fetchOutbound; the release client adds the GitHub host pin and the
@@ -12,6 +13,7 @@ import type { RouteContext } from "./context.js";
 import { fetchOutbound, OutboundUrlBlockedError } from "./outboundFetchGuard.js";
 import { SigmaStoreError, type SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "../analysis/sigmaReleaseArchive.js";
+import { SIGMA_EXCLUSION_LIMITS } from "../analysis/sigmaExclusions.js";
 import { computeSigmaCoverage, inventoryCounts } from "../analysis/sigmaCoverage.js";
 import {
   sigmaMinLevelFromEnv,
@@ -39,6 +41,14 @@ const disabledBody = z.object({
   id: z.string().min(1).max(200),
   disabled: z.boolean(),
   reason: z.string().max(300).optional(),
+});
+
+const exclusionBody = z.object({
+  id: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.id),
+  field: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.field),
+  value: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.value),
+  reason: z.string().max(SIGMA_EXCLUSION_LIMITS.reason).optional(),
+  remove: z.boolean().optional(),
 });
 
 const sigmaEnabled = (): boolean => !OFF.has(process.env.DFIR_SIGMA_RULES?.trim().toLowerCase() ?? "");
@@ -72,6 +82,7 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
       previous: store.previous(),
       contentSha: set.contentSha,
       disabledHash: set.disabledHash,
+      exclusionsHash: set.exclusionsHash,
       settings: {
         statuses: sigmaStatusesFromEnv(),
         minLevel: sigmaMinLevelFromEnv(),
@@ -179,6 +190,23 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
       return res.json({ ok: true });
     } catch (err) {
       return fail(res, "PUT /sigma/disabled", err);
+    }
+  });
+
+  // #2218: add or remove one exclusion. It grades the next import; events already imported keep
+  // their grading.
+  app.put("/sigma/exclusions", async (req: Request, res: Response) => {
+    const store = need(res);
+    if (!store) return;
+    const body = exclusionBody.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: "send {id, field, value, reason?, remove?}" });
+    const { id, field, value, reason, remove } = body.data;
+    try {
+      if (remove) await store.removeRuleExclusion(id, field, value);
+      else await store.setRuleExclusion(id, field, value, reason ?? "");
+      return res.json({ ok: true });
+    } catch (err) {
+      return fail(res, "PUT /sigma/exclusions", err);
     }
   });
 }

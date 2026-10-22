@@ -12,6 +12,7 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const TOKEN_A = "sigma:r2026-07-01:0123456789ab:stable+test:high:none";
 const TOKEN_B = "sigma:file_rules.zip:ba9876543210:stable+test+experimental:medium:1a2b3c4d";
+const TOKEN_EXCL = "sigma:r2026-07-01:0123456789ab:stable+test:high:none:9f8e7d6c";
 
 const ev = (id: string, ruleVersions?: string[]): ForensicEvent =>
   ({
@@ -55,6 +56,21 @@ describe("sigmaGradingsInCase", () => {
 
   it("ignores malformed tokens", () => {
     expect(sigmaGradingsInCase([ev("1", ["sigma:only:three"])])).toEqual([]);
+    expect(sigmaGradingsInCase([ev("1", [`${TOKEN_A}:NOTHEX!!`])])).toEqual([]);
+  });
+
+  // #2218: the token gained the exclusions hash. Older tokens (six parts) still read.
+  it("reads the exclusions hash from a seven-part token", () => {
+    expect(sigmaGradingsInCase([ev("1", [TOKEN_EXCL])])).toEqual([
+      {
+        release: "r2026-07-01",
+        contentSha: "0123456789ab",
+        statuses: ["stable", "test"],
+        minLevel: "high",
+        disabledHash: "none",
+        exclusionsHash: "9f8e7d6c",
+      },
+    ]);
   });
 });
 
@@ -75,6 +91,15 @@ describe("report output", () => {
     expect(detectionRulesHtml([ev("1", ["sigma:<b>:0123456789ab:stable:high:none"])])).toBe("");
     expect(detectionRulesHtml([ev("1", [TOKEN_A])])).toBe(
       '<p class="meta">Detection rules: SigmaHQ r2026-07-01 (content 0123456789ab), statuses stable, test, raises at high+, disabled list none</p>',
+    );
+  });
+
+  it("names the exclusions when the token carries them (#2218)", () => {
+    const lines: string[] = [];
+    detectionRulesMarkdown([ev("1", [TOKEN_EXCL])], lines);
+    expect(lines.join("\n")).toContain("disabled list `none`; exclusions `9f8e7d6c`");
+    expect(detectionRulesHtml([ev("1", [TOKEN_EXCL])])).toContain(
+      "disabled list none, exclusions 9f8e7d6c</p>",
     );
   });
 });

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applySigmaMatches,
   createSigmaImportGrader,
+  sigmaImportNote,
   sigmaMatchesFor,
+  sigmaProvenanceToken,
 } from "../../src/analysis/sigmaImportGrade.js";
 import { buildSigmaRuleSet, type SigmaRuleRef } from "../../src/analysis/sigmaRuleSet.js";
 import type { MappedEvent } from "../../src/analysis/siemImport.js";
@@ -110,15 +112,9 @@ describe("applySigmaMatches", () => {
 });
 
 describe("createSigmaImportGrader / sigmaMatchesFor", () => {
-  const set = buildSigmaRuleSet(
-    [
-      {
-        path: "r.yml",
-        text: "title: Stop\nid: stop\nstatus: test\nlogsource:\n  product: aws\n  service: cloudtrail\ndetection:\n  sel:\n    eventName: StopLogging\n  condition: sel\nlevel: high\n",
-      },
-    ],
-    { release: "r-test", commit: "abc" },
-  );
+  const STOP_TEXT =
+    "title: Stop\nid: stop\nstatus: test\nlogsource:\n  product: aws\n  service: cloudtrail\ndetection:\n  sel:\n    eventName: StopLogging\n  condition: sel\nlevel: high\n";
+  const set = buildSigmaRuleSet([{ path: "r.yml", text: STOP_TEXT }], { release: "r-test", commit: "abc" });
 
   it("matches through the grader while enabled", () => {
     const grader = createSigmaImportGrader(set);
@@ -136,6 +132,23 @@ describe("createSigmaImportGrader / sigmaMatchesFor", () => {
     on = true;
     expect(sigmaMatchesFor(grader.snapshot(), "aws-cloudtrail", { eventName: "StopLogging" })).toHaveLength(
       1,
+    );
+  });
+
+  // #2218: two imports graded under different exclusions must not carry the same token.
+  it("puts the exclusions hash last in the provenance token", () => {
+    const plain = sigmaProvenanceToken(set, "high");
+    expect(plain).toMatch(/:none:none$/);
+    const excluded = buildSigmaRuleSet(
+      [{ path: "r.yml", text: STOP_TEXT }],
+      { release: "r-test", commit: "abc" },
+      { exclusions: new Map([["stop", [{ field: "eventSource", value: "backup.example.com" }]]]) },
+    );
+    const token = sigmaProvenanceToken(excluded, "high");
+    expect(token).toMatch(/^sigma:r-test:[0-9a-f]{12}:stable\+test:high:none:[0-9a-f]{8}$/);
+    expect(token).not.toBe(plain);
+    expect(sigmaImportNote({ ruleSet: excluded, minLevel: "high", token }, 2)).toMatch(
+      /disabled list none, exclusions [0-9a-f]{8}, 2 row\(s\) matched$/,
     );
   });
 });

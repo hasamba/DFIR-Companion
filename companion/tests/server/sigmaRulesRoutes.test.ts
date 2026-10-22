@@ -91,6 +91,52 @@ describe("Sigma rules routes", () => {
     expect((await request(a).put("/sigma/disabled").send({ id: "", disabled: true })).status).toBe(400);
   });
 
+  // #2218: per-rule exclusions.
+  it("adds and removes a rule exclusion, and refuses a bad body or field", async () => {
+    const a = app();
+    const rules = (await request(a).get("/sigma/rules")).body.rules as {
+      id: string;
+      outcome: string;
+      source: string;
+      exclusions?: unknown[];
+    }[];
+    const id = rules.find((r) => r.outcome === "loaded" && r.source === "aws-cloudtrail")!.id;
+    const value = "arn:aws:iam::111122223333:role/BackupService";
+    const add = await request(a)
+      .put("/sigma/exclusions")
+      .send({ id, field: "userIdentity.arn", value, reason: "nightly backup" });
+    expect(add.status).toBe(200);
+    const listed = (await request(a).get("/sigma/rules")).body.rules as typeof rules;
+    expect(listed.find((r) => r.id === id)?.exclusions).toEqual([
+      { field: "userIdentity.arn", value, reason: "nightly backup" },
+    ]);
+    expect((await request(a).get("/sigma/status")).body.exclusionsHash).toMatch(/^[0-9a-f]{8}$/);
+
+    const remove = await request(a)
+      .put("/sigma/exclusions")
+      .send({ id, field: "userIdentity.arn", value, remove: true });
+    expect(remove.status).toBe(200);
+    expect((await request(a).get("/sigma/status")).body.exclusionsHash).toBe("none");
+
+    const bad = await request(a).put("/sigma/exclusions").send({ id, field: "" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/id, field, value/);
+    const field = await request(a).put("/sigma/exclusions").send({ id, field: "TargetFilename", value: "x" });
+    expect(field.status).toBe(422);
+    expect(field.body.error).toMatch(/not available in AWS CloudTrail/);
+    const unknown = await request(a)
+      .put("/sigma/exclusions")
+      .send({ id: "no-such-rule", field: "eventName", value: "x" });
+    expect(unknown.status).toBe(404);
+  });
+
+  it("answers 501 for exclusions when no rule store is configured", async () => {
+    const res = await request(app({ sigmaRuleStore: undefined }))
+      .put("/sigma/exclusions")
+      .send({ id: "r", field: "eventName", value: "x" });
+    expect(res.status).toBe(501);
+  });
+
   it("refuses changes in the demo", async () => {
     const res = await request(app({ demoMode: true }))
       .post("/sigma/rollback")

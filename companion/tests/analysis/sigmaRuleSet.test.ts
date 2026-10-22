@@ -270,3 +270,56 @@ describe("contentSha line endings (#2215)", () => {
     expect(normalizeRuleText("a\nb\n")).toBe("a\nb\n");
   });
 });
+
+// #2218: an analyst exclusion keeps a rule on but skips one known-benign value. Sigma exact-match
+// semantics (case-insensitive, `*` / `?` wildcards); the field is read through the source's own
+// resolver; a truncated lookup never hides a hit.
+describe("rule exclusions (#2218)", () => {
+  const BACKUP = "arn:aws:iam::111122223333:role/BackupService";
+  const rec = (arn: string, extra: Record<string, unknown> = {}) => ({
+    eventSource: "cloudtrail.amazonaws.com",
+    eventName: "StopLogging",
+    userIdentity: { arn },
+    ...extra,
+  });
+  const withExclusion = (value: string, field = "userIdentity.arn") =>
+    buildSigmaRuleSet([STOP], META, { exclusions: new Map([["stop", [{ field, value }]]]) });
+  const ids = (set: ReturnType<typeof buildSigmaRuleSet>, r: Record<string, unknown>) =>
+    matchSigmaRecord(set, "aws-cloudtrail", r).matches.map((m) => m.ref.id);
+
+  it("drops the match for the excluded value and keeps it for any other", () => {
+    const set = withExclusion(BACKUP);
+    expect(ids(set, rec(BACKUP))).toEqual([]);
+    expect(ids(set, rec("arn:aws:iam::111122223333:role/Attacker"))).toEqual(["stop"]);
+  });
+
+  it("matches the way a Sigma value does: wildcards and any letter case", () => {
+    expect(ids(withExclusion("*:role/BackupService"), rec(BACKUP))).toEqual([]);
+    expect(ids(withExclusion(BACKUP.toUpperCase()), rec(BACKUP))).toEqual([]);
+    expect(ids(withExclusion("*:role/Backup"), rec(BACKUP))).toEqual(["stop"]);
+  });
+
+  it("reads the field through the source's resolver (lower-case Sigma spelling)", () => {
+    expect(ids(withExclusion(BACKUP, "useridentity.arn"), rec(BACKUP))).toEqual([]);
+  });
+
+  it("never suppresses on a truncated lookup", () => {
+    const set = withExclusion(BACKUP);
+    expect(ids(set, rec(BACKUP, { __sigmaIncomplete: ["userIdentity.arn"] }))).toEqual(["stop"]);
+    expect(ids(set, { ...rec(BACKUP), userIdentity: {}, __sigmaIncomplete: ["userIdentity.arn"] })).toEqual([
+      "stop",
+    ]);
+  });
+
+  it("keeps the match when the record has no value for the field", () => {
+    const bare = { eventSource: "cloudtrail.amazonaws.com", eventName: "StopLogging" };
+    expect(ids(withExclusion(BACKUP), bare)).toEqual(["stop"]);
+  });
+
+  it("names the exclusions in a hash: none when empty, changed by any exclusion", () => {
+    expect(buildSigmaRuleSet([STOP], META).exclusionsHash).toBe("none");
+    const one = withExclusion(BACKUP);
+    expect(one.exclusionsHash).toMatch(/^[0-9a-f]{8}$/);
+    expect(withExclusion("arn:aws:iam::111122223333:role/Other").exclusionsHash).not.toBe(one.exclusionsHash);
+  });
+});

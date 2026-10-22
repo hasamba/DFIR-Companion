@@ -786,6 +786,7 @@
     "sigmaRuleTypes.ts": "analysis/hunt",
     "sigmaLookup.ts": "analysis/hunt",
     "sigmaMatch.ts": "analysis/hunt",
+    "sigmaExclusions.ts": "analysis/hunt",
     "sigmaLogSources.ts": "analysis/hunt",
     "sigmaCoverage.ts": "analysis/hunt",
     "sigmaRuleSet.ts": "analysis/hunt",

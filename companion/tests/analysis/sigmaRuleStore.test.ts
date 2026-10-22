@@ -132,6 +132,74 @@ describe("SigmaRuleStore", () => {
     expect(again.inventory().find((e) => e.id === loadedId)?.outcome).toBe("disabled");
   });
 
+  // #2218: per-rule exclusions, persisted beside disabled.yml.
+  describe("exclusions (#2218)", () => {
+    const ARN = "arn:aws:iam::111122223333:role/BackupService";
+    const cloudTrailRule = (s: SigmaRuleStore) =>
+      s.inventory().find((e) => e.outcome === "loaded" && e.source === "aws-cloudtrail")!.id;
+
+    it("adds an exclusion, shows it on the rule, rebuilds the rule set and persists it", async () => {
+      const { s, root } = await store();
+      const id = cloudTrailRule(s);
+      const before = s.activeRuleSet();
+      expect(before.exclusionsHash).toBe("none");
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "nightly backup");
+      const after = s.activeRuleSet();
+      expect(after).not.toBe(before);
+      expect(after.exclusionsHash).toMatch(/^[0-9a-f]{8}$/);
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toEqual([
+        { field: "userIdentity.arn", value: ARN, reason: "nightly backup" },
+      ]);
+      const again = new SigmaRuleStore(root, BUNDLED, {});
+      await again.init();
+      expect(again.inventory().find((e) => e.id === id)?.exclusions).toHaveLength(1);
+      expect(again.activeRuleSet().exclusionsHash).toBe(after.exclusionsHash);
+    });
+
+    it("removes an exclusion, and removing one that is not there changes nothing", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "");
+      await s.removeRuleExclusion(id, "USERIDENTITY.ARN", ARN.toUpperCase());
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toBeUndefined();
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+      await s.removeRuleExclusion(id, "userIdentity.arn", "nothing");
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+    });
+
+    it("replaces the reason when the same exclusion is added again", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "first");
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "second");
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toEqual([
+        { field: "userIdentity.arn", value: ARN, reason: "second" },
+      ]);
+    });
+
+    it("refuses a field the rule's log source cannot read (422) and an unknown rule (404)", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await expect(s.setRuleExclusion(id, "TargetFilename", "x", "")).rejects.toMatchObject({
+        status: 422,
+        message: expect.stringMatching(/TargetFilename is not available in AWS CloudTrail/),
+      });
+      await expect(s.setRuleExclusion("no-such-rule", "eventName", "x", "")).rejects.toMatchObject({
+        status: 404,
+      });
+      await expect(s.setRuleExclusion(id, "eventName", "   ", "")).rejects.toMatchObject({ status: 422 });
+    });
+
+    it("loads a malformed exclusions.yml as empty without failing startup", async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-sigma-store-"));
+      await mkdir(sigmaPaths(root).root, { recursive: true });
+      await writeFile(sigmaPaths(root).exclusions, "exclusions: [unclosed");
+      const s = new SigmaRuleStore(root, BUNDLED, {});
+      await s.init();
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+    });
+  });
+
   it("rebuilds when the status setting changes", async () => {
     const env: NodeJS.ProcessEnv = {};
     const { s } = await store(env);

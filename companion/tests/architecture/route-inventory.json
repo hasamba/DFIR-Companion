@@ -350,6 +350,7 @@
     "ROUTE POST /sigma/install",
     "ROUTE POST /sigma/rollback",
     "ROUTE PUT /sigma/disabled",
+    "ROUTE PUT /sigma/exclusions",
     "ROUTE GET /cases/:id/custody/manifest",
     "ROUTE GET /cases/:id/custody",
     "ROUTE POST /cases/:id/custody",

@@ -1,5 +1,6 @@
 // The installed Sigma rules and everything an analyst does to them (#2204): which release is
-// active, preview / install / roll back a release, and switch single rules off or back on.
+// active, preview / install / roll back a release, switch single rules off or back on, and keep a
+// rule on while skipping known-benign values (exclusions, #2218).
 //
 // Reads are synchronous and served from memory, because every import takes a grading snapshot
 // before it parses. Mutations are serialized and persisted crash-safely (sigmaReleaseFiles.ts).
@@ -13,6 +14,17 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { readDisabledList, readMeta, ruleFiles, SIGMA_MAX_RULE_FILES } from "./sigmaBundledRules.js";
 import { diffSigmaReleases, readSigmaReleaseZip, type SigmaReleaseDiff } from "./sigmaReleaseArchive.js";
 import { downloadSigmaRelease, latestSigmaRelease, type SigmaAssetFetch } from "./sigmaReleaseClient.js";
+import {
+  checkSigmaExclusion,
+  exclusionsByRule,
+  parseSigmaExclusions,
+  SIGMA_EXCLUSION_LIMITS,
+  sigmaExclusionKey,
+  sigmaExclusionsHash,
+  stringifySigmaExclusions,
+  type SigmaExclusion,
+} from "./sigmaExclusions.js";
+import { fieldResolvers, SIGMA_LOG_SOURCES } from "./sigmaLogSources.js";
 import {
   buildSigmaRuleSet,
   type SigmaInventoryEntry,
@@ -95,6 +107,9 @@ export class SigmaRuleStore {
   private activeInfo: SigmaReleaseInfo;
   private overrides: SigmaOverrides = { disabled: [], enabled: [] };
   private overridesVersion = 0;
+  private exclusions: SigmaExclusion[] = [];
+  /** The exclusions' hash, kept in the rule-set cache key (#2218). */
+  private exclusionsKey = "none";
   private startupProblems: string[] = [];
   private cache?: { key: string; set: SigmaRuleSet; files: SigmaRuleFile[] };
   private pending?: Pending;
@@ -120,6 +135,7 @@ export class SigmaRuleStore {
     }
     this.activeInfo = this.infoFor(this.manifest.active);
     this.overrides = this.readOverrides();
+    this.setExclusions(this.readExclusions());
   }
 
   /** load(), then drop staging leftovers and releases the manifest does not name. */
@@ -202,7 +218,11 @@ export class SigmaRuleStore {
     return buildSigmaRuleSet(
       files,
       { release: release.release, commit: release.commit },
-      { statuses: sigmaStatusesFromEnv(this.env).statuses, disabled: this.effectiveDisabled() },
+      {
+        statuses: sigmaStatusesFromEnv(this.env).statuses,
+        disabled: this.effectiveDisabled(),
+        exclusions: exclusionsByRule(this.exclusions),
+      },
     );
   }
 
@@ -240,7 +260,8 @@ export class SigmaRuleStore {
 
   /** The rule set imports are graded with: the active release, current statuses and disabled list. */
   activeRuleSet(): SigmaRuleSet {
-    const key = `${this.activeInfo.id}|${sigmaStatusesFromEnv(this.env).statuses.join(",")}|${this.overridesVersion}`;
+    const statuses = sigmaStatusesFromEnv(this.env).statuses.join(",");
+    const key = `${this.activeInfo.id}|${statuses}|${this.overridesVersion}|${this.exclusionsKey}`;
     if (this.cache?.key === key) return this.cache.set;
     const files =
       this.cache && this.cache.key.split("|")[0] === this.activeInfo.id
@@ -269,14 +290,18 @@ export class SigmaRuleStore {
         : null;
   }
 
-  inventory(): (SigmaInventoryEntry & { disabledBy?: "shipped" | "analyst" })[] {
+  inventory(): SigmaStoreInventoryEntry[] {
     const shipped = this.shippedDisabled();
     const analyst = new Set(this.overrides.disabled.map((d) => d.id));
-    return this.activeRuleSet().inventory.map((e) =>
-      e.outcome === "disabled"
-        ? { ...e, disabledBy: analyst.has(e.id) || !shipped.has(e.id) ? "analyst" : "shipped" }
-        : e,
-    );
+    return this.activeRuleSet().inventory.map((e) => {
+      const excl = this.exclusions
+        .filter((x) => x.id === e.id)
+        .map(({ field, value, reason }) => ({ field, value, reason }));
+      const withExcl = excl.length ? { ...e, exclusions: excl } : e;
+      return e.outcome === "disabled"
+        ? { ...withExcl, disabledBy: analyst.has(e.id) || !shipped.has(e.id) ? "analyst" : "shipped" }
+        : withExcl;
+    });
   }
 
   // ── Mutations (serialized) ─────────────────────────────────────────────────────────────────
@@ -325,6 +350,56 @@ export class SigmaRuleStore {
       await writeAtomic(sigmaPaths(this.dataRoot).overrides, stringifyYaml(next));
       this.overrides = next;
       this.overridesVersion++;
+    });
+  }
+
+  // ── Exclusions (#2218) ─────────────────────────────────────────────────────────────────────
+
+  private readExclusions(): SigmaExclusion[] {
+    try {
+      return parseSigmaExclusions(readFileSync(sigmaPaths(this.dataRoot).exclusions, "utf8"));
+    } catch {
+      return [];
+    }
+  }
+
+  private setExclusions(next: SigmaExclusion[]): void {
+    this.exclusions = next;
+    this.exclusionsKey = sigmaExclusionsHash(exclusionsByRule(next));
+  }
+
+  private async writeExclusions(next: SigmaExclusion[]): Promise<void> {
+    await writeAtomic(sigmaPaths(this.dataRoot).exclusions, stringifySigmaExclusions(next));
+    this.setExclusions(next);
+  }
+
+  /**
+   * Keep rule `id` on but skip records whose `field` holds `value` (Sigma exact match, wildcards
+   * allowed). The same rule, field and value again replaces the reason. A field the rule's log
+   * source cannot read is refused: it resolves to nothing, so the exclusion would never fire.
+   */
+  setRuleExclusion(id: string, field: string, value: string, reason = ""): Promise<void> {
+    return this.serial(async () => {
+      const entry = checkedExclusion(id, field, value, reason);
+      const rule = this.activeRuleSet().inventory.find((e) => e.id === entry.id && e.source);
+      if (!rule) throw new SigmaStoreError(404, `no rule ${entry.id} for a log source the Companion grades`);
+      const def = SIGMA_LOG_SOURCES.find((s) => s.id === rule.source);
+      const resolvers = def ? fieldResolvers(def, entry.field) : { refused: "unknown log source" };
+      if (!Array.isArray(resolvers)) throw new SigmaStoreError(422, resolvers.refused);
+      const key = sigmaExclusionKey(entry);
+      const others = this.exclusions.filter((x) => sigmaExclusionKey(x) !== key);
+      if (others.length >= SIGMA_EXCLUSION_LIMITS.count)
+        throw new SigmaStoreError(422, `at most ${SIGMA_EXCLUSION_LIMITS.count} exclusions can be kept`);
+      await this.writeExclusions([...others, entry]);
+    });
+  }
+
+  /** Drop one exclusion. Removing one that is not there changes nothing. */
+  removeRuleExclusion(id: string, field: string, value: string): Promise<void> {
+    return this.serial(async () => {
+      const key = sigmaExclusionKey({ id: id.trim(), field: field.trim(), value: value.trim() });
+      const next = this.exclusions.filter((x) => sigmaExclusionKey(x) !== key);
+      if (next.length !== this.exclusions.length) await this.writeExclusions(next);
     });
   }
 
@@ -480,6 +555,22 @@ export class SigmaRuleStore {
     const bytes = await downloadSigmaRelease(latest, fetchAsset);
     return this.preview(bytes, { source: "github", tag: latest.tag, verified: true });
   }
+}
+
+export type SigmaStoreInventoryEntry = SigmaInventoryEntry & {
+  disabledBy?: "shipped" | "analyst";
+  exclusions?: { field: string; value: string; reason: string }[];
+};
+
+function checkedExclusion(id: string, field: string, value: string, reason: string): SigmaExclusion {
+  const entry = checkSigmaExclusion({ id, field, value, reason });
+  if (!entry)
+    throw new SigmaStoreError(
+      422,
+      `an exclusion needs a rule id, a field (at most ${SIGMA_EXCLUSION_LIMITS.field} characters) ` +
+        `and a value (at most ${SIGMA_EXCLUSION_LIMITS.value} characters)`,
+    );
+  return entry;
 }
 
 /** A refusal the route turns into an HTTP status with the sentence as the error. */

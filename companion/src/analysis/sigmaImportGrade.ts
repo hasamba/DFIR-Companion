@@ -44,7 +44,10 @@ const rank = (level: SigmaLevel): number => SIGMA_LEVELS.indexOf(level);
 export interface SigmaGradingSnapshot {
   ruleSet: SigmaRuleSet;
   minLevel: SigmaLevel;
-  /** `sigma:<release>:<content>:<statuses>:<min level>:<disabled>` — stamped on every graded event. */
+  /**
+   * `sigma:<release>:<content>:<statuses>:<min level>:<disabled>:<exclusions>` — stamped on every
+   * graded event. The exclusions part (#2218) keeps imports graded under different exclusions apart.
+   */
   token: string;
 }
 
@@ -63,6 +66,7 @@ export function sigmaProvenanceToken(set: SigmaRuleSet, minLevel: SigmaLevel): s
     set.statuses.map(tokenPart).join("+") || "_",
     minLevel,
     set.disabledHash,
+    set.exclusionsHash,
   ].join(":");
 }
 
@@ -195,6 +199,7 @@ export function sigmaImportNote(snapshot: SigmaGradingSnapshot | undefined, rows
   const set = snapshot.ruleSet;
   return (
     `; Sigma: SigmaHQ ${set.release} (content ${set.contentSha}), statuses ${set.statuses.join(", ")}, ` +
-    `raises at ${snapshot.minLevel} and above, disabled list ${set.disabledHash}, ${rowsMatched} row(s) matched`
+    `raises at ${snapshot.minLevel} and above, disabled list ${set.disabledHash}, ` +
+    `exclusions ${set.exclusionsHash}, ${rowsMatched} row(s) matched`
   );
 }

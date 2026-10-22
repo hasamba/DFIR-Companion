@@ -310,6 +310,19 @@ The tab also shows:
 - **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
   noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion
   ships switched off because they need tenant-specific values.
+- **Exclude…** — keeps a loaded rule on but skips one known-benign value in your environment. Name a
+  field the rule's log source has (for example `userIdentity.arn`), a value (for example
+  `arn:aws:iam::111122223333:role/BackupService`) and a reason. The value matches the way a Sigma
+  value does: letter case is ignored, and `*` and `?` are wildcards. A record that matches the rule
+  AND the exclusion is not graded by that rule; every other record still is. If the field was cut
+  short at import, the exclusion does not apply and the rule still matches. The Companion refuses a
+  field the log source cannot read. Each exclusion shows under its rule with its reason and a
+  **Remove** button. Exclusions are server-wide, like the disabled list, and are kept in
+  `sigma/exclusions.yml` in the data folder.
+
+Disable, Enable and exclusions apply from the next import only. Events already imported keep their
+grading. The detection-rules line in each report carries a short hash of the exclusions that graded the case,
+so two imports graded under different exclusions never look the same.
 
 Updates and rule changes are not available in the demo.
 

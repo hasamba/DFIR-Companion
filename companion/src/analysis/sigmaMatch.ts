@@ -93,7 +93,8 @@ function globBody(value: string): { body: string; literal: string; wildcard: boo
   return { body, literal, wildcard };
 }
 
-function stringTest(value: SigmaScalar, mode: Mode): ValueTest {
+/** One Sigma string value as a test, in the given mode. Exported for analyst exclusions (#2218). */
+export function stringTest(value: SigmaScalar, mode: Mode): ValueTest {
   const { body, literal, wildcard } = globBody(String(value));
   if (wildcard) {
     const anchored =
