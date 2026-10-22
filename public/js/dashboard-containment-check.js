@@ -15,7 +15,7 @@
 (function () {
   const IN_PROGRESS_CAVEAT = "still in progress at the end of the collected evidence — not a live status";
   const RERUN_MESSAGE = "The check result expired or the finding changed — run the check again.";
-  const NOT_CONFIGURED = "Jev is not configured. Set it up in Settings → AI.";
+  const NOT_CONFIGURED = "The decision model is not configured. Set it up in Settings → AI.";
   // findingId → { busy, error, result, ticked:Set, added:Set, adding, message, resultAt }
   let ccByFinding = new Map();
   let ccActiveCase = "";
@@ -107,8 +107,8 @@
     const rec = ccByFinding.get(String(fid));
     const busy = !!(rec && rec.busy);
     const tip = busy
-      ? "Checking… — Jev is answering the containment questions for this finding"
-      : "Containment check — ask Jev narrow questions about this finding and suggest containment steps (advice only)";
+      ? "Checking… — the decision model is answering the containment questions for this finding"
+      : "Containment check — ask the decision model narrow questions about this finding and suggest containment steps (advice only)";
     return (
       `<button type="button" class="ccheck-btn" data-ccheck-run="${escAttr(String(fid))}"` +
       ` aria-label="Containment check" title="${escAttr(tip)}"${busy ? ' disabled aria-busy="true"' : ""}>` +
@@ -179,7 +179,7 @@
       const steps = Array.isArray(res.steps) ? res.steps : [];
       const anyTick = steps.some((s) => rec.ticked.has(String(s.id)) && !ccStepInPlaybook(fid, rec, s));
       body +=
-        `<div class="ccheck-meta">Jev ${esc(res.model)} · ${esc(ccDate(res.checkedAt))}</div>` +
+        `<div class="ccheck-meta">Decision model ${esc(res.model)} · ${esc(ccDate(res.checkedAt))}</div>` +
         ccAnswersHtml(answers) +
         ccCoverageHtml(res.coverage) +
         `<div class="ccheck-sub">Suggested steps</div>` +

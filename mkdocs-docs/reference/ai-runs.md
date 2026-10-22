@@ -218,7 +218,7 @@ Nothing these do reaches your case file. Press them as often as you like; the on
 
 **Caps.** 2,000 rows by default (`DFIR_JEV_MAX_ROWS`) — a default, not a ceiling; “Read every row” covers the archive
 
-**Costs.** one per 40 rows — scales, about 50 calls per 2,000 rows, using the Jev (a decision model, not a writer) model.
+**Costs.** one per 40 rows — scales, about 50 calls per 2,000 rows, using the decision model (not a writer).
 
 !!! warning "Know this"
     Off unless `DFIR_JEV_ENABLED` is set. The panel **hides rows it scores above 0.5 as your own tooling, ticked by default** — a real finding misjudged that way is invisible until you untick it. And nothing it grades Critical enters your case; you act on it by hand.

@@ -376,9 +376,9 @@ The deterministic content tagger gets one chance to raise an imported row above 
 raises what its rule set names. Anything it does not recognise stays `Info`, leaves the forensic
 timeline, and never reaches the AI — and a tagger rule written next week cannot reach back for it.
 
-This review grades those left-behind rows with **Jev**, a decision model that returns a grade and a
+This review grades those left-behind rows with a **decision model**, a model that returns a grade and a
 confidence instead of prose. It is fast and cheap enough to read a whole case's archive: about a
-thousand rows in a few seconds, for roughly a penny.
+thousand rows in a few seconds, for roughly a penny (measured with Jev 1.13, the default model's predecessor).
 
 **Grading writes nothing.** Running the review changes no case data; the run's cost is the only
 thing it records. What you tick is another matter — see *Promoting what it finds* below.
@@ -435,7 +435,7 @@ next to it.
 
 !!! note "Masking applies"
     Row text goes through the same anonymisation gate as every other model call. There is no
-    un-masking step and none is needed — a Jev answer is a number, so no real value can travel back
+    un-masking step and none is needed — a decision model's answer is a number, so no real value can travel back
     inside it. Tokenising paths and addresses barely affects the grades, because what makes a row
     suspicious is the action, not the hostname.
 
@@ -445,31 +445,47 @@ next to it.
 |---|---|---|
 | `DFIR_JEV_ENABLED` | off | Turns the panel on. |
 | `DFIR_JEV_PROVIDER` | `openrouter` | `openrouter` or `typesafe`. |
-| `DFIR_JEV_MODEL` | `typesafe/jev-1.13` | `jev-latest` on the `typesafe` provider. |
+| `DFIR_JEV_MODEL` | `typesafe/jev-1.14` | On `openrouter`, pick from a list of OpenRouter's decision models (see below). On `typesafe` it is blank by default, which means `jev-latest`. |
 | `DFIR_JEV_KEY` | blank | Blank on OpenRouter inherits your existing OpenRouter key. Required on `typesafe`. |
 | `DFIR_JEV_MAX_ROWS` | 2000 | Rows one ordinary press reads. A default, not a ceiling — the panel can read every row. |
 | `DFIR_JEV_BATCH_SIZE` | 40 | Rows per request. |
 | `DFIR_JEV_GRADING` | `single` | How a row is graded. See *Grading style* below. |
 
+### Choosing the model
+
+Jev (by TypeSafe) is one decision model among about thirty that OpenRouter offers. On the `openrouter`
+provider, Settings → AI → *Missed evidence review (Decision model)* shows the Model field as a
+dropdown of OpenRouter's decision models only, each with its price per million input tokens or
+"free". Pick *Enter model ID manually…* to type an id, and press **Refresh** to reload the list; if
+the list cannot load, type the id yourself. On the `typesafe` provider the list hides, because
+TypeSafe serves Jev only (blank means `jev-latest`). A model you already saved is kept.
+
+Every result names the model that produced it: each graded row records the model that answered for
+it, the containment card shows `Decision model <model id>`, and promoted rows carry
+`[missed-evidence: … by <model id>]`. If the chosen model rejects a question, the whole run stops so
+no more paid requests go out, and the error names the model, for example
+`Decision model perplexity/pplx-decider-v1.2: HTTP 400 …`. Only Jev 1.13 has been benchmarked.
+
 ### Grading style
 
 Settings → AI → *Grading style* picks one of two ways to grade a row. Both read the same rows.
 
-- **One question** (`single`, the default). Jev grades each row Info to Critical in one step. On 10
-  lab cases it caught every attack row, but half or more of its flags were false alarms. The 40%
+- **One question** (`single`, the default). The decision model grades each row Info to Critical in one step. On 10
+  lab cases Jev 1.13 caught every attack row, but half or more of its flags were false alarms. The 40%
   confidence filter removes many of them.
-- **Narrow questions** (`narrow`, experimental). Jev answers three small questions per row: is this
+- **Narrow questions** (`narrow`, experimental). The decision model answers three small questions per row: is this
   attacker activity, how strong is the evidence, and how much damage does it do. A fixed rule turns
-  the answers into the grade, and the panel shows those answers under each row. It raised fewer
-  false alarms, but it missed up to 1 in 4 attack rows and costs about 40% more.
+  the answers into the grade, and the panel shows those answers under each row. With Jev 1.13 it raised fewer
+  false alarms, but it missed up to 1 in 4 attack rows and cost about 40% more. Other models are not benchmarked.
 
 The panel's caption says when a review used the narrow questions. A promoted row's tag ends in
 `· d1` when the narrow questions graded it, so the record always shows which method set its
 severity. Use the default unless you are comparing the two on a case you know.
 
 !!! warning "The model id is versioned"
-    On OpenRouter the id is `typesafe/jev-1.13`. `typesafe/jev-latest` does not exist there and
-    returns a 400 — the `latest` alias only works against TypeSafe's own endpoint.
+    On OpenRouter the default id is `typesafe/jev-1.14`, and any OpenRouter decision model id works.
+    A versioned id is safest: `typesafe/jev-latest` does not exist there and returns a 400 — the
+    `latest` alias only works against TypeSafe's own endpoint.
 
 ## Containment Check
 
@@ -478,10 +494,10 @@ pick containment steps. "Generate remediation plan" writes a whole plan in one p
 whether it believes credentials were stolen, whether the activity survives a reboot, or whether data
 is leaving. This check asks.
 
-**Run it:** the **Containment check** button (the shield icon) in a finding's action row. It shows only when Jev is set up
-(Settings → AI → Missed evidence review). One press is one Jev call.
+**Run it:** the **Containment check** button (the shield icon) in a finding's action row. It shows only when the decision model is set up
+(Settings → AI → Missed evidence review). One press is one decision model call.
 
-**What Jev reads:** the finding and the forensic-timeline events it cites — never the super-timeline.
+**What the decision model reads:** the finding and the forensic-timeline events it cites — never the super-timeline.
 Everything is masked like every other AI call, and the attacker's text is marked as data, not
 instructions. A very large finding is cut at a size limit; the panel says how many cited events were
 sent and how many were left out.
@@ -494,7 +510,7 @@ the reach (one entity / a workgroup / the whole organization) and the attack typ
 
 **Read the answers with their numbers.** A yes/no answer of 60% or more counts as yes, under 15% as
 no, and anything between is shown as **unsure**. Each choice shows its confidence. A low number means
-Jev is guessing: look at the finding's evidence yourself before you act on it.
+the model is guessing: look at the finding's evidence yourself before you act on it.
 "In progress" means *still in progress at the end of the collected evidence* — it is not a live status.
 
 **Suggested steps** come from a fixed, tested rule, not from the model: block the attacker

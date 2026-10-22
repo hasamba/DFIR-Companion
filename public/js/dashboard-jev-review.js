@@ -315,9 +315,9 @@
   }
 
   function notConfiguredHtml() {
-    const reason = status && status.reason ? String(status.reason) : "Jev is not configured on this server.";
+    const reason = status && status.reason ? String(status.reason) : "The decision model is not configured on this server.";
     return `<p class="jev-status">${esc(reason)}</p>
-      <p class="jev-status">Set it up in <strong>Settings &rarr; AI &rarr; Missed evidence review (Jev)</strong>: turn <code>DFIR_JEV_ENABLED</code> on and choose a provider and model.</p>
+      <p class="jev-status">Set it up in <strong>Settings &rarr; AI &rarr; Missed evidence review (Decision model)</strong>: turn <code>DFIR_JEV_ENABLED</code> on and choose a provider and model.</p>
       <p><button type="button" id="jevOpenSettings">Open Settings</button></p>`;
   }
 
@@ -343,14 +343,14 @@
       btn.textContent = busy && !runningAll ? "Reviewing…" : "Review missed evidence";
       btn.title = configured
         ? "Grade the Info-graded super-timeline rows the AI never sees, up to the server's row cap. Reads only; nothing is promoted until you tick rows and press Promote."
-        : "Jev is not configured — see the note below.";
+        : "The decision model is not configured — see the note below.";
     }
     if (allBtn) {
       allBtn.disabled = locked;
       allBtn.textContent = busy && runningAll ? "Reading every row…" : "Read every row";
       allBtn.title = configured
         ? "Ignore the row cap and read every matching super-timeline row. Slower and dearer — it asks first, with the numbers. Reads only; nothing is promoted until you tick rows and press Promote."
-        : "Jev is not configured — see the note below.";
+        : "The decision model is not configured — see the note below.";
     }
     // The filter controls follow the same lock, and always show the state the render used.
     const gradeSel = document.getElementById("jevGradeFilter");

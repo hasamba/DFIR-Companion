@@ -238,6 +238,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-view-presets.js": "application/javascript; charset=utf-8",
   // The .env settings form — read, test Presidio, and save only the groups that changed.
   "/js/dashboard-env-settings.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-decision-model-picker.js": "application/javascript; charset=utf-8",
   // Memory Next Steps (#101) — what to look at next in a memory image.
   "/js/dashboard-memory-next-steps.js": "application/javascript; charset=utf-8",
   // Delete case, optionally archiving first.

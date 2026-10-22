@@ -55,6 +55,7 @@ import type { ComplianceControlStore } from "../analysis/complianceControl.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookHuntStore } from "../analysis/playbookHuntStore.js";
 import type { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
+import type { DecisionModelCatalog } from "../analysis/ai/jev/decisionModels.js";
 import type { PlaybookControlStore } from "../analysis/playbookControl.js";
 import type { FindingTaskStore } from "../analysis/findingTaskStore.js";
 import type { AssetOverridesStore } from "../analysis/assetOverrides.js";
@@ -361,6 +362,9 @@ export interface AppOptions {
   // its grades from here rather than from the request. The Jev routes build one over the case store
   // when this is absent — it exists as an option so a test can hand in a failing one.
   jevGradeStore?: JevGradeStore;
+  // The OpenRouter decision-model list behind the Settings picker (#2224). The route uses one shared,
+  // cached catalog when this is absent — it exists as an option so a test never touches the network.
+  decisionModelCatalog?: DecisionModelCatalog;
   correlationProfileStore?: CorrelationProfileStore;
   // Second LLM opinion (issue #116): the last QA cross-check record (deltas + analyst decisions),
   // read by the GET route. `secondOpinionEnabled` gates the dashboard button (a different model is

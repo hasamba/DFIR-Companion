@@ -27,7 +27,7 @@ function attributionLine(ref: string, c: ContainmentAttribution): string {
   const basis = new Set(c.basis);
   const answers = c.answers.filter((a) => basis.has(a.id)).map(answerText);
   const source =
-    `- ${ref} — suggested by the Jev containment check of finding ${cellMd(c.findingId)} ` +
+    `- ${ref} — suggested by the decision-model containment check of finding ${cellMd(c.findingId)} ` +
     `(model ${cellMd(c.model)}, ${cellMd(c.checkedAt.slice(0, 10))}, rule ${cellMd(c.rule)})`;
   return answers.length ? `${source}: ${answers.join("; ")}.` : `${source}.`;
 }

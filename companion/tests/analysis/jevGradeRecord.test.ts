@@ -144,4 +144,15 @@ describe("the review grade record", () => {
     expect(loaded.has("ok")).toBe(true);
     expect(loaded.has("bad")).toBe(false);
   });
+
+  it("records the model that answered each row, not one id for the whole review (#2224)", async () => {
+    const store = await cases();
+    await new JevGradeStore(store).record("c1", "run-model", [
+      { ...graded("r1", "High"), model: "perplexity/pplx-decider-v1.2" },
+      graded("r2", "Low"),
+    ]);
+    const loaded = await new JevGradeStore(store).load("c1");
+    expect(loaded.get("r1")?.model).toBe("perplexity/pplx-decider-v1.2");
+    expect(loaded.get("r2")?.model).toBe("run-model");
+  });
 });

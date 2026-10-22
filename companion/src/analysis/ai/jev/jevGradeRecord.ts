@@ -43,6 +43,8 @@ export interface JevGradedRow {
   readonly confidence: number;
   readonly score: number;
   readonly signals?: JevGradeSignals;
+  /** The model that answered for this row (#2224); the review's model when absent. */
+  readonly model?: string;
 }
 
 const unit = z.number().finite().min(0).max(1);
@@ -120,7 +122,7 @@ export class JevGradeStore {
           grade: row.grade,
           confidence: row.confidence,
           score: row.score,
-          model,
+          model: row.model || model,
           reviewedAt: at,
           ...(row.signals ? { signals: row.signals } : {}),
         });
