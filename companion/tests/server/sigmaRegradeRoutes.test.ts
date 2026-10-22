@@ -260,7 +260,7 @@ describe("POST /cases/:id/sigma/regrade — the apply (#2206)", () => {
     const m365 = (rows: ForensicEvent[]) => rows.filter((e) => e.canonical?.producer?.importer === "m365");
     const before = m365((await superStore.query("c1", {})).events);
     expect(before.length).toBeGreaterThan(0);
-    expect(before.every((e) => !e.canonical!.producer!.ruleVersions)).toBe(true);
+    expect(before.every((e) => !e.canonical!.producer.ruleVersions)).toBe(true);
     sigmaOn = true;
     const token = createSigmaImportGrader(SET_ON).snapshot()!.token;
     const res = await request(app).post("/cases/c1/sigma/regrade").send({});

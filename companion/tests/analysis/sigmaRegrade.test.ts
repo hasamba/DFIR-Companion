@@ -65,7 +65,7 @@ function stored(
   extra: Partial<ForensicEvent> = {},
 ): ForensicEvent[] {
   return parseCloudTrail(TEXT, { sigma: snapshot }).events.map((e, i) => ({
-    ...(e as SiemEvent),
+    ...e,
     id: `a1e${i + 1}`,
     relatedFindingIds: [],
     sourceScreenshots: [FILE],
