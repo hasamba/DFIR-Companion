@@ -65,6 +65,7 @@ describe("buildSigmaRuleSet", () => {
         url: "https://github.com/SigmaHQ/sigma/blob/abc123/rules/cloud/aws/cloudtrail/stop.yml",
         release: "r-test",
         mitre: ["T1562.008"],
+        huntingOnly: false,
       },
     ]);
   });
@@ -194,5 +195,18 @@ describe("matchSigmaRecord index", () => {
     const m = matchSigmaRecord(filtered, "aws-cloudtrail", big);
     expect(m.matches).toEqual([]);
     expect(m.incomplete).toBe(1);
+  });
+});
+
+describe("threat-hunting rules and versioning (#2204)", () => {
+  it("marks a rule under rules-threat-hunting/ hunting-only and records modified", () => {
+    const text = ruleText({ id: "hunt", detection: "  sel:\n    eventName: X" }).replace(
+      "author: Example Author",
+      "author: Example Author\nmodified: 2025-02-03",
+    );
+    const set = buildSigmaRuleSet([file("rules-threat-hunting/cloud/aws/x.yml", text)], META);
+    const ref = matchSigmaRecord(set, "aws-cloudtrail", { eventName: "X" }).matches[0].ref;
+    expect(ref.huntingOnly).toBe(true);
+    expect(ref.modified).toBe("2025-02-03");
   });
 });

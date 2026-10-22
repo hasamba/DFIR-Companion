@@ -31,9 +31,8 @@ import { m365Coverage } from "./cloudCoverageBuilders.js";
 import {
   applySigmaMatches,
   applySigmaToRecordRows,
-  DEFAULT_SIGMA_MIN_LEVEL,
   sigmaMatchesFor,
-  type SigmaImportGrader,
+  type SigmaGradingSnapshot,
 } from "./sigmaImportGrade.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
@@ -74,7 +73,7 @@ export interface M365ImportOptions {
    * directory-audit records. UAL-shaped Entra records and service-principal sign-ins are not graded:
    * their fields differ from what the azure/signinlogs and azure/auditlogs rules are written for.
    */
-  sigma?: SigmaImportGrader;
+  sigma?: SigmaGradingSnapshot;
 }
 
 export interface M365ParseResult {
@@ -90,6 +89,8 @@ export interface M365ParseResult {
   // Every within-upload spray candidate this parse built (#1104) — importBatch left unset here,
   // since parseM365Audit is pure and has no idPrefix; the ingest layer (importM365) stamps it.
   sprayCandidates: SprayCandidate[];
+  /** Rows a Sigma rule matched (#2204), for the import note; 0 without a snapshot. */
+  sigmaRowsMatched?: number;
 }
 
 interface OpDef {
@@ -475,7 +476,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // accounts into a single counted row. A candidate needs a real IP and a real tenant; a record
   // missing either is excluded from counting entirely, never merged into a shared bucket.
   const sprayCandidates: SprayCandidate[] = [];
-  const minLevel = opts.sigma?.minLevel() ?? DEFAULT_SIGMA_MIN_LEVEL;
+  const snapshot = opts.sigma;
   let sigmaRows = 0;
   const sigmaFor = (sourceId: string, rec: Row) => {
     const refs = sigmaMatchesFor(opts.sigma, sourceId, rec, (n) =>
@@ -500,7 +501,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       sawUal = true;
     } else if (kind === "signin") {
       const row = mapSignIn(rec, iocSink, index, opts.debug);
-      mapped.push(applySigmaMatches(row, sigmaFor("azure-signinlogs", rec), minLevel));
+      mapped.push(snapshot ? applySigmaMatches(row, sigmaFor("azure-signinlogs", rec), snapshot) : row);
       sawSignin = true;
       if (isEntraSignIn(rec)) {
         const s = readEntraSignIn(rec);
@@ -533,7 +534,9 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       sawSignin = true;
     } else if (kind === "audit") {
       const rows = mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity);
-      mapped.push(...applySigmaToRecordRows(rows, sigmaFor("azure-auditlogs", rec), minLevel));
+      mapped.push(
+        ...(snapshot ? applySigmaToRecordRows(rows, sigmaFor("azure-auditlogs", rec), snapshot) : rows),
+      );
       sawAudit = true;
     } else {
       // Not a UAL, sign-in or directory-audit record by its own fields: never mapped (#1736).
@@ -592,5 +595,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     format,
     coverage,
     sprayCandidates,
+    sigmaRowsMatched: sigmaRows,
   };
 }

@@ -45,12 +45,14 @@ async function pipeline(sigmaGrader?: SigmaImportGrader): Promise<AnalysisPipeli
   });
 }
 
+let note = "";
 const run = async (p: AnalysisPipeline) => {
   const state = await p.importAws("c1", JSON.stringify({ Records: [RECORD] }), {
     label: "trail.json",
     idPrefix: "a1",
     importedAt: "2026-03-02T00:00:00Z",
   });
+  note = state.timeline.find((t) => /AWS CloudTrail import/.test(t.description))?.description ?? "";
   return state.forensicTimeline.find((e) => /BatchUpdateFindings/.test(e.description));
 };
 
@@ -59,6 +61,9 @@ describe("Sigma grader wiring", () => {
     const ev = await run(await pipeline(createSigmaImportGrader(loadBundledSigmaRuleSet().set)));
     expect(ev?.severity).toBe("High");
     expect(ev?.description).toMatch(/^Sigma: AWS SecurityHub Findings Evasion/);
+    expect(note).toMatch(
+      /; Sigma: SigmaHQ r2026-07-01 \(content [0-9a-f]{12}\), statuses stable, test, raises at high and above, disabled list [0-9a-f]{8}, 1 row\(s\) matched$/,
+    );
   });
 
   it("grades exactly as before without one", async () => {
@@ -78,13 +83,13 @@ describe("server Sigma settings", () => {
   it("loads the bundled grader once and reads the switch at import time", () => {
     const g = bundledSigmaGrader();
     expect(bundledSigmaGrader()).toBe(g);
-    expect(g.set.release).toBe("r2026-07-01");
+    expect(g.snapshot()?.ruleSet.release).toBe("r2026-07-01");
     const before = process.env.DFIR_SIGMA_RULES;
     try {
       process.env.DFIR_SIGMA_RULES = "off";
-      expect(g.enabled()).toBe(false);
+      expect(g.snapshot()).toBeUndefined();
       process.env.DFIR_SIGMA_RULES = "on";
-      expect(g.enabled()).toBe(true);
+      expect(g.snapshot()).toBeDefined();
     } finally {
       if (before === undefined) delete process.env.DFIR_SIGMA_RULES;
       else process.env.DFIR_SIGMA_RULES = before;
@@ -92,7 +97,7 @@ describe("server Sigma settings", () => {
   });
 
   it("summarises the inventory per log source", () => {
-    expect(sigmaInventorySummary(bundledSigmaGrader().set)).toMatch(
+    expect(sigmaInventorySummary(bundledSigmaGrader().snapshot()!.ruleSet)).toMatch(
       /^Sigma rules r2026-07-01 — aws-cloudtrail: .*28 loaded/,
     );
   });

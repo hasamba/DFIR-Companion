@@ -17,6 +17,7 @@ import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport, crossUploadSprayRows, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
+import { sigmaImportNote } from "../sigmaImportGrade.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 
@@ -53,7 +54,9 @@ export async function importM365(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug, sigma: ctx.opts.sigmaGrader });
+  // One Sigma snapshot for this whole import, taken before parsing (#2204).
+  const sigma = ctx.opts.sigmaGrader?.snapshot();
+  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug, sigma });
 
   // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
   const { events: crossRows, retentionNote } = await crossUploadSprayRows(
@@ -102,6 +105,7 @@ export async function importM365(
       describeFloor(parsedRaw.events.length + crossRows.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
       (retentionNote ? `; ${retentionNote}` : ""),
     summary: "",
   };
@@ -521,7 +525,9 @@ export async function importAws(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug, sigma: ctx.opts.sigmaGrader });
+  // One Sigma snapshot for this whole import, taken before parsing (#2204).
+  const sigma = ctx.opts.sigmaGrader?.snapshot();
+  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug, sigma });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
@@ -545,7 +551,8 @@ export async function importAws(
       `AWS CloudTrail import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

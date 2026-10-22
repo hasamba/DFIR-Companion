@@ -12,6 +12,7 @@ import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
 import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 import { escapeHtml } from "./escapeHtml.js";
+import { detectionRulesHtml } from "./detectionRules.js";
 import { caseDomains, defangIndicators } from "./defang.js";
 import { buildMatrixEmbed, MATRIX_SECTION_HTML, MATRIX_STYLES } from "./interactiveHtmlMatrix.js";
 import { MATRIX_SCRIPT } from "./interactiveHtmlMatrixScript.js";
@@ -454,6 +455,7 @@ export function renderInteractiveHtmlReport(
     data.restrictions ? ` · ${escapeHtml(data.restrictions)}` : "",
     ` · Updated: ${escapeHtml(data.updatedAt)}`,
     `</p>`,
+    detectionRulesHtml(state.forensicTimeline),
     `<div id="size-banner" class="banner" hidden></div>`,
     `<h2>Findings</h2>`,
     `<div class="controls">`,

@@ -20,10 +20,9 @@ import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicaGroups, type ReplicaCandidate } from "./awsReplicas.js";
 import {
   applySigmaMatches,
-  DEFAULT_SIGMA_MIN_LEVEL,
   sigmaMatchesFor,
   unionSigmaMatches,
-  type SigmaImportGrader,
+  type SigmaGradingSnapshot,
 } from "./sigmaImportGrade.js";
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
@@ -61,8 +60,8 @@ export interface AwsImportOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
-  /** Import-time Sigma rules (#2202); absent → no Sigma grading, exactly the pre-#2202 output. */
-  sigma?: SigmaImportGrader;
+  /** This import's Sigma snapshot (#2202, #2204); absent → no Sigma grading, the pre-#2202 output. */
+  sigma?: SigmaGradingSnapshot;
 }
 
 export interface AwsParseResult {
@@ -75,6 +74,8 @@ export interface AwsParseResult {
   /** Derived summary rows appended after the source-row cap (the credential lineages #979, the compute lifecycles #931 item 8) — not in `kept`. */
   summaries: number;
   format: string; // "cloudtrail" | "empty"
+  /** Rows a Sigma rule matched (#2204), for the import note; 0 without a snapshot. */
+  sigmaRowsMatched?: number;
   /** Per-upload coverage drafts (#1063) — never part of the timeline; consumed once by the caller and stored outside InvestigationState. */
   coverage: CloudCoverageDraft[];
 }
@@ -591,12 +592,12 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   // independent of the optional aggregation. The Sigma matches of EVERY replica of a row are
   // applied after the merge, so a match on the replica the merge did not keep is not lost and the
   // merge's re-rendered description cannot overwrite the rule title.
-  const minLevel = opts.sigma?.minLevel() ?? DEFAULT_SIGMA_MIN_LEVEL;
+  const snapshot = opts.sigma;
   const merged = mergeReplicaGroups(candidates).map((g) => ({
     event: g.event,
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
   }));
-  const mapped = merged.map((g) => applySigmaMatches(g.event, g.sigma, minLevel));
+  const mapped = merged.map((g) => (snapshot ? applySigmaMatches(g.event, g.sigma, snapshot) : g.event));
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)
@@ -655,5 +656,6 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     summaries: summaries.length,
     format: "cloudtrail",
     coverage,
+    sigmaRowsMatched: sigmaRows,
   };
 }

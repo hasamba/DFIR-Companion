@@ -281,11 +281,36 @@ Custom declarative importers:
 
 ---
 
-## Sigma Rules at Import
+## Sigma Rules
 
-- `DFIR_SIGMA_RULES` — `on` (default) or `off`. Grades AWS CloudTrail and Entra ID sign-in / audit
-  imports with the bundled SigmaHQ rules ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)).
-  Read on every import, so a change applies to the next import without a restart.
+Settings → **Sigma rules** controls the SigmaHQ rules that grade AWS CloudTrail and Entra ID sign-in /
+audit imports ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)). Every setting is
+read on every import, so a change applies to the next import without a restart. Cases already imported
+keep the grading they got, and their report names the release and settings that produced it.
+
+| Setting | Values | Default |
+|---|---|---|
+| `DFIR_SIGMA_RULES` | `on` / `off` | `on` |
+| `DFIR_SIGMA_RULE_STATUSES` | any of `stable`, `test`, `experimental` (deprecated and unsupported are never used) | `stable,test` |
+| `DFIR_SIGMA_MIN_LEVEL` | `critical`, `high`, `medium`, `low` — lower levels only tag the event | `high` |
+| `DFIR_SIGMA_UPDATE_CHECK` | `on` / `off` — one check at startup; shows a notice, never installs | `off` |
+
+The tab also shows:
+
+- **Installed release** — the SigmaHQ release in use, where it came from (bundled, downloaded, or
+  installed from a file), and how many rules load, are filtered by status, disabled, or refused per
+  log source. Any problem reading the installed release is shown here and in the server log.
+- **Check for updates** — asks GitHub for the latest SigmaHQ release. When it is newer, the release is
+  downloaded and checked against the SHA-256 GitHub publishes, then shown as rules added, changed and
+  removed for the log sources the Companion grades. **Nothing is installed until you click Install.**
+- **Install from file** — the same review for a release zip you downloaded yourself (air-gapped labs).
+  A file install is marked "not checked against GitHub" and records the file's SHA-256.
+- **Roll back** — switches back to the previous release (the bundled rules after a first install).
+- **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
+  noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion
+  ships switched off because they need tenant-specific values.
+
+Updates and rule changes are not available in the demo.
 
 ---
 

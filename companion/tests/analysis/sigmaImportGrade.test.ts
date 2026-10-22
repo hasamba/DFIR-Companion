@@ -20,7 +20,10 @@ const ref = (id: string, level: SigmaRuleRef["level"], mitre: string[] = []): Si
   url: `https://github.com/SigmaHQ/sigma/blob/abc/rules/${id}.yml`,
   release: "r-test",
   mitre,
+  huntingOnly: false,
 });
+
+const SNAP = { minLevel: "high" as const, token: "sigma:r-test:abc:stable+test:high:none" };
 
 const base = (): MappedEvent => ({
   timestamp: "2026-01-01T00:00:00Z",
@@ -32,14 +35,14 @@ const base = (): MappedEvent => ({
 });
 
 describe("applySigmaMatches", () => {
-  it("returns the same event when nothing matched", () => {
+  it("returns the same event when nothing matched and there is no canonical envelope", () => {
     const ev = base();
-    expect(applySigmaMatches(ev, [], "high")).toBe(ev);
+    expect(applySigmaMatches(ev, [], SNAP)).toBe(ev);
   });
 
   it("grades to the rule level at or above the minimum, and records the rule", () => {
     const ev = base();
-    const out = applySigmaMatches(ev, [ref("a", "high", ["T1562.008"])], "high");
+    const out = applySigmaMatches(ev, [ref("a", "high", ["T1562.008"])], SNAP);
     expect(out.severity).toBe("High");
     expect(out.description).toBe("Sigma: Rule a - AWS cloudtrail StopLogging by alice");
     expect(out.mitre).toEqual(["T1078.004", "T1562.008"]);
@@ -53,29 +56,32 @@ describe("applySigmaMatches", () => {
   });
 
   it("never lowers a hand-graded severity", () => {
-    const out = applySigmaMatches({ ...base(), severity: "Critical" }, [ref("a", "high")], "high");
+    const out = applySigmaMatches({ ...base(), severity: "Critical" }, [ref("a", "high")], SNAP);
     expect(out.severity).toBe("Critical");
   });
 
   it("tags without grading below the minimum level", () => {
-    const out = applySigmaMatches(base(), [ref("m", "medium", ["T1098"])], "high");
+    const out = applySigmaMatches(base(), [ref("m", "medium", ["T1098"])], SNAP);
     expect(out.severity).toBe("Info");
     expect(out.description).toBe("Sigma (medium, tag only): Rule m - AWS cloudtrail StopLogging by alice");
     expect(out.mitre).toContain("T1098");
   });
 
+  it("never grades on a threat-hunting rule, whatever its level", () => {
+    const out = applySigmaMatches(base(), [{ ...ref("t", "critical"), huntingOnly: true }], SNAP);
+    expect(out.severity).toBe("Info");
+    expect(out.description).toMatch(/^Sigma \(critical, tag only\): Rule t - /);
+    expect(out.message).toContain("threat-hunting rule (tag only)");
+  });
+
   it("leads with a graded rule and counts the rest", () => {
-    const out = applySigmaMatches(
-      base(),
-      [ref("m", "medium"), ref("c", "critical"), ref("h", "high")],
-      "high",
-    );
+    const out = applySigmaMatches(base(), [ref("m", "medium"), ref("c", "critical"), ref("h", "high")], SNAP);
     expect(out.severity).toBe("Critical");
     expect(out.description.startsWith("Sigma: Rule c (+2 more) - ")).toBe(true);
     expect(out.aggKey).toBe("aws|key|sigma:c,h,m");
   });
 
-  it("adds the release to the canonical producer once", () => {
+  it("stamps the snapshot token on the canonical producer once", () => {
     const ev: MappedEvent = {
       ...base(),
       canonical: {
@@ -87,15 +93,16 @@ describe("applySigmaMatches", () => {
         },
       } as unknown as MappedEvent["canonical"],
     };
-    const out = applySigmaMatches(ev, [ref("a", "high"), ref("b", "high")], "high");
-    expect(out.canonical?.producer.ruleVersions).toEqual(["x", "sigma-r-test"]);
+    const out = applySigmaMatches(ev, [ref("a", "high"), ref("b", "high")], SNAP);
+    expect(out.canonical?.producer.ruleVersions).toEqual(["x", SNAP.token]);
+    expect(applySigmaMatches(out, [], SNAP).canonical?.producer.ruleVersions).toEqual(["x", SNAP.token]);
   });
 
   it("appends an attribution note to the message", () => {
     const out = applySigmaMatches(
       base(),
       [ref("a", "high")],
-      "high",
+      SNAP,
       "matched the whole audit record (3 rows)",
     );
     expect(out.message).toContain("matched the whole audit record (3 rows)");
@@ -115,17 +122,20 @@ describe("createSigmaImportGrader / sigmaMatchesFor", () => {
 
   it("matches through the grader while enabled", () => {
     const grader = createSigmaImportGrader(set);
-    expect(sigmaMatchesFor(grader, "aws-cloudtrail", { eventName: "StopLogging" }).map((r) => r.id)).toEqual([
-      "stop",
-    ]);
+    expect(
+      sigmaMatchesFor(grader.snapshot(), "aws-cloudtrail", { eventName: "StopLogging" }).map((r) => r.id),
+    ).toEqual(["stop"]);
   });
 
   it("matches nothing when there is no grader or it is switched off", () => {
     let on = false;
     const grader = createSigmaImportGrader(set, { enabled: () => on });
     expect(sigmaMatchesFor(undefined, "aws-cloudtrail", { eventName: "StopLogging" })).toEqual([]);
-    expect(sigmaMatchesFor(grader, "aws-cloudtrail", { eventName: "StopLogging" })).toEqual([]);
+    expect(grader.snapshot()).toBeUndefined();
+    expect(sigmaMatchesFor(grader.snapshot(), "aws-cloudtrail", { eventName: "StopLogging" })).toEqual([]);
     on = true;
-    expect(sigmaMatchesFor(grader, "aws-cloudtrail", { eventName: "StopLogging" })).toHaveLength(1);
+    expect(sigmaMatchesFor(grader.snapshot(), "aws-cloudtrail", { eventName: "StopLogging" })).toHaveLength(
+      1,
+    );
   });
 });
