@@ -21,7 +21,12 @@ type StubJob = {
   parameters?: Record<string, unknown>;
 };
 
-type StubButton = { dataset: { job: string }; disabled: boolean; listeners: (() => void)[] };
+type StubButton = {
+  dataset: { job: string };
+  disabled: boolean;
+  listeners: (() => void)[];
+  addEventListener: (e: string, fn: () => void) => void;
+};
 
 const held = (id: string, kind: string, parameters?: Record<string, unknown>): StubJob => ({
   id,
@@ -40,20 +45,20 @@ function setup(jobs: StubJob[]) {
     },
     set innerHTML(html: string) {
       this._html = html;
-      rerunButtons = [...html.matchAll(/class="job-rerun" data-job="([^"]+)"/g)].map((m) => ({
-        dataset: { job: m[1] },
-        disabled: false,
-        listeners: [],
-      }));
+      // One object per button, returned as-is by every query: a fresh copy per query would let a
+      // `disabled` write from rerunJob land on a throwaway object (#2196).
+      rerunButtons = [...html.matchAll(/class="job-rerun" data-job="([^"]+)"/g)].map((m) => {
+        const b: StubButton = {
+          dataset: { job: m[1] },
+          disabled: false,
+          listeners: [],
+          addEventListener: (_e: string, fn: () => void) => b.listeners.push(fn),
+        };
+        return b;
+      });
     },
     style: { display: "none" },
-    querySelectorAll: (sel: string) =>
-      sel === ".job-rerun"
-        ? rerunButtons.map((b) => ({
-            ...b,
-            addEventListener: (_e: string, fn: () => void) => b.listeners.push(fn),
-          }))
-        : [],
+    querySelectorAll: (sel: string) => (sel === ".job-rerun" ? rerunButtons : []),
   };
   const control = () => ({
     disabled: false,
@@ -85,12 +90,25 @@ function setup(jobs: StubJob[]) {
       runDeepPass,
     },
   );
-  const click = (id: string) => {
+  const rerunButton = (id: string) => {
     const b = rerunButtons.find((x) => x.dataset.job === id);
     if (!b) throw new Error(`no Re-run button on ${id}`);
-    b.listeners.forEach((fn) => fn());
+    return b;
   };
-  return { api, menu, elements, runDeepPass, click, rerunIds: () => rerunButtons.map((b) => b.dataset.job) };
+  // A disabled button does not fire its click listeners, as in a browser.
+  const click = (id: string) => {
+    const b = rerunButton(id);
+    if (!b.disabled) b.listeners.forEach((fn) => fn());
+  };
+  return {
+    api,
+    menu,
+    elements,
+    runDeepPass,
+    click,
+    rerunButton,
+    rerunIds: () => rerunButtons.map((b) => b.dataset.job),
+  };
 }
 
 describe("Re-run on a held job", () => {
@@ -159,6 +177,8 @@ describe("Re-run on a held job", () => {
     t.click("d1");
     expect((t.elements.deepPassBtn as { click: () => void }).click).toHaveBeenCalledOnce();
     expect(t.runDeepPass).toHaveBeenCalledWith("Medium");
+    // runDeepPass locks itself; Re-run has no path back from a disable of its own (#2196).
+    expect(t.rerunButton("d1").disabled).toBe(false);
   });
 
   it("says why, and starts nothing, when the control is locked", async () => {
@@ -170,5 +190,45 @@ describe("Re-run on a held job", () => {
     t.click("s1");
     expect((t.elements.synthesize as { click: () => void }).click).not.toHaveBeenCalled();
     expect((t.elements.status as { textContent: string }).textContent).toContain("A deep pass is running");
+  });
+
+  // #2196: Re-run must not disable itself. When the delegated start runs nothing (a cancelled
+  // confirm, a refused POST), no job is created, the menu does not rebuild, and a disabled Re-run
+  // would stay dead until a reload.
+  it("stays clickable when the control starts nothing", async () => {
+    const t = setup([held("s1", "synthesis")]);
+    await t.api.loadJobs();
+    t.api.setJobsGateCleared("INC-1", true);
+    const synth = t.elements.synthesize as { click: () => void };
+    t.click("s1");
+    expect(t.rerunButton("s1").disabled).toBe(false);
+    t.click("s1");
+    expect(synth.click).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why on a second press while a run is starting", async () => {
+    const t = setup([held("s1", "synthesis")]);
+    await t.api.loadJobs();
+    t.api.setJobsGateCleared("INC-1", true);
+    const synth = t.elements.synthesize as { disabled: boolean; click: ReturnType<typeof vi.fn> };
+    // The real handler locks its own control synchronously, before any await.
+    synth.click.mockImplementation(() => {
+      synth.disabled = true;
+    });
+    t.click("s1");
+    t.click("s1");
+    expect(synth.click).toHaveBeenCalledOnce();
+    expect((t.elements.status as { textContent: string }).textContent).toContain("Cannot re-run");
+  });
+
+  it("says the control is missing, not that a job is running, when the control is absent", async () => {
+    const t = setup([held("s1", "synthesis")]);
+    await t.api.loadJobs();
+    t.api.setJobsGateCleared("INC-1", true);
+    delete t.elements.synthesize;
+    t.click("s1");
+    const text = (t.elements.status as { textContent: string }).textContent;
+    expect(text).toContain("not on this page");
+    expect(text).not.toContain("another AI job is running");
   });
 });

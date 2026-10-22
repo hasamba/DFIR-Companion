@@ -1,5 +1,6 @@
 // The installed Sigma rules and everything an analyst does to them (#2204): which release is
-// active, preview / install / roll back a release, and switch single rules off or back on.
+// active, preview / install / roll back a release, switch single rules off or back on, and keep a
+// rule on while skipping known-benign values (exclusions, #2218).
 //
 // Reads are synchronous and served from memory, because every import takes a grading snapshot
 // before it parses. Mutations are serialized and persisted crash-safely (sigmaReleaseFiles.ts).
@@ -13,6 +14,17 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { readDisabledList, readMeta, ruleFiles, SIGMA_MAX_RULE_FILES } from "./sigmaBundledRules.js";
 import { diffSigmaReleases, readSigmaReleaseZip, type SigmaReleaseDiff } from "./sigmaReleaseArchive.js";
 import { downloadSigmaRelease, latestSigmaRelease, type SigmaAssetFetch } from "./sigmaReleaseClient.js";
+import {
+  checkSigmaExclusion,
+  exclusionsByRule,
+  parseSigmaExclusions,
+  SIGMA_EXCLUSION_LIMITS,
+  sigmaExclusionKey,
+  sigmaExclusionsHash,
+  stringifySigmaExclusions,
+  type SigmaExclusion,
+} from "./sigmaExclusions.js";
+import { fieldResolvers, SIGMA_LOG_SOURCES } from "./sigmaLogSources.js";
 import {
   buildSigmaRuleSet,
   type SigmaInventoryEntry,
@@ -32,7 +44,8 @@ import {
   type InstalledReleaseMeta,
   type SigmaManifest,
 } from "./sigmaReleaseFiles.js";
-import { sigmaStatusesFromEnv } from "./sigmaSettings.js";
+import { sigmaProvenanceToken, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
+import { SIGMA_STATUS_CHOICES, sigmaMinLevelFromEnv, sigmaStatusesFromEnv } from "./sigmaSettings.js";
 
 const PREVIEW_TTL_MS = 60 * 60 * 1000;
 
@@ -79,6 +92,8 @@ interface Pending {
   generation: number;
   createdAt: number;
   usable: boolean;
+  /** The staged rules, kept in memory so a measure (#2209) never reads a folder install renames. */
+  files: SigmaRuleFile[];
 }
 
 const tokenPart = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "release";
@@ -95,6 +110,9 @@ export class SigmaRuleStore {
   private activeInfo: SigmaReleaseInfo;
   private overrides: SigmaOverrides = { disabled: [], enabled: [] };
   private overridesVersion = 0;
+  private exclusions: SigmaExclusion[] = [];
+  /** The exclusions' hash, kept in the rule-set cache key (#2218). */
+  private exclusionsKey = "none";
   private startupProblems: string[] = [];
   private cache?: { key: string; set: SigmaRuleSet; files: SigmaRuleFile[] };
   private pending?: Pending;
@@ -120,6 +138,7 @@ export class SigmaRuleStore {
     }
     this.activeInfo = this.infoFor(this.manifest.active);
     this.overrides = this.readOverrides();
+    this.setExclusions(this.readExclusions());
   }
 
   /** load(), then drop staging leftovers and releases the manifest does not name. */
@@ -202,7 +221,11 @@ export class SigmaRuleStore {
     return buildSigmaRuleSet(
       files,
       { release: release.release, commit: release.commit },
-      { statuses: sigmaStatusesFromEnv(this.env).statuses, disabled: this.effectiveDisabled() },
+      {
+        statuses: sigmaStatusesFromEnv(this.env).statuses,
+        disabled: this.effectiveDisabled(),
+        exclusions: exclusionsByRule(this.exclusions),
+      },
     );
   }
 
@@ -240,7 +263,8 @@ export class SigmaRuleStore {
 
   /** The rule set imports are graded with: the active release, current statuses and disabled list. */
   activeRuleSet(): SigmaRuleSet {
-    const key = `${this.activeInfo.id}|${sigmaStatusesFromEnv(this.env).statuses.join(",")}|${this.overridesVersion}`;
+    const statuses = sigmaStatusesFromEnv(this.env).statuses.join(",");
+    const key = `${this.activeInfo.id}|${statuses}|${this.overridesVersion}|${this.exclusionsKey}`;
     if (this.cache?.key === key) return this.cache.set;
     const files =
       this.cache && this.cache.key.split("|")[0] === this.activeInfo.id
@@ -250,6 +274,19 @@ export class SigmaRuleStore {
     const set = { ...built, problems: [...this.startupProblems, ...files.problems, ...built.problems] };
     this.cache = { key, set, files: files.files };
     return set;
+  }
+
+  /**
+   * The active release with no rule switched off and every status loaded — only to look an old
+   * rule up by id when a case is re-graded (#2206), never to grade.
+   */
+  lookupRuleSet(): SigmaRuleSet {
+    this.activeRuleSet();
+    const files = this.cache?.files ?? [];
+    const meta = { release: this.activeInfo.release, commit: this.activeInfo.commit };
+    return buildSigmaRuleSet(files, meta, {
+      statuses: [...SIGMA_STATUS_CHOICES, "deprecated", "unsupported"],
+    });
   }
 
   active(): SigmaReleaseInfo {
@@ -269,14 +306,18 @@ export class SigmaRuleStore {
         : null;
   }
 
-  inventory(): (SigmaInventoryEntry & { disabledBy?: "shipped" | "analyst" })[] {
+  inventory(): SigmaStoreInventoryEntry[] {
     const shipped = this.shippedDisabled();
     const analyst = new Set(this.overrides.disabled.map((d) => d.id));
-    return this.activeRuleSet().inventory.map((e) =>
-      e.outcome === "disabled"
-        ? { ...e, disabledBy: analyst.has(e.id) || !shipped.has(e.id) ? "analyst" : "shipped" }
-        : e,
-    );
+    return this.activeRuleSet().inventory.map((e) => {
+      const excl = this.exclusions
+        .filter((x) => x.id === e.id)
+        .map(({ field, value, reason }) => ({ field, value, reason }));
+      const withExcl = excl.length ? { ...e, exclusions: excl } : e;
+      return e.outcome === "disabled"
+        ? { ...withExcl, disabledBy: analyst.has(e.id) || !shipped.has(e.id) ? "analyst" : "shipped" }
+        : withExcl;
+    });
   }
 
   // ── Mutations (serialized) ─────────────────────────────────────────────────────────────────
@@ -328,6 +369,56 @@ export class SigmaRuleStore {
     });
   }
 
+  // ── Exclusions (#2218) ─────────────────────────────────────────────────────────────────────
+
+  private readExclusions(): SigmaExclusion[] {
+    try {
+      return parseSigmaExclusions(readFileSync(sigmaPaths(this.dataRoot).exclusions, "utf8"));
+    } catch {
+      return [];
+    }
+  }
+
+  private setExclusions(next: SigmaExclusion[]): void {
+    this.exclusions = next;
+    this.exclusionsKey = sigmaExclusionsHash(exclusionsByRule(next));
+  }
+
+  private async writeExclusions(next: SigmaExclusion[]): Promise<void> {
+    await writeAtomic(sigmaPaths(this.dataRoot).exclusions, stringifySigmaExclusions(next));
+    this.setExclusions(next);
+  }
+
+  /**
+   * Keep rule `id` on but skip records whose `field` holds `value` (Sigma exact match, wildcards
+   * allowed). The same rule, field and value again replaces the reason. A field the rule's log
+   * source cannot read is refused: it resolves to nothing, so the exclusion would never fire.
+   */
+  setRuleExclusion(id: string, field: string, value: string, reason = ""): Promise<void> {
+    return this.serial(async () => {
+      const entry = checkedExclusion(id, field, value, reason);
+      const rule = this.activeRuleSet().inventory.find((e) => e.id === entry.id && e.source);
+      if (!rule) throw new SigmaStoreError(404, `no rule ${entry.id} for a log source the Companion grades`);
+      const def = SIGMA_LOG_SOURCES.find((s) => s.id === rule.source);
+      const resolvers = def ? fieldResolvers(def, entry.field) : { refused: "unknown log source" };
+      if (!Array.isArray(resolvers)) throw new SigmaStoreError(422, resolvers.refused);
+      const key = sigmaExclusionKey(entry);
+      const others = this.exclusions.filter((x) => sigmaExclusionKey(x) !== key);
+      if (others.length >= SIGMA_EXCLUSION_LIMITS.count)
+        throw new SigmaStoreError(422, `at most ${SIGMA_EXCLUSION_LIMITS.count} exclusions can be kept`);
+      await this.writeExclusions([...others, entry]);
+    });
+  }
+
+  /** Drop one exclusion. Removing one that is not there changes nothing. */
+  removeRuleExclusion(id: string, field: string, value: string): Promise<void> {
+    return this.serial(async () => {
+      const key = sigmaExclusionKey({ id: id.trim(), field: field.trim(), value: value.trim() });
+      const next = this.exclusions.filter((x) => sigmaExclusionKey(x) !== key);
+      if (next.length !== this.exclusions.length) await this.writeExclusions(next);
+    });
+  }
+
   /** Stage a release for review. Nothing becomes active. Replaces any earlier preview. */
   preview(
     bytes: Buffer,
@@ -367,6 +458,7 @@ export class SigmaRuleStore {
         generation: this.manifest.generation,
         createdAt: Date.now(),
         usable,
+        files: contents.files,
       };
       return {
         token,
@@ -386,19 +478,39 @@ export class SigmaRuleStore {
     });
   }
 
+  /** The pending preview for `token`, or the refusal install() gives for it. Call inside serial(). */
+  private livePending(token: string): Pending {
+    const p = this.pending;
+    if (!p || p.token !== token)
+      throw new SigmaStoreError(404, "that preview is gone — preview the release again");
+    if (Date.now() - p.createdAt > PREVIEW_TTL_MS)
+      throw new SigmaStoreError(409, "that preview is more than an hour old — preview the release again");
+    if (p.generation !== this.manifest.generation)
+      throw new SigmaStoreError(
+        409,
+        "the installed rules changed since this preview — preview the release again",
+      );
+    return p;
+  }
+
+  /**
+   * The staged release as a grading snapshot (#2209), to measure it against a case before install.
+   * It gets the filters it would get once installed: the current statuses, disabled list,
+   * exclusions and minimum level. Installs nothing and leaves the preview usable.
+   */
+  pendingSnapshot(token: string): Promise<SigmaGradingSnapshot> {
+    return this.serial(async () => {
+      const p = this.livePending(token);
+      const ruleSet = this.build(p.files, p.info);
+      const minLevel = sigmaMinLevelFromEnv(this.env).level;
+      return { ruleSet, minLevel, token: sigmaProvenanceToken(ruleSet, minLevel) };
+    });
+  }
+
   /** Make the previewed release active. The release it replaces becomes the rollback target. */
   install(token: string): Promise<SigmaReleaseInfo> {
     return this.serial(async () => {
-      const p = this.pending;
-      if (!p || p.token !== token)
-        throw new SigmaStoreError(404, "that preview is gone — preview the release again");
-      if (Date.now() - p.createdAt > PREVIEW_TTL_MS)
-        throw new SigmaStoreError(409, "that preview is more than an hour old — preview the release again");
-      if (p.generation !== this.manifest.generation)
-        throw new SigmaStoreError(
-          409,
-          "the installed rules changed since this preview — preview the release again",
-        );
+      const p = this.livePending(token);
       if (!p.usable)
         throw new SigmaStoreError(422, "no rule in this release loads for a log source the Companion grades");
       const paths = sigmaPaths(this.dataRoot);
@@ -480,6 +592,22 @@ export class SigmaRuleStore {
     const bytes = await downloadSigmaRelease(latest, fetchAsset);
     return this.preview(bytes, { source: "github", tag: latest.tag, verified: true });
   }
+}
+
+export type SigmaStoreInventoryEntry = SigmaInventoryEntry & {
+  disabledBy?: "shipped" | "analyst";
+  exclusions?: { field: string; value: string; reason: string }[];
+};
+
+function checkedExclusion(id: string, field: string, value: string, reason: string): SigmaExclusion {
+  const entry = checkSigmaExclusion({ id, field, value, reason });
+  if (!entry)
+    throw new SigmaStoreError(
+      422,
+      `an exclusion needs a rule id, a field (at most ${SIGMA_EXCLUSION_LIMITS.field} characters) ` +
+        `and a value (at most ${SIGMA_EXCLUSION_LIMITS.value} characters)`,
+    );
+  return entry;
 }
 
 /** A refusal the route turns into an HTTP status with the sentence as the error. */

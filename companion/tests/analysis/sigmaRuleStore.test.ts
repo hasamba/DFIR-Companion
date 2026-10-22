@@ -1,11 +1,12 @@
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
 import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
 import { sigmaPaths, writeManifest } from "../../src/analysis/sigmaReleaseFiles.js";
+import { sigmaProvenanceToken } from "../../src/analysis/sigmaImportGrade.js";
 
 // The installed-rules store (#2204): preview → install → roll back, crash safety, stale previews,
 // and the analyst's disabled-list overrides. Real bundled rules, temporary data folder.
@@ -132,6 +133,74 @@ describe("SigmaRuleStore", () => {
     expect(again.inventory().find((e) => e.id === loadedId)?.outcome).toBe("disabled");
   });
 
+  // #2218: per-rule exclusions, persisted beside disabled.yml.
+  describe("exclusions (#2218)", () => {
+    const ARN = "arn:aws:iam::111122223333:role/BackupService";
+    const cloudTrailRule = (s: SigmaRuleStore) =>
+      s.inventory().find((e) => e.outcome === "loaded" && e.source === "aws-cloudtrail")!.id;
+
+    it("adds an exclusion, shows it on the rule, rebuilds the rule set and persists it", async () => {
+      const { s, root } = await store();
+      const id = cloudTrailRule(s);
+      const before = s.activeRuleSet();
+      expect(before.exclusionsHash).toBe("none");
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "nightly backup");
+      const after = s.activeRuleSet();
+      expect(after).not.toBe(before);
+      expect(after.exclusionsHash).toMatch(/^[0-9a-f]{8}$/);
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toEqual([
+        { field: "userIdentity.arn", value: ARN, reason: "nightly backup" },
+      ]);
+      const again = new SigmaRuleStore(root, BUNDLED, {});
+      await again.init();
+      expect(again.inventory().find((e) => e.id === id)?.exclusions).toHaveLength(1);
+      expect(again.activeRuleSet().exclusionsHash).toBe(after.exclusionsHash);
+    });
+
+    it("removes an exclusion, and removing one that is not there changes nothing", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "");
+      await s.removeRuleExclusion(id, "USERIDENTITY.ARN", ARN.toUpperCase());
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toBeUndefined();
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+      await s.removeRuleExclusion(id, "userIdentity.arn", "nothing");
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+    });
+
+    it("replaces the reason when the same exclusion is added again", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "first");
+      await s.setRuleExclusion(id, "userIdentity.arn", ARN, "second");
+      expect(s.inventory().find((e) => e.id === id)?.exclusions).toEqual([
+        { field: "userIdentity.arn", value: ARN, reason: "second" },
+      ]);
+    });
+
+    it("refuses a field the rule's log source cannot read (422) and an unknown rule (404)", async () => {
+      const { s } = await store();
+      const id = cloudTrailRule(s);
+      await expect(s.setRuleExclusion(id, "TargetFilename", "x", "")).rejects.toMatchObject({
+        status: 422,
+        message: expect.stringMatching(/TargetFilename is not available in AWS CloudTrail/),
+      });
+      await expect(s.setRuleExclusion("no-such-rule", "eventName", "x", "")).rejects.toMatchObject({
+        status: 404,
+      });
+      await expect(s.setRuleExclusion(id, "eventName", "   ", "")).rejects.toMatchObject({ status: 422 });
+    });
+
+    it("loads a malformed exclusions.yml as empty without failing startup", async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-sigma-store-"));
+      await mkdir(sigmaPaths(root).root, { recursive: true });
+      await writeFile(sigmaPaths(root).exclusions, "exclusions: [unclosed");
+      const s = new SigmaRuleStore(root, BUNDLED, {});
+      await s.init();
+      expect(s.activeRuleSet().exclusionsHash).toBe("none");
+    });
+  });
+
   it("rebuilds when the status setting changes", async () => {
     const env: NodeJS.ProcessEnv = {};
     const { s } = await store(env);
@@ -173,5 +242,71 @@ describe("SigmaRuleStore", () => {
     await st.install((await st.preview(releaseZip({ "rules/cloud/aws/new.yml": NEW_RULE }), file)).token);
     await rm(join(sigmaPaths(root).releases, first.id, "rules"), { recursive: true, force: true });
     await expect(st.rollback()).rejects.toThrow(/can no longer be read/);
+  });
+  // #2209: the staged release as a grading snapshot, to measure it against a case before install.
+  describe("pendingSnapshot", () => {
+    const NEW_ID = "00000000-0000-0000-0000-00000000beef";
+    const loadedIds = (set: { inventory: { id: string; outcome: string }[] }) =>
+      set.inventory.filter((e) => e.outcome === "loaded").map((e) => e.id);
+
+    it("builds the staged release with the current settings and installs nothing", async () => {
+      const { s } = await store({ DFIR_SIGMA_MIN_LEVEL: "medium" });
+      const p = await s.preview(releaseZip({ "rules/cloud/aws/new.yml": NEW_RULE }), file);
+      const snap = await s.pendingSnapshot(p.token);
+      expect(snap.ruleSet.release).toBe("file sigma_all_rules.zip");
+      expect(loadedIds(snap.ruleSet)).toContain(NEW_ID);
+      expect(snap.minLevel).toBe("medium");
+      expect(snap.token).toBe(sigmaProvenanceToken(snap.ruleSet, "medium"));
+      expect(snap.token).not.toBe(sigmaProvenanceToken(s.activeRuleSet(), "medium"));
+      expect(s.active().id).toBe("bundled");
+      // The preview still installs afterwards: measuring does not use the token up.
+      await s.install(p.token);
+    });
+
+    it("applies the current disabled list and exclusions to the staged release", async () => {
+      const { s } = await store();
+      await s.setRuleDisabled(NEW_ID, true, "noisy here");
+      const p = await s.preview(releaseZip({ "rules/cloud/aws/new.yml": NEW_RULE }), file);
+      const snap = await s.pendingSnapshot(p.token);
+      expect(loadedIds(snap.ruleSet)).not.toContain(NEW_ID);
+      expect(snap.ruleSet.disabledHash).toBe(s.activeRuleSet().disabledHash);
+      expect(snap.ruleSet.exclusionsHash).toBe(s.activeRuleSet().exclusionsHash);
+    });
+
+    it("refuses an unknown token, a stale preview and a changed baseline with install's words", async () => {
+      const { s } = await store();
+      await expect(s.pendingSnapshot("nope")).rejects.toMatchObject({
+        status: 404,
+        message: "that preview is gone — preview the release again",
+      });
+      const p = await s.preview(releaseZip(), file);
+      const now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now + 61 * 60 * 1000);
+      try {
+        await expect(s.pendingSnapshot(p.token)).rejects.toMatchObject({
+          status: 409,
+          message: "that preview is more than an hour old — preview the release again",
+        });
+      } finally {
+        clock.mockRestore();
+      }
+      const first = await s.preview(releaseZip(), file);
+      await s.install(first.token);
+      const second = await s.preview(releaseZip({ "rules/cloud/aws/new.yml": NEW_RULE }), file);
+      await s.rollback();
+      await expect(s.pendingSnapshot(second.token)).rejects.toMatchObject({
+        status: 409,
+        message: "the installed rules changed since this preview — preview the release again",
+      });
+    });
+
+    it("is serialized with install: a measure queued behind the install sees the token gone", async () => {
+      const { s } = await store();
+      const p = await s.preview(releaseZip(), file);
+      const installing = s.install(p.token);
+      const measuring = s.pendingSnapshot(p.token);
+      await installing;
+      await expect(measuring).rejects.toMatchObject({ status: 404 });
+    });
   });
 });

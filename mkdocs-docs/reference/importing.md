@@ -1851,6 +1851,12 @@ and the disabled rules are all managed in [Settings → Sigma rules](settings.md
 note in the capture timeline records the release, content and settings it was graded with, and so does the
 report's chain-of-custody appendix.
 
+An import keeps the grading it got. To apply a newer release, a disabled rule or a new exclusion to a
+case you already imported, use **Re-grade this case** in [Settings → Sigma rules](settings.md#sigma-rules).
+It parses the stored import files again (CloudTrail, Entra and web access logs), shows a preview of
+what would change, and changes only the Sigma part of the rows the import kept. It never adds rows;
+re-import the file for records the import did not keep.
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

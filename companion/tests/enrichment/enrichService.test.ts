@@ -452,6 +452,30 @@ describe("enrichIocs", () => {
     ]);
   });
 
+  it("redacts a URL secret from a provider error before it reaches the check detail or the log (#2208)", async () => {
+    const leaky: EnrichmentProvider = {
+      name: "Leaky",
+      scope: "external",
+      supports: () => true,
+      lookup: async () => {
+        throw new TypeError("Failed to parse URL from https://x.example.com/h?key=fakekey-example");
+      },
+    };
+    const events: EnrichLookupEvent[] = [];
+    const { iocs: out } = await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+      providers: [leaky],
+      sleep: noSleep,
+      now,
+      monotonic: () => 0,
+      onLookup: (e) => events.push(e),
+    });
+    expect(events[0].detail).toContain("key=[redacted]");
+    expect(events[0].detail).not.toContain("fakekey-example");
+    const persisted = JSON.stringify(out[0]);
+    expect(persisted).toContain("[redacted]");
+    expect(persisted).not.toContain("fakekey-example");
+  });
+
   describe("perProviderDelayMs", () => {
     it("sleeps the provider-specific delay between calls to the same provider", async () => {
       const slept: number[] = [];

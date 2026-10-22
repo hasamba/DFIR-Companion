@@ -11,7 +11,7 @@
   "reports/reportWriter.ts": 827,
   "routes/caseLifecycle.ts": 826,
   "routes/findings.ts": 815,
-  "routes/import.ts": 2783,
+  "routes/import.ts": 2711,
   "routes/mcp.ts": 896,
   "routes/threatIntel.ts": 857,
   "routes/velociraptor.ts": 1027

@@ -277,6 +277,7 @@ export class ShodanExposureProvider implements CustomerExposureProvider {
   }
 
   async lookupDomain(domain: string): Promise<CustomerExposureResult[]> {
+    // Shodan accepts the key only as a query parameter; errorMessage() sinks redact it (#2208).
     const url =
       `${this.base}/shodan/host/search?key=${encodeURIComponent(this.opts.apiKey)}` +
       `&query=${encodeURIComponent(`hostname:${domain}`)}`;

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isNoiseDomain } from "./anonymize.js";
+import { redactUrlSecrets } from "./destinationFacts.js";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractCaseEmails, normalizeEmail, sanitizeTargets, type CustomerTargets } from "./customerStore.js";
 
@@ -63,8 +64,10 @@ function domainOfEmail(email: string): string {
   return email.slice(email.lastIndexOf("@") + 1).toLowerCase();
 }
 
+// A failed request can echo its URL (e.g. "Failed to parse URL from …?key=…"); redact any
+// token-bearing parameter before the text reaches a log, case state or a report (#2208).
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return redactUrlSecrets(err instanceof Error ? err.message : String(err));
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {

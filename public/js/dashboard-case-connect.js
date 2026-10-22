@@ -427,6 +427,7 @@
       ["hypotheses", () => loadHypotheses(caseId)],
       ["savedTimeframes", () => loadSavedTimeframes(caseId)],
       ["superTimeline", () => loadSuperTimeline(caseId)],
+      ["sigmaCoverage", () => loadSigmaCoverage(caseId)], // #2217 Hunt Workbench → Sigma coverage
       ["savedStarredReport", () => loadSavedStarredReport(caseId)],
       ["playbook", () => loadPlaybook(caseId)],
       ["synthMeta", () => loadSynthMeta(caseId)],
@@ -626,6 +627,8 @@
     else if (msg.type === "super_timeline_changed") {
       once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleLoginGraphReload(caseId);
+      // #2217: an import's new origin shows on the Sigma coverage card without a reload.
+      if (typeof loadSigmaCoverage === "function") loadSigmaCoverage(caseId);
     } else if (msg.type === "playbook_changed") loadPlaybook(caseId);
     else if (msg.type === "asset_overrides_changed") {
       once("assetGraph", () => loadAssetGraph(caseId));

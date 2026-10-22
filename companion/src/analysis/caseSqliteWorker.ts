@@ -741,6 +741,7 @@ async function dispatch(message) {
     case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId, message.max);
     case "listSuperProtected": return listSuperProtected(message.dbPath);
     case "superMeta": return superMeta(message.dbPath, message.hosts);
+    case "superOriginCounts": return superOriginCounts(message.dbPath);
     case "superMigrateNeeded": return superMigrateNeeded(message.dbPath, message.tagsPath, message.setAsideMarkers, message.setAsideVersion);
     case "iocCandidates": return iocCandidates(message.dbPath, message.keys, message.ids);
     case "iocCandidatesRead": return iocCandidatesRead(message.dbPath, message.keys, message.ids);

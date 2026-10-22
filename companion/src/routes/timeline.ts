@@ -52,7 +52,7 @@ import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
  */
 export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   registerHuntWorkbenchRoutes(app, ctx);
-  registerSigmaCompileRoutes(app);
+  registerSigmaCompileRoutes(app, ctx);
   const { options, markConclusionsOutOfDate } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.

@@ -11,6 +11,7 @@ import {
   type RetryPolicy,
 } from "./provider.js";
 import { isInternalTarget } from "../analysis/iocValue.js";
+import { redactUrlSecrets } from "../analysis/destinationFacts.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
 import {
   assertionIdFor,
@@ -67,8 +68,10 @@ export interface EnrichOptions {
   health?: ProviderHealthCache;
 }
 
+// A failed request can echo its URL (e.g. "Failed to parse URL from …?key=…"); redact any
+// token-bearing parameter before the text reaches a log, case state or a report (#2208).
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return redactUrlSecrets(err instanceof Error ? err.message : String(err));
 }
 
 export interface EnrichSummary {

@@ -331,6 +331,7 @@ export const FEATURES: Feature[] = [
       "clearSuperTime",
       "initSuperTimeline",
       "closeSuperCtxMenu",
+      "filterSuperTimelineToOrigin",
       "genStarredReport",
       "genViewSummary",
       "loadSavedStarredReport",
@@ -2059,5 +2060,7 @@ export const NON_FEATURES = new Set([
   "dashboard-tagger.js",
   "dashboard-kev.js",
   "dashboard-sigma-rules.js", // Settings → Sigma rules (#2204): reads the DOM, calls /sigma routes, holds no state
+  "dashboard-sigma-coverage.js", // Hunt Workbench → Sigma coverage (#2217): reads the DOM, calls one route, holds no state
+  "dashboard-sigma-dryrun.js", // Sigma paste card → Dry-run on this case (#2211): called by the card, calls one route, holds no state
   "dashboard-facade.js",
 ]);

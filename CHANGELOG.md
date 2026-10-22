@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Re-grade a case with current Sigma rules** — preview then apply a re-grade of already-imported CloudTrail, Entra and web-log events; severity can go up or down, counts of raised / lowered / unchanged rows are shown, and Undo restores both timelines (closes #2206, closes #2220)
+- **Measure a Sigma release against the open case** — before installing, preview how a staged release would re-grade this case; nothing is changed (closes #2209)
+- **Sigma rule exclusions** — keep a rule on but skip a known-benign field value, with a reason; the exclusions are part of the provenance token shown in reports (closes #2218)
+- **Sigma coverage card** — Hunt Workbench shows, per log source in the case, whether Sigma rules graded it, with a jump into the super-timeline (closes #2217)
+- **Dry-run a pasted Sigma rule** — the Sigma paste card counts how many events in this case the rule would match and names every field the case cannot check (closes #2211)
 - **Sigma rules for web and proxy logs** — SigmaHQ web server and proxy rules grade Apache, nginx and Squid access logs at import; unanswered requests only tag, so scanners do not flood the timeline (closes #2203)
 - **Sigma rule updates and settings** — check, preview, install (or install from a file) and roll back SigmaHQ releases, choose rule statuses and the minimum level that raises severity, and switch single rules off; reports name the release that graded the case (closes #2204)
 - **Sigma rules at import** — bundled SigmaHQ rules grade AWS CloudTrail and Entra ID sign-in / audit imports: high and critical rules raise the event, lower levels tag it (closes #2202)
@@ -25,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **API keys redacted from enrichment errors** — a key in a failed request URL no longer reaches the server log, case state or report (closes #2208)
+- **Malformed ZIP entries refused** — the ZIP reader checks each entry's local header and data bounds and reports a corrupt archive (closes #2212)
+- **Sigma update preview on Windows** — line endings no longer mark every rule as changed or change the rule-set content id (closes #2215)
+- **Mac-made Sigma release zips** — `__MACOSX`, `.DS_Store` and `._*` entries no longer break Install from file (closes #2214)
+- **Oversized Sigma zip refused early** — a file over 32 MB is refused before the browser reads it (closes #2213)
+- **Re-run no longer goes dead** — a held job's Re-run stays usable when the start is cancelled or refused (closes #2196)
+- **Sigma buttons in the public demo** — rule Enable/Disable, Exclude and Install are disabled with a reason instead of failing (closes #2216)
 - **Presidio skips AI-written text** — values found only in the case summary, attacker path or finding text the AI wrote no longer stop the next run; events and analyst notes are still scanned
 - **Presidio "not local" warning** — the Settings and setup-wizard warning now checks only the URL's hostname, so a remote analyzer with `localhost` in its path or user name no longer passes as local (part of #2197)
 - **Re-run a held job** — once the Presidio or duplicate-host gate clears, the held job row reads "was held — gate cleared" and offers Re-run for synthesis, deep pass and second opinion

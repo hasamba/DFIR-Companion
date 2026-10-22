@@ -4,6 +4,7 @@
 //   <dataRoot>/sigma/staging/<token>/ the one previewed-but-not-installed release
 //   <dataRoot>/sigma/active.json      { active, previous, generation } — "bundled" is a valid value
 //   <dataRoot>/sigma/disabled.yml     the analyst's overrides of the shipped disabled list
+//   <dataRoot>/sigma/exclusions.yml   the analyst's per-rule exclusions (#2218): rule id, field, value
 //
 // A release folder is written under a temporary name and renamed into place; the manifest is
 // written to a temporary file and renamed over the old one. A crash at any point leaves the old
@@ -45,6 +46,7 @@ export const sigmaPaths = (dataRoot: string) => {
     staging: join(root, "staging"),
     manifest: join(root, "active.json"),
     overrides: join(root, "disabled.yml"),
+    exclusions: join(root, "exclusions.yml"),
   };
 };
 

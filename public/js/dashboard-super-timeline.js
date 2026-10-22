@@ -606,6 +606,22 @@
     superPage(0);
   }
 
+  // #2217: the Sigma coverage card's per-row pivot. The origin filter is an EXCLUDE model, so the
+  // caller passes every origin of the case: a panel never loaded for this case knows none, and with
+  // nothing to exclude it would show every row. The super-timeline is hidden in some built-in
+  // views, so it is revealed first.
+  function filterSuperTimelineToOrigin(origin, allOrigins) {
+    const caseId = superCaseId();
+    if (!caseId || !origin) return;
+    scopeSuperFiltersToCase(caseId);
+    const all = Array.isArray(allOrigins) ? allOrigins.filter((o) => typeof o === "string") : [];
+    superKnownOrigins = new Set([...superKnownOrigins, ...all, origin]);
+    superSelectedOrigins = new Set([origin]);
+    superOffset = 0;
+    if (typeof revealSection === "function") revealSection("sec-super-timeline");
+    loadSuperTimeline(caseId);
+  }
+
   function superPage(delta) {
     const next = superOffset + delta * ST_PAGE;
     // delta 0 = re-query current page after a filter change (reset to first page).
@@ -716,6 +732,7 @@
   window.clearSuperTime = clearSuperTime;
   window.closeSuperCtxMenu = closeSuperCtxMenu;
   window.genStarredReport = genStarredReport;
+  window.filterSuperTimelineToOrigin = filterSuperTimelineToOrigin;
   window.genViewSummary = genViewSummary;
   window.loadSavedStarredReport = loadSavedStarredReport;
   window.loadSavedTimeframes = loadSavedTimeframes;

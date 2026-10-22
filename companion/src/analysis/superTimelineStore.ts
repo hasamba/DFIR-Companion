@@ -306,6 +306,15 @@ export class SuperTimelineStore {
     return result;
   }
 
+  /** Rows per origin over the whole store, sorted by origin (#2217, the Sigma coverage card). */
+  async originCounts(caseId: string): Promise<{ origin: string; events: number }[]> {
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<{ origin: string; events: number }[]>({
+      op: "superOriginCounts",
+      dbPath: this.databasePath(caseId),
+    });
+  }
+
   /**
    * One querySuper call with its label source. The tag-table source is read inside the worker;
    * when that table cannot answer yet (tags.json not migrated) the worker says so, and the call is

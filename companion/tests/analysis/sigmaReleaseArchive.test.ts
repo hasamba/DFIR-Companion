@@ -63,6 +63,34 @@ describe("readSigmaReleaseZip", () => {
     expect(r.files).toHaveLength(1);
   });
 
+  it("ignores macOS __MACOSX metadata beside a wrapped release (#2214)", () => {
+    const r = readSigmaReleaseZip(
+      zip({
+        "sigma/rules/a.yml": rule("a"),
+        "sigma/version.txt": VERSION,
+        "__MACOSX/sigma/rules/._a.yml": "resource fork",
+      }),
+    );
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+    expect(r.versionLabel).toBe("r2026-04-01-50-gabc");
+  });
+
+  it("ignores a root .DS_Store beside a wrapped release (#2214)", () => {
+    const r = readSigmaReleaseZip(zip({ "sigma/rules/a.yml": rule("a"), ".DS_Store": "finder" }));
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+  });
+
+  it("ignores AppleDouble ._ files inside rules/ (#2214)", () => {
+    const r = readSigmaReleaseZip(zip({ "rules/a.yml": rule("a"), "rules/._a.yml": "resource fork" }));
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+  });
+
+  it("still refuses an unsafe path under __MACOSX/ (#2214)", () => {
+    expect(() => readSigmaReleaseZip(zip({ "rules/a.yml": rule("a"), "__MACOSX/../evil": "x" }))).toThrow(
+      /unsafe path/,
+    );
+  });
+
   it("refuses an archive larger than the cap before reading it", () => {
     expect(() => readSigmaReleaseZip(Buffer.alloc(SIGMA_RELEASE_MAX_ZIP_BYTES + 1))).toThrow(/larger than/);
   });
@@ -87,5 +115,21 @@ describe("diffSigmaReleases", () => {
     expect(d.changed.map((r) => r.id)).toEqual(["b"]);
     expect(d.removed.map((r) => r.id)).toEqual(["c"]);
     expect(d.otherSources).toBe(1);
+  });
+
+  it("ignores line endings: a CRLF copy of the same rules is not a change (#2215)", () => {
+    const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+    const before = [f("rules/a.yml", rule("a")), f("rules/b.yml", rule("b"))];
+    const after = [f("rules/a.yml", crlf(rule("a"))), f("rules/b.yml", crlf(rule("b", "DeleteTrail")))];
+    const d = diffSigmaReleases(before, after);
+    expect(d.changed.map((r) => r.id)).toEqual(["b"]);
+    expect(d.added).toEqual([]);
+    expect(d.removed).toEqual([]);
+    expect(
+      diffSigmaReleases(
+        before,
+        before.map((x) => f(x.path, crlf(x.text))),
+      ).changed,
+    ).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import { iocUndoFromJournal } from "./iocJournalDiff.js";
 import type { JournalEntry } from "./forensicRows.js";
 import type { StateStore } from "./stateStore.js";
 import {
+  applyUndoDelta,
   computeUndoDelta,
   type KeyedArrayDelta,
   type RestoredRow,
@@ -85,6 +86,24 @@ export async function baselineCheckpoint(
   delta.keyed.forensicTimeline = keyed;
   if (iocRef && !(await putIocDelta(store, iocRef, delta))) return null;
   return { label, at, delta, counts };
+}
+
+/**
+ * Put the case back as it was at `baseline`, for an action that failed part-way inside its import
+ * section (#2206): the checkpoint Undo would build, applied at once instead of pushed. Call it while
+ * the section is still held (the journal is armed) and under the state lock. False when the journal
+ * cannot account for the changes, so no honest restore can be built.
+ */
+export async function restoreImportBaseline(store: StateStore, baseline: ImportBaseline): Promise<boolean> {
+  const at = new Date().toISOString();
+  let target = baseline.full;
+  if (!target) {
+    const checkpoint = await baselineCheckpoint(store, baseline, "rollback", at);
+    if (!checkpoint?.delta) return false;
+    target = applyUndoDelta(await store.load(baseline.caseId), checkpoint.delta);
+  }
+  await store.save({ ...target, caseId: baseline.caseId, updatedAt: at });
+  return true;
 }
 
 // The IOC part of the delta, from the IOC journal (analysis/iocJournal.ts). When the IOC ids are not

@@ -22,6 +22,13 @@ import {
   type SigmaLogSourceDef,
 } from "./sigmaLogSources.js";
 import { parseSigmaRule } from "./sigmaRule.js";
+import {
+  compileSigmaExclusions,
+  isSigmaExcluded,
+  sigmaExclusionsHash,
+  type CompiledSigmaExclusion,
+  type SigmaExclusionSpec,
+} from "./sigmaExclusions.js";
 import type { SigmaCondition, SigmaRule, SigmaSelection } from "./sigmaRuleTypes.js";
 
 type Row = Record<string, unknown>;
@@ -102,6 +109,10 @@ export interface SigmaRuleSet {
   contentSha: string;
   /** First 8 hex of a SHA-256 over the sorted disabled ids ("none" when empty). */
   disabledHash: string;
+  /** First 8 hex of a SHA-256 over the analyst's exclusions ("none" when empty) — #2218. */
+  exclusionsHash: string;
+  /** Rule id → the analyst's exclusions for it, compiled once (#2218). */
+  exclusions: ReadonlyMap<string, readonly CompiledSigmaExclusion[]>;
   inventory: SigmaInventoryEntry[];
   sources: ReadonlyMap<string, SourceRules>;
 }
@@ -110,6 +121,8 @@ export interface SigmaRuleSetOptions {
   statuses?: readonly string[];
   /** Rule id → why it is off. */
   disabled?: ReadonlyMap<string, string>;
+  /** Rule id → records to skip for that rule (#2218). */
+  exclusions?: ReadonlyMap<string, readonly SigmaExclusionSpec[]>;
   sources?: readonly SigmaLogSourceDef[];
 }
 
@@ -220,11 +233,20 @@ function classify(
   };
 }
 
-/** A content identity for a set of rule files, independent of their order. */
+/**
+ * Rule text with CRLF and lone CR turned into LF, for hashing only (#2215). A hash is a content
+ * identity, so line endings must not change it: Windows checkouts and the Windows EXE build carry
+ * CRLF. LF text comes back unchanged, so LF hashes keep their previous value.
+ */
+export function normalizeRuleText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/** A content identity for a set of rule files, independent of their order and line endings. */
 export function contentSha(files: readonly SigmaRuleFile[]): string {
   const hash = createHash("sha256");
   for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)))
-    hash.update(f.path).update("\0").update(f.text).update("\0");
+    hash.update(f.path).update("\0").update(normalizeRuleText(f.text)).update("\0");
   return hash.digest("hex").slice(0, 12);
 }
 
@@ -245,6 +267,7 @@ export function buildSigmaRuleSet(
   const opts: Required<SigmaRuleSetOptions> = {
     statuses: (options.statuses ?? DEFAULT_SIGMA_STATUSES).map((s) => s.toLowerCase()),
     disabled: options.disabled ?? new Map(),
+    exclusions: options.exclusions ?? new Map(),
     sources: options.sources ?? SIGMA_LOG_SOURCES,
   };
   const sources = new Map<string, SourceRules>();
@@ -291,6 +314,8 @@ export function buildSigmaRuleSet(
     statuses: [...opts.statuses],
     contentSha: contentSha(files),
     disabledHash: disabledHash(opts.disabled),
+    exclusionsHash: sigmaExclusionsHash(opts.exclusions),
+    exclusions: compileSigmaExclusions(opts.exclusions),
     inventory,
     sources,
   };
@@ -315,7 +340,10 @@ function candidates(src: SourceRules, record: Row): LoadedSigmaRule[] {
   return [...out];
 }
 
-/** Every loaded rule of `sourceId` that definitely matches `record`, in load order. */
+/**
+ * Every loaded rule of `sourceId` that definitely matches `record`, in load order. A match the
+ * analyst excluded for this record (#2218) is dropped; an exclusion that cannot be proven is not.
+ */
 export function matchSigmaRecord(set: SigmaRuleSet, sourceId: string, record: Row): SigmaRecordMatch {
   const src = set.sources.get(sourceId);
   if (!src) return { matches: [], incomplete: 0 };
@@ -323,8 +351,9 @@ export function matchSigmaRecord(set: SigmaRuleSet, sourceId: string, record: Ro
   let incomplete = 0;
   for (const rule of candidates(src, record)) {
     const v = rule.compiled.evaluate(record, src.resolve);
-    if (v === true) matches.push(rule);
-    else if (v === "incomplete") incomplete++;
+    if (v === true) {
+      if (!isSigmaExcluded(record, src.resolve, set.exclusions.get(rule.ref.id))) matches.push(rule);
+    } else if (v === "incomplete") incomplete++;
   }
   return { matches: matches.sort((a, b) => a.order - b.order), incomplete };
 }

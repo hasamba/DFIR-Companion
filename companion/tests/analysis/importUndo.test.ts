@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import {
   ImportUndoStore,
   emptyUndoStack,
@@ -15,6 +15,7 @@ import {
   encodeStack,
   undoMaxBytesFromEnv,
   deltaCheckpoint,
+  runUndoStep,
   DEFAULT_UNDO_MAX_BYTES,
   type ImportUndoStack,
 } from "../../src/analysis/importUndo.js";
@@ -461,5 +462,113 @@ describe("ImportUndoStore", () => {
     );
     const loaded = await store.load("c1");
     expect(loaded.undo.map((c) => c.label).sort()).toEqual([...labels].sort());
+  });
+});
+
+// #2220: a Sigma re-grade rewrites super-timeline rows in place, so its checkpoint carries the
+// before and after copies. Undo writes `restore` back; the mirror entry holds the pair swapped.
+describe("super-timeline rows on a checkpoint (#2220)", () => {
+  const S0 = mkState("s0", 2, 0);
+  const S1 = { ...S0, forensicTimeline: [...S0.forensicTimeline, ...mkState("s1", 1, 0).forensicTimeline] };
+  const before = mkState("sup", 2, 0).forensicTimeline.map((e) => ({ ...e, severity: "High" as const }));
+  const after = before.map((e) => ({ ...e, severity: "Low" as const }));
+  const withSuper = () => ({
+    ...deltaCheckpoint("Sigma re-grade", "t1", S0, S1),
+    superRows: { restore: before, reapply: after },
+  });
+
+  it("undo hands back the restore rows and pushes the swapped pair on redo; redo swaps back", () => {
+    const stack = pushCheckpoint(emptyUndoStack(), withSuper());
+    const u = applyUndo(stack, S1)!;
+    expect(u.superRows).toEqual({ restore: before, reapply: after });
+    expect(u.stack.redo[0].superRows).toEqual({ restore: after, reapply: before });
+    const r = applyRedo(u.stack, u.restore)!;
+    expect(r.superRows).toEqual({ restore: after, reapply: before });
+    expect(r.stack.undo[0].superRows).toEqual({ restore: before, reapply: after });
+  });
+
+  it("a checkpoint without super rows hands back none and adds none to its mirror", () => {
+    const u = applyUndo(pushCheckpoint(emptyUndoStack(), deltaCheckpoint("thor", "t", S0, S1)), S1)!;
+    expect(u.superRows).toBeUndefined();
+    expect(u.stack.redo[0].superRows).toBeUndefined();
+  });
+
+  it("super rows survive the file format", () => {
+    const stack = normalizeStack(
+      JSON.parse(encodeStack(pushCheckpoint(emptyUndoStack(), withSuper())).toString("utf8")),
+    );
+    expect(stack.undo[0].superRows).toEqual({ restore: before, reapply: after });
+    expect(applyUndo(stack, S1)!.restore).toEqual(S0);
+  });
+
+  it("normalizeStack drops malformed super rows but keeps the checkpoint", () => {
+    const good = JSON.parse(JSON.stringify(withSuper()));
+    const bad = [
+      { restore: "x", reapply: [] },
+      { restore: [{ id: 1 }], reapply: [] },
+      { restore: [], reapply: [null] },
+      "nope",
+    ];
+    const out = normalizeStack({ undo: bad.map((superRows) => ({ ...good, superRows })), redo: [] });
+    expect(out.undo).toHaveLength(bad.length);
+    for (const c of out.undo) {
+      expect(c.superRows).toBeUndefined();
+      expect(c.delta).toBeDefined();
+    }
+  });
+
+  describe("runUndoStep", () => {
+    let undoStore: ImportUndoStore;
+    let state: InvestigationState;
+    let rehome: ReturnType<typeof vi.fn>;
+    const deps = () => ({
+      undoStore,
+      stateStore: {
+        load: async () => state,
+        save: async (s: InvestigationState) => {
+          state = s;
+        },
+      },
+      importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
+      runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
+      superTimeline: { rehome: rehome as (caseId: string, rows: ForensicEvent[]) => Promise<number> },
+    });
+
+    beforeEach(async () => {
+      const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-importundo-super-")));
+      await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      undoStore = new ImportUndoStore(cases);
+      state = { ...S1, caseId: "c1" };
+      rehome = vi.fn(async (_c: string, rows: unknown[]) => rows.length);
+      await undoStore.save("c1", pushCheckpoint(emptyUndoStack(), withSuper()));
+    });
+
+    it("writes the restore rows to the super-timeline on undo and the reapply rows on redo", async () => {
+      const u = await runUndoStep(deps(), "c1", applyUndo);
+      expect(u.superChanged).toBe(true);
+      expect(rehome).toHaveBeenCalledWith("c1", before);
+      const r = await runUndoStep(deps(), "c1", applyRedo);
+      expect(r.superChanged).toBe(true);
+      expect(rehome).toHaveBeenLastCalledWith("c1", after);
+    });
+
+    it("a failed stack write puts the super rows back as well as the state", async () => {
+      const saveStack = undoStore.save.bind(undoStore);
+      undoStore.save = async () => {
+        throw new Error("disk full");
+      };
+      await expect(runUndoStep(deps(), "c1", applyUndo)).rejects.toThrow("disk full");
+      undoStore.save = saveStack;
+      expect(rehome.mock.calls.map((c) => c[1])).toEqual([before, after]);
+      expect(state.forensicTimeline).toHaveLength(S1.forensicTimeline.length);
+      expect((await undoStore.load("c1")).undo).toHaveLength(1);
+    });
+
+    it("without a super-timeline store the step still restores the state", async () => {
+      const { superTimeline: _unused, ...rest } = deps();
+      const u = await runUndoStep(rest, "c1", applyUndo);
+      expect(u.superChanged).toBe(false);
+      expect(state.forensicTimeline).toHaveLength(S0.forensicTimeline.length);
+    });
   });
 });

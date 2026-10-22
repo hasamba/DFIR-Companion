@@ -48,6 +48,7 @@ import { registerSensitiveAccessRoutes } from "../routes/sensitiveAccess.js";
 import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
 import { registerSigmaRulesRoutes } from "../routes/sigmaRules.js";
+import { registerSigmaRegradeRoutes } from "../routes/sigmaRegrade.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
 import { registerMcpRoutes } from "../routes/mcp.js";
 import { registerPlaybookHuntsRoutes } from "../routes/playbookHunts.js";
@@ -174,6 +175,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
   registerSigmaRulesRoutes(app, ctx); // Settings → Sigma rules: updates, rollback, disabled list (#2204)
+  registerSigmaRegradeRoutes(app, ctx); // re-grade an imported case with the current Sigma rules (#2206)
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the
   // store rather than onto the ~25 saveImport call sites, so no import route — including ones added
   // later — can quietly land evidence without a custody entry. POST /cases/:id/custody remains for

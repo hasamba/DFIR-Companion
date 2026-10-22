@@ -208,6 +208,26 @@ function querySuper(dbPath, query) {
   }
 }
 
+// #2217: rows per origin over the whole store, for the Sigma coverage card. The same origin
+// mapping as superFacets (null/empty source = SUPER_UNKNOWN_ORIGIN); super rows only.
+function superOriginCounts(dbPath) {
+  if (!existsSync(dbPath)) return [];
+  const db = openDatabase(dbPath);
+  try {
+    const counts = new Map();
+    for (const row of db.prepare(
+      "SELECT e.source AS v, count(*) AS n FROM entities e WHERE e.kind='superTimeline' GROUP BY e.source"
+    ).all()) {
+      const origin = row.v === null || row.v === "" ? SUPER_UNKNOWN_ORIGIN : String(row.v);
+      counts.set(origin, (counts.get(origin) || 0) + Number(row.n));
+    }
+    return [...counts].map(([origin, events]) => ({ origin, events }))
+      .sort((a, b) => (a.origin < b.origin ? -1 : a.origin > b.origin ? 1 : 0));
+  } finally {
+    db.close();
+  }
+}
+
 // #2129: the READ-side pre-check for migrateSuper (caseSqliteWorkerSuper.ts). The pool counts every
 // writer op as a write, so a migrateSuper that does nothing still moved the case's write sequence on
 // every super-timeline read and defeated the caches keyed on it (#2126, #2057). The store asks this

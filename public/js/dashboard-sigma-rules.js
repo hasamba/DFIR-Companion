@@ -1,5 +1,6 @@
 // Settings → Sigma rules (#2204): the SigmaHQ release the import-time engine runs, its settings,
-// updates (check / preview / install / install from file / roll back) and the disabled-rules list.
+// updates (check / preview / install / install from file / roll back), the disabled-rules list and
+// per-rule exclusions (#2218).
 //
 // A CLASSIC SCRIPT, like every js/dashboard-*.js file. It wires itself once the page has loaded —
 // its buttons, and its own tab button (to load the tab when opened) — so the frozen inline script in
@@ -7,6 +8,10 @@
 //
 // Every string from the server is rendered with textContent, never innerHTML: a release installed
 // from a file carries rule titles and reasons nobody vetted.
+
+// The largest release zip the server accepts. Matches SIGMA_RELEASE_MAX_ZIP_BYTES in
+// companion/src/analysis/sigmaReleaseArchive.ts; dashboardSigmaRules.test.ts pins the two together.
+const SIGMA_MAX_ZIP_BYTES = 32 * 1024 * 1024;
 
 function sigmaEl(tag, text, cls) {
   const el = document.createElement(tag);
@@ -89,6 +94,14 @@ function sigmaRenderStatus(s) {
   document.getElementById("sigmaDemo").hidden = !demo;
 }
 
+// True in the public demo, where the server refuses every change (#2216). It reads the notice
+// sigmaRenderStatus shows, so this file keeps no state. Every button that changes something uses it.
+const SIGMA_DEMO_TITLE = "Not available in the public demo";
+function sigmaDemoActive() {
+  const n = document.getElementById("sigmaDemo");
+  return !!n && !n.hidden;
+}
+
 function sigmaRenderRules(list) {
   const body = document.getElementById("sigmaRulesBody");
   body.textContent = "";
@@ -99,18 +112,36 @@ function sigmaRenderRules(list) {
     tr.appendChild(sigmaEl("td", r.source));
     const outcome = r.outcome === "status" ? "filtered by status" : r.outcome === "disabled" ? `disabled (${r.disabledBy || "analyst"})` : r.outcome;
     tr.appendChild(sigmaEl("td", outcome));
-    tr.appendChild(sigmaEl("td", (r.reasons || []).join("; ")));
+    const why = sigmaEl("td", (r.reasons || []).join("; "));
+    sigmaAppendExclusions(why, r);
+    tr.appendChild(why);
     const act = document.createElement("td");
-    if (r.outcome === "loaded" || r.outcome === "disabled") {
-      const btn = sigmaEl("button", r.outcome === "loaded" ? "Disable" : "Enable", "btn-mini");
-      btn.type = "button";
-      btn.addEventListener("click", () => sigmaToggleRule(r.id, r.outcome === "loaded"));
-      act.appendChild(btn);
-    }
+    if (r.outcome === "loaded") act.appendChild(sigmaRuleButton("Exclude…", () => sigmaExcludeRule(r.id)));
+    if (r.outcome === "loaded" || r.outcome === "disabled")
+      act.appendChild(sigmaRuleButton(r.outcome === "loaded" ? "Disable" : "Enable", () => sigmaToggleRule(r.id, r.outcome === "loaded")));
     tr.appendChild(act);
     body.appendChild(tr);
   }
   document.getElementById("sigmaRulesCount").textContent = `(${shown.length} rules for the log sources the Companion grades)`;
+}
+
+// A mini button for the rules table, disabled in the public demo (#2216).
+function sigmaRuleButton(label, onClick) {
+  const btn = sigmaEl("button", label, "btn-mini");
+  btn.type = "button";
+  btn.disabled = sigmaDemoActive();
+  if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+// #2218: each exclusion under its rule, as text, with a Remove button.
+function sigmaAppendExclusions(cell, r) {
+  for (const x of r.exclusions || []) {
+    const line = sigmaEl("div", `${x.field} = ${x.value} — ${x.reason}`, "sfield-hint");
+    line.appendChild(sigmaRuleButton("Remove", () => sigmaRemoveExclusion(r.id, x.field, x.value)));
+    cell.appendChild(line);
+  }
 }
 
 async function loadSigmaRules() {
@@ -147,9 +178,66 @@ function sigmaRenderPreview(p) {
   for (const pr of p.problems || []) box.appendChild(sigmaEl("div", pr, "sfield-hint"));
   const btn = sigmaEl("button", "Install this release", "btn-mini");
   btn.type = "button";
-  btn.disabled = !p.usable;
+  btn.disabled = !p.usable || sigmaDemoActive();
+  if (sigmaDemoActive()) btn.title = SIGMA_DEMO_TITLE;
   btn.addEventListener("click", sigmaInstall);
   box.appendChild(btn);
+  sigmaAppendMeasure(box, p);
+}
+
+// #2209: "Measure against this case" beside Install, only with a case open. It runs the case's
+// re-grade preview (#2206) with the staged release, on click only, and changes nothing.
+function sigmaAppendMeasure(box, p) {
+  if (!sigmaRegradeCaseId()) return;
+  const btn = sigmaEl("button", "Measure against this case", "btn-mini");
+  btn.type = "button";
+  btn.disabled = !p.usable || sigmaDemoActive();
+  if (sigmaDemoActive()) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", sigmaMeasureRelease);
+  box.appendChild(btn);
+}
+
+async function sigmaMeasureRelease() {
+  const preview = document.getElementById("sigmaPreview");
+  const token = preview && preview.dataset.token;
+  const caseId = sigmaRegradeCaseId();
+  if (!token || !caseId || sigmaDemoActive()) return;
+  sigmaMsg(`Measuring the release against ${caseId}…`);
+  try {
+    const url = `/cases/${encodeURIComponent(caseId)}/sigma/regrade?release=${encodeURIComponent(token)}`;
+    sigmaRenderMeasure(await sigmaFetch(url));
+    sigmaMsg("Measured. Nothing was changed.");
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+function sigmaMeasureLines(r) {
+  if (!r.enabled) return r.notes || [];
+  const files = r.files || [];
+  if (!files.length) return [`This case has no CloudTrail, Entra, M365 or web log import — release ${r.release} cannot change it.`];
+  const c = r.counts || {};
+  const n = (k) => Number(c[k]) || 0;
+  const skipped = files.filter((f) => f.status === "skipped").length;
+  const lines = [
+    `On this case, release ${r.release} would raise ${n("raised")} row(s), lower ${n("lowered")} and leave ${n("unchanged")} unchanged; ${n("entersForensic")} would join the forensic timeline and ${n("leavesForensic")} would leave it (scanned ${files.length - skipped} of ${files.length} Sigma-graded import(s)).`,
+  ];
+  if (skipped) lines.push(`${skipped} import(s) were not scanned — the stored file is missing or changed — so their rows are not counted.`);
+  if (n("lowered")) lines.push("A lowered row loses only the Sigma grade: it never drops below the importer's own grade, and a row the analyst promoted stays in the forensic timeline.");
+  return lines;
+}
+
+function sigmaRenderMeasure(r) {
+  const box = document.getElementById("sigmaPreview");
+  if (!box) return;
+  // A second click replaces the earlier measure rather than stacking it.
+  box.querySelector?.("[data-sigma-measure]")?.remove();
+  const out = sigmaEl("div");
+  out.dataset.sigmaMeasure = "1";
+  for (const line of sigmaMeasureLines(r)) out.appendChild(sigmaEl("div", line));
+  if (r.enabled) for (const note of r.notes || []) out.appendChild(sigmaEl("div", note, "sfield-hint"));
+  out.appendChild(sigmaEl("div", "Nothing was changed. Install the release, then use Re-grade this case to apply it.", "sfield-hint"));
+  box.appendChild(out);
 }
 
 async function sigmaCheck() {
@@ -178,6 +266,14 @@ async function sigmaInstallFile() {
   const input = document.getElementById("sigmaFile");
   const file = input && input.files && input.files[0];
   if (!file) return sigmaMsg("Choose a SigmaHQ release zip first (for example sigma_all_rules.zip).", true);
+  // Refuse before reading (#2213): base64-encoding a multi-GB file freezes or crashes the tab.
+  if (file.size > SIGMA_MAX_ZIP_BYTES) {
+    const mb = (file.size / 1048576).toFixed(1);
+    return sigmaMsg(
+      `${file.name} is ${mb} MB — too large for a SigmaHQ release zip (limit 32 MB). Choose sigma_all_rules.zip or a similar release file.`,
+      true,
+    );
+  }
   sigmaMsg(`Reading ${file.name}…`);
   try {
     const zipBase64 = sigmaBase64(await file.arrayBuffer());
@@ -224,6 +320,7 @@ async function sigmaRollback() {
 }
 
 async function sigmaToggleRule(id, disable) {
+  if (sigmaDemoActive()) return;
   let reason = "";
   if (disable) {
     reason = prompt("Why switch this rule off? (shown next to it)", "noisy in this environment");
@@ -241,6 +338,121 @@ async function sigmaToggleRule(id, disable) {
   }
 }
 
+async function sigmaPutExclusion(body) {
+  await sigmaFetch("/sigma/exclusions", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// #2218: keep the rule on but skip one known-benign value. Applies from the next import only.
+async function sigmaExcludeRule(id) {
+  if (sigmaDemoActive()) return;
+  const field = prompt("Exclude records by which field? (a field the rule's log source has, for example userIdentity.arn)", "");
+  if (field === null || !field.trim()) return;
+  const value = prompt(`Skip this rule when ${field.trim()} equals… (* and ? are wildcards; letter case is ignored)`, "");
+  if (value === null || !value.trim()) return;
+  const reason = prompt("Why is this value benign here? (shown next to the rule)", "known-benign in this environment");
+  if (reason === null) return;
+  try {
+    await sigmaPutExclusion({ id, field: field.trim(), value: value.trim(), reason });
+    sigmaMsg("Exclusion saved. It applies from the next import; events already imported keep their grading.");
+    await loadSigmaRules();
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+async function sigmaRemoveExclusion(id, field, value) {
+  if (sigmaDemoActive()) return;
+  try {
+    await sigmaPutExclusion({ id, field, value, remove: true });
+    sigmaMsg("Exclusion removed. It applies from the next import; events already imported keep their grading.");
+    await loadSigmaRules();
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+// #2206: re-grade the open case with the current rules. A preview first (it changes nothing), then
+// an Apply button, disabled in the public demo like every other change here.
+function sigmaRegradeCaseId() {
+  const input = document.getElementById("caseId");
+  return ((input && input.value) || "").trim();
+}
+
+const SIGMA_REGRADE_STATUS = {
+  current: "already graded with the current rules",
+  other: "graded with another release or setting",
+  never: "never graded by Sigma",
+  skipped: "skipped — the stored file is missing or changed",
+};
+
+function sigmaRegradeCountsText(c) {
+  const parts = [`${Number(c.rows) || 0} row(s) graded by Sigma: ${Number(c.raised) || 0} raised, ${Number(c.lowered) || 0} lowered, ${Number(c.unchanged) || 0} unchanged`];
+  if (c.tokenOnly) parts.push(`${c.tokenOnly} only re-stamped with the current release`);
+  parts.push(`${Number(c.entersForensic) || 0} join the forensic timeline, ${Number(c.leavesForensic) || 0} leave it`);
+  return `${parts.join("; ")}.`;
+}
+
+function sigmaRenderRegrade(r, caseId, applied) {
+  const box = document.getElementById("sigmaRegrade");
+  if (!box) return;
+  box.textContent = "";
+  box.hidden = false;
+  if (!r.enabled) {
+    for (const n of r.notes || []) box.appendChild(sigmaEl("div", n));
+    return;
+  }
+  const c = r.counts || {};
+  const head = applied
+    ? `Re-graded with SigmaHQ ${r.release}.`
+    : r.current
+      ? `Already graded with the current rules (SigmaHQ ${r.release}). A re-grade changes nothing.`
+      : `A re-grade with SigmaHQ ${r.release} would change:`;
+  box.appendChild(sigmaEl("div", head));
+  box.appendChild(sigmaEl("div", sigmaRegradeCountsText(c)));
+  if (applied && r.demoted) box.appendChild(sigmaEl("div", `${r.demoted} row(s) left the forensic timeline; they stay in the super-timeline.`));
+  for (const f of r.files || []) box.appendChild(sigmaEl("div", `${f.file} (${f.importer}): ${SIGMA_REGRADE_STATUS[f.status] || f.status}`, "sfield-hint"));
+  for (const n of r.notes || []) box.appendChild(sigmaEl("div", n, "sfield-hint"));
+  if (applied || !((Number(c.changed) || 0) + (Number(c.tokenOnly) || 0))) return;
+  const btn = sigmaEl("button", "Apply re-grade", "btn-mini");
+  btn.type = "button";
+  btn.disabled = sigmaDemoActive();
+  if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", () => sigmaRegradeApply(caseId));
+  box.appendChild(btn);
+}
+
+async function sigmaRegradePreview() {
+  const caseId = sigmaRegradeCaseId();
+  if (!caseId) {
+    sigmaMsg("Open a case to re-grade it.", true);
+    return;
+  }
+  try {
+    sigmaRenderRegrade(await sigmaFetch(`/cases/${encodeURIComponent(caseId)}/sigma/regrade`), caseId, false);
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+async function sigmaRegradeApply(caseId) {
+  if (sigmaDemoActive()) return;
+  try {
+    const r = await sigmaFetch(`/cases/${encodeURIComponent(caseId)}/sigma/regrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    sigmaRenderRegrade(r, caseId, true);
+    sigmaMsg("Re-grade done. No AI run started; the case's conclusions are marked out of date.");
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
 function initSigmaRules() {
   // Load the tab when its own button is clicked (a listener, not a deep link — see openSettingsTab).
   document.querySelectorAll(".stab").forEach((b) => {
@@ -249,6 +461,7 @@ function initSigmaRules() {
   document.getElementById("sigmaCheckBtn")?.addEventListener("click", sigmaCheck);
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
+  document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
   document.querySelectorAll("[data-sigma-status]").forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));
 }
 

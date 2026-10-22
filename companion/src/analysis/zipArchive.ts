@@ -137,6 +137,14 @@ export function createZip(entries: ZipEntry[]): Buffer {
 // process before a post-hoc size check ever ran. Enforced via zlib's maxOutputLength, which
 // aborts DURING decompression rather than after — see readZip. 512 MB per entry and 2 GB total
 // are generous ceilings for a forensic case archive (state JSON + screenshots + imports).
+/** Entries that are never evidence: directories, dotfiles, and macOS resource-fork metadata. */
+export function isIgnorableZipEntry(path: string): boolean {
+  if (path.endsWith("/")) return true;
+  const base = path.split("/").pop() ?? "";
+  if (base === "" || base.startsWith(".")) return true;
+  return path.startsWith("__MACOSX/");
+}
+
 const MAX_ENTRY_INFLATED = 512 * 1024 * 1024;
 const MAX_TOTAL_INFLATED = 2 * 1024 * 1024 * 1024;
 
@@ -199,9 +207,14 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     // The central record's relative-offset field is equally attacker-controlled — bound it the
     // same way before the reads below walk off the end of the buffer.
     if (localOffset + 30 > archive.length) throw new Error("corrupt ZIP: local header out of bounds");
+    if (archive.readUInt32LE(localOffset) !== SIG_LOCAL)
+      throw new Error(`corrupt ZIP: bad local header for ${name}`);
     const localNameLen = archive.readUInt16LE(localOffset + 26);
     const localExtraLen = archive.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    // A compressed size past the end would make subarray clamp silently (#2212).
+    if (dataStart + compSize > archive.length)
+      throw new Error(`corrupt ZIP: entry data out of bounds for ${name}`);
     let compressed = archive.subarray(dataStart, dataStart + compSize);
     const encrypted = (flag & FLAG_ENCRYPTED) !== 0;
 

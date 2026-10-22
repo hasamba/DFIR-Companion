@@ -34,7 +34,15 @@ export interface SigmaLogSourceDef {
   fields: SigmaFieldTable;
   /** Fields whose literal values index the rules, so a record is checked only against candidates. */
   indexFields: readonly string[];
+  /** The super-timeline origin labels its importer stamps on graded rows (#2217 coverage card). */
+  origins: readonly string[];
 }
+
+// The importers' own `sources` labels (awsImport.ts, m365Import.ts + entraAuditImport.ts,
+// combinedLogImport.ts COMBINED_LOG_SOURCE). sigmaCoverage.test.ts pins them to those files.
+export const SIGMA_ORIGIN_CLOUDTRAIL = "AWS CloudTrail";
+export const SIGMA_ORIGIN_ENTRA = "Entra ID";
+export const SIGMA_ORIGIN_WEB = "Web Access Log";
 
 const same = (...names: string[]): Record<string, string[]> =>
   Object.fromEntries(names.map((n) => [n.toLowerCase(), [n]]));
@@ -121,6 +129,7 @@ export const AWS_CLOUDTRAIL: SigmaLogSourceDef = {
     prefixes: CLOUDTRAIL_OPEN.map((p) => ({ from: `${p.toLowerCase()}.`, to: [`${p}.`] })),
   },
   indexFields: ["eventName", "eventSource"],
+  origins: [SIGMA_ORIGIN_CLOUDTRAIL],
 };
 
 export const AZURE_SIGNIN_LOGS: SigmaLogSourceDef = {
@@ -175,6 +184,7 @@ export const AZURE_SIGNIN_LOGS: SigmaLogSourceDef = {
     },
   },
   indexFields: [],
+  origins: [SIGMA_ORIGIN_ENTRA],
 };
 
 const AUDIT_OPEN = ["TargetResources", "InitiatedBy", "AdditionalDetails"];
@@ -207,6 +217,7 @@ export const AZURE_AUDIT_LOGS: SigmaLogSourceDef = {
     },
   },
   indexFields: ["OperationName", "ActivityDisplayName"],
+  origins: [SIGMA_ORIGIN_ENTRA],
 };
 
 const category = (ls: SigmaLogsource, name: string): boolean =>
@@ -242,6 +253,7 @@ export const WEB_SERVER: SigmaLogSourceDef = {
     unavailable: WEB_UNAVAILABLE,
   },
   indexFields: [],
+  origins: [SIGMA_ORIGIN_WEB],
 };
 
 export const WEB_PROXY: SigmaLogSourceDef = {
@@ -267,6 +279,7 @@ export const WEB_PROXY: SigmaLogSourceDef = {
     unavailable: WEB_UNAVAILABLE,
   },
   indexFields: [],
+  origins: [SIGMA_ORIGIN_WEB],
 };
 
 /** Every log source the engine grades, in the order a rule is offered to them. */

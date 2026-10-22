@@ -615,9 +615,10 @@
     return (
       `<div class="hunt-card sigma-compile-card">` +
       `<div class="hunt-card-head"><span>Sigma rule → Velociraptor hunt</span><div>` +
-      `<button class="sigma-compile-go" id="sigmaCompileBtn" title="Compile this Sigma rule to VQL — deterministic, no AI">Compile</button></div></div>` +
+      `<button class="sigma-compile-go" id="sigmaCompileBtn" title="Compile this Sigma rule to VQL — deterministic, no AI">Compile</button>` +
+      `<button class="sigma-compile-go" id="sigmaDryRunBtn" title="Count the events in this case the rule would match — both timelines, no AI, writes nothing (#2211)">Dry-run on this case</button></div></div>` +
       `<textarea class="hunt-vql-edit" id="sigmaYamlIn" spellcheck="false" placeholder="Paste a Sigma rule (YAML). Supported logsource categories: process_creation, network_connection, file_event, registry_*">${esc(prefill || "")}</textarea>` +
-      `<div class="hunt-run-res" id="sigmaCompileRes"></div></div>`
+      `<div class="hunt-run-res" id="sigmaDryRunRes"></div><div class="hunt-run-res" id="sigmaCompileRes"></div></div>`
     );
   }
   // What the analyst sees under the paste box: the VQL card, the refusal list, or one error line.
@@ -711,6 +712,8 @@
   function bindSigmaCard() {
     const btn = document.getElementById("sigmaCompileBtn");
     if (btn) btn.onclick = compileSigmaRule;
+    const dry = document.getElementById("sigmaDryRunBtn"); // js/dashboard-sigma-dryrun.js
+    if (dry) dry.onclick = () => typeof window.runSigmaDryRun === "function" && window.runSigmaDryRun();
   }
   // Open the modal on the Sigma card alone, prefilled with a rule, and compile it at once. The two
   // shortcuts — the per-finding chip and the query translator's Sigma card — both land here.

@@ -4,13 +4,14 @@
 // Everything is bounded BEFORE it is trusted (Codex plan review): the archive size, the number of
 // entries, every entry's inflated size (zipArchive.readZip, which now caps stored entries too), and
 // every path — absolute, `..`, backslash or drive paths are refused, as are two entries that
-// differ only in case and a name that is both a file and a folder. Only rule YAML under the three
-// release folders and the release's version.txt are kept.
+// differ only in case and a name that is both a file and a folder. Those checks cover every entry;
+// macOS metadata (`__MACOSX/`, `.DS_Store`, `._*`) and other dotfiles are then skipped (#2214). Only
+// rule YAML under the three release folders and the release's version.txt are kept.
 
 import { parse as parseYaml } from "yaml";
-import { readZip } from "./zipArchive.js";
+import { isIgnorableZipEntry, readZip } from "./zipArchive.js";
 import { SIGMA_LOG_SOURCES, type SigmaLogSourceDef } from "./sigmaLogSources.js";
-import { SIGMA_RULE_DIRS, type SigmaRuleFile } from "./sigmaRuleSet.js";
+import { normalizeRuleText, SIGMA_RULE_DIRS, type SigmaRuleFile } from "./sigmaRuleSet.js";
 import type { SigmaLogsource } from "./sigmaRuleTypes.js";
 import { createHash } from "node:crypto";
 
@@ -90,8 +91,9 @@ export function readSigmaReleaseZip(buf: Buffer): SigmaReleaseContents {
   for (const e of files)
     if (!safePath(e.path)) throw new Error(`the archive holds an unsafe path: ${e.path}`);
   checkCollisions(files.map((e) => e.path));
-  const prefix = wrapperPrefix(files.map((e) => e.path));
-  const inRelease = files
+  const kept = files.filter((e) => !isIgnorableZipEntry(e.path));
+  const prefix = wrapperPrefix(kept.map((e) => e.path));
+  const inRelease = kept
     .filter((e) => e.path.startsWith(prefix))
     .map((e) => ({ path: e.path.slice(prefix.length), data: e.data }));
   const rules = inRelease
@@ -145,7 +147,7 @@ function brief(file: SigmaRuleFile, sources: readonly SigmaLogSourceDef[]): Brie
     id: typeof doc.id === "string" ? doc.id : file.path,
     title: typeof doc.title === "string" ? doc.title : file.path,
     path: file.path,
-    hash: createHash("sha256").update(file.text).digest("hex"),
+    hash: createHash("sha256").update(normalizeRuleText(file.text)).digest("hex"),
     graded: sources.some((s) => s.matches(logsource)),
   };
 }

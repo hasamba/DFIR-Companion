@@ -1,6 +1,7 @@
 // Settings → Sigma rules (#2204): what the import-time Sigma engine runs, and the analyst's controls
 // over it — check SigmaHQ for a newer release, preview it (download + verify + diff, nothing
-// installed), install it, install from a file, roll back, and switch single rules off or on.
+// installed), install it, install from a file, roll back, switch single rules off or on, and keep a
+// rule on while skipping known-benign values (exclusions, #2218).
 //
 // Every mutating route is POST/PUT, so the demo's read-only gate refuses all of them. Downloads go
 // through the SSRF-guarded fetchOutbound; the release client adds the GitHub host pin and the
@@ -12,6 +13,8 @@ import type { RouteContext } from "./context.js";
 import { fetchOutbound, OutboundUrlBlockedError } from "./outboundFetchGuard.js";
 import { SigmaStoreError, type SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "../analysis/sigmaReleaseArchive.js";
+import { SIGMA_EXCLUSION_LIMITS } from "../analysis/sigmaExclusions.js";
+import { computeSigmaCoverage, inventoryCounts } from "../analysis/sigmaCoverage.js";
 import {
   sigmaMinLevelFromEnv,
   sigmaStatusesFromEnv,
@@ -40,17 +43,18 @@ const disabledBody = z.object({
   reason: z.string().max(300).optional(),
 });
 
-function counts(store: SigmaRuleStore): Record<string, Record<string, number>> {
-  const out: Record<string, Record<string, number>> = {};
-  for (const e of store.activeRuleSet().inventory) {
-    const src = e.source ?? "other";
-    out[src] = { ...(out[src] ?? {}), [e.outcome]: (out[src]?.[e.outcome] ?? 0) + 1 };
-  }
-  return out;
-}
+const exclusionBody = z.object({
+  id: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.id),
+  field: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.field),
+  value: z.string().min(1).max(SIGMA_EXCLUSION_LIMITS.value),
+  reason: z.string().max(SIGMA_EXCLUSION_LIMITS.reason).optional(),
+  remove: z.boolean().optional(),
+});
+
+const sigmaEnabled = (): boolean => !OFF.has(process.env.DFIR_SIGMA_RULES?.trim().toLowerCase() ?? "");
 
 export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void {
-  const { options } = ctx;
+  const { options, store: cases } = ctx;
   const errLine = (msg: string): void => ctx.serverLogger.warn(msg);
   const need = (res: Response): SigmaRuleStore | undefined => {
     if (!options.sigmaRuleStore)
@@ -73,21 +77,39 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
     if (!store) return;
     const set = store.activeRuleSet();
     return res.json({
-      enabled: !OFF.has(process.env.DFIR_SIGMA_RULES?.trim().toLowerCase() ?? ""),
+      enabled: sigmaEnabled(),
       active: store.active(),
       previous: store.previous(),
       contentSha: set.contentSha,
       disabledHash: set.disabledHash,
+      exclusionsHash: set.exclusionsHash,
       settings: {
         statuses: sigmaStatusesFromEnv(),
         minLevel: sigmaMinLevelFromEnv(),
         updateCheck: sigmaUpdateCheckEnabled(),
       },
-      counts: counts(store),
+      counts: inventoryCounts(set.inventory),
       problems: set.problems,
       lastCheck: store.lastCheck ?? null,
       demoMode: !!options.demoMode,
     });
+  });
+
+  // #2217: which of this case's ingested origins Sigma grades, and with how many rules. Analyst-only
+  // and read-only — derived from the super-timeline's origin counts, never fed to an AI prompt.
+  app.get("/cases/:id/sigma/coverage", async (req: Request, res: Response) => {
+    const sigma = need(res);
+    if (!sigma) return;
+    const superStore = options.superTimelineStore;
+    if (!superStore) return res.status(501).json({ error: "super-timeline not configured" });
+    try {
+      if (!(await cases.caseExists(req.params.id)))
+        return res.status(404).json({ error: `case ${req.params.id} not found` });
+      const origins = await superStore.originCounts(req.params.id);
+      return res.json(computeSigmaCoverage(origins, sigma.activeRuleSet().inventory, sigmaEnabled()));
+    } catch (err) {
+      return fail(res, "GET /cases/:id/sigma/coverage", err);
+    }
   });
 
   app.get("/sigma/rules", (_req: Request, res: Response) => {
@@ -168,6 +190,23 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
       return res.json({ ok: true });
     } catch (err) {
       return fail(res, "PUT /sigma/disabled", err);
+    }
+  });
+
+  // #2218: add or remove one exclusion. It grades the next import; events already imported keep
+  // their grading.
+  app.put("/sigma/exclusions", async (req: Request, res: Response) => {
+    const store = need(res);
+    if (!store) return;
+    const body = exclusionBody.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: "send {id, field, value, reason?, remove?}" });
+    const { id, field, value, reason, remove } = body.data;
+    try {
+      if (remove) await store.removeRuleExclusion(id, field, value);
+      else await store.setRuleExclusion(id, field, value, reason ?? "");
+      return res.json({ ok: true });
+    } catch (err) {
+      return fail(res, "PUT /sigma/exclusions", err);
     }
   });
 }

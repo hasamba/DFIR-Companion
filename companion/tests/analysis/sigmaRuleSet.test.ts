@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildSigmaRuleSet, matchSigmaRecord, type SigmaRuleFile } from "../../src/analysis/sigmaRuleSet.js";
+import { createHash } from "node:crypto";
+import {
+  buildSigmaRuleSet,
+  contentSha,
+  matchSigmaRecord,
+  normalizeRuleText,
+  type SigmaRuleFile,
+} from "../../src/analysis/sigmaRuleSet.js";
 import { AWS_CLOUDTRAIL, type SigmaLogSourceDef } from "../../src/analysis/sigmaLogSources.js";
 
 // Loading and indexing rules for the import-time engine (#2202), from in-memory rule texts so
@@ -134,6 +141,7 @@ describe("buildSigmaRuleSet", () => {
       matches: (ls) => ls.product === "acme" && ls.service === "audit",
       fields: { exact: { action: ["act"] } },
       indexFields: ["action"],
+      origins: ["Acme audit"],
     };
     const r = file(
       "acme.yml",
@@ -223,5 +231,95 @@ describe("duplicate rule ids (Codex review of #2204)", () => {
     expect(set.inventory.map((e) => e.outcome)).toEqual(["loaded", "refused"]);
     expect(set.inventory[1].reasons?.join(" ")).toMatch(/duplicate rule id.*rules\/a\.yml/);
     expect(matchSigmaRecord(set, "aws-cloudtrail", { eventName: "B" }).matches).toEqual([]);
+  });
+});
+
+describe("contentSha line endings (#2215)", () => {
+  const files = [
+    file("rules/a.yml", ruleText({ id: "a", detection: "  sel:\n    eventName: A" })),
+    file("rules/b.yml", ruleText({ id: "b", detection: "  sel:\n    eventName: B" })),
+  ];
+  const withEol = (eol: string) => files.map((f) => file(f.path, f.text.replace(/\n/g, eol)));
+  // The pre-#2215 formula, over raw text. LF input must keep this exact value so the
+  // provenance ids already in Linux/Docker reports stay valid.
+  const legacySha = (list: readonly SigmaRuleFile[]) => {
+    const hash = createHash("sha256");
+    for (const f of [...list].sort((a, b) => (a.path < b.path ? -1 : 1)))
+      hash.update(f.path).update("\0").update(f.text).update("\0");
+    return hash.digest("hex").slice(0, 12);
+  };
+
+  it("gives CRLF, lone-CR and LF copies of the same rules one content id", () => {
+    expect(contentSha(withEol("\r\n"))).toBe(contentSha(files));
+    expect(contentSha(withEol("\r"))).toBe(contentSha(files));
+  });
+
+  it("keeps the previous value for LF input", () => {
+    expect(contentSha(files)).toBe(legacySha(files));
+  });
+
+  it("still changes when the rule content changes", () => {
+    const edited = [files[0], file("rules/b.yml", files[1].text.replace("eventName: B", "eventName: C"))];
+    expect(contentSha(edited.map((f) => file(f.path, f.text.replace(/\n/g, "\r\n"))))).not.toBe(
+      contentSha(files),
+    );
+  });
+
+  it("normalizeRuleText converts CRLF and lone CR to LF and leaves LF text alone", () => {
+    expect(normalizeRuleText("a\r\nb\rc\nd")).toBe("a\nb\nc\nd");
+    expect(normalizeRuleText("a\nb\n")).toBe("a\nb\n");
+  });
+});
+
+// #2218: an analyst exclusion keeps a rule on but skips one known-benign value. Sigma exact-match
+// semantics (case-insensitive, `*` / `?` wildcards); the field is read through the source's own
+// resolver; a truncated lookup never hides a hit.
+describe("rule exclusions (#2218)", () => {
+  const BACKUP = "arn:aws:iam::111122223333:role/BackupService";
+  const rec = (arn: string, extra: Record<string, unknown> = {}) => ({
+    eventSource: "cloudtrail.amazonaws.com",
+    eventName: "StopLogging",
+    userIdentity: { arn },
+    ...extra,
+  });
+  const withExclusion = (value: string, field = "userIdentity.arn") =>
+    buildSigmaRuleSet([STOP], META, { exclusions: new Map([["stop", [{ field, value }]]]) });
+  const ids = (set: ReturnType<typeof buildSigmaRuleSet>, r: Record<string, unknown>) =>
+    matchSigmaRecord(set, "aws-cloudtrail", r).matches.map((m) => m.ref.id);
+
+  it("drops the match for the excluded value and keeps it for any other", () => {
+    const set = withExclusion(BACKUP);
+    expect(ids(set, rec(BACKUP))).toEqual([]);
+    expect(ids(set, rec("arn:aws:iam::111122223333:role/Attacker"))).toEqual(["stop"]);
+  });
+
+  it("matches the way a Sigma value does: wildcards and any letter case", () => {
+    expect(ids(withExclusion("*:role/BackupService"), rec(BACKUP))).toEqual([]);
+    expect(ids(withExclusion(BACKUP.toUpperCase()), rec(BACKUP))).toEqual([]);
+    expect(ids(withExclusion("*:role/Backup"), rec(BACKUP))).toEqual(["stop"]);
+  });
+
+  it("reads the field through the source's resolver (lower-case Sigma spelling)", () => {
+    expect(ids(withExclusion(BACKUP, "useridentity.arn"), rec(BACKUP))).toEqual([]);
+  });
+
+  it("never suppresses on a truncated lookup", () => {
+    const set = withExclusion(BACKUP);
+    expect(ids(set, rec(BACKUP, { __sigmaIncomplete: ["userIdentity.arn"] }))).toEqual(["stop"]);
+    expect(ids(set, { ...rec(BACKUP), userIdentity: {}, __sigmaIncomplete: ["userIdentity.arn"] })).toEqual([
+      "stop",
+    ]);
+  });
+
+  it("keeps the match when the record has no value for the field", () => {
+    const bare = { eventSource: "cloudtrail.amazonaws.com", eventName: "StopLogging" };
+    expect(ids(withExclusion(BACKUP), bare)).toEqual(["stop"]);
+  });
+
+  it("names the exclusions in a hash: none when empty, changed by any exclusion", () => {
+    expect(buildSigmaRuleSet([STOP], META).exclusionsHash).toBe("none");
+    const one = withExclusion(BACKUP);
+    expect(one.exclusionsHash).toMatch(/^[0-9a-f]{8}$/);
+    expect(withExclusion("arn:aws:iam::111122223333:role/Other").exclusionsHash).not.toBe(one.exclusionsHash);
   });
 });

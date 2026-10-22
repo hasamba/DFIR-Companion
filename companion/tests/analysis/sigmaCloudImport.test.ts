@@ -59,7 +59,7 @@ describe("CloudTrail with import-time Sigma", () => {
     const rec = ct({ eventSource: "s3.amazonaws.com", eventName: "ListBuckets", readOnly: true });
     const r = parseCloudTrail(trail([rec]), { sigma });
     expect(r.events[0].canonical?.producer.ruleVersions).toContain(sigma?.token);
-    expect(sigma?.token).toMatch(/^sigma:r2026-07-01:[0-9a-f]{12}:stable\+test:high:[0-9a-f]{8}$/);
+    expect(sigma?.token).toMatch(/^sigma:r2026-07-01:[0-9a-f]{12}:stable\+test:high:[0-9a-f]{8}:none$/);
     expect(r.sigmaRowsMatched).toBe(0);
   });
 

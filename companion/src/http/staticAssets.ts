@@ -94,6 +94,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",
   "/js/dashboard-sigma-rules.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-sigma-coverage.js": "application/javascript; charset=utf-8",
   // The Timeline Swimlane canvas chart (#415 tier 3). A 404 here costs the chart and nothing else,
   // but the guarded ENTRY POINT is only half the reason: this module also publishes four names that
   // the page calls bare from the middle of its load-time refresh chains, where a ReferenceError
@@ -124,6 +125,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-settings-tools.js": "application/javascript; charset=utf-8",
   // Sigma draft export (#89) and the ES|QL / YARA / Suricata hunt modal built from the same context.
   "/js/dashboard-sigma-hunt.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-sigma-dryrun.js": "application/javascript; charset=utf-8",
   // Push ingest token (#84) — the per-case token an external collector posts evidence with.
   "/js/dashboard-push-token.js": "application/javascript; charset=utf-8",
   // Reproducible analysis runs (#377) — the run history for a case and the diff between two runs.

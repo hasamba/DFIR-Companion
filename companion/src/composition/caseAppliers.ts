@@ -21,7 +21,12 @@ import { nsrlEventMatches } from "./nsrlRows.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import { scriptBlockSignal } from "../analysis/tradecraftRules.js";
 import { deobfuscateRows } from "./deobfuscationRows.js";
-import { deltaCheckpoint, pushCheckpoint, type ImportCheckpoint } from "../analysis/importUndo.js";
+import {
+  deltaCheckpoint,
+  pushCheckpoint,
+  type ImportCheckpoint,
+  type SuperRowsUndo,
+} from "../analysis/importUndo.js";
 import { isImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { baselineCheckpoint } from "../analysis/importUndoRows.js";
 import { DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "../analysis/playbookControl.js";
@@ -50,13 +55,15 @@ export interface CaseAppliers {
    * the full pre-import state. `afterState` is the state the import left; a full-state caller that
    * holds it passes it, otherwise the current state is loaded. A baseline needs neither: its
    * checkpoint is built from the rows the import changed, and must be pushed while the section is
-   * still held (the journal it reads goes with the section).
+   * still held (the journal it reads goes with the section). `superRows`: super-timeline rows the
+   * action rewrote in place (#2220, a Sigma re-grade) — Undo writes their old copies back.
    */
   pushImportCheckpoint(
     caseId: string,
     beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
+    superRows?: SuperRowsUndo,
   ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyDeobfuscationToCase(
@@ -89,12 +96,14 @@ export function createCaseAppliers({
     beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
+    superRows?: SuperRowsUndo,
   ): Promise<void> {
     const undoStore = options.importUndoStore;
     if (!undoStore) return;
     try {
       const at = new Date().toISOString();
-      const checkpoint = await checkpointFor(caseId, beforeState, label, at, afterState);
+      const built = await checkpointFor(caseId, beforeState, label, at, afterState);
+      const checkpoint = superRows ? { ...built, superRows } : built;
       // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
       // import firing requests seconds apart while the previous one's async work is still in
       // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge
