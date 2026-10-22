@@ -1797,6 +1797,35 @@ three feeds the beacon detector (an interval-aggregated row would read as a low-
   compare to the other two providers. **The records are sampled**: a flow that does not appear is
   not evidence that no traffic occurred, and the import note says so.
 
+### Sigma rules grade CloudTrail and Entra imports
+
+AWS CloudTrail records and Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
+Analytics exports) are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
+they are imported. No AI is involved, and the same file always gets the same result.
+
+- **A high or critical rule raises the event** to the rule's level. The description starts with
+  `Sigma: <rule title>`. A severity the importer already gave is never lowered.
+- **A medium, low or informational rule only tags the event**: `Sigma (medium, tag only): <title>`.
+  The severity does not change, so an Info row stays Info, goes to the super-timeline, and is never
+  read by the AI.
+- **Every match is recorded on the event**: the rule id, level, status, author, the SigmaHQ release
+  and a link to the rule. The rule's ATT&CK techniques are added to the event.
+- **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
+  stays one event with both verdicts.
+- **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
+- **An Entra audit record that becomes several rows** carries its match on the first row, with a note
+  that the rule matched the whole record.
+
+Which rules run: SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs` and
+`azure/auditlogs`. A rule is not run when it uses a field the Companion cannot read in these exports
+(for example `properties.message`), and six rules that need tenant-specific values (an application id,
+a country list, an approved-inviter list) or that match routine sign-ins are shipped switched off.
+The server log lists, per source, how many rules loaded, were disabled, or were refused.
+
+Entra records exported through the Microsoft 365 Unified Audit Log, and service-principal sign-ins, are
+not graded by Sigma yet. Switch the feature off with `DFIR_SIGMA_RULES=off` (Settings → Sigma rules at
+import).
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

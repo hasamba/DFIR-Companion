@@ -17,6 +17,7 @@ import {
   type SigmaFieldMatch,
   type SigmaLogsource,
   type SigmaModifier,
+  type SigmaParseOptions,
   type SigmaParseResult,
   type SigmaRefusal,
   type SigmaRule,
@@ -241,9 +242,23 @@ function checkRegexValues(path: string, values: readonly SigmaScalar[], out: Ref
   return true;
 }
 
-function readFieldMatch(path: string, key: string, raw: unknown, out: Refusals): SigmaFieldMatch | null {
+function readFieldMatch(
+  path: string,
+  key: string,
+  raw: unknown,
+  out: Refusals,
+  opts: SigmaParseOptions,
+): SigmaFieldMatch | null {
   const [field, ...mods] = key.split("|");
   const fieldPath = `${path}.${key}`;
+  if (raw === null && opts.allowNull) {
+    // `field: null` means "this key is absent". A modifier has nothing to compare against.
+    if (mods.length) {
+      out.add(fieldPath, "a null value cannot take a modifier; write the field without one");
+      return null;
+    }
+    return { field, modifiers: [], values: [], nullValue: true };
+  }
   const modifiers: SigmaModifier[] = [];
   for (const mod of mods) {
     if ((SIGMA_MODIFIERS as readonly string[]).includes(mod)) modifiers.push(mod as SigmaModifier);
@@ -261,10 +276,10 @@ function readFieldMatch(path: string, key: string, raw: unknown, out: Refusals):
   return { field, modifiers, values };
 }
 
-function readFieldMap(path: string, raw: Plain, out: Refusals): SigmaFieldMatch[] {
+function readFieldMap(path: string, raw: Plain, out: Refusals, opts: SigmaParseOptions): SigmaFieldMatch[] {
   const fields: SigmaFieldMatch[] = [];
   for (const [key, value] of Object.entries(raw)) {
-    const match = readFieldMatch(path, key, value, out);
+    const match = readFieldMatch(path, key, value, out, opts);
     if (match) fields.push(match);
   }
   return fields;
@@ -280,7 +295,12 @@ function countValues(raw: unknown): number {
 // before the compiler, so the analyst reads the reason at the selection that carries it.
 const NO_FIELDS = "this selection has no fields, so it matches nothing; give it at least one field";
 
-function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelection | null {
+function readSelection(
+  name: string,
+  raw: unknown,
+  out: Refusals,
+  opts: SigmaParseOptions,
+): SigmaSelection | null {
   const path = `detection.${name}`;
   if (countValues(raw) > SIGMA_MAX_VALUES_PER_SELECTION) {
     out.add(path, `a selection is limited to ${SIGMA_MAX_VALUES_PER_SELECTION} values`);
@@ -291,7 +311,7 @@ function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelectio
       out.add(path, NO_FIELDS);
       return null;
     }
-    return { kind: "map", name, fields: readFieldMap(path, raw, out) };
+    return { kind: "map", name, fields: readFieldMap(path, raw, out, opts) };
   }
   if (!Array.isArray(raw) || raw.length === 0) {
     out.add(path, "a selection must be a map of fields, a list of such maps, or a list of keywords");
@@ -300,7 +320,7 @@ function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelectio
   if (raw.every(isPlain)) {
     // Every entry is read even after an empty one, so the refusal list stays complete.
     const alternatives = raw.map((m, i) => {
-      if (Object.keys(m).length > 0) return readFieldMap(path, m, out);
+      if (Object.keys(m).length > 0) return readFieldMap(path, m, out, opts);
       out.add(`${path}[${i}]`, NO_FIELDS.replace("this selection", "this entry of the selection list"));
       return null;
     });
@@ -312,7 +332,7 @@ function readSelection(name: string, raw: unknown, out: Refusals): SigmaSelectio
   return null;
 }
 
-function readDetection(doc: Plain, out: Refusals): SigmaRule["detection"] | null {
+function readDetection(doc: Plain, out: Refusals, opts: SigmaParseOptions): SigmaRule["detection"] | null {
   const raw = doc.detection;
   if (!isPlain(raw)) {
     out.add("detection", "detection is required and must be a map of selections plus a condition");
@@ -328,7 +348,7 @@ function readDetection(doc: Plain, out: Refusals): SigmaRule["detection"] | null
   }
   const selections: SigmaSelection[] = [];
   for (const name of names) {
-    const sel = readSelection(name, blocks[name], out);
+    const sel = readSelection(name, blocks[name], out, opts);
     if (sel) selections.push(sel);
   }
   if (typeof condition !== "string" || !condition.trim()) {
@@ -349,7 +369,7 @@ function readDetection(doc: Plain, out: Refusals): SigmaRule["detection"] | null
  * Parse one Sigma rule. Returns the typed rule, or every reason it cannot be expressed. Pure and
  * deterministic; never throws on input.
  */
-export function parseSigmaRule(text: string): SigmaParseResult {
+export function parseSigmaRule(text: string, opts: SigmaParseOptions = {}): SigmaParseResult {
   const out = new Refusals();
   const doc = readDocument(text, out);
   if (!doc) return { ok: false, refusals: out.list };
@@ -358,10 +378,14 @@ export function parseSigmaRule(text: string): SigmaParseResult {
   if (!title?.trim()) out.add("title", "title is required");
   const id = readString(doc, "id", out);
   const level = readString(doc, "level", out);
+  const status = readString(doc, "status", out);
+  const author = readString(doc, "author", out);
+  const date = readString(doc, "date", out);
+  const modified = readString(doc, "modified", out);
   const description = readString(doc, "description", out);
   const tags = readTags(doc, out);
   const logsource = readLogsource(doc, out);
-  const detection = readDetection(doc, out);
+  const detection = readDetection(doc, out, opts);
 
   if (out.list.length || !title || !logsource || !detection) return { ok: false, refusals: out.list };
   return {
@@ -370,6 +394,10 @@ export function parseSigmaRule(text: string): SigmaParseResult {
       title,
       ...(id !== undefined ? { id } : {}),
       ...(level !== undefined ? { level } : {}),
+      ...(status !== undefined ? { status } : {}),
+      ...(author !== undefined ? { author } : {}),
+      ...(date !== undefined ? { date } : {}),
+      ...(modified !== undefined ? { modified } : {}),
       ...(description !== undefined ? { description } : {}),
       tags,
       mitreTechniques: techniquesFromTags(tags),

@@ -26,6 +26,11 @@ export interface SigmaFieldMatch {
   field: string;
   modifiers: SigmaModifier[];
   values: SigmaScalar[];
+  /**
+   * `field: null` — the key is absent or JSON null. Only produced when the caller parses with
+   * `allowNull` (the import-time engine, #2202); `values` is then empty and `modifiers` too.
+   */
+  nullValue?: true;
 }
 
 /**
@@ -59,6 +64,12 @@ export interface SigmaRule {
   title: string;
   id?: string;
   level?: string;
+  /** stable / test / experimental / deprecated / unsupported, as the rule states it. */
+  status?: string;
+  /** As written. The DRL requires it on every match the import-time engine records (#2202). */
+  author?: string;
+  date?: string;
+  modified?: string;
   description?: string;
   /** Every tag as written, tactic tags included. */
   tags: string[];
@@ -75,6 +86,11 @@ export interface SigmaRule {
 export interface SigmaRefusal {
   path: string;
   message: string;
+}
+
+/** Parse options. `allowNull` is the import-time engine's (#2202); the hunt compiler never sets it. */
+export interface SigmaParseOptions {
+  allowNull?: boolean;
 }
 
 export type SigmaParseResult = { ok: true; rule: SigmaRule } | { ok: false; refusals: SigmaRefusal[] };

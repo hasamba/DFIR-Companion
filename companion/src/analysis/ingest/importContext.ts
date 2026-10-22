@@ -5,6 +5,7 @@ import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
 import type { BulkImportSink } from "./velociraptorBulk.js";
+import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 
 /**
  * What an importer needs from the pipeline, and nothing else (#384).
@@ -54,6 +55,10 @@ export interface ImportContext {
     // The batched Velociraptor driver's stores (#1439). Optional for the same reason: minimal/test
     // wirings have none, and importVelociraptor then takes the whole-file path for every size.
     bulkImportSink?: BulkImportSink;
+    // Import-time Sigma rules (#2202), read by the CloudTrail and M365/Entra importers. Optional for
+    // the same reason: minimal/test wirings have none, and those importers then grade exactly as
+    // they did before #2202.
+    sigmaGrader?: SigmaImportGrader;
   };
 
   /**
@@ -94,6 +99,7 @@ export function buildImportOpts(source: {
   readonly superTimelineStore?: SuperTimelineStore;
   readonly authObservationStore?: AuthObservationStore;
   readonly bulkImportSink?: BulkImportSink;
+  readonly sigmaGrader?: SigmaImportGrader;
 }): ImportContext["opts"] {
   return {
     get stateStore() {
@@ -110,6 +116,9 @@ export function buildImportOpts(source: {
     },
     get bulkImportSink() {
       return source.bulkImportSink;
+    },
+    get sigmaGrader() {
+      return source.sigmaGrader;
     },
   };
 }

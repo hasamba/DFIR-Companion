@@ -512,6 +512,8 @@
     // and every run, so turning Jev on in Settings is live as soon as the server reloads the
     // prefix. Same contract with settings/envManager.ts — one list alone does nothing.
     "DFIR_JEV_",
+    // Import-time Sigma rules (#2202): read from process.env on every import. Same contract.
+    "DFIR_SIGMA_",
   ];
 
   // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178).

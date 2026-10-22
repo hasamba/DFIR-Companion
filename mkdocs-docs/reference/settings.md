@@ -281,6 +281,14 @@ Custom declarative importers:
 
 ---
 
+## Sigma Rules at Import
+
+- `DFIR_SIGMA_RULES` — `on` (default) or `off`. Grades AWS CloudTrail and Entra ID sign-in / audit
+  imports with the bundled SigmaHQ rules ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)).
+  Read on every import, so a change applies to the next import without a restart.
+
+---
+
 ## Content Tagger
 
 Controls the [content-based event tagger](advanced.md) (`companion/data/tags.yaml`), env-configured (no dashboard fields):

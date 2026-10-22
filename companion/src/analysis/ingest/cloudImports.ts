@@ -53,7 +53,7 @@ export async function importM365(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug });
+  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug, sigma: ctx.opts.sigmaGrader });
 
   // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
   const { events: crossRows, retentionNote } = await crossUploadSprayRows(
@@ -521,7 +521,7 @@ export async function importAws(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug });
+  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug, sigma: ctx.opts.sigmaGrader });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)

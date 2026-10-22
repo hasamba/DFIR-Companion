@@ -57,6 +57,7 @@ import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
+import { bundledSigmaGrader } from "./sigmaRules.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
@@ -347,6 +348,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     stateLock: params.stateLock,
     stateStore: params.stateStore,
     bulkImportSink: params.bulkImportSink,
+    sigmaGrader: bundledSigmaGrader(), // #2202 import-time Sigma rules (CloudTrail, Entra)
     falsePositiveStore: new FalsePositiveStore(params.store),
     scopeStore: new ScopeStore(params.store),
     assetOverridesStore: new AssetOverridesStore(params.store),

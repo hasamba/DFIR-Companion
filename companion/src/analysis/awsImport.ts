@@ -17,7 +17,15 @@ import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
-import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
+import { mergeReplicaGroups, type ReplicaCandidate } from "./awsReplicas.js";
+import {
+  applySigmaMatches,
+  DEFAULT_SIGMA_MIN_LEVEL,
+  sigmaMatchesFor,
+  unionSigmaMatches,
+  type SigmaImportGrader,
+} from "./sigmaImportGrade.js";
+import type { SigmaRuleRef } from "./sigmaRuleSet.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
@@ -53,6 +61,8 @@ export interface AwsImportOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
+  /** Import-time Sigma rules (#2202); absent → no Sigma grading, exactly the pre-#2202 output. */
+  sigma?: SigmaImportGrader;
 }
 
 export interface AwsParseResult {
@@ -568,16 +578,27 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   const coverage: CloudCoverageDraft[] = awsCloudTrailCoverage(records).map((d) => ({ ...d, uploadId }));
 
   const iocSink = new Map<string, SiemIoc>();
-  const candidates: ReplicaCandidate[] = [];
+  const candidates: Array<ReplicaCandidate & { sigma: SigmaRuleRef[] }> = [];
+  const onIncomplete = (n: number) => opts.debug?.observed("sigma_incomplete", n);
   for (const [recordIndex, rec] of records.entries()) {
     const m = mapRecord(rec, iocSink, recordIndex);
-    if (m) candidates.push(m);
+    // Sigma reads the RAW record (#2202): the rules are written against CloudTrail's own fields.
+    if (m) candidates.push({ ...m, sigma: sigmaMatchesFor(opts.sigma, "aws-cloudtrail", rec, onIncomplete) });
     // No eventName or eventSource: the record is never mapped (#1736).
     else opts.debug?.skipped("missing_required_field");
   }
   // The two records of one cross-account action are one row (awsReplicas.ts), before and
-  // independent of the optional aggregation.
-  const mapped = mergeReplicas(candidates);
+  // independent of the optional aggregation. The Sigma matches of EVERY replica of a row are
+  // applied after the merge, so a match on the replica the merge did not keep is not lost and the
+  // merge's re-rendered description cannot overwrite the rule title.
+  const minLevel = opts.sigma?.minLevel() ?? DEFAULT_SIGMA_MIN_LEVEL;
+  const merged = mergeReplicaGroups(candidates).map((g) => ({
+    event: g.event,
+    sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
+  }));
+  const mapped = merged.map((g) => applySigmaMatches(g.event, g.sigma, minLevel));
+  const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
+  if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)
     opts.debug?.omitted("merged_replica", candidates.length - mapped.length);
   if (mapped.length === 0) {
