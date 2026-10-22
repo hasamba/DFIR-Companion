@@ -141,6 +141,7 @@ describe("buildSigmaRuleSet", () => {
       matches: (ls) => ls.product === "acme" && ls.service === "audit",
       fields: { exact: { action: ["act"] } },
       indexFields: ["action"],
+      origins: ["Acme audit"],
     };
     const r = file(
       "acme.yml",

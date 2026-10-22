@@ -10,6 +10,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules.js";
 import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Settings → Sigma rules routes (#2204). File installs only: nothing here touches the network.
 
@@ -99,5 +101,73 @@ describe("Sigma rules routes", () => {
   it("answers 501 without a store", async () => {
     const res = await request(createApp(store, { stateStore: new StateStore(store) })).get("/sigma/status");
     expect(res.status).toBe(501);
+  });
+});
+
+// #2217: the per-case coverage card. Analyst-only and read-only: nothing here reaches an AI prompt.
+describe("GET /cases/:id/sigma/coverage", () => {
+  const ev = (id: string, origin?: string): ForensicEvent => ({
+    id,
+    timestamp: "2026-06-01T00:00:00Z",
+    description: `event ${id}`,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    ...(origin ? { sources: [origin] } : {}),
+  });
+
+  async function seeded() {
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const superTimelineStore = new SuperTimelineStore(store, 100000);
+    await superTimelineStore.append("c1", [
+      ev("a1", "AWS CloudTrail"),
+      ev("a2", "AWS CloudTrail"),
+      ev("w1", "Windows.EventLogs.Evtx"),
+    ]);
+    return superTimelineStore;
+  }
+
+  it("lists each origin with its Sigma sources and state", async () => {
+    const res = await request(app({ superTimelineStore: await seeded() })).get("/cases/c1/sigma/coverage");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ enabled: true, graded: 1, total: 2 });
+    expect(res.body.rows[0]).toMatchObject({ origin: "AWS CloudTrail", events: 2, state: "covered" });
+    expect(res.body.rows[0].sigmaSources[0]).toMatchObject({ id: "aws-cloudtrail", loaded: 28 });
+    expect(res.body.rows[1]).toMatchObject({
+      origin: "Windows.EventLogs.Evtx",
+      events: 1,
+      state: "not-graded",
+    });
+  });
+
+  it("says sigma-off on every row when grading is switched off", async () => {
+    const prev = process.env.DFIR_SIGMA_RULES;
+    process.env.DFIR_SIGMA_RULES = "off";
+    try {
+      const res = await request(app({ superTimelineStore: await seeded() })).get("/cases/c1/sigma/coverage");
+      expect(res.body.enabled).toBe(false);
+      expect(res.body.rows.map((r: { state: string }) => r.state)).toEqual(["sigma-off", "sigma-off"]);
+    } finally {
+      if (prev === undefined) delete process.env.DFIR_SIGMA_RULES;
+      else process.env.DFIR_SIGMA_RULES = prev;
+    }
+  });
+
+  it("answers 404 for a case that does not exist", async () => {
+    const res = await request(app({ superTimelineStore: new SuperTimelineStore(store, 10) })).get(
+      "/cases/nope/sigma/coverage",
+    );
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/case nope not found/);
+  });
+
+  it("answers 501 without the Sigma store or the super-timeline store", async () => {
+    expect((await request(app()).get("/cases/c1/sigma/coverage")).status).toBe(501);
+    const noSigma = createApp(store, {
+      stateStore: new StateStore(store),
+      superTimelineStore: new SuperTimelineStore(store, 10),
+    });
+    expect((await request(noSigma).get("/cases/c1/sigma/coverage")).status).toBe(501);
   });
 });

@@ -313,6 +313,9 @@ The tab also shows:
 
 Updates and rule changes are not available in the demo.
 
+To see which of one case's sources these rules grade, open the **Sigma coverage** card in the
+[Hunt Workbench](hunt-workbench.md#sigma-coverage).
+
 ---
 
 ## Content Tagger

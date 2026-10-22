@@ -213,3 +213,35 @@ Results can be:
 
 Notebook and finding-evidence actions are disabled for super-timeline results. Select and promote
 the individual raw rows first; the promoted forensic copies can then be queried and used normally.
+
+## Sigma coverage
+
+The **Sigma coverage** card at the bottom of the Hunt Workbench shows which of the case's ingested
+sources the import-time Sigma rules grade. Use it to find blind spots before you trust a quiet
+result.
+
+The headline reads "N of M ingested sources have Sigma rules running". The table has one row for
+each origin in the case's super-timeline:
+
+- **Origin** and **Events** — the source label and the number of rows the super-timeline holds for it.
+- **Coverage** — one of four states:
+    - *Sigma rules running* — at least one rule is loaded for this source.
+    - *No loaded rules* — the source is graded, but every rule for it is switched off, refused or
+      filtered by status. This is a real blind spot.
+    - *Not graded by Sigma* — no Sigma log source reads this origin (for example Windows event logs
+      or Microsoft 365 audit logs).
+    - *Sigma grading is switched off* — `DFIR_SIGMA_RULES=off`, so nothing is graded.
+- **Sigma sources and rules** — for each Sigma log source that grades the origin, the rules loaded,
+  switched off, refused, and filtered by status in the installed release.
+- **Show in super-timeline** — opens the Super-Timeline filtered to that origin only.
+
+Limits of the card:
+
+- Sigma grades rows at import only. Rows imported before a source gained rules, or while Sigma was
+  switched off, were not checked.
+- *Web Access Log* rows are graded by the web server rules **or** the web proxy rules. The importer
+  picks one per import from the log's shape.
+- *Entra ID* also carries service-principal sign-ins. Sigma does not grade them.
+
+The card is for the analyst only. The AI never reads it. It refreshes when a case opens, when an
+import adds rows, and when you click **Refresh coverage**.

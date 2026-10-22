@@ -224,6 +224,7 @@
   <!-- The CISA KEV catalog panel (#99), the second and last wholly-movable feature (#415 tier 3). -->
   <script src="/js/dashboard-kev.js"></script>
   <script src="/js/dashboard-sigma-rules.js"></script>
+  <script src="/js/dashboard-sigma-coverage.js"></script>
   <!-- The Timeline Swimlane canvas chart (#415 tier 3). Wired by initSwimlane(), which the inline
        script calls where the old IIFE sat: #sec-swimlane's markup does not exist yet when this
        head script runs, so the wiring cannot self-invoke here. -->
@@ -4008,6 +4009,12 @@
         <button id="hqExport" type="button">Export CSV</button>
       </div>
       <div id="hqResults" class="hq-results"><div class="hq-help">Run a query to see results.</div></div>
+      <details id="sigmaCoverageCard" open>
+        <summary data-safe-style="font-size:13px;font-weight:600;cursor:pointer;margin-top:10px">Sigma coverage <span id="sigmaCoverageHeadline" class="ev-sub"></span></summary>
+        <div class="hq-help">Which of this case's ingested sources the import-time Sigma rules grade, and with how many rules. Sigma grades rows at import only: rows imported before a source gained rules, or while Sigma was switched off, were not checked. Web Access Log rows are graded by the web server or the web proxy rules, chosen per import. Entra ID also carries service-principal sign-ins, which Sigma does not grade.</div>
+        <div class="hq-row"><button id="sigmaCoverageRefresh" type="button">↻ Refresh coverage</button></div>
+        <div id="sigmaCoverage" class="hq-results"><div class="hq-help">Open a case to see which of its sources Sigma grades.</div></div>
+      </details>
     </section>
     <section id="sec-super-timeline" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>

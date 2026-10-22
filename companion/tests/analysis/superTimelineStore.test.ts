@@ -42,6 +42,27 @@ describe("SuperTimelineStore", () => {
     expect(r).toEqual({ events: [], total: 0, origins: [], hosts: [], labelsAvailable: [] });
   });
 
+  // #2217: the Sigma coverage card's origin counts, from one GROUP BY over the super rows only.
+  it("originCounts counts super rows per origin, maps a missing origin to Unknown, and skips other kinds", async () => {
+    expect(await store.originCounts("c1")).toEqual([]);
+    await store.append("c1", [
+      ev({ id: "a1", timestamp: "2026-06-01T00:00:00Z", sources: ["AWS CloudTrail"] }),
+      ev({ id: "a2", timestamp: "2026-06-01T00:00:01Z", sources: ["AWS CloudTrail"] }),
+      ev({ id: "m1", timestamp: "2026-06-01T00:00:02Z", artifactName: "Windows.NTFS.MFT" }),
+      ev({ id: "u1", timestamp: "2026-06-01T00:00:03Z" }),
+    ]);
+    const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+    db.prepare(
+      "INSERT INTO entities (kind, entity_id, ordinal, source, payload) VALUES ('event', 'f1', 999, 'AWS CloudTrail', '{}')",
+    ).run();
+    db.close();
+    expect(await store.originCounts("c1")).toEqual([
+      { origin: "AWS CloudTrail", events: 2 },
+      { origin: "Unknown", events: 1 },
+      { origin: "Windows.NTFS.MFT", events: 1 },
+    ]);
+  });
+
   it("append persists events; query returns them; re-append dedups by id", async () => {
     await store.append("c1", [
       ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.NTFS.MFT" }),
