@@ -88,4 +88,20 @@ describe("diffSigmaReleases", () => {
     expect(d.removed.map((r) => r.id)).toEqual(["c"]);
     expect(d.otherSources).toBe(1);
   });
+
+  it("ignores line endings: a CRLF copy of the same rules is not a change (#2215)", () => {
+    const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+    const before = [f("rules/a.yml", rule("a")), f("rules/b.yml", rule("b"))];
+    const after = [f("rules/a.yml", crlf(rule("a"))), f("rules/b.yml", crlf(rule("b", "DeleteTrail")))];
+    const d = diffSigmaReleases(before, after);
+    expect(d.changed.map((r) => r.id)).toEqual(["b"]);
+    expect(d.added).toEqual([]);
+    expect(d.removed).toEqual([]);
+    expect(
+      diffSigmaReleases(
+        before,
+        before.map((x) => f(x.path, crlf(x.text))),
+      ).changed,
+    ).toEqual([]);
+  });
 });

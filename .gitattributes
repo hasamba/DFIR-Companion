@@ -6,3 +6,7 @@ docker-entrypoint.sh text eol=lf
 Dockerfile           text eol=lf
 .dockerignore        text eol=lf
 docker-compose.yml   text eol=lf
+
+# Bundled Sigma rules stay LF on every checkout, so the Windows EXE ships the same bytes as Linux
+# and Docker (#2215). The rule hashes also ignore line endings, for analyst-supplied zips.
+companion/data/sigma/** text eol=lf

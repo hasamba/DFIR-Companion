@@ -10,7 +10,7 @@
 import { parse as parseYaml } from "yaml";
 import { readZip } from "./zipArchive.js";
 import { SIGMA_LOG_SOURCES, type SigmaLogSourceDef } from "./sigmaLogSources.js";
-import { SIGMA_RULE_DIRS, type SigmaRuleFile } from "./sigmaRuleSet.js";
+import { normalizeRuleText, SIGMA_RULE_DIRS, type SigmaRuleFile } from "./sigmaRuleSet.js";
 import type { SigmaLogsource } from "./sigmaRuleTypes.js";
 import { createHash } from "node:crypto";
 
@@ -145,7 +145,7 @@ function brief(file: SigmaRuleFile, sources: readonly SigmaLogSourceDef[]): Brie
     id: typeof doc.id === "string" ? doc.id : file.path,
     title: typeof doc.title === "string" ? doc.title : file.path,
     path: file.path,
-    hash: createHash("sha256").update(file.text).digest("hex"),
+    hash: createHash("sha256").update(normalizeRuleText(file.text)).digest("hex"),
     graded: sources.some((s) => s.matches(logsource)),
   };
 }

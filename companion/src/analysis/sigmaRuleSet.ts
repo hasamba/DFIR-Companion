@@ -220,11 +220,20 @@ function classify(
   };
 }
 
-/** A content identity for a set of rule files, independent of their order. */
+/**
+ * Rule text with CRLF and lone CR turned into LF, for hashing only (#2215). A hash is a content
+ * identity, so line endings must not change it: Windows checkouts and the Windows EXE build carry
+ * CRLF. LF text comes back unchanged, so LF hashes keep their previous value.
+ */
+export function normalizeRuleText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/** A content identity for a set of rule files, independent of their order and line endings. */
 export function contentSha(files: readonly SigmaRuleFile[]): string {
   const hash = createHash("sha256");
   for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)))
-    hash.update(f.path).update("\0").update(f.text).update("\0");
+    hash.update(f.path).update("\0").update(normalizeRuleText(f.text)).update("\0");
   return hash.digest("hex").slice(0, 12);
 }
 
