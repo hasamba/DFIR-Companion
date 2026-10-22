@@ -209,11 +209,73 @@ export const AZURE_AUDIT_LOGS: SigmaLogSourceDef = {
   indexFields: ["OperationName", "ActivityDisplayName"],
 };
 
+const category = (ls: SigmaLogsource, name: string): boolean =>
+  ls.category?.toLowerCase() === name && !ls.product && !ls.service;
+
+// Web access logs (#2203). The combined-log importer builds a record in these exact names
+// (sigmaWebRecord.ts), so every entry reads its own name. A field the format never logs — the
+// request content type, cookies, the destination address — is not here, and a rule needing it is
+// refused at load with the field named.
+const WEB_UNAVAILABLE = {
+  "cs-content-type": "a combined access log does not record the request's content type",
+  "cs-cookie": "a combined access log does not record cookies",
+  dst_ip: "a combined access log does not record the destination address",
+  "": "the rule names an empty field",
+};
+
+export const WEB_SERVER: SigmaLogSourceDef = {
+  id: "web-server",
+  label: "web server access logs",
+  matches: (ls) => category(ls, "webserver"),
+  fields: {
+    exact: same(
+      "cs-method",
+      "cs-uri-query",
+      "cs-uri-stem",
+      "sc-status",
+      "cs-user-agent",
+      "cs-referer",
+      "cs-username",
+      "cs-host",
+      "c-ip",
+    ),
+    unavailable: WEB_UNAVAILABLE,
+  },
+  indexFields: [],
+};
+
+export const WEB_PROXY: SigmaLogSourceDef = {
+  id: "web-proxy",
+  label: "web proxy access logs",
+  matches: (ls) => category(ls, "proxy"),
+  fields: {
+    exact: same(
+      "c-uri",
+      "cs-uri",
+      "c-uri-stem",
+      "cs-uri-stem",
+      "c-uri-query",
+      "c-uri-extension",
+      "cs-method",
+      "cs-host",
+      "sc-status",
+      "c-useragent",
+      "cs-referer",
+      "cs-username",
+      "c-ip",
+    ),
+    unavailable: WEB_UNAVAILABLE,
+  },
+  indexFields: [],
+};
+
 /** Every log source the engine grades, in the order a rule is offered to them. */
 export const SIGMA_LOG_SOURCES: readonly SigmaLogSourceDef[] = [
   AWS_CLOUDTRAIL,
   AZURE_SIGNIN_LOGS,
   AZURE_AUDIT_LOGS,
+  WEB_SERVER,
+  WEB_PROXY,
 ];
 
 // ── Resolution ────────────────────────────────────────────────────────────────────────────────
@@ -243,12 +305,16 @@ function merge(lookups: readonly SigmaFieldLookup[]): SigmaFieldLookup {
 export function sourceResolver(def: SigmaLogSourceDef): SigmaFieldResolver {
   const cache = new Map<string, Resolver[]>();
   return (record, field) => {
+    // An importer that clipped a field lists it here (#2203): what remains is not complete evidence.
+    const clipped = record.__sigmaIncomplete;
+    const incomplete = Array.isArray(clipped) && clipped.includes(field);
     let resolvers = cache.get(field);
     if (!resolvers) {
       const r = fieldResolvers(def, field);
       resolvers = Array.isArray(r) ? r : [];
       cache.set(field, resolvers);
     }
-    return merge(resolvers.map((r) => (typeof r === "string" ? lookupPath(record, r) : r(record))));
+    const merged = merge(resolvers.map((r) => (typeof r === "string" ? lookupPath(record, r) : r(record))));
+    return incomplete ? { ...merged, incomplete: true } : merged;
   };
 }

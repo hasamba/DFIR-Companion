@@ -57,6 +57,8 @@ export interface SigmaRuleRef {
   modified?: string;
   /** Under rules-threat-hunting/: low-fidelity by design, so it only ever tags (#2204). */
   huntingOnly: boolean;
+  /** Lower-cased field names the rule's detection reads (#2203: a rule that constrains sc-status). */
+  fields?: string[];
 }
 
 /** The release folders a rule set is read from, in load order. */
@@ -209,6 +211,7 @@ function classify(
     mitre: rule.mitreTechniques,
     ...(rule.modified || rule.date ? { modified: rule.modified ?? rule.date } : {}),
     huntingOnly: file.path.startsWith(`${SIGMA_HUNTING_DIR}/`),
+    fields: [...new Set(ruleFields(rule).map((f) => f.toLowerCase()))],
   };
   const loadedRule = { ref, compiled, order: 0 };
   return {

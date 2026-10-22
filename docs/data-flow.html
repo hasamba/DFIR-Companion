@@ -382,7 +382,7 @@ const NODES = [
     tech:["src/analysis/importDetect.ts","src/analysis/importDetectSources.ts","src/composition/importIngest.ts"] },
   { id:"parse", col:1, kind:"process", label:"Parse & normalize", sub:"one reader per format",
     plain:"The format's reader turns every row into a standard forensic event — time, host, user, process, what happened — and records where it came from.",
-    pts:["Optional minimum severity applied here","Command lines are decoded (base64, obfuscation)","CloudTrail and Entra records are checked against SigmaHQ rules (bundled, or a release installed in Settings): rules at or above the minimum level raise severity, the rest only tag"],
+    pts:["Optional minimum severity applied here","Command lines are decoded (base64, obfuscation)","CloudTrail, Entra and web / proxy access-log records are checked against SigmaHQ rules (bundled, or a release installed in Settings): rules at or above the minimum level raise severity, the rest only tag"],
     tech:["src/analysis/*Import.ts","src/analysis/ingest/*.ts","src/analysis/canonicalEvent.ts","src/analysis/responseSchema.ts (delta schema)","src/analysis/sigmaImportGrade.ts","companion/data/sigma/ (bundled SigmaHQ rules)","<root>/sigma/ (installed releases, Settings → Sigma rules)"] },
   { id:"ai-extract", col:1, kind:"ai", label:"AI extraction", sub:"screenshots · unknown formats",
     plain:"For things no reader understands — screenshots and unfamiliar CSVs or logs — an AI model extracts events and IOCs. Screenshots are batched about four at a time. Output has the same shape as a normal import.",
