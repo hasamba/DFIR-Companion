@@ -239,3 +239,25 @@ describe("readZip with encrypted entries", () => {
     expect(readZip(archive, { password: "infected" })[0].data.toString()).toBe("plain");
   });
 });
+
+describe("readZip — local header and entry bounds (#2212)", () => {
+  const twoEntries = (): Buffer =>
+    createZip([
+      { path: "a.txt", data: Buffer.from("alpha alpha alpha", "utf8") },
+      { path: "b.txt", data: Buffer.from("bravo bravo bravo", "utf8") },
+    ]);
+  // Central directory offset, read from the 22-byte EOCD at the end (no archive comment).
+  const centralDirOffset = (archive: Buffer): number => archive.readUInt32LE(archive.length - 22 + 16);
+
+  it("rejects an entry whose local header signature is wrong", () => {
+    const archive = twoEntries();
+    archive.writeUInt32LE(0xdeadbeef, 0);
+    expect(() => readZip(archive)).toThrow(/corrupt ZIP: bad local header for a\.txt/);
+  });
+
+  it("rejects an entry whose compressed size runs past the end of the archive", () => {
+    const archive = twoEntries();
+    archive.writeUInt32LE(0x7fffffff, centralDirOffset(archive) + 20);
+    expect(() => readZip(archive)).toThrow(/corrupt ZIP: entry data out of bounds for a\.txt/);
+  });
+});

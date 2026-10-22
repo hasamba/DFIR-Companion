@@ -199,9 +199,14 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     // The central record's relative-offset field is equally attacker-controlled — bound it the
     // same way before the reads below walk off the end of the buffer.
     if (localOffset + 30 > archive.length) throw new Error("corrupt ZIP: local header out of bounds");
+    if (archive.readUInt32LE(localOffset) !== SIG_LOCAL)
+      throw new Error(`corrupt ZIP: bad local header for ${name}`);
     const localNameLen = archive.readUInt16LE(localOffset + 26);
     const localExtraLen = archive.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    // A compressed size past the end would make subarray clamp silently (#2212).
+    if (dataStart + compSize > archive.length)
+      throw new Error(`corrupt ZIP: entry data out of bounds for ${name}`);
     let compressed = archive.subarray(dataStart, dataStart + compSize);
     const encrypted = (flag & FLAG_ENCRYPTED) !== 0;
 
