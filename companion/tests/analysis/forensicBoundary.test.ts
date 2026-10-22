@@ -554,3 +554,28 @@ describe("the Sigma re-grade reads the raw record but feeds no AI (#2206)", () =
     for (const rel of MODULES) expect(read(rel), rel).not.toMatch(/promotedAt\s*[:=](?!=)/);
   });
 });
+
+describe("the Sigma dry-run reads both timelines but feeds no AI and writes nothing (#2211)", () => {
+  // An analyst-pressed read of the super-timeline, like the Hunt Workbench: allowed because no model
+  // sees what it reads. Its matched ids go back to the analyst only.
+  const MODULES = ["../../src/analysis/sigmaDryRun.ts", "../../src/routes/sigmaCompile.ts"];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("imports nothing AI-related and starts no synthesis", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      const specs = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
+      expect(specs.length, rel).toBeGreaterThan(0);
+      for (const spec of specs)
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+      expect(src, rel).not.toMatch(/resynthesizeInBackground|\.synthesize\(|promoteSuperTimeline\(/);
+    }
+  });
+
+  it("calls no store write and no activity log", () => {
+    for (const rel of MODULES)
+      expect(read(rel), rel).not.toMatch(
+        /\.save\(|\.append\(|\.promote|logActivity|markConclusionsOutOfDate/,
+      );
+  });
+});

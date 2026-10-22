@@ -48,6 +48,10 @@ describe("sigmaCompileCardHtml — the paste card", () => {
     expect(html).toContain('id="sigmaYamlIn"');
     expect(html).toContain('id="sigmaCompileBtn"');
     expect(html).toContain('id="sigmaCompileRes"');
+    // #2211: the dry-run button and its result line, served by js/dashboard-sigma-dryrun.js.
+    expect(html).toContain('id="sigmaDryRunBtn"');
+    expect(html).toContain('id="sigmaDryRunRes"');
+    expect(html).toMatch(/Dry-run on this case/);
     expect(html).toMatch(/Sigma rule/);
   });
 

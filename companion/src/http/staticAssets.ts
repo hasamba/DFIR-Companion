@@ -125,6 +125,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-settings-tools.js": "application/javascript; charset=utf-8",
   // Sigma draft export (#89) and the ES|QL / YARA / Suricata hunt modal built from the same context.
   "/js/dashboard-sigma-hunt.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-sigma-dryrun.js": "application/javascript; charset=utf-8",
   // Push ingest token (#84) — the per-case token an external collector posts evidence with.
   "/js/dashboard-push-token.js": "application/javascript; charset=utf-8",
   // Reproducible analysis runs (#377) — the run history for a case and the diff between two runs.

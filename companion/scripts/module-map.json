@@ -789,6 +789,7 @@
     "sigmaExclusions.ts": "analysis/hunt",
     "sigmaLogSources.ts": "analysis/hunt",
     "sigmaCoverage.ts": "analysis/hunt",
+    "sigmaDryRun.ts": "analysis/hunt",
     "sigmaRuleSet.ts": "analysis/hunt",
     "sigmaBundledRules.ts": "analysis/hunt",
     "sigmaImportGrade.ts": "analysis/ingest",

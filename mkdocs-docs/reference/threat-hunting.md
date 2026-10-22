@@ -78,6 +78,19 @@ with an enrolled Windows client and run `npm run sigma:live-fixture` from `compa
 The card appears when Velociraptor is an enabled hunt platform (`DFIR_HUNT_PLATFORMS`). Compile
 works before the Velociraptor API is configured; only **Run** needs it.
 
+**Dry-run on this case** answers a different question before you hunt the fleet: would this rule
+have matched anything the case already holds? It reads the forensic timeline and the
+super-timeline, without AI, and writes nothing to the case. It says how many events the rule
+matches out of the events in its category (process, network, file or registry), and links the
+first 20 matches into the timeline. It tests the fields the stored events keep: `Image`, `User`,
+`ProcessId`, `CommandLine`, `ParentImage`, `DestinationIp`, `DestinationPort`,
+`DestinationHostname`, `SourceIp`, `SourcePort`, `TargetFilename`, `TargetObject` and `Details`.
+Every field the rule reads gets one line: how many events carry it, "no event in this case keeps
+it" (for example `ParentImage` on rows that keep only the parent's name), or "not checkable here"
+for a field the stored events do not keep. A row that depends on a field that is not checkable is
+counted as undecided, never as a match or a miss. Keyword lists and other categories are refused.
+The scan stops at 200,000 events and says so when it does.
+
 **A live-only rule is a snapshot, and the Hunting Profile knows it.** The network, file and
 registry templates read the endpoint as it is now, so a connection that closed or a file that was
 deleted before the hunt ran will not be there. An empty result from such a rule is therefore shown
