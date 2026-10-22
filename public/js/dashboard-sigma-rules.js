@@ -182,6 +182,62 @@ function sigmaRenderPreview(p) {
   if (sigmaDemoActive()) btn.title = SIGMA_DEMO_TITLE;
   btn.addEventListener("click", sigmaInstall);
   box.appendChild(btn);
+  sigmaAppendMeasure(box, p);
+}
+
+// #2209: "Measure against this case" beside Install, only with a case open. It runs the case's
+// re-grade preview (#2206) with the staged release, on click only, and changes nothing.
+function sigmaAppendMeasure(box, p) {
+  if (!sigmaRegradeCaseId()) return;
+  const btn = sigmaEl("button", "Measure against this case", "btn-mini");
+  btn.type = "button";
+  btn.disabled = !p.usable || sigmaDemoActive();
+  if (sigmaDemoActive()) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", sigmaMeasureRelease);
+  box.appendChild(btn);
+}
+
+async function sigmaMeasureRelease() {
+  const preview = document.getElementById("sigmaPreview");
+  const token = preview && preview.dataset.token;
+  const caseId = sigmaRegradeCaseId();
+  if (!token || !caseId || sigmaDemoActive()) return;
+  sigmaMsg(`Measuring the release against ${caseId}…`);
+  try {
+    const url = `/cases/${encodeURIComponent(caseId)}/sigma/regrade?release=${encodeURIComponent(token)}`;
+    sigmaRenderMeasure(await sigmaFetch(url));
+    sigmaMsg("Measured. Nothing was changed.");
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+function sigmaMeasureLines(r) {
+  if (!r.enabled) return r.notes || [];
+  const files = r.files || [];
+  if (!files.length) return [`This case has no CloudTrail, Entra, M365 or web log import — release ${r.release} cannot change it.`];
+  const c = r.counts || {};
+  const n = (k) => Number(c[k]) || 0;
+  const skipped = files.filter((f) => f.status === "skipped").length;
+  const lines = [
+    `On this case, release ${r.release} would raise ${n("raised")} row(s), lower ${n("lowered")} and leave ${n("unchanged")} unchanged; ${n("entersForensic")} would join the forensic timeline and ${n("leavesForensic")} would leave it (scanned ${files.length - skipped} of ${files.length} Sigma-graded import(s)).`,
+  ];
+  if (skipped) lines.push(`${skipped} import(s) were not scanned — the stored file is missing or changed — so their rows are not counted.`);
+  if (n("lowered")) lines.push("A lowered row loses only the Sigma grade: it never drops below the importer's own grade, and a row the analyst promoted stays in the forensic timeline.");
+  return lines;
+}
+
+function sigmaRenderMeasure(r) {
+  const box = document.getElementById("sigmaPreview");
+  if (!box) return;
+  // A second click replaces the earlier measure rather than stacking it.
+  box.querySelector?.("[data-sigma-measure]")?.remove();
+  const out = sigmaEl("div");
+  out.dataset.sigmaMeasure = "1";
+  for (const line of sigmaMeasureLines(r)) out.appendChild(sigmaEl("div", line));
+  if (r.enabled) for (const note of r.notes || []) out.appendChild(sigmaEl("div", note, "sfield-hint"));
+  out.appendChild(sigmaEl("div", "Nothing was changed. Install the release, then use Re-grade this case to apply it.", "sfield-hint"));
+  box.appendChild(out);
 }
 
 async function sigmaCheck() {

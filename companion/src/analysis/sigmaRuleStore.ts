@@ -44,7 +44,8 @@ import {
   type InstalledReleaseMeta,
   type SigmaManifest,
 } from "./sigmaReleaseFiles.js";
-import { SIGMA_STATUS_CHOICES, sigmaStatusesFromEnv } from "./sigmaSettings.js";
+import { sigmaProvenanceToken, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
+import { SIGMA_STATUS_CHOICES, sigmaMinLevelFromEnv, sigmaStatusesFromEnv } from "./sigmaSettings.js";
 
 const PREVIEW_TTL_MS = 60 * 60 * 1000;
 
@@ -91,6 +92,8 @@ interface Pending {
   generation: number;
   createdAt: number;
   usable: boolean;
+  /** The staged rules, kept in memory so a measure (#2209) never reads a folder install renames. */
+  files: SigmaRuleFile[];
 }
 
 const tokenPart = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "release";
@@ -455,6 +458,7 @@ export class SigmaRuleStore {
         generation: this.manifest.generation,
         createdAt: Date.now(),
         usable,
+        files: contents.files,
       };
       return {
         token,
@@ -474,19 +478,39 @@ export class SigmaRuleStore {
     });
   }
 
+  /** The pending preview for `token`, or the refusal install() gives for it. Call inside serial(). */
+  private livePending(token: string): Pending {
+    const p = this.pending;
+    if (!p || p.token !== token)
+      throw new SigmaStoreError(404, "that preview is gone — preview the release again");
+    if (Date.now() - p.createdAt > PREVIEW_TTL_MS)
+      throw new SigmaStoreError(409, "that preview is more than an hour old — preview the release again");
+    if (p.generation !== this.manifest.generation)
+      throw new SigmaStoreError(
+        409,
+        "the installed rules changed since this preview — preview the release again",
+      );
+    return p;
+  }
+
+  /**
+   * The staged release as a grading snapshot (#2209), to measure it against a case before install.
+   * It gets the filters it would get once installed: the current statuses, disabled list,
+   * exclusions and minimum level. Installs nothing and leaves the preview usable.
+   */
+  pendingSnapshot(token: string): Promise<SigmaGradingSnapshot> {
+    return this.serial(async () => {
+      const p = this.livePending(token);
+      const ruleSet = this.build(p.files, p.info);
+      const minLevel = sigmaMinLevelFromEnv(this.env).level;
+      return { ruleSet, minLevel, token: sigmaProvenanceToken(ruleSet, minLevel) };
+    });
+  }
+
   /** Make the previewed release active. The release it replaces becomes the rollback target. */
   install(token: string): Promise<SigmaReleaseInfo> {
     return this.serial(async () => {
-      const p = this.pending;
-      if (!p || p.token !== token)
-        throw new SigmaStoreError(404, "that preview is gone — preview the release again");
-      if (Date.now() - p.createdAt > PREVIEW_TTL_MS)
-        throw new SigmaStoreError(409, "that preview is more than an hour old — preview the release again");
-      if (p.generation !== this.manifest.generation)
-        throw new SigmaStoreError(
-          409,
-          "the installed rules changed since this preview — preview the release again",
-        );
+      const p = this.livePending(token);
       if (!p.usable)
         throw new SigmaStoreError(422, "no rule in this release loads for a log source the Companion grades");
       const paths = sigmaPaths(this.dataRoot);

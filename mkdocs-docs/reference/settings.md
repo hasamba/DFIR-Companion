@@ -306,6 +306,12 @@ The tab also shows:
 - **Install from file** — the same review for a release zip you downloaded yourself (air-gapped labs).
   A file install is marked "not checked against GitHub" and records the file's SHA-256. The zip
   must be 32 MB or smaller; a SigmaHQ release is a few MB.
+- **Measure against this case** — shown beside Install when a case is open. It runs the
+  Re-grade this case preview with the reviewed release instead of the installed one, and counts the
+  rows it would raise, lower, move into the forensic timeline or take out of it. It uses your current
+  statuses, disabled rules, exclusions and minimum level. A lowered row never drops below the
+  importer's own grade. Imports whose stored file is missing or changed are not scanned, and the
+  result says how many. It changes nothing; it runs only when you click it.
 - **Roll back** — switches back to the previous release (the bundled rules after a first install).
 - **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
   noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion

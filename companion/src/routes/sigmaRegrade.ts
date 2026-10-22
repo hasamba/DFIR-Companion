@@ -1,6 +1,8 @@
 // Re-grade an imported case with the current Sigma rules (#2206).
 //
 //   GET  /cases/:id/sigma/regrade — the preview: what a re-grade would change. Writes nothing.
+//        With ?release=<preview token> (#2209) it measures the STAGED, not-yet-installed release
+//        instead: the same read-only preview, graded with that release's snapshot.
 //   POST /cases/:id/sigma/regrade — the apply: re-grades the stored rows and reports the counts.
 //
 // The apply holds the case's import section (no import runs beside it) and takes the state lock
@@ -26,6 +28,7 @@ import {
   type RegradeRow,
 } from "../analysis/sigmaRegrade.js";
 import { sigmaRuleMitreIndex } from "../analysis/sigmaRegradeSources.js";
+import { SigmaStoreError } from "../analysis/sigmaRuleStore.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { beginImportSection } from "./importSection.js";
 import { loadRegradePlan, regradeNotes } from "./sigmaRegradePlan.js";
@@ -56,8 +59,9 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     return { plan, snapshot };
   }
 
-  const summary = ({ plan, snapshot }: Prepared) => ({
+  const summary = ({ plan, snapshot }: Prepared, staged = false) => ({
     enabled: true,
+    ...(staged ? { staged: true } : {}),
     release: snapshot.ruleSet.release,
     token: snapshot.token,
     current: plan.files.length > 0 && plan.files.every((f) => f.status === "current"),
@@ -78,11 +82,18 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     try {
       if (!(await cases.caseExists(caseId)))
         return res.status(404).json({ error: `case ${caseId} not found` });
-      const snapshot = options.pipeline!.sigmaSnapshot();
-      if (!snapshot) return res.json({ enabled: false, notes: ["Sigma grading is switched off."] });
-      return res.json(summary(await prepare(caseId, snapshot)));
+      const release = stagedToken(req.query.release);
+      if (release !== undefined && !options.sigmaRuleStore)
+        return res.status(501).json({ error: "Sigma rules are not configured on this server" });
+      const active = options.pipeline!.sigmaSnapshot();
+      if (!active) return res.json({ enabled: false, notes: ["Sigma grading is switched off."] });
+      // #2209: the staged release, filtered the way it would be once installed. Read-only.
+      const snapshot =
+        release === undefined ? active : await options.sigmaRuleStore!.pendingSnapshot(release);
+      return res.json(summary(await prepare(caseId, snapshot), release !== undefined));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      const status = err instanceof SigmaStoreError ? err.status : 500;
+      return res.status(status).json({ error: (err as Error).message });
     }
   });
 
@@ -158,6 +169,12 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     options.onStateChanged?.(caseId);
     return demoted.length;
   }
+}
+
+/** The `release` query value: a preview token, or undefined when absent. Only ever a lookup key. */
+function stagedToken(raw: unknown): string | undefined {
+  if (raw === undefined) return undefined;
+  return typeof raw === "string" ? raw.slice(0, 200) : "";
 }
 
 function regradeLabel(snapshot: SigmaGradingSnapshot): string {

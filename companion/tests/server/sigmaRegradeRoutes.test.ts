@@ -23,6 +23,9 @@ import { sigmaTokensOf, splitSigmaOverlay } from "../../src/analysis/sigmaRegrad
 import type { SigmaRuleSet } from "../../src/analysis/sigmaRuleSet.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { pollFor } from "../helpers/poll.js";
+import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules.js";
+import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
+import { createZip } from "../../src/analysis/zipArchive.js";
 
 const ct = (i: number, o: Record<string, unknown>) => ({
   eventVersion: "1.08",
@@ -241,5 +244,66 @@ describe("POST /cases/:id/sigma/regrade — the apply (#2206)", () => {
     const app = build({ demoMode: true });
     const res = await request(app).post("/cases/c1/sigma/regrade").send({});
     expect(res.status).toBe(403);
+  });
+});
+
+// #2209: measure a staged (not installed) release against the case before installing it.
+describe("GET /cases/:id/sigma/regrade?release=<token> — measure a staged release (#2209)", () => {
+  /** A staged release without the rule that graded the record. */
+  async function stagedWithout(ruleId: string): Promise<{ store: SigmaRuleStore; token: string }> {
+    const dir = bundledSigmaDir() as string;
+    const files = ruleFiles(dir).files.filter((f) => !f.text.includes(`id: ${ruleId}`));
+    const root = await mkdtemp(join(tmpdir(), "dfir-sigma-staged-"));
+    const store = new SigmaRuleStore(root, dir, {});
+    await store.init();
+    const zip = createZip(files.map((f) => ({ path: f.path, data: Buffer.from(f.text) })));
+    const p = await store.preview(zip, { source: "file", fileName: "next.zip", verified: false });
+    return { store, token: p.token };
+  }
+
+  it("grades the case with the staged release and writes nothing", async () => {
+    const { store, token } = await stagedWithout(RULE_ID);
+    const app = build({ sigmaRuleStore: store });
+    await importTrail(app);
+    const before = await stateStore.load("c1");
+    const row = target(before.forensicTimeline)!;
+    const superBefore = await superRow(row.id);
+    const active = await request(app).get("/cases/c1/sigma/regrade");
+    expect(active.body.counts.lowered).toBe(0);
+    const res = await request(app).get(`/cases/c1/sigma/regrade?release=${encodeURIComponent(token)}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ staged: true, release: "file next.zip", current: false });
+    expect(res.body.counts.lowered).toBe(1);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual(before.forensicTimeline);
+    expect(await superRow(row.id)).toEqual(superBefore);
+    expect((await meta.load("c1")).outOfDate ?? null).toBeNull();
+    expect(store.active().id).toBe("bundled");
+  });
+
+  it("refuses an unknown token with the install wording", async () => {
+    const { store } = await stagedWithout(RULE_ID);
+    const app = build({ sigmaRuleStore: store });
+    const res = await request(app).get("/cases/c1/sigma/regrade?release=nope");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("that preview is gone — preview the release again");
+  });
+
+  it("refuses a stale preview", async () => {
+    const { store, token } = await stagedWithout(RULE_ID);
+    const app = build({ sigmaRuleStore: store });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60 * 1000);
+    try {
+      const res = await request(app).get(`/cases/c1/sigma/regrade?release=${encodeURIComponent(token)}`);
+      expect(res.status).toBe(409);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("answers 501 without a rule store and 404 for an unknown case", async () => {
+    expect((await request(build()).get("/cases/c1/sigma/regrade?release=t")).status).toBe(501);
+    const { store, token } = await stagedWithout(RULE_ID);
+    const app = build({ sigmaRuleStore: store });
+    expect((await request(app).get(`/cases/nope/sigma/regrade?release=${token}`)).status).toBe(404);
   });
 });

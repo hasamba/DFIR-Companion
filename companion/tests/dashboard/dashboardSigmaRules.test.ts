@@ -30,6 +30,7 @@ describe("the Sigma rules settings tab", () => {
       "sigmaRemoveExclusion",
       "sigmaRegradePreview",
       "sigmaRegradeApply",
+      "sigmaMeasureRelease",
     ])
       expect(fns).toContain(name);
   });
@@ -123,8 +124,9 @@ describe("the Sigma rules settings tab", () => {
       const own = root.tag === "button" ? [root] : [];
       return [...own, ...root.children.flatMap(buttons)];
     }
-    function load(demo: boolean) {
+    function load(demo: boolean, caseId = "") {
       const nodes: Record<string, Node> = {
+        caseId: { ...makeNode("input"), value: caseId },
         sigmaRulesBody: makeNode("tbody"),
         sigmaRulesCount: makeNode("span"),
         sigmaPreview: makeNode("div"),
@@ -148,6 +150,8 @@ describe("the Sigma rules settings tab", () => {
         sigmaRemoveExclusion: (id: string, field: string, value: string) => Promise<void>;
         sigmaRenderRegrade: (r: unknown, caseId: string, applied: boolean) => void;
         sigmaRegradeApply: (caseId: string) => Promise<void>;
+        sigmaMeasureRelease: () => Promise<void>;
+        sigmaRenderMeasure: (r: unknown) => void;
       }>("dashboard-sigma-rules.js", [], { document, fetch, prompt });
       return { mod, nodes, prompt, fetch };
     }
@@ -328,6 +332,67 @@ describe("the Sigma rules settings tab", () => {
       const call = fetch.mock.calls[0] as unknown as [string, { method: string }];
       expect(call[0]).toBe("/cases/c%201/sigma/regrade");
       expect(call[1].method).toBe("POST");
+    });
+
+    // #2209: measure the staged release against the open case before installing it.
+    const measureBtn = (root: Node) =>
+      buttons(root).find((b) => b.textContent === "Measure against this case");
+
+    it("offers Measure against this case only when a case is open", () => {
+      const none = load(false);
+      none.mod.sigmaRenderPreview(PREVIEW);
+      expect(measureBtn(none.nodes.sigmaPreview)).toBeUndefined();
+      const open = load(false, "c1");
+      open.mod.sigmaRenderPreview(PREVIEW);
+      const btn = measureBtn(open.nodes.sigmaPreview)!;
+      expect(btn.disabled).toBe(false);
+      expect(btn.listeners).toContain("click");
+    });
+
+    it("disables Measure in the demo and for a release that cannot install", () => {
+      const demo = load(true, "c1");
+      demo.mod.sigmaRenderPreview(PREVIEW);
+      const btn = measureBtn(demo.nodes.sigmaPreview)!;
+      expect(btn.disabled).toBe(true);
+      expect(btn.title).toBe("Not available in the public demo");
+      const unusable = load(false, "c1");
+      unusable.mod.sigmaRenderPreview({ ...PREVIEW, usable: false });
+      expect(measureBtn(unusable.nodes.sigmaPreview)!.disabled).toBe(true);
+    });
+
+    it("sends the preview token to the open case's re-grade preview, and only on click", async () => {
+      const { mod, nodes, fetch } = load(false, "c 1");
+      mod.sigmaRenderPreview(PREVIEW);
+      expect(fetch).not.toHaveBeenCalled();
+      await mod.sigmaMeasureRelease();
+      const call = fetch.mock.calls[0] as unknown as [string, unknown];
+      expect(call[0]).toBe("/cases/c%201/sigma/regrade?release=t");
+      expect(call[1]).toBeUndefined();
+      expect(nodes.sigmaPreview.dataset).toMatchObject({ token: "t" });
+    });
+
+    it("renders the measure as text, with lines for skipped files and a case with no Sigma import", () => {
+      const { mod, nodes } = load(false, "c1");
+      mod.sigmaRenderPreview(PREVIEW);
+      mod.sigmaRenderMeasure({
+        ...REGRADE,
+        staged: true,
+        release: "<b>r-next</b>",
+        files: [
+          ...REGRADE.files,
+          { file: "0002_x.json", importer: "aws-cloudtrail", rows: 1, status: "skipped" },
+        ],
+      });
+      const all = texts(nodes.sigmaPreview);
+      expect(all.some((t) => t.startsWith("On this case, release <b>r-next</b> would raise 1 row(s)"))).toBe(
+        true,
+      );
+      expect(all.some((t) => t.includes("scanned 1 of 2 Sigma-graded import(s)"))).toBe(true);
+      expect(all.some((t) => t.includes("1 import(s) were not scanned"))).toBe(true);
+      mod.sigmaRenderMeasure({ ...REGRADE, staged: true, files: [], counts: { rows: 0 } });
+      expect(
+        texts(nodes.sigmaPreview).some((t) => t.includes("has no CloudTrail, Entra, M365 or web log import")),
+      ).toBe(true);
     });
   });
 });
