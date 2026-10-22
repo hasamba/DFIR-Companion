@@ -207,9 +207,20 @@ export interface JevGraderDeps {
   ) => Promise<JevBatchResult>;
 }
 
-/** One review's shared stop flag: set by the first failure, read before every request (#2224). */
+/**
+ * One review's shared stop flag: set by the first failure, read before every request (#2224). It
+ * also KEEPS that first failure: once halted, other requests fail with stand-ins (ours, or the
+ * caller's own beforeSend error), and none of those may replace the cause the analyst needs to see.
+ */
 interface RunHalt {
   failed: boolean;
+  cause?: unknown;
+}
+
+function haltOn(halt: RunHalt, err: unknown): void {
+  if (halt.failed) return;
+  halt.failed = true;
+  halt.cause = err;
 }
 
 /** Thrown in place of a request the review no longer sends; never the error the analyst sees. */
@@ -434,18 +445,12 @@ async function settleBoth(
 ): Promise<[SplitResult, SplitResult]> {
   const mark = (p: Promise<SplitResult>): Promise<SplitResult> =>
     p.catch((err: unknown) => {
-      halt.failed = true;
+      haltOn(halt, err);
       throw err;
     });
   const [ra, rb] = await Promise.allSettled([mark(a), mark(b)]);
   if (ra.status === "fulfilled" && rb.status === "fulfilled") return [ra.value, rb.value];
-  throw firstRealError([ra, rb]);
-}
-
-/** The error to report: a genuine failure, never the ReviewHalted stand-in it caused. */
-function firstRealError(settled: readonly PromiseSettledResult<unknown>[]): unknown {
-  const reasons = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as unknown] : []));
-  return reasons.find((r) => !(r instanceof ReviewHalted)) ?? reasons[0];
+  throw halt.cause;
 }
 
 /** One row's answers → its graded row, by the shape the review asked in. */
@@ -531,7 +536,6 @@ export async function gradeEvents(
   // rejects only once every request already in flight has settled — so the route's lock is never
   // released while this review is still sending billable batches.
   const halt: RunHalt = { failed: false };
-  const errors: unknown[] = [];
   const workers = Array.from({ length: Math.min(GRADE_CONCURRENCY, batches.length) }, async () => {
     while (!halt.failed) {
       const next = queue.shift();
@@ -554,13 +558,12 @@ export async function gradeEvents(
         if (result.usage.costUSD !== undefined) costUSD = (costUSD ?? 0) + result.usage.costUSD;
         graded[index] = batch.map((e, i) => toGradeRow(e, ids[i], result, plan));
       } catch (err) {
-        halt.failed = true;
-        errors.push(err);
+        haltOn(halt, err);
       }
     }
   });
   await Promise.all(workers);
-  if (errors.length) throw firstRealError(errors.map((reason) => ({ status: "rejected", reason }) as const));
+  if (halt.failed) throw halt.cause;
   const rows = graded.flat();
 
   return {

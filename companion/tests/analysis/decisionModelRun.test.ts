@@ -67,6 +67,27 @@ describe("a decision-model review stops on the first failure", () => {
   });
 });
 
+describe("the failure the analyst sees is the real one", () => {
+  it("keeps the provider's error when a split's other half is stopped by the caller's halt check", async () => {
+    // The route's beforeSend throws its OWN error once the review is halted. That stand-in must never
+    // replace the model-named failure that caused the halt.
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions, halted) => {
+        const rows = Object.keys(questions).filter((q) => !q.endsWith("_tool"));
+        if (rows.length > 1) throw new Error('HTTP 400: {"detail":{"error_type":"max_tokens_exceeded"}}');
+        if (rows[0] === "R001") throw new Error("Decision model vendor/x: HTTP 401 bad key");
+        await tick();
+        if (halted()) throw new Error("review halted after an earlier batch failed");
+        return { model: "m", answers: answersFor(questions), usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    await expect(gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 40 })).rejects.toThrow(
+      /HTTP 401 bad key/,
+    );
+  });
+});
+
 describe("each graded row names the model that answered for it", () => {
   it("keeps per-batch model ids instead of stamping the last one on every row", async () => {
     const ids = ["typesafe/jev-1.14", "perplexity/pplx-decider-v1.2"];
