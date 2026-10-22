@@ -197,9 +197,10 @@ export function regradeCopy(
     ...fresh.mitreTechniques,
   ]);
   const message = [old.message, ...now.lines].filter(Boolean).join("\n");
-  const versions = stored.canonical?.producer?.ruleVersions;
+  // A row imported with Sigma off has a producer but no ruleVersions: it gets its first token here.
+  const versions = stored.canonical?.producer?.ruleVersions ?? [];
   const canonical =
-    stored.canonical?.producer && versions
+    stored.canonical?.producer && (stored.canonical.producer.ruleVersions || sigmaTokensOf(fresh).length)
       ? {
           ...stored.canonical,
           producer: {

@@ -306,5 +306,20 @@ describe("pairing holds for every Sigma-graded importer (#2206)", () => {
       const high = p.rows.filter((r) => r.after === "High");
       expect(high.every((r) => /^Sigma: /.test(r.forensic!.after.description))).toBe(true);
     });
+
+    it(`${c.importer}: stamps the token on every row of an import never graded by Sigma`, () => {
+      const rows = c.parse(undefined);
+      expect(rows.some((e) => e.canonical?.producer && !e.canonical.producer.ruleVersions)).toBe(true);
+      const p = planFor(c.importer, c.text, rows);
+      expect(p.rows.length).toBe(rows.length);
+      for (const r of p.rows) expect(sigmaTokensOf(r.forensic!.after)).toEqual([snapOn.token]);
+      const again = planFor(
+        c.importer,
+        c.text,
+        p.rows.map((r) => r.forensic!.after as SiemEvent),
+      );
+      expect(again.rows.every((r) => r.kind === "unchanged")).toBe(true);
+      expect(again.files[0].status).toBe("current");
+    });
   }
 });

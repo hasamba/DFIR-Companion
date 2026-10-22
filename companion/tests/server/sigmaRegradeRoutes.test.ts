@@ -27,6 +27,7 @@ import { pollFor } from "../helpers/poll.js";
 import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules.js";
 import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
+import { sigmaGradingsInCase } from "../../src/reports/detectionRules.js";
 
 const ct = (i: number, o: Record<string, unknown>) => ({
   eventVersion: "1.08",
@@ -63,6 +64,7 @@ const { set: SET_OFF } = loadBundledSigmaRuleSet({ disabled: new Map([[RULE_ID, 
 const BASE = parseCloudTrail(TEXT).events.find((e) => /BatchUpdateFindings/.test(e.description))!;
 
 let rules: SigmaRuleSet;
+let sigmaOn: boolean;
 let cases: CaseStore;
 let stateStore: StateStore;
 let superStore: SuperTimelineStore;
@@ -74,7 +76,7 @@ function build(extra: Record<string, unknown> = {}) {
   const pipeline = new AnalysisPipeline({
     stateStore,
     stateLock,
-    sigmaGrader: createSigmaImportGrader(() => rules),
+    sigmaGrader: createSigmaImportGrader(() => rules, { enabled: () => sigmaOn }),
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   synthesize = vi.spyOn(pipeline, "synthesize");
@@ -104,6 +106,33 @@ async function importTrail(app: ReturnType<typeof createApp>): Promise<void> {
   });
 }
 
+/** Entra sign-ins: no importer rule version, so a Sigma-off import leaves `ruleVersions` unset. */
+const SIGN_INS = JSON.stringify({
+  value: [
+    {
+      id: "s-1",
+      createdDateTime: "2026-03-01T10:00:00Z",
+      userPrincipalName: "alice@example.test",
+      appDisplayName: "Azure Portal",
+      ipAddress: "198.51.100.7",
+      clientAppUsed: "Browser",
+      userAgent: "azurehound/v2.1.0",
+      status: { errorCode: 0 },
+    },
+  ],
+});
+
+async function importSignIns(app: ReturnType<typeof createApp>): Promise<void> {
+  const res = await request(app)
+    .post("/cases/c1/import-m365")
+    .send({ filename: "signins.json", text: SIGN_INS });
+  expect(res.status).toBe(202);
+  await pollFor("the sign-in import to settle", async () => {
+    const m = await new ImportMetaStore(cases).load("c1");
+    return m.lastImportKind === "m365" ? m : undefined;
+  });
+}
+
 /** A case gate above the importer's own grade for the record (Info or Low): Medium. */
 const gateAboveBase = async () => {
   expect(["Info", "Low"]).toContain(BASE.severity);
@@ -122,6 +151,7 @@ beforeEach(async () => {
   // The case has conclusions from an earlier synthesis, so there is something to be out of date.
   await meta.record("c1", null as never, "2026-03-01T12:00:00.000Z");
   rules = SET_ON;
+  sigmaOn = true;
 });
 
 describe("GET /cases/:id/sigma/regrade — the preview (#2206)", () => {
@@ -221,6 +251,32 @@ describe("POST /cases/:id/sigma/regrade — the apply (#2206)", () => {
     expect(row.description).toMatch(/^Sigma: /);
     expect(row.promotedAt).toBeUndefined();
     expect(row.provenance ?? []).not.toContain("[promoted]");
+  });
+
+  it("stamps the grading on every row of an import made with Sigma off, in both timelines", async () => {
+    sigmaOn = false;
+    const app = build();
+    await importSignIns(app);
+    const m365 = (rows: ForensicEvent[]) => rows.filter((e) => e.canonical?.producer?.importer === "m365");
+    const before = m365((await superStore.query("c1", {})).events);
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((e) => !e.canonical!.producer!.ruleVersions)).toBe(true);
+    sigmaOn = true;
+    const token = createSigmaImportGrader(SET_ON).snapshot()!.token;
+    const res = await request(app).post("/cases/c1/sigma/regrade").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.counts.raised).toBeGreaterThan(0);
+
+    const forensic = m365((await stateStore.load("c1")).forensicTimeline);
+    expect(forensic.length).toBeGreaterThan(0);
+    for (const e of forensic) expect(sigmaTokensOf(e)).toEqual([token]);
+    for (const e of before) expect(sigmaTokensOf((await superRow(e.id))!)).toEqual([token]);
+    expect(sigmaGradingsInCase(forensic).map((g) => g.release)).toEqual([SET_ON.release]);
+
+    const again = await request(app).get("/cases/c1/sigma/regrade");
+    expect(again.body.counts).toMatchObject({ changed: 0, tokenOnly: 0 });
+    const file = again.body.files.find((f: { file: string }) => /signins\.json$/.test(f.file));
+    expect(file).toMatchObject({ importer: "m365", status: "current" });
   });
 
   it("moves nothing when the rules are unchanged", async () => {
