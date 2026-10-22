@@ -28,6 +28,8 @@ describe("the Sigma rules settings tab", () => {
       "sigmaToggleRule",
       "sigmaExcludeRule",
       "sigmaRemoveExclusion",
+      "sigmaRegradePreview",
+      "sigmaRegradeApply",
     ])
       expect(fns).toContain(name);
   });
@@ -127,6 +129,7 @@ describe("the Sigma rules settings tab", () => {
         sigmaRulesCount: makeNode("span"),
         sigmaPreview: makeNode("div"),
         sigmaDemo: makeNode("div"),
+        sigmaRegrade: makeNode("div"),
       };
       nodes.sigmaDemo.hidden = !demo;
       const prompt = vi.fn(() => "noisy");
@@ -143,6 +146,8 @@ describe("the Sigma rules settings tab", () => {
         sigmaToggleRule: (id: string, disable: boolean) => Promise<void>;
         sigmaExcludeRule: (id: string) => Promise<void>;
         sigmaRemoveExclusion: (id: string, field: string, value: string) => Promise<void>;
+        sigmaRenderRegrade: (r: unknown, caseId: string, applied: boolean) => void;
+        sigmaRegradeApply: (caseId: string) => Promise<void>;
       }>("dashboard-sigma-rules.js", [], { document, fetch, prompt });
       return { mod, nodes, prompt, fetch };
     }
@@ -258,6 +263,71 @@ describe("the Sigma rules settings tab", () => {
       await mod.sigmaToggleRule("r1", true);
       expect(prompt).not.toHaveBeenCalled();
       expect(fetch).not.toHaveBeenCalled();
+    });
+
+    // #2206: re-grade the open case. The preview changes nothing; Apply is the change.
+    const REGRADE = {
+      enabled: true,
+      release: "r2026-07-01",
+      current: false,
+      counts: {
+        rows: 3,
+        raised: 1,
+        lowered: 1,
+        unchanged: 1,
+        changed: 2,
+        tokenOnly: 0,
+        entersForensic: 1,
+        leavesForensic: 1,
+      },
+      files: [{ file: "0001_<b>trail</b>.json", importer: "aws-cloudtrail", rows: 3, status: "other" }],
+      notes: [
+        "2 record(s) match a rule now but were not kept as their own row by the import — re-import the file to add them.",
+      ],
+    };
+
+    it("shows the re-grade counts as text and an Apply button", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRegrade(REGRADE, "c1", false);
+      const all = texts(nodes.sigmaRegrade);
+      expect(all.some((t) => t.includes("1 raised, 1 lowered, 1 unchanged"))).toBe(true);
+      expect(all).toContain(
+        "0001_<b>trail</b>.json (aws-cloudtrail): graded with another release or setting",
+      );
+      expect(all.some((t) => t.includes("re-import the file to add them"))).toBe(true);
+      const [apply] = buttons(nodes.sigmaRegrade);
+      expect(apply.textContent).toBe("Apply re-grade");
+      expect(apply.disabled).toBe(false);
+    });
+
+    it("disables Apply re-grade in the demo, and Apply sends nothing there", async () => {
+      const { mod, nodes, fetch } = load(true);
+      mod.sigmaRenderRegrade(REGRADE, "c1", false);
+      const [apply] = buttons(nodes.sigmaRegrade);
+      expect(apply.disabled).toBe(true);
+      expect(apply.title).toBe("Not available in the public demo");
+      await mod.sigmaRegradeApply("c1");
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("offers no Apply when nothing would change, or once applied", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRegrade(
+        { ...REGRADE, current: true, counts: { ...REGRADE.counts, changed: 0 } },
+        "c1",
+        false,
+      );
+      expect(buttons(nodes.sigmaRegrade)).toHaveLength(0);
+      mod.sigmaRenderRegrade(REGRADE, "c1", true);
+      expect(buttons(nodes.sigmaRegrade)).toHaveLength(0);
+    });
+
+    it("posts the apply for the case it previewed", async () => {
+      const { mod, fetch } = load(false);
+      await mod.sigmaRegradeApply("c 1");
+      const call = fetch.mock.calls[0] as unknown as [string, { method: string }];
+      expect(call[0]).toBe("/cases/c%201/sigma/regrade");
+      expect(call[1].method).toBe("POST");
     });
   });
 });

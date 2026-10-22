@@ -44,7 +44,7 @@ import {
   type InstalledReleaseMeta,
   type SigmaManifest,
 } from "./sigmaReleaseFiles.js";
-import { sigmaStatusesFromEnv } from "./sigmaSettings.js";
+import { SIGMA_STATUS_CHOICES, sigmaStatusesFromEnv } from "./sigmaSettings.js";
 
 const PREVIEW_TTL_MS = 60 * 60 * 1000;
 
@@ -271,6 +271,19 @@ export class SigmaRuleStore {
     const set = { ...built, problems: [...this.startupProblems, ...files.problems, ...built.problems] };
     this.cache = { key, set, files: files.files };
     return set;
+  }
+
+  /**
+   * The active release with no rule switched off and every status loaded — only to look an old
+   * rule up by id when a case is re-graded (#2206), never to grade.
+   */
+  lookupRuleSet(): SigmaRuleSet {
+    this.activeRuleSet();
+    const files = this.cache?.files ?? [];
+    const meta = { release: this.activeInfo.release, commit: this.activeInfo.commit };
+    return buildSigmaRuleSet(files, meta, {
+      statuses: [...SIGMA_STATUS_CHOICES, "deprecated", "unsupported"],
+    });
   }
 
   active(): SigmaReleaseInfo {

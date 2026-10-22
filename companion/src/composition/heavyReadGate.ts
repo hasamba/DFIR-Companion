@@ -100,6 +100,8 @@ export const HEAVY_READ_PATHS: ReadonlySet<string> = new Set([
   "/second-look/preview",
   "/known-unknowns",
   "/login-graph",
+  // #2206: the Sigma re-grade preview re-parses the stored import files and scans the super-timeline.
+  "/sigma/regrade",
 ]);
 
 export interface HeavyReadLimits {

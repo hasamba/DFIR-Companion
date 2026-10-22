@@ -319,6 +319,84 @@ async function sigmaRemoveExclusion(id, field, value) {
   }
 }
 
+// #2206: re-grade the open case with the current rules. A preview first (it changes nothing), then
+// an Apply button, disabled in the public demo like every other change here.
+function sigmaRegradeCaseId() {
+  const input = document.getElementById("caseId");
+  return ((input && input.value) || "").trim();
+}
+
+const SIGMA_REGRADE_STATUS = {
+  current: "already graded with the current rules",
+  other: "graded with another release or setting",
+  never: "never graded by Sigma",
+  skipped: "skipped — the stored file is missing or changed",
+};
+
+function sigmaRegradeCountsText(c) {
+  const parts = [`${Number(c.rows) || 0} row(s) graded by Sigma: ${Number(c.raised) || 0} raised, ${Number(c.lowered) || 0} lowered, ${Number(c.unchanged) || 0} unchanged`];
+  if (c.tokenOnly) parts.push(`${c.tokenOnly} only re-stamped with the current release`);
+  parts.push(`${Number(c.entersForensic) || 0} join the forensic timeline, ${Number(c.leavesForensic) || 0} leave it`);
+  return `${parts.join("; ")}.`;
+}
+
+function sigmaRenderRegrade(r, caseId, applied) {
+  const box = document.getElementById("sigmaRegrade");
+  if (!box) return;
+  box.textContent = "";
+  box.hidden = false;
+  if (!r.enabled) {
+    for (const n of r.notes || []) box.appendChild(sigmaEl("div", n));
+    return;
+  }
+  const c = r.counts || {};
+  const head = applied
+    ? `Re-graded with SigmaHQ ${r.release}.`
+    : r.current
+      ? `Already graded with the current rules (SigmaHQ ${r.release}). A re-grade changes nothing.`
+      : `A re-grade with SigmaHQ ${r.release} would change:`;
+  box.appendChild(sigmaEl("div", head));
+  box.appendChild(sigmaEl("div", sigmaRegradeCountsText(c)));
+  if (applied && r.demoted) box.appendChild(sigmaEl("div", `${r.demoted} row(s) left the forensic timeline; they stay in the super-timeline.`));
+  for (const f of r.files || []) box.appendChild(sigmaEl("div", `${f.file} (${f.importer}): ${SIGMA_REGRADE_STATUS[f.status] || f.status}`, "sfield-hint"));
+  for (const n of r.notes || []) box.appendChild(sigmaEl("div", n, "sfield-hint"));
+  if (applied || !((Number(c.changed) || 0) + (Number(c.tokenOnly) || 0))) return;
+  const btn = sigmaEl("button", "Apply re-grade", "btn-mini");
+  btn.type = "button";
+  btn.disabled = sigmaDemoActive();
+  if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
+  btn.addEventListener("click", () => sigmaRegradeApply(caseId));
+  box.appendChild(btn);
+}
+
+async function sigmaRegradePreview() {
+  const caseId = sigmaRegradeCaseId();
+  if (!caseId) {
+    sigmaMsg("Open a case to re-grade it.", true);
+    return;
+  }
+  try {
+    sigmaRenderRegrade(await sigmaFetch(`/cases/${encodeURIComponent(caseId)}/sigma/regrade`), caseId, false);
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
+async function sigmaRegradeApply(caseId) {
+  if (sigmaDemoActive()) return;
+  try {
+    const r = await sigmaFetch(`/cases/${encodeURIComponent(caseId)}/sigma/regrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    sigmaRenderRegrade(r, caseId, true);
+    sigmaMsg("Re-grade done. No AI run started; the case's conclusions are marked out of date.");
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
 function initSigmaRules() {
   // Load the tab when its own button is clicked (a listener, not a deep link — see openSettingsTab).
   document.querySelectorAll(".stab").forEach((b) => {
@@ -327,6 +405,7 @@ function initSigmaRules() {
   document.getElementById("sigmaCheckBtn")?.addEventListener("click", sigmaCheck);
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
+  document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
   document.querySelectorAll("[data-sigma-status]").forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));
 }
 

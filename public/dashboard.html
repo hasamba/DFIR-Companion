@@ -2765,9 +2765,9 @@
       <div class="stab-pane" id="stab-sigma">
         <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
           <strong>Sigma rules</strong> from <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a>
-          (Detection Rule License 1.1) grade AWS CloudTrail and Entra ID sign-in / audit records as they are imported.
+          (Detection Rule License 1.1) grade AWS CloudTrail, Entra ID sign-in / audit records and web access logs as they are imported.
           A rule at or above the minimum level raises the event; a lower one only tags it. Changes apply to the next import —
-          cases already imported keep the grading they got, and their report names the release that produced it.
+          cases already imported keep the grading they got, and their report names the release that produced it, until you re-grade them below.
         </div>
         <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
         <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
@@ -2811,6 +2811,14 @@
           <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
           <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
           <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
+        </div>
+        <div class="sfield">
+          <label>Re-grade this case</label>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="sigmaRegradeBtn" type="button" class="btn-mini">Preview re-grade of the open case</button>
+          </div>
+          <span class="sfield-hint">Grades the open case's CloudTrail, Entra and web access-log rows again with the rules above. Nothing changes until you review the counts and click Apply. No AI run starts; the case's conclusions are marked out of date.</span>
+          <div id="sigmaRegrade" role="status" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>
         <div class="sfield">
           <label>Rules <span id="sigmaRulesCount" class="sfield-hint" data-safe-style="display:inline"></span></label>

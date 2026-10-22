@@ -300,6 +300,14 @@ export class AnalysisPipeline {
     return ingest.promoteSuperTimeline(this.importCtx, ...args);
   }
 
+  /** #2206: re-graded rows through the same-id merge; the rule snapshot imports grade with. */
+  mergeSigmaRegrade(...args: ImporterArgs<typeof ingest.mergeSigmaRegrade>) {
+    return ingest.mergeSigmaRegrade(this.importCtx, ...args);
+  }
+  sigmaSnapshot() {
+    return this.importCtx.opts.sigmaGrader?.snapshot();
+  }
+
   promoteSuperTimelineWithOutcome(...args: ImporterArgs<typeof ingest.promoteSuperTimelineWithOutcome>) {
     return ingest.promoteSuperTimelineWithOutcome(this.importCtx, ...args);
   }

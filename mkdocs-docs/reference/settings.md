@@ -321,10 +321,32 @@ The tab also shows:
   `sigma/exclusions.yml` in the data folder.
 
 Disable, Enable and exclusions apply from the next import only. Events already imported keep their
-grading. The detection-rules line in each report carries a short hash of the exclusions that graded the case,
+grading until you re-grade the case. The detection-rules line in each report carries a short hash of the exclusions that graded the case,
 so two imports graded under different exclusions never look the same.
 
-Updates and rule changes are not available in the demo.
+- **Re-grade this case** — grades the open case's CloudTrail, Entra and web access-log rows again with
+  the rules and settings shown above. Click **Preview re-grade of the open case** first: it changes
+  nothing and shows how many rows would be raised, lowered or left unchanged, how many would join or
+  leave the forensic timeline, and each import's state ("already graded with the current rules",
+  "graded with another release or setting", or "never graded by Sigma"). Then click **Apply re-grade**.
+    - Only Sigma's part of a row changes: its severity, the `Sigma:` text, the `Sigma rule:` lines, the
+      rule's ATT&CK techniques and the release stamp. The new severity is the highest of the importer's
+      own grade, the new Sigma grade and the content tagger's grade, so it can go down. The row's
+      "changed after first recorded" history records the move.
+    - Both timelines change. A row raised above the forensic gate joins the forensic timeline as a
+      normal graded row (it is not marked promoted, so a later re-grade can take it out again). A row
+      lowered below the gate leaves the forensic timeline and stays in the super-timeline. A row you
+      promoted stays in the forensic timeline at its new grade.
+    - Only rows the import kept are re-graded. A record that a rule now matches but that the import
+      did not keep as its own row (below the severity floor, over the event cap, or folded into a
+      grouped row) is counted in the preview: re-import the file to add it. A grouped row is
+      re-graded on the record that sets its identity. A row whose stored file is missing or changed,
+      or whose record reads differently now, is left as it is and counted.
+    - No AI run starts. The case's conclusions are marked out of date; press **Re-synthesize** when
+      you want them updated. The content tagger does not run again.
+    - With the same rules and settings, a re-grade changes nothing.
+
+Updates, rule changes and Apply re-grade are not available in the demo.
 
 To see which of one case's sources these rules grade, open the **Sigma coverage** card in the
 [Hunt Workbench](hunt-workbench.md#sigma-coverage).
