@@ -790,6 +790,7 @@
     "sigmaRuleSet.ts": "analysis/hunt",
     "sigmaBundledRules.ts": "analysis/hunt",
     "sigmaImportGrade.ts": "analysis/ingest",
+    "sigmaWebRecord.ts": "analysis/ingest",
     "sigmaRuleStore.ts": "analysis/ingest",
     "sigmaReleaseFiles.ts": "analysis/hunt",
     "sigmaSettings.ts": "analysis/hunt",

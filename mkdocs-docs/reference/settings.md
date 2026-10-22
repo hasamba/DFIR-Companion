@@ -284,7 +284,7 @@ Custom declarative importers:
 ## Sigma Rules
 
 Settings → **Sigma rules** controls the SigmaHQ rules that grade AWS CloudTrail and Entra ID sign-in /
-audit imports ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)). Every setting is
+audit imports, and Apache / nginx / Squid access logs ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)). Every setting is
 read on every import, so a change applies to the next import without a restart. Cases already imported
 keep the grading they got, and their report names the release and settings that produced it.
 

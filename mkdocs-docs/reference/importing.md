@@ -530,6 +530,28 @@ A scanner run is bounded: after 64 distinct payloads on one path, the rest fold 
 `[overflow: …]` row per path that names every family seen. A field longer than 64 KiB is not
 inspected at all — the row says `oversized@target (N chars, not inspected)` instead of silently
 scanning a prefix — and a decoded control character is shown as `\x00`, never written as the byte.
+### Web access logs: Sigma rules
+
+Apache, nginx and Squid access logs are also graded at import by the SigmaHQ **web server** and
+**proxy** rules (122 load from the bundled release: web shells, exploit attempts against named CVEs,
+path traversal, known attack-tool user agents and URLs).
+
+- **One rule pack per import.** A file declared as a Squid log is graded with the proxy rules.
+  Otherwise the proxy rules are used only when most requests in the file are full URLs or CONNECT
+  tunnels; one crafted request cannot switch packs. The import's note says which pack graded it and why.
+- **Scanners do not flood the timeline.** On a web server, a rule only raises severity when the server
+  answered the request (2xx or 3xx). A matching request answered 404, 403, 400 or 5xx is tagged, with a
+  note saying why. Web-shell rules, and rules that themselves test the response status, grade at any
+  status. Proxy rules are never held back by status (a C2 beacon answered 404 is still C2).
+- **Encoded attacks still match.** URL fields are checked both as logged and URL-decoded, so
+  `%2e%2e%2f` matches a `../` rule. A field the log wrote as `-` counts as absent.
+- This sits on top of the importer's own attack-shape grading, which is unchanged: Sigma only adds a
+  rule name, ATT&CK techniques and, when allowed, a higher severity.
+
+Rules that need data a combined log does not record (cookies, the request content type, the destination
+address) are not run, and Settings → Sigma rules lists them with the reason. IIS W3C logs are not imported
+yet.
+
 ### Web access logs: what one line establishes
 
 A combined-format line (Apache, nginx, Squid) carries more than the request and the status, and the

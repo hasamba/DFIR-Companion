@@ -47,6 +47,14 @@
 // with more than 2000 DISTINCT aggregated request patterns could still lose rare ones; out of scope
 // here (that cap is shared code, not specific to this format).
 
+import { applySigmaMatches, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
+import {
+  buildWebSigmaRecord,
+  chooseWebPack,
+  webSigmaMayGrade,
+  WEB_VETO_NOTE,
+  type WebPack,
+} from "./sigmaWebRecord.js";
 import type { Severity } from "./stateTypes.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
 import { recordMappedAggregation } from "./siemImportDebug.js";
@@ -91,9 +99,23 @@ export interface CombinedLogImportOptions {
    * wherever an Apache format appends a request header — never establishes it.
    */
   trailerProfile?: TrailerProfile | null;
+  /** This import's Sigma snapshot (#2203); absent → no Sigma grading, the pre-#2203 output. */
+  sigma?: SigmaGradingSnapshot;
 }
 
-export type CombinedLogParseResult = SiemParseResult;
+/** The Sigma context one parse hands each line (#2203): the snapshot and the pack the import uses. */
+export interface WebSigmaContext {
+  snapshot: SigmaGradingSnapshot;
+  sourceId: "web-server" | "web-proxy";
+  pack: WebPack;
+  onMatch: () => void;
+}
+
+export type CombinedLogParseResult = SiemParseResult & {
+  /** Rows a Sigma rule matched, and which rule pack graded the import and why (#2203). */
+  sigmaRowsMatched?: number;
+  sigmaPack?: { sourceId: string; reason: string };
+};
 
 export const COMBINED_LOG_SOURCE = "Web Access Log";
 
@@ -290,6 +312,7 @@ export function mapCombinedLogLine(
   sink: Map<string, SiemIoc>,
   attackMeta?: Map<MappedEvent, AttackMeta>,
   profile: TrailerProfile | null = null,
+  sigma?: WebSigmaContext,
 ): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
@@ -463,7 +486,7 @@ export function mapCombinedLogLine(
     ? attackDescription(attack, method, shownUri, status, bytesTag, tags, userTag, shownRef, shownUa, mark)
     : plainDescription(method, shownUri, status, bytesTag, tags, userTag, refTag, uaTag, mark, lossy);
 
-  const event: MappedEvent = {
+  const built: MappedEvent = {
     timestamp,
     description,
     severity: graded,
@@ -521,6 +544,39 @@ export function mapCombinedLogLine(
       producer: { importer: "combined-log", parserVersion: "1", mappingVersion: "combined-log-v1" },
     }),
   };
+  // Sigma (#2203), applied BEFORE the variant bookkeeping below, which keys on the event object.
+  const sigmaRefs = sigma
+    ? sigmaMatchesFor(
+        sigma.snapshot,
+        sigma.sourceId,
+        buildWebSigmaRecord(
+          {
+            method,
+            target: uri,
+            referer: refererRaw,
+            ua: uaRaw,
+            user,
+            host,
+            client,
+            status,
+            // A field the inspector clipped is incomplete evidence, not the whole value.
+            clipped: new Set([
+              ...(fields.target !== uriRaw ? ["target"] : []),
+              ...(fields.referer !== unquote(refererQuoted) ? ["referer"] : []),
+              ...(fields.ua !== unquote(uaQuoted) ? ["ua"] : []),
+            ]),
+          },
+          sigma.pack,
+        ),
+      )
+    : [];
+  if (sigmaRefs.length) sigma?.onMatch();
+  const event: MappedEvent = sigma
+    ? applySigmaMatches(built, sigmaRefs, sigma.snapshot, undefined, {
+        mayGrade: webSigmaMayGrade(sigma.sourceId, status),
+        note: WEB_VETO_NOTE,
+      })
+    : built;
   // Every row whose identity carries a variant — an attack payload, an unlabelled trailer, or
   // both — is bounded per base key, so neither can multiply groups without limit.
   if ((attack || trailer.variantKey) && attackMeta) {
@@ -528,7 +584,9 @@ export function mapCombinedLogLine(
       base: baseKey.toLowerCase() + pathKey,
       prefix: baseKey.toLowerCase(),
       path: pathKey,
-      families: attack?.families ?? [],
+      // A Sigma-matched row names its rules among the families, so an overflow row's union still
+      // says which rules fired (#2203, Codex plan review).
+      families: [...(attack?.families ?? []), ...sigmaRefs.map((r) => `sigma ${r.title}`)],
       digest: attack ? attack.digest : trailer.variantKey,
       hasAttack: Boolean(attack),
       // Whole tags here too (packTags): the overflow row is the one the analyst reads when the
@@ -595,6 +653,16 @@ function boundRecordVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
   return rewritten;
 }
 
+/** Method and target of every line the line grammar accepts — the only lines that vote on the pack. */
+function acceptedRequests(lines: readonly string[]): { method: string; target: string }[] {
+  const out: { method: string; target: string }[] = [];
+  for (const l of lines) {
+    const m = l ? LINE_RE.exec(l) : null;
+    if (m) out.push({ method: m[6], target: m[7] });
+  }
+  return out;
+}
+
 // Parse a combined-format access/proxy log into the shared SIEM result shape (aggregated + capped).
 // Pure, no AI.
 export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = {}): CombinedLogParseResult {
@@ -611,11 +679,19 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   // format. Without a declaration every appended token is shown unlabelled.
   const profile = opts.trailerProfile ?? null;
 
+  // The Sigma pack is chosen ONCE for the whole import (#2203): a declared Squid log, else the
+  // majority of requests — never per line, so one crafted request cannot move itself.
+  const pack = opts.sigma ? chooseWebPack(acceptedRequests(lines), Boolean(profile)) : undefined;
+  let sigmaRows = 0;
+  const sigma: WebSigmaContext | undefined =
+    opts.sigma && pack
+      ? { snapshot: opts.sigma, sourceId: pack.sourceId, pack: pack.pack, onMatch: () => void sigmaRows++ }
+      : undefined;
   let unparsed = 0;
   for (const line of lines) {
     if (!line) continue;
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapCombinedLogLine(line, rowSink, attackMeta, profile);
+    const m = mapCombinedLogLine(line, rowSink, attackMeta, profile, sigma);
     if (m) {
       total++;
       mergeRowIocs(sink, rowSink, m.aggKey);
@@ -654,5 +730,8 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
     groups,
     format: "combined-log",
     hostname: "",
+    ...(pack
+      ? { sigmaRowsMatched: sigmaRows, sigmaPack: { sourceId: pack.sourceId, reason: pack.reason } }
+      : {}),
   };
 }

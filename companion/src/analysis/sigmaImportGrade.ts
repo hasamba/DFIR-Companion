@@ -132,14 +132,18 @@ export function applySigmaMatches(
   matches: readonly SigmaRuleRef[],
   snapshot: Pick<SigmaGradingSnapshot, "minLevel" | "token">,
   note?: string,
+  /** A log source's own veto on raising severity for this record (#2203: unanswered web requests). */
+  veto?: { mayGrade: (ref: SigmaRuleRef) => boolean; note: string },
 ): MappedEvent {
   const stamped = stamp(event, snapshot.token);
   if (matches.length === 0) return stamped;
   const minLevel = snapshot.minLevel;
   const byLevel = [...matches].sort((a, b) => rank(b.level) - rank(a.level));
   // A threat-hunting rule is low-fidelity by design: it tags, it never grades (#2204).
-  const graded = byLevel.filter((r) => !r.huntingOnly && rank(r.level) >= rank(minLevel));
-  const lead = byLevel[0];
+  const eligible = byLevel.filter((r) => !r.huntingOnly && rank(r.level) >= rank(minLevel));
+  const graded = veto ? eligible.filter(veto.mayGrade) : eligible;
+  const vetoed = eligible.length > graded.length;
+  const lead = graded[0] ?? byLevel[0];
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
   const head = graded.length
     ? `Sigma: ${lead.title}${more}`
@@ -147,7 +151,11 @@ export function applySigmaMatches(
   const severity = graded.reduce((s, r) => worstSeverity(s, LEVEL_SEVERITY[r.level]), stamped.severity);
   const mitre = [...stamped.mitre];
   for (const t of matches.flatMap((r) => r.mitre)) if (!mitre.includes(t)) mitre.push(t);
-  const lines = [...byLevel.map(messageLine), ...(note ? [`Sigma note: ${note}`] : [])];
+  const lines = [
+    ...byLevel.map(messageLine),
+    ...(note ? [`Sigma note: ${note}`] : []),
+    ...(vetoed && veto ? [`Sigma note: ${veto.note}`] : []),
+  ];
   return {
     ...stamped,
     severity,

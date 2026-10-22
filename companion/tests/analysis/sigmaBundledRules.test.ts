@@ -35,6 +35,12 @@ describe("bundled Sigma rules", () => {
       "azure-auditlogs:loaded": 17,
       "azure-auditlogs:disabled": 1,
       "azure-auditlogs:refused": 26,
+      "web-server:loaded": 76,
+      "web-server:status": 5,
+      "web-server:refused": 2,
+      "web-proxy:loaded": 46,
+      "web-proxy:status": 2,
+      "web-proxy:refused": 3,
     });
   });
 

@@ -1,3 +1,4 @@
+import { sigmaImportNote } from "../sigmaImportGrade.js";
 import { parseAuditdLog, type AuditdImportOptions } from "../auditdImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "../bashHistoryImport.js";
 import { CISCO_ASA_SOURCE, parseCiscoAsaLog, type CiscoAsaImportOptions } from "../ciscoAsaImport.js";
@@ -105,7 +106,9 @@ export async function importCombinedLog(
     debug?: ImportDebugRecorder; // #1736
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog, debug: opts.debug });
+  // One Sigma snapshot for this whole import, taken before parsing (#2203).
+  const sigma = ctx.opts.sigmaGrader?.snapshot();
+  const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog, debug: opts.debug, sigma });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
@@ -133,7 +136,11 @@ export async function importCombinedLog(
     timelineNote:
       `Web/proxy access-log import (${parsed.format}): ${parsed.events.length} request(s) from ${parsed.total} line(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
-      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
+      (parsedRaw.sigmaPack
+        ? ` (${parsedRaw.sigmaPack.sourceId === "web-proxy" ? "proxy" : "web server"} rules — ${parsedRaw.sigmaPack.reason})`
+        : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

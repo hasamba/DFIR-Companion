@@ -66,6 +66,7 @@ describe("buildSigmaRuleSet", () => {
         release: "r-test",
         mitre: ["T1562.008"],
         huntingOnly: false,
+        fields: ["eventsource", "eventname"],
       },
     ]);
   });
