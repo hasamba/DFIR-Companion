@@ -21,9 +21,24 @@ export interface ReplicaCandidate {
   recipientAccountId: string;
 }
 
+/** One output row and every candidate it stands for (one, or a whole replica group). */
+export interface ReplicaGroup<C extends ReplicaCandidate = ReplicaCandidate> {
+  event: MappedEvent;
+  members: readonly C[];
+}
+
 export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEvent[] {
-  const groups = new Map<string, ReplicaCandidate[]>();
-  const order: Array<ReplicaCandidate | string> = [];
+  return mergeReplicaGroups(candidates).map((g) => g.event);
+}
+
+/**
+ * mergeReplicas, keeping which candidates each row stands for — so a per-record verdict computed
+ * before the merge (the import-time Sigma matches, #2202) can be unioned over EVERY replica of the
+ * row rather than lost with the replicas the merge did not keep.
+ */
+export function mergeReplicaGroups<C extends ReplicaCandidate>(candidates: readonly C[]): ReplicaGroup<C>[] {
+  const groups = new Map<string, C[]>();
+  const order: Array<C | string> = [];
   for (const c of candidates) {
     if (!c.replicaId) {
       order.push(c);
@@ -37,9 +52,9 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     }
   }
   return order.map((entry) => {
-    if (typeof entry !== "string") return entry.event;
+    if (typeof entry !== "string") return { event: entry.event, members: [entry] };
     const group = groups.get(entry)!;
-    if (group.length === 1) return group[0].event;
+    if (group.length === 1) return { event: group[0].event, members: group };
     // The caller's account comes from ANY replica that carries it (an Identity Center record may
     // omit it). The kept replica is the caller's own record when it is informative — so the row
     // and its notice read the same whichever record the file lists first — else the first
@@ -100,7 +115,7 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
             },
           }
         : {};
-    return {
+    const event: MappedEvent = {
       ...kept.event,
       description,
       ...(kept.event.canonical
@@ -121,5 +136,6 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
           }
         : {}),
     };
+    return { event, members: group };
   });
 }

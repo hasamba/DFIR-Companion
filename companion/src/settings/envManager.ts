@@ -124,6 +124,8 @@ export const LIVE_FROM_ENV_PREFIXES = new Set([
   // process.env, with nothing captured at startup — so loading the env IS the change. Without this
   // the dashboard would tell an analyst to restart for a review the very next click would have run.
   "DFIR_JEV_",
+  // Import-time Sigma rules (#2202): the grader reads process.env on every import.
+  "DFIR_SIGMA_",
 ]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The
@@ -202,6 +204,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_MAX_BODY_MB",
   "DFIR_MAX_IMPORT_FILE_MB",
   "DFIR_FORENSIC_",
+  // Import-time Sigma rules (#2202): the on/off switch, and #2204's status / level settings.
+  "DFIR_SIGMA_",
   "DFIR_DROP_",
   "DFIR_BEACON_",
   "DFIR_PHASE_",

@@ -1438,6 +1438,10 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOOKALIKE_EXTRA_DOMAINS">Extra domains to protect<span class="sfield-hint">DFIR_LOOKALIKE_EXTRA_DOMAINS — comma-separated, in addition to the case's own observed domains, e.g. acmecorp.com,acme-internal.net</span></label><input id="env-DFIR_LOOKALIKE_EXTRA_DOMAINS" placeholder="acmecorp.com,acme-internal.net" /></div>
         </div>
+        <div class="settings-group-head">Sigma rules at import</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on). Bundled SigmaHQ rules grade AWS CloudTrail and Entra ID sign-in / audit records at import: a high or critical rule raises the event, a lower one only tags it. Applies to the next import.</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
+        </div>
         <div class="settings-group-head">Import / forensic-timeline gate</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_FORENSIC_MIN_SEVERITY">Forensic-timeline min severity<span class="sfield-hint">DFIR_FORENSIC_MIN_SEVERITY — floor for an imported event to enter the forensic timeline (default Low); lower-severity events still land in the super-timeline. Per-case override: GET/PUT /cases/:id/forensic-gate</span></label><input id="env-DFIR_FORENSIC_MIN_SEVERITY" placeholder="Low" /></div>

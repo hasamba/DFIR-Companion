@@ -1,0 +1,24 @@
+# Sigma rules the Companion ships switched OFF (#2202). Each one needs a value only the analyst's
+# own tenant can supply (an application id, a country list, an approved-inviter list, the home
+# tenant id) and ships with a placeholder instead. Left on, a placeholder under `not` turns the
+# rule into "every successful sign-in", which would stamp misleading rule titles and ATT&CK tags
+# on routine activity. The editor for this list is #2204.
+rules:
+  - id: f272fb46-25f2-422c-b667-45837994980f
+    title: Authentications To Important Apps Using Single Factor Authentication
+    reason: AppId is the placeholder text "Insert Application ID use OR for multiple"
+  - id: 8c944ecb-6970-4541-8496-be554b8e2846
+    title: Successful Authentications From Countries You Do Not Operate Out Of
+    reason: the allowed-country filter is a placeholder, so every successful sign-in would match
+  - id: 4ad97bf5-a514-41a4-abd3-4f3455ad4865
+    title: Guest Users Invited To Tenant By Non Approved Inviters
+    reason: the approved-inviter filter is a placeholder, so every guest invitation would match
+  - id: 5f521e4b-0105-4b72-845b-2198a54487b9
+    title: Users Authenticating To Other Azure AD Tenants
+    reason: HomeTenantId is the placeholder text "HomeTenantID"
+  - id: e1d02b53-c03c-4948-b11d-4d00cca49d03
+    title: Increased Failed Authentications Of Any Type
+    reason: needs a baseline count over time ("Count < 10%"), which a single record cannot answer
+  - id: 4f77e1d7-3982-4ee0-8489-abf2d6b75284
+    title: Sign-ins from Non-Compliant Devices
+    reason: rated high but matches on isCompliant = false alone, which is every sign-in from an unmanaged or personal device in most tenants

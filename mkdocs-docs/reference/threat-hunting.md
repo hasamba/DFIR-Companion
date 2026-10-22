@@ -120,6 +120,18 @@ an empty result is a miss as before.
 
 ---
 
+## Sigma Rules at Import
+
+Besides compiling a Sigma rule into a fleet hunt, the Companion runs bundled SigmaHQ rules over AWS
+CloudTrail and Entra ID sign-in and audit logs **while they are imported**. High and critical rules
+raise the matching event's severity; lower levels only tag it. See
+[Importing → Sigma rules grade CloudTrail and Entra imports](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports).
+
+The rules are SigmaHQ release `r2026-07-01`, licensed under the Detection Rule License (DRL) 1.1.
+Each match names the rule's author and links the rule, as the license asks.
+
+---
+
 ## Hunting Feedback Loop
 
 The **Hunting Profile** panel tracks every hunt's outcome:
