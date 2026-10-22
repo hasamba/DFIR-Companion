@@ -313,6 +313,56 @@ describe("Undo / Redo of a Sigma re-grade (#2220)", () => {
   });
 });
 
+// A re-grade that fails part-way puts BOTH timelines back before it answers 500, so a retry plans
+// from the original rows and its Undo restores the original grade.
+describe("a failed Sigma re-grade apply rolls back both timelines (#2206)", () => {
+  const grade = (e: ForensicEvent | null | undefined) =>
+    e && { severity: e.severity, description: e.description, message: e.message, tokens: sigmaTokensOf(e) };
+  const failures: Record<string, () => void> = {
+    "after the super-timeline rewrite": () =>
+      void vi
+        .spyOn(AnalysisPipeline.prototype, "mergeSigmaRegrade")
+        .mockRejectedValueOnce(new Error("injected merge failure")),
+    "after the forensic merge": () =>
+      void vi
+        .spyOn(stateStore, "forensicRowsById")
+        .mockRejectedValueOnce(new Error("injected cleanup failure")),
+    "after the cleanup": () =>
+      void vi
+        .spyOn(stateStore, "deleteForensicRows")
+        .mockRejectedValueOnce(new Error("injected demote failure")),
+  };
+
+  for (const [where, inject] of Object.entries(failures)) {
+    it(`${where}: both timelines equal their pre-apply state; a retry then Undo restores the originals`, async () => {
+      await gateAboveBase();
+      const app = build({ importUndoStore: new ImportUndoStore(cases) });
+      await importTrail(app);
+      const forensicBefore = (await stateStore.load("c1")).forensicTimeline;
+      const row = target(forensicBefore)!;
+      const superBefore = await superRow(row.id);
+      expect(grade(superBefore)!.severity).toBe("High");
+      rules = SET_OFF;
+
+      inject();
+      const failed = await request(app).post("/cases/c1/sigma/regrade").send({});
+      vi.restoreAllMocks();
+      expect(failed.status).toBe(500);
+      expect((await stateStore.load("c1")).forensicTimeline).toEqual(forensicBefore);
+      expect(await superRow(row.id)).toEqual(superBefore);
+
+      const retry = await request(app).post("/cases/c1/sigma/regrade").send({});
+      expect(retry.status).toBe(200);
+      expect(retry.body.counts).toMatchObject({ lowered: 1 });
+      expect(grade(await superRow(row.id))!.severity).toBe(BASE.severity);
+
+      expect((await request(app).post("/cases/c1/import/undo").send({})).status).toBe(200);
+      expect(target((await stateStore.load("c1")).forensicTimeline)).toEqual(row);
+      expect(grade(await superRow(row.id))).toEqual(grade(superBefore));
+    });
+  }
+});
+
 // #2209: measure a staged (not installed) release against the case before installing it.
 describe("GET /cases/:id/sigma/regrade?release=<token> — measure a staged release (#2209)", () => {
   /** A staged release without the rule that graded the record. */
