@@ -273,10 +273,13 @@
     const job = jobsForCurrentCase().find((j) => j.id === id);
     if (!job) return;
     const say = (text) => (document.getElementById("status").textContent = text);
+    // Re-run never disables itself. The target control locks itself synchronously, so a second
+    // press lands on the check below and says why. A Re-run disable had no path back when the
+    // start ran nothing — a cancelled confirm or a refused POST left it dead (#2196).
     const press = (buttonId) => {
       const b = document.getElementById(buttonId);
-      if (!b || b.disabled) return say(`Cannot re-run the ${job.kind} now — ${b && b.title ? b.title : "another AI job is running"}.`);
-      if (btn) btn.disabled = true;
+      if (!b) return say(`Cannot re-run the ${job.kind} — its control is not on this page. Reload the dashboard.`);
+      if (b.disabled) return say(`Cannot re-run the ${job.kind} now — ${b.title || "another AI job is running"}.`);
       b.click();
     };
     if (job.kind === "synthesis") return press("synthesize");
@@ -285,7 +288,6 @@
       const floor = job.parameters && job.parameters.minSeverity;
       if (typeof floor !== "string" || !floor) return say("Cannot re-run this deep pass — its severity floor is unknown. Open Deep pass and pick one.");
       if (deepPassBusy() || runningJob("synthesis")) return say("Cannot re-run the deep pass now — a heavy AI job is already running for this case.");
-      if (btn) btn.disabled = true;
       // Show the panel, so the run's progress and result are on screen.
       document.getElementById("deepPassBtn")?.click();
       runDeepPass(floor);
