@@ -21,7 +21,7 @@ const TOKEN = /^sigma:([A-Za-z0-9._-]+):([0-9a-f]{12}):([A-Za-z0-9._+-]+):([a-z]
 export function sigmaGradingsInCase(events: readonly ForensicEvent[]): SigmaGradingRef[] {
   const seen = new Map<string, SigmaGradingRef>();
   for (const e of events) {
-    for (const v of e.canonical?.producer.ruleVersions ?? []) {
+    for (const v of e.canonical?.producer?.ruleVersions ?? []) {
       if (seen.has(v)) continue;
       const m = TOKEN.exec(v);
       if (!m) continue;

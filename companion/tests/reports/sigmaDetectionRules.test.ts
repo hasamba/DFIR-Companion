@@ -48,6 +48,11 @@ describe("sigmaGradingsInCase", () => {
     ]);
   });
 
+  it("reads an older event envelope that has no producer (CI found this on #2204)", () => {
+    const legacy = { ...ev("1"), canonical: { evidence: { rawRecords: [] } } } as unknown as ForensicEvent;
+    expect(sigmaGradingsInCase([legacy])).toEqual([]);
+  });
+
   it("ignores malformed tokens", () => {
     expect(sigmaGradingsInCase([ev("1", ["sigma:only:three"])])).toEqual([]);
   });

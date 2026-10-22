@@ -110,8 +110,10 @@ function messageLine(r: SigmaRuleRef): string {
 
 /** The event with the snapshot's provenance token on its canonical producer (once). */
 function stamp(event: MappedEvent, token: string): MappedEvent {
-  const versions = event.canonical?.producer.ruleVersions ?? [];
-  if (!event.canonical || versions.includes(token)) return event;
+  // An envelope without a producer (older stored data) has nowhere to record provenance.
+  if (!event.canonical?.producer) return event;
+  const versions = event.canonical.producer.ruleVersions ?? [];
+  if (versions.includes(token)) return event;
   return {
     ...event,
     canonical: {
