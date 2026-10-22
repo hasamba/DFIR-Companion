@@ -64,8 +64,7 @@ describe("buildWebSigmaRecord — proxy", () => {
 });
 
 describe("chooseWebPack", () => {
-  const line = (t: string, m = "GET") =>
-    `203.0.113.5 - - [14/May/2024:19:00:00 +0000] "${m} ${t} HTTP/1.1" 200 1 "-" "ua"`;
+  const line = (target: string, method = "GET") => ({ method, target });
   it("uses the declared Squid profile", () => {
     expect(chooseWebPack([line("/x")], true)).toMatchObject({
       sourceId: "web-proxy",

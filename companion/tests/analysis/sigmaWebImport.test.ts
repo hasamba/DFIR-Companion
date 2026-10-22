@@ -113,3 +113,16 @@ describe("aggregation with Sigma matches (Codex plan review)", () => {
     expect(overflow?.severity).toBe("High");
   });
 });
+
+describe("pack choice ignores lines the importer rejects (Codex review)", () => {
+  it("keeps the web server pack, and the High WebLogic match, when junk lines claim a proxy shape", () => {
+    const r = parse([
+      line("GET", "/console/css/%2e%2e%2fconsole.portal", 200, "-", "-"),
+      'malformed "GET http://example.test/ HTTP/1.1"',
+      'also malformed "CONNECT a.test:443 HTTP/1.1"',
+    ]);
+    expect(r.total).toBe(1);
+    expect(r.sigmaPack?.sourceId).toBe("web-server");
+    expect(r.events[0].severity).toBe("High");
+  });
+});

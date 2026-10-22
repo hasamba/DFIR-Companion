@@ -653,6 +653,16 @@ function boundRecordVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
   return rewritten;
 }
 
+/** Method and target of every line the line grammar accepts — the only lines that vote on the pack. */
+function acceptedRequests(lines: readonly string[]): { method: string; target: string }[] {
+  const out: { method: string; target: string }[] = [];
+  for (const l of lines) {
+    const m = l ? LINE_RE.exec(l) : null;
+    if (m) out.push({ method: m[6], target: m[7] });
+  }
+  return out;
+}
+
 // Parse a combined-format access/proxy log into the shared SIEM result shape (aggregated + capped).
 // Pure, no AI.
 export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = {}): CombinedLogParseResult {
@@ -671,7 +681,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
 
   // The Sigma pack is chosen ONCE for the whole import (#2203): a declared Squid log, else the
   // majority of requests — never per line, so one crafted request cannot move itself.
-  const pack = opts.sigma ? chooseWebPack(lines, Boolean(profile)) : undefined;
+  const pack = opts.sigma ? chooseWebPack(acceptedRequests(lines), Boolean(profile)) : undefined;
   let sigmaRows = 0;
   const sigma: WebSigmaContext | undefined =
     opts.sigma && pack

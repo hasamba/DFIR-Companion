@@ -108,34 +108,24 @@ export function buildWebSigmaRecord(p: WebLineParts, pack: WebPack): Record_ {
   return rec;
 }
 
-const REQUEST = /"([A-Z]+)\s+(\S+)[^"]*"/;
-
-/** The pack for a whole import: a declared Squid log, else proxy only when most requests say so. */
+/**
+ * The pack for a whole import: a declared Squid log, else proxy only when most requests say so.
+ * `requests` are the method and target of every line the importer ACCEPTED — a line its grammar
+ * rejects never votes, or one junk line could switch the pack and hide a real match (Codex review).
+ */
 export function chooseWebPack(
-  lines: readonly string[],
+  requests: readonly { method: string; target: string }[],
   declaredSquid: boolean,
 ): { sourceId: "web-proxy" | "web-server"; pack: WebPack; reason: string } {
   if (declaredSquid) return { sourceId: "web-proxy", pack: "proxy", reason: "declared Squid log" };
-  let requests = 0;
-  let proxyShaped = 0;
-  for (const line of lines) {
-    const m = REQUEST.exec(line);
-    if (!m) continue;
-    requests++;
-    if (m[1] === "CONNECT" || /^[a-z][a-z0-9+.-]*:\/\//i.test(m[2])) proxyShaped++;
-  }
-  const pct = requests ? Math.round((proxyShaped / requests) * 100) : 0;
-  return requests > 0 && proxyShaped * 2 >= requests
-    ? {
-        sourceId: "web-proxy",
-        pack: "proxy",
-        reason: `inferred: ${pct}% of requests absolute-form or CONNECT`,
-      }
-    : {
-        sourceId: "web-server",
-        pack: "webserver",
-        reason: `inferred: ${pct}% of requests absolute-form or CONNECT`,
-      };
+  const proxyShaped = requests.filter(
+    (r) => r.method === "CONNECT" || /^[a-z][a-z0-9+.-]*:\/\//i.test(r.target),
+  ).length;
+  const pct = requests.length ? Math.round((proxyShaped / requests.length) * 100) : 0;
+  const reason = `inferred: ${pct}% of requests absolute-form or CONNECT`;
+  return requests.length > 0 && proxyShaped * 2 >= requests.length
+    ? { sourceId: "web-proxy", pack: "proxy", reason }
+    : { sourceId: "web-server", pack: "webserver", reason };
 }
 
 /**
