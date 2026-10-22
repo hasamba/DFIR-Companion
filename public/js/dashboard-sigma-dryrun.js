@@ -78,11 +78,19 @@ function renderSigmaDryRun(box, body) {
       const b = sigmaDryEl("button", id, "sigma-compile-go");
       b.type = "button";
       b.title = "Open this event in the forensic timeline";
-      b.addEventListener("click", () => sigmaDryOpen(String(id)));
+      b.setAttribute("data-jump-event", String(id));
       row.appendChild(b);
     }
     box.appendChild(row);
   }
+  // One delegated handler, bound by reference: a render* function must not reach jumpToEvent,
+  // whose filter reset commits to DfirFacets (dashboardFacets.test.ts "no renderer writes a facet").
+  box.onclick = sigmaDryOnClick;
+}
+
+function sigmaDryOnClick(e) {
+  const t = e.target && e.target.closest ? e.target.closest("button[data-jump-event]") : null;
+  if (t) sigmaDryOpen(t.getAttribute("data-jump-event"));
 }
 
 /* exported runSigmaDryRun */

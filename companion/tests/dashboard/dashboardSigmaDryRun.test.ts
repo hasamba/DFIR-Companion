@@ -20,8 +20,13 @@ interface FakeEl {
   value: string;
   textContent: string;
   listeners: Record<string, (() => void)[]>;
+  attrs: Record<string, string>;
+  onclick: ((e: { target: FakeEl }) => void) | null;
   appendChild(c: FakeEl): FakeEl;
   addEventListener(t: string, fn: () => void): void;
+  setAttribute(k: string, v: string): void;
+  getAttribute(k: string): string | null;
+  closest(sel: string): FakeEl | null;
 }
 
 function fakeEl(tag: string): FakeEl {
@@ -36,6 +41,8 @@ function fakeEl(tag: string): FakeEl {
     disabled: false,
     value: "",
     listeners: {},
+    attrs: {},
+    onclick: null,
     get textContent() {
       return text + el.children.map((c) => c.textContent).join("");
     },
@@ -49,6 +56,18 @@ function fakeEl(tag: string): FakeEl {
     },
     addEventListener(t, fn) {
       (el.listeners[t] ??= []).push(fn);
+    },
+    setAttribute(k, v) {
+      el.attrs[k] = String(v);
+    },
+    getAttribute(k) {
+      return k in el.attrs ? el.attrs[k] : null;
+    },
+    // Only the one selector the module uses; the buttons have no element children to walk up from.
+    closest(sel) {
+      return sel === "button[data-jump-event]" && el.tagName === "BUTTON" && "data-jump-event" in el.attrs
+        ? el
+        : null;
     },
   };
   return el;
@@ -151,7 +170,9 @@ describe("the Sigma dry-run result", () => {
     expect(h.created.some((e) => e.tagName === "IMG")).toBe(false);
     const links = walk(h.box).filter((e) => e.tagName === "BUTTON");
     expect(links.map((l) => l.textContent)).toEqual(["e1", HOSTILE]);
-    for (const fn of links[1].listeners.click ?? []) fn();
+    // One delegated handler on the box (a render* must not reach jumpToEvent — see dashboardFacets).
+    expect(links.every((l) => !l.listeners.click)).toBe(true);
+    h.box.onclick?.({ target: links[1] });
     expect(h.close).toHaveBeenCalled();
     expect(h.jump).toHaveBeenCalledWith(HOSTILE, expect.stringMatching(/super-timeline/));
   });
