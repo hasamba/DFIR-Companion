@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sigma rule updates and settings** — check, preview, install (or install from a file) and roll back SigmaHQ releases, choose rule statuses and the minimum level that raises severity, and switch single rules off; reports name the release that graded the case (closes #2204)
 - **Sigma rules at import** — bundled SigmaHQ rules grade AWS CloudTrail and Entra ID sign-in / audit imports: high and critical rules raise the event, lower levels tag it (closes #2202)
 - **Custody at receipt with SHA-1** — every import is hashed (SHA-256 and SHA-1) into chain of custody before any parser runs, rejected files included; custody manifests are now version 2 (closes #2111)
 - **Presidio without the manual container** — `docker compose --profile presidio up -d` starts the analyzer, and the manual documents a Python install for machines without Docker (closes #2197)

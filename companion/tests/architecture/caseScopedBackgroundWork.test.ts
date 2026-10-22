@@ -111,6 +111,7 @@ const OUTSIDE_GATE_GLOBAL_PREFIXES = [
   "/log-level",
   "/update-check/",
   "/tagger/",
+  "/sigma/", // installed Sigma releases + disabled list (#2204): server data folder, no case
   "/bundles",
   "/dashboard-views",
   "/report-templates",

@@ -1805,7 +1805,8 @@ they are imported. No AI is involved, and the same file always gets the same res
 
 - **A high or critical rule raises the event** to the rule's level. The description starts with
   `Sigma: <rule title>`. A severity the importer already gave is never lowered.
-- **A medium, low or informational rule only tags the event**: `Sigma (medium, tag only): <title>`.
+- **A rule below the minimum level (default: medium, low or informational), or any rule from SigmaHQ's
+  threat-hunting set, only tags the event**: `Sigma (medium, tag only): <title>`.
   The severity does not change, so an Info row stays Info, goes to the super-timeline, and is never
   read by the AI.
 - **Every match is recorded on the event**: the rule id, level, status, author, the SigmaHQ release
@@ -1816,15 +1817,17 @@ they are imported. No AI is involved, and the same file always gets the same res
 - **An Entra audit record that becomes several rows** carries its match on the first row, with a note
   that the rule matched the whole record.
 
-Which rules run: SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs` and
+Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs` and
 `azure/auditlogs`. A rule is not run when it uses a field the Companion cannot read in these exports
 (for example `properties.message`), and six rules that need tenant-specific values (an application id,
 a country list, an approved-inviter list) or that match routine sign-ins are shipped switched off.
 The server log lists, per source, how many rules loaded, were disabled, or were refused.
 
 Entra records exported through the Microsoft 365 Unified Audit Log, and service-principal sign-ins, are
-not graded by Sigma yet. Switch the feature off with `DFIR_SIGMA_RULES=off` (Settings → Sigma rules at
-import).
+not graded by Sigma yet. Newer SigmaHQ releases, the statuses used, the minimum level that raises severity
+and the disabled rules are all managed in [Settings → Sigma rules](settings.md#sigma-rules). Each import's
+note in the capture timeline records the release, content and settings it was graded with, and so does the
+report's chain-of-custody appendix.
 
 ### Entra applications: credentials, grants, roles, sign-ins
 

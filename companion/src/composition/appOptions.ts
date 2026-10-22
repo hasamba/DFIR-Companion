@@ -46,6 +46,7 @@ import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../analysis/authObservationStore.js";
 import type { StarredReportStore } from "../analysis/starredReportStore.js";
 import type { TaggerStore } from "../analysis/taggerStore.js";
+import type { SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
 import type { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
 import type { CustodyStore } from "../analysis/custody.js";
 import type { EvidenceIntegrityMonitor } from "../analysis/custodyIntegrity.js";
@@ -285,6 +286,9 @@ export interface AppOptions {
   // Content-based event tagger (Timesketch-style tags.yaml): the rule file store. Powers manual
   // "Run tagger" + rule editing (routes/tagger.ts) and the automatic post-import run (pipeline).
   taggerStore?: TaggerStore;
+  // Installed Sigma rules (#2204): releases, previews, rollback and the analyst's disabled list.
+  // Absent in scripts/tests → the /sigma routes answer 501 and imports grade with the bundled rules.
+  sigmaRuleStore?: SigmaRuleStore;
   // Per-case forensic-timeline severity cut (machine/analyst preference — NOT snapshotted). After every
   // import dual-writes into the super-timeline, sub-threshold (Info-by-default) events are demoted OUT of
   // the forensic timeline so the AI only synthesizes graded signal. onForensicGate pings live dashboard

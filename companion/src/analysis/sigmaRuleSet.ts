@@ -13,6 +13,7 @@
 // index fields (eventName, OperationName) is only evaluated for records carrying that value.
 // The index is a necessary condition, so it never changes which rules match — only how many run.
 
+import { createHash } from "node:crypto";
 import { compileSigmaRule, type CompiledSigmaRule, type SigmaFieldResolver } from "./sigmaMatch.js";
 import {
   fieldResolvers,
@@ -52,7 +53,15 @@ export interface SigmaRuleRef {
   url: string;
   release: string;
   mitre: string[];
+  /** The rule's own `modified` (or `date`) — versions the match (#2204). */
+  modified?: string;
+  /** Under rules-threat-hunting/: low-fidelity by design, so it only ever tags (#2204). */
+  huntingOnly: boolean;
 }
+
+/** The release folders a rule set is read from, in load order. */
+export const SIGMA_RULE_DIRS = ["rules", "rules-emerging-threats", "rules-threat-hunting"] as const;
+export const SIGMA_HUNTING_DIR = "rules-threat-hunting";
 
 export type SigmaInventoryOutcome = "loaded" | "status" | "disabled" | "refused" | "no-source";
 
@@ -83,6 +92,14 @@ interface SourceRules {
 export interface SigmaRuleSet {
   release: string;
   commit: string;
+  /** Sentences about the folder itself (too many files, unreadable) — shown in status and logged. */
+  problems: string[];
+  /** The statuses this set was built with (lower-case). */
+  statuses: string[];
+  /** First 12 hex of a SHA-256 over every rule file's path and text: identifies the content. */
+  contentSha: string;
+  /** First 8 hex of a SHA-256 over the sorted disabled ids ("none" when empty). */
+  disabledHash: string;
   inventory: SigmaInventoryEntry[];
   sources: ReadonlyMap<string, SourceRules>;
 }
@@ -190,12 +207,30 @@ function classify(
     url: `https://github.com/SigmaHQ/sigma/blob/${meta.commit}/${file.path}`,
     release: meta.release,
     mitre: rule.mitreTechniques,
+    ...(rule.modified || rule.date ? { modified: rule.modified ?? rule.date } : {}),
+    huntingOnly: file.path.startsWith(`${SIGMA_HUNTING_DIR}/`),
   };
   const loadedRule = { ref, compiled, order: 0 };
   return {
     entry: { ...head, source: def.id, outcome: "loaded" },
     loaded: { def, rule: loadedRule, rawRule: rule },
   };
+}
+
+/** A content identity for a set of rule files, independent of their order. */
+export function contentSha(files: readonly SigmaRuleFile[]): string {
+  const hash = createHash("sha256");
+  for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)))
+    hash.update(f.path).update("\0").update(f.text).update("\0");
+  return hash.digest("hex").slice(0, 12);
+}
+
+function disabledHash(disabled: ReadonlyMap<string, string>): string {
+  if (disabled.size === 0) return "none";
+  return createHash("sha256")
+    .update([...disabled.keys()].sort().join("\n"))
+    .digest("hex")
+    .slice(0, 8);
 }
 
 /** Build the rule set from rule texts. Never throws; every file lands in the inventory. */
@@ -211,8 +246,24 @@ export function buildSigmaRuleSet(
   };
   const sources = new Map<string, SourceRules>();
   const inventory: SigmaInventoryEntry[] = [];
+  // A rule id names one rule. A later file reusing it is refused, so what loads is exactly what a
+  // preview's diff (keyed by id, first occurrence) shows (Codex review of #2204).
+  const firstPathOfId = new Map<string, string>();
   for (const file of files) {
-    const { entry, loaded: found } = classify(file, meta, opts);
+    const classified = classify(file, meta, opts);
+    const firstPath = firstPathOfId.get(classified.entry.id);
+    if (firstPath === undefined) firstPathOfId.set(classified.entry.id, file.path);
+    const { entry, loaded: found } =
+      firstPath === undefined
+        ? classified
+        : {
+            entry: {
+              ...classified.entry,
+              outcome: "refused" as const,
+              reasons: [`duplicate rule id, first seen in ${firstPath}`],
+            },
+            loaded: undefined,
+          };
     inventory.push(entry);
     if (!found) continue;
     const loaded = { ...found, rule: { ...found.rule, order: inventory.length } };
@@ -230,7 +281,16 @@ export function buildSigmaRuleSet(
     bucket.index.set(gate.field, byValue);
     for (const v of new Set(gate.values)) byValue.set(v, [...(byValue.get(v) ?? []), loaded.rule]);
   }
-  return { release: meta.release, commit: meta.commit, inventory, sources };
+  return {
+    release: meta.release,
+    commit: meta.commit,
+    problems: [],
+    statuses: [...opts.statuses],
+    contentSha: contentSha(files),
+    disabledHash: disabledHash(opts.disabled),
+    inventory,
+    sources,
+  };
 }
 
 // ── Matching ──────────────────────────────────────────────────────────────────────────────────

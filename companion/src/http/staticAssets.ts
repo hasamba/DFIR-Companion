@@ -93,6 +93,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-sigma-rules.js": "application/javascript; charset=utf-8",
   // The Timeline Swimlane canvas chart (#415 tier 3). A 404 here costs the chart and nothing else,
   // but the guarded ENTRY POINT is only half the reason: this module also publishes four names that
   // the page calls bare from the middle of its load-time refresh chains, where a ReferenceError

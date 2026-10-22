@@ -8,7 +8,7 @@ import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js"
 // Records are synthetic and shaped like the exports the importers already accept.
 
 const { set } = loadBundledSigmaRuleSet();
-const sigma = createSigmaImportGrader(set);
+const sigma = createSigmaImportGrader(set).snapshot();
 
 const trail = (records: object[]) => JSON.stringify({ Records: records });
 
@@ -55,6 +55,14 @@ describe("CloudTrail with import-time Sigma", () => {
     expect(r.events[0].mitreTechniques).toContain("T1562.008");
   });
 
+  it("stamps the grading snapshot on every graded event, matched or not (#2204)", () => {
+    const rec = ct({ eventSource: "s3.amazonaws.com", eventName: "ListBuckets", readOnly: true });
+    const r = parseCloudTrail(trail([rec]), { sigma });
+    expect(r.events[0].canonical?.producer.ruleVersions).toContain(sigma?.token);
+    expect(sigma?.token).toMatch(/^sigma:r2026-07-01:[0-9a-f]{12}:stable\+test:high:[0-9a-f]{8}$/);
+    expect(r.sigmaRowsMatched).toBe(0);
+  });
+
   it("is the pre-#2202 output exactly when no rule matches, or no grader is given", () => {
     const rec = ct({ eventSource: "s3.amazonaws.com", eventName: "ListBuckets", readOnly: true });
     const a = parseCloudTrail(trail([rec]));
@@ -65,7 +73,8 @@ describe("CloudTrail with import-time Sigma", () => {
   });
 
   it("does nothing while the grader is switched off", () => {
-    const off = createSigmaImportGrader(set, { enabled: () => false });
+    const off = createSigmaImportGrader(set, { enabled: () => false }).snapshot();
+    expect(off).toBeUndefined();
     const rec = ct({ eventSource: "securityhub.amazonaws.com", eventName: "BatchUpdateFindings" });
     expect(parseCloudTrail(trail([rec]), { sigma: off }).events[0].description).not.toMatch(/Sigma/);
   });

@@ -127,8 +127,10 @@ CloudTrail and Entra ID sign-in and audit logs **while they are imported**. High
 raise the matching event's severity; lower levels only tag it. See
 [Importing → Sigma rules grade CloudTrail and Entra imports](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports).
 
-The rules are SigmaHQ release `r2026-07-01`, licensed under the Detection Rule License (DRL) 1.1.
-Each match names the rule's author and links the rule, as the license asks.
+The Companion ships SigmaHQ release `r2026-07-01`; newer releases are installed from
+[Settings → Sigma rules](settings.md#sigma-rules) after you review what changes. The rules are licensed
+under the Detection Rule License (DRL) 1.1. Each match names the rule's author and links the rule, as the
+license asks.
 
 ---
 

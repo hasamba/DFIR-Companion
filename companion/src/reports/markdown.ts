@@ -1447,7 +1447,7 @@ export function renderMarkdownReport(
     notebook: () => {
       if (notebookEntries && notebookEntries.length > 0) analystNotebook(notebookEntries, lines);
     },
-    chainOfCustody: () => chainOfCustodySection(custody, lines),
+    chainOfCustody: () => chainOfCustodySection(custody, lines, state.forensicTimeline),
     sandboxReports: () => sandboxReportsSection(state, lines),
     intelRetirement: () => intelRetirementSection(state, lines),
     remediationChecks: () => remediationChecksSection(state, lines),

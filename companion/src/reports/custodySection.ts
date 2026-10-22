@@ -1,4 +1,6 @@
 import type { CustodyRecord } from "../analysis/custody.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { detectionRulesMarkdown } from "./detectionRules.js";
 import { cellMd, codeSpanMd, oneLineMd } from "./mdText.js";
 
 // Extracted from markdown.ts verbatim when that file reached its size ledger (#932 item 5 part C
@@ -14,9 +16,19 @@ import { cellMd, codeSpanMd, oneLineMd } from "./mdText.js";
  * An empty case still renders the heading and says so. A court-facing deliverable that silently
  * omits the section is indistinguishable from one where custody was never recorded at all.
  */
-export function chainOfCustodySection(custody: CustodyRecord[] | undefined, lines: string[]): void {
+export function chainOfCustodySection(
+  custody: CustodyRecord[] | undefined,
+  lines: string[],
+  events: readonly ForensicEvent[] = [],
+): void {
   lines.push("## Appendix — Chain of Custody", "");
-  const records = custody ?? [];
+  custodyRecords(custody ?? [], lines);
+  // Which Sigma rule release and settings graded the imported events (#2204): provenance of the
+  // grading, beside the provenance of the evidence it graded.
+  detectionRulesMarkdown(events, lines);
+}
+
+function custodyRecords(records: CustodyRecord[], lines: string[]): void {
   if (records.length === 0) {
     lines.push("No custody records were captured for this case.", "");
     return;

@@ -223,6 +223,7 @@
   <script src="/js/dashboard-tagger.js"></script>
   <!-- The CISA KEV catalog panel (#99), the second and last wholly-movable feature (#415 tier 3). -->
   <script src="/js/dashboard-kev.js"></script>
+  <script src="/js/dashboard-sigma-rules.js"></script>
   <!-- The Timeline Swimlane canvas chart (#415 tier 3). Wired by initSwimlane(), which the inline
        script calls where the old IIFE sat: #sec-swimlane's markup does not exist yet when this
        head script runs, so the wiring cannot self-invoke here. -->
@@ -1259,6 +1260,7 @@
         <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="importers">Importers</button>
         <button class="stab" data-stab="kev">KEV</button>
+        <button class="stab" data-stab="sigma">Sigma rules</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="dashboard-views">Dashboard Views</button>
         <button class="stab" data-stab="notifications" data-essential>Notifications</button>
@@ -1437,10 +1439,6 @@
         <div class="settings-group-head">Lookalike-domain detection</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOOKALIKE_EXTRA_DOMAINS">Extra domains to protect<span class="sfield-hint">DFIR_LOOKALIKE_EXTRA_DOMAINS — comma-separated, in addition to the case's own observed domains, e.g. acmecorp.com,acme-internal.net</span></label><input id="env-DFIR_LOOKALIKE_EXTRA_DOMAINS" placeholder="acmecorp.com,acme-internal.net" /></div>
-        </div>
-        <div class="settings-group-head">Sigma rules at import</div>
-        <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on). Bundled SigmaHQ rules grade AWS CloudTrail and Entra ID sign-in / audit records at import: a high or critical rule raises the event, a lower one only tags it. Applies to the next import.</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
         </div>
         <div class="settings-group-head">Import / forensic-timeline gate</div>
         <div class="sfield-row">
@@ -2759,6 +2757,63 @@
             <span id="kevClearMsg" class="manual-msg"></span>
           </div>
           <span class="sfield-hint">Removes the catalog from disk. The catalog is global — clearing it affects all cases.</span>
+        </div>
+      </div>
+
+      <!-- Sigma rules (#2202, #2204) — the SigmaHQ release that grades cloud imports, its settings and updates -->
+      <div class="stab-pane" id="stab-sigma">
+        <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
+          <strong>Sigma rules</strong> from <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a>
+          (Detection Rule License 1.1) grade AWS CloudTrail and Entra ID sign-in / audit records as they are imported.
+          A rule at or above the minimum level raises the event; a lower one only tags it. Changes apply to the next import —
+          cases already imported keep the grading they got, and their report names the release that produced it.
+        </div>
+        <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
+        <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">Minimum level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
+            <select id="env-DFIR_SIGMA_MIN_LEVEL">
+              <option value="">— default (high) —</option>
+              <option value="critical">critical</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+          </div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULE_STATUSES">Rule status to use<span class="sfield-hint">DFIR_SIGMA_RULE_STATUSES — deprecated and unsupported rules are never used</span></label>
+            <div data-safe-style="display:flex;gap:12px;align-items:center">
+              <label><input type="checkbox" data-sigma-status="stable" /> stable</label>
+              <label><input type="checkbox" data-sigma-status="test" /> test</label>
+              <label><input type="checkbox" data-sigma-status="experimental" /> experimental</label>
+            </div>
+            <input id="env-DFIR_SIGMA_RULE_STATUSES" type="hidden" />
+          </div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><input id="env-DFIR_SIGMA_UPDATE_CHECK" placeholder="off" /></div>
+        </div>
+        <div class="sfield">
+          <label>Installed release</label>
+          <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
+          <span class="sfield-hint">Previous (roll-back target): <span id="sigmaPrevious">—</span></span>
+          <div id="sigmaCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="sfield">
+          <label>Updates</label>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="sigmaCheckBtn" type="button" class="btn-mini">Check for updates</button>
+            <input id="sigmaFile" type="file" accept=".zip,application/zip" aria-label="SigmaHQ release zip" />
+            <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
+            <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back</button>
+          </div>
+          <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
+          <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
+          <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
+        </div>
+        <div class="sfield">
+          <label>Rules <span id="sigmaRulesCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
+          <table data-safe-style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr><th>Rule</th><th>Log source</th><th>State</th><th>Why</th><th></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table>
         </div>
       </div>
 

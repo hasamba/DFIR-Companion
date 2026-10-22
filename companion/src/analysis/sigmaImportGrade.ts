@@ -36,32 +36,60 @@ const LEVEL_SEVERITY: Record<SigmaLevel, Severity> = {
 
 const rank = (level: SigmaLevel): number => SIGMA_LEVELS.indexOf(level);
 
+/**
+ * The rules and settings ONE import is graded with, taken once before parsing (#2204, Codex plan
+ * review): installing a release or changing a setting mid-import can never mix two configurations
+ * in one import, and the import's note is rendered from the same snapshot that graded it.
+ */
+export interface SigmaGradingSnapshot {
+  ruleSet: SigmaRuleSet;
+  minLevel: SigmaLevel;
+  /** `sigma:<release>:<content>:<statuses>:<min level>:<disabled>` — stamped on every graded event. */
+  token: string;
+}
+
 export interface SigmaImportGrader {
-  readonly set: SigmaRuleSet;
-  enabled(): boolean;
-  minLevel(): SigmaLevel;
+  /** The snapshot for the next import, or undefined while Sigma grading is switched off. */
+  snapshot(): SigmaGradingSnapshot | undefined;
+}
+
+const tokenPart = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, "_") || "_";
+
+export function sigmaProvenanceToken(set: SigmaRuleSet, minLevel: SigmaLevel): string {
+  return [
+    "sigma",
+    tokenPart(set.release),
+    set.contentSha,
+    set.statuses.map(tokenPart).join("+") || "_",
+    minLevel,
+    set.disabledHash,
+  ].join(":");
 }
 
 export function createSigmaImportGrader(
-  set: SigmaRuleSet,
+  set: SigmaRuleSet | (() => SigmaRuleSet),
   opts: { enabled?: () => boolean; minLevel?: () => SigmaLevel } = {},
 ): SigmaImportGrader {
+  const ruleSet = typeof set === "function" ? set : () => set;
   return {
-    set,
-    enabled: opts.enabled ?? (() => true),
-    minLevel: opts.minLevel ?? (() => DEFAULT_SIGMA_MIN_LEVEL),
+    snapshot() {
+      if (opts.enabled && !opts.enabled()) return undefined;
+      const current = ruleSet();
+      const minLevel = opts.minLevel?.() ?? DEFAULT_SIGMA_MIN_LEVEL;
+      return { ruleSet: current, minLevel, token: sigmaProvenanceToken(current, minLevel) };
+    },
   };
 }
 
-/** The rules that definitely match one raw record; [] without a grader or while it is off. */
+/** The rules that definitely match one raw record; [] without a snapshot (Sigma off). */
 export function sigmaMatchesFor(
-  grader: SigmaImportGrader | undefined,
+  snapshot: SigmaGradingSnapshot | undefined,
   sourceId: string,
   record: Row,
   onIncomplete?: (n: number) => void,
 ): SigmaRuleRef[] {
-  if (!grader?.enabled()) return [];
-  const { matches, incomplete } = matchSigmaRecord(grader.set, sourceId, record);
+  if (!snapshot) return [];
+  const { matches, incomplete } = matchSigmaRecord(snapshot.ruleSet, sourceId, record);
   if (incomplete) onIncomplete?.(incomplete);
   return matches.map((m) => m.ref);
 }
@@ -75,52 +103,61 @@ export function unionSigmaMatches(lists: readonly (readonly SigmaRuleRef[])[]): 
 
 function messageLine(r: SigmaRuleRef): string {
   const author = r.author ? `, author ${r.author}` : "";
-  return `Sigma rule: ${r.title} [${r.id}] — level ${r.level}, status ${r.status}${author}, SigmaHQ ${r.release}, ${r.url}`;
+  const modified = r.modified ? `, modified ${r.modified}` : "";
+  const hunting = r.huntingOnly ? ", threat-hunting rule (tag only)" : "";
+  return `Sigma rule: ${r.title} [${r.id}] — level ${r.level}, status ${r.status}${modified}${hunting}${author}, SigmaHQ ${r.release}, ${r.url}`;
 }
 
-/** The event with the matches applied; the same object when nothing matched. Never mutates. */
+/** The event with the snapshot's provenance token on its canonical producer (once). */
+function stamp(event: MappedEvent, token: string): MappedEvent {
+  // An envelope without a producer (older stored data) has nowhere to record provenance.
+  if (!event.canonical?.producer) return event;
+  const versions = event.canonical.producer.ruleVersions ?? [];
+  if (versions.includes(token)) return event;
+  return {
+    ...event,
+    canonical: {
+      ...event.canonical,
+      producer: { ...event.canonical.producer, ruleVersions: [...versions, token] },
+    },
+  };
+}
+
+/**
+ * The event graded by one snapshot: the provenance token is always stamped (the event WAS checked,
+ * even when nothing matched), and the matches are applied. Never mutates.
+ */
 export function applySigmaMatches(
   event: MappedEvent,
   matches: readonly SigmaRuleRef[],
-  minLevel: SigmaLevel,
+  snapshot: Pick<SigmaGradingSnapshot, "minLevel" | "token">,
   note?: string,
 ): MappedEvent {
-  if (matches.length === 0) return event;
+  const stamped = stamp(event, snapshot.token);
+  if (matches.length === 0) return stamped;
+  const minLevel = snapshot.minLevel;
   const byLevel = [...matches].sort((a, b) => rank(b.level) - rank(a.level));
-  const graded = byLevel.filter((r) => rank(r.level) >= rank(minLevel));
+  // A threat-hunting rule is low-fidelity by design: it tags, it never grades (#2204).
+  const graded = byLevel.filter((r) => !r.huntingOnly && rank(r.level) >= rank(minLevel));
   const lead = byLevel[0];
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
   const head = graded.length
     ? `Sigma: ${lead.title}${more}`
     : `Sigma (${lead.level}, tag only): ${lead.title}${more}`;
-  const severity = graded.reduce((s, r) => worstSeverity(s, LEVEL_SEVERITY[r.level]), event.severity);
-  const mitre = [...event.mitre];
+  const severity = graded.reduce((s, r) => worstSeverity(s, LEVEL_SEVERITY[r.level]), stamped.severity);
+  const mitre = [...stamped.mitre];
   for (const t of matches.flatMap((r) => r.mitre)) if (!mitre.includes(t)) mitre.push(t);
   const lines = [...byLevel.map(messageLine), ...(note ? [`Sigma note: ${note}`] : [])];
-  const releases = [...new Set(matches.map((r) => `sigma-${r.release}`))];
-  const canonical = event.canonical
-    ? {
-        ...event.canonical,
-        producer: {
-          ...event.canonical.producer,
-          ruleVersions: [
-            ...(event.canonical.producer.ruleVersions ?? []),
-            ...releases.filter((v) => !event.canonical?.producer.ruleVersions?.includes(v)),
-          ],
-        },
-      }
-    : undefined;
   return {
-    ...event,
+    ...stamped,
     severity,
     mitre,
-    description: `${head} - ${event.description}`.slice(0, 600),
-    message: [event.message, ...lines].filter(Boolean).join("\n"),
-    aggKey: `${event.aggKey}|sigma:${matches
+    description: `${head} - ${stamped.description}`.slice(0, 600),
+    message: [stamped.message, ...lines].filter(Boolean).join("\n"),
+    aggKey: `${stamped.aggKey}|sigma:${matches
       .map((r) => r.id)
       .sort()
       .join(",")}`,
-    ...(canonical ? { canonical } : {}),
   };
 }
 
@@ -132,12 +169,24 @@ export function applySigmaMatches(
 export function applySigmaToRecordRows(
   rows: readonly MappedEvent[],
   matches: readonly SigmaRuleRef[],
-  minLevel: SigmaLevel,
+  snapshot: Pick<SigmaGradingSnapshot, "minLevel" | "token">,
 ): MappedEvent[] {
-  if (rows.length === 0 || matches.length === 0) return [...rows];
+  if (rows.length === 0) return [];
+  const stamped = rows.map((r) => applySigmaMatches(r, [], snapshot));
+  if (matches.length === 0) return stamped;
   const note =
     rows.length > 1
       ? `the rule matched the whole audit record, which produced ${rows.length} timeline rows; it is shown on the first`
       : undefined;
-  return [applySigmaMatches(rows[0], matches, minLevel, note), ...rows.slice(1)];
+  return [applySigmaMatches(stamped[0], matches, snapshot, note), ...stamped.slice(1)];
+}
+
+/** The import-note sentence for one snapshot, e.g. "; Sigma: SigmaHQ r2026-07-01 …, 3 row(s) matched". */
+export function sigmaImportNote(snapshot: SigmaGradingSnapshot | undefined, rowsMatched = 0): string {
+  if (!snapshot) return "";
+  const set = snapshot.ruleSet;
+  return (
+    `; Sigma: SigmaHQ ${set.release} (content ${set.contentSha}), statuses ${set.statuses.join(", ")}, ` +
+    `raises at ${snapshot.minLevel} and above, disabled list ${set.disabledHash}, ${rowsMatched} row(s) matched`
+  );
 }

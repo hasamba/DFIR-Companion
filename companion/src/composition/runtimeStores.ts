@@ -93,6 +93,7 @@ import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
+import { configureSigmaRules } from "./sigmaRules.js";
 import { StarredReportStore } from "../analysis/starredReportStore.js";
 import { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
 import { CustodyStore } from "../analysis/custody.js";
@@ -200,6 +201,9 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   // Content-based event tagger: dashboard-edited rules persist here; the bundled data/tags.yaml is
   // the fallback default (resolved inside TaggerStore), and TAGGER_RULES_FILE overrides both.
   const taggerStore = new TaggerStore(join(dirname(casesRoot), "tagger", "tags.yaml"));
+  // Import-time Sigma rules (#2204): installed releases and the analyst's overrides live under the
+  // server data folder, next to the tagger's; the grader reads the active release from here.
+  const sigmaRules = configureSigmaRules(dirname(casesRoot));
   // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
@@ -478,6 +482,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     reportTemplateStore,
     dashboardViewStore,
     taggerStore,
+    sigmaRules,
     iocWhitelistStore,
     importerStore,
     nsrlStore,

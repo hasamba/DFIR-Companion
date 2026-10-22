@@ -40,6 +40,7 @@ export function crc32(buf: Buffer): number {
 const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
+const METHOD_STORED = 0;
 const METHOD_DEFLATE = 8;
 const METHOD_AES = 99; // WinZip AE-x; the real method lives in the 0x9901 extra field
 const FLAG_ENCRYPTED = 0x0001; // general-purpose bit 0
@@ -275,8 +276,20 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
         }
         throw err;
       }
-    } else {
+    } else if (effectiveMethod === METHOD_STORED) {
+      // A stored entry is its own size: it counts against the same caps a DEFLATE entry does, or
+      // a large stored entry walks past both (Codex review of #2204).
+      const remaining = maxTotalBytes - totalInflated;
+      const budget = Math.max(0, Math.min(maxEntryBytes, remaining));
+      if (compressed.length > budget) {
+        throw new Error(`zip entry "${name}" is larger than the ${budget} byte cap for this archive`);
+      }
       data = Buffer.from(compressed);
+    } else {
+      // Anything else (bzip2, LZMA, …) was once copied through as if stored — garbage at best.
+      throw new Error(
+        `zip entry "${name}" uses compression method ${effectiveMethod}, which is not supported`,
+      );
     }
 
     totalInflated += data.length;
