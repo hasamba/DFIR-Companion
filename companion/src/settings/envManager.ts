@@ -92,6 +92,9 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // Missed evidence review (#1540). resolveJevSettings() reads process.env on every status
   // probe and every run, so a saved key decides behaviour as soon as it is reloaded.
   "DFIR_JEV_",
+  // Import-time Sigma rules (#2202): the grader reads process.env on every import, so a saved
+  // switch is live once reloaded. Same contract with the browser list and LIVE_FROM_ENV below.
+  "DFIR_SIGMA_",
 ]);
 
 /**

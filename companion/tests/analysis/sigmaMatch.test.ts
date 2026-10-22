@@ -4,6 +4,7 @@ import {
   compileSigmaRule,
   lookupPath,
   SIGMA_LOOKUP_MAX_LEAVES,
+  SIGMA_LOOKUP_MAX_JSON_CHARS,
   type SigmaTri,
 } from "../../src/analysis/sigmaMatch.js";
 
@@ -185,6 +186,21 @@ describe("incomplete evaluation (three-valued)", () => {
     const rec = many(SIGMA_LOOKUP_MAX_LEAVES + 5, "needle");
     const d = "  sel:\n    a: x\n  filter:\n    list: needle";
     expect(evalOn(d, rec, "sel and not filter")).toBe("incomplete");
+  });
+
+  it("never calls a truncated field absent (null) — Codex review", () => {
+    const big = JSON.stringify({ trustType: "AzureAD", pad: "x".repeat(SIGMA_LOOKUP_MAX_JSON_CHARS + 10) });
+    expect(evalOn("  sel:\n    deviceDetail.trustType: null", { deviceDetail: big })).toBe("incomplete");
+    const nulls = { list: [...Array.from({ length: SIGMA_LOOKUP_MAX_LEAVES + 5 }, () => null), "set"] };
+    expect(evalOn("  sel:\n    list: null", nulls)).toBe("incomplete");
+    expect(
+      evalOn("  sel:\n    a: x\n  filter:\n    list: null", { a: "x", ...nulls }, "sel and not filter"),
+    ).toBe("incomplete");
+  });
+
+  it("still calls a field non-null when a retained value is set, even if truncated", () => {
+    const rec = { list: ["set", ...Array.from({ length: SIGMA_LOOKUP_MAX_LEAVES + 5 }, () => null)] };
+    expect(evalOn("  sel:\n    list: null", rec)).toBe(false);
   });
 
   it("still answers definitely when the overflowed part cannot change the result", () => {

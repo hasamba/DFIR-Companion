@@ -22,7 +22,12 @@ import type {
   SigmaSelection,
 } from "./sigmaRuleTypes.js";
 
-export { lookupPath, SIGMA_LOOKUP_MAX_LEAVES, type SigmaFieldLookup } from "./sigmaLookup.js";
+export {
+  lookupPath,
+  SIGMA_LOOKUP_MAX_JSON_CHARS,
+  SIGMA_LOOKUP_MAX_LEAVES,
+  type SigmaFieldLookup,
+} from "./sigmaLookup.js";
 
 type Row = Record<string, unknown>;
 
@@ -161,9 +166,12 @@ type FieldEval = (lookup: SigmaFieldLookup) => SigmaTri;
 
 function compileField(field: SigmaFieldMatch): FieldEval {
   if (field.nullValue) {
+    // Absent or JSON null. A retained non-null value settles it (false); otherwise a truncated
+    // lookup cannot establish absence, so the answer is unknown, never a match (Codex review).
     return (l) => {
-      const isNull = !l.present || (l.values.length > 0 && l.values.every((v) => v === null));
-      return isNull ? true : l.incomplete ? "incomplete" : false;
+      if (l.values.some((v) => v !== null)) return false;
+      if (l.incomplete) return "incomplete";
+      return !l.present || l.values.length > 0;
     };
   }
   const tests = field.values.map((v) => valueTest(field, v));

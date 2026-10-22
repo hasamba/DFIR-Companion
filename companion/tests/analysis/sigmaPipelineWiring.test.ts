@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { RELOADABLE_ENV_PREFIXES } from "../../src/settings/envManager.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,5 +95,15 @@ describe("server Sigma settings", () => {
     expect(sigmaInventorySummary(bundledSigmaGrader().set)).toMatch(
       /^Sigma rules r2026-07-01 — aws-cloudtrail: .*28 loaded/,
     );
+  });
+
+  it("reloads DFIR_SIGMA_ on save, in the server and the browser lists (Codex review)", async () => {
+    expect(RELOADABLE_ENV_PREFIXES.has("DFIR_SIGMA_")).toBe(true);
+    const js = await readFile(
+      new URL("../../../public/js/dashboard-env-settings.js", import.meta.url),
+      "utf8",
+    );
+    const block = /const RELOADABLE_ENV_PREFIXES = \[([\s\S]*?)\];/.exec(js)?.[1] ?? "";
+    expect(block).toMatch(/^\s*"DFIR_SIGMA_",?\s*$/m);
   });
 });
