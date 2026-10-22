@@ -11,6 +11,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
@@ -244,6 +245,71 @@ describe("POST /cases/:id/sigma/regrade — the apply (#2206)", () => {
     const app = build({ demoMode: true });
     const res = await request(app).post("/cases/c1/sigma/regrade").send({});
     expect(res.status).toBe(403);
+  });
+});
+
+// #2220: Undo of a re-grade puts BOTH timelines back; Redo re-grades both again.
+describe("Undo / Redo of a Sigma re-grade (#2220)", () => {
+  /** The fields a re-grade rewrites on a super-timeline copy. */
+  const grade = (e: ForensicEvent | null | undefined) =>
+    e && { severity: e.severity, description: e.description, message: e.message, tokens: sigmaTokensOf(e) };
+  const findSuper = async () =>
+    (await superStore.query("c1", {})).events.find((e) => /BatchUpdateFindings/.test(e.description))!;
+  let superNotices: string[];
+  const buildWithUndo = () => {
+    superNotices = [];
+    return build({
+      importUndoStore: new ImportUndoStore(cases),
+      onSuperTimeline: (caseId: string) => superNotices.push(caseId),
+    });
+  };
+  const step = async (app: ReturnType<typeof createApp>, which: "undo" | "redo") => {
+    superNotices.length = 0;
+    const res = await request(app).post(`/cases/c1/import/${which}`).send({});
+    expect(res.status).toBe(200);
+    expect(superNotices).toContain("c1");
+  };
+
+  it("a lowered and demoted row comes back to forensic AND its super copy gets its old grade", async () => {
+    await gateAboveBase();
+    const app = buildWithUndo();
+    await importTrail(app);
+    const row = target((await stateStore.load("c1")).forensicTimeline)!;
+    const superBefore = grade(await superRow(row.id));
+    expect(superBefore!.severity).toBe("High");
+    rules = SET_OFF;
+    expect((await request(app).post("/cases/c1/sigma/regrade").send({})).body.demoted).toBe(1);
+    const superAfter = grade(await superRow(row.id));
+    expect(superAfter!.severity).toBe(BASE.severity);
+
+    await step(app, "undo");
+    expect(target((await stateStore.load("c1")).forensicTimeline)?.severity).toBe("High");
+    expect(grade(await superRow(row.id))).toEqual(superBefore);
+
+    await step(app, "redo");
+    expect(target((await stateStore.load("c1")).forensicTimeline)).toBeUndefined();
+    expect(grade(await superRow(row.id))).toEqual(superAfter);
+  });
+
+  it("a raised row leaves forensic again AND its super copy drops back to its old grade", async () => {
+    rules = SET_OFF;
+    await gateAboveBase();
+    const app = buildWithUndo();
+    await importTrail(app);
+    const superBefore = grade(await findSuper());
+    expect(superBefore!.severity).toBe(BASE.severity);
+    rules = SET_ON;
+    expect((await request(app).post("/cases/c1/sigma/regrade").send({})).body.counts.entersForensic).toBe(1);
+    const superAfter = grade(await findSuper());
+    expect(superAfter!.severity).toBe("High");
+
+    await step(app, "undo");
+    expect(target((await stateStore.load("c1")).forensicTimeline)).toBeUndefined();
+    expect(grade(await findSuper())).toEqual(superBefore);
+
+    await step(app, "redo");
+    expect(target((await stateStore.load("c1")).forensicTimeline)?.severity).toBe("High");
+    expect(grade(await findSuper())).toEqual(superAfter);
   });
 });
 

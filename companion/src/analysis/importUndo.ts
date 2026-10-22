@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
-import type { InvestigationState } from "./stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { applyUndoDelta, computeUndoDelta, isStateDelta, type StateDelta } from "./importUndoDelta.js";
 
 // Per-case UNDO / REDO of imports (#76). A single import can flood the dashboard — it grows the
@@ -22,6 +22,15 @@ export interface CheckpointCounts {
   findings: number;
 }
 
+/**
+ * Super-timeline rows an action rewrote in place (#2220: a Sigma re-grade). `restore` is what this
+ * step writes back to the super-timeline store, by id; `reapply` is what the mirror step writes.
+ */
+export interface SuperRowsUndo {
+  restore: ForensicEvent[];
+  reapply: ForensicEvent[];
+}
+
 export interface ImportCheckpoint {
   label: string; // what this checkpoint precedes, e.g. "thor (0003_thor.json)"
   at: string; // ISO time the checkpoint was captured
@@ -31,6 +40,13 @@ export interface ImportCheckpoint {
   state?: InvestigationState;
   delta?: StateDelta;
   counts?: CheckpointCounts;
+  superRows?: SuperRowsUndo;
+}
+
+/** The mirror entry of `top`: the same super rows, the pair swapped (none when `top` has none). */
+function mirrorOf(top: ImportCheckpoint, entry: ImportCheckpoint): ImportCheckpoint {
+  const s = top.superRows;
+  return s ? { ...entry, superRows: { restore: s.reapply, reapply: s.restore } } : entry;
 }
 
 const countsOf = (s: InvestigationState): CheckpointCounts => ({
@@ -143,6 +159,13 @@ export function pushCheckpoint(
   return { undo: capBySize(undo, maxBytes), redo: [] };
 }
 
+/** One undo or redo step: the new stack, the state to save, and the super rows to write (#2220). */
+export interface UndoStepResult {
+  stack: ImportUndoStack;
+  restore: InvestigationState;
+  superRows?: SuperRowsUndo;
+}
+
 // Undo the latest import: pop the top pre-import checkpoint to RESTORE, and push the CURRENT
 // (post-import) state onto the redo stack so it can be re-applied. Returns null when there is
 // nothing to undo. The redo entry inherits the popped checkpoint's label (redoing re-applies that
@@ -155,17 +178,18 @@ export function applyUndo(
   at: string = new Date().toISOString(),
   maxDepth: number = DEFAULT_UNDO_DEPTH,
   maxBytes: number = DEFAULT_UNDO_MAX_BYTES,
-): { stack: ImportUndoStack; restore: InvestigationState } | null {
+): UndoStepResult | null {
   if (stack.undo.length === 0) return null;
   const top = stack.undo[stack.undo.length - 1];
   const restore = restoreOf(top, current);
-  const redoEntry = deltaCheckpoint(top.label, at, current, restore);
+  const redoEntry = mirrorOf(top, deltaCheckpoint(top.label, at, current, restore));
   const depth = Math.max(1, Math.floor(maxDepth));
   let redo = [...stack.redo, redoEntry];
   if (redo.length > depth) redo = redo.slice(redo.length - depth);
   return {
     stack: { undo: stack.undo.slice(0, -1), redo: capBySize(redo, maxBytes) },
     restore,
+    ...(top.superRows ? { superRows: top.superRows } : {}),
   };
 }
 
@@ -178,17 +202,18 @@ export function applyRedo(
   at: string = new Date().toISOString(),
   maxDepth: number = DEFAULT_UNDO_DEPTH,
   maxBytes: number = DEFAULT_UNDO_MAX_BYTES,
-): { stack: ImportUndoStack; restore: InvestigationState } | null {
+): UndoStepResult | null {
   if (stack.redo.length === 0) return null;
   const top = stack.redo[stack.redo.length - 1];
   const restore = restoreOf(top, current);
-  const undoEntry = deltaCheckpoint(top.label, at, current, restore);
+  const undoEntry = mirrorOf(top, deltaCheckpoint(top.label, at, current, restore));
   const depth = Math.max(1, Math.floor(maxDepth));
   let undo = [...stack.undo, undoEntry];
   if (undo.length > depth) undo = undo.slice(undo.length - depth);
   return {
     stack: { undo: capBySize(undo, maxBytes), redo: stack.redo.slice(0, -1) },
     restore,
+    ...(top.superRows ? { superRows: top.superRows } : {}),
   };
 }
 
@@ -256,6 +281,18 @@ function normalizeCounts(v: unknown): CheckpointCounts {
   return { events: n(o.events), iocs: n(o.iocs), findings: n(o.findings) };
 }
 
+const isRowList = (v: unknown): v is ForensicEvent[] =>
+  Array.isArray(v) &&
+  v.every((e) => !!e && typeof e === "object" && typeof (e as { id?: unknown }).id === "string");
+
+function normalizeSuperRows(v: unknown): SuperRowsUndo | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const o = v as Record<string, unknown>;
+  return isRowList(o.restore) && isRowList(o.reapply)
+    ? { restore: o.restore, reapply: o.reapply }
+    : undefined;
+}
+
 function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
   if (!Array.isArray(v)) return [];
   // Trust the index only when it lines up one-to-one with the entries it describes.
@@ -272,6 +309,9 @@ function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
     } else if (isStateDelta(o.delta)) {
       checkpoint = { label, at, delta: o.delta, counts: normalizeCounts(o.counts) };
     } else return; // unrestorable — drop it
+    // Malformed super rows are dropped on their own: the checkpoint still restores the state.
+    const superRows = normalizeSuperRows(o.superRows);
+    if (superRows) checkpoint = { ...checkpoint, superRows };
     const n: unknown = idx[i];
     // A coerced label/at no longer matches the stored entry, so its size is re-measured instead.
     if (
@@ -279,7 +319,8 @@ function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
       Number.isSafeInteger(n) &&
       n > 0 &&
       o.label === checkpoint.label &&
-      o.at === checkpoint.at
+      o.at === checkpoint.at &&
+      (o.superRows === undefined || superRows)
     )
       knownBytes.set(checkpoint, n);
     out.push(checkpoint);
@@ -373,6 +414,8 @@ export interface UndoStepDeps {
   };
   importLock: { runExclusive<T>(caseId: string, fn: () => Promise<T>): Promise<T> };
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
+  /** The super-timeline store, typed by the one method a step uses (#2220). Absent: rows untouched. */
+  superTimeline?: { rehome(caseId: string, events: ForensicEvent[]): Promise<number> };
 }
 
 // One undo or redo step, for the routes. The restored state is saved verbatim — findings, IOCs,
@@ -385,13 +428,17 @@ export interface UndoStepDeps {
 // state never disagree (a retry would otherwise re-apply the delta and record an empty redo). Only a
 // process crash between the two writes can still leave them apart. `summary` is null when there is
 // nothing to undo/redo.
+// A checkpoint with super rows (#2220) also writes its `restore` rows to the super-timeline by id,
+// after the state; a failed stack write puts the `reapply` rows back too. `superChanged` says the
+// step rewrote super-timeline rows, so the route can announce it.
 export async function runUndoStep(
   deps: UndoStepDeps,
   caseId: string,
   step: typeof applyUndo,
-): Promise<{ summary: UndoStackSummary | null; next: InvestigationState | null }> {
-  const { undoStore, stateStore } = deps;
+): Promise<{ summary: UndoStackSummary | null; next: InvestigationState | null; superChanged: boolean }> {
+  const { undoStore, stateStore, superTimeline } = deps;
   let next: InvestigationState | null = null;
+  let superWritten: SuperRowsUndo | undefined;
   const summary = await deps.importLock.runExclusive(caseId, () =>
     deps.runStateExclusive(caseId, async () => {
       const state = await stateStore.load(caseId);
@@ -406,6 +453,10 @@ export async function runUndoStep(
           };
           await stateStore.save(saved);
           next = saved;
+          if (superTimeline && result.superRows?.restore.length) {
+            superWritten = result.superRows; // set first: a partial write is rolled back as well
+            await superTimeline.rehome(caseId, result.superRows.restore);
+          }
           return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
         });
       } catch (err) {
@@ -413,9 +464,14 @@ export async function runUndoStep(
           next = null;
           await stateStore.save(state); // the stack write failed: put the case back as it was
         }
+        if (superTimeline && superWritten) {
+          const rows = superWritten.reapply;
+          superWritten = undefined;
+          await superTimeline.rehome(caseId, rows); // and the super-timeline rows with it
+        }
         throw err;
       }
     }),
   );
-  return { summary, next };
+  return { summary, next, superChanged: superWritten !== undefined };
 }

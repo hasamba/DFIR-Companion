@@ -230,6 +230,8 @@ export interface RouteContext {
     beforeState: InvestigationState | ImportBaseline,
     label: string,
     afterState?: InvestigationState,
+    /** Super-timeline rows rewritten in place (#2220): Undo writes `restore`, Redo `reapply`. */
+    superRows?: { restore: ForensicEvent[]; reapply: ForensicEvent[] },
   ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;

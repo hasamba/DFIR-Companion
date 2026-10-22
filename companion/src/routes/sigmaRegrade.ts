@@ -29,6 +29,7 @@ import {
 } from "../analysis/sigmaRegrade.js";
 import { sigmaRuleMitreIndex } from "../analysis/sigmaRegradeSources.js";
 import { SigmaStoreError } from "../analysis/sigmaRuleStore.js";
+import type { SuperRowsUndo } from "../analysis/importUndo.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { beginImportSection } from "./importSection.js";
 import { loadRegradePlan, regradeNotes } from "./sigmaRegradePlan.js";
@@ -109,10 +110,13 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     try {
       const prepared = await prepare(caseId, snapshot);
       const work = prepared.plan.rows.filter((r) => r.kind !== "unchanged");
-      const demoted = work.length ? await applyRegrade(caseId, prepared, work) : 0;
+      const applied = work.length ? await applyRegrade(caseId, prepared, work) : undefined;
+      const demoted = applied?.demoted ?? 0;
       if (work.some((r) => r.kind === "changed")) {
         const label = regradeLabel(snapshot);
-        if (section.baseline) await ctx.pushImportCheckpoint(caseId, section.baseline, label);
+        // #2220: the checkpoint carries the super copies, so Undo puts both timelines back.
+        if (section.baseline)
+          await ctx.pushImportCheckpoint(caseId, section.baseline, label, undefined, applied?.superRows);
         await ctx.markConclusionsOutOfDate(caseId, "Sigma re-grade"); // #1599: no run of its own
       }
       const c = prepared.plan.counts;
@@ -129,16 +133,21 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     }
   });
 
-  /** The write: super copies, merge, cleanup, demote. Returns how many rows the demote removed. */
+  /**
+   * The write: super copies, merge, cleanup, demote. Returns how many rows the demote removed and,
+   * when super rows were rewritten, their before and after copies for the undo checkpoint (#2220).
+   */
   async function applyRegrade(
     caseId: string,
     { plan, snapshot }: Prepared,
     work: RegradeRow[],
-  ): Promise<number> {
+  ): Promise<{ demoted: number; superRows?: SuperRowsUndo }> {
     const stateStore = options.stateStore!;
-    const superRows = work.flatMap((r) => (r.super ? [r.super.after] : []));
-    if (superRows.length && options.superTimelineStore) {
-      await options.superTimelineStore.rehome(caseId, superRows);
+    const rehomed = work.flatMap((r) => (r.super ? [r.super] : []));
+    let superRows: SuperRowsUndo | undefined;
+    if (rehomed.length && options.superTimelineStore) {
+      superRows = { restore: rehomed.map((s) => s.before), reapply: rehomed.map((s) => s.after) };
+      await options.superTimelineStore.rehome(caseId, superRows.reapply);
       options.onSuperTimeline?.(caseId);
     }
     const merged = work.filter((r) => r.kind === "changed" && (r.forensic || r.entersForensic));
@@ -167,7 +176,7 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     });
     const demoted = await ctx.demoteForensic(caseId);
     options.onStateChanged?.(caseId);
-    return demoted.length;
+    return { demoted: demoted.length, ...(superRows ? { superRows } : {}) };
   }
 }
 

@@ -46,7 +46,7 @@ import {
   type ToolConfig,
 } from "../integrations/tools/toolConfig.js";
 import { createToolRunCache } from "../integrations/tools/toolProvenance.js";
-import { summarizeUndoStack, applyUndo, applyRedo, runUndoStep } from "../analysis/importUndo.js";
+import { registerImportUndoRoutes } from "./importUndoRoutes.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -2705,78 +2705,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // #76 Import undo/redo. Imports can flood the dashboard; these let the analyst roll the forensic
-  // timeline + IOCs back to the pre-import snapshot (and redo). The synthesis-derived conclusions are
-  // re-derived from the restored timeline by resynthesizeInBackground, exactly as on import.
-
-  // Current undo/redo state (button enable + labels). Lightweight summary, not the raw snapshots.
-  app.get("/cases/:id/import/undo-stack", async (req: Request, res: Response) => {
-    if (!options.importUndoStore) return res.status(501).json({ error: "import undo not configured" });
-    try {
-      const stack = await options.importUndoStore.load(req.params.id);
-      return res.status(200).json(summarizeUndoStack(stack, options.importUndoStore.depth()));
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
-
-  // Undo the latest import: restore the full pre-import state (findings/IOCs/timeline/MITRE/attacker
-  // path), push the current state to redo. No AI re-synthesis — the snapshot is the exact prior state.
-  app.post("/cases/:id/import/undo", async (req: Request, res: Response) => {
-    const undoStore = options.importUndoStore;
-    if (!undoStore || !options.stateStore)
-      return res.status(501).json({ error: "import undo not configured" });
-    const caseId = req.params.id;
-    try {
-      const { summary, next } = await runUndoStep(
-        { undoStore, stateStore: options.stateStore, importLock, runStateExclusive: ctx.runStateExclusive },
-        caseId,
-        applyUndo,
-      );
-      if (!summary) return res.status(400).json({ error: "nothing to undo" });
-      // The "last import" banner / NEW row highlights describe a change that has now been rolled back.
-      if (options.importMetaStore) {
-        try {
-          await options.importMetaStore.clear(caseId);
-          options.onImportMeta?.(caseId);
-        } catch {
-          /* non-fatal */
-        }
-      }
-      options.onImportUndo?.(caseId);
-      if (next) options.onState?.(next);
-      return res.status(200).json(summary);
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
-
-  // Redo the most-recently-undone import: re-apply its full state.
-  app.post("/cases/:id/import/redo", async (req: Request, res: Response) => {
-    const undoStore = options.importUndoStore;
-    if (!undoStore || !options.stateStore)
-      return res.status(501).json({ error: "import undo not configured" });
-    const caseId = req.params.id;
-    try {
-      const { summary, next } = await runUndoStep(
-        { undoStore, stateStore: options.stateStore, importLock, runStateExclusive: ctx.runStateExclusive },
-        caseId,
-        applyRedo,
-      );
-      if (!summary) return res.status(400).json({ error: "nothing to redo" });
-      if (options.importMetaStore) {
-        try {
-          await options.importMetaStore.clear(caseId);
-          options.onImportMeta?.(caseId);
-        } catch {
-          /* non-fatal */
-        }
-      }
-      options.onImportUndo?.(caseId);
-      if (next) options.onState?.(next);
-      return res.status(200).json(summary);
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
+  // #76 Import undo/redo — routes/importUndoRoutes.ts, registered at this position (#2220).
+  registerImportUndoRoutes(app, ctx);
 }
