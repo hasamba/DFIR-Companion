@@ -9,8 +9,8 @@
  * Two routes, one body shape:
  *   - OpenRouter — POST https://openrouter.ai/api/alpha/decisions, model `typesafe/jev-1.14` by default — or any
  *     other OpenRouter decision model (#2224); the body and the answers are the same shape.
- *     Its response carries `usage.cost` in real dollars. `typesafe/jev-latest` does NOT exist
- *     there and returns 400; only the versioned id works.
+ *     Its response carries `usage.cost` in real dollars. The `~typesafe/jev-latest` alias works
+ *     there; the default stays versioned so a case's model does not change mid-investigation.
  *   - TypeSafe direct — POST https://api.typesafe.ai/v1/systemone, model `jev-latest`. Same body,
  *     but the response prices nothing, so `costUSD` stays unset.
  *

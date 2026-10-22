@@ -466,6 +466,11 @@ it, the containment card shows `Decision model <model id>`, and promoted rows ca
 no more paid requests go out, and the error names the model, for example
 `Decision model perplexity/pplx-decider-v1.2: HTTP 400 …`. Only Jev 1.13 has been benchmarked.
 
+A live check on 2026-10-22 sent every listed model the app's real questions: 24 of 30 answered them
+all. ScaleDown Classify-1 cannot read the events the app sends, so it is left out of the list. A few
+others (Respan, the free Mercury) were offline at OpenRouter that day; they stay listed, and a run on
+one while it is down stops with an error naming it.
+
 ### Grading style
 
 Settings → AI → *Grading style* picks one of two ways to grade a row. Both read the same rows.
@@ -484,8 +489,9 @@ severity. Use the default unless you are comparing the two on a case you know.
 
 !!! warning "The model id is versioned"
     On OpenRouter the default id is `typesafe/jev-1.14`, and any OpenRouter decision model id works.
-    A versioned id is safest: `typesafe/jev-latest` does not exist there and returns a 400 — the
-    `latest` alias only works against TypeSafe's own endpoint.
+    A versioned id is safest: it does not change under a case mid-investigation. The alias
+    `~typesafe/jev-latest` (with the `~`) works on OpenRouter and follows Jev's newest version; the
+    bare `typesafe/jev-latest` does not exist there.
 
 ## Containment Check
 

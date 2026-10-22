@@ -23,6 +23,18 @@ const MAX_MODELS = 500;
 const MAX_ID_CHARS = 200;
 const TOKENS_PER_MILLION = 1_000_000;
 
+/**
+ * Listed by OpenRouter as decision models, but refuse what every Decision model feature sends — so
+ * offering them would only offer a run that fails. Found by scripts/probe-decision-models.ts on
+ * 2026-10-22: ScaleDown rejects the structured `state` with HTTP 400 ("ScaleDown state must be a …").
+ * Matched with and without a `:variant` suffix. A model that is merely OFFLINE (OpenRouter's
+ * "0 endpoints") stays listed: availability changes daily, and a run on it stops naming the model.
+ * Typing a hidden id by hand still works, and fails with that same named error.
+ */
+const INCOMPATIBLE_MODELS: ReadonlySet<string> = new Set(["scaledown/classify-1"]);
+
+const isIncompatible = (id: string): boolean => INCOMPATIBLE_MODELS.has(id.split(":")[0]);
+
 export interface DecisionModelOption {
   readonly id: string;
   readonly name: string;
@@ -67,6 +79,7 @@ function toOption(raw: unknown): DecisionModelOption | null {
   const m = parsed.data;
   // The query already filters; this is the second lock, so a catalog change cannot slip a chat model in.
   if (!m.architecture?.output_modalities?.includes(DECISIONS)) return null;
+  if (isIncompatible(m.id)) return null;
   const prompt = price(m.pricing?.prompt);
   const completion = price(m.pricing?.completion);
   return {

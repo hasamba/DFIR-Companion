@@ -44,7 +44,11 @@ export interface JevSettings {
   readonly shape: JevGradeShape;
 }
 
-/** `typesafe/jev-latest` does NOT exist on OpenRouter — it 400s. Only a versioned id works there. */
+/**
+ * Versioned on purpose: a pinned model does not change under a case mid-investigation. The alias
+ * `~typesafe/jev-latest` does work on OpenRouter now (it resolved to jev-1.14 on 2026-10-22), but
+ * the bare `typesafe/jev-latest` is not an OpenRouter id.
+ */
 const OPENROUTER_MODEL = "typesafe/jev-1.14";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha/decisions";
 /** `jev-latest` is TypeSafe's own alias, valid only on its direct API. */

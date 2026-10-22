@@ -94,4 +94,14 @@ describe("the decision model catalog", () => {
     const fetchImpl = vi.fn(async () => ok({ nope: true }));
     await expect(createDecisionModelCatalog(fetchImpl as unknown as typeof fetch).list()).rejects.toThrow();
   });
+
+  it("hides a decision model known to refuse the questions the app sends (#2224 live probe)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        data: [entry("scaledown/classify-1"), entry("scaledown/classify-1:free"), entry("typesafe/jev-1.14")],
+      }),
+    );
+    const list = await createDecisionModelCatalog(fetchImpl as unknown as typeof fetch).list();
+    expect(list.models.map((m) => m.id)).toEqual(["typesafe/jev-1.14"]);
+  });
 });
