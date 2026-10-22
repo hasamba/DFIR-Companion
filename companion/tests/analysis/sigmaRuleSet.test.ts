@@ -210,3 +210,17 @@ describe("threat-hunting rules and versioning (#2204)", () => {
     expect(ref.modified).toBe("2025-02-03");
   });
 });
+
+describe("duplicate rule ids (Codex review of #2204)", () => {
+  it("refuses a later file with an id already loaded, naming the first file", () => {
+    const first = file("rules/a.yml", ruleText({ id: "dup", detection: "  sel:\n    eventName: A" }));
+    const second = file(
+      "rules/b.yml",
+      ruleText({ id: "dup", level: "critical", detection: "  sel:\n    eventName: B" }),
+    );
+    const set = buildSigmaRuleSet([first, second], META);
+    expect(set.inventory.map((e) => e.outcome)).toEqual(["loaded", "refused"]);
+    expect(set.inventory[1].reasons?.join(" ")).toMatch(/duplicate rule id.*rules\/a\.yml/);
+    expect(matchSigmaRecord(set, "aws-cloudtrail", { eventName: "B" }).matches).toEqual([]);
+  });
+});

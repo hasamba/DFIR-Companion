@@ -246,8 +246,24 @@ export function buildSigmaRuleSet(
   };
   const sources = new Map<string, SourceRules>();
   const inventory: SigmaInventoryEntry[] = [];
+  // A rule id names one rule. A later file reusing it is refused, so what loads is exactly what a
+  // preview's diff (keyed by id, first occurrence) shows (Codex review of #2204).
+  const firstPathOfId = new Map<string, string>();
   for (const file of files) {
-    const { entry, loaded: found } = classify(file, meta, opts);
+    const classified = classify(file, meta, opts);
+    const firstPath = firstPathOfId.get(classified.entry.id);
+    if (firstPath === undefined) firstPathOfId.set(classified.entry.id, file.path);
+    const { entry, loaded: found } =
+      firstPath === undefined
+        ? classified
+        : {
+            entry: {
+              ...classified.entry,
+              outcome: "refused" as const,
+              reasons: [`duplicate rule id, first seen in ${firstPath}`],
+            },
+            loaded: undefined,
+          };
     inventory.push(entry);
     if (!found) continue;
     const loaded = { ...found, rule: { ...found.rule, order: inventory.length } };

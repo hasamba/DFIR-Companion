@@ -6,7 +6,7 @@
 // Nothing here downloads; the route hands in fetchers so the network stays behind the SSRF guard.
 
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -136,9 +136,20 @@ export class SigmaRuleStore {
     return { id: BUNDLED, release: meta.release, commit: meta.commit, source: "bundled", verified: true };
   }
 
+  /** A release folder counts only with readable metadata AND its rules/ folder (Codex review). */
+  private intactMeta(id: string): InstalledReleaseMeta | undefined {
+    const dir = join(sigmaPaths(this.dataRoot).releases, id);
+    const meta = readReleaseMetaSync(dir);
+    try {
+      return meta && statSync(join(dir, "rules")).isDirectory() ? meta : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private infoFor(id: string): SigmaReleaseInfo {
     if (id === BUNDLED) return this.bundledInfo();
-    const meta = readReleaseMetaSync(join(sigmaPaths(this.dataRoot).releases, id));
+    const meta = this.intactMeta(id);
     if (!meta) {
       this.startupProblems.push(
         `the installed Sigma release ${id} could not be read — using the bundled rules`,
@@ -195,14 +206,36 @@ export class SigmaRuleStore {
     );
   }
 
-  private activeFiles(): { files: SigmaRuleFile[]; problems: string[] } {
-    const dir = this.activeDir();
+  private readFiles(dir: string | undefined): { files: SigmaRuleFile[]; problems: string[] } {
     if (!dir) return { files: [], problems: ["no bundled Sigma rules folder (data/sigma/rules) was found"] };
     const { files, overflow } = ruleFiles(dir);
     return {
       files,
       problems: overflow ? [`more than ${SIGMA_MAX_RULE_FILES} rule files; the rest were not read`] : [],
     };
+  }
+
+  /**
+   * The active release's files. An installed release that cannot be read, or holds no rules, falls
+   * back to the bundled rules with a problem sentence — imports never run on zero rules, and a read
+   * error never reaches an import (Codex review of #2204).
+   */
+  private activeFiles(): { files: SigmaRuleFile[]; problems: string[] } {
+    if (this.activeInfo.id === BUNDLED) return this.readFiles(this.bundledDir);
+    let read: { files: SigmaRuleFile[]; problems: string[] } | undefined;
+    let why = "it holds no rules";
+    try {
+      read = this.readFiles(this.activeDir());
+    } catch (error) {
+      why = (error as Error).message;
+    }
+    if (read && read.files.length > 0) return read;
+    const failed = this.activeInfo.id;
+    this.activeInfo = this.bundledInfo();
+    this.startupProblems.push(
+      `the installed Sigma release ${failed} could not be read (${why}) — using the bundled rules`,
+    );
+    return this.readFiles(this.bundledDir);
   }
 
   /** The rule set imports are graded with: the active release, current statuses and disabled list. */
@@ -397,7 +430,7 @@ export class SigmaRuleStore {
     return this.serial(async () => {
       const prev = this.manifest.previous;
       if (!prev) throw new SigmaStoreError(409, "there is no earlier release to roll back to");
-      if (prev !== BUNDLED && !(await readReleaseMeta(join(sigmaPaths(this.dataRoot).releases, prev))))
+      if (prev !== BUNDLED && !this.intactMeta(prev))
         throw new SigmaStoreError(409, `the earlier release ${prev} can no longer be read`);
       await this.activate({
         active: prev,

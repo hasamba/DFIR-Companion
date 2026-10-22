@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -151,5 +151,27 @@ describe("SigmaRuleStore", () => {
     await s.init();
     expect(await readdir(sigmaPaths(root).releases)).toEqual([]);
     expect(await readdir(sigmaPaths(root).staging)).toEqual([]);
+  });
+
+  it("falls back to the bundled rules, and says so, when an installed release lost its rules (Codex review)", async () => {
+    const { s: st, root } = await store();
+    const p = await st.preview(releaseZip(), file);
+    const installed = await st.install(p.token);
+    await rm(join(sigmaPaths(root).releases, installed.id, "rules"), { recursive: true, force: true });
+    const fresh = new SigmaRuleStore(root, BUNDLED, {});
+    await fresh.init();
+    expect(fresh.active().id).toBe("bundled");
+    const set = fresh.activeRuleSet();
+    expect(set.release).toBe("r2026-07-01");
+    expect(set.problems.join(" ")).toMatch(new RegExp(`${installed.id} could not be read`));
+    expect(set.inventory.some((e) => e.outcome === "loaded")).toBe(true);
+  });
+
+  it("refuses to roll back to a release that lost its rules", async () => {
+    const { s: st, root } = await store();
+    const first = await st.install((await st.preview(releaseZip(), file)).token);
+    await st.install((await st.preview(releaseZip({ "rules/cloud/aws/new.yml": NEW_RULE }), file)).token);
+    await rm(join(sigmaPaths(root).releases, first.id, "rules"), { recursive: true, force: true });
+    await expect(st.rollback()).rejects.toThrow(/can no longer be read/);
   });
 });
