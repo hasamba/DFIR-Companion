@@ -304,7 +304,8 @@ The tab also shows:
   downloaded and checked against the SHA-256 GitHub publishes, then shown as rules added, changed and
   removed for the log sources the Companion grades. **Nothing is installed until you click Install.**
 - **Install from file** — the same review for a release zip you downloaded yourself (air-gapped labs).
-  A file install is marked "not checked against GitHub" and records the file's SHA-256.
+  A file install is marked "not checked against GitHub" and records the file's SHA-256. The zip
+  must be 32 MB or smaller; a SigmaHQ release is a few MB.
 - **Roll back** — switches back to the previous release (the bundled rules after a first install).
 - **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
   noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion

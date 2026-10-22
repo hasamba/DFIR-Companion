@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "../../src/analysis/sigmaReleaseArchive.js";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
-import { declaredFunctions } from "../helpers/dashboardModule.js";
+import { declaredFunctions, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-sigma-rules.js — Settings → Sigma rules (#2204). Rule titles and reasons come
 // from release files the analyst may have uploaded, so the module must never write HTML from them.
@@ -51,5 +52,44 @@ describe("the Sigma rules settings tab", () => {
       "DFIR_SIGMA_UPDATE_CHECK",
     ])
       expect(html).toContain(`id="env-${key}"`);
+  });
+
+  // #2213: a file over the server's cap must be refused before it is read, or a large zip freezes
+  // the tab while it is base64-encoded. The cap is the server constant, so the limits cannot drift.
+  describe("install from file size guard", () => {
+    function loadWithFile(size: number) {
+      const box = { textContent: "", style: { color: "" } };
+      const file = { name: "dump.zip", size, arrayBuffer: vi.fn(async () => new ArrayBuffer(4)) };
+      const fetch = vi.fn(async () => {
+        throw new Error("offline");
+      });
+      const document = {
+        readyState: "loading",
+        addEventListener: () => undefined,
+        getElementById: (id: string) =>
+          id === "sigmaFile" ? { files: [file] } : id === "sigmaMessage" ? box : null,
+      };
+      const mod = loadDashboardModule<{ sigmaInstallFile: () => Promise<void> }>(
+        "dashboard-sigma-rules.js",
+        [],
+        { document, fetch },
+      );
+      return { mod, box, file, fetch };
+    }
+
+    it("refuses a zip over the server cap without reading it", async () => {
+      const { mod, box, file, fetch } = loadWithFile(SIGMA_RELEASE_MAX_ZIP_BYTES + 1);
+      await mod.sigmaInstallFile();
+      expect(file.arrayBuffer).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(box.textContent).toContain("too large");
+      expect(box.textContent).toContain("32 MB");
+    });
+
+    it("reads a zip exactly at the server cap", async () => {
+      const { mod, file } = loadWithFile(SIGMA_RELEASE_MAX_ZIP_BYTES);
+      await mod.sigmaInstallFile();
+      expect(file.arrayBuffer).toHaveBeenCalledTimes(1);
+    });
   });
 });

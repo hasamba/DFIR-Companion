@@ -8,6 +8,10 @@
 // Every string from the server is rendered with textContent, never innerHTML: a release installed
 // from a file carries rule titles and reasons nobody vetted.
 
+// The largest release zip the server accepts. Matches SIGMA_RELEASE_MAX_ZIP_BYTES in
+// companion/src/analysis/sigmaReleaseArchive.ts; dashboardSigmaRules.test.ts pins the two together.
+const SIGMA_MAX_ZIP_BYTES = 32 * 1024 * 1024;
+
 function sigmaEl(tag, text, cls) {
   const el = document.createElement(tag);
   if (text !== undefined && text !== null) el.textContent = String(text);
@@ -178,6 +182,14 @@ async function sigmaInstallFile() {
   const input = document.getElementById("sigmaFile");
   const file = input && input.files && input.files[0];
   if (!file) return sigmaMsg("Choose a SigmaHQ release zip first (for example sigma_all_rules.zip).", true);
+  // Refuse before reading (#2213): base64-encoding a multi-GB file freezes or crashes the tab.
+  if (file.size > SIGMA_MAX_ZIP_BYTES) {
+    const mb = (file.size / 1048576).toFixed(1);
+    return sigmaMsg(
+      `${file.name} is ${mb} MB — too large for a SigmaHQ release zip (limit 32 MB). Choose sigma_all_rules.zip or a similar release file.`,
+      true,
+    );
+  }
   sigmaMsg(`Reading ${file.name}…`);
   try {
     const zipBase64 = sigmaBase64(await file.arrayBuffer());
