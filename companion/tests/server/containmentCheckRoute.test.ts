@@ -261,12 +261,12 @@ describe("the containment check routes", () => {
       expect(JSON.stringify(await stateStore.load("c1"))).toBe(before);
     });
 
-    it("answers 502 without the key when Jev refuses the call", async () => {
+    it("answers 502 without the key when the decision model refuses the call", async () => {
       status = 401;
       const { app, playbookStore } = await harness();
       const res = await request(app).post(PATH).send({});
       expect(res.status).toBe(502);
-      expect(String(res.body.error)).toMatch(/^Jev containment check failed: /);
+      expect(String(res.body.error)).toMatch(/^Decision model containment check failed: /);
       expect(String(res.body.error)).not.toContain(KEY);
       expect(await playbookStore.load("c1")).toEqual([]);
     });

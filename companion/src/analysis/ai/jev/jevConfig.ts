@@ -44,8 +44,12 @@ export interface JevSettings {
   readonly shape: JevGradeShape;
 }
 
-/** `typesafe/jev-latest` does NOT exist on OpenRouter — it 400s. Only a versioned id works there. */
-const OPENROUTER_MODEL = "typesafe/jev-1.13";
+/**
+ * Versioned on purpose: a pinned model does not change under a case mid-investigation. The alias
+ * `~typesafe/jev-latest` does work on OpenRouter now (it resolved to jev-1.14 on 2026-10-22), but
+ * the bare `typesafe/jev-latest` is not an OpenRouter id.
+ */
+const OPENROUTER_MODEL = "typesafe/jev-1.14";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha/decisions";
 /** `jev-latest` is TypeSafe's own alias, valid only on its direct API. */
 const TYPESAFE_MODEL = "jev-latest";
@@ -145,12 +149,12 @@ export function describeJevKeySource(env: NodeJS.ProcessEnv = process.env): JevK
 /** Returns null with a reason when Jev is not usable (disabled, or no key resolvable). */
 export function resolveJevSettings(env: NodeJS.ProcessEnv = process.env): Resolved {
   if (!TRUTHY.has((env.DFIR_JEV_ENABLED ?? "").trim().toLowerCase()))
-    return unusable("Jev is off. Set DFIR_JEV_ENABLED=1 to turn it on.");
+    return unusable("The decision model is off. Set DFIR_JEV_ENABLED=1 to turn it on.");
 
   const providerName = (text(env, "DFIR_JEV_PROVIDER") ?? "openrouter").toLowerCase();
   if (providerName !== "openrouter" && providerName !== "typesafe")
     return unusable(
-      `DFIR_JEV_PROVIDER="${providerName}" is not a Jev route. Use "openrouter" (the default) or "typesafe".`,
+      `DFIR_JEV_PROVIDER="${providerName}" is not a decision-model provider. Use "openrouter" (the default) or "typesafe".`,
     );
   const provider: JevProvider = providerName;
   const isOpenRouter = provider === "openrouter";
@@ -206,7 +210,7 @@ function resolveKey(
   const inherited = inheritedOpenRouterKey(env);
   if (!inherited)
     return unusable(
-      "No Jev API key. Set DFIR_JEV_KEY, or one of DFIR_AI_KEY_OPENROUTER / DFIR_AI_VELO_KEY / " +
+      "No decision-model API key. Set DFIR_JEV_KEY, or one of DFIR_AI_KEY_OPENROUTER / DFIR_AI_VELO_KEY / " +
         "DFIR_AI_SYNTH_KEY / DFIR_VISION_KEY / DFIR_AI_KEY for the OpenRouter route.",
     );
   if (host !== OPENROUTER_HOST)

@@ -273,6 +273,7 @@
       await Promise.all([
         ...AI_MODEL_PICKERS.map((picker) => refreshAiModels(picker)),
         refreshAiKeyMigration(),
+        window.refreshDecisionModels?.(), // #2224: painted against the saved DFIR_JEV_MODEL
       ]);
     } catch {}
   }
@@ -700,7 +701,7 @@
   function initEnvSettings() {
     wireAiModelPickers();
     document.getElementById("aiKeyMigrationBtn")?.addEventListener("click", runAiKeyMigration);
-    // The Jev key hint is repainted on anything that changes its answer, and the probe runs once.
+    // The decision-model key hint is repainted on anything that changes its answer, and the probe runs once.
     // This belongs here, not at module scope: a DOM read that runs before the markup exists finds
     // nothing, attaches to nothing, and reports no error — which is what dashboardFeatureLifecycle
     // refuses, and it refused this on the first attempt.

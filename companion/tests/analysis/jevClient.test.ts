@@ -318,3 +318,33 @@ describe("askJev — the API key never leaks", () => {
     expect(String((err as Error).message)).not.toContain(KEY);
   });
 });
+
+describe("a rejected question names the decision model that rejected it (#2224)", () => {
+  const PPLX: JevRequestConfig = { ...CFG, model: "perplexity/pplx-decider-v1.2", maxRetries: 0 };
+
+  it("says which model refused, on an HTTP error", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: "unsupported question type" }, 400));
+    await expect(askJev(PPLX, "s", QUESTIONS, fetchImpl as unknown as typeof fetch)).rejects.toThrow(
+      /^Decision model .*perplexity\/pplx-decider-v1\.2/s,
+    );
+  });
+
+  it("says which model answered wrongly, on a missing answer", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ model: PPLX.model, answers: {} }));
+    await expect(askJev(PPLX, "s", QUESTIONS, fetchImpl as unknown as typeof fetch)).rejects.toThrow(
+      /^Decision model .*perplexity\/pplx-decider-v1\.2/s,
+    );
+  });
+
+  it("leaves an error thrown by beforeSend untouched", async () => {
+    const stop = new Error("masking changed");
+    const fetchImpl = vi.fn();
+    const cfg: JevRequestConfig = {
+      ...PPLX,
+      beforeSend: () => {
+        throw stop;
+      },
+    };
+    await expect(askJev(cfg, "s", QUESTIONS, fetchImpl as unknown as typeof fetch)).rejects.toBe(stop);
+  });
+});

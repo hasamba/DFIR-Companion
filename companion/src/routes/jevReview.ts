@@ -9,6 +9,7 @@ import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { createDecisionModelCatalog } from "../analysis/ai/jev/decisionModels.js";
 import { buildAnalystContext } from "../analysis/ai/jev/jevDecomposed.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
@@ -69,6 +70,9 @@ async function readMatchingRows(
 /** Shown as-is by the panel, after "The review did not run: ". */
 const REVIEW_RUNNING = "a missed-evidence review of this case is already running — wait for it to finish";
 
+/** One per process: the catalog is the same for every case and its cache is the point. */
+const sharedDecisionModelCatalog = createDecisionModelCatalog();
+
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
   const grades = options.jevGradeStore ?? new JevGradeStore(store);
@@ -87,6 +91,20 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
   // It answers with the NAME of the setting a key would come from and never with a key.
   app.get("/settings/jev/key-source", (_req: Request, res: Response) => res.json(describeJevKeySource()));
+
+  // The Settings model picker's list (#2224): OpenRouter's decision models only, fetched and cached
+  // by the server because the page's CSP keeps the browser off openrouter.ai. Free and keyless, so
+  // it is not an AI call and is not budgeted as one.
+  const catalog = options.decisionModelCatalog ?? sharedDecisionModelCatalog;
+  app.get("/settings/jev/models", async (_req: Request, res: Response) => {
+    try {
+      return res.json(await catalog.list());
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      getServerLogger().warn(`[decision-model] model list unavailable — ${detail}`);
+      return res.status(502).json({ error: `Could not load the decision model list: ${detail}` });
+    }
+  });
 
   app.get("/cases/:id/jev/status", (_req: Request, res: Response) => {
     const resolved = resolveJevSettings();
@@ -235,7 +253,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       const result = await gradeEvents(
         {
           mask,
-          ask: (jevState, questions) =>
+          ask: (jevState, questions, halted) =>
             presidioCheck(jevState).then(() =>
               askJev(
                 {
@@ -244,7 +262,11 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
                   apiKey: settings.apiKey,
                   timeoutMs: settings.timeoutMs,
                   // Before every attempt, retries included: a retry resends the same masked body.
-                  beforeSend: () => assertAnonRevision(caseId, maskedAt, "the missed-evidence review"),
+                  // #2224: and once another batch of this review has failed, nothing more is sent.
+                  beforeSend: () => {
+                    if (halted()) throw new Error("review halted after an earlier batch failed");
+                    assertAnonRevision(caseId, maskedAt, "the missed-evidence review");
+                  },
                 },
                 jevState,
                 questions,
@@ -293,7 +315,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       if (sendJevPresidioStop(res, err, caseId, options)) return res;
       const detail = err instanceof Error ? err.message : String(err);
       getServerLogger().warn(`[jev] ${caseId}: review failed — ${detail}`, { caseId });
-      return res.status(502).json({ error: `Jev review failed: ${detail}` });
+      return res.status(502).json({ error: `Decision model review failed: ${detail}` });
     }
   }
 }

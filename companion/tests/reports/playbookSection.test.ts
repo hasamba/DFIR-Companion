@@ -83,7 +83,7 @@ describe("playbookSection", () => {
     const md = render([task({ title: "Block the destination org-wide", containmentCheck: attribution() })]);
     expect(md).toContain("**Containment-check attribution**");
     expect(md).toContain(
-      "- #1 (T001) — suggested by the Jev containment check of finding F3 (model typesafe/jev-1.13, 2026-10-02, rule containment-v1): " +
+      "- #1 (T001) — suggested by the decision-model containment check of finding F3 (model typesafe/jev-1.13, 2026-10-02, rule containment-v1): " +
         "data/command traffic to attacker destination: yes (0.91); reach: whole organization (confidence 0.72).",
     );
     expect(md).not.toContain("check manually");
@@ -130,10 +130,10 @@ describe("playbookSection", () => {
     const tasks = [task({ containmentCheck: attribution() })];
     const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, tasks);
     expect(md).toContain("**Containment-check attribution**");
-    expect(md).toContain("suggested by the Jev containment check of finding F3");
+    expect(md).toContain("suggested by the decision-model containment check of finding F3");
     const html = renderHtmlReport(emptyState("c1"), undefined, undefined, undefined, undefined, tasks);
     expect(html).toContain("Containment-check attribution");
-    expect(html).toContain("suggested by the Jev containment check of finding F3");
+    expect(html).toContain("suggested by the decision-model containment check of finding F3");
   });
 
   it("an HTML-looking model string stays inert in the HTML report", () => {

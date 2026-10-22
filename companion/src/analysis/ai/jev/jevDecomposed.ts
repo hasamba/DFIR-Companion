@@ -174,7 +174,7 @@ export function buildDecomposedQuestions(
 
 function need(answers: Readonly<Record<string, JevAnswer>>, key: string, type: JevAnswer["type"]): JevAnswer {
   const a = answers[key];
-  if (a?.type !== type) throw new Error(`Jev returned no ${type} answer for ${key}`);
+  if (a?.type !== type) throw new Error(`Decision model returned no ${type} answer for ${key}`);
   return a;
 }
 

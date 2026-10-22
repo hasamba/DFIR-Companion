@@ -518,9 +518,9 @@ describe("gradeEvents — decomposed shape", () => {
     const deps = stubAsk({ R000: 3 });
     const wrapped: JevGraderDeps = {
       mask: deps.mask,
-      ask: (s, q) => {
+      ask: (s, q, halted) => {
         seen.push({ state: s as Record<string, unknown>, questions: q });
-        return deps.ask(s, q);
+        return deps.ask(s, q, halted);
       },
     };
     const res = await gradeEvents(wrapped, [ev("a")], { batchSize: 10, shape: "single" });

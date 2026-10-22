@@ -102,7 +102,7 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
         if (sendJevPresidioStop(res, err, caseId, options)) return res;
         const detail = err instanceof Error ? err.message : String(err);
         getServerLogger().warn(`[jev] ${caseId}: containment check failed — ${detail}`, { caseId });
-        return res.status(502).json({ error: `Jev containment check failed: ${detail}` });
+        return res.status(502).json({ error: `Decision model containment check failed: ${detail}` });
       }
 
       await options.aiCostStore?.record(caseId, "other", "jev", result.model, {

@@ -181,6 +181,8 @@ export interface JevGradeRow {
   readonly path?: string;
   /** Present only on a decomposed grade. */
   readonly signals?: JevGradeSignals;
+  /** The model id the service answered this row under (#2224) — batches of one review can differ. */
+  readonly model: string;
 }
 
 export interface JevReviewResult {
@@ -194,8 +196,43 @@ export interface JevReviewResult {
 export interface JevGraderDeps {
   /** The case anonymizer's apply(), or identity when masking is off for this case. */
   readonly mask: (text: string) => string;
-  readonly ask: (state: unknown, questions: Readonly<Record<string, JevQuestion>>) => Promise<JevBatchResult>;
+  /**
+   * `halted` turns true once any batch of the same review has failed (#2224). The caller checks it
+   * before every attempt, retries included, so a run that has already failed sends nothing more.
+   */
+  readonly ask: (
+    state: unknown,
+    questions: Readonly<Record<string, JevQuestion>>,
+    halted: () => boolean,
+  ) => Promise<JevBatchResult>;
 }
+
+/**
+ * One review's shared stop flag: set by the first failure, read before every request (#2224). It
+ * also KEEPS that first failure: once halted, other requests fail with stand-ins (ours, or the
+ * caller's own beforeSend error), and none of those may replace the cause the analyst needs to see.
+ */
+interface RunHalt {
+  failed: boolean;
+  cause?: unknown;
+}
+
+function haltOn(halt: RunHalt, err: unknown): void {
+  if (halt.failed) return;
+  halt.failed = true;
+  halt.cause = err;
+}
+
+/** Thrown in place of a request the review no longer sends; never the error the analyst sees. */
+class ReviewHalted extends Error {
+  constructor() {
+    super("review halted after an earlier batch failed");
+    this.name = "ReviewHalted";
+  }
+}
+
+/** A batch's answers plus which model answered each row id — a split batch has two halves. */
+type SplitResult = JevBatchResult & { readonly rowModels: Readonly<Record<string, string>> };
 
 /**
  * Flatten one event into the text Jev judges. Every rendered field is masked, in both views.
@@ -354,14 +391,16 @@ async function askWithSplit(
   batch: readonly ForensicEvent[],
   ids: readonly string[],
   plan: AskPlan,
-): Promise<JevBatchResult> {
+  halt: RunHalt,
+): Promise<SplitResult> {
+  if (halt.failed) throw new ReviewHalted();
   const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
   const subjectText = Object.fromEntries(
     batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, deps.mask)]),
   );
   try {
     const withContext = plan.shape === "decomposed" && plan.caseContext !== "";
-    return await deps.ask(
+    const result = await deps.ask(
       {
         note: STATE_NOTE,
         [ROWS_KEY]: rowText,
@@ -369,17 +408,21 @@ async function askWithSplit(
         ...(withContext ? { [CASE_CONTEXT_KEY]: plan.caseContext } : {}),
       },
       buildBatchQuestions([...ids], plan.shape, withContext),
+      () => halt.failed,
     );
+    return { ...result, rowModels: Object.fromEntries(ids.map((id) => [id, result.model])) };
   } catch (err) {
     if (!isTooLarge(err) || batch.length < 2) throw err;
     const mid = Math.ceil(batch.length / 2);
-    const [a, b] = await Promise.all([
-      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan),
-      askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan),
-    ]);
+    const [a, b] = await settleBoth(
+      halt,
+      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan, halt),
+      askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan, halt),
+    );
     return {
       model: a.model || b.model,
       answers: { ...a.answers, ...b.answers },
+      rowModels: { ...a.rowModels, ...b.rowModels },
       usage: {
         inputTokens: a.usage.inputTokens + b.usage.inputTokens,
         outputTokens: a.usage.outputTokens + b.usage.outputTokens,
@@ -391,11 +434,31 @@ async function askWithSplit(
   }
 }
 
+/**
+ * Both halves of a split, or the first real error once BOTH have settled. Promise.all would reject
+ * while the sibling is still sending; the first failure halts the sibling's next attempt instead.
+ */
+async function settleBoth(
+  halt: RunHalt,
+  a: Promise<SplitResult>,
+  b: Promise<SplitResult>,
+): Promise<[SplitResult, SplitResult]> {
+  const mark = (p: Promise<SplitResult>): Promise<SplitResult> =>
+    p.catch((err: unknown) => {
+      haltOn(halt, err);
+      throw err;
+    });
+  const [ra, rb] = await Promise.allSettled([mark(a), mark(b)]);
+  if (ra.status === "fulfilled" && rb.status === "fulfilled") return [ra.value, rb.value];
+  throw halt.cause;
+}
+
 /** One row's answers → its graded row, by the shape the review asked in. */
-function toGradeRow(e: ForensicEvent, id: string, result: JevBatchResult, plan: AskPlan): JevGradeRow {
+function toGradeRow(e: ForensicEvent, id: string, result: SplitResult, plan: AskPlan): JevGradeRow {
   const tool = result.answers[`${id}_tool`];
   const base = {
     id: e.id,
+    model: result.rowModels[id] ?? result.model,
     tooling: tool?.type === "noul" ? tool.noul : 0,
     description: e.description,
     artifactName: e.artifactName,
@@ -415,7 +478,7 @@ function toGradeRow(e: ForensicEvent, id: string, result: JevBatchResult, plan: 
     };
   }
   const grade = result.answers[id];
-  if (grade?.type !== "score") throw new Error(`Jev returned no grade for row ${e.id}`);
+  if (grade?.type !== "score") throw new Error(`Decision model returned no grade for row ${e.id}`);
   return { ...base, score: grade.score, grade: severityFor(grade.score), confidence: grade.confidence };
 }
 
@@ -444,7 +507,7 @@ export async function gradeEvents(
   // a review that quietly graded nothing and reported success. Found when a harness passed the
   // wrong argument here; the configured value is clamped upstream, so this only catches a caller.
   if (!Number.isFinite(opts.batchSize) || opts.batchSize < 1) {
-    throw new Error(`Jev batch size must be a positive number, got ${String(opts.batchSize)}`);
+    throw new Error(`Decision model batch size must be a positive number, got ${String(opts.batchSize)}`);
   }
   // Planned by what each batch will COST. `batchSize` survives as an upper bound on rows so a
   // case of tiny rows cannot build a request of 500 questions; the budget is what actually binds.
@@ -469,8 +532,12 @@ export async function gradeEvents(
   // not matter — the rows are sorted by grade at the end.
   const queue = [...batches.entries()];
   const graded: JevGradeRow[][] = new Array(batches.length);
+  // #2224: the first failure stops the run. No worker dequeues or retries after it, and the review
+  // rejects only once every request already in flight has settled — so the route's lock is never
+  // released while this review is still sending billable batches.
+  const halt: RunHalt = { failed: false };
   const workers = Array.from({ length: Math.min(GRADE_CONCURRENCY, batches.length) }, async () => {
-    for (;;) {
+    while (!halt.failed) {
       const next = queue.shift();
       if (!next) return;
       const [index, batch] = next;
@@ -483,15 +550,20 @@ export async function gradeEvents(
       // batch and ask again, down to a single row. Any other failure still rejects the whole
       // review — a review that silently covered half the rows would be the coverage lie this
       // panel exists to avoid. Found by a real 40-row batch being refused on the first case it met.
-      const result = await askWithSplit(deps, batch, ids, plan);
-      model = result.model;
-      inputTokens += result.usage.inputTokens;
-      outputTokens += result.usage.outputTokens;
-      if (result.usage.costUSD !== undefined) costUSD = (costUSD ?? 0) + result.usage.costUSD;
-      graded[index] = batch.map((e, i) => toGradeRow(e, ids[i], result, plan));
+      try {
+        const result = await askWithSplit(deps, batch, ids, plan, halt);
+        model = result.model;
+        inputTokens += result.usage.inputTokens;
+        outputTokens += result.usage.outputTokens;
+        if (result.usage.costUSD !== undefined) costUSD = (costUSD ?? 0) + result.usage.costUSD;
+        graded[index] = batch.map((e, i) => toGradeRow(e, ids[i], result, plan));
+      } catch (err) {
+        haltOn(halt, err);
+      }
     }
   });
   await Promise.all(workers);
+  if (halt.failed) throw halt.cause;
   const rows = graded.flat();
 
   return {

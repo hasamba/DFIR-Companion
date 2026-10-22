@@ -1068,6 +1068,14 @@ export const FEATURES: Feature[] = [
     private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES", "LOCAL_PRESIDIO_HOSTS"],
   },
   {
+    // Settings → Decision model picker (#2224). requestVersion is private: a reachable copy would let
+    // another module make a stale model list paint over the provider the analyst just switched to.
+    file: "dashboard-decision-model-picker.js",
+    initializer: "initDecisionModelPicker",
+    publish: ["initDecisionModelPicker", "refreshDecisionModels"],
+    private: ["requestVersion", "CUSTOM", "DEFAULT_MODEL"],
+  },
+  {
     // Memory Next Steps (#101). No initializer — the only load-time statement in its range was a
     // guard stanza an earlier extraction left there.
     file: "dashboard-memory-next-steps.js",

@@ -7,9 +7,10 @@
  * transport, so the caller decides what is worth asking about and what to do with the verdicts.
  *
  * Two routes, one body shape:
- *   - OpenRouter — POST https://openrouter.ai/api/alpha/decisions, model `typesafe/jev-1.13`.
- *     Its response carries `usage.cost` in real dollars. `typesafe/jev-latest` does NOT exist
- *     there and returns 400; only the versioned id works.
+ *   - OpenRouter — POST https://openrouter.ai/api/alpha/decisions, model `typesafe/jev-1.14` by default — or any
+ *     other OpenRouter decision model (#2224); the body and the answers are the same shape.
+ *     Its response carries `usage.cost` in real dollars. The `~typesafe/jev-latest` alias works
+ *     there; the default stays versioned so a case's model does not change mid-investigation.
  *   - TypeSafe direct — POST https://api.typesafe.ai/v1/systemone, model `jev-latest`. Same body,
  *     but the response prices nothing, so `costUSD` stays unset.
  *
@@ -101,28 +102,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validateQuestions(questions: Readonly<Record<string, JevQuestion>>): void {
   const ids = Object.keys(questions);
-  if (ids.length === 0) throw new Error("Jev needs at least one question — there is nothing to decide.");
+  if (ids.length === 0)
+    throw new Error("Decision model needs at least one question — there is nothing to decide.");
   for (const id of ids) {
     const q = questions[id] as JevQuestion | undefined;
-    if (!q || !isRecord(q)) throw new Error(`Jev question "${id}" is not a question object.`);
+    if (!q || !isRecord(q)) throw new Error(`Decision model question "${id}" is not a question object.`);
     if (typeof q.instructions !== "string" || q.instructions.trim() === "")
-      throw new Error(`Jev question "${id}": instructions must be a non-empty string.`);
+      throw new Error(`Decision model question "${id}": instructions must be a non-empty string.`);
     if (q.type === "choice") {
       const options = isRecord(q.criteria) ? Object.keys(q.criteria).length : 0;
       if (options < 1 || options > MAX_CHOICE_OPTIONS)
         throw new Error(
-          `Jev question "${id}": a choice needs 1..${MAX_CHOICE_OPTIONS} options, got ${options}.`,
+          `Decision model question "${id}": a choice needs 1..${MAX_CHOICE_OPTIONS} options, got ${options}.`,
         );
     } else if (q.type === "score") {
       const levels = Array.isArray(q.criteria) ? q.criteria.length : 0;
       if (levels < MIN_SCORE_LEVELS || levels > MAX_SCORE_LEVELS)
         throw new Error(
-          `Jev question "${id}": a score needs ${MIN_SCORE_LEVELS}..${MAX_SCORE_LEVELS} ordered level ` +
+          `Decision model question "${id}": a score needs ${MIN_SCORE_LEVELS}..${MAX_SCORE_LEVELS} ordered level ` +
             `descriptions, got ${levels}.`,
         );
     } else if (q.type !== "noul") {
       throw new Error(
-        `Jev question "${id}": unknown question type "${String((q as { type?: unknown }).type)}".`,
+        `Decision model question "${id}": unknown question type "${String((q as { type?: unknown }).type)}".`,
       );
     }
   }
@@ -131,17 +133,19 @@ function validateQuestions(questions: Readonly<Record<string, JevQuestion>>): vo
 function numberField(raw: Record<string, unknown>, field: string, id: string): number {
   const value = raw[field];
   if (typeof value !== "number" || !Number.isFinite(value))
-    throw new Error(`Jev answer "${id}": ${field} must be a finite number, got ${JSON.stringify(value)}.`);
+    throw new Error(
+      `Decision model answer "${id}": ${field} must be a finite number, got ${JSON.stringify(value)}.`,
+    );
   return value;
 }
 
 function numberMap(raw: Record<string, unknown>, field: string, id: string): Record<string, number> {
   const value = raw[field];
-  if (!isRecord(value)) throw new Error(`Jev answer "${id}": ${field} must be a map of numbers.`);
+  if (!isRecord(value)) throw new Error(`Decision model answer "${id}": ${field} must be a map of numbers.`);
   const out: Record<string, number> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry !== "number" || !Number.isFinite(entry))
-      throw new Error(`Jev answer "${id}": ${field}["${key}"] is not a finite number.`);
+      throw new Error(`Decision model answer "${id}": ${field}["${key}"] is not a finite number.`);
     out[key] = entry;
   }
   return out;
@@ -149,32 +153,35 @@ function numberMap(raw: Record<string, unknown>, field: string, id: string): Rec
 
 function stringMap(raw: Record<string, unknown>, field: string, id: string): Record<string, string> {
   const value = raw[field];
-  if (!isRecord(value)) throw new Error(`Jev answer "${id}": ${field} must be a map of strings.`);
+  if (!isRecord(value)) throw new Error(`Decision model answer "${id}": ${field} must be a map of strings.`);
   const out: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== "string") throw new Error(`Jev answer "${id}": ${field}["${key}"] is not a string.`);
+    if (typeof entry !== "string")
+      throw new Error(`Decision model answer "${id}": ${field}["${key}"] is not a string.`);
     out[key] = entry;
   }
   return out;
 }
 
 function parseAnswer(id: string, question: JevQuestion, raw: unknown): JevAnswer {
-  if (!isRecord(raw)) throw new Error(`Jev answer "${id}" is missing or is not an object.`);
+  if (!isRecord(raw)) throw new Error(`Decision model answer "${id}" is missing or is not an object.`);
   if (raw.type !== question.type)
     throw new Error(
-      `Jev answer "${id}": expected a "${question.type}" answer, got "${String(raw.type)}". ` +
+      `Decision model answer "${id}": expected a "${question.type}" answer, got "${String(raw.type)}". ` +
         `The question and its answer must agree.`,
     );
   if (question.type === "noul") {
     const noul = numberField(raw, "noul", id);
     if (noul < 0 || noul > 1)
-      throw new Error(`Jev answer "${id}": noul is a probability and must be 0..1, got ${noul}.`);
+      throw new Error(`Decision model answer "${id}": noul is a probability and must be 0..1, got ${noul}.`);
     return { type: "noul", noul };
   }
   if (question.type === "choice") {
     const choice = raw.choice;
     if (typeof choice !== "string" || !(choice in question.criteria))
-      throw new Error(`Jev answer "${id}": choice "${String(choice)}" is not one of the offered options.`);
+      throw new Error(
+        `Decision model answer "${id}": choice "${String(choice)}" is not one of the offered options.`,
+      );
     return {
       type: "choice",
       choice,
@@ -211,9 +218,9 @@ function parseBatch(
   json: unknown,
   questions: Readonly<Record<string, JevQuestion>>,
 ): JevBatchResult {
-  if (!isRecord(json)) throw new Error("Jev returned a body that is not a JSON object.");
+  if (!isRecord(json)) throw new Error("Decision model returned a body that is not a JSON object.");
   const rawAnswers = json.answers;
-  if (!isRecord(rawAnswers)) throw new Error("Jev returned no answers map.");
+  if (!isRecord(rawAnswers)) throw new Error("Decision model returned no answers map.");
   const answers: Record<string, JevAnswer> = {};
   for (const [id, question] of Object.entries(questions)) {
     answers[id] = parseAnswer(id, question, rawAnswers[id]);
@@ -241,26 +248,39 @@ async function requestOnce(cfg: JevRequestConfig, body: string, fetchImpl: typeo
       // A timeout is a wall, not a blip (the repo's AI retry policy says the same): retrying only
       // makes the caller wait another full timeout for the same silence.
       if (controller.signal.aborted)
-        throw new JevRequestFailure(`Jev request timed out after ${cfg.timeoutMs}ms`, false);
+        throw new JevRequestFailure(`Decision model request timed out after ${cfg.timeoutMs}ms`, false);
       const detail = redact(err instanceof Error ? err.message : String(err), cfg.apiKey);
-      throw new JevRequestFailure(`Jev transport error: ${detail}`, true);
+      throw new JevRequestFailure(`Decision model transport error: ${detail}`, true);
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       const detail = redact(text.slice(0, MAX_ERROR_BODY_CHARS), cfg.apiKey) || "(empty body)";
       throw new JevRequestFailure(
-        `Jev HTTP ${res.status} from ${cfg.baseUrl}: ${detail}`,
+        `Decision model HTTP ${res.status} from ${cfg.baseUrl}: ${detail}`,
         RETRYABLE_STATUSES.has(res.status),
       );
     }
     try {
       return await res.json();
     } catch {
-      throw new JevRequestFailure(`Jev returned a body that is not JSON (HTTP ${res.status}).`, false);
+      throw new JevRequestFailure(
+        `Decision model returned a body that is not JSON (HTTP ${res.status}).`,
+        false,
+      );
     }
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Any decision model can answer now (#2224), so a failure says WHICH one failed: "Decision model
+ * perplexity/pplx-decider-v1.2: HTTP 400 …" is something the analyst can act on. Only failures of the
+ * request and of its answer pass through here — an error beforeSend throws keeps its own identity.
+ */
+function namingModel(err: unknown, model: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  return new Error(message.replace(/^Decision model /, `Decision model ${model}: `));
 }
 
 /**
@@ -280,7 +300,7 @@ export async function askJev(
   try {
     body = JSON.stringify({ model: cfg.model, state, questions });
   } catch (err) {
-    throw new Error(`Jev state could not be serialized to JSON: ${(err as Error).message}`);
+    throw new Error(`Decision model state could not be serialized to JSON: ${(err as Error).message}`);
   }
   const maxRetries = cfg.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {
@@ -289,7 +309,7 @@ export async function askJev(
       return parseBatch(cfg.model, await requestOnce(cfg, body, fetchImpl), questions);
     } catch (err) {
       const retryable = err instanceof JevRequestFailure && err.retryable;
-      if (!retryable || attempt >= maxRetries) throw err;
+      if (!retryable || attempt >= maxRetries) throw namingModel(err, cfg.model);
       await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * 2 ** attempt));
     }
   }

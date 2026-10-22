@@ -64,7 +64,7 @@ function taskInput(record: ContainmentCheckRecord, step: SuggestedStep): NewPlay
   return {
     title: step.title,
     description:
-      "Suggested by the Jev containment check — advice only, nothing was run. " +
+      "Suggested by the decision-model containment check — advice only, nothing was run. " +
       `Because: ${basisLabels(step.basis).join("; ")}.`,
     priority: step.priority,
     relatedFindingId: record.findingId,

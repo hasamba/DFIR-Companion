@@ -65,7 +65,7 @@
       btn: "jevReviewBtn",
       category: "Actions",
       label: "Missed evidence review",
-      keywords: ["missed", "evidence", "review", "jev", "graded", "info", "super-timeline"],
+      keywords: ["missed", "evidence", "review", "jev", "decision", "model", "graded", "info", "super-timeline"],
     },
     {
       id: "act.secondLook",

@@ -40,7 +40,7 @@ describe("resolveJevSettings — provider, route and model defaults", () => {
     expect(s.provider).toBe("openrouter");
     expect(s.baseUrl).toBe("https://openrouter.ai/api/alpha/decisions");
     // typesafe/jev-latest does not exist on OpenRouter and 400s — only the versioned id works.
-    expect(s.model).toBe("typesafe/jev-1.13");
+    expect(s.model).toBe("typesafe/jev-1.14"); // #2224
   });
 
   it("defaults the TypeSafe direct route to api.typesafe.ai and jev-latest", () => {
