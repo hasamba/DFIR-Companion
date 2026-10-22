@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-22
+
 ### Added
 
 - **Re-grade a case with current Sigma rules** — preview then apply a re-grade of already-imported CloudTrail, Entra and web-log events; severity can go up or down, counts of raised / lowered / unchanged rows are shown, and Undo restores both timelines (closes #2206, closes #2220)
@@ -30,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Undo keeps host renames in step** — undoing or redoing an import that taught a host rename moves both timelines to the same host name (closes #2221)
 - **API keys redacted from enrichment errors** — a key in a failed request URL no longer reaches the server log, case state or report (closes #2208)
 - **Malformed ZIP entries refused** — the ZIP reader checks each entry's local header and data bounds and reports a corrupt archive (closes #2212)
 - **Sigma update preview on Windows** — line endings no longer mark every rule as changed or change the rule-set content id (closes #2215)
@@ -1535,7 +1538,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.40.0...v0.41.0

@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.43.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.44.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.43.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.44.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -942,6 +942,18 @@
           <h3>Safety Stops Don't Lose the Run</h3>
           <p>When a model's safety filter refuses a forensic prompt, synthesis, the deep pass, the referee, Explain event and view summaries retry, then hand the work to a fallback model you pick. Every answer names the model that wrote it, and refused prompts can be saved for replay.</p>
           <span class="tag">v0.43.0 — refusals fall back, never vanish</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">🧭</div>
+          <h3>SigmaHQ Rules at Import</h3>
+          <p>Bundled SigmaHQ rules grade CloudTrail, Entra ID and web and proxy access logs as they import. Check, install and roll back rule releases, skip known-benign values, dry-run a pasted rule, and re-grade a case you already imported. Undo restores both timelines.</p>
+          <span class="tag">v0.44.0 — community rules, graded at the door</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">🔏</div>
+          <h3>Custody at Receipt</h3>
+          <p>Every file is hashed with SHA-256 and SHA-1 into chain of custody before any parser touches it, rejected files included. You can show a file was handed over and match it against your own copy, even when the import failed.</p>
+          <span class="tag">v0.44.0 — hashed before it is read</span>
         </div>
       </div>
     </div>

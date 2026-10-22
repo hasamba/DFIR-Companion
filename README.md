@@ -239,7 +239,7 @@ list of known compromised hosts and users.
 - **Large-case imports** — each import merges, settles and undoes only the rows it changed, and an import memory guard refuses an import that would exhaust the server before it starts (`DFIR_IMPORT_MEMORY_GUARD`)
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
-- **Chain of custody** — every screenshot and import gets an automatic, hash-chained custody record with a signed manifest
+- **Chain of custody** — every screenshot and import gets an automatic, hash-chained custody record with a signed manifest; imports are hashed (SHA-256 and SHA-1) at receipt, before any parser runs, rejected files included
 - **Incident-type auto-playbooks** — picking an incident type seeds key questions, next steps, and expected findings
 - **Screenshot OCR full-text search** — every captured screenshot is OCR'd locally in the background; search the text seen in consoles (hostname, "mimikatz", a hash, an error) from the filter bar and jump to the screenshot. No AI, local-only (`DFIR_OCR_SEARCH=off` to disable; `npm run ocr-index` to backfill)
 - **Localhost only** — `127.0.0.1` with CORS + Private-Network-Access for extension; refuses unrecognized hostnames, closing DNS-rebinding attacks (`DFIR_ALLOWED_HOSTS`)
@@ -262,7 +262,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Suricata / Zeek** | `eve.json`, Zeek JSON logs and classic `#fields` TSV logs (conn, dns, http, files, ssl); telemetry → IOCs only | Alert priority / notice severity |
 | **Snort / Suricata IDS (fast)** | `alert_fast` single-line alert log | Rule **Priority** (1→High / 2→Medium / 3→Low) |
 | **YARA** | `yara -s -m` CLI scan output (rule matches + strings/meta) | Info→Medium per match; bump on rule `score`/`threat_level` meta |
-| **Web/proxy access log** | Apache/Nginx/Squid **combined** log format (web server or forward-proxy access log); request URL, **HTTP Referer, and User-Agent** captured (secrets in URL/Referer + scanner/bot/injection UAs survive as events + IOCs) | Info by default; access-denied (401/403/407) → Low; git smart-HTTP clone/push → T1213 |
+| **Web/proxy access log** | Apache/Nginx/Squid **combined** log format (web server or forward-proxy access log); request URL, **HTTP Referer, and User-Agent** captured (secrets in URL/Referer + scanner/bot/injection UAs survive as events + IOCs) | Info by default; access-denied (401/403/407) → Low; git smart-HTTP clone/push → T1213; SigmaHQ web server and proxy rules |
 | **Cisco ASA firewall syslog** | `%ASA-#-######:` Built/Teardown/Deny messages | Info by default (telemetry); explicit **Deny** → Low |
 | **Syslog (plain)** | RFC 5424 (`<PRI>1 …`) + RFC 3164 (`Mmm dd …`) Linux/Unix host logs | Info by default (telemetry); auth-failure or crit/alert/emerg PRI → Low |
 | **Security Onion** | SOC Alerts/Hunt events (ECS); pushed by the extension or a SOC API export | `event.severity_label` (Suricata/SO label) |
@@ -270,13 +270,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
 | **Defender XDR** | Advanced-hunting exports (hosts + accounts) | Tradecraft table — replication from a non-DC and AD FS DKM LDAP reads → High |
 | **Microsoft Sentinel / Log Analytics** | SecurityEvent, OfficeActivity, Syslog-wrapped auditd/AUOMS, Sysmon for Linux, VMConnection flows (dated from `TimeGenerated`) | Per-source tables; full Linux command lines graded |
-| **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel |
+| **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel; SigmaHQ Entra rules |
 | **Okta** | System Log export | IdP tradecraft table (MFA disabled, admin grant, API token minted, session impersonated) — not the vendor's operational grade |
 | **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added) |
 | **Hindsight (browser)** | Chrome/Edge/Brave history, downloads, interpretations (JSON or CSV) | — (Info events: browser artifacts are evidence, not verdicts) |
 | **macOS** | Unified log (`log show --style json`), LSQuarantine download events, `com.apple.quarantine` attributes, launchd plists, login items (classic plist, `.sfl2`, BTM) | Quarantine record ↔ file attribute ↔ browser visit ↔ process start joined by identifier; a plist reads as configuration, never as a run |
 | **iLEAPP / ALEAPP** | iOS + Android extraction artifacts from LEAPP TSV exports | — (Info events; generic parser keyed on the timestamp column) |
-| **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
+| **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets); SigmaHQ CloudTrail rules |
 | **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
 | **Kubernetes audit** | API-server audit log (`audit.k8s.io` JSON-lines / EventList) | (verb, resource) table — pod exec/attach T1609, secret access T1552.007, RBAC change T1098, privileged-pod T1610/T1611, anonymous access T1078 |
 | **osquery** | scheduled-query result log (differential `columns` + `snapshot`) | Info telemetry; conservative tradecraft bump on a command-line column |
@@ -316,6 +316,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Mobile origin tags** — every iLEAPP / ALEAPP row says whether its content was recorded on this device, synced or received, from a registry pinned to upstream
 - **Masquerade and look-alike detection** (T1036.002) — a file name hiding a right-to-left override is High and shows as `<RLO>` in every view and export; a new account named one edit from a built-in or case account is High
 - **Remote access, webshells and web scanners** — AnyDesk/ScreenConnect/TeamViewer/Atera in Prefetch or Amcache → Medium (T1219); an IIS worker writing a page into a web root → High (T1505.003); sqlmap, dirsearch and similar scanners → Medium, exploit modes High
+- **SigmaHQ rules at import** — bundled rules grade CloudTrail, Entra and Apache/nginx/Squid logs (high/critical raise, lower levels tag); check, install and roll back releases, exclude benign values, re-grade an imported case, dry-run a pasted rule, and see per-source coverage in the Hunt Workbench
 - **Log4Shell shape** (T1190 / T1203) — a JVM LDAP/RMI lookup followed by the JVM spawning a shell → High
 - **Persistence executed** (T1547.001) — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts)
 - **Quiet tradecraft** — alternate-data-stream execution → High; anti-VM WMI checks, AV-product and installed-software discovery → Medium
@@ -344,7 +345,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Restore a capped finding** — a finding a grading check lowered shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis
 - **Other commands in this session** — each finding lists the attack session's command lines that no finding names
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
-- **AI-input anonymization** — reversibly tokenizes IPs, users, hosts, domains, emails, paths, card/phone/national-ID numbers, encoded commands and SIDs; one-way-redacts secrets. Optional **[Presidio](mkdocs-docs/reference/presidio.md)** catches names, with an approval gate
+- **AI-input anonymization** — reversibly tokenizes IPs, users, hosts, domains, emails, paths, card/phone/national-ID numbers, encoded commands and SIDs; one-way-redacts secrets (vendor API keys, tokens, CLI password flags, secret-named fields). Optional **[Presidio](mkdocs-docs/reference/presidio.md)** catches names, with an approval gate and a Docker Compose profile
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
@@ -450,7 +451,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Forensic timeline rows** — affected host + clickable finding links; report has Host column
 - **Manual add** — record missed events/IOCs (tagged `manual`, survives re-analysis)
 - **MITRE techniques** link to [attack.mitre.org](https://attack.mitre.org/)
-- **Asset ↔ IoC graph, Evidence Chain, and Login graph** — share one interactive Cytoscape view (5 layouts, live filter, fullscreen, PNG export), each with its own node glyphs/edge styling (host/account/service toggles, process lineage, risk-colored logons)
+- **Asset ↔ IoC graph, Evidence Chain, and Login graph** — share one interactive Cytoscape view (5 layouts, live filter, fullscreen, PNG export), each with its own node glyphs/edge styling (host/account/service toggles, process lineage, risk-colored logons); a **LOLBIN chains** toggle narrows the Evidence Chain to living-off-the-land processes with their parents and children
 - **Timeline Swimlane** — severity/tactic × time; click details, Shift-select for bulk action, PNG export
 - **Reports** — Markdown + HTML + PDF (one-click) + Word (.docx) + CSVs (findings/IOCs/timeline) + JSON state
 - **Pre-export evidence-safety check** — every human-readable export is checked against the case's own indicators and evidence text; a live indicator or unescaped evidence still ships, with a banner in the document and a dashboard warning
