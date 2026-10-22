@@ -14,7 +14,10 @@ import {
   runUndoStep,
   type UndoStepDeps,
 } from "../analysis/importUndo.js";
+import type { RenameLedger } from "../analysis/hostRenameCarry.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 import { sendPipelineError } from "./presidioApproval.js";
+import { rehomeSuperTimeline, type SuperRehomeStore } from "./importSettleRehomeSuper.js";
 import type { RouteContext } from "./context.js";
 
 export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void {
@@ -44,6 +47,7 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
         importLock,
         runStateExclusive: ctx.runStateExclusive,
         superTimeline: options.superTimelineStore,
+        rehomeSuper: superRehomer(options.superTimelineStore),
       };
       const { summary, next, superChanged } = await runUndoStep(deps, caseId, step);
       if (!summary) return res.status(400).json({ error: nothing });
@@ -69,4 +73,25 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
   app.post("/cases/:id/import/undo", stepRoute(applyUndo, "nothing to undo"));
   // Redo the most-recently-undone import: re-apply its full state.
   app.post("/cases/:id/import/redo", stepRoute(applyRedo, "nothing to redo"));
+}
+
+// A step that changes the host-rename ledger re-homes the super-timeline against the ledger it
+// restored (#2221) — the same pass settle runs (#1508), and on an EMPTY ledger too, because Undo of the
+// import that taught the first rename restores none. A store without the scan (a test fake) is skipped.
+function superRehomer(
+  store: Partial<SuperRehomeStore> | undefined,
+): ((caseId: string, ledger: RenameLedger) => Promise<number>) | undefined {
+  if (!store?.rehome || !store.eventBatches) return undefined;
+  const scan = store as SuperRehomeStore;
+  return async (caseId, ledger) => {
+    try {
+      return await rehomeSuperTimeline(scan, caseId, ledger, { evenWithoutLedger: true });
+    } catch (error) {
+      getServerLogger().warn(
+        `[import] ${caseId}: super-timeline rename re-home after undo/redo failed — ${error instanceof Error ? error.message : String(error)}`,
+        { caseId },
+      );
+      throw error;
+    }
+  };
 }
