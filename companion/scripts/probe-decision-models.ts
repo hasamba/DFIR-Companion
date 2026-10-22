@@ -96,7 +96,13 @@ const requested =
   process.argv.length > 2
     ? process.argv.slice(2)
     : (await createDecisionModelCatalog().list()).models.map((m) => m.id);
-const results = await Promise.all(requested.map((m) => probe(m, key)));
+// A few models at a time: firing every model's three question sets at once (~90 requests) exhausted
+// the connection on the first live run and every model after the first 11 came back "fetch failed".
+const MODEL_CONCURRENCY = 4;
+const results: Awaited<ReturnType<typeof probe>>[] = [];
+for (let i = 0; i < requested.length; i += MODEL_CONCURRENCY) {
+  results.push(...(await Promise.all(requested.slice(i, i + MODEL_CONCURRENCY).map((m) => probe(m, key)))));
+}
 
 console.log(`${"model".padEnd(42)} single narrow contain  answered as`);
 for (const r of results) {
