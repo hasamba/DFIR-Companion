@@ -57,6 +57,7 @@ export class ShodanProvider implements EnrichmentProvider {
 
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "ip") return null;
+    // Shodan accepts the key only as a query parameter; errorMessage() sinks redact it (#2208).
     const url = `${this.base}/shodan/host/${encodeURIComponent(value)}?key=${encodeURIComponent(this.opts.apiKey)}`;
     const res = await this.fetchFn(url, {
       headers: { Accept: "application/json" },

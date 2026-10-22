@@ -268,4 +268,29 @@ describe("summarizeExposure", () => {
       { provider: "Bad", targetType: "email", target: "alice@example.com", error: "rate limited" },
     ]);
   });
+
+  it("redacts a URL secret from a provider error before it is stored (#2208)", async () => {
+    const providers: CustomerExposureProvider[] = [
+      {
+        name: "Leaky",
+        lookupEmail: async () => [],
+        lookupDomain: async () => {
+          throw new TypeError(
+            "Failed to parse URL from https://x.example.com/search?key=fakekey-example&query=a",
+          );
+        },
+      },
+    ];
+
+    const summary = await summarizeExposure(
+      stateWith([]),
+      { domains: ["example.com"], emails: [] },
+      providers,
+      { now: () => "2026-06-08T12:00:00Z", sleep: async () => {} },
+    );
+
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0].error).toContain("key=[redacted]");
+    expect(summary.errors[0].error).not.toContain("fakekey-example");
+  });
 });
