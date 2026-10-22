@@ -30,7 +30,7 @@ const CATALOG = {
 describe("the decision model catalog", () => {
   it("keeps only decision models, with a readable price or free", async () => {
     const fetchImpl = vi.fn(async () => ok(CATALOG));
-    const list = await createDecisionModelCatalog(fetchImpl as unknown as typeof fetch).list();
+    const list = await createDecisionModelCatalog(fetchImpl).list();
     expect(list.stale).toBe(false);
     expect(list.models).toEqual([
       {
@@ -53,7 +53,7 @@ describe("the decision model catalog", () => {
 
   it("serves a cached list without refetching, and coalesces concurrent first loads", async () => {
     const fetchImpl = vi.fn(async () => ok(CATALOG));
-    const catalog = createDecisionModelCatalog(fetchImpl as unknown as typeof fetch);
+    const catalog = createDecisionModelCatalog(fetchImpl);
     await Promise.all([catalog.list(), catalog.list()]);
     await catalog.list();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -72,7 +72,7 @@ describe("the decision model catalog", () => {
       .fn()
       .mockResolvedValueOnce(ok(CATALOG))
       .mockResolvedValue(new Response("down", { status: 503 }));
-    const catalog = createDecisionModelCatalog(fetchImpl as unknown as typeof fetch, () => now);
+    const catalog = createDecisionModelCatalog(fetchImpl, () => now);
     await catalog.list();
 
     now = 2 * 60 * 60 * 1000; // past the one-hour cache
@@ -101,7 +101,7 @@ describe("the decision model catalog", () => {
         data: [entry("scaledown/classify-1"), entry("scaledown/classify-1:free"), entry("typesafe/jev-1.14")],
       }),
     );
-    const list = await createDecisionModelCatalog(fetchImpl as unknown as typeof fetch).list();
+    const list = await createDecisionModelCatalog(fetchImpl).list();
     expect(list.models.map((m) => m.id)).toEqual(["typesafe/jev-1.14"]);
   });
 });
