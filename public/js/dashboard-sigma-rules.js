@@ -93,6 +93,14 @@ function sigmaRenderStatus(s) {
   document.getElementById("sigmaDemo").hidden = !demo;
 }
 
+// True in the public demo, where the server refuses every change (#2216). It reads the notice
+// sigmaRenderStatus shows, so this file keeps no state. Every button that changes something uses it.
+const SIGMA_DEMO_TITLE = "Not available in the public demo";
+function sigmaDemoActive() {
+  const n = document.getElementById("sigmaDemo");
+  return !!n && !n.hidden;
+}
+
 function sigmaRenderRules(list) {
   const body = document.getElementById("sigmaRulesBody");
   body.textContent = "";
@@ -108,6 +116,8 @@ function sigmaRenderRules(list) {
     if (r.outcome === "loaded" || r.outcome === "disabled") {
       const btn = sigmaEl("button", r.outcome === "loaded" ? "Disable" : "Enable", "btn-mini");
       btn.type = "button";
+      btn.disabled = sigmaDemoActive();
+      if (btn.disabled) btn.title = SIGMA_DEMO_TITLE;
       btn.addEventListener("click", () => sigmaToggleRule(r.id, r.outcome === "loaded"));
       act.appendChild(btn);
     }
@@ -151,7 +161,8 @@ function sigmaRenderPreview(p) {
   for (const pr of p.problems || []) box.appendChild(sigmaEl("div", pr, "sfield-hint"));
   const btn = sigmaEl("button", "Install this release", "btn-mini");
   btn.type = "button";
-  btn.disabled = !p.usable;
+  btn.disabled = !p.usable || sigmaDemoActive();
+  if (sigmaDemoActive()) btn.title = SIGMA_DEMO_TITLE;
   btn.addEventListener("click", sigmaInstall);
   box.appendChild(btn);
 }
@@ -236,6 +247,7 @@ async function sigmaRollback() {
 }
 
 async function sigmaToggleRule(id, disable) {
+  if (sigmaDemoActive()) return;
   let reason = "";
   if (disable) {
     reason = prompt("Why switch this rule off? (shown next to it)", "noisy in this environment");

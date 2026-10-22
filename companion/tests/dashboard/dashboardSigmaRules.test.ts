@@ -92,4 +92,106 @@ describe("the Sigma rules settings tab", () => {
       expect(file.arrayBuffer).toHaveBeenCalledTimes(1);
     });
   });
+  // #2216: in the public demo every change is refused by the server. The rule Enable/Disable and
+  // Install buttons must be disabled like Check, File and Roll back, not answer with a 403.
+  describe("demo mode", () => {
+    type Node = Record<string, unknown> & { children: Node[]; listeners: string[] };
+    function makeNode(tag: string): Node {
+      const node: Node = {
+        tag,
+        children: [],
+        listeners: [],
+        textContent: "",
+        className: "",
+        dataset: {},
+        hidden: false,
+        appendChild(child: Node) {
+          node.children.push(child);
+          return child;
+        },
+        addEventListener(type: string) {
+          node.listeners.push(type);
+        },
+      };
+      return node;
+    }
+    function buttons(root: Node): Node[] {
+      const own = root.tag === "button" ? [root] : [];
+      return [...own, ...root.children.flatMap(buttons)];
+    }
+    function load(demo: boolean) {
+      const nodes: Record<string, Node> = {
+        sigmaRulesBody: makeNode("tbody"),
+        sigmaRulesCount: makeNode("span"),
+        sigmaPreview: makeNode("div"),
+        sigmaDemo: makeNode("div"),
+      };
+      nodes.sigmaDemo.hidden = !demo;
+      const prompt = vi.fn(() => "noisy");
+      const fetch = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+      const document = {
+        readyState: "loading",
+        addEventListener: () => undefined,
+        getElementById: (id: string) => nodes[id] ?? null,
+        createElement: (tag: string) => makeNode(tag),
+      };
+      const mod = loadDashboardModule<{
+        sigmaRenderRules: (list: unknown[]) => void;
+        sigmaRenderPreview: (p: unknown) => void;
+        sigmaToggleRule: (id: string, disable: boolean) => Promise<void>;
+      }>("dashboard-sigma-rules.js", [], { document, fetch, prompt });
+      return { mod, nodes, prompt, fetch };
+    }
+    const RULES = [
+      { id: "r1", title: "Rule one", source: "cloudtrail", outcome: "loaded" },
+      { id: "r2", title: "Rule two", source: "cloudtrail", outcome: "disabled" },
+    ];
+    const PREVIEW = {
+      token: "t",
+      usable: true,
+      release: { release: "r2026-01-01", source: "github", sha256: "abc" },
+      diff: { added: [], changed: [], removed: [], otherSources: 0 },
+      loads: {},
+    };
+
+    it("disables the rule Enable/Disable buttons when the demo notice shows", () => {
+      const { mod, nodes } = load(true);
+      mod.sigmaRenderRules(RULES);
+      const btns = buttons(nodes.sigmaRulesBody);
+      expect(btns).toHaveLength(2);
+      for (const b of btns) {
+        expect(b.disabled).toBe(true);
+        expect(b.title).toBe("Not available in the public demo");
+      }
+    });
+
+    it("leaves the rule buttons enabled outside the demo", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRules(RULES);
+      const btns = buttons(nodes.sigmaRulesBody);
+      expect(btns).toHaveLength(2);
+      for (const b of btns) expect(b.disabled).toBeFalsy();
+    });
+
+    it("disables Install this release in the demo", () => {
+      const { mod, nodes } = load(true);
+      mod.sigmaRenderPreview(PREVIEW);
+      const [install] = buttons(nodes.sigmaPreview);
+      expect(install.disabled).toBe(true);
+    });
+
+    it("leaves Install enabled outside the demo for a usable release", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderPreview(PREVIEW);
+      const [install] = buttons(nodes.sigmaPreview);
+      expect(install.disabled).toBe(false);
+    });
+
+    it("asks nothing and sends nothing when a rule is toggled in the demo", async () => {
+      const { mod, prompt, fetch } = load(true);
+      await mod.sigmaToggleRule("r1", true);
+      expect(prompt).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
 });
