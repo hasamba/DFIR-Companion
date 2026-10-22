@@ -137,6 +137,14 @@ export function createZip(entries: ZipEntry[]): Buffer {
 // process before a post-hoc size check ever ran. Enforced via zlib's maxOutputLength, which
 // aborts DURING decompression rather than after — see readZip. 512 MB per entry and 2 GB total
 // are generous ceilings for a forensic case archive (state JSON + screenshots + imports).
+/** Entries that are never evidence: directories, dotfiles, and macOS resource-fork metadata. */
+export function isIgnorableZipEntry(path: string): boolean {
+  if (path.endsWith("/")) return true;
+  const base = path.split("/").pop() ?? "";
+  if (base === "" || base.startsWith(".")) return true;
+  return path.startsWith("__MACOSX/");
+}
+
 const MAX_ENTRY_INFLATED = 512 * 1024 * 1024;
 const MAX_TOTAL_INFLATED = 2 * 1024 * 1024 * 1024;
 

@@ -7,7 +7,7 @@
 // discards the rest of a multi-entry archive. A sample bundle of "pcap plus three dropped binaries"
 // would lose three quarters of its evidence that way.
 
-import { readZip } from "./zipArchive.js";
+import { isIgnorableZipEntry, readZip } from "./zipArchive.js";
 import { ZipPasswordError } from "./zipCrypto.js";
 
 /** Hard cap on files taken from one archive, so a crafted zip cannot fan out into many uploads. */
@@ -44,14 +44,6 @@ export function candidatePasswords(filename: string, supplied?: string): string[
     if (!out.includes(dated)) out.push(dated);
   }
   return out;
-}
-
-// Entries that are never evidence: directories, dotfiles, and macOS resource-fork metadata.
-function isIgnorableEntry(path: string): boolean {
-  if (path.endsWith("/")) return true;
-  const base = path.split("/").pop() ?? "";
-  if (base === "" || base.startsWith(".")) return true;
-  return path.startsWith("__MACOSX/");
 }
 
 // Cheap central-directory scan for any entry with general-purpose bit 0 set. Used so an archive
@@ -132,7 +124,7 @@ export function extractZipEntries(archive: Buffer, filename: string, supplied?: 
 
   for (const e of raw) {
     assertContained(e.path);
-    if (isIgnorableEntry(e.path)) continue;
+    if (isIgnorableZipEntry(e.path)) continue;
     if (e.data.subarray(0, 2).toString("latin1") === "PK") {
       skippedNested.push(e.path);
       continue;

@@ -63,6 +63,34 @@ describe("readSigmaReleaseZip", () => {
     expect(r.files).toHaveLength(1);
   });
 
+  it("ignores macOS __MACOSX metadata beside a wrapped release (#2214)", () => {
+    const r = readSigmaReleaseZip(
+      zip({
+        "sigma/rules/a.yml": rule("a"),
+        "sigma/version.txt": VERSION,
+        "__MACOSX/sigma/rules/._a.yml": "resource fork",
+      }),
+    );
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+    expect(r.versionLabel).toBe("r2026-04-01-50-gabc");
+  });
+
+  it("ignores a root .DS_Store beside a wrapped release (#2214)", () => {
+    const r = readSigmaReleaseZip(zip({ "sigma/rules/a.yml": rule("a"), ".DS_Store": "finder" }));
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+  });
+
+  it("ignores AppleDouble ._ files inside rules/ (#2214)", () => {
+    const r = readSigmaReleaseZip(zip({ "rules/a.yml": rule("a"), "rules/._a.yml": "resource fork" }));
+    expect(r.files.map((f) => f.path)).toEqual(["rules/a.yml"]);
+  });
+
+  it("still refuses an unsafe path under __MACOSX/ (#2214)", () => {
+    expect(() => readSigmaReleaseZip(zip({ "rules/a.yml": rule("a"), "__MACOSX/../evil": "x" }))).toThrow(
+      /unsafe path/,
+    );
+  });
+
   it("refuses an archive larger than the cap before reading it", () => {
     expect(() => readSigmaReleaseZip(Buffer.alloc(SIGMA_RELEASE_MAX_ZIP_BYTES + 1))).toThrow(/larger than/);
   });
