@@ -130,6 +130,7 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     try {
       section = await beginImportSection(ctx.importLock, caseId, options.stateStore, {
         incomingBytes: await storedImportBytes(cases.importsDir(caseId)),
+        uncapped: true, // the re-parse reads every stored file with no DFIR_MAX_EVENTS cap
         wording: REGRADE_REFUSAL_WORDING,
       });
       return res.json(await applyHeld(caseId, snapshot, section));

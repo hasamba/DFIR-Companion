@@ -121,6 +121,9 @@ export interface ImportAdmissionHint {
   incomingEvents?: number;
   /** The refusal's wording, when the default ("the file is saved…import the file again") is untrue. */
   wording?: RefusalWording;
+  /** The work is not bound by DFIR_MAX_EVENTS (a Sigma re-grade re-parses every stored file), so the
+   *  estimate is not capped by it either. */
+  uncapped?: boolean;
 }
 
 /** Admit an import for a case; resolves to the release for its reservation, or throws the refusal. */
@@ -141,12 +144,13 @@ export interface ImportMemoryGuardDeps {
 
 export function estimateIncomingEvents(maxEvents: number, hint?: ImportAdmissionHint): number {
   const rows = hint?.incomingEvents;
-  if (typeof rows === "number" && Number.isFinite(rows) && rows >= 0) return Math.min(maxEvents, rows);
+  const sized = hint?.uncapped ? Number.MAX_SAFE_INTEGER : maxEvents;
+  if (typeof rows === "number" && Number.isFinite(rows) && rows >= 0) return Math.min(sized, rows);
   const bytes = hint?.incomingBytes;
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
     return Math.min(maxEvents, UNSIZED_INCOMING_EVENTS);
   }
-  return Math.min(maxEvents, Math.ceil(bytes / IMPORT_INPUT_BYTES_PER_EVENT));
+  return Math.min(sized, Math.ceil(bytes / IMPORT_INPUT_BYTES_PER_EVENT));
 }
 
 export function importMemoryGuardEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

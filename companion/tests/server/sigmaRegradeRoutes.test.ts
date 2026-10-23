@@ -384,6 +384,7 @@ describe("POST /cases/:id/sigma/regrade — admission (#2227)", () => {
     const hint = hints.at(-1)!;
     expect(hint.incomingBytes).toBe(await storedBytes());
     expect(hint.incomingBytes).toBeGreaterThan(0);
+    expect(hint.uncapped).toBe(true); // the whole corpus, not the per-import DFIR_MAX_EVENTS cap
     expect(hint.wording?.retry).toMatch(/re-grade/);
     expect(refused.body.error).toContain(hint.wording!.retry);
     expect((await stateStore.load("c1")).forensicTimeline).toEqual(forensicBefore);
