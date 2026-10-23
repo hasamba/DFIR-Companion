@@ -40,7 +40,7 @@
   function priceLabel(m) {
     if (m.free) return `${m.name} — free`;
     if (typeof m.inputPerMillionUSD === "number" && isFinite(m.inputPerMillionUSD)) {
-      return `${m.name} — $${m.inputPerMillionUSD} per million input tokens`;
+      return `${m.name} — $${m.inputPerMillionUSD}`;
     }
     return m.name;
   }

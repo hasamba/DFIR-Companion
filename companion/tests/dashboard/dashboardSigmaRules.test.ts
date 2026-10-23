@@ -211,6 +211,67 @@ describe("the Sigma rules settings tab", () => {
       return [String(root.textContent ?? ""), ...root.children.flatMap(texts)].filter(Boolean);
     }
 
+    it("names the log source and the state in analyst words", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRules([
+        {
+          id: "a",
+          title: "A",
+          source: "aws-cloudtrail",
+          outcome: "status",
+          reasons: ["status is experimental"],
+        },
+        { id: "b", title: "B", source: "web-proxy", outcome: "refused", reasons: ["field X"] },
+      ]);
+      const all = texts(nodes.sigmaRulesBody);
+      for (const t of [
+        "AWS CloudTrail",
+        "Web proxy",
+        "Filtered by status",
+        "Refused",
+        "status is experimental",
+      ])
+        expect(all).toContain(t);
+    });
+
+    it("filters rows by search text and state, and lists only the states present", () => {
+      const { mod, nodes } = load(false);
+      const filter = { ...makeNode("input"), value: "" };
+      const state = { ...makeNode("select"), value: "" };
+      const empty = { ...makeNode("div"), hidden: true };
+      Object.assign(nodes, { sigmaRulesFilter: filter, sigmaRulesState: state, sigmaRulesEmpty: empty });
+      nodes.sigmaRulesBody.querySelectorAll = () => nodes.sigmaRulesBody.children;
+      mod.sigmaRenderRules([
+        { id: "a", title: "Bucket deleted", source: "aws-cloudtrail", outcome: "loaded" },
+        {
+          id: "b",
+          title: "Log4j probe",
+          source: "web-server",
+          outcome: "status",
+          reasons: ["status is experimental"],
+        },
+      ]);
+      const rows = nodes.sigmaRulesBody.children;
+      expect(state.children.map((o) => o.textContent)).toEqual([
+        "All states (2)",
+        "Loaded (1)",
+        "Filtered by status (1)",
+      ]);
+      filter.value = "log4j";
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(rows.map((r) => r.hidden)).toEqual([true, false]);
+      filter.value = "web server"; // the displayed source name, not only the id
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(rows.map((r) => r.hidden)).toEqual([true, false]);
+      filter.value = "";
+      state.value = "loaded";
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(rows.map((r) => r.hidden)).toEqual([false, true]);
+      filter.value = "nothing matches";
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(empty.hidden).toBe(false);
+    });
+
     it("lists each exclusion as text, never as HTML (#2218)", () => {
       const { mod, nodes } = load(false);
       mod.sigmaRenderRules(RULES);

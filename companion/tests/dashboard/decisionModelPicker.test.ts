@@ -89,7 +89,7 @@ describe("the decision model picker", () => {
     await h.api.refreshDecisionModels();
     const labels = picker(h).options.map((o) => o.textContent);
     expect(labels).toContain("Baseten: Mammoth 1 (free) — free");
-    expect(labels).toContain("TypeSafe: Jev 1.14 — $0.02 per million input tokens");
+    expect(labels).toContain("TypeSafe: Jev 1.14 — $0.02");
     expect(labels[0]).toMatch(/default.*jev-1\.14/i);
     expect(labels.at(-1)).toMatch(/manually/i);
     expect(picker(h).hidden).toBe(false);
