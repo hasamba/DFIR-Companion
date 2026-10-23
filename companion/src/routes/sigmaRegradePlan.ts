@@ -2,7 +2,7 @@
 // reads the case's forensic rows, its super-timeline rows and the stored import files, and writes
 // nothing. The pure diff is analysis/sigmaRegrade.ts.
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { ForensicRowStore } from "../analysis/forensicRows.js";
@@ -40,6 +40,23 @@ async function storedFiles(dir: string): Promise<Set<string>> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Set();
     throw err;
   }
+}
+
+/**
+ * The bytes a re-grade re-reads: every stored import file of the case (#2227). It sizes the apply
+ * for the memory guard; the files are already stored, so a refusal loses nothing.
+ */
+export async function storedImportBytes(dir: string): Promise<number> {
+  let total = 0;
+  for (const file of await storedFiles(dir)) {
+    try {
+      const s = await stat(join(dir, file));
+      if (s.isFile()) total += s.size;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+  return total;
 }
 
 interface Group {

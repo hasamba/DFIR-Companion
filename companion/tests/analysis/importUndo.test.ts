@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,21 @@ import {
   DEFAULT_UNDO_MAX_BYTES,
   type ImportUndoStack,
 } from "../../src/analysis/importUndo.js";
+import { getServerLogger, setServerLogger } from "../../src/logging/serverLogger.js";
+import type { Logger } from "../../src/logging/logger.js";
+
+function captureLogger(lines: { level: string; message: string }[]): Logger {
+  const record = (level: string) => (message: string) => lines.push({ level, message });
+  return {
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
+    getLevel: () => "debug",
+    setLevel: () => {},
+    close: async () => {},
+  };
+}
 
 // Build a full investigation state with `n` events, `m` IOCs, `k` findings — tagged so we can
 // assert which snapshot was restored.
@@ -562,6 +577,58 @@ describe("super-timeline rows on a checkpoint (#2220)", () => {
       expect(rehome.mock.calls.map((c) => c[1])).toEqual([before, after]);
       expect(state.forensicTimeline).toHaveLength(S1.forensicTimeline.length);
       expect((await undoStore.load("c1")).undo).toHaveLength(1);
+    });
+
+    // #2228: a rollback half that fails is logged, never allowed to replace the original error.
+    describe("a failed rollback does not hide the original error (#2228)", () => {
+      let lines: { level: string; message: string }[];
+      let previousLogger: Logger;
+      let saveStack: ImportUndoStore["save"];
+
+      beforeEach(() => {
+        lines = [];
+        previousLogger = getServerLogger();
+        setServerLogger(captureLogger(lines));
+        saveStack = undoStore.save.bind(undoStore);
+        undoStore.save = async () => {
+          throw new Error("disk full");
+        };
+      });
+
+      afterEach(() => {
+        undoStore.save = saveStack;
+        setServerLogger(previousLogger);
+      });
+
+      it("a failed super-row rollback is logged and the stack-write error still surfaces", async () => {
+        rehome = vi.fn().mockResolvedValueOnce(before.length).mockRejectedValueOnce(new Error("super down"));
+        await expect(runUndoStep(deps(), "c1", applyUndo)).rejects.toThrow("disk full");
+        const errors = lines.filter((l) => l.level === "error");
+        expect(errors).toHaveLength(1);
+        expect(errors[0].message).toContain("case=c1");
+        expect(errors[0].message).toContain("super-timeline rows could not be put back");
+        expect(errors[0].message).toContain("super down");
+      });
+
+      it("a failed state restore is logged, the super rows are still put back, and the error surfaces", async () => {
+        const base = deps();
+        let saves = 0;
+        const stateStore = {
+          load: base.stateStore.load,
+          save: async (s: InvestigationState) => {
+            saves += 1;
+            if (saves === 2) throw new Error("state down");
+            state = s;
+          },
+        };
+        await expect(runUndoStep({ ...base, stateStore }, "c1", applyUndo)).rejects.toThrow("disk full");
+        expect(rehome).toHaveBeenLastCalledWith("c1", after);
+        const errors = lines.filter((l) => l.level === "error");
+        expect(errors).toHaveLength(1);
+        expect(errors[0].message).toContain("case=c1");
+        expect(errors[0].message).toContain("case state could not be put back");
+        expect(errors[0].message).toContain("state down");
+      });
     });
 
     it("without a super-timeline store the step still restores the state", async () => {

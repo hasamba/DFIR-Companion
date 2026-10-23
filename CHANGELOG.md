@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Decision model picker** — pick any OpenRouter decision model (priced, filtered list) for the missed-evidence review and containment check; "Jev" is now labelled "Decision model", default `typesafe/jev-1.14`, and a rejected question stops the run and names the model (closes #2224)
 
+### Fixed
+
+- **Sigma re-grade apply guard** — one re-grade per case at a time (a second one is refused), and the import memory guard now sizes and can refuse a re-grade without changing either timeline (closes #2227)
+- **Undo error reporting** — when an Undo or Redo step fails and its rollback also fails, the original error is shown and the rollback failure is logged; both halves of the rollback always run (closes #2228)
+
 ## [0.44.0] - 2026-10-22
 
 ### Added

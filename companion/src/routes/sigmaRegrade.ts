@@ -15,7 +15,10 @@
 // from the import journal (the checkpoint Undo would build), the super copies from the plan.
 //
 // POST is refused in the public demo (demoModeReadOnlyGate), for a missing case
-// (caseWriteExistsGate) and, below, for a closed or archived case (423).
+// (caseWriteExistsGate) and, below, for a closed or archived case (423). #2227: it is single-flight
+// per case (a second POST while one runs or waits answers 409) and its section is sized for the
+// memory guard from the stored import files it re-reads (a refusal answers 503). The GET preview
+// stays on the heavy-read gate (composition/heavyReadGate.ts).
 
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
@@ -31,17 +34,28 @@ import {
 } from "../analysis/sigmaRegrade.js";
 import { sigmaRuleMitreIndex } from "../analysis/sigmaRegradeSources.js";
 import { SigmaStoreError } from "../analysis/sigmaRuleStore.js";
+import { ImportMemoryRefusedError } from "../analysis/importMemoryGuard.js";
+import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import type { SuperRowsUndo } from "../analysis/importUndo.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { restoreImportBaseline } from "../analysis/importUndoRows.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
-import { beginImportSection } from "./importSection.js";
-import { loadRegradePlan, regradeNotes } from "./sigmaRegradePlan.js";
+import { beginImportSection, type ImportSection } from "./importSection.js";
+import { loadRegradePlan, regradeNotes, storedImportBytes } from "./sigmaRegradePlan.js";
 
 type Prepared = { plan: RegradePlan; snapshot: SigmaGradingSnapshot };
 
+const REGRADE_RUNNING = "a Sigma re-grade of this case is already running — wait for it to finish";
+const REGRADE_REFUSAL_WORDING = {
+  saved: "The case's imports are unchanged",
+  retry: "run the re-grade again",
+};
+
 export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): void {
   const { options, store: cases } = ctx;
+  // Cases with a re-grade apply held or queued (#2227): parallel POSTs must not stack whole-corpus
+  // passes ahead of the case's imports. Per app and per case incarnation (#1866).
+  const running = new CaseKeyedSet(() => cases.casesRoot);
 
   async function prepare(caseId: string, snapshot: SigmaGradingSnapshot): Promise<Prepared> {
     const gate = resolveForensicMinSeverity(
@@ -110,32 +124,46 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     const snapshot = options.pipeline!.sigmaSnapshot();
     if (!snapshot)
       return res.status(409).json({ error: "Sigma grading is switched off — switch it on to re-grade" });
-    const section = await beginImportSection(ctx.importLock, caseId, options.stateStore);
+    if (running.has(caseId)) return res.status(409).json({ error: REGRADE_RUNNING });
+    running.add(caseId);
+    let section: ImportSection | undefined;
     try {
-      const prepared = await prepare(caseId, snapshot);
-      const work = prepared.plan.rows.filter((r) => r.kind !== "unchanged");
-      const applied = work.length ? await applyRegrade(caseId, prepared, work, section.baseline) : undefined;
-      const demoted = applied?.demoted ?? 0;
-      if (work.some((r) => r.kind === "changed")) {
-        const label = regradeLabel(snapshot);
-        // #2220: the checkpoint carries the super copies, so Undo puts both timelines back.
-        if (section.baseline)
-          await ctx.pushImportCheckpoint(caseId, section.baseline, label, undefined, applied?.superRows);
-        await ctx.markConclusionsOutOfDate(caseId, "Sigma re-grade"); // #1599: no run of its own
-      }
-      const c = prepared.plan.counts;
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "triage",
-        action: "sigma-regrade",
-        detail: `Sigma re-grade with SigmaHQ ${snapshot.ruleSet.release}: ${c.raised} raised, ${c.lowered} lowered, ${c.unchanged} unchanged, ${demoted} left the forensic timeline`,
+      section = await beginImportSection(ctx.importLock, caseId, options.stateStore, {
+        incomingBytes: await storedImportBytes(cases.importsDir(caseId)),
+        uncapped: true, // the re-parse reads every stored file with no DFIR_MAX_EVENTS cap
+        wording: REGRADE_REFUSAL_WORDING,
       });
-      return res.json({ ...summary(prepared), applied: true, demoted });
+      return res.json(await applyHeld(caseId, snapshot, section));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      const status = err instanceof ImportMemoryRefusedError ? 503 : 500;
+      return res.status(status).json({ error: (err as Error).message });
     } finally {
-      section.release();
+      section?.release();
+      running.delete(caseId);
     }
   });
+
+  /** The apply, with the case's import section held: plan, write, checkpoint, activity. */
+  async function applyHeld(caseId: string, snapshot: SigmaGradingSnapshot, section: ImportSection) {
+    const prepared = await prepare(caseId, snapshot);
+    const work = prepared.plan.rows.filter((r) => r.kind !== "unchanged");
+    const applied = work.length ? await applyRegrade(caseId, prepared, work, section.baseline) : undefined;
+    const demoted = applied?.demoted ?? 0;
+    if (work.some((r) => r.kind === "changed")) {
+      const label = regradeLabel(snapshot);
+      // #2220: the checkpoint carries the super copies, so Undo puts both timelines back.
+      if (section.baseline)
+        await ctx.pushImportCheckpoint(caseId, section.baseline, label, undefined, applied?.superRows);
+      await ctx.markConclusionsOutOfDate(caseId, "Sigma re-grade"); // #1599: no run of its own
+    }
+    const c = prepared.plan.counts;
+    void logActivity(options.activityLogStore, options.onActivity, caseId, {
+      category: "triage",
+      action: "sigma-regrade",
+      detail: `Sigma re-grade with SigmaHQ ${snapshot.ruleSet.release}: ${c.raised} raised, ${c.lowered} lowered, ${c.unchanged} unchanged, ${demoted} left the forensic timeline`,
+    });
+    return { ...summary(prepared), applied: true, demoted };
+  }
 
   /**
    * The write: super copies, merge, cleanup, demote. Returns how many rows the demote removed and,

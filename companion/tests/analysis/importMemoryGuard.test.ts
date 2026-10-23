@@ -76,6 +76,11 @@ describe("estimateIncomingEvents", () => {
     expect(estimateIncomingEvents(550_000)).toBe(2_000);
     expect(estimateIncomingEvents(500)).toBe(500);
   });
+
+  it("does not cap an uncapped re-parse, such as a Sigma re-grade of every stored file (#2227)", () => {
+    expect(estimateIncomingEvents(2_000, { incomingBytes: 10_000_000, uncapped: true })).toBe(50_000);
+    expect(estimateIncomingEvents(2_000, { incomingEvents: 70_000, uncapped: true })).toBe(70_000);
+  });
 });
 
 describe("createImportMemoryGuard", () => {
@@ -112,6 +117,22 @@ describe("createImportMemoryGuard", () => {
     expect(guard.reservedBytes()).toBe(0);
     const releaseB = await guard.admit("b");
     releaseB();
+  });
+
+  it("sizes an uncapped re-parse by its whole corpus, not the per-import cap (#2227)", async () => {
+    // Few forensic rows, a large stored corpus: capped at 2,000 rows this would be admitted.
+    const guard = createImportMemoryGuard({
+      countEvents: async () => 100,
+      probe: probe(4 * GB),
+      maxEvents: () => 2_000,
+    });
+    await expect(guard.admit("big", { incomingBytes: 10_000_000, uncapped: true })).rejects.toBeInstanceOf(
+      ImportMemoryRefusedError,
+    );
+    expect(guard.reservedBytes()).toBe(0);
+    const release = await guard.admit("small", { incomingBytes: 1_000_000, uncapped: true });
+    expect(guard.reservedBytes()).toBe(5_100 * IMPORT_RSS_BYTES_PER_EVENT);
+    release();
   });
 
   it("admits a small case even when DFIR_MAX_EVENTS was raised for full MFT imports", async () => {

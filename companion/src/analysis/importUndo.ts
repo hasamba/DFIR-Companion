@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 import { StateLock } from "./stateLock.js";
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { applyUndoDelta, computeUndoDelta, isStateDelta, type StateDelta } from "./importUndoDelta.js";
@@ -470,14 +471,18 @@ export async function runUndoStep(
           return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
         });
       } catch (err) {
+        // Each rollback half runs even when the other fails; a failed half is logged, and the
+        // caller still gets the original error (#2228, the same contract as sigmaRegrade rollBack).
         if (next) {
           next = null;
-          await stateStore.save(state); // the stack write failed: put the case back as it was
+          await rollBackHalf(caseId, "the case state could not be put back", () => stateStore.save(state));
         }
         if (superTimeline && superWritten) {
           const rows = superWritten.reapply;
           superWritten = undefined;
-          await superTimeline.rehome(caseId, rows); // and the super-timeline rows with it
+          await rollBackHalf(caseId, "its super-timeline rows could not be put back", () =>
+            superTimeline.rehome(caseId, rows),
+          );
         }
         throw err;
       }
@@ -487,6 +492,17 @@ export async function runUndoStep(
     return stepped;
   });
   return { summary, next, superChanged: superWritten !== undefined || renamedSuper };
+}
+
+// One half of a failed step's rollback (#2228): a throw here is logged, never allowed to replace
+// the error that made the step fail.
+async function rollBackHalf(caseId: string, what: string, undo: () => Promise<unknown>): Promise<void> {
+  try {
+    await undo();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    getServerLogger().error(`[import-undo] case=${caseId} step failed and ${what} (${message})`);
+  }
 }
 
 // The forensic half of #2221: a step that changes the ledger re-homes every row the restore keeps
