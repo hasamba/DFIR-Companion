@@ -121,14 +121,16 @@ function sigmaRenderRules(list) {
   for (const r of shown) {
     const tr = document.createElement("tr");
     tr.dataset.state = r.outcome;
-    tr.dataset.search = `${r.title} ${r.source} ${(r.reasons || []).join(" ")}`.toLowerCase();
+    const source = SIGMA_SOURCE_LABELS[r.source] || r.source;
+    // Search matches what the row shows (the source name) and the id the server log uses.
+    tr.dataset.search = `${r.title} ${source} ${r.source} ${(r.reasons || []).join(" ")}`.toLowerCase();
     const rule = sigmaEl("td", null, "sigma-rule-cell");
     rule.appendChild(sigmaEl("div", r.title, "sigma-rule-title"));
     const why = (r.reasons || []).join("; ");
     if (why) rule.appendChild(sigmaEl("div", why, "sigma-rule-why"));
     sigmaAppendExclusions(rule, r);
     tr.appendChild(rule);
-    tr.appendChild(sigmaEl("td", SIGMA_SOURCE_LABELS[r.source] || r.source, "sigma-rule-source"));
+    tr.appendChild(sigmaEl("td", source, "sigma-rule-source"));
     const state = sigmaEl("td");
     const label = r.outcome === "disabled" ? `Disabled (${r.disabledBy || "analyst"})` : SIGMA_STATE_LABELS[r.outcome] || r.outcome;
     state.appendChild(sigmaEl("span", label, `sigma-state sigma-state-${r.outcome}`));
