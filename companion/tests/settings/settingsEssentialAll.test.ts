@@ -45,6 +45,12 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     // override key and base URL stay All-only like every other model's.
     "DFIR_AI_RECONCILE_PROVIDER",
     "DFIR_AI_RECONCILE_MODEL",
+    // The missed-evidence review is off until switched on, and needs a provider, a model and a
+    // key to run. Grading style, base URL, row caps, batch size and timeout all default: All-only.
+    "DFIR_JEV_ENABLED",
+    "DFIR_JEV_PROVIDER",
+    "DFIR_JEV_MODEL",
+    "DFIR_JEV_KEY",
   ],
   // Credentials, plus each self-hostable source's "Skip TLS verify" flag. `_CA` (finding a bundle
   // path is a deliberate trip), the keyless hashlookup/RDAP/GeoIP endpoint URLs, the GeoIP map
