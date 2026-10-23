@@ -351,6 +351,9 @@ so two imports graded under different exclusions never look the same.
     - No AI run starts. The case's conclusions are marked out of date; press **Re-synthesize** when
       you want them updated. The content tagger does not run again.
     - With the same rules and settings, a re-grade changes nothing.
+    - One re-grade per case at a time: a second Apply for the same case while one runs is refused
+      until the first finishes. On a server short of memory the import memory guard can refuse the
+      apply; nothing changes, and you run the re-grade again later.
 
 Updates, rule changes and Apply re-grade are not available in the demo.
 

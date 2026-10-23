@@ -2,7 +2,7 @@
 // through the real app, the real pipeline merge, the real super-timeline and the real demote.
 // A CloudTrail file is imported under one rule set; the rule that graded it is then switched off.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -28,6 +28,12 @@ import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules
 import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
 import { sigmaGradingsInCase } from "../../src/reports/detectionRules.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
+import {
+  ImportMemoryRefusedError,
+  type ImportAdmission,
+  type ImportAdmissionHint,
+} from "../../src/analysis/importMemoryGuard.js";
 
 const ct = (i: number, o: Record<string, unknown>) => ({
   eventVersion: "1.08",
@@ -301,6 +307,92 @@ describe("POST /cases/:id/sigma/regrade — the apply (#2206)", () => {
     const app = build({ demoMode: true });
     const res = await request(app).post("/cases/c1/sigma/regrade").send({});
     expect(res.status).toBe(403);
+  });
+});
+
+// #2227: the apply re-parses every stored import file, so it is single-flight per case and sized
+// for the memory guard like every other import section.
+describe("POST /cases/:id/sigma/regrade — admission (#2227)", () => {
+  const storedBytes = async () => {
+    const dir = cases.importsDir("c1");
+    let total = 0;
+    for (const f of await readdir(dir)) total += (await stat(join(dir, f))).size;
+    return total;
+  };
+
+  it("a second re-grade of the same case is refused with 409 while one runs, and the first still applies", async () => {
+    let gate: Promise<void> | undefined;
+    let entered: () => void = () => {};
+    const inAdmission = new Promise<void>((r) => (entered = r));
+    let open: () => void = () => {};
+    const admission: ImportAdmission = {
+      admit: async () => {
+        if (gate) {
+          entered();
+          await gate;
+        }
+        return () => {};
+      },
+    };
+    const app = build({ importLock: new ImportLock(admission) });
+    await importTrail(app);
+    rules = SET_OFF;
+    gate = new Promise<void>((r) => (open = r));
+
+    const first = request(app)
+      .post("/cases/c1/sigma/regrade")
+      .send({})
+      .then((r) => r);
+    await inAdmission;
+    const second = await request(app).post("/cases/c1/sigma/regrade").send({});
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already running/);
+
+    gate = undefined;
+    open();
+    const done = await first;
+    expect(done.status).toBe(200);
+    expect(done.body.applied).toBe(true);
+    expect(done.body.counts.lowered).toBe(1);
+
+    const third = await request(app).post("/cases/c1/sigma/regrade").send({});
+    expect(third.status).toBe(200);
+  });
+
+  it("is sized for the memory guard from the stored import files, and a refusal changes nothing", async () => {
+    const hints: ImportAdmissionHint[] = [];
+    let refuse = false;
+    const admission: ImportAdmission = {
+      admit: async (_caseId, hint) => {
+        if (hint) hints.push(hint);
+        if (refuse) throw new ImportMemoryRefusedError(`refused. Then ${hint?.wording?.retry ?? "-"}.`);
+        return () => {};
+      },
+    };
+    const app = build({ importLock: new ImportLock(admission) });
+    await importTrail(app);
+    rules = SET_OFF;
+    const forensicBefore = (await stateStore.load("c1")).forensicTimeline;
+    const row = target(forensicBefore)!;
+    const superBefore = await superRow(row.id);
+    const imported = hints.length;
+    refuse = true;
+
+    const refused = await request(app).post("/cases/c1/sigma/regrade").send({});
+    expect(refused.status).toBe(503);
+    expect(hints.length).toBe(imported + 1);
+    const hint = hints.at(-1)!;
+    expect(hint.incomingBytes).toBe(await storedBytes());
+    expect(hint.incomingBytes).toBeGreaterThan(0);
+    expect(hint.wording?.retry).toMatch(/re-grade/);
+    expect(refused.body.error).toContain(hint.wording!.retry);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual(forensicBefore);
+    expect(await superRow(row.id)).toEqual(superBefore);
+
+    refuse = false;
+    const next = await request(app).post("/cases/c1/sigma/regrade").send({});
+    expect(next.status).toBe(200);
+    expect(next.body.applied).toBe(true);
   });
 });
 
