@@ -53,6 +53,8 @@ function sigmaSyncStatusBoxes() {
   const input = document.getElementById("env-DFIR_SIGMA_RULE_STATUSES");
   if (!input) return;
   const set = new Set((input.value || "stable,test").split(",").map((s) => s.trim().toLowerCase()));
+  document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
+  document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
   document.querySelectorAll("[data-sigma-status]").forEach((box) => {
     box.checked = set.has(box.dataset.sigmaStatus);
   });
@@ -102,27 +104,82 @@ function sigmaDemoActive() {
   return !!n && !n.hidden;
 }
 
+// Analyst-facing names for the log-source ids the server sends; an unknown id shows as sent.
+const SIGMA_SOURCE_LABELS = {
+  "aws-cloudtrail": "AWS CloudTrail",
+  "azure-signinlogs": "Entra ID sign-in",
+  "azure-auditlogs": "Entra ID audit",
+  "web-server": "Web server",
+  "web-proxy": "Web proxy",
+};
+const SIGMA_STATE_LABELS = { loaded: "Loaded", status: "Filtered by status", disabled: "Disabled", refused: "Refused" };
+
 function sigmaRenderRules(list) {
   const body = document.getElementById("sigmaRulesBody");
   body.textContent = "";
   const shown = list.filter((r) => r.source);
   for (const r of shown) {
     const tr = document.createElement("tr");
-    tr.appendChild(sigmaEl("td", r.title));
-    tr.appendChild(sigmaEl("td", r.source));
-    const outcome = r.outcome === "status" ? "filtered by status" : r.outcome === "disabled" ? `disabled (${r.disabledBy || "analyst"})` : r.outcome;
-    tr.appendChild(sigmaEl("td", outcome));
-    const why = sigmaEl("td", (r.reasons || []).join("; "));
-    sigmaAppendExclusions(why, r);
-    tr.appendChild(why);
-    const act = document.createElement("td");
+    tr.dataset.state = r.outcome;
+    tr.dataset.search = `${r.title} ${r.source} ${(r.reasons || []).join(" ")}`.toLowerCase();
+    const rule = sigmaEl("td", null, "sigma-rule-cell");
+    rule.appendChild(sigmaEl("div", r.title, "sigma-rule-title"));
+    const why = (r.reasons || []).join("; ");
+    if (why) rule.appendChild(sigmaEl("div", why, "sigma-rule-why"));
+    sigmaAppendExclusions(rule, r);
+    tr.appendChild(rule);
+    tr.appendChild(sigmaEl("td", SIGMA_SOURCE_LABELS[r.source] || r.source, "sigma-rule-source"));
+    const state = sigmaEl("td");
+    const label = r.outcome === "disabled" ? `Disabled (${r.disabledBy || "analyst"})` : SIGMA_STATE_LABELS[r.outcome] || r.outcome;
+    state.appendChild(sigmaEl("span", label, `sigma-state sigma-state-${r.outcome}`));
+    tr.appendChild(state);
+    const act = sigmaEl("td", null, "sigma-rule-actions");
     if (r.outcome === "loaded") act.appendChild(sigmaRuleButton("Exclude…", () => sigmaExcludeRule(r.id)));
     if (r.outcome === "loaded" || r.outcome === "disabled")
       act.appendChild(sigmaRuleButton(r.outcome === "loaded" ? "Disable" : "Enable", () => sigmaToggleRule(r.id, r.outcome === "loaded")));
     tr.appendChild(act);
     body.appendChild(tr);
   }
+  sigmaFillStateFilter(shown);
+  sigmaFilterRules();
   document.getElementById("sigmaRulesCount").textContent = `(${shown.length} rules for the log sources the Companion grades)`;
+}
+
+// The state filter lists only the states present, each with its count, and keeps the analyst's pick.
+function sigmaFillStateFilter(shown) {
+  const sel = document.getElementById("sigmaRulesState");
+  if (!sel) return;
+  const keep = sel.value;
+  const counts = {};
+  for (const r of shown) counts[r.outcome] = (counts[r.outcome] || 0) + 1;
+  sel.textContent = "";
+  const all = sigmaEl("option", `All states (${shown.length})`);
+  all.value = "";
+  sel.appendChild(all);
+  for (const key of Object.keys(SIGMA_STATE_LABELS)) {
+    if (!counts[key]) continue;
+    const opt = sigmaEl("option", `${SIGMA_STATE_LABELS[key]} (${counts[key]})`);
+    opt.value = key;
+    sel.appendChild(opt);
+  }
+  sel.value = counts[keep] ? keep : "";
+}
+
+// Hide the rows that do not match the search text and the state filter; say how many remain.
+function sigmaFilterRules() {
+  const body = document.getElementById("sigmaRulesBody");
+  if (!body || !body.querySelectorAll) return;
+  const text = (document.getElementById("sigmaRulesFilter")?.value || "").trim().toLowerCase();
+  const state = document.getElementById("sigmaRulesState")?.value || "";
+  let visible = 0;
+  const rows = body.querySelectorAll("tr");
+  for (const tr of rows) {
+    const show = (!state || tr.dataset.state === state) && (!text || tr.dataset.search.includes(text));
+    tr.hidden = !show;
+    if (show) visible++;
+  }
+  const empty = document.getElementById("sigmaRulesEmpty");
+  if (empty) empty.hidden = visible > 0 || rows.length === 0;
 }
 
 // A mini button for the rules table, disabled in the public demo (#2216).
@@ -462,6 +519,8 @@ function initSigmaRules() {
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
   document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
+  document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
+  document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
   document.querySelectorAll("[data-sigma-status]").forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));
 }
 

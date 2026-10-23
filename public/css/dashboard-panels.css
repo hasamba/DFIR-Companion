@@ -564,3 +564,32 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   color: var(--text-muted); cursor: pointer; }
 .sl-status { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
 .sl-result { margin-top: 4px; }
+
+/* Settings → Sigma rules: the rules inventory table (#2204). Scrolls in its own box with a sticky
+   header; the reason a rule is not loaded sits under its title, and the state is a coloured pill. */
+.sigma-rules-tools { display: flex; gap: 8px; margin: 4px 0 8px; }
+.sfield .sigma-rules-tools input { flex: 1 1 auto; width: auto; min-width: 0; }
+.sfield .sigma-rules-tools select { flex: 0 0 220px; width: 220px; }
+.sigma-rules-wrap { max-height: 440px; overflow: auto; border: 1px solid var(--border-color);
+  border-radius: 6px; background: var(--bg-primary); }
+.sigma-rules-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sigma-rules-table th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 7px 10px;
+  background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600;
+  border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+.sigma-rules-table td { padding: 7px 10px; vertical-align: top; border-bottom: 1px solid var(--border-subtle); }
+.sigma-rules-table tbody tr:last-child td { border-bottom: 0; }
+.sigma-rules-table tbody tr:hover td { background: var(--hover-wash); }
+.sigma-rule-cell { width: 100%; }
+.sigma-rule-title { color: var(--text-bright); }
+.sigma-rule-why { margin-top: 2px; color: var(--text-dim); font-size: 11px; }
+.sigma-rule-cell .sfield-hint { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.sigma-rule-source { white-space: nowrap; color: var(--text-muted); }
+.sigma-rule-actions { white-space: nowrap; text-align: right; }
+.sigma-rules-table .btn-mini { padding: 2px 9px; font-size: 11px; line-height: 1.5; }
+.sigma-rule-actions .btn-mini + .btn-mini { margin-left: 4px; }
+.sigma-state { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+  white-space: nowrap; border: 1px solid var(--border-color); color: var(--text-muted); }
+.sigma-state-loaded { color: var(--badge-success-text); background: var(--success-bg); border-color: var(--success-border); }
+.sigma-state-disabled { color: var(--badge-warning-text); background: var(--warning-bg); border-color: var(--warning-border); }
+.sigma-state-refused { color: var(--badge-danger-text); border-color: var(--danger-border); }
+.sigma-rules-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 12px; }

@@ -2826,7 +2826,8 @@
         </div>
         <div class="sfield">
           <label>Rules <span id="sigmaRulesCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
-          <table data-safe-style="width:100%; border-collapse:collapse; font-size:12px;"><thead><tr><th>Rule</th><th>Log source</th><th>State</th><th>Why</th><th></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table>
+          <div class="sigma-rules-tools"><input id="sigmaRulesFilter" type="search" placeholder="Search rules, sources, reasons…" aria-label="Search rules" /><select id="sigmaRulesState" aria-label="Filter by state"><option value="">All states</option></select></div>
+          <div class="sigma-rules-wrap"><table class="sigma-rules-table"><thead><tr><th>Rule</th><th>Log source</th><th>State</th><th aria-label="Actions"></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table><div id="sigmaRulesEmpty" class="sigma-rules-empty" hidden>No rules match the search.</div></div>
         </div>
       </div>
 
