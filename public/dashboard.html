@@ -2765,7 +2765,7 @@
         </div>
       </div>
 
-      <!-- Sigma rules (#2202, #2204) — the SigmaHQ release that grades cloud imports, its settings and updates -->
+      <!-- Sigma rules (#2202, #2204) — the SigmaHQ release that grades cloud and web access log imports, its settings and updates -->
       <div class="stab-pane" id="stab-sigma">
         <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
           <strong>Sigma rules</strong> from <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a>
@@ -2776,7 +2776,7 @@
         <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
         <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
           <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">Minimum level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
             <select id="env-DFIR_SIGMA_MIN_LEVEL">
               <option value="">— default (high) —</option>

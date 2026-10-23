@@ -1,6 +1,6 @@
 # Bundled Sigma rules
 
-These rules grade imported cloud logs at import time (#2202). They are copied verbatim from the
+These rules grade imported cloud logs (#2202) and web server / proxy access logs (#2203) at import time. They are copied verbatim from the
 SigmaHQ release named in `version.txt`; nothing in `rules/` is edited by hand.
 
 - Source: https://github.com/SigmaHQ/sigma, release `r2026-07-01`, asset `sigma_all_rules.zip`
