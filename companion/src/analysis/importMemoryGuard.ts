@@ -21,7 +21,8 @@ import { maxEventsDefault } from "./eventAggregate.js";
  * import will add are estimated from the file's size — about one event per 200 bytes, which
  * over-counts every format we measured — capped by DFIR_MAX_EVENTS. When the caller does not know
  * the size (a Velociraptor monitor poll), the default cap of 2,000 stands in: an operator who
- * raised DFIR_MAX_EVENTS for a full MFT import must not have every small import refused.
+ * raised DFIR_MAX_EVENTS for a full MFT import must not have every small import refused. The same
+ * 2,000 stands in for an uncapped caller that cannot give a size, not lowered by DFIR_MAX_EVENTS.
  *
  * Admitted imports RESERVE their estimates — memory and heap — until their import section is
  * released, so two cases importing at once cannot both be admitted against the same free memory or
@@ -148,7 +149,7 @@ export function estimateIncomingEvents(maxEvents: number, hint?: ImportAdmission
   if (typeof rows === "number" && Number.isFinite(rows) && rows >= 0) return Math.min(sized, rows);
   const bytes = hint?.incomingBytes;
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
-    return Math.min(maxEvents, UNSIZED_INCOMING_EVENTS);
+    return Math.min(sized, UNSIZED_INCOMING_EVENTS);
   }
   return Math.min(sized, Math.ceil(bytes / IMPORT_INPUT_BYTES_PER_EVENT));
 }

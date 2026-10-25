@@ -591,5 +591,6 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   white-space: nowrap; border: 1px solid var(--border-color); color: var(--text-muted); }
 .sigma-state-loaded { color: var(--badge-success-text); background: var(--success-bg); border-color: var(--success-border); }
 .sigma-state-disabled { color: var(--badge-warning-text); background: var(--warning-bg); border-color: var(--warning-border); }
+.sigma-state-status { color: var(--tag-purple-text); background: var(--info-bg); border-color: var(--info-border); }
 .sigma-state-refused { color: var(--badge-danger-text); border-color: var(--danger-border); }
 .sigma-rules-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 12px; }

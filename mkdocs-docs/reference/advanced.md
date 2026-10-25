@@ -381,7 +381,8 @@ confidence instead of prose. It is fast and cheap enough to read a whole case's 
 thousand rows in a few seconds, for roughly a penny (measured with Jev 1.13, the default model's predecessor).
 
 **Grading writes nothing.** Running the review changes no case data; the run's cost is the only
-thing it records. What you tick is another matter — see *Promoting what it finds* below.
+thing it records. A review that stops on an error still records the cost of the requests that
+already ran. What you tick is another matter — see *Promoting what it finds* below.
 
 **Run it:** the *Missed evidence review* panel. The table is ranked by grade, highest first.
 
@@ -462,7 +463,8 @@ TypeSafe serves Jev only (blank means `jev-latest`). A model you already saved i
 
 Every result names the model that produced it: each graded row records the model that answered for
 it, the containment card shows `Decision model <model id>`, and promoted rows carry
-`[missed-evidence: … by <model id>]`. If the chosen model rejects a question, the whole run stops so
+`[missed-evidence: … by <model id>]`. In the review table, a row answered by a different model than
+the one in the panel's header shows `graded by <model id>`. If the chosen model rejects a question, the whole run stops so
 no more paid requests go out, and the error names the model, for example
 `Decision model perplexity/pplx-decider-v1.2: HTTP 400 …`. Only Jev 1.13 has been benchmarked.
 

@@ -147,6 +147,7 @@ interface Row {
   description: string;
   artifactName?: string;
   timestamp: string;
+  model?: string;
 }
 
 const row = (
@@ -602,5 +603,79 @@ describe("what the panel says it does", () => {
     expect(jev).toContain(".jev-pick");
     const a11y = await readFile(new URL("../../../public/css/a11y.css", import.meta.url), "utf8");
     expect(a11y).toContain(":focus-visible");
+  });
+});
+
+describe("which model graded each row (#2236)", () => {
+  const HEADLINE = "typesafe/jev-1.13";
+  const OTHER = "perplexity/pplx-decider-v1.2";
+  const count = (html: string, needle: string) => html.split(needle).length - 1;
+
+  it("names a row's model only when it differs from the review's headline model", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "High", 0.9, 0.1, { model: OTHER }),
+    ]);
+    const html = h.panel().innerHTML;
+    expect(count(html, `graded by ${OTHER}`)).toBe(1);
+    expect(html).not.toContain(`graded by ${HEADLINE}`);
+  });
+
+  it("says nothing when every row was graded by the headline model", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "Medium", 0.9, 0.1, { model: HEADLINE }),
+    ]);
+    expect(h.panel().innerHTML).not.toContain("graded by");
+  });
+
+  it("says nothing when a row carries no model (an older server)", async () => {
+    const h = await reviewed([row("e-a", "High", 0.9), row("e-b", "Medium", 0.9)]);
+    const html = h.panel().innerHTML;
+    expect(html).not.toContain("graded by");
+    expect(html).not.toContain("undefined");
+  });
+
+  it("escapes the row's model — it comes from a remote response", async () => {
+    const h = await reviewed([row("e-a", "High", 0.9, 0.1, { model: "<img src=x onerror=1>" })]);
+    const html = h.panel().innerHTML;
+    expect(html).toContain("graded by &lt;img");
+    expect(html).not.toContain("<img src=x");
+  });
+
+  it("does not credit every ticked row to one model when they came from more than one", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "High", 0.9, 0.1, { model: OTHER }),
+    ]);
+    selectAll(h);
+    h.inPanel("#jevPromoteBtn")!.fire("click");
+    const html = h.panel().innerHTML;
+    expect(html).toContain("Promote 2 row(s) into the forensic timeline?");
+    expect(html).not.toContain(`${HEADLINE} gave it as its severity`);
+    expect(html).toContain("2 models");
+  });
+
+  it("names the ticked rows' own model when they all came from a non-headline model", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "High", 0.9, 0.1, { model: OTHER }),
+    ]);
+    setTick(h, "e-b", true);
+    h.inPanel("#jevPromoteBtn")!.fire("click");
+    const html = h.panel().innerHTML;
+    expect(html).toContain("Promote 1 row(s) into the forensic timeline?");
+    expect(html).toContain(`${OTHER} gave it as its severity`);
+    expect(html).not.toContain(`${HEADLINE} gave it`);
+  });
+
+  it("keeps the single-model sentence when every ticked row came from one model", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "High", 0.9, 0.1, { model: HEADLINE }),
+    ]);
+    selectAll(h);
+    h.inPanel("#jevPromoteBtn")!.fire("click");
+    expect(h.panel().innerHTML).toContain(`${HEADLINE} gave it as its severity`);
   });
 });

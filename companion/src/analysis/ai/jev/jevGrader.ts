@@ -223,6 +223,44 @@ function haltOn(halt: RunHalt, err: unknown): void {
   halt.cause = err;
 }
 
+/** What a review spent, as the provider billed it. */
+export interface JevReviewSpend {
+  readonly model: string;
+  readonly usage: { inputTokens: number; outputTokens: number; costUSD?: number };
+  /** How many requests the provider answered — and so billed. */
+  readonly requests: number;
+}
+
+/**
+ * One review's running spend (#2235), added to the moment each request resolves — split halves and
+ * requests that finish after a halt included — so a review that stops part way can still say what
+ * it already cost. Summing per batch lost both: a split's good half never reached the batch total,
+ * and every total was dropped when the review threw.
+ */
+interface RunSpend {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUSD?: number;
+  requests: number;
+}
+
+function addSpend(spend: RunSpend, result: JevBatchResult): void {
+  spend.model = result.model;
+  spend.inputTokens += result.usage.inputTokens;
+  spend.outputTokens += result.usage.outputTokens;
+  if (result.usage.costUSD !== undefined) spend.costUSD = (spend.costUSD ?? 0) + result.usage.costUSD;
+  spend.requests += 1;
+}
+
+function spendUsage(spend: RunSpend): JevReviewSpend["usage"] {
+  return {
+    inputTokens: spend.inputTokens,
+    outputTokens: spend.outputTokens,
+    ...(spend.costUSD !== undefined ? { costUSD: spend.costUSD } : {}),
+  };
+}
+
 /** Thrown in place of a request the review no longer sends; never the error the analyst sees. */
 class ReviewHalted extends Error {
   constructor() {
@@ -392,6 +430,7 @@ async function askWithSplit(
   ids: readonly string[],
   plan: AskPlan,
   halt: RunHalt,
+  spend: RunSpend,
 ): Promise<SplitResult> {
   if (halt.failed) throw new ReviewHalted();
   const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
@@ -410,14 +449,15 @@ async function askWithSplit(
       buildBatchQuestions([...ids], plan.shape, withContext),
       () => halt.failed,
     );
+    addSpend(spend, result);
     return { ...result, rowModels: Object.fromEntries(ids.map((id) => [id, result.model])) };
   } catch (err) {
     if (!isTooLarge(err) || batch.length < 2) throw err;
     const mid = Math.ceil(batch.length / 2);
     const [a, b] = await settleBoth(
       halt,
-      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan, halt),
-      askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan, halt),
+      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan, halt, spend),
+      askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan, halt, spend),
     );
     return {
       model: a.model || b.model,
@@ -501,6 +541,12 @@ export async function gradeEvents(
     shape?: JevGradeShape;
     /** The analyst's own records, already masked. Used by the decomposed shape only. */
     caseContext?: string;
+    /**
+     * Called once, just before a halted review rejects, with what the requests that DID answer
+     * cost (#2235) — only when at least one did. The rejection itself is still the original error
+     * object: the route tells a Presidio hold from a provider failure by its type.
+     */
+    onSpendOnFailure?: (spend: JevReviewSpend) => void;
   },
 ): Promise<JevReviewResult> {
   // Explicit, because Math.max(1, NaN) is NaN and chunk() would then hand back one EMPTY batch —
@@ -520,10 +566,7 @@ export async function gradeEvents(
     plan.shape,
     plan.shape === "decomposed" ? plan.caseContext : "",
   ).map((idx) => idx.map((i) => events[i]));
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let costUSD: number | undefined;
-  let model = "";
+  const spend: RunSpend = { model: "", inputTokens: 0, outputTokens: 0, requests: 0 };
 
   // Bounded concurrency, because the analyst can now ask for the whole archive. Sequential
   // batches were fine at the 2000-row default (25 calls) and are not at 20,000 (500 calls, one
@@ -551,11 +594,7 @@ export async function gradeEvents(
       // review — a review that silently covered half the rows would be the coverage lie this
       // panel exists to avoid. Found by a real 40-row batch being refused on the first case it met.
       try {
-        const result = await askWithSplit(deps, batch, ids, plan, halt);
-        model = result.model;
-        inputTokens += result.usage.inputTokens;
-        outputTokens += result.usage.outputTokens;
-        if (result.usage.costUSD !== undefined) costUSD = (costUSD ?? 0) + result.usage.costUSD;
+        const result = await askWithSplit(deps, batch, ids, plan, halt, spend);
         graded[index] = batch.map((e, i) => toGradeRow(e, ids[i], result, plan));
       } catch (err) {
         haltOn(halt, err);
@@ -563,13 +602,18 @@ export async function gradeEvents(
     }
   });
   await Promise.all(workers);
-  if (halt.failed) throw halt.cause;
+  if (halt.failed) {
+    if (spend.requests > 0) {
+      opts.onSpendOnFailure?.({ model: spend.model, usage: spendUsage(spend), requests: spend.requests });
+    }
+    throw halt.cause;
+  }
   const rows = graded.flat();
 
   return {
-    model,
+    model: spend.model,
     rows: [...rows].sort((a, b) => b.score - a.score),
     usedEvents: events.length,
-    usage: { inputTokens, outputTokens, ...(costUSD !== undefined ? { costUSD } : {}) },
+    usage: spendUsage(spend),
   };
 }

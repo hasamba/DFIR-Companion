@@ -457,3 +457,54 @@ describe("the Sigma rules settings tab", () => {
     });
   });
 });
+
+// #2233 — every rule state the table can show needs its own pill colour. The keys come from the
+// module's label map, so a state added later without a CSS rule fails here too.
+describe("Sigma rule state pills", () => {
+  const PANELS_CSS = new URL("../../../public/css/dashboard-panels.css", import.meta.url);
+
+  it("gives every rule state its own pill style", async () => {
+    const src = await readFile(MODULE, "utf8");
+    const map = /const SIGMA_STATE_LABELS\s*=\s*\{([^}]*)\}/.exec(src);
+    expect(map).not.toBeNull();
+    const keys = [...(map?.[1] ?? "").matchAll(/(\w+)\s*:/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThan(0);
+    const css = await readFile(PANELS_CSS, "utf8");
+    const missing = keys.filter((key) => !css.includes(`.sigma-state-${key} {`));
+    expect(missing).toEqual([]);
+  });
+});
+
+// #2232 — the rule search and state filter are wired once, by initSigmaRules. loadSigmaRules runs
+// on every tab open and after every rule action, so wiring them there piled up a listener each time.
+describe("Sigma rules filter wiring", () => {
+  it("wires the rule search and state filter once, however often the tab loads (#2232)", async () => {
+    const filter = { value: "", addEventListener: vi.fn() };
+    const state = { value: "", addEventListener: vi.fn() };
+    const box = { textContent: "", style: { color: "" } };
+    const nodes: Record<string, unknown> = {
+      "env-DFIR_SIGMA_RULE_STATUSES": { value: "stable,test" },
+      sigmaRulesFilter: filter,
+      sigmaRulesState: state,
+      sigmaMessage: box,
+    };
+    const document = {
+      readyState: "complete",
+      addEventListener: () => undefined,
+      getElementById: (id: string) => nodes[id] ?? null,
+      querySelectorAll: () => [],
+    };
+    const fetch = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const mod = loadDashboardModule<{ loadSigmaRules: () => Promise<void> }>("dashboard-sigma-rules.js", [], {
+      document,
+      fetch,
+    });
+    for (let i = 0; i < 3; i++) await mod.loadSigmaRules();
+    const calls = (spy: ReturnType<typeof vi.fn>, type: string) =>
+      spy.mock.calls.filter(([t]) => t === type).length;
+    expect(calls(filter.addEventListener, "input")).toBe(1);
+    expect(calls(state.addEventListener, "change")).toBe(1);
+  });
+});

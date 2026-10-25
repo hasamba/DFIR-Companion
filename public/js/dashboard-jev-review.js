@@ -190,12 +190,15 @@
     const tool = isTooling(row)
       ? `<div class="jev-tool-score">reads as our own collection tooling (${pct(row.tooling)})</div>`
       : "";
+    // #2236: the model that answered for THIS row, named only when it is not the headline's.
+    const rowModel = row.model ? String(row.model) : "";
+    const by = rowModel && rowModel !== String(result.model || "") ? `<div class="jev-tool-score jev-row-model">graded by ${esc(rowModel)}</div>` : "";
     return `<tr${sentIds.has(row.id) ? ' class="jev-row-sent"' : ""}>
       <td class="jev-pick-cell">${pickHtml(row, grade)}</td>
       <td><span class="jev-grade ${gradeClass(grade)}"><span class="sev-dot"></span>${esc(grade)}</span></td>
       <td class="jev-conf">${esc(pct(row.confidence))}</td>
       <td>${esc(when(row.timestamp))}</td>
-      <td>${esc(row.artifactName || "—")}${tool}</td>
+      <td>${esc(row.artifactName || "—")}${tool}${by}</td>
       <td class="jev-desc">${esc(row.description || "—")}${sub ? `<div class="jev-tool-score">${sub}</div>` : ""}${why ? `<div class="jev-tool-score">${esc(why)}</div>` : ""}</td>
     </tr>`;
   }
@@ -246,8 +249,11 @@
   function promoteConfirmHtml() {
     const n = selectedRows().length;
     const model = result && result.model ? String(result.model) : "this model";
+    // #2236: ticked rows are credited to the model(s) that graded them, not to the headline model.
+    const picked = [...new Set(selectedRows().map((r) => (r.model ? String(r.model) : model)))];
+    const whose = picked.length > 1 ? `the decision model that graded it gave it (${num(picked.length)} models; each row's model is named in the table)` : `${picked[0] || model} gave it`;
     const stake =
-      `Each row enters the case record with the grade ${model} gave it as its severity. Severity is ` +
+      `Each row enters the case record with the grade ${whose} as its severity. Severity is ` +
       "what decides whether the analysis AI ever reads a row, so this writes a model's judgement into " +
       "the evidence. It is a reading, not a finding — check the rows before you press. This panel " +
       "cannot undo it.";

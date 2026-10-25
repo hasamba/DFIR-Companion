@@ -14,6 +14,7 @@ import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis
 import type { PresidioClient } from "../../src/analysis/presidio.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
+import { AiCostStore } from "../../src/analysis/aiCost.js";
 
 // #1952: the two Jev routes masked their payload but never ran the Presidio gate, so a name the
 // built-in masking cannot see reached the external model with no scan and no approval hold. They
@@ -184,4 +185,50 @@ describe("the Jev routes run the Presidio gate (#1952)", () => {
       });
     });
   }
+
+  it("still records the spend of a batch already sent when a later one is held (#2235)", async () => {
+    const savedBatch = process.env.DFIR_JEV_BATCH_SIZE;
+    process.env.DFIR_JEV_BATCH_SIZE = "1";
+    try {
+      const root = await mkdtemp(join(tmpdir(), "dfir-jev-presidio-spend-"));
+      const cases = new CaseStore(root);
+      await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      const stateStore = new StateStore(cases);
+      await stateStore.save(emptyState("c1"));
+      const superTimelineStore = new SuperTimelineStore(cases);
+      await superTimelineStore.append("c1", [
+        row("r0", "Info", "routine update check"),
+        row("r1", "Info", `logon by ${PERSON}`),
+      ]);
+      const client: PresidioClient = {
+        analyze: async (text) => {
+          if (!text.includes(PERSON)) return [];
+          // The held batch is scanned slowly, so the clean one has already been sent and billed.
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return [{ entityType: "PERSON", value: PERSON, score: 0.95 }];
+        },
+      };
+      const pipeline = buildRuntimePipeline({
+        provider: new NoProvider(),
+        stateStore,
+        store: cases,
+        imageLoader: async () => ({ base64: "AA", mimeType: "image/webp" }),
+        presidio: { client, url: "http://localhost:5002", minScore: 0.6 },
+      });
+      const aiCostStore = new AiCostStore(cases);
+      const app = createApp(cases, { pipeline, stateStore, superTimelineStore, aiCostStore });
+
+      const res = await request(app).post("/cases/c1/jev/review").send({});
+
+      expect(res.status, JSON.stringify(res.body)).toBe(409);
+      expect(res.body.error).toBe("presidio_approval_required");
+      expect(bodies).toHaveLength(1);
+      const m = (await aiCostStore.load("c1")).other.byModel["jev/jev-stub"];
+      expect(m?.inputTokens).toBe(1);
+      expect(m?.outputTokens).toBe(1);
+    } finally {
+      if (savedBatch === undefined) delete process.env.DFIR_JEV_BATCH_SIZE;
+      else process.env.DFIR_JEV_BATCH_SIZE = savedBatch;
+    }
+  });
 });
