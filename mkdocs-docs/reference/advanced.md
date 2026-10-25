@@ -463,7 +463,8 @@ TypeSafe serves Jev only (blank means `jev-latest`). A model you already saved i
 
 Every result names the model that produced it: each graded row records the model that answered for
 it, the containment card shows `Decision model <model id>`, and promoted rows carry
-`[missed-evidence: … by <model id>]`. If the chosen model rejects a question, the whole run stops so
+`[missed-evidence: … by <model id>]`. In the review table, a row answered by a different model than
+the one in the panel's header shows `graded by <model id>`. If the chosen model rejects a question, the whole run stops so
 no more paid requests go out, and the error names the model, for example
 `Decision model perplexity/pplx-decider-v1.2: HTTP 400 …`. Only Jev 1.13 has been benchmarked.
 
