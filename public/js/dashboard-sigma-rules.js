@@ -53,8 +53,6 @@ function sigmaSyncStatusBoxes() {
   const input = document.getElementById("env-DFIR_SIGMA_RULE_STATUSES");
   if (!input) return;
   const set = new Set((input.value || "stable,test").split(",").map((s) => s.trim().toLowerCase()));
-  document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
-  document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
   document.querySelectorAll("[data-sigma-status]").forEach((box) => {
     box.checked = set.has(box.dataset.sigmaStatus);
   });

@@ -474,3 +474,37 @@ describe("Sigma rule state pills", () => {
     expect(missing).toEqual([]);
   });
 });
+
+// #2232 — the rule search and state filter are wired once, by initSigmaRules. loadSigmaRules runs
+// on every tab open and after every rule action, so wiring them there piled up a listener each time.
+describe("Sigma rules filter wiring", () => {
+  it("wires the rule search and state filter once, however often the tab loads (#2232)", async () => {
+    const filter = { value: "", addEventListener: vi.fn() };
+    const state = { value: "", addEventListener: vi.fn() };
+    const box = { textContent: "", style: { color: "" } };
+    const nodes: Record<string, unknown> = {
+      "env-DFIR_SIGMA_RULE_STATUSES": { value: "stable,test" },
+      sigmaRulesFilter: filter,
+      sigmaRulesState: state,
+      sigmaMessage: box,
+    };
+    const document = {
+      readyState: "complete",
+      addEventListener: () => undefined,
+      getElementById: (id: string) => nodes[id] ?? null,
+      querySelectorAll: () => [],
+    };
+    const fetch = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const mod = loadDashboardModule<{ loadSigmaRules: () => Promise<void> }>("dashboard-sigma-rules.js", [], {
+      document,
+      fetch,
+    });
+    for (let i = 0; i < 3; i++) await mod.loadSigmaRules();
+    const calls = (spy: ReturnType<typeof vi.fn>, type: string) =>
+      spy.mock.calls.filter(([t]) => t === type).length;
+    expect(calls(filter.addEventListener, "input")).toBe(1);
+    expect(calls(state.addEventListener, "change")).toBe(1);
+  });
+});
