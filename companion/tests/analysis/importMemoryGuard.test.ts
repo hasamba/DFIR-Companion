@@ -81,6 +81,12 @@ describe("estimateIncomingEvents", () => {
     expect(estimateIncomingEvents(2_000, { incomingBytes: 10_000_000, uncapped: true })).toBe(50_000);
     expect(estimateIncomingEvents(2_000, { incomingEvents: 70_000, uncapped: true })).toBe(70_000);
   });
+
+  it("does not cap an uncapped caller that cannot size its work by DFIR_MAX_EVENTS (#2234)", () => {
+    expect(estimateIncomingEvents(500, { uncapped: true })).toBe(2_000);
+    expect(estimateIncomingEvents(550_000, { uncapped: true })).toBe(2_000);
+    expect(estimateIncomingEvents(500, { uncapped: true, incomingBytes: Number.NaN })).toBe(2_000);
+  });
 });
 
 describe("createImportMemoryGuard", () => {
