@@ -120,3 +120,109 @@ describe("each graded row names the model that answered for it", () => {
     expect(byId).toEqual({ a: "model-first-half", b: "model-second-half" });
   });
 });
+
+describe("a halted review still reports what it already spent (#2235)", () => {
+  interface Spend {
+    model: string;
+    usage: { inputTokens: number; outputTokens: number; costUSD?: number };
+    requests: number;
+  }
+  const billed = { inputTokens: 1, outputTokens: 1, costUSD: 0.01 };
+  const tooLarge = (): Error => new Error('HTTP 400: {"detail":{"error_type":"max_tokens_exceeded"}}');
+
+  it("reports the spend of batches that succeeded when a later batch halts the review", async () => {
+    const events = Array.from({ length: 12 }, (_, i) => ev(`e${i}`));
+    const providerErr = new Error("HTTP 400: question type not supported");
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const mine = ++calls;
+        await tick();
+        if (mine === 1) throw providerErr;
+        await tick();
+        return { model: "m", answers: answersFor(questions), usage: billed };
+      },
+    };
+    const spends: Spend[] = [];
+    await expect(
+      gradeEvents(deps, events, { batchSize: 1, onSpendOnFailure: (s) => spends.push(s) }),
+    ).rejects.toBe(providerErr);
+    expect(spends).toHaveLength(1);
+    const [s] = spends;
+    expect(s.requests).toBeGreaterThan(0);
+    expect(s.requests).toBe(calls - 1);
+    expect(s.model).toBe("m");
+    expect(s.usage.inputTokens).toBe(calls - 1);
+    expect(s.usage.outputTokens).toBe(calls - 1);
+    expect(s.usage.costUSD).toBeCloseTo(0.01 * (calls - 1));
+  });
+
+  it("counts the half of a size split that succeeded", async () => {
+    const authErr = new Error("Decision model vendor/x: HTTP 401 bad key");
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const rows = Object.keys(questions).filter((q) => !q.endsWith("_tool"));
+        if (rows.length > 1) throw tooLarge();
+        if (rows[0] === "R001") {
+          await tick();
+          throw authErr;
+        }
+        return {
+          model: "m",
+          answers: answersFor(questions),
+          usage: { inputTokens: 7, outputTokens: 3, costUSD: 0.02 },
+        };
+      },
+    };
+    const spends: Spend[] = [];
+    await expect(
+      gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 40, onSpendOnFailure: (s) => spends.push(s) }),
+    ).rejects.toBe(authErr);
+    expect(spends).toEqual([
+      { model: "m", usage: { inputTokens: 7, outputTokens: 3, costUSD: 0.02 }, requests: 1 },
+    ]);
+  });
+
+  it("counts a request that finishes after the halt", async () => {
+    const providerErr = new Error("HTTP 529 overloaded");
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const mine = ++calls;
+        if (mine === 1) {
+          await tick();
+          throw providerErr;
+        }
+        // Still in flight long after the first request has halted the review.
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { model: "slow", answers: answersFor(questions), usage: { inputTokens: 5, outputTokens: 5 } };
+      },
+    };
+    const spends: Spend[] = [];
+    await expect(
+      gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1, onSpendOnFailure: (s) => spends.push(s) }),
+    ).rejects.toBe(providerErr);
+    expect(spends).toEqual([{ model: "slow", usage: { inputTokens: 5, outputTokens: 5 }, requests: 1 }]);
+  });
+
+  it("does not call onSpendOnFailure when nothing was billed", async () => {
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async () => {
+        await tick();
+        throw new Error("HTTP 401 bad key");
+      },
+    };
+    const spends: Spend[] = [];
+    await expect(
+      gradeEvents(deps, [ev("a"), ev("b"), ev("c")], {
+        batchSize: 1,
+        onSpendOnFailure: (s) => spends.push(s),
+      }),
+    ).rejects.toThrow(/bad key/);
+    expect(spends).toEqual([]);
+  });
+});

@@ -12,6 +12,7 @@ import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
+import { AiCostStore } from "../../src/analysis/aiCost.js";
 
 // The Jev review is OFF unless the analyst turns it on, and it reads the raw record — so the two
 // properties worth pinning at the route are that an unconfigured install offers nothing, and that
@@ -469,4 +470,113 @@ describe("what the analyst is told about coverage", () => {
       }
     },
   );
+});
+
+describe("the cost of a decision-model review is on the ledger whatever happens (#2235)", () => {
+  const ENV = [...JEV_ENV, "DFIR_JEV_BATCH_SIZE"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let server: ReturnType<typeof createServer> | undefined;
+
+  /** Answers the first request it receives; refuses every later one with a 401 (not retried). */
+  async function firstThenRefuse(): Promise<void> {
+    let seen = 0;
+    const s = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen += 1;
+        if (seen > 1) {
+          res.writeHead(401, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "no credentials" } }));
+          return;
+        }
+        const questions = JSON.parse(body).questions as Record<string, { type: string }>;
+        const answers: Record<string, unknown> = {};
+        for (const [id, q] of Object.entries(questions)) {
+          answers[id] =
+            q.type === "noul"
+              ? { type: "noul", noul: 0 }
+              : { type: "score", score: 1, legend: {}, probabilities: {}, confidence: 0.5 };
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            model: "jev-stub",
+            answers,
+            usage: { input_tokens: 11, output_tokens: 3, cost: 0.25 },
+          }),
+        );
+      });
+    });
+    server = s;
+    await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    process.env.DFIR_JEV_BASE_URL = `http://127.0.0.1:${(s.address() as AddressInfo).port}/decisions`;
+  }
+
+  async function caseWithRows(n: number) {
+    const root = await mkdtemp(join(tmpdir(), "dfir-jev-spend-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save(emptyState("c1"));
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append(
+      "c1",
+      Array.from({ length: n }, (_, i) => raw(`r${i}`, `row ${i}`)),
+    );
+    return { cases, stateStore, superTimelineStore };
+  }
+
+  beforeEach(() => {
+    resetLimiters();
+    for (const k of ENV) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.DFIR_JEV_ENABLED = "1";
+    process.env.DFIR_JEV_KEY = "jev-test-credential-NOTAREALKEY";
+    process.env.DFIR_JEV_BATCH_SIZE = "1";
+  });
+
+  afterEach(async () => {
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    const s = server;
+    server = undefined;
+    if (s) await new Promise<void>((resolve) => s.close(() => resolve()));
+  });
+
+  it("records the spend of a review that failed part way", async () => {
+    await firstThenRefuse();
+    const { cases, stateStore, superTimelineStore } = await caseWithRows(3);
+    const aiCostStore = new AiCostStore(cases);
+    const app = createApp(cases, { stateStore, superTimelineStore, aiCostStore });
+
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+
+    expect(res.status).toBe(502);
+    const ledger = await aiCostStore.load("c1");
+    const m = ledger.other.byModel["jev/jev-stub"];
+    expect(m).toBeDefined();
+    expect(m.inputTokens).toBe(11);
+    expect(m.outputTokens).toBe(3);
+    expect(m.costUSD).toBeCloseTo(0.25);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+
+  it("a ledger write failure does not cost the analyst a successful review", async () => {
+    await firstThenRefuse();
+    process.env.DFIR_JEV_BATCH_SIZE = "40";
+    const { cases, stateStore, superTimelineStore } = await caseWithRows(2);
+    const aiCostStore = new AiCostStore(cases);
+    aiCostStore.record = () => Promise.reject(new Error("ledger disk full"));
+    const app = createApp(cases, { stateStore, superTimelineStore, aiCostStore });
+
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+
+    expect(res.status).toBe(200);
+    expect([...(await new JevGradeStore(cases).load("c1")).keys()].sort()).toEqual(["r0", "r1"]);
+  });
 });

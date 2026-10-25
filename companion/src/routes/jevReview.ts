@@ -8,7 +8,7 @@ import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
-import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { gradeEvents, type JevReviewSpend } from "../analysis/ai/jev/jevGrader.js";
 import { createDecisionModelCatalog } from "../analysis/ai/jev/decisionModels.js";
 import { buildAnalystContext } from "../analysis/ai/jev/jevDecomposed.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
@@ -242,6 +242,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
     // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
     const shape = settings.shape;
+    // #2235: what a review that halts part way already spent, so the catch can put it on the ledger.
+    let spentBeforeHalt: JevReviewSpend | undefined;
     try {
       // The analyst's own authorized/known-good records (#1924), masked like the rows. Read only when
       // the decomposed shape will ask about them, and inside the try: a damaged marker file must not
@@ -274,14 +276,15 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
             ),
         },
         candidates,
-        { batchSize: settings.batchSize, shape, caseContext },
+        {
+          batchSize: settings.batchSize,
+          shape,
+          caseContext,
+          onSpendOnFailure: (spend) => (spentBeforeHalt = spend),
+        },
       );
 
-      await options.aiCostStore?.record(caseId, "other", "jev", result.model, {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        ...(result.usage.costUSD !== undefined ? { costUSD: result.usage.costUSD } : {}),
-      });
+      await recordJevSpend(options, caseId, result, settings.model);
 
       // AFTER the cost, so money already spent is on the books whatever happens next. BEFORE the
       // answer, and a failure here is the whole answer: grades the analyst can see and tick but the
@@ -312,10 +315,35 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
       return res.json({ ...result, ...coverage, shape });
     } catch (err) {
+      // Before either answer: the requests that did run were billed whichever way the review stopped.
+      if (spentBeforeHalt) await recordJevSpend(options, caseId, spentBeforeHalt, settings.model);
       if (sendJevPresidioStop(res, err, caseId, options)) return res;
       const detail = err instanceof Error ? err.message : String(err);
       getServerLogger().warn(`[jev] ${caseId}: review failed — ${detail}`, { caseId });
       return res.status(502).json({ error: `Decision model review failed: ${detail}` });
     }
+  }
+}
+
+/**
+ * Put a review's spend on the per-case cost ledger, best effort (#2235) — the contract providerCall
+ * keeps for every chat-model call. The ledger is diagnostics-only: a failed write is logged, and
+ * never turns a review the analyst already paid for into an error.
+ */
+async function recordJevSpend(
+  options: RouteContext["options"],
+  caseId: string,
+  spend: Pick<JevReviewSpend, "model" | "usage">,
+  fallbackModel: string,
+): Promise<void> {
+  try {
+    await options.aiCostStore?.record(caseId, "other", "jev", spend.model || fallbackModel, {
+      inputTokens: spend.usage.inputTokens,
+      outputTokens: spend.usage.outputTokens,
+      ...(spend.usage.costUSD !== undefined ? { costUSD: spend.usage.costUSD } : {}),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    getServerLogger().warn(`[jev] ${caseId}: review cost not recorded — ${detail}`, { caseId });
   }
 }

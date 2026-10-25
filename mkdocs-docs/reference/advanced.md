@@ -381,7 +381,8 @@ confidence instead of prose. It is fast and cheap enough to read a whole case's 
 thousand rows in a few seconds, for roughly a penny (measured with Jev 1.13, the default model's predecessor).
 
 **Grading writes nothing.** Running the review changes no case data; the run's cost is the only
-thing it records. What you tick is another matter — see *Promoting what it finds* below.
+thing it records. A review that stops on an error still records the cost of the requests that
+already ran. What you tick is another matter — see *Promoting what it finds* below.
 
 **Run it:** the *Missed evidence review* panel. The table is ranked by grade, highest first.
 
