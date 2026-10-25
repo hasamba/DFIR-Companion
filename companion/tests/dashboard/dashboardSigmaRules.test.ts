@@ -457,3 +457,20 @@ describe("the Sigma rules settings tab", () => {
     });
   });
 });
+
+// #2233 — every rule state the table can show needs its own pill colour. The keys come from the
+// module's label map, so a state added later without a CSS rule fails here too.
+describe("Sigma rule state pills", () => {
+  const PANELS_CSS = new URL("../../../public/css/dashboard-panels.css", import.meta.url);
+
+  it("gives every rule state its own pill style", async () => {
+    const src = await readFile(MODULE, "utf8");
+    const map = /const SIGMA_STATE_LABELS\s*=\s*\{([^}]*)\}/.exec(src);
+    expect(map).not.toBeNull();
+    const keys = [...(map?.[1] ?? "").matchAll(/(\w+)\s*:/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThan(0);
+    const css = await readFile(PANELS_CSS, "utf8");
+    const missing = keys.filter((key) => !css.includes(`.sigma-state-${key} {`));
+    expect(missing).toEqual([]);
+  });
+});
