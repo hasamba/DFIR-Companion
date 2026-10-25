@@ -249,9 +249,9 @@
   function promoteConfirmHtml() {
     const n = selectedRows().length;
     const model = result && result.model ? String(result.model) : "this model";
-    // #2236: ticked rows from more than one model are not credited to the headline model.
-    const models = new Set(selectedRows().map((r) => (r.model ? String(r.model) : model))).size;
-    const whose = models > 1 ? `the decision model that graded it gave it (${num(models)} models; each row's model is named in the table)` : `${model} gave it`;
+    // #2236: ticked rows are credited to the model(s) that graded them, not to the headline model.
+    const picked = [...new Set(selectedRows().map((r) => (r.model ? String(r.model) : model)))];
+    const whose = picked.length > 1 ? `the decision model that graded it gave it (${num(picked.length)} models; each row's model is named in the table)` : `${picked[0] || model} gave it`;
     const stake =
       `Each row enters the case record with the grade ${whose} as its severity. Severity is ` +
       "what decides whether the analysis AI ever reads a row, so this writes a model's judgement into " +

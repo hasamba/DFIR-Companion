@@ -656,6 +656,19 @@ describe("which model graded each row (#2236)", () => {
     expect(html).toContain("2 models");
   });
 
+  it("names the ticked rows' own model when they all came from a non-headline model", async () => {
+    const h = await reviewed([
+      row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
+      row("e-b", "High", 0.9, 0.1, { model: OTHER }),
+    ]);
+    setTick(h, "e-b", true);
+    h.inPanel("#jevPromoteBtn")!.fire("click");
+    const html = h.panel().innerHTML;
+    expect(html).toContain("Promote 1 row(s) into the forensic timeline?");
+    expect(html).toContain(`${OTHER} gave it as its severity`);
+    expect(html).not.toContain(`${HEADLINE} gave it`);
+  });
+
   it("keeps the single-model sentence when every ticked row came from one model", async () => {
     const h = await reviewed([
       row("e-a", "High", 0.9, 0.1, { model: HEADLINE }),
