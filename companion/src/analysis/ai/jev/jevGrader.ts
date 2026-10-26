@@ -238,7 +238,8 @@ export interface JevReviewSpend {
  * and every total was dropped when the review threw.
  */
 interface RunSpend {
-  model: string;
+  /** Billed tokens and requests per answering model id, in the order each model first billed. */
+  readonly byModel: Map<string, { readonly tokens: number; readonly requests: number }>;
   inputTokens: number;
   outputTokens: number;
   costUSD?: number;
@@ -246,11 +247,32 @@ interface RunSpend {
 }
 
 function addSpend(spend: RunSpend, result: JevBatchResult): void {
-  spend.model = result.model;
+  const prior = spend.byModel.get(result.model) ?? { tokens: 0, requests: 0 };
+  spend.byModel.set(result.model, {
+    tokens: prior.tokens + result.usage.inputTokens + result.usage.outputTokens,
+    requests: prior.requests + 1,
+  });
   spend.inputTokens += result.usage.inputTokens;
   spend.outputTokens += result.usage.outputTokens;
   if (result.usage.costUSD !== undefined) spend.costUSD = (spend.costUSD ?? 0) + result.usage.costUSD;
   spend.requests += 1;
+}
+
+/**
+ * The model a review is reported under (#2240): the one that billed the most tokens, then the most
+ * requests, then the one that billed first. Last-write-wins named whichever batch resolved last.
+ * "" when nothing billed, so the caller's configured-model fallback still applies.
+ */
+function headlineModel(spend: RunSpend): string {
+  let best = "";
+  let top = { tokens: -1, requests: -1 };
+  for (const [model, s] of spend.byModel) {
+    if (s.tokens > top.tokens || (s.tokens === top.tokens && s.requests > top.requests)) {
+      best = model;
+      top = s;
+    }
+  }
+  return best;
 }
 
 function spendUsage(spend: RunSpend): JevReviewSpend["usage"] {
@@ -269,8 +291,14 @@ class ReviewHalted extends Error {
   }
 }
 
-/** A batch's answers plus which model answered each row id — a split batch has two halves. */
-type SplitResult = JevBatchResult & { readonly rowModels: Readonly<Record<string, string>> };
+/**
+ * A batch's answers plus which model answered each row id — a split batch has two halves. Spend and
+ * the review's headline model live only in the RunSpend accumulator, never here.
+ */
+interface SplitResult {
+  readonly answers: JevBatchResult["answers"];
+  readonly rowModels: Readonly<Record<string, string>>;
+}
 
 /**
  * Flatten one event into the text Jev judges. Every rendered field is masked, in both views.
@@ -450,7 +478,10 @@ async function askWithSplit(
       () => halt.failed,
     );
     addSpend(spend, result);
-    return { ...result, rowModels: Object.fromEntries(ids.map((id) => [id, result.model])) };
+    return {
+      answers: result.answers,
+      rowModels: Object.fromEntries(ids.map((id) => [id, result.model])),
+    };
   } catch (err) {
     if (!isTooLarge(err) || batch.length < 2) throw err;
     const mid = Math.ceil(batch.length / 2);
@@ -459,17 +490,11 @@ async function askWithSplit(
       askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid), plan, halt, spend),
       askWithSplit(deps, batch.slice(mid), ids.slice(mid), plan, halt, spend),
     );
+    // Each half already added its own spend to the RunSpend accumulator — the one source of spend
+    // and of the review's model — so the merge carries answers and per-row models only.
     return {
-      model: a.model || b.model,
       answers: { ...a.answers, ...b.answers },
       rowModels: { ...a.rowModels, ...b.rowModels },
-      usage: {
-        inputTokens: a.usage.inputTokens + b.usage.inputTokens,
-        outputTokens: a.usage.outputTokens + b.usage.outputTokens,
-        ...(a.usage.costUSD !== undefined || b.usage.costUSD !== undefined
-          ? { costUSD: (a.usage.costUSD ?? 0) + (b.usage.costUSD ?? 0) }
-          : {}),
-      },
     };
   }
 }
@@ -493,12 +518,19 @@ async function settleBoth(
   throw halt.cause;
 }
 
+/** The model that answered one row. Every asked id is in rowModels; a gap is an invariant break. */
+function rowModel(result: SplitResult, id: string): string {
+  const model = result.rowModels[id];
+  if (model === undefined) throw new Error(`decision-model review: no answering model for row ${id}`);
+  return model;
+}
+
 /** One row's answers → its graded row, by the shape the review asked in. */
 function toGradeRow(e: ForensicEvent, id: string, result: SplitResult, plan: AskPlan): JevGradeRow {
   const tool = result.answers[`${id}_tool`];
   const base = {
     id: e.id,
-    model: result.rowModels[id] ?? result.model,
+    model: rowModel(result, id),
     tooling: tool?.type === "noul" ? tool.noul : 0,
     description: e.description,
     artifactName: e.artifactName,
@@ -566,7 +598,7 @@ export async function gradeEvents(
     plan.shape,
     plan.shape === "decomposed" ? plan.caseContext : "",
   ).map((idx) => idx.map((i) => events[i]));
-  const spend: RunSpend = { model: "", inputTokens: 0, outputTokens: 0, requests: 0 };
+  const spend: RunSpend = { byModel: new Map(), inputTokens: 0, outputTokens: 0, requests: 0 };
 
   // Bounded concurrency, because the analyst can now ask for the whole archive. Sequential
   // batches were fine at the 2000-row default (25 calls) and are not at 20,000 (500 calls, one
@@ -604,14 +636,18 @@ export async function gradeEvents(
   await Promise.all(workers);
   if (halt.failed) {
     if (spend.requests > 0) {
-      opts.onSpendOnFailure?.({ model: spend.model, usage: spendUsage(spend), requests: spend.requests });
+      opts.onSpendOnFailure?.({
+        model: headlineModel(spend),
+        usage: spendUsage(spend),
+        requests: spend.requests,
+      });
     }
     throw halt.cause;
   }
   const rows = graded.flat();
 
   return {
-    model: spend.model,
+    model: headlineModel(spend),
     rows: [...rows].sort((a, b) => b.score - a.score),
     usedEvents: events.length,
     usage: spendUsage(spend),
