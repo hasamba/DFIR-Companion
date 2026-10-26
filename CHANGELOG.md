@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sigma "Filtered by status" pill** — the fourth rule state now has its own colour instead of the grey fallback (closes #2233)
 - **Sigma rules search listeners** — reopening the Sigma tab or running a rule action no longer adds another copy of the search and state filters (closes #2232)
 - **Import memory estimate** — an uncapped caller with no known size is no longer cut down to the event cap (closes #2234)
+- **Decision-model review headline model** — the panel header and the cost ledger name the model that billed the most tokens, not whichever request answered last (closes #2240)
 
 ## [0.44.0] - 2026-10-22
 
