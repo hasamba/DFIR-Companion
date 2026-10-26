@@ -226,3 +226,127 @@ describe("a halted review still reports what it already spent (#2235)", () => {
     expect(spends).toEqual([]);
   });
 });
+
+describe("the review's headline model is the one that billed the most (#2240)", () => {
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  const tooLarge = (): Error => new Error('HTTP 400: {"detail":{"error_type":"max_tokens_exceeded"}}');
+  const reply = (
+    model: string,
+    questions: Readonly<Record<string, JevQuestion>>,
+    tokens: number,
+  ): {
+    model: string;
+    answers: Record<string, JevAnswer>;
+    usage: { inputTokens: number; outputTokens: number };
+  } => ({
+    model,
+    answers: answersFor(questions),
+    usage: { inputTokens: tokens, outputTokens: tokens },
+  });
+
+  it("names the majority model, not the batch that resolved last", async () => {
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const mine = ++calls;
+        if (mine === 1) return reply("big", questions, 50);
+        await sleep(30);
+        return reply("small", questions, 1);
+      },
+    };
+    const r = await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1 });
+    expect(r.model).toBe("big");
+  });
+
+  it("names the majority model after a size split, with the exact summed usage", async () => {
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const rows = Object.keys(questions).filter((q) => !q.endsWith("_tool"));
+        if (rows.length > 1) throw tooLarge();
+        if (rows[0] === "R000") {
+          return { ...reply("big", questions, 0), usage: { inputTokens: 100, outputTokens: 50 } };
+        }
+        await sleep(30);
+        return reply("small", questions, 1);
+      },
+    };
+    const r = await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 40 });
+    expect(r.model).toBe("big");
+    expect(r.usage).toEqual({ inputTokens: 101, outputTokens: 51 });
+    const byId = Object.fromEntries(r.rows.map((row) => [row.id, row.model]));
+    expect(byId).toEqual({ a: "big", b: "small" });
+  });
+
+  it("uses the same rule when the review fails part way", async () => {
+    const authErr = new Error("Decision model vendor/x: HTTP 401 bad key");
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const mine = ++calls;
+        if (mine === 1) return reply("big", questions, 20);
+        if (mine === 2) {
+          await sleep(30);
+          return reply("small", questions, 1);
+        }
+        await sleep(5);
+        throw authErr;
+      },
+    };
+    const spends: Array<{ model: string; requests: number }> = [];
+    await expect(
+      gradeEvents(deps, [ev("a"), ev("b"), ev("c")], {
+        batchSize: 1,
+        onSpendOnFailure: (s) => spends.push(s),
+      }),
+    ).rejects.toBe(authErr);
+    expect(spends).toHaveLength(1);
+    expect(spends[0].model).toBe("big");
+    expect(spends[0].requests).toBe(2);
+  });
+
+  it("breaks a token tie by request count", async () => {
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        const mine = ++calls;
+        if (mine === 1) return reply("one-request", questions, 2);
+        await sleep(10 * mine);
+        return reply("two-requests", questions, 1);
+      },
+    };
+    const r = await gradeEvents(deps, [ev("a"), ev("b"), ev("c")], { batchSize: 1 });
+    expect(r.model).toBe("two-requests");
+  });
+
+  it("breaks a full tie by model id, whatever order the requests finish in", async () => {
+    const run = async (firstDelay: number, secondDelay: number): Promise<string> => {
+      let calls = 0;
+      const deps: JevGraderDeps = {
+        mask: (t) => t,
+        ask: async (_state, questions) => {
+          const mine = ++calls;
+          await sleep(mine === 1 ? firstDelay : secondDelay);
+          return reply(mine === 1 ? "x" : "y", questions, 3);
+        },
+      };
+      return (await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1 })).model;
+    };
+    expect(await run(5, 30)).toBe("x");
+    expect(await run(30, 5)).toBe("x");
+  });
+
+  it("returns an empty model when nothing was billed, so the caller's fallback applies", async () => {
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async () => {
+        throw new Error("unreachable");
+      },
+    };
+    const r = await gradeEvents(deps, [], { batchSize: 1 });
+    expect(r.model).toBe("");
+  });
+});
