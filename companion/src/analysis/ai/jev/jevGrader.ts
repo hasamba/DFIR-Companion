@@ -238,7 +238,7 @@ export interface JevReviewSpend {
  * and every total was dropped when the review threw.
  */
 interface RunSpend {
-  /** Billed tokens and requests per answering model id, in the order each model first billed. */
+  /** Billed tokens and requests per answering model id. */
   readonly byModel: Map<string, { readonly tokens: number; readonly requests: number }>;
   inputTokens: number;
   outputTokens: number;
@@ -260,19 +260,15 @@ function addSpend(spend: RunSpend, result: JevBatchResult): void {
 
 /**
  * The model a review is reported under (#2240): the one that billed the most tokens, then the most
- * requests, then the one that billed first. Last-write-wins named whichever batch resolved last.
+ * requests, then the lowest model id — never request finish order, which concurrency makes random.
+ * Last-write-wins named whichever batch resolved last.
  * "" when nothing billed, so the caller's configured-model fallback still applies.
  */
 function headlineModel(spend: RunSpend): string {
-  let best = "";
-  let top = { tokens: -1, requests: -1 };
-  for (const [model, s] of spend.byModel) {
-    if (s.tokens > top.tokens || (s.tokens === top.tokens && s.requests > top.requests)) {
-      best = model;
-      top = s;
-    }
-  }
-  return best;
+  const ranked = [...spend.byModel].sort(
+    ([ma, a], [mb, b]) => b.tokens - a.tokens || b.requests - a.requests || (ma < mb ? -1 : ma > mb ? 1 : 0),
+  );
+  return ranked[0]?.[0] ?? "";
 }
 
 function spendUsage(spend: RunSpend): JevReviewSpend["usage"] {

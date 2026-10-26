@@ -322,7 +322,7 @@ describe("the review's headline model is the one that billed the most (#2240)", 
     expect(r.model).toBe("two-requests");
   });
 
-  it("breaks a full tie by the model that billed first", async () => {
+  it("breaks a full tie by model id, whatever order the requests finish in", async () => {
     const run = async (firstDelay: number, secondDelay: number): Promise<string> => {
       let calls = 0;
       const deps: JevGraderDeps = {
@@ -336,8 +336,7 @@ describe("the review's headline model is the one that billed the most (#2240)", 
       return (await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1 })).model;
     };
     expect(await run(5, 30)).toBe("x");
-    expect(await run(30, 5)).toBe("y");
-    expect(await run(5, 30)).toBe("x");
+    expect(await run(30, 5)).toBe("x");
   });
 
   it("returns an empty model when nothing was billed, so the caller's fallback applies", async () => {
