@@ -228,15 +228,9 @@ async function buildCaseArchive(
 
   const staging = await createStagingDir(join(store.casesRoot, EXPORT_STAGING_DIRNAME), `${caseId}-`);
   try {
-    return await archiveGeneration(
-      store.casesRoot,
-      caseDir,
-      caseId,
-      password,
-      relPaths,
-      extraEntries,
-      staging,
-    );
+    const scope = { casesRoot: store.casesRoot, caseDir };
+    const generation = await snapshotGeneration(scope, caseId, relPaths, staging);
+    return await archiveGeneration(scope, caseId, password, generation, extraEntries, staging);
   } finally {
     // The snapshot is a full copy of the case database, so it never outlives the request that
     // needed it — including when the export throws.
@@ -246,27 +240,77 @@ async function buildCaseArchive(
   }
 }
 
+const DB_REL = `state/${INVESTIGATION_DB_FILENAME}`;
+
+// How many times the walk and the database snapshot are taken again when the database changed
+// under them. One retry covers the case that made this necessary; the rest is margin.
+const SNAPSHOT_ATTEMPTS = 3;
+
+/** The file list and the database snapshot, taken from the same moment of the case. */
+interface CaseGeneration {
+  relPaths: string[];
+  /** False when the case has no database, so there is nothing to substitute and nothing to count. */
+  snapshotted: boolean;
+}
+
+/**
+ * Snapshot the case database, and make sure the file list agrees with it.
+ *
+ * The database can appear while a case is being exported (#2244): opening the dashboard on a case
+ * still in the legacy JSON format migrates it into SQLite, and that migration does not take the
+ * export's state lock. The worker opens the live database by name, so the name is judged before and
+ * after (#1846). A database that appeared, vanished or was replaced across that window is refused
+ * as a "changed file" — and here the walk and the snapshot are then taken again, together. Retrying
+ * the snapshot alone is not enough: a walk that missed the database would leave it out of the archive
+ * while the manifest still counted it. Each accepted attempt passes every check; only a "changed
+ * file" refusal is retried, and the last one still fails the export. Symlink, hardlink and other
+ * refusals end the export at once.
+ */
+async function snapshotGeneration(
+  scope: { casesRoot: string; caseDir: string },
+  caseId: string,
+  firstWalk: string[],
+  staging: string,
+): Promise<CaseGeneration> {
+  const liveDbPath = join(scope.caseDir, DB_REL);
+  const snapshotPath = join(staging, INVESTIGATION_DB_FILENAME);
+  let relPaths = firstWalk;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const snapshotted = await withPinnedCaseFile(scope, liveDbPath, () =>
+        caseSqliteWorker.request<boolean>({
+          op: "backupDatabase",
+          dbPath: liveDbPath,
+          targetPath: snapshotPath,
+        }),
+      );
+      if (snapshotted === relPaths.includes(DB_REL)) return { relPaths, snapshotted };
+      if (attempt >= SNAPSHOT_ATTEMPTS)
+        throw new CaseFileRefusedError(
+          "changed file",
+          liveDbPath,
+          "the database came or went during the export",
+        );
+    } catch (err) {
+      const retryable = err instanceof CaseFileRefusedError && err.kind === "changed file";
+      if (!retryable || attempt >= SNAPSHOT_ATTEMPTS) refusedAs(DB_REL)(err);
+    }
+    relPaths = await walkDir(scope.caseDir);
+    if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);
+  }
+}
+
 async function archiveGeneration(
-  casesRoot: string,
-  caseDir: string,
+  scope: { casesRoot: string; caseDir: string },
   caseId: string,
   password: string,
-  relPaths: string[],
+  { relPaths, snapshotted }: CaseGeneration,
   extraEntries: ZipEntry[],
   staging: string,
 ): Promise<Buffer> {
-  // The live database, and the consistent snapshot standing in for it in the archive. `false` means
-  // the case has no database yet (a case created but never written to), in which case there is
-  // nothing to substitute and nothing to count.
-  const liveDbPath = join(caseDir, "state", INVESTIGATION_DB_FILENAME);
+  // The consistent snapshot stands in for the live database in the archive.
   const snapshotPath = join(staging, INVESTIGATION_DB_FILENAME);
-  const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
-  const scope = { casesRoot, caseDir };
-  // The worker opens the live database by name, so the name is judged before and after (#1846): a
-  // link to another case's database, or a swap during the snapshot, fails the export.
-  const snapshotted = await withPinnedCaseFile(scope, liveDbPath, () =>
-    caseSqliteWorker.request<boolean>({ op: "backupDatabase", dbPath: liveDbPath, targetPath: snapshotPath }),
-  ).catch(refusedAs(dbRel));
+  const dbRel = DB_REL;
 
   const entries: ZipEntry[] = [];
   // `originalPath` appears only on an entry whose case-directory name could not be an archive
@@ -298,7 +342,7 @@ async function archiveGeneration(
       entries.push({ path: recordFile(rel, data), data });
       continue;
     }
-    const fullPath = join(caseDir, rel);
+    const fullPath = join(scope.caseDir, rel);
     // The check and the read are ONE operation on ONE descriptor (storage/caseFileRead.ts). Reading
     // the path after checking it let a process controlling the case directory swap the approved file
     // — or a folder above it (#1846) — for a link and seal another file into the encrypted export.
@@ -324,12 +368,15 @@ async function archiveGeneration(
   // Counted from the SNAPSHOT — the database that is actually in the archive. Counting the live one
   // described a case that had moved on since the bytes were captured, so a recipient verifying the
   // manifest against the archive could find fewer events than it claimed and reasonably conclude
-  // evidence had been dropped.
-  const databaseCounts = await caseSqliteWorker.request<Record<string, number> | null>({
-    op: "entityCounts",
-    dbPath: snapshotted ? snapshotPath : liveDbPath,
-    kinds: ["forensicTimeline", "findings", "iocs"],
-  });
+  // evidence had been dropped. With no snapshot the archive holds no database, so there is none to
+  // count: a database created after the snapshot found none is not in the archive (#2244).
+  const databaseCounts = snapshotted
+    ? await caseSqliteWorker.request<Record<string, number> | null>({
+        op: "entityCounts",
+        dbPath: snapshotPath,
+        kinds: ["forensicTimeline", "findings", "iocs"],
+      })
+    : null;
   if (databaseCounts) {
     counts.forensicEvents = databaseCounts.forensicTimeline ?? counts.forensicEvents;
     counts.findings = databaseCounts.findings ?? counts.findings;
