@@ -239,7 +239,9 @@ export interface JevReviewSpend {
  *
  * `byModel` is deliberately uncapped (#2242). A review sends one configured model; any other id comes
  * from the provider's answered `model` field, which the provider controls. Only an answered request
- * adds an entry, so entries <= answered requests <= rows <= DFIR_JEV_MAX_ROWS (20,000 max). A cap or
+ * adds an entry, so entries <= answered requests <= rows reviewed. That is DFIR_JEV_MAX_ROWS (20,000
+ * max) for a capped review, but a read-all review has no row cap. The per-row `rowModels` record is
+ * already that size, so this map is never the larger structure. A cap or
  * an overflow bucket could mis-name the headline (a synthetic bucket, or a late leader folded away);
  * the spend totals below are summed in their own fields and stay exact either way. A feature that
  * picks a model per row or per request (#2236, #2237) must re-check this bound.
