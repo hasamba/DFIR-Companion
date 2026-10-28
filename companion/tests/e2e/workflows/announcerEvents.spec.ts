@@ -19,6 +19,9 @@ test("US-240: a real import's progress reaches the live regions as spoken announ
   page,
   demoCase,
 }, testInfo) => {
+  // The import's own synthesis and the Re-synthesize run both happen inside this test; the default
+  // 30s would end it before the 60s completion poll below could (#2244).
+  test.setTimeout(150_000);
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await page.waitForLoadState("networkidle");
 
@@ -79,6 +82,19 @@ test("US-240: a real import's progress reaches the live regions as spoken announ
   // (The third named event — import FAILURE — is not provokable through this harness's UI: every
   // text file falls back to the log importer and is accepted, so there is no in-browser action
   // that fails an import. That gap is the harness's, and it is stated rather than papered over.)
+  //
+  // The import's completion starts a synthesis of its own. When that run has finished, the AI pill
+  // reads "up to date" and Re-synthesize asks for confirmation first. Left unanswered, Playwright
+  // dismisses the confirm, the button does nothing, and nothing is announced — the #2244 nightly
+  // failure. Whether the confirm appears depends on where the pill is at the moment of the click,
+  // and the pill keeps moving after an import, so the test answers it when it appears rather than
+  // requiring it. Both branches of the confirm itself are pinned in
+  // tests/dashboard/resynthesizeConfirm.test.ts.
+  const dialogs: Array<{ type: string; message: string }> = [];
+  page.on("dialog", async (dialog) => {
+    dialogs.push({ type: dialog.type(), message: dialog.message() });
+    await dialog.accept();
+  });
   await page.locator("#synthesize").click();
   await expect
     .poll(
@@ -86,4 +102,8 @@ test("US-240: a real import's progress reaches the live regions as spoken announ
       { timeout: 60_000 },
     )
     .toEqual(expect.arrayContaining([expect.stringMatching(/synthesized: \d+ findings/i)]));
+  // Any dialog the press raised must be the up-to-date confirm — nothing else may block the run.
+  for (const dialog of dialogs) {
+    expect(dialog).toEqual({ type: "confirm", message: expect.stringMatching(/already up to date/i) });
+  }
 });
