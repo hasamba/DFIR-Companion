@@ -143,25 +143,30 @@ describe("exportEncryptedCase — the database changes state during the export (
     expect(manifest.counts).toMatchObject({ forensicEvents: 2, findings: 1, iocs: 1 });
   });
 
-  it("still refuses when the database is replaced on every attempt", async () => {
-    const store = await legacyCase("RACE-5");
-    await migrate(store, "RACE-5");
-    const liveDb = join(store.stateDir("RACE-5"), INVESTIGATION_DB_FILENAME);
-    const request = caseSqliteWorker.request.bind(caseSqliteWorker);
-    let backups = 0;
-    vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (msg) => {
-      if ((msg as { op: string }).op === "backupDatabase") {
-        backups++;
-        // A new inode under the same name, every time.
-        await copyFile(liveDb, `${liveDb}.swap`);
-        await rename(`${liveDb}.swap`, liveDb);
-      }
-      return request(msg as never);
-    });
+  // Windows refuses to rename over a file another handle holds open (EPERM), and the export holds
+  // the database open across the snapshot — so this swap cannot happen there at all.
+  it.skipIf(process.platform === "win32")(
+    "still refuses when the database is replaced on every attempt",
+    async () => {
+      const store = await legacyCase("RACE-5");
+      await migrate(store, "RACE-5");
+      const liveDb = join(store.stateDir("RACE-5"), INVESTIGATION_DB_FILENAME);
+      const request = caseSqliteWorker.request.bind(caseSqliteWorker);
+      let backups = 0;
+      vi.spyOn(caseSqliteWorker, "request").mockImplementation(async (msg) => {
+        if ((msg as { op: string }).op === "backupDatabase") {
+          backups++;
+          // A new inode under the same name, every time.
+          await copyFile(liveDb, `${liveDb}.swap`);
+          await rename(`${liveDb}.swap`, liveDb);
+        }
+        return request(msg as never);
+      });
 
-    await expect(exportEncryptedCase(store, "RACE-5", PASSWORD)).rejects.toThrow(
-      /changed file detected in case directory at "state\/investigation\.sqlite"/,
-    );
-    expect(backups).toBe(3);
-  });
+      await expect(exportEncryptedCase(store, "RACE-5", PASSWORD)).rejects.toThrow(
+        /changed file detected in case directory at "state\/investigation\.sqlite"/,
+      );
+      expect(backups).toBe(3);
+    },
+  );
 });
