@@ -236,9 +236,16 @@ export interface JevReviewSpend {
  * requests that finish after a halt included — so a review that stops part way can still say what
  * it already cost. Summing per batch lost both: a split's good half never reached the batch total,
  * and every total was dropped when the review threw.
+ *
+ * `byModel` is deliberately uncapped (#2242). A review sends one configured model; any other id comes
+ * from the provider's answered `model` field, which the provider controls. Only an answered request
+ * adds an entry, so entries <= answered requests <= rows <= DFIR_JEV_MAX_ROWS (20,000 max). A cap or
+ * an overflow bucket could mis-name the headline (a synthetic bucket, or a late leader folded away);
+ * the spend totals below are summed in their own fields and stay exact either way. A feature that
+ * picks a model per row or per request (#2236, #2237) must re-check this bound.
  */
 interface RunSpend {
-  /** Billed tokens and requests per answering model id. */
+  /** Billed tokens and requests per answering model id. Uncapped; bounded as stated above. */
   readonly byModel: Map<string, { readonly tokens: number; readonly requests: number }>;
   inputTokens: number;
   outputTokens: number;
