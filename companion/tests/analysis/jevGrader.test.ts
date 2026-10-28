@@ -301,6 +301,40 @@ describe("gradeEvents", () => {
     expect(r.rows.map((x) => x.score)).toEqual([...r.rows.map((x) => x.score)].sort((a, b) => b - a));
   });
 
+  it("keeps spend exact and names the real leader when every request answers a different model (#2242)", async () => {
+    // The answered model id is the provider's to choose, so a broken provider can return a new one
+    // on every request. Per-model spend stays uncapped on purpose: a cap or an overflow bucket could
+    // fold the leader away. The leader here is the LAST row, so it arrives once the map is already big.
+    const rowCount = 50;
+    const leader = `e${rowCount - 1}`;
+    const events = Array.from({ length: rowCount }, (_, i) => ev(`e${i}`));
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (state, questions) => {
+        // Row ids restart at R000 in every batch, so name the model after the event the batch holds.
+        const rowId = /desc (e\d+)/.exec(JSON.stringify(state))?.[1] ?? "none";
+        const answers: Record<string, JevAnswer> = {};
+        for (const qid of Object.keys(questions)) {
+          answers[qid] = qid.endsWith("_tool")
+            ? { type: "noul", noul: 0 }
+            : { type: "score", score: 1, legend: {}, probabilities: {}, confidence: 0.5 };
+        }
+        const inputTokens = rowId === leader ? 100 : 10;
+        return {
+          model: `routed/variant-${rowId}`,
+          answers,
+          usage: { inputTokens, outputTokens: 1, costUSD: 0.001 },
+        };
+      },
+    };
+    const r = await gradeEvents(deps, events, { batchSize: 1 });
+    expect(r.rows).toHaveLength(rowCount);
+    expect(r.usage.inputTokens).toBe((rowCount - 1) * 10 + 100);
+    expect(r.usage.outputTokens).toBe(rowCount);
+    expect(r.usage.costUSD).toBeCloseTo(rowCount * 0.001);
+    expect(r.model).toBe(`routed/variant-${leader}`);
+  });
+
   it("refuses a batch size that is not a positive number", async () => {
     // NaN here used to produce one empty batch: nothing graded, no error, a successful-looking run.
     for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {

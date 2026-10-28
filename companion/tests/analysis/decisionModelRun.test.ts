@@ -243,20 +243,44 @@ describe("the review's headline model is the one that billed the most (#2240)", 
     answers: answersFor(questions),
     usage: { inputTokens: tokens, outputTokens: tokens },
   });
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-  it("names the majority model, not the batch that resolved last", async () => {
+  // Request N replies as models[N] with tokens[N], but only once the test opens its gate. Every
+  // request must be in flight before any gate opens, so a serialized pool fails here, loudly.
+  // Gates then open one at a time in releaseOrder, so the finish order is chosen, not slept for.
+  const gatedRun = async (models: string[], tokens: number[], releaseOrder: number[]): Promise<string> => {
+    const opens: Array<() => void> = [];
+    const gates = models.map(() => new Promise<void>((resolve) => opens.push(resolve)));
     let calls = 0;
     const deps: JevGraderDeps = {
       mask: (t) => t,
       ask: async (_state, questions) => {
-        const mine = ++calls;
-        if (mine === 1) return reply("big", questions, 50);
-        await sleep(30);
-        return reply("small", questions, 1);
+        const mine = calls++;
+        await gates[mine];
+        return reply(models[mine], questions, tokens[mine]);
       },
     };
-    const r = await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1 });
-    expect(r.model).toBe("big");
+    const review = gradeEvents(
+      deps,
+      models.map((_, i) => ev(`e${i}`)),
+      { batchSize: 1 },
+    );
+    await flush();
+    expect(calls).toBe(models.length);
+    for (const i of releaseOrder) {
+      opens[i]();
+      await flush();
+    }
+    return (await review).model;
+  };
+  const forward = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
+  const reverse = (n: number): number[] => forward(n).reverse();
+
+  it("names the majority model, not the batch that resolved last", async () => {
+    const models = ["big", "small"];
+    const tokens = [50, 1];
+    expect(await gatedRun(models, tokens, forward(2))).toBe("big");
+    expect(await gatedRun(models, tokens, reverse(2))).toBe("big");
   });
 
   it("names the majority model after a size split, with the exact summed usage", async () => {
@@ -308,35 +332,17 @@ describe("the review's headline model is the one that billed the most (#2240)", 
   });
 
   it("breaks a token tie by request count", async () => {
-    let calls = 0;
-    const deps: JevGraderDeps = {
-      mask: (t) => t,
-      ask: async (_state, questions) => {
-        const mine = ++calls;
-        if (mine === 1) return reply("one-request", questions, 2);
-        await sleep(10 * mine);
-        return reply("two-requests", questions, 1);
-      },
-    };
-    const r = await gradeEvents(deps, [ev("a"), ev("b"), ev("c")], { batchSize: 1 });
-    expect(r.model).toBe("two-requests");
+    const models = ["one-request", "two-requests", "two-requests"];
+    const tokens = [2, 1, 1];
+    expect(await gatedRun(models, tokens, forward(3))).toBe("two-requests");
+    expect(await gatedRun(models, tokens, reverse(3))).toBe("two-requests");
   });
 
   it("breaks a full tie by model id, whatever order the requests finish in", async () => {
-    const run = async (firstDelay: number, secondDelay: number): Promise<string> => {
-      let calls = 0;
-      const deps: JevGraderDeps = {
-        mask: (t) => t,
-        ask: async (_state, questions) => {
-          const mine = ++calls;
-          await sleep(mine === 1 ? firstDelay : secondDelay);
-          return reply(mine === 1 ? "x" : "y", questions, 3);
-        },
-      };
-      return (await gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 1 })).model;
-    };
-    expect(await run(5, 30)).toBe("x");
-    expect(await run(30, 5)).toBe("x");
+    const models = ["x", "y"];
+    const tokens = [3, 3];
+    expect(await gatedRun(models, tokens, forward(2))).toBe("x");
+    expect(await gatedRun(models, tokens, reverse(2))).toBe("x");
   });
 
   it("returns an empty model when nothing was billed, so the caller's fallback applies", async () => {
