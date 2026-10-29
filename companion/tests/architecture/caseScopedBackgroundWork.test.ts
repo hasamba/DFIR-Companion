@@ -79,6 +79,7 @@ const INTERVALS: Record<string, { count: number; kind: "global" | "per-case"; wh
 // A sweep that starts per-case work must pass the LISTED generation (generationOf) into the scope,
 // so a case created between the listing and the work is not adopted.
 const LIST_SWEEPS: Record<string, string> = {
+  "composition/captureAnalysis.ts": "#2249 restart resume of stranded captures, with generationOf(listed)",
   "composition/dropFolder.ts": "scanCaseDrops per case, in scope with generationOf(listed)",
   "composition/maintenanceTasks.ts": "scheduled backup per case, in scope with generationOf(listed)",
   "composition/veloMonitors.ts": "startup resume arms each monitor in scope with generationOf(listed)",

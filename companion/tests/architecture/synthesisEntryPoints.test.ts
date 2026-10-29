@@ -43,9 +43,11 @@ const RESYNTHESIZE_IN_BACKGROUND: Sites = {
 };
 
 const SCHEDULE_SYNTHESIS: Sites = {
-  // 1. AI on (backfill ×2) and screenshot windows analyzed (flush ×1). A busy case no longer
-  // re-schedules itself: it waits in the shared deferral queue (composition/synthesisDeferral.ts).
-  "composition/captureAnalysis.ts": 3,
+  // 1. AI on (backfill with nothing to analyze ×1) and screenshot windows analyzed (flush ×1, and
+  // the owed-capture run ×1 that backfill and failed-window recovery share, #2248). A busy case no
+  // longer re-schedules itself: it waits in the shared deferral queue (composition/synthesisDeferral.ts).
+  "composition/captureAnalysis.ts": 1,
+  "composition/captureWindows.ts": 2,
 };
 
 // Direct pipeline.synthesize() calls. Each must sit inside an exclusive `synthesis` job — the one

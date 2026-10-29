@@ -20,10 +20,7 @@
  * forever — a real bug report ("this message is stuck, I don't know if it finished"), which is why
  * the early returns below all route through `idle()` or `catchUpSynthesis()`.
  */
-import { join } from "node:path";
-import { readFile, rm } from "node:fs/promises";
 import { warnLine } from "../logging/serverLogger.js";
-import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
@@ -37,17 +34,9 @@ import { SynthMetaStore } from "../analysis/synthMeta.js";
 // header pill and the gate's own 409 can never drift into saying different things.
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import { isAnalystDecisionGate } from "../routes/presidioApproval.js";
-import { runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
+import { generationOf, runInCaseScope, runInGenerationScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet } from "../storage/caseKeyedState.js";
-import {
-  afterWindowFailure,
-  afterWindowSuccess,
-  parseCaptureLog,
-  pendingCaptures,
-  recoveryDue,
-  recoveryPolicy,
-  releaseHold,
-} from "./captureRecovery.js";
+import { createCaptureWindows } from "./captureWindows.js";
 
 export interface CaptureAnalysisDeps {
   store: CaseStore;
@@ -77,6 +66,8 @@ export interface CaptureAnalysis {
    * on for the case. A no-op otherwise. The safety-net sweep calls it for every held case.
    */
   recover(caseId: string): Promise<void>;
+  /** #2249: analyze what each AI-on case owes after a restart. The first sweep calls it. */
+  resumeAfterRestart(): Promise<void>;
   /** Debounced auto-synthesis after captures/imports land. No-op unless autoSynthesize is on. */
   scheduleSynthesis(caseId: string): void;
   /**
@@ -103,22 +94,19 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   // #1866: every per-case map below keys on (case id, generation), so a deleted case's late
   // callbacks never cancel, coalesce with or clear a same-id successor's entries.
   const captureBuffers = new CaseKeyedMap<CaptureMetadata[]>(() => store.casesRoot);
-  // #2248: cases holding a failed window. In memory only — the hold itself is in the AI control.
-  const heldCases = new CaseKeyedSet(() => store.casesRoot);
-  const policy = recoveryPolicy(options.captureRecovery);
-  // #2248: flush and recovery run one at a time per case. Recovery re-derives "what is owed" from
-  // the log minus the live buffer, so a flush that had already taken its buffer and was still
-  // running would otherwise be analyzed twice. A queued flush takes its buffer when it starts.
-  const caseQueues = new CaseKeyedMap<Promise<void>>(() => store.casesRoot);
-  function serialized(caseId: string, fn: () => Promise<void>): Promise<void> {
-    const run = (caseQueues.get(caseId) ?? Promise.resolve()).then(fn);
-    const tail = run.catch(() => {});
-    caseQueues.set(caseId, tail);
-    void tail.then(() => {
-      if (caseQueues.get(caseId) === tail) caseQueues.delete(caseId);
-    });
-    return run;
-  }
+  // #2248: the live window, recovery and the shared "what is owed" re-derivation. See captureWindows.ts.
+  const windows = createCaptureWindows({
+    store,
+    options,
+    hasAiProvider,
+    getControl,
+    setControl,
+    recordAiError,
+    captureBuffers,
+    windowSize,
+    scheduleSynthesis,
+  });
+  const { flush, recover } = windows;
 
   // Debounced live synthesis: after capture windows are analyzed, re-derive the
   // findings / MITRE / attacker path so the dashboard updates as you browse.
@@ -355,189 +343,6 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
-  // The pending_analysis.json failure marker the diagnostics report counts. Shared by the live
-  // window (flush), the AI off→on catch-up (backfill) and recovery — #2179: backfill used to write
-  // none. #2152: atomic (never torn JSON) and best-effort — it never throws, so a failed marker
-  // write cannot swallow the caller's error status. No `pending` list: the owed captures are
-  // re-derived from captures.jsonl and the hold in the AI control (#2248), which also keeps this
-  // marker in place until they are analyzed.
-  async function recordFailureMarker(caseId: string, err: unknown, control?: AiControl): Promise<void> {
-    const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
-    const hold = control?.analysisHold;
-    const marker = JSON.stringify(
-      {
-        error: (err as Error).message,
-        at: new Date().toISOString(),
-        ...(hold ? { heldScreenshots: hold.failedSeqs.length, retriesGivenUp: hold.gaveUp === true } : {}),
-      },
-      null,
-      2,
-    );
-    try {
-      await atomicWrite(markerPath, marker); // carries the #1855 case guard itself
-    } catch (writeErr) {
-      warnLine(
-        `[capture-analysis] ${caseId}: could not record failure marker: ${(writeErr as Error).message}`,
-      );
-    }
-  }
-
-  function flush(caseId: string): Promise<void> {
-    return runInCaseScope(store.casesRoot, caseId, () => flushInScope(caseId));
-  }
-
-  function flushInScope(caseId: string): Promise<void> {
-    return serialized(caseId, () => flushNow(caseId));
-  }
-
-  async function flushNow(caseId: string): Promise<void> {
-    const buf = captureBuffers.get(caseId) ?? [];
-    if (buf.length === 0 || !options.pipeline || !hasAiProvider()) return;
-    captureBuffers.set(caseId, []);
-    options.onAiStatus?.(caseId, {
-      status: "analyzing",
-      phase: "extracting",
-      at: new Date().toISOString(),
-      detail: `${buf.length} screenshot(s)`,
-    });
-    // #2248: the buffer is NOT put back on failure — a permanent error would resend a batch that
-    // grows with every capture. The failed captures are held instead and recovered from the log.
-    const seqs = buf.filter((c) => !c.isDuplicate).map((c) => c.sequenceNumber);
-    try {
-      await options.pipeline.analyzeWindow(caseId, buf);
-      if (seqs.length > 0) await windowAnalyzed(caseId, seqs);
-      await clearMarkerUnlessHeld(caseId);
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-      scheduleSynthesis(caseId); // live findings/attacker path
-    } catch (err) {
-      await windowFailed(caseId, seqs, err, false);
-    }
-  }
-
-  /** Move the watermark for an analyzed window — never past a held failure (#2248). */
-  async function windowAnalyzed(caseId: string, seqs: number[]): Promise<void> {
-    const patch = afterWindowSuccess(await getControl(caseId), seqs);
-    if (Object.keys(patch).length > 0) await setControl(caseId, patch);
-  }
-
-  /** Release a hold whose captures are all dealt with, then drop the marker if nothing is owed. */
-  async function settleHold(caseId: string): Promise<void> {
-    const patch = releaseHold(await getControl(caseId));
-    if (Object.keys(patch).length > 0) await setControl(caseId, patch);
-    await clearMarkerUnlessHeld(caseId);
-  }
-
-  /**
-   * Hold a failed window's captures, then report the failure (#2248). The hold write is
-   * best-effort like the marker: neither may swallow the error status the analyst sees.
-   */
-  async function windowFailed(
-    caseId: string,
-    seqs: number[],
-    err: unknown,
-    recovery: boolean,
-  ): Promise<void> {
-    recordAiError(caseId, "extracting", err);
-    let control: AiControl | undefined;
-    try {
-      const cur = await getControl(caseId);
-      control = seqs.length
-        ? await setControl(caseId, afterWindowFailure(cur, seqs, (err as Error).message, recovery, policy))
-        : cur;
-      if (control.analysisHold) heldCases.add(caseId);
-    } catch (holdErr) {
-      warnLine(
-        `[capture-analysis] ${caseId}: could not hold the failed window: ${(holdErr as Error).message}`,
-      );
-    }
-    await recordFailureMarker(caseId, err, control);
-    options.onAiStatus?.(caseId, {
-      status: "error",
-      at: new Date().toISOString(),
-      detail: (err as Error).message,
-    });
-  }
-
-  /** Drop the failure marker once nothing is owed any more; a held window keeps it (#2248). */
-  async function clearMarkerUnlessHeld(caseId: string): Promise<void> {
-    if ((await getControl(caseId)).analysisHold) return;
-    heldCases.delete(caseId);
-    const markerPath = join(store.stateDir(caseId), "pending_analysis.json");
-    await store.withCaseWrite(markerPath, () => rm(markerPath, { force: true })); // #1855
-  }
-
-  /**
-   * Analyze every capture still owed, re-derived from captures.jsonl (#2248): the backlog captured
-   * while AI was off, a failed window's held captures, and anything newer than the last analyzed
-   * window that is not in the live buffer. Shared by backfill and recovery so the two can never
-   * disagree on what "owed" means. Emits its own terminal status once it has started analyzing.
-   */
-  async function analyzeOwed(caseId: string, recovery: boolean): Promise<"no-log" | "none" | "done"> {
-    let log: string;
-    try {
-      log = await readFile(store.capturesLogPath(caseId), "utf8");
-    } catch (err) {
-      // ENOENT alone means "no capture log" (an import-only case). Any other read failure
-      // (EACCES, EIO, …) degrades the same way — synthesis still runs — but must be SAID:
-      // silently equating the two is how a whole screenshot backlog went missing without a trace.
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        warnLine(`[backfill] ${caseId}: cannot read captures.jsonl: ${(err as Error).message}`);
-      }
-      return "no-log";
-    }
-    // Per line, skipping only a malformed line: captures.jsonl is appendFile-written, so a crash
-    // or ENOSPC mid-append can truncate exactly one line, and it must not sink the whole backlog.
-    const { captures, skipped } = parseCaptureLog(log);
-    if (skipped > 0) warnLine(`[backfill] ${caseId}: skipped ${skipped} malformed captures.jsonl line(s)`);
-    const inBuffer = new Set((captureBuffers.get(caseId) ?? []).map((c) => c.sequenceNumber));
-    const pending = pendingCaptures(captures, await getControl(caseId), inBuffer);
-    if (pending.length === 0) {
-      await settleHold(caseId); // a held capture missing from the log can never be analyzed
-      return "none";
-    }
-    options.onAiStatus?.(caseId, {
-      status: "analyzing",
-      phase: "extracting",
-      at: new Date().toISOString(),
-      detail: recovery
-        ? `retrying ${pending.length} screenshot(s) from a failed analysis`
-        : `catching up on ${pending.length} screenshot(s)`,
-    });
-    for (let i = 0; i < pending.length; i += windowSize) {
-      const seqs = pending.slice(i, i + windowSize).map((c) => c.sequenceNumber);
-      try {
-        await options.pipeline!.analyzeWindow(caseId, pending.slice(i, i + windowSize));
-      } catch (err) {
-        await windowFailed(caseId, seqs, err, recovery);
-        return "done";
-      }
-      await windowAnalyzed(caseId, seqs);
-    }
-    await settleHold(caseId);
-    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-    scheduleSynthesis(caseId);
-    return "done";
-  }
-
-  function recover(caseId: string): Promise<void> {
-    return runInCaseScope(store.casesRoot, caseId, () => recoverInScope(caseId));
-  }
-
-  async function recoverInScope(caseId: string): Promise<void> {
-    if (!options.pipeline || !hasAiProvider()) return;
-    const control = await getControl(caseId);
-    if (!control.enabled || !recoveryDue(control)) return;
-    await serialized(caseId, async () => {
-      // Re-checked in the queue: a flush ahead of this one may have changed the hold.
-      if (!recoveryDue(await getControl(caseId))) return;
-      try {
-        await analyzeOwed(caseId, true);
-      } catch (err) {
-        await windowFailed(caseId, [], err, true);
-      }
-    });
-  }
-
   // Safety-net periodic flush. A `timer`/`click` capture buffers until `windowSize` accumulates
   // (only a `navigation`/`tab_switch` flushes early), so a single (or sub-window) capture could
   // otherwise sit unanalyzed indefinitely. Every `flushIntervalMs` (default 5 min) drain any
@@ -547,18 +352,50 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   // the process — or a test runner — alive.
   const flushIntervalMs = options.flushIntervalMs ?? 5 * 60_000;
   if (flushIntervalMs > 0 && options.pipeline) {
+    let resumed = false;
     const sweep = setInterval(() => {
       // #1866: each buffer drains as work of the incarnation that filled it.
       for (const { caseId, generation, value } of captureBuffers.list()) {
         if (value.length > 0)
           void runInGenerationScope(store.casesRoot, caseId, generation, () => flush(caseId));
       }
+      // #2249: the first sweep after start picks up what the restart stranded, case by case.
+      if (!resumed) {
+        resumed = true;
+        void resumeAfterRestart();
+        return;
+      }
       // #2248: and retry any held failed window whose backoff has run out.
-      for (const { caseId, generation } of heldCases.list()) {
+      for (const { caseId, generation } of windows.heldCases.list()) {
         void runInGenerationScope(store.casesRoot, caseId, generation, () => recover(caseId));
       }
     }, flushIntervalMs);
     sweep.unref?.();
+  }
+
+  /**
+   * #2249: the live buffer is memory only, so every restart stranded the sub-window tail of each
+   * AI-on case. Re-derive it from captures.jsonl (captureWindows.resume), one case at a time so a
+   * restart with many cases does not fire a burst of paid calls. Archived cases are skipped.
+   */
+  async function resumeAfterRestart(): Promise<void> {
+    let cases: Awaited<ReturnType<typeof store.listCases>>;
+    try {
+      cases = await store.listCases();
+    } catch (err) {
+      warnLine(`[capture-analysis] cannot list cases to resume analysis: ${(err as Error).message}`);
+      return;
+    }
+    for (const meta of cases) {
+      if (meta.status === "archived") continue;
+      const { caseId } = meta;
+      try {
+        // #1866: as work of the incarnation just listed.
+        await runInCaseScope(store.casesRoot, caseId, () => windows.resume(caseId), generationOf(meta));
+      } catch (err) {
+        warnLine(`[capture-analysis] ${caseId}: could not resume analysis: ${(err as Error).message}`);
+      }
+    }
   }
 
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
@@ -616,7 +453,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // failed window still held. A held window is retried here even after recovery gave up: turning
     // AI back on is the analyst asking for it. A failed window writes the #2179 marker and the
     // error status inside analyzeOwed.
-    const outcome = await analyzeOwed(caseId, false);
+    const outcome = await windows.analyzeOwed(caseId, "backfill");
     // No capture log (import-only case) or no new screenshots → still synthesize anything
     // imported while AI was off.
     if (outcome !== "done") await catchUpSynthesis();
@@ -759,6 +596,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     flush,
     backfill,
     recover,
+    resumeAfterRestart,
     scheduleSynthesis,
     resynthesizeInBackground,
   };

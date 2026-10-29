@@ -51,18 +51,22 @@ export function parseCaptureLog(text: string): { captures: CaptureMetadata[]; sk
 
 /**
  * The captures still owed, oldest first. `exclude` is what the live buffer already holds — those
- * go out with the next flush, so sending them here too would analyze them twice.
+ * go out with the next flush, so sending them here too would analyze them twice. `skipHeld` leaves
+ * the hold's failed captures out — for a pass that must not spend a recovery attempt (#2249).
  */
 export function pendingCaptures(
   captures: readonly CaptureMetadata[],
   control: AiControl,
   exclude: ReadonlySet<number> = new Set(),
+  skipHeld = false,
 ): CaptureMetadata[] {
   const hold = control.analysisHold;
   const failed = new Set(hold?.failedSeqs ?? []);
+  const owed = (seq: number) =>
+    !hold || seq > hold.analyzedThrough ? !(skipHeld && failed.has(seq)) : failed.has(seq) && !skipHeld;
   return captures
     .filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq)
-    .filter((c) => !hold || failed.has(c.sequenceNumber) || c.sequenceNumber > hold.analyzedThrough)
+    .filter((c) => owed(c.sequenceNumber))
     .filter((c) => !exclude.has(c.sequenceNumber))
     .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 }
