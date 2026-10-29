@@ -136,11 +136,11 @@ A read-only, step-through slide deck for handoff briefings and executive walkthr
 | First slide | Home |
 | Last slide | End |
 | Fullscreen | F (or browser fullscreen button) |
-| Auto-advance | Toggle button in controls |
+| Auto-advance | **Auto** checkbox in controls. Set the seconds per slide beside it (default 8, minimum 2). After the last slide it goes back to the first and keeps looping. |
 
 ### Severity Filter
 
-Set a **minimum severity** filter before opening — only findings/events at or above that level are included. Useful for an executive deck (Critical/High only) vs. a technical deck (everything).
+The deck opens with **All** severities. Choose a minimum in the deck's own **Severity** selector (Low+, Medium+, High+, Critical) — only findings/events at or above that level are shown. Useful for an executive deck (High+ or Critical) vs. a technical deck (everything). The deck's **⬇ Standalone HTML** button exports with the severity you selected; **Export → Presentation deck** on the dashboard always includes every severity.
 
 !!! tip
     The deck inherits the **report template** branding (accent colour, cover title, company name) of the current case.

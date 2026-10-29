@@ -50,7 +50,7 @@ When you're not sure what VQL to write for a hunt, describe what you're looking 
 ---
 
 **For presentations, filter by severity first.**
-Set the severity filter to `high+` before opening Presentation mode. You get a clean executive deck that covers the most important findings and events without the noise of Info/Low items.
+After Presentation mode opens, set the deck's **Severity** selector to **High+**. You get a clean executive deck that covers the most important findings and events without the noise of Info/Low items.
 
 ---
 
