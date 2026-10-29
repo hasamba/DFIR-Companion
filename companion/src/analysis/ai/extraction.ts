@@ -79,12 +79,12 @@ export async function analyzeWindow(
   captures: CaptureMetadata[],
 ): Promise<InvestigationState> {
   const provider = ctx.requireProvider("screenshot analysis");
-  const analyzable = captures.filter((c) => !c.isDuplicate);
-  if (analyzable.length === 0) return ctx.opts.stateStore.load(caseId);
+  const candidates = captures.filter((c) => !c.isDuplicate);
+  if (candidates.length === 0) return ctx.opts.stateStore.load(caseId);
 
   return ctx.withStateLock(caseId, async () => {
     const state = await ctx.opts.stateStore.load(caseId);
-    const images = await Promise.all(analyzable.map((c) => ctx.opts.imageLoader(caseId, c.screenshotFile)));
+    const { analyzable, images } = await loadWindowImages(ctx, caseId, candidates);
     const userPrompt = buildScreenshotPrompt(state, analyzable);
 
     const backoffMs = ctx.opts.backoffMs ?? 500;
@@ -134,6 +134,46 @@ export async function analyzeWindow(
     ctx.opts.onState?.(next);
     return next;
   });
+}
+
+/**
+ * Load a window's screenshots, skipping any that cannot be read (#2251).
+ *
+ * imageLoader throws for a missing file or a refused cross-case link. With Promise.all one such
+ * image failed the whole window and took the good screenshots down with it. Now each failure is
+ * logged (case id, sequence number and reason — never image content) and the rest are analyzed.
+ * The skipped capture is not re-queued: the same bytes fail the same way, so it counts as handled.
+ * Only a window where nothing loads throws, so the caller's failed-window path still sees it.
+ */
+async function loadWindowImages(
+  ctx: ExtractionContext,
+  caseId: string,
+  candidates: CaptureMetadata[],
+): Promise<{ analyzable: CaptureMetadata[]; images: AnalyzeImage[] }> {
+  const results = await Promise.allSettled(
+    candidates.map((c) => ctx.opts.imageLoader(caseId, c.screenshotFile)),
+  );
+  const analyzable: CaptureMetadata[] = [];
+  const images: AnalyzeImage[] = [];
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      analyzable.push(candidates[i]);
+      images.push(result.value);
+    } else {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      ctx.log.warn(
+        `[extract] skipped screenshot seq ${candidates[i].sequenceNumber}: image could not be loaded: ${reason}`,
+        { caseId },
+      );
+    }
+  });
+  if (analyzable.length === 0) {
+    const first = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    throw first?.reason instanceof Error
+      ? first.reason
+      : new Error("no screenshot in the window could be loaded");
+  }
+  return { analyzable, images };
 }
 
 /**
