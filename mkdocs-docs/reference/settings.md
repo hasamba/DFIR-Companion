@@ -218,7 +218,8 @@ many as you like; each appears in the Import/drop banners for its extensions.
 
 Per tool: binary path (blank = off), run-args template (`<target>`/`<output>`/`<rules>` placeholders),
 rules path (Snort/YARA), a separate **Update rules** command + button, an **auto-run on drop** toggle,
-and timeout/output caps. Click **Reconnect / apply** to apply saved paths without a restart. A raw
+and timeout/output caps. **Update rules** works with no case connected; with team sign-in on, only a
+global administrator can run it. Click **Reconnect / apply** to apply saved paths without a restart. A raw
 `.evtx`/`.evt`/`.pcap`/`.pcapng` copied into a case's `drop/` folder runs automatically when a matching
 tool has auto-run on; the Import dialog shows a banner for these formats. Config is stored in `.env`
 (`DFIR_TOOL_*`, not a secret). Commands run with **no shell** (args tokenized) and the target path is

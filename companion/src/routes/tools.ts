@@ -19,7 +19,8 @@ import { createImportDebugRecorder } from "../analysis/importDebug.js";
 
 /**
  * External-tool runner + forensic-gate routes: the top-level /tools* config/registry and custom-tool
- * CRUD (#211), the per-case /cases/:id/tools/:toolId/{run,run-upload,update-rules} runner endpoints,
+ * CRUD (#211), the global /tools/:toolId/update-rules (#2259), the per-case
+ * /cases/:id/tools/:toolId/{run,run-upload,update-rules} runner endpoints,
  * and the per-case /cases/:id/forensic-gate severity-cut config.
  *
  * Pure structural move out of createApp (see routes/system.ts for the conventions). The tool-runner
@@ -240,9 +241,33 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
 
   // Run a tool's "update rules" command (Settings → Tools). Does NOT touch case data — a rule update is
   // not evidence; returns the command output for a UI toast. 501 when tools off, 400 when no update
-  // command is configured for the tool.
+  // command is configured for the tool. Shared by the global route and the legacy per-case route.
+  const runUpdateRules = async (toolId: string, res: Response): Promise<Response> => {
+    const runner = options.toolRunner;
+    if (!runner) return res.status(501).json({ error: "external tools not configured" });
+    if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    const cfg = ctx.liveToolConfigs()().get(toolId);
+    if (!cfg) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
+    try {
+      const output = await updateToolRules(cfg, runner);
+      return res.status(200).json({ ok: true, tool: toolId, output });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  };
+
+  // GLOBAL rule update (#2259). Rules belong to the tool, not to a case, so Settings → Tools calls this
+  // with no case connected. Who may reach it is decided before the handler: the origin guard (#211)
+  // refuses every untrusted browser origin, and in team mode the path policy (auth/policy.ts) gives
+  // /tools/* POSTs no case to authorise against, so it falls to GLOBAL ADMIN — stricter than the
+  // per-case route below, which only needs "write" on some case. tests/server/toolUpdateRulesGlobal
+  // pins both refusals (no credential → 401, non-admin → 403) with nothing spawned.
+  app.post("/tools/:toolId/update-rules", (req: Request, res: Response) =>
+    runUpdateRules(req.params.toolId, res),
+  );
+
+  // Legacy per-case spelling, kept for API callers. The dashboard uses the global route above.
   app.post("/cases/:id/tools/:toolId/update-rules", async (req: Request, res: Response) => {
-    const toolId = req.params.toolId;
     if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     // Confirm the case exists BEFORE spawning anything (#211). The case-password gate deliberately
     // waves nonexistent cases through — a missing case is the downstream route's 404 to report, not
@@ -250,15 +275,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     // naming a case that was never created. This is that downstream check.
     if (!(await store.getCaseMeta(req.params.id)))
       return res.status(404).json({ error: `case "${req.params.id}" not found` });
-    if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
-    const cfg = ctx.liveToolConfigs()().get(toolId);
-    if (!cfg) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
-    try {
-      const output = await updateToolRules(cfg, options.toolRunner);
-      return res.status(200).json({ ok: true, tool: toolId, output });
-    } catch (err) {
-      return res.status(400).json({ ok: false, error: (err as Error).message });
-    }
+    return runUpdateRules(req.params.toolId, res);
   });
 
   // In-flight and finished SO-CRATES analyses for this case — polled by the import banner so the

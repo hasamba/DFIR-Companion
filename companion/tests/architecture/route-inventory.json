@@ -80,6 +80,7 @@
     "ROUTE POST /tools/reconnect",
     "ROUTE POST /cases/:id/tools/:toolId/run",
     "ROUTE POST /cases/:id/tools/:toolId/run-upload",
+    "ROUTE POST /tools/:toolId/update-rules",
     "ROUTE POST /cases/:id/tools/:toolId/update-rules",
     "ROUTE GET /cases/:id/socrates/jobs",
     "ROUTE GET /tools/custom",
