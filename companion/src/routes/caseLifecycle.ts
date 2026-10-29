@@ -226,6 +226,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   }
 
+  // #2247: the ZIP is built inside the case's state lock, as the encrypted export is. A backup restore
+  // renames a database over the live file under that lock; unserialized, it could land mid-archive and
+  // fail it with a "changed file" refusal, or ship the old database beside restored sidecar files.
+  // Lock order matches the export: the archive barrier's import section is outer, this lock inner.
+  const archiveCaseLocked = (id: string, caseName: string | undefined) =>
+    ctx.runStateExclusive(id, () => archiveCase(store.casesRoot, id, {}, caseName, store.caseDir(id)));
+
   // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Intended for
   // closed cases. Returns the archive path and a manifest of archived files + checksums. With
   // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
@@ -240,7 +247,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       logLine(`[archive] starting archive for case=${id}`);
-      const result = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
+      const result = await archiveCaseLocked(id, meta.name);
       logLine(
         `[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`,
       );
@@ -343,7 +350,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
             .status(400)
             .json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
         }
-        const archive = await exportEncryptedCase(store, id, password);
+        const archive = await exportEncryptedCase(store, id, password, [], {
+          runExclusive: ctx.runStateExclusive, // same lock as /export/encrypted (#2247)
+        });
         const filename = dfircaseFilename(id, meta.name);
         const { deleted } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
         res.type("application/octet-stream");
@@ -355,7 +364,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
 
       let archiveResult: Awaited<ReturnType<typeof archiveCase>> | undefined;
       if (archiveFirst === "zip") {
-        archiveResult = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
+        archiveResult = await archiveCaseLocked(id, meta.name);
         logLine(`[delete] case=${id} archived to ZIP before deletion: ${archiveResult.archivePath}`);
       }
 

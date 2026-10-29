@@ -270,6 +270,14 @@ export async function archiveCase(
   // (not case content, and never archived) while any reader has the file open. A raw copy of the
   // .sqlite file alone would be missing them. The archive carries a VACUUM INTO snapshot instead —
   // one consistent standalone file — exactly as the encrypted export does.
+  //
+  // #2247: only a database the walk saw is snapshotted. One that APPEARS after the walk (a legacy JSON
+  // case migrated by a dashboard load, which does not take the state lock) is deliberately left out:
+  // the walk's state/investigation.json is the complete source the migration copies from and never
+  // deletes, and this manifest holds only per-file hashes of the bytes packaged, so it cannot
+  // contradict itself. The encrypted export needs a retry for that case (caseExportArchive.ts,
+  // snapshotGeneration) because its manifest counts entities from the snapshot. A REPLACED database
+  // (backup restore) is kept out by the caller holding the case's state lock (routes/caseLifecycle.ts).
   const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
   const snapshot = relPaths.includes(dbRel)
     ? await withPinnedCaseFile(scope, join(caseDir, dbRel), () =>
