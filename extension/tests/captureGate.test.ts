@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_CAPTURE_MIN_GAP_MS,
   CaptureGate,
+  captureThroughGate,
   isAutomaticTrigger,
   isCaptureRateLimitError,
 } from "../src/captureGate.js";
@@ -139,11 +140,95 @@ describe("CaptureGate", () => {
     await a;
   });
 
+  it("keeps working after a capture throws (snapshot)", async () => {
+    const c = fakeClock();
+    const gate = new CaptureGate(600, c.now, c.sleep);
+    await expect(
+      captureThroughGate(gate, true, async () => { throw new Error("snap"); }, async () => "up", "skipped"),
+    ).rejects.toThrow("snap");
+    c.advance(600);
+    await expect(
+      captureThroughGate(gate, true, async () => ({ snapshot: "s" }), async (s) => `up:${s}`, "skipped"),
+    ).resolves.toBe("up:s");
+  });
+
   it("keeps working after a capture throws", async () => {
     const c = fakeClock();
     const gate = new CaptureGate(600, c.now, c.sleep);
     await expect(gate.run(true, async () => { throw new Error("x"); }, "skipped")).rejects.toThrow("x");
     c.advance(600);
     await expect(gate.run(true, async () => "ok", "skipped")).resolves.toBe("ok");
+  });
+});
+
+// Let queued microtasks (the snapshot, the gate's bookkeeping) run.
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+// #2255 — the gate covers only the snapshot; the upload runs after it is released.
+describe("captureThroughGate", () => {
+  it("does not let a stalled upload suppress a later automatic capture", async () => {
+    const c = fakeClock();
+    const gate = new CaptureGate(600, c.now, c.sleep);
+    const uploaded: string[] = [];
+    const never = new Promise<string>(() => { /* the companion never answers */ });
+    void captureThroughGate(
+      gate, true,
+      async () => ({ snapshot: "shot-1" }),
+      (s) => { uploaded.push(s); return never; },
+      "skipped",
+    );
+    await flush();
+    expect(uploaded).toEqual(["shot-1"]);
+
+    c.advance(600);
+    let snapshots = 0;
+    const second = await captureThroughGate(
+      gate, true,
+      async () => { snapshots += 1; return { snapshot: "shot-2" }; },
+      async (s) => { uploaded.push(s); return "uploaded"; },
+      "skipped",
+    );
+    expect(second).toBe("uploaded");
+    expect(snapshots).toBe(1);
+    expect(uploaded).toEqual(["shot-1", "shot-2"]);
+  });
+
+  it("still keeps the minimum gap between snapshots while an upload is pending", async () => {
+    const c = fakeClock();
+    const gate = new CaptureGate(600, c.now, c.sleep);
+    const never = new Promise<string>(() => { /* stalled */ });
+    void captureThroughGate(gate, true, async () => ({ snapshot: "a" }), () => never, "skipped");
+    await flush();
+    c.advance(200);
+    let took = false;
+    await expect(
+      captureThroughGate(gate, true, async () => { took = true; return { snapshot: "b" }; }, async () => "up", "skipped"),
+    ).resolves.toBe("skipped");
+    expect(took).toBe(false);
+  });
+
+  it("keeps single-flight on the snapshot itself", async () => {
+    const c = fakeClock();
+    const gate = new CaptureGate(600, c.now, c.sleep);
+    const snap = deferred<{ snapshot: string }>();
+    const a = captureThroughGate(gate, true, () => snap.promise, async (s) => `up:${s}`, "skipped");
+    c.advance(5_000);
+    await expect(
+      captureThroughGate(gate, true, async () => ({ snapshot: "b" }), async () => "up", "skipped"),
+    ).resolves.toBe("skipped");
+    snap.resolve({ snapshot: "a" });
+    await expect(a).resolves.toBe("up:a");
+  });
+
+  it("returns an early answer from the snapshot step without uploading", async () => {
+    const c = fakeClock();
+    const gate = new CaptureGate(600, c.now, c.sleep);
+    let uploads = 0;
+    await expect(
+      captureThroughGate(gate, false, async () => ({ result: "blocked" }), async () => { uploads += 1; return "up"; }, "skipped"),
+    ).resolves.toBe("blocked");
+    expect(uploads).toBe(0);
   });
 });

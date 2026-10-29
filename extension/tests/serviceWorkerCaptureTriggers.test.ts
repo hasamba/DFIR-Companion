@@ -18,7 +18,14 @@ function captureNowBody(): string {
 
 describe("service-worker capture triggers", () => {
   it("routes every capture through the single-flight gate", () => {
-    expect(sw).toMatch(/captureGate\.run\(\s*automatic,/);
+    expect(sw).toMatch(/captureThroughGate\(\s*captureGate,\s*automatic,/);
+  });
+
+  it("uploads outside the gate, so a slow companion cannot drop screenshots", () => {
+    const body = captureNowBody();
+    expect(body).not.toContain("controller.capture");
+    expect(body).not.toContain("readCaseCredential");
+    expect(sw).toMatch(/async function uploadSnapshot\([\s\S]*?controller\.capture\(/);
   });
 
   it("takes the navigation shot when the page has loaded, not when it is committed", () => {

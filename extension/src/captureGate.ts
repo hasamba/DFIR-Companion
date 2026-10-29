@@ -69,3 +69,26 @@ export class CaptureGate {
     return result;
   }
 }
+
+/** What the gated part of a capture produced: a snapshot to upload, or a final answer (#2255). */
+export type SnapshotOutcome<S, R> = { snapshot: S } | { result: R };
+
+/**
+ * Take the tab snapshot through the gate, then upload it OUTSIDE the gate (#2255).
+ *
+ * The gate used to wrap the whole capture, upload and queue drain included, so a slow or stalled
+ * companion held it for the whole network round trip and every automatic screenshot in that time
+ * was dropped — never captured, never queued. Only the snapshot (tab lookup + captureVisibleTab)
+ * needs the single-flight and the minimum gap; uploads may overlap one another (each is its own
+ * POST, failed ones are enqueued independently, and the queue guards its own drain).
+ */
+export async function captureThroughGate<S, R>(
+  gate: CaptureGate,
+  automatic: boolean,
+  takeSnapshot: () => Promise<SnapshotOutcome<S, R>>,
+  upload: (snapshot: S) => Promise<R>,
+  skipped: R,
+): Promise<R> {
+  const outcome = await gate.run<SnapshotOutcome<S, R>>(automatic, takeSnapshot, { result: skipped });
+  return "snapshot" in outcome ? upload(outcome.snapshot) : outcome.result;
+}

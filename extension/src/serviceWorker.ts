@@ -2,7 +2,9 @@ import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { describeCaptureOutcome } from "./captureOutcome.js";
-import { CaptureGate, isAutomaticTrigger, isCaptureRateLimitError } from "./captureGate.js";
+import {
+  CaptureGate, captureThroughGate, isAutomaticTrigger, isCaptureRateLimitError, type SnapshotOutcome,
+} from "./captureGate.js";
 import { startCaptureBlockReason } from "./captureToggle.js";
 import { clampIntervalSeconds } from "./popupSettings.js";
 import { setActionIcon } from "./actionIcon.js";
@@ -68,13 +70,25 @@ async function recordBlockedCapture(trigger: TriggerType, error: string): Promis
   return { ok: false, error };
 }
 
-// Every capture goes through the gate (#2255): automatic triggers that arrive while a capture is in
-// flight or inside the minimum gap are dropped silently; manual and one-off captures wait their turn.
+// A screenshot taken under the gate, waiting to be uploaded outside it (#2255).
+interface ActiveTabSnapshot {
+  settings: Settings;
+  caseId: string;
+  url: string;
+  tabTitle: string;
+  imageBase64: string;
+}
+
+// Every snapshot goes through the gate (#2255): automatic triggers that arrive while a snapshot is
+// being taken or inside the minimum gap are dropped silently; manual and one-off captures wait their
+// turn. The upload runs AFTER the gate is released, so a slow companion cannot drop screenshots.
 function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<CaptureAttemptResult> {
   const automatic = isAutomaticTrigger(trigger, oneOff);
-  return captureGate.run(
+  return captureThroughGate(
+    captureGate,
     automatic,
     () => captureActiveTabNow(trigger, oneOff, automatic),
+    (snapshot) => uploadSnapshot(trigger, snapshot),
     { ok: false, error: "capture throttled" },
   );
 }
@@ -83,10 +97,12 @@ async function captureActiveTabNow(
   trigger: TriggerType,
   oneOff: boolean,
   automatic: boolean,
-): Promise<CaptureAttemptResult> {
+): Promise<SnapshotOutcome<ActiveTabSnapshot, CaptureAttemptResult>> {
+  // Any early exit is a final answer: nothing to upload.
+  const result = async (r: CaptureAttemptResult | Promise<CaptureAttemptResult>) => ({ result: await r });
   const settings = await getSettings();
   if ((!settings.running && !oneOff) || !settings.caseId) {
-    return { ok: false, error: "select a case before capturing" };
+    return result({ ok: false, error: "select a case before capturing" });
   }
 
   const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
@@ -95,11 +111,11 @@ async function captureActiveTabNow(
   // Manual and one-off captures still record why they were blocked.
   if (!tab || tab.id === undefined || !tab.url || !isCapturableTab(tab)) {
     const error = "this browser or private page cannot be captured";
-    return automatic ? { ok: false, error } : recordBlockedCapture(trigger, error);
+    return result(automatic ? { ok: false, error } : recordBlockedCapture(trigger, error));
   }
   if (!oneOff && !(await tabHasPersistentAccess(tab))) {
     const error = "site access is not granted; open the extension on this site";
-    return automatic ? { ok: false, error } : recordBlockedCapture(trigger, error);
+    return result(automatic ? { ok: false, error } : recordBlockedCapture(trigger, error));
   }
 
   let dataUrl: string;
@@ -108,17 +124,22 @@ async function captureActiveTabNow(
   } catch (e) {
     // Chrome's per-second quota is not a denial: skip quietly and leave the badge alone (#2255).
     if (isCaptureRateLimitError(e)) {
-      return { ok: false, error: "the browser is rate-limiting screenshots; try again in a moment" };
+      return result({ ok: false, error: "the browser is rate-limiting screenshots; try again in a moment" });
     }
-    return recordBlockedCapture(trigger, "the browser denied screenshot access; click the extension and try again");
+    return result(recordBlockedCapture(trigger, "the browser denied screenshot access; click the extension and try again"));
   }
   const imageBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  return { snapshot: { settings, caseId: settings.caseId, url: tab.url, tabTitle: tab.title ?? "", imageBase64 } };
+}
 
-  const credential = await readCaseCredential(sessionArea(), settings.caseId, settings.companionUrl);
+// Upload a snapshot and record the outcome — runs OUTSIDE the capture gate (#2255).
+async function uploadSnapshot(trigger: TriggerType, snap: ActiveTabSnapshot): Promise<CaptureAttemptResult> {
+  const { settings, imageBase64 } = snap;
+  const credential = await readCaseCredential(sessionArea(), snap.caseId, settings.companionUrl);
   const controller = new CaptureController(clientFor(settings, credential), queue);
-  const status = await controller.capture(settings.caseId, trigger, {
-    url: tab.url,
-    tabTitle: tab.title ?? "",
+  const status = await controller.capture(snap.caseId, trigger, {
+    url: snap.url,
+    tabTitle: snap.tabTitle,
     imageBase64,
   });
 
@@ -131,7 +152,7 @@ async function captureActiveTabNow(
 
   // Record the last capture outcome so the popup can surface it.
   await browserApi.storage.local.set({
-    lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag: outcome.diag },
+    lastCapture: { at: new Date().toISOString(), trigger, url: snap.url, bytes: imageBase64.length, diag: outcome.diag },
   });
   await browserApi.action.setBadgeText({ text: outcome.badgeText });
   await browserApi.action.setBadgeBackgroundColor({ color: outcome.badgeColor });
