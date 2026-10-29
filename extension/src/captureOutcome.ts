@@ -5,7 +5,8 @@ import type { ConnectionStatus, DroppedCapture } from "./types.js";
 // What the toolbar badge, the popup's last-capture line and the capture's caller are told about one
 // capture attempt. Pure — the service worker applies it — so the badge logic is unit-testable.
 //
-// Priority: the current capture was locked > held for access (amber count, #2254) > rejected /
+// Priority: the queue write failed, so the capture is lost (red "!", #2256) > the current capture
+// was locked > held for access (amber count, #2254) > rejected /
 // queued captures discarded ("!") > a queued capture for another case is waiting for its password
 // (#2185) or was kept for access (#2254) (amber count) > normal online/offline.
 
@@ -62,6 +63,7 @@ function heldDiag(status: ConnectionStatus): string {
 }
 
 function baseDiag(status: ConnectionStatus, hadCredential: boolean): string {
+  if (status.queueWriteFailed) return `capture NOT saved — queue write failed: ${status.queueWriteFailed}`;
   if (status.locked) {
     return `${lockedQueueMessage(status.queued)}${hadCredential ? " (the password was not accepted)" : ""}`;
   }
@@ -78,6 +80,8 @@ function baseDiag(status: ConnectionStatus, hadCredential: boolean): string {
 }
 
 function badge(status: ConnectionStatus): { badgeText: string; badgeColor: string } {
+  // Red "!" — the capture is lost, not waiting anywhere (#2256).
+  if (status.queueWriteFailed) return { badgeText: "!", badgeColor: RED };
   // Amber with the count — evidence is waiting for a case password, not lost (#2135, #2185).
   if (status.locked) return { badgeText: String(status.queued), badgeColor: AMBER };
   // Amber with the count — kept in the queue until the token / role / log is fixed (#2254).
@@ -92,7 +96,7 @@ function badge(status: ConnectionStatus): { badgeText: string; badgeColor: strin
 export function describeCaptureOutcome(status: ConnectionStatus, hadCredential: boolean): CaptureOutcome {
   const diag = baseDiag(status, hadCredential) + droppedNote(status) + keptNote(status);
   // A held capture is saved but not delivered, and needs the analyst — report it like locked.
-  const ok = !(status.rejected || status.locked || status.held);
+  const ok = !(status.rejected || status.locked || status.held || status.queueWriteFailed);
   return {
     diag,
     ...badge(status),

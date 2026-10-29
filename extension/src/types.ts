@@ -70,6 +70,9 @@ export interface ConnectionStatus {
   // Previously-queued captures refused for the same reasons during this drain (or team auth's 404
   // "case not found or access denied"). Kept in the queue and skipped, never discarded (#2254).
   kept?: DroppedCapture[];
+  // The capture had to be queued but the queue write itself failed (quota, aborted transaction) —
+  // it is NOT saved anywhere. The reason, for the popup (#2256).
+  queueWriteFailed?: string;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

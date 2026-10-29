@@ -76,22 +76,19 @@ export class CaptureController {
     // The case is password-locked and the capture carried no (or a wrong) password (#2135). Not a
     // verdict on the screenshot: queue it, so it uploads once the analyst enters the password.
     if (isLockedRejection(result.status, result.errorMessage)) {
-      await this.queue.enqueue(payload);
-      return { online: true, queued: await this.queue.size(), locked: true };
+      return this.keep(payload, { online: true, locked: true });
     }
 
     // Refused for WHO is asking — a missing/rotated service token (401), a case role that cannot
     // capture (403) — or a capture log that needs repair (409, #2252). Not a verdict on the
     // screenshot: keep it, so it uploads once the analyst fixes the token / role / log (#2254).
     if (isHeldRefusal(result.status, result.errorMessage, result.errorCode)) {
-      await this.queue.enqueue(payload);
-      return {
+      return this.keep(payload, {
         online: true,
-        queued: await this.queue.size(),
         held: result.status,
         ...(result.errorMessage ? { heldMessage: result.errorMessage } : {}),
         ...(result.errorCode ? { heldCode: result.errorCode } : {}),
-      };
+      });
     }
 
     // The companion responded but rejected the capture (4xx — typically 404, the case
@@ -102,7 +99,27 @@ export class CaptureController {
     }
 
     // Transient failure (unreachable / 5xx / 408 / 429) — queue for retry when the companion is back.
-    await this.queue.enqueue(payload);
-    return { online: false, queued: await this.queue.size() };
+    return this.keep(payload, { online: false });
+  }
+
+  /**
+   * Queue the capture and report `status` with the new queue size. A failed queue write (quota,
+   * aborted transaction) is REPORTED, never thrown: automatic triggers call capture() with `void`,
+   * so a rejection went unhandled and the screenshot vanished without a trace (#2256).
+   */
+  private async keep(payload: CapturePayload, status: Omit<ConnectionStatus, "queued">): Promise<ConnectionStatus> {
+    try {
+      await this.queue.enqueue(payload);
+      return { ...status, queued: await this.queue.size() };
+    } catch (err) {
+      // `locked` is kept so a refused case password is still forgotten (#2135); `held` is not —
+      // nothing is waiting in the queue for the token / role to be fixed.
+      return {
+        online: status.online,
+        queued: await this.queue.size().catch(() => 0),
+        ...(status.locked ? { locked: true } : {}),
+        queueWriteFailed: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 }
