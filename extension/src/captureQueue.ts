@@ -2,6 +2,35 @@ import type { CapturePayload, DroppedCapture } from "./types.js";
 
 const STORE = "captures";
 
+/** First wait before a kept (access-refused) capture is re-sent (#2263). */
+export const KEPT_BACKOFF_BASE_MS = 60_000;
+/** Longest wait between re-sends of a kept capture (#2263). */
+export const KEPT_BACKOFF_MAX_MS = 30 * 60_000;
+
+/**
+ * How long to wait after the `attempts`-th refusal before re-sending a kept capture: one minute,
+ * doubling each time, capped at thirty minutes (#2263). A nonsense count is the first attempt.
+ */
+export function keptBackoffMs(attempts: number): number {
+  const n = Number.isFinite(attempts) && attempts >= 1 ? Math.floor(attempts) : 1;
+  // The exponent is clamped so a huge count cannot overflow to Infinity before the cap applies.
+  return Math.min(KEPT_BACKOFF_BASE_MS * 2 ** Math.min(n - 1, 30), KEPT_BACKOFF_MAX_MS);
+}
+
+/**
+ * One stored queue row. `attempts`, `nextAttemptAt` and the `last*` refusal fields exist only on a
+ * kept capture (#2263); a row written by an older extension has just `payload` and is due now.
+ */
+interface QueueRecord {
+  key: number;
+  payload: CapturePayload;
+  attempts?: number;
+  nextAttemptAt?: number;
+  lastStatus?: number;
+  lastErrorMessage?: string;
+  lastErrorCode?: string;
+}
+
 /**
  * What the sender decided about one queued capture (#215).
  *
@@ -43,8 +72,46 @@ function reported(payload: CapturePayload, result: QueueSendResult): DroppedCapt
   };
 }
 
+/** The refusal stored on a kept record, re-reported while it waits out its backoff. */
+function lastRefusal(rec: QueueRecord): QueueSendResult {
+  return {
+    outcome: "skip",
+    ...(rec.lastStatus !== undefined ? { status: rec.lastStatus } : {}),
+    ...(rec.lastErrorMessage ? { errorMessage: rec.lastErrorMessage } : {}),
+    ...(rec.lastErrorCode ? { errorCode: rec.lastErrorCode } : {}),
+  };
+}
+
+/**
+ * Is this record waiting out its backoff? Missing or malformed fields mean due. So does a
+ * nextAttemptAt further away than the cap allows — the clock moved backwards — so a kept capture
+ * can never be stranded for longer than one maximum window.
+ */
+function isDeferred(rec: QueueRecord, now: number): boolean {
+  const at = rec.nextAttemptAt;
+  if (typeof at !== "number" || !Number.isFinite(at)) return false;
+  return at > now && at - now <= KEPT_BACKOFF_MAX_MS;
+}
+
+/** The record after one more access refusal: attempt counted, next re-send pushed out (#2263). */
+function withRefusal(rec: QueueRecord, result: QueueSendResult, now: number): QueueRecord {
+  const attempts = (typeof rec.attempts === "number" && Number.isFinite(rec.attempts) ? rec.attempts : 0) + 1;
+  return {
+    key: rec.key,
+    payload: rec.payload,
+    attempts,
+    nextAttemptAt: now + keptBackoffMs(attempts),
+    ...(result.status !== undefined ? { lastStatus: result.status } : {}),
+    ...(result.errorMessage ? { lastErrorMessage: result.errorMessage } : {}),
+    ...(result.errorCode ? { lastErrorCode: result.errorCode } : {}),
+  };
+}
+
 export class CaptureQueue {
-  constructor(private readonly dbName = "dfir-capture-queue") {}
+  constructor(
+    private readonly dbName = "dfir-capture-queue",
+    private readonly now: () => number = () => Date.now(),
+  ) {}
 
   private draining = false;
 
@@ -122,7 +189,7 @@ export class CaptureQueue {
   // Sends queued payloads oldest-first. Stops at the first RETRYABLE failure (keeping it and
   // everything behind it, so order is preserved); discards permanently-rejected entries and
   // continues past them, reporting them in the summary; keeps SKIPPED entries in place and
-  // continues past them too (#2254).
+  // continues past them too (#2254), backing off before re-sending them (#2263).
   async drain(sender: (p: CapturePayload) => Promise<QueueSendResult>): Promise<DrainSummary> {
     const summary: DrainSummary = { sent: 0, dropped: [], kept: [] };
     if (this.draining) return summary;
@@ -132,14 +199,14 @@ export class CaptureQueue {
       // another, so draining fifty captures meant fifty-one connections — pure churn, and fifty-one
       // chances to leave one open.
       return await this.withDb(async (db) => {
-        const entries: { key: number; payload: CapturePayload }[] = await new Promise((resolve, reject) => {
-          const out: { key: number; payload: CapturePayload }[] = [];
+        const entries: QueueRecord[] = await new Promise((resolve, reject) => {
+          const out: QueueRecord[] = [];
           const tx = db.transaction(STORE, "readonly");
           const cursorReq = tx.objectStore(STORE).openCursor();
           cursorReq.onsuccess = () => {
             const cursor = cursorReq.result;
             if (cursor) {
-              out.push({ key: cursor.key as number, payload: (cursor.value as { payload: CapturePayload }).payload });
+              out.push({ ...(cursor.value as Omit<QueueRecord, "key">), key: cursor.key as number });
               cursor.continue();
             }
           };
@@ -151,11 +218,20 @@ export class CaptureQueue {
         });
 
         for (const entry of entries) {
+          // A kept capture still inside its backoff window is NOT uploaded again (#2263) — before
+          // this, every successful capture re-sent every kept PNG. It is still reported as kept, so
+          // the amber badge and popup note stay up while it waits. Never deleted here.
+          if (isDeferred(entry, this.now())) {
+            summary.kept.push(reported(entry.payload, lastRefusal(entry)));
+            continue;
+          }
           const result = await sender(entry.payload);
           if (result.outcome === "retry") return summary; // keep this and all later entries
           if (result.outcome === "skip") {
             summary.kept.push(reported(entry.payload, result));
-            continue; // left in the queue — not deleted
+            // Left in the queue — not deleted — with its attempt count and next re-send time.
+            await this.txOn(db, "readwrite", (s) => s.put(withRefusal(entry, result, this.now())));
+            continue;
           }
           if (result.outcome === "drop") {
             summary.dropped.push(reported(entry.payload, result));

@@ -112,9 +112,12 @@ describe("CaptureController — drain keeps and skips refused queued captures (#
     expect(status.kept).toHaveLength(1);
     expect(status.kept?.[0].status).toBe(403);
     expect(status.queued).toBe(1);
-    const left: string[] = [];
-    await queue.drain(async (p) => { left.push(p.caseId); return { outcome: "retry" }; });
-    expect(left).toEqual(["old-case"]);
+    // What is left is the old-case capture. An immediate second drain does not re-send it — it is
+    // inside its backoff window (#2263) — but still reports it as kept.
+    const sentAgain: string[] = [];
+    const again = await queue.drain(async (p) => { sentAgain.push(p.caseId); return { outcome: "retry" }; });
+    expect(sentAgain).toEqual([]);
+    expect(again.kept.map((k) => k.payload.caseId)).toEqual(["old-case"]);
   });
 
   it("keeps a queued capture on team-auth 404 'case not found or access denied'", async () => {
