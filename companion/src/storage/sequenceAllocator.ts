@@ -46,10 +46,12 @@ export class SequenceAllocator {
       // A mark from another incarnation forces the read again — a delete or reseed clears marks
       // (forget), and a whole-case import publishes a fresh generation by rename, never through
       // the store. A read that throws caches nothing, so a corrupted log keeps failing closed.
+      // Captures only: the custody log can hold a line written outside this allocator (a crash
+      // between append and pin write, #2150), so imports and custody keep reading the log.
       const generation = currentGeneration(this.casesRoot, caseId);
       const mark = this.highWater.get(key);
       const next =
-        mark && mark.generation === generation
+        kind === "capture" && mark && mark.generation === generation
           ? mark.seq + 1
           : Math.max((await maxOnDisk()) + 1, (mark?.seq ?? 0) + 1);
       this.highWater.set(key, { seq: next, generation });
