@@ -7,6 +7,7 @@ import { startCaptureBlockReason } from "./captureToggle.js";
 import { clampIntervalSeconds } from "./popupSettings.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
+import { artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
   forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, pushErrorMessage,
@@ -226,9 +227,15 @@ async function pushArtifact(
   // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
   // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
   // an uploaded file, so no format hint beyond the filename is needed.
-  const result = rows?.length
-    ? await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename })
-    : await client.postImport(settings.caseId, { text: text as string, filename });
+  // The page URL goes to the import audit log as provenance only — never to the AI (#2258).
+  const sourceUrl = importSourceUrl(msg.sourceUrl);
+  const meta = { filename, ...(sourceUrl ? { sourceUrl } : {}) };
+  // One automatic retry ~2 s later on 0 / 429 / 5xx — a transient blip, not a verdict (#2258).
+  const result = await postWithOneRetry(() =>
+    rows?.length
+      ? client.postImport(settings.caseId, { json: JSON.stringify(rows), ...meta })
+      : client.postImport(settings.caseId, { text: text as string, ...meta }),
+  );
 
   const rowCount = rows?.length ?? 0;
   await browserApi.storage.local.set({
@@ -238,7 +245,13 @@ async function pushArtifact(
     },
   });
 
-  if (result.ok) return { ok: true, status: result.status, rows: rowCount, caseId: settings.caseId };
+  if (result.ok) {
+    const { analyzed, reason } = result; // AI off: saved but not analyzed — the toast says so (#2258)
+    return {
+      ok: true, status: result.status, rows: rowCount, caseId: settings.caseId,
+      ...(analyzed !== undefined ? { analyzed } : {}), ...(reason ? { reason } : {}),
+    };
+  }
   // One attempt per typed password — see captureActiveTab (#2135).
   if (credential && isLockedRejection(result.status, result.errorMessage)) await forgetCaseCredential(sessionArea());
   const error = pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl);
@@ -318,7 +331,8 @@ async function handleContextMenuClick(
     ...(rows ? { rows } : { text }),
   };
   const res = await pushArtifact(msg);
-  void sendContextToast(tabId, res.ok, res.ok ? `Pushed to "${res.caseId}"` : (res.error ?? "Push failed"));
+  const okText = artifactPushSuccessText({ ...res, rows: undefined }); // AI-off aware (#2258)
+  void sendContextToast(tabId, res.ok, res.ok ? okText : (res.error ?? "Push failed"));
 }
 
 function changedOrigins(change: chrome.permissions.Permissions): string[] {

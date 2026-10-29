@@ -11,6 +11,9 @@ export interface PostCaptureResult {
   status: number;
   errorMessage?: string;
   errorCode?: string; // the body's machine-readable `code`, when it sent one
+  // On success: `analyzed:false, reason:"ai-off"` means saved as evidence but NOT analyzed (#2258).
+  analyzed?: boolean;
+  reason?: string;
 }
 
 export class CompanionClient {
@@ -40,6 +43,15 @@ export class CompanionClient {
     };
   }
 
+  // The success body's analyzed/reason (#2258). Best-effort: an unreadable body is still a success.
+  private static async successOf(res: Response): Promise<{ analyzed?: boolean; reason?: string }> {
+    const body = (await res.json().catch(() => ({}))) as { analyzed?: unknown; reason?: unknown } | null;
+    return {
+      ...(typeof body?.analyzed === "boolean" ? { analyzed: body.analyzed } : {}),
+      ...(typeof body?.reason === "string" ? { reason: body.reason } : {}),
+    };
+  }
+
   private headers(contentType = false): Record<string, string> {
     return {
       ...(contentType ? { "content-type": "application/json" } : {}),
@@ -54,7 +66,7 @@ export class CompanionClient {
         headers: this.headers(true),
         body: JSON.stringify(this.withCasePassword(payload.caseId, payload)),
       });
-      if (res.status === 201) return { ok: true, status: 201 };
+      if (res.status === 201) return { ok: true, status: 201, ...(await CompanionClient.successOf(res)) };
       return { ok: false, status: res.status, ...(await CompanionClient.errorOf(res)) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
@@ -70,7 +82,7 @@ export class CompanionClient {
         headers: this.headers(true),
         body: JSON.stringify(this.withCasePassword(caseId, payload)),
       });
-      if (res.status === 202) return { ok: true, status: 202 };
+      if (res.status === 202) return { ok: true, status: 202, ...(await CompanionClient.successOf(res)) };
       return { ok: false, status: res.status, ...(await CompanionClient.errorOf(res)) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable

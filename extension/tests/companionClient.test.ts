@@ -155,3 +155,32 @@ describe("CompanionClient — case password for locked cases (#2135)", () => {
     expect(bodyOf(fetchFn)).not.toHaveProperty("casePassword");
   });
 });
+
+// #2258: a 202/201 can still mean "saved as evidence but NOT analyzed" (the case's AI is off). The
+// body carries `analyzed:false, reason:"ai-off"`; the client must hand that to the caller.
+describe("CompanionClient — analyzed/reason on success (#2258)", () => {
+  const reply = (status: number, body: unknown) =>
+    vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(body), { status }));
+
+  it("postImport carries analyzed:false + reason from a 202 body", async () => {
+    const client = new CompanionClient("http://x", reply(202, { accepted: true, kind: "csv", analyzed: false, reason: "ai-off" }));
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" }))
+      .toEqual({ ok: true, status: 202, analyzed: false, reason: "ai-off" });
+  });
+
+  it("postCapture carries analyzed:false + reason from a 201 body", async () => {
+    const client = new CompanionClient("http://x", reply(201, { sequenceNumber: 3, analyzed: false, reason: "ai-off" }));
+    expect(await client.postCapture(payload)).toEqual({ ok: true, status: 201, analyzed: false, reason: "ai-off" });
+  });
+
+  it("adds nothing for a normal 202 and ignores non-boolean/non-string fields", async () => {
+    const client = new CompanionClient("http://x", reply(202, { accepted: true, analyzed: "no", reason: 5 }));
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: true, status: 202 });
+  });
+
+  it("still reports success when the 202 body is not JSON", async () => {
+    const fetchFn = vi.fn(async () => new Response("not json", { status: 202 }));
+    const client = new CompanionClient("http://x", fetchFn);
+    expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: true, status: 202 });
+  });
+});

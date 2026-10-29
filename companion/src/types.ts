@@ -49,6 +49,7 @@ export interface ImportMetadata {
   originalName: string; // the user's original file name
   rows: number; // data rows (excluding header)
   bytes: number; // raw CSV byte length
+  sourceUrl?: string; // page an extension push came from — audit provenance only, never AI input (#2258)
 }
 
 // Payload the extension POSTs to the ingest endpoint.

@@ -55,6 +55,7 @@ import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
+import { importBodyError, importBodyText, withSourceUrl } from "./importRequestBody.js";
 import { siemFallbackWarning } from "./importNotes.js";
 import { openImportFile, saveReceiptedImport } from "./importFileSource.js";
 import { registerImportReceiptCustody } from "./importReceipt.js";
@@ -239,16 +240,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
     // (the case-existence 404 is mounted by registerImportCaseGuard, ahead of this handler)
-    const text =
-      typeof req.body?.text === "string"
-        ? req.body.text
-        : typeof req.body?.json === "string"
-          ? req.body.json
-          : typeof req.body?.csv === "string"
-            ? req.body.csv
-            : "";
+    const text = importBodyText(req.body);
     const originalName = String(req.body?.filename ?? "import.dat");
-    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+    const bodyError = importBodyError(text, req.body?.sourceUrl); // incl. sourceUrl provenance (#2258)
+    if (bodyError) return res.status(400).json({ error: bodyError });
 
     const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
     const kind = ctx.resolveImportKind()(originalName, text, debug);
@@ -274,15 +269,18 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
       const importedAt = new Date().toISOString();
       await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
+      await store.appendImport(
         caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
-        originalName,
-        rows: 0,
-        bytes: Buffer.byteLength(text, "utf8"),
-      });
+        withSourceUrl(req.body?.sourceUrl, {
+          caseId,
+          sequenceNumber: seq,
+          importedAt,
+          filename: storedName,
+          originalName,
+          rows: 0,
+          bytes: Buffer.byteLength(text, "utf8"),
+        }),
+      );
 
       // AI-dependent imports respect the per-case AI toggle — rationale on isAiDependent().
       const aiDependent = isAiDependent(kind);

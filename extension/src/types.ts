@@ -100,6 +100,7 @@ export interface ImportPayload {
   text?: string;           // raw text (context-menu selection / link push)
   filename: string;        // synthetic name (adapter id + timestamp) — detection hint + audit label
   minSeverity?: string;
+  sourceUrl?: string;      // page the push came from — import audit log only, never AI input (#2258)
 }
 
 // content script → service worker: inject the MAIN-world fetch/XHR hook into this tab. The SW uses
@@ -127,6 +128,8 @@ export interface PushArtifactResult {
   rows?: number;
   caseId?: string;
   error?: string;
+  analyzed?: boolean;      // false + reason "ai-off" → saved as evidence, NOT analyzed (#2258)
+  reason?: string;
 }
 
 // ── Context-menu send (#new) ──────────────────────────────────────────────────────────────────

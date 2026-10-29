@@ -26,6 +26,7 @@ import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG, isAcceptableCaptureB
 import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult, CaptureStatusResult } from "./types.js";
 import { browserApi } from "./browser.js";
+import { artifactPushSuccessText, isSavedNotAnalyzed } from "./artifactPush.js";
 import { isExtensionContextInvalidated, runBestEffortExtensionCall } from "./extensionContext.js";
 
 const BTN_ID = "dfir-companion-push-btn";
@@ -422,7 +423,10 @@ async function onClick(): Promise<void> {
     };
     const res = (await browserApi.runtime.sendMessage(msg)) as PushArtifactResult | undefined;
     if (res?.ok) {
-      flash(`✓ Pushed ${res.rows ?? artifact.rows.length} rows to "${res.caseId}"`, "#1a7f37");
+      // AI off: saved as evidence but not analyzed — amber, not the green "done" (#2258).
+      const shown = artifactPushSuccessText({ ...res, rows: res.rows ?? artifact.rows.length });
+      if (isSavedNotAnalyzed(res)) flash(`⚠ ${shown}`, "#b35900");
+      else flash(`✓ ${shown}`, "#1a7f37");
     } else {
       flash(`✗ ${res?.error ?? "Push failed"}`, "#b42318");
     }
