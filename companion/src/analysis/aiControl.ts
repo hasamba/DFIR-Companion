@@ -21,6 +21,10 @@ export interface AiControl {
   // #2248: set while a failed screenshot window is still owed. lastAnalyzedSeq stays below the
   // lowest failed capture until recovery analyzes it. See composition/captureRecovery.ts.
   analysisHold?: AnalysisHold;
+  // #2265: the live window whose model call is running right now, written before the call and
+  // cleared when it ends. A restart that finds it set adopts those captures into the hold, so a
+  // window cut off mid-call is still owed even when a later window moved the watermark past it.
+  inFlightSeqs?: number[];
 }
 
 export interface AnalysisHold {
@@ -35,6 +39,19 @@ export interface AnalysisHold {
   /** Recovery hit its cap. The captures stay owed; only the AI off→on catch-up retries them. */
   gaveUp?: boolean;
   lastError?: string;
+}
+
+/**
+ * #2265: the analyst-facing line for screenshots still owed by a failed window, or undefined when
+ * nothing is held. Shared by the pushed idle status and the derived pill state (analysis/aiState.ts)
+ * so the two never word it differently.
+ */
+export function describeAnalysisHold(hold: AnalysisHold | undefined): string | undefined {
+  const count = hold?.failedSeqs.length ?? 0;
+  if (!hold || count === 0) return undefined;
+  return hold.gaveUp
+    ? `${count} screenshot(s) could not be analyzed — turn AI off and on to retry`
+    : `${count} screenshot(s) waiting for retry`;
 }
 
 const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };

@@ -14,6 +14,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
 import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDismissals.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
+import { AiControlStore } from "../../src/analysis/aiControl.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -74,6 +75,18 @@ describe("GET /cases/:id/ai-state", () => {
     expect(res.body.state).toBe("blocked");
     expect(res.body.holds).toHaveLength(1);
     expect(res.body.holds[0]).toMatchObject({ kind: "host-duplicates", count: 1 });
+  });
+
+  // #2265: the pill read "up to date" while a failed window's screenshots waited for a retry.
+  it("reports screenshots a failed window still owes", async () => {
+    await build(["WIN11"]);
+    await new AiControlStore(cases).save("c1", {
+      enabled: true,
+      lastAnalyzedSeq: 0,
+      analysisHold: { failedSeqs: [1, 2], analyzedThrough: 4, attempts: 1 },
+    });
+    const res = await request(app).get("/cases/c1/ai-state");
+    expect(res.body).toMatchObject({ state: "idle", detail: "2 screenshot(s) waiting for retry" });
   });
 
   it("reports a pending Presidio approval", async () => {

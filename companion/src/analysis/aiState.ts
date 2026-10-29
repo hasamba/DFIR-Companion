@@ -100,6 +100,11 @@ export interface AiStateInput {
   jobs?: readonly Job[];
   /** #1599: the synth-meta out-of-date marker, or null/absent when the conclusions are current. */
   outOfDate?: AiStateOutOfDate | null;
+  /**
+   * #2265: screenshots a failed window still owes — the caller words it (describeAnalysisHold in
+   * analysis/aiControl.ts, a layer this module may not import), absent when nothing is held.
+   */
+  screenshotHold?: { detail: string; gaveUp: boolean } | null;
 }
 
 const ACTIVE: readonly Job["status"][] = ["running", "queued"];
@@ -170,6 +175,11 @@ export function deriveAiState(input: AiStateInput): AiState {
   if (holds.length > 0) {
     return { state: "blocked", detail: holds.map((hold) => hold.detail).join("; "), ...common };
   }
+
+  // #2265: screenshots a failed window still owes. Without this the pill read "up to date" while
+  // they waited for a retry. A hold that used up its retries needs the analyst, so it is an error.
+  const held = input.screenshotHold;
+  if (held) return { state: held.gaveUp ? "error" : "idle", detail: held.detail, ...common };
 
   const last = lastEnded(jobs);
   if (last && BROKEN.includes(last.status)) {

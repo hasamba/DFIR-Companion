@@ -14,11 +14,12 @@ import { warnLine } from "../logging/serverLogger.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
-import type { AiControl } from "../analysis/aiControl.js";
+import { describeAnalysisHold, type AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet } from "../storage/caseKeyedState.js";
 import {
+  adoptInFlight,
   afterWindowFailure,
   afterWindowSuccess,
   parseCaptureLog,
@@ -142,19 +143,64 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     // grows with every capture. The failed captures are held instead and recovered from the log.
     const seqs = buf.filter((c) => !c.isDuplicate).map((c) => c.sequenceNumber);
     try {
+      if (seqs.length > 0) await markInFlight(caseId, seqs);
       await options.pipeline.analyzeWindow(caseId, buf);
       if (seqs.length > 0) await windowAnalyzed(caseId, seqs);
       await clearMarkerUnlessHeld(caseId);
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      await reportIdle(caseId);
       scheduleSynthesis(caseId); // live findings/attacker path
     } catch (err) {
       await windowFailed(caseId, seqs, err, false);
     }
   }
 
+  /**
+   * #2265: record the live window before its model call, so a restart mid-call still owes it. A
+   * stale record from before a restart is adopted into the hold first, never overwritten. Best
+   * effort: a failed write must not turn a call that may succeed into a held failure.
+   */
+  async function markInFlight(caseId: string, seqs: number[]): Promise<void> {
+    try {
+      const cur = await getControl(caseId);
+      const control = await setControl(caseId, { ...adoptInFlight(cur), inFlightSeqs: seqs });
+      if (control.analysisHold) heldCases.add(caseId);
+    } catch (err) {
+      warnLine(
+        `[capture-analysis] ${caseId}: could not record the window in flight: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** Adopt a window a restart left in flight into the hold (#2265). */
+  async function adoptStaleInFlight(caseId: string): Promise<void> {
+    const patch = adoptInFlight(await getControl(caseId));
+    if (Object.keys(patch).length === 0) return;
+    const control = await setControl(caseId, patch);
+    if (control.analysisHold) heldCases.add(caseId);
+  }
+
+  /** "idle", naming any screenshots a failed window still owes instead of reading up to date (#2265). */
+  async function reportIdle(caseId: string): Promise<void> {
+    let detail: string | undefined;
+    try {
+      detail = describeAnalysisHold((await getControl(caseId)).analysisHold);
+    } catch {
+      detail = undefined; // the status is informational; never fail a finished window over it
+    }
+    options.onAiStatus?.(caseId, {
+      status: "idle",
+      at: new Date().toISOString(),
+      ...(detail ? { detail } : {}),
+    });
+  }
+
   /** Move the watermark for an analyzed window — never past a held failure (#2248). */
   async function windowAnalyzed(caseId: string, seqs: number[]): Promise<void> {
-    const patch = afterWindowSuccess(await getControl(caseId), seqs);
+    const cur = await getControl(caseId);
+    const patch = {
+      ...afterWindowSuccess(cur, seqs),
+      ...(cur.inFlightSeqs ? { inFlightSeqs: undefined } : {}),
+    };
     if (Object.keys(patch).length > 0) await setControl(caseId, patch);
   }
 
@@ -174,14 +220,22 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     seqs: number[],
     err: unknown,
     recovery: boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     recordAiError(caseId, "extracting", err);
     let control: AiControl | undefined;
+    let counted = false;
     try {
       const cur = await getControl(caseId);
-      control = seqs.length
-        ? await setControl(caseId, afterWindowFailure(cur, seqs, (err as Error).message, recovery, policy))
+      // #2265: a recovery pass that threw before any window (an unreadable log, say) still uses up
+      // an attempt against the same cap and backoff — otherwise the sweep retries it forever.
+      const countAttempt = seqs.length > 0 || (recovery && Boolean(cur.analysisHold));
+      control = countAttempt
+        ? await setControl(caseId, {
+            ...afterWindowFailure(cur, seqs, (err as Error).message, recovery, policy),
+            ...(seqs.length > 0 && cur.inFlightSeqs ? { inFlightSeqs: undefined } : {}),
+          })
         : cur;
+      counted = countAttempt;
       if (control.analysisHold) heldCases.add(caseId);
     } catch (holdErr) {
       warnLine(
@@ -194,6 +248,7 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
       at: new Date().toISOString(),
       detail: (err as Error).message,
     });
+    return counted;
   }
 
   /** Drop the failure marker once nothing is owed any more; a held window keeps it (#2248). */
@@ -211,6 +266,9 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
    * disagree on what "owed" means. Emits its own terminal status once it has started analyzing.
    */
   async function analyzeOwed(caseId: string, mode: OwedMode): Promise<OwedOutcome> {
+    // Serialized behind every flush, so a window still recorded in flight here was cut off by a
+    // restart (or its clear failed): adopt it before deciding what is owed (#2265).
+    await adoptStaleInFlight(caseId);
     const control = await getControl(caseId);
     // A restart pass leaves a held window alone unless its backoff has run out and it has tries
     // left — the cap must hold across restarts. When it does include it, it counts as an attempt.
@@ -227,6 +285,9 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         warnLine(`[backfill] ${caseId}: cannot read captures.jsonl: ${(err as Error).message}`);
       }
+      // #2265: recovery exists only for a held window, so an unreadable log is a failed attempt —
+      // thrown so it counts against the cap instead of being retried every sweep.
+      if (mode === "recovery") throw err;
       return "no-log";
     }
     // Per line, skipping only a malformed line: captures.jsonl is appendFile-written, so a crash
@@ -268,7 +329,7 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
       await windowAnalyzed(caseId, seqs);
     }
     if (includeHeld) await settleHold(caseId);
-    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+    await reportIdle(caseId);
     scheduleSynthesis(caseId);
     return "done";
   }
@@ -277,19 +338,31 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     return runInCaseScope(store.casesRoot, caseId, () => recoverInScope(caseId));
   }
 
+  /**
+   * #2265: recovery passes that threw and could not record the attempt in the control (its own
+   * read or write is what failed). Counted here instead, against the same cap, so a control store
+   * that keeps throwing is not retried every sweep. Memory only: a restart starts it over.
+   */
+  const unrecordedFailures = new CaseKeyedMap<number>(() => store.casesRoot);
+
   async function recoverInScope(caseId: string): Promise<void> {
     if (!options.pipeline || !hasAiProvider()) return;
-    const control = await getControl(caseId);
-    if (!control.enabled || !recoveryDue(control)) return;
-    await serialized(caseId, async () => {
-      // Re-checked in the queue: a flush ahead of this one may have changed the hold.
-      if (!recoveryDue(await getControl(caseId))) return;
-      try {
+    if ((unrecordedFailures.get(caseId) ?? 0) >= policy.maxAttempts) return;
+    // Never rejects: the sweep fires this with `void`, so a throw would be an unhandled rejection.
+    try {
+      const control = await getControl(caseId);
+      if (!control.enabled || !recoveryDue(control)) return;
+      await serialized(caseId, async () => {
+        // Re-checked in the queue: a flush ahead of this one may have changed the hold.
+        if (!recoveryDue(await getControl(caseId))) return;
         await analyzeOwed(caseId, "recovery");
-      } catch (err) {
-        await windowFailed(caseId, [], err, true);
-      }
-    });
+      });
+      unrecordedFailures.delete(caseId);
+    } catch (err) {
+      const counted = await serialized(caseId, () => windowFailed(caseId, [], err, true));
+      if (counted) unrecordedFailures.delete(caseId);
+      else unrecordedFailures.set(caseId, (unrecordedFailures.get(caseId) ?? 0) + 1);
+    }
   }
 
   function resume(caseId: string): Promise<void> {
@@ -319,7 +392,11 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     flush,
     recover,
     resume,
-    analyzeOwedExclusive: (caseId, mode) => serialized(caseId, () => analyzeOwed(caseId, mode)),
+    analyzeOwedExclusive: (caseId, mode) => {
+      // The analyst's AI off→on retries even a hold that gave up, so it re-arms the sweep too.
+      if (mode === "backfill") unrecordedFailures.delete(caseId);
+      return serialized(caseId, () => analyzeOwed(caseId, mode));
+    },
     heldCases,
   };
 }

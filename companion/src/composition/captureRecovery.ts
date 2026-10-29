@@ -138,3 +138,32 @@ export function recoveryDue(control: AiControl, now: number = Date.now()): boole
   if (!hold || hold.gaveUp) return false;
   return !hold.nextAttemptAt || now >= Date.parse(hold.nextAttemptAt);
 }
+
+/**
+ * #2265: adopt a live window left in flight (a restart cut its model call off) into the hold. Its
+ * captures are usually still above the watermark and owed anyway — then the record is just dropped.
+ * Only captures a later window already moved the watermark (or the hold's high mark) past are
+ * added as failed. A new hold has no backoff, so the next pass retries it; an existing hold keeps
+ * its attempts, so the cap still holds across restarts.
+ */
+export function adoptInFlight(control: AiControl): Partial<AiControl> {
+  const seqs = control.inFlightSeqs;
+  if (!seqs) return {};
+  const hold = control.analysisHold;
+  const failed = new Set(hold?.failedSeqs ?? []);
+  const owed = (seq: number) =>
+    seq > control.lastAnalyzedSeq && (!hold || seq > hold.analyzedThrough || failed.has(seq));
+  const lost = seqs.filter((seq) => !owed(seq));
+  if (lost.length === 0) return { inFlightSeqs: undefined };
+  const prior: AnalysisHold = hold ?? {
+    failedSeqs: [],
+    analyzedThrough: control.lastAnalyzedSeq,
+    attempts: 0,
+  };
+  const failedSeqs = [...new Set([...prior.failedSeqs, ...lost])].sort((a, b) => a - b);
+  return {
+    inFlightSeqs: undefined,
+    lastAnalyzedSeq: Math.min(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: { ...prior, failedSeqs },
+  };
+}
