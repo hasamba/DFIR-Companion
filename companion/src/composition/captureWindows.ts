@@ -22,11 +22,14 @@ import {
   adoptInFlight,
   afterWindowFailure,
   afterWindowSuccess,
+  holdSkipped,
+  mayHaveSkippedBelow,
   parseCaptureLog,
   pendingCaptures,
   recoveryDue,
   recoveryPolicy,
   releaseHold,
+  skippedBelow,
 } from "./captureRecovery.js";
 
 export interface CaptureWindowsDeps {
@@ -145,7 +148,12 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     try {
       if (seqs.length > 0) await markInFlight(caseId, seqs);
       await options.pipeline.analyzeWindow(caseId, buf);
-      if (seqs.length > 0) await windowAnalyzed(caseId, seqs);
+      if (seqs.length > 0)
+        await windowAnalyzed(
+          caseId,
+          seqs,
+          buf.map((c) => c.sequenceNumber),
+        );
       await clearMarkerUnlessHeld(caseId);
       await reportIdle(caseId);
       scheduleSynthesis(caseId); // live findings/attacker path
@@ -194,14 +202,46 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     });
   }
 
-  /** Move the watermark for an analyzed window — never past a held failure (#2248). */
-  async function windowAnalyzed(caseId: string, seqs: number[]): Promise<void> {
+  /**
+   * Move the watermark for an analyzed window — never past a held failure (#2248), and never past
+   * an owed capture below the window (#2249): one a restart stranded in the memory-only buffer, say,
+   * when a navigation flush lands before the first sweep. Those are held for recovery. `accounted`
+   * is every sequence number the window carried, duplicates included.
+   */
+  async function windowAnalyzed(caseId: string, seqs: number[], accounted: number[] = seqs): Promise<void> {
     const cur = await getControl(caseId);
-    const patch = {
-      ...afterWindowSuccess(cur, seqs),
+    const hold = await holdSkippedBelow(caseId, cur, seqs, accounted);
+    const patch: Partial<AiControl> = {
+      ...hold,
+      ...afterWindowSuccess({ ...cur, ...hold }, seqs),
       ...(cur.inFlightSeqs ? { inFlightSeqs: undefined } : {}),
     };
     if (Object.keys(patch).length > 0) await setControl(caseId, patch);
+    if (patch.analysisHold) heldCases.add(caseId);
+  }
+
+  /** The hold patch for owed captures below a window. Reads the log only when there is a gap. */
+  async function holdSkippedBelow(
+    caseId: string,
+    cur: AiControl,
+    seqs: number[],
+    accounted: number[],
+  ): Promise<Partial<AiControl>> {
+    if (!mayHaveSkippedBelow(cur, seqs, accounted)) return {};
+    let log: string;
+    try {
+      log = await readFile(store.capturesLogPath(caseId), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        warnLine(
+          `[capture-analysis] ${caseId}: cannot check for skipped captures: ${(err as Error).message}`,
+        );
+      }
+      return {};
+    }
+    const inBuffer = new Set((captureBuffers.get(caseId) ?? []).map((c) => c.sequenceNumber));
+    const skipped = skippedBelow(parseCaptureLog(log).captures, cur, seqs, inBuffer);
+    return holdSkipped(cur, skipped);
   }
 
   /** Release a hold whose captures are all dealt with, then drop the marker if nothing is owed. */

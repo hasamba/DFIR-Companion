@@ -167,3 +167,63 @@ export function adoptInFlight(control: AiControl): Partial<AiControl> {
     analysisHold: { ...prior, failedSeqs },
   };
 }
+
+/** Everything at or below this is dealt with, apart from the hold's failed captures. */
+function dealtWithThrough(control: AiControl): number {
+  return Math.max(control.lastAnalyzedSeq, control.analysisHold?.analyzedThrough ?? control.lastAnalyzedSeq);
+}
+
+/**
+ * #2249: the watermark only ever advances contiguously. Before a window of `seqs` moves it, could a
+ * capture between what is dealt with and the window's lowest one still be owed? `accounted` is
+ * every sequence number the window carried, duplicates included. Answered without reading the
+ * log, so the usual contiguous window costs nothing.
+ */
+export function mayHaveSkippedBelow(
+  control: AiControl,
+  seqs: readonly number[],
+  accounted: readonly number[] = seqs,
+): boolean {
+  const known = new Set([...(control.analysisHold?.failedSeqs ?? []), ...accounted]);
+  const low = Math.min(...seqs);
+  for (let seq = dealtWithThrough(control) + 1; seq < low; seq += 1) if (!known.has(seq)) return true;
+  return false;
+}
+
+/**
+ * The owed captures a window of `seqs` would skip: logged, not duplicates, above what is dealt
+ * with, below the window, and neither held already nor waiting in the live buffer (`exclude`).
+ */
+export function skippedBelow(
+  captures: readonly CaptureMetadata[],
+  control: AiControl,
+  seqs: readonly number[],
+  exclude: ReadonlySet<number> = new Set(),
+): number[] {
+  const floor = dealtWithThrough(control);
+  const failed = new Set(control.analysisHold?.failedSeqs ?? []);
+  const low = Math.min(...seqs);
+  const skipped = captures
+    .filter((c) => !c.isDuplicate && c.sequenceNumber > floor && c.sequenceNumber < low)
+    .map((c) => c.sequenceNumber)
+    .filter((seq) => !failed.has(seq) && !exclude.has(seq));
+  return [...new Set(skipped)].sort((a, b) => a - b);
+}
+
+/**
+ * Hold captures a successful window would otherwise have skipped, so recovery analyzes them. They
+ * did not fail, so no attempt is counted and no backoff starts; an existing hold keeps its own.
+ */
+export function holdSkipped(control: AiControl, skipped: readonly number[]): Partial<AiControl> {
+  if (skipped.length === 0) return {};
+  const prior: AnalysisHold = control.analysisHold ?? {
+    failedSeqs: [],
+    analyzedThrough: control.lastAnalyzedSeq,
+    attempts: 0,
+  };
+  const failedSeqs = [...new Set([...prior.failedSeqs, ...skipped])].sort((a, b) => a - b);
+  return {
+    lastAnalyzedSeq: Math.min(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: { ...prior, failedSeqs },
+  };
+}
