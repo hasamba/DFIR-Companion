@@ -59,7 +59,10 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
   // check-on-connect for the cross-case capture warning.
   let lastCapture: { caseId: string; at: number } | null = null;
 
-  // How many captures have been recorded for a case (counts the audit-log lines).
+  // How many captures have been recorded for a case (counts the audit-log lines). Duplicate frames
+  // (isDuplicate) are counted ON PURPOSE (#2262): every one is saved to screenshots/ as evidence and
+  // logged, and the only caller — the dashboard's "Screenshots: N" header — shows how many
+  // screenshots the case holds, not how many were analyzed.
   app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
     try {
       const log = await readFile(store.capturesLogPath(req.params.id), "utf8");
