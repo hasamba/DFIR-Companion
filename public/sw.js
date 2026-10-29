@@ -25,6 +25,13 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Only a real, same-origin 200 may replace the offline shell (#2260). An error page would replace it
+// with the error, and an expired session's 302 to /login is followed by fetch() into a 200 for the
+// LOGIN page, which would then be served as the offline /mobile.
+function isCacheableShell(res) {
+  return res.ok && !res.redirected && res.type === "basic";
+}
+
 // App-shell strategy: network-first (so a fresh shell is served when online), falling back to the
 // cached shell when offline. Only navigations are handled; anything else falls through to the
 // network untouched.
@@ -36,8 +43,10 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(req)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(SHELL_CACHE).then((cache) => cache.put(SHELL_URL, copy)).catch(() => {});
+        if (isCacheableShell(res)) {
+          const copy = res.clone();
+          caches.open(SHELL_CACHE).then((cache) => cache.put(SHELL_URL, copy)).catch(() => {});
+        }
         return res;
       })
       .catch(() => caches.match(SHELL_URL).then((cached) => cached || Response.error())),
