@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extension capture throttle** — capture triggers are rate-limited, and browser limits or sites without access no longer hide the real status badge (closes #2255)
 - **Extension queue write failure** — a screenshot that cannot be saved to the offline queue is reported instead of lost silently (closes #2256)
 - **Extension popup** — the non-working dedup threshold field is gone, the timer interval minimum is 30 s (browser limit), and the shortcut no longer shows REC with no case (closes #2257)
-- **Extension push feedback** — a push to a case with AI off says "saved as evidence — not analyzed", the source page URL is recorded in the import log, and a failed push is retried once (closes #2258)
+- **Extension push feedback** — a push to a case with AI off says "saved as evidence — not analyzed", the source page URL is recorded in the import log, a rate-limited push is retried once, and a push that may already be saved is never re-sent automatically (closes #2258)
 - **Update rules without a case** — Settings → Tools → Update rules works with no case open; under team login it needs a global admin (closes #2259)
 - **Expired session on mobile and presentation pages** — both pages go to the login page, and the mobile offline copy never stores the login page (closes #2260)
 - **Manual fixes** — presentation severity filter and auto-advance, the preflight control route, and how screenshots are batched for analysis (closes #2261)
