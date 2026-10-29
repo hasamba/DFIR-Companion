@@ -401,7 +401,22 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
   // is switched back on after capturing with it off. Runs in the background.
   function backfill(caseId: string): Promise<void> {
-    return runInCaseScope(store.casesRoot, caseId, () => backfillInScope(caseId));
+    return runInCaseScope(store.casesRoot, caseId, () => backfillSafely(caseId));
+  }
+
+  // #2250: the route fires backfill with `void`, so a throw here was an unhandled rejection and the
+  // optimistic "catching up…" text stayed on screen. Every throw now ends on a terminal status.
+  async function backfillSafely(caseId: string): Promise<void> {
+    try {
+      await backfillInScope(caseId);
+    } catch (err) {
+      recordAiError(caseId, "extracting", err);
+      options.onAiStatus?.(caseId, {
+        status: "error",
+        at: new Date().toISOString(),
+        detail: (err as Error).message,
+      });
+    }
   }
 
   async function backfillInScope(caseId: string): Promise<void> {
@@ -452,11 +467,12 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // #2248: the same re-derivation recovery uses — the backlog captured while AI was off plus any
     // failed window still held. A held window is retried here even after recovery gave up: turning
     // AI back on is the analyst asking for it. A failed window writes the #2179 marker and the
-    // error status inside analyzeOwed.
-    const outcome = await windows.analyzeOwed(caseId, "backfill");
+    // error status inside analyzeOwed. #2250: queued behind the case's live flush and recovery, so
+    // the two never send the same screenshots or race on the watermark; it stops if AI is paused.
+    const outcome = await windows.analyzeOwedExclusive(caseId, "backfill");
     // No capture log (import-only case) or no new screenshots → still synthesize anything
-    // imported while AI was off.
-    if (outcome !== "done") await catchUpSynthesis();
+    // imported while AI was off. "done" and "stopped" already emitted their terminal status.
+    if (outcome === "no-log" || outcome === "none") await catchUpSynthesis();
   }
 
   // Tell someone the case is holding on a merge decision. The gate itself lives in synthesize(),

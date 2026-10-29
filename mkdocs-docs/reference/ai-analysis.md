@@ -39,6 +39,8 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **After a restart.** Screenshots that were waiting for a full batch when the Companion stopped are not lost. About five minutes after the Companion starts, it analyzes them for every case that has AI on.
 
+**Pausing AI during a catch-up.** If you turn AI off while it is catching up on screenshots, it stops after the current batch. The rest are analyzed when you turn AI on again.
+
 **Settings.** `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` (screenshots), `DFIR_AI_SYNTH_*` (CSV and log triage), `DFIR_AI_TIMEOUT_MS`, `DFIR_AI_MAX_TOKENS`, `DFIR_AI_CONTEXT_TOKENS`, and `DFIR_AI_SYSTEM_PROMPT_FILE` / `DFIR_AI_CSV_PROMPT_FILE` / `DFIR_AI_LOG_PROMPT_FILE` to override the prompts.
 
 ### 3. Synthesis — the normal run

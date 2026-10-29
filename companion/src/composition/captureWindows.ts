@@ -40,7 +40,8 @@ export interface CaptureWindowsDeps {
   scheduleSynthesis: (caseId: string) => void;
 }
 
-export type OwedOutcome = "no-log" | "none" | "done";
+// "stopped": AI was paused (or the vision model removed) between windows (#2250).
+export type OwedOutcome = "no-log" | "none" | "done" | "stopped";
 
 /**
  * Why an owed-capture pass runs. "recovery" retries a held window and counts against its cap;
@@ -54,8 +55,8 @@ export interface CaptureWindows {
   recover(caseId: string): Promise<void>;
   /** After a restart (#2249): analyze what the case still owes, if AI is on. */
   resume(caseId: string): Promise<void>;
-  /** Analyze everything owed for the case. Call inside the case scope. */
-  analyzeOwed(caseId: string, mode: OwedMode): Promise<OwedOutcome>;
+  /** Analyze everything the case owes, queued behind its flush/recovery so they never overlap (#2250). */
+  analyzeOwedExclusive(caseId: string, mode: OwedMode): Promise<OwedOutcome>;
   /** Cases holding a failed window, for the safety-net sweep. */
   readonly heldCases: CaseKeyedSet;
 }
@@ -79,9 +80,12 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
   // the log minus the live buffer, so a flush that had already taken its buffer and was still
   // running would otherwise be analyzed twice. A queued flush takes its buffer when it starts.
   const caseQueues = new CaseKeyedMap<Promise<void>>(() => store.casesRoot);
-  function serialized(caseId: string, fn: () => Promise<void>): Promise<void> {
+  function serialized<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     const run = (caseQueues.get(caseId) ?? Promise.resolve()).then(fn);
-    const tail = run.catch(() => {});
+    const tail = run.then(
+      () => {},
+      () => {},
+    );
     caseQueues.set(caseId, tail);
     void tail.then(() => {
       if (caseQueues.get(caseId) === tail) caseQueues.delete(caseId);
@@ -246,6 +250,15 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     });
     for (let i = 0; i < pending.length; i += windowSize) {
       const seqs = pending.slice(i, i + windowSize).map((c) => c.sequenceNumber);
+      // #2250: pausing AI must stop the next paid call. The rest stays owed above the watermark.
+      if (i > 0 && !((await getControl(caseId)).enabled && hasAiProvider())) {
+        options.onAiStatus?.(caseId, {
+          status: "idle",
+          at: new Date().toISOString(),
+          detail: `AI paused — ${pending.length - i} screenshot(s) left for the next catch-up`,
+        });
+        return "stopped";
+      }
       try {
         await options.pipeline!.analyzeWindow(caseId, pending.slice(i, i + windowSize));
       } catch (err) {
@@ -302,5 +315,11 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     });
   }
 
-  return { flush, recover, resume, analyzeOwed, heldCases };
+  return {
+    flush,
+    recover,
+    resume,
+    analyzeOwedExclusive: (caseId, mode) => serialized(caseId, () => analyzeOwed(caseId, mode)),
+    heldCases,
+  };
 }
