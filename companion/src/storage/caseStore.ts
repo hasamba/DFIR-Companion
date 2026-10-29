@@ -14,7 +14,7 @@ import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
@@ -24,6 +24,7 @@ import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite 
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
+import { AuditLogNeedsRepairError } from "./auditLogNeedsRepairError.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -557,7 +558,7 @@ export class CaseStore {
 
   async nextSequenceNumber(caseId: string): Promise<number> {
     return this.reserveSequence("capture", caseId, () =>
-      this.maxSequenceInLog(this.capturesLogPath(caseId), "sequenceNumber"),
+      this.maxSequenceInLog(caseId, "capture", this.capturesLogPath(caseId), "sequenceNumber"),
     );
   }
 
@@ -578,8 +579,14 @@ export class CaseStore {
    * indistinguishable from a line count alone, so this fails closed and asks for repair instead of
    * guessing). A row that parses but simply lacks `field` (the legacy-custody case above) is not an
    * error — it still counts toward the line-count floor, just not toward the field's own max.
+   * The throw is an AuditLogNeedsRepairError (#2252), so a route can name the case and the line.
    */
-  private async maxSequenceInLog(path: string, field: "sequenceNumber" | "seq"): Promise<number> {
+  private async maxSequenceInLog(
+    caseId: string,
+    kind: SequenceKind,
+    path: string,
+    field: "sequenceNumber" | "seq",
+  ): Promise<number> {
     let raw: string;
     try {
       raw = await readFile(path, "utf8");
@@ -589,16 +596,14 @@ export class CaseStore {
     }
     let count = 0;
     let maxField = 0;
-    for (const line of raw.split("\n")) {
+    for (const [index, line] of raw.split("\n").entries()) {
       if (!line.trim()) continue;
       count += 1;
       let row: Record<string, unknown>;
       try {
         row = JSON.parse(line) as Record<string, unknown>;
       } catch (err) {
-        throw new Error(
-          `${path} has a corrupted/truncated line at record ${count} — refusing to allocate a sequence number past it until it is repaired: ${(err as Error).message}`,
-        );
+        throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
       }
       const value = row[field];
       if (typeof value === "number" && Number.isFinite(value) && value > maxField) maxField = value;
@@ -736,13 +741,13 @@ export class CaseStore {
   // gaps are the safe direction for provenance, reuse is not.
   async nextCustodySeq(caseId: string): Promise<number> {
     return this.reserveSequence("custody", caseId, () =>
-      this.maxSequenceInLog(this.custodyLogPath(caseId), "seq"),
+      this.maxSequenceInLog(caseId, "custody", this.custodyLogPath(caseId), "seq"),
     );
   }
 
   async nextImportSeq(caseId: string): Promise<number> {
     return this.reserveSequence("import", caseId, () =>
-      this.maxSequenceInLog(this.importsLogPath(caseId), "sequenceNumber"),
+      this.maxSequenceInLog(caseId, "import", this.importsLogPath(caseId), "sequenceNumber"),
     );
   }
 
