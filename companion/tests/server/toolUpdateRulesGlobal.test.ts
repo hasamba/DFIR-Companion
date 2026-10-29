@@ -82,60 +82,60 @@ describe("POST /tools/:toolId/update-rules — single-user mode (#2259)", () => 
   });
 });
 
+async function teamApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-upd-global-team-"));
+  const store = new CaseStore(join(root, "cases"));
+  await store.createCase({ caseId: "c1", name: "Case c1", investigator: "i", aiProvider: null });
+  const { runner, spawned } = recordingRunner();
+  const app = createApp(store, {
+    stateStore: new StateStore(store),
+    toolRunner: runner,
+    loadToolConfigs: suricataConfigs,
+    teamAuth: new TeamAuth({
+      store: new AuthStore(join(root, "auth.sqlite")),
+      bootstrapToken: BOOTSTRAP_TOKEN,
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    }),
+  });
+  const admin = request.agent(app);
+  const boot = await admin.post("/auth/bootstrap").send({
+    bootstrapToken: BOOTSTRAP_TOKEN,
+    username: "admin",
+    password: "correct horse battery staple",
+    displayName: "Primary Admin",
+  });
+  expect(boot.status).toBe(201);
+  const adminCsrf = (await admin.get("/auth/me")).body.csrfToken as string;
+
+  // An investigator holds "write" on c1 — enough for the per-case routes, not for a global action.
+  const created = await admin.post("/auth/users").set("X-DFIR-CSRF", adminCsrf).send({
+    username: "investigator",
+    password: USER_PASSWORD,
+    displayName: "Investigator",
+  });
+  expect(created.status).toBe(201);
+  const grant = await admin
+    .put(`/auth/cases/c1/roles/${encodeURIComponent(created.body.id as string)}`)
+    .set("X-DFIR-CSRF", adminCsrf)
+    .send({ role: "investigator" });
+  expect(grant.status).toBe(200);
+  const investigator = request.agent(app);
+  const login = await investigator
+    .post("/auth/local/login")
+    .send({ username: "investigator", password: USER_PASSWORD });
+  expect(login.status).toBe(200);
+  const investigatorCsrf = (await investigator.get("/auth/me")).body.csrfToken as string;
+
+  return { app, spawned, admin, adminCsrf, investigator, investigatorCsrf };
+}
+
 describe("POST /tools/:toolId/update-rules — team mode needs a global admin (#2259)", () => {
   it("resolves to the global-admin policy, never a case permission", () => {
     for (const path of ["/tools/suricata/update-rules", "/TOOLS/suricata/UPDATE-RULES/"]) {
       expect(resolveRequestPolicy("POST", path)).toEqual({ kind: "global", permission: "admin" });
     }
   });
-
-  async function teamApp() {
-    const root = await mkdtemp(join(tmpdir(), "dfir-upd-global-team-"));
-    const store = new CaseStore(join(root, "cases"));
-    await store.createCase({ caseId: "c1", name: "Case c1", investigator: "i", aiProvider: null });
-    const { runner, spawned } = recordingRunner();
-    const app = createApp(store, {
-      stateStore: new StateStore(store),
-      toolRunner: runner,
-      loadToolConfigs: suricataConfigs,
-      teamAuth: new TeamAuth({
-        store: new AuthStore(join(root, "auth.sqlite")),
-        bootstrapToken: BOOTSTRAP_TOKEN,
-        cookieSecure: false,
-        sessionTtlMs: 60 * 60_000,
-      }),
-    });
-    const admin = request.agent(app);
-    const boot = await admin.post("/auth/bootstrap").send({
-      bootstrapToken: BOOTSTRAP_TOKEN,
-      username: "admin",
-      password: "correct horse battery staple",
-      displayName: "Primary Admin",
-    });
-    expect(boot.status).toBe(201);
-    const adminCsrf = (await admin.get("/auth/me")).body.csrfToken as string;
-
-    // An investigator holds "write" on c1 — enough for the per-case routes, not for a global action.
-    const created = await admin.post("/auth/users").set("X-DFIR-CSRF", adminCsrf).send({
-      username: "investigator",
-      password: USER_PASSWORD,
-      displayName: "Investigator",
-    });
-    expect(created.status).toBe(201);
-    const grant = await admin
-      .put(`/auth/cases/c1/roles/${encodeURIComponent(created.body.id as string)}`)
-      .set("X-DFIR-CSRF", adminCsrf)
-      .send({ role: "investigator" });
-    expect(grant.status).toBe(200);
-    const investigator = request.agent(app);
-    const login = await investigator
-      .post("/auth/local/login")
-      .send({ username: "investigator", password: USER_PASSWORD });
-    expect(login.status).toBe(200);
-    const investigatorCsrf = (await investigator.get("/auth/me")).body.csrfToken as string;
-
-    return { app, spawned, admin, adminCsrf, investigator, investigatorCsrf };
-  }
 
   it("refuses an unauthenticated caller with 401 and spawns nothing", async () => {
     const { app, spawned } = await teamApp();
@@ -157,6 +157,43 @@ describe("POST /tools/:toolId/update-rules — team mode needs a global admin (#
   it("lets a global admin update rules", async () => {
     const { spawned, admin, adminCsrf } = await teamApp();
     const r = await admin.post("/tools/suricata/update-rules").set("X-DFIR-CSRF", adminCsrf).send({});
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);
+    expect(spawned).toHaveLength(1);
+  });
+});
+
+// The legacy per-case spelling ran the same global rule update but sat in the case "write" bucket, so
+// any investigator on any case could trigger it in team mode (#2264). Same bar as the global route now.
+describe("POST /cases/:id/tools/:toolId/update-rules — team mode needs a global admin (#2264)", () => {
+  const SPELLINGS = [
+    "/cases/c1/tools/suricata/update-rules",
+    "/cases/c1/tools/suricata/update-rules/",
+    "/cases/c1/TOOLS/suricata/UPDATE-RULES",
+    "/cases/c1/Tools/suricata/Update-Rules/",
+  ];
+
+  it("resolves to the global-admin policy in every spelling", () => {
+    for (const path of SPELLINGS) {
+      expect(resolveRequestPolicy("POST", path), path).toEqual({ kind: "global", permission: "admin" });
+    }
+  });
+
+  it("refuses an investigator holding case write with 403 and spawns nothing", async () => {
+    const { spawned, investigator, investigatorCsrf } = await teamApp();
+    for (const path of SPELLINGS) {
+      const r = await investigator.post(path).set("X-DFIR-CSRF", investigatorCsrf).send({});
+      expect(r.status, path).toBe(403);
+    }
+    expect(spawned).toEqual([]);
+  });
+
+  it("lets a global admin update rules through the per-case route", async () => {
+    const { spawned, admin, adminCsrf } = await teamApp();
+    const r = await admin
+      .post("/cases/c1/tools/suricata/update-rules")
+      .set("X-DFIR-CSRF", adminCsrf)
+      .send({});
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     expect(spawned).toHaveLength(1);

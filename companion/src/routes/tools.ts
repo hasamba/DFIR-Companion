@@ -259,9 +259,10 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // GLOBAL rule update (#2259). Rules belong to the tool, not to a case, so Settings → Tools calls this
   // with no case connected. Who may reach it is decided before the handler: the origin guard (#211)
   // refuses every untrusted browser origin, and in team mode the path policy (auth/policy.ts) gives
-  // /tools/* POSTs no case to authorise against, so it falls to GLOBAL ADMIN — stricter than the
-  // per-case route below, which only needs "write" on some case. tests/server/toolUpdateRulesGlobal
-  // pins both refusals (no credential → 401, non-admin → 403) with nothing spawned.
+  // /tools/* POSTs no case to authorise against, so it falls to GLOBAL ADMIN. The per-case route below
+  // carries the same bar (#2264): the case id in its path authorises nothing, since the update is
+  // global. tests/server/toolUpdateRulesGlobal pins the refusals (no credential → 401, non-admin →
+  // 403) on both routes with nothing spawned.
   app.post("/tools/:toolId/update-rules", (req: Request, res: Response) =>
     runUpdateRules(req.params.toolId, res),
   );
