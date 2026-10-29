@@ -15,17 +15,32 @@ const STORE = "captures";
  *              so ordering is preserved for the next drain.
  *  - `drop`  — permanent (4xx); discard this entry and carry on with the rest, reporting it so the
  *              analyst finds out rather than silently losing evidence.
+ *  - `skip`  — refused for who is asking, not for what was sent (401/403 after a token or case
+ *              switch, #2254): KEEP this entry and carry on with the rest. It must not be `retry` —
+ *              that would stop the drain and block every valid capture behind it, the #215 bug again.
  */
 export interface QueueSendResult {
-  outcome: "sent" | "retry" | "drop";
+  outcome: "sent" | "retry" | "drop" | "skip";
   status?: number;        // HTTP status where known; 0 when fetch itself failed
   errorMessage?: string;  // the companion's explanation, for the popup diagnostic
+  errorCode?: string;     // the companion's machine-readable reason, when it gave one
 }
 
 /** What one drain pass did, so callers can surface dropped captures instead of losing them quietly. */
 export interface DrainSummary {
   sent: number;
   dropped: DroppedCapture[];
+  /** Entries refused for access and left in the queue (`skip`, #2254). */
+  kept: DroppedCapture[];
+}
+
+function reported(payload: CapturePayload, result: QueueSendResult): DroppedCapture {
+  return {
+    payload,
+    status: result.status ?? 0,
+    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+    ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+  };
 }
 
 export class CaptureQueue {
@@ -106,9 +121,10 @@ export class CaptureQueue {
 
   // Sends queued payloads oldest-first. Stops at the first RETRYABLE failure (keeping it and
   // everything behind it, so order is preserved); discards permanently-rejected entries and
-  // continues past them, reporting them in the summary.
+  // continues past them, reporting them in the summary; keeps SKIPPED entries in place and
+  // continues past them too (#2254).
   async drain(sender: (p: CapturePayload) => Promise<QueueSendResult>): Promise<DrainSummary> {
-    const summary: DrainSummary = { sent: 0, dropped: [] };
+    const summary: DrainSummary = { sent: 0, dropped: [], kept: [] };
     if (this.draining) return summary;
     this.draining = true;
     try {
@@ -137,12 +153,12 @@ export class CaptureQueue {
         for (const entry of entries) {
           const result = await sender(entry.payload);
           if (result.outcome === "retry") return summary; // keep this and all later entries
+          if (result.outcome === "skip") {
+            summary.kept.push(reported(entry.payload, result));
+            continue; // left in the queue — not deleted
+          }
           if (result.outcome === "drop") {
-            summary.dropped.push({
-              payload: entry.payload,
-              status: result.status ?? 0,
-              ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-            });
+            summary.dropped.push(reported(entry.payload, result));
           } else {
             summary.sent += 1;
           }

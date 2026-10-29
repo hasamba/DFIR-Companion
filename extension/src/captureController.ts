@@ -2,10 +2,13 @@ import type { CompanionClient } from "./companionClient.js";
 import type { CaptureQueue, QueueSendResult } from "./captureQueue.js";
 import type { CapturePayload, ConnectionStatus, TriggerType } from "./types.js";
 import { isLockedRejection } from "./casePasswordSession.js";
+import { isHeldRefusal, isKeptQueuedRefusal } from "./captureRefusal.js";
 
 // Is this HTTP status worth retrying later? A 4xx is normally the companion's considered answer
 // about THIS capture (404 case gone, 423 case closed, 410 deleted) and will say the same thing
 // tomorrow, so a queued capture that gets one must be discarded rather than retried forever.
+// Refusals about WHO is asking (401/403, team auth's access-denied 404) are not such an answer —
+// see captureRefusal.ts (#2254) — and are classified before this check.
 // The exceptions are 408 (request timeout) and 429 (rate limited — e.g. a case-password lockout,
 // which rejects even a valid capture until the window passes): those mean "try again later", so
 // they are transient like 5xx and 0 for "fetch threw / companion unreachable" (#215, #2174).
@@ -51,16 +54,21 @@ export class CaptureController {
           lockedQueuedCaseId = p.caseId;
           return { outcome: "retry", status: r.status };
         }
-        return {
-          outcome: isPermanent(r.status) ? "drop" : "retry",
+        const detail = {
           status: r.status,
           ...(r.errorMessage ? { errorMessage: r.errorMessage } : {}),
+          ...(r.errorCode ? { errorCode: r.errorCode } : {}),
         };
+        // Refused for access (e.g. a capture for the old case after a token switch) — keep it, and
+        // SKIP rather than retry, so the valid captures behind it still go out (#2254, #215).
+        if (isKeptQueuedRefusal(r.status, r.errorMessage, r.errorCode)) return { outcome: "skip", ...detail };
+        return { outcome: isPermanent(r.status) ? "drop" : "retry", ...detail };
       });
       return {
         online: true,
         queued: await this.queue.size(),
         ...(drained.dropped.length ? { dropped: drained.dropped } : {}),
+        ...(drained.kept.length ? { kept: drained.kept } : {}),
         ...(lockedQueuedCaseId ? { lockedQueuedCaseId } : {}),
       };
     }
@@ -70,6 +78,20 @@ export class CaptureController {
     if (isLockedRejection(result.status, result.errorMessage)) {
       await this.queue.enqueue(payload);
       return { online: true, queued: await this.queue.size(), locked: true };
+    }
+
+    // Refused for WHO is asking — a missing/rotated service token (401), a case role that cannot
+    // capture (403) — or a capture log that needs repair (409, #2252). Not a verdict on the
+    // screenshot: keep it, so it uploads once the analyst fixes the token / role / log (#2254).
+    if (isHeldRefusal(result.status, result.errorMessage, result.errorCode)) {
+      await this.queue.enqueue(payload);
+      return {
+        online: true,
+        queued: await this.queue.size(),
+        held: result.status,
+        ...(result.errorMessage ? { heldMessage: result.errorMessage } : {}),
+        ...(result.errorCode ? { heldCode: result.errorCode } : {}),
+      };
     }
 
     // The companion responded but rejected the capture (4xx — typically 404, the case

@@ -41,6 +41,7 @@ export interface DroppedCapture {
   payload: CapturePayload;
   status: number;         // the HTTP status that made it unsendable (0 = fetch itself failed)
   errorMessage?: string;  // the companion's explanation, when it gave one
+  errorCode?: string;     // the companion's machine-readable reason, e.g. "capture-log-needs-repair"
 }
 
 export interface ConnectionStatus {
@@ -60,6 +61,15 @@ export interface ConnectionStatus {
   // is password-locked (#2185). It stays queued. Distinct from `locked`: this capture was saved,
   // and the selected case's password (if any) was accepted, so it must not be forgotten.
   lockedQueuedCaseId?: string;
+  // The current capture was refused for access — a non-locked 401 (missing/rotated service token),
+  // a 403 (case role cannot capture) — or a 409 capture-log-needs-repair (#2252). Not a verdict on
+  // the screenshot, so it is KEPT in the queue (#2254). The HTTP status, message and body code.
+  held?: number;
+  heldMessage?: string;
+  heldCode?: string;
+  // Previously-queued captures refused for the same reasons during this drain (or team auth's 404
+  // "case not found or access denied"). Kept in the queue and skipped, never discarded (#2254).
+  kept?: DroppedCapture[];
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

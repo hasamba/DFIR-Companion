@@ -10,6 +10,7 @@ export interface PostCaptureResult {
   ok: boolean;
   status: number;
   errorMessage?: string;
+  errorCode?: string; // the body's machine-readable `code`, when it sent one
 }
 
 export class CompanionClient {
@@ -30,9 +31,13 @@ export class CompanionClient {
     return cred && credentialMatches(cred, caseId, this.baseUrl) ? { ...body, casePassword: cred.password } : body;
   }
 
-  private static async errorOf(res: Response): Promise<string | undefined> {
-    const body = (await res.json().catch(() => ({}))) as { error?: unknown };
-    return typeof body.error === "string" ? body.error : undefined;
+  private static async errorOf(res: Response): Promise<{ errorMessage?: string; errorCode?: string }> {
+    const body = (await res.json().catch(() => ({}))) as { error?: unknown; code?: unknown } | null;
+    return {
+      ...(typeof body?.error === "string" ? { errorMessage: body.error } : {}),
+      // A machine-readable reason, e.g. "capture-log-needs-repair" (#2252, #2254).
+      ...(typeof body?.code === "string" ? { errorCode: body.code } : {}),
+    };
   }
 
   private headers(contentType = false): Record<string, string> {
@@ -50,8 +55,7 @@ export class CompanionClient {
         body: JSON.stringify(this.withCasePassword(payload.caseId, payload)),
       });
       if (res.status === 201) return { ok: true, status: 201 };
-      const errorMessage = await CompanionClient.errorOf(res);
-      return { ok: false, status: res.status, ...(errorMessage ? { errorMessage } : {}) };
+      return { ok: false, status: res.status, ...(await CompanionClient.errorOf(res)) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }
@@ -67,8 +71,7 @@ export class CompanionClient {
         body: JSON.stringify(this.withCasePassword(caseId, payload)),
       });
       if (res.status === 202) return { ok: true, status: 202 };
-      const errorMessage = await CompanionClient.errorOf(res);
-      return { ok: false, status: res.status, ...(errorMessage ? { errorMessage } : {}) };
+      return { ok: false, status: res.status, ...(await CompanionClient.errorOf(res)) };
     } catch {
       return { ok: false, status: 0 }; // network error — companion unreachable
     }
