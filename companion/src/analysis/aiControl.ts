@@ -18,6 +18,23 @@ export interface AiControl {
   // When true, the analyst notebook entries are appended to the synthesis prompt so the
   // AI can incorporate investigator hypotheses and open questions. Off by default (opt-in).
   includeNotebook?: boolean;
+  // #2248: set while a failed screenshot window is still owed. lastAnalyzedSeq stays below the
+  // lowest failed capture until recovery analyzes it. See composition/captureRecovery.ts.
+  analysisHold?: AnalysisHold;
+}
+
+export interface AnalysisHold {
+  /** Captures whose window failed and that have not been analyzed since. */
+  failedSeqs: number[];
+  /** The highest capture analyzed while the hold was open; newer ones are still owed. */
+  analyzedThrough: number;
+  /** Automatic recovery attempts used so far. */
+  attempts: number;
+  /** ISO time before which no automatic recovery runs (backoff). */
+  nextAttemptAt?: string;
+  /** Recovery hit its cap. The captures stay owed; only the AI off→on catch-up retries them. */
+  gaveUp?: boolean;
+  lastError?: string;
 }
 
 const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };

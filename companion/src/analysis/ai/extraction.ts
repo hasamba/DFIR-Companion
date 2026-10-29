@@ -1,4 +1,5 @@
-import type { AIProvider, AnalyzeImage } from "../../providers/provider.js";
+import type { AIProvider, AnalyzeImage, ProviderError } from "../../providers/provider.js";
+import { withTransientRetry } from "./extractionRetry.js";
 import type { CaptureMetadata } from "../../types.js";
 import { chunkToCsvText, parseCsv } from "../csvImport.js";
 import { lastImportEventSequence } from "../importResume.js";
@@ -86,21 +87,33 @@ export async function analyzeWindow(
     const images = await Promise.all(analyzable.map((c) => ctx.opts.imageLoader(caseId, c.screenshotFile)));
     const userPrompt = buildScreenshotPrompt(state, analyzable);
 
-    const delta = await ctx.withRetry(
-      caseId,
-      "extract",
-      async () => {
-        const parsed = await ctx.analyzeRestored(
+    const backoffMs = ctx.opts.backoffMs ?? 500;
+    // #2248: a 429 or a timeout is retried here, for screenshots only — see extractionRetry.ts.
+    const delta = await withTransientRetry(
+      () =>
+        ctx.withRetry(
           caseId,
-          state,
-          provider,
-          { systemPrompt: getSystemPrompt(), userPrompt, images },
           "extract",
-        );
-        return stripAiExtractedFrom(deltaSchema.parse(parsed));
+          async () => {
+            const parsed = await ctx.analyzeRestored(
+              caseId,
+              state,
+              provider,
+              { systemPrompt: getSystemPrompt(), userPrompt, images },
+              "extract",
+            );
+            return stripAiExtractedFrom(deltaSchema.parse(parsed));
+          },
+          ctx.opts.retries ?? 3,
+          backoffMs,
+        ),
+      backoffMs,
+      (err) => {
+        ctx.log.warn(`AI call [extract] transient ${(err as ProviderError).kind} — retrying the window`, {
+          caseId,
+        });
+        ctx.recordRetry?.(caseId, "extract", err);
       },
-      ctx.opts.retries ?? 3,
-      ctx.opts.backoffMs ?? 500,
     );
 
     const last = analyzable[analyzable.length - 1];

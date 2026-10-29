@@ -35,6 +35,8 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **When to use it.** Automatic — after each import, and once enough new screenshots have accumulated. Screenshots need a **vision** model; CSV and log triage are text-only and run on the synthesis model.
 
+**If a batch of screenshots fails.** A rate limit (HTTP 429) or a timeout is retried a few times at once. If the batch still fails, the header shows the error and those screenshots are kept as still owed. Later batches are analyzed as normal. The Companion then retries the failed screenshots in the background, up to three times, with a wait between tries. If all three tries fail (for example a bad API key or a removed model), it stops retrying. The screenshots stay owed, and the Diagnostics page still counts the case as a failed analysis. Fix the cause, then turn AI off and on again for the case to retry them.
+
 **Settings.** `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` (screenshots), `DFIR_AI_SYNTH_*` (CSV and log triage), `DFIR_AI_TIMEOUT_MS`, `DFIR_AI_MAX_TOKENS`, `DFIR_AI_CONTEXT_TOKENS`, and `DFIR_AI_SYSTEM_PROMPT_FILE` / `DFIR_AI_CSV_PROMPT_FILE` / `DFIR_AI_LOG_PROMPT_FILE` to override the prompts.
 
 ### 3. Synthesis — the normal run

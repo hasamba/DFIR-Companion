@@ -26,6 +26,7 @@ async function harness(analyzeWindow: () => Promise<void>) {
   const options = {
     pipeline,
     flushIntervalMs: 0,
+    captureRecovery: { backoffMs: 0 },
     onAiStatus: (_caseId: string, s: { status: string; detail?: string }) => statuses.push(s),
   } as unknown as AppOptions;
   let control = { enabled: true, lastAnalyzedSeq: 0 } as AiControl;
@@ -88,17 +89,22 @@ describe("pending_analysis.json failure marker (#2152)", () => {
     expect(await h.tmpLeftovers()).toEqual([]);
   });
 
-  it("is removed again once a later window analyzes cleanly", async () => {
+  // #2248: a later clean window no longer clears it — the failed capture is still owed. It goes
+  // once recovery has analyzed the held capture.
+  it("stays while the failed window is held, and is removed once recovery analyzes it", async () => {
     let fail = true;
     const h = await harness(async () => {
       if (fail) throw new Error("provider down");
     });
+    await h.logCaptures(1, 2);
     h.feed(1);
     await h.analysis.flush(CASE_ID);
     expect((await stat(join(h.stateDir, MARKER))).isFile()).toBe(true);
     fail = false;
     h.feed(2);
     await h.analysis.flush(CASE_ID);
+    expect((await stat(join(h.stateDir, MARKER))).isFile()).toBe(true);
+    await h.analysis.recover(CASE_ID);
     await expect(stat(join(h.stateDir, MARKER))).rejects.toThrow();
   });
 });
