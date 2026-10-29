@@ -13,17 +13,21 @@ export interface Settings {
   caseId: string;
   companionUrl: string;    // default http://127.0.0.1:4773
   serviceToken: string;    // optional case-scoped team-mode identity
-  intervalSeconds: number; // default 10
-  dedupThreshold: number;  // default 5 (informational; dedup runs companion-side)
+  intervalSeconds: number; // default and minimum MIN_INTERVAL_SECONDS
   running: boolean;
 }
+
+// Chrome alarms in packed extensions fire at most every 30 s, so a shorter timer interval would be
+// accepted and then silently not honoured (#2257). Duplicate screenshots are dropped by the
+// companion (DFIR_DEDUP); an older build stored a client-side `dedupThreshold` that did nothing —
+// a stale stored value is ignored and dropped on the next save.
+export const MIN_INTERVAL_SECONDS = 30;
 
 export const DEFAULT_SETTINGS: Settings = {
   caseId: "",
   companionUrl: "http://127.0.0.1:4773",
   serviceToken: "",
-  intervalSeconds: 10,
-  dedupThreshold: 5,
+  intervalSeconds: MIN_INTERVAL_SECONDS,
   running: false,
 };
 

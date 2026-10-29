@@ -3,6 +3,8 @@ import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { describeCaptureOutcome } from "./captureOutcome.js";
 import { CaptureGate, isAutomaticTrigger, isCaptureRateLimitError } from "./captureGate.js";
+import { startCaptureBlockReason } from "./captureToggle.js";
+import { clampIntervalSeconds } from "./popupSettings.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { browserApi } from "./browser.js";
@@ -357,7 +359,8 @@ async function rescheduleAlarm(): Promise<void> {
   const settings = await getSettings();
   await browserApi.alarms.clear(ALARM);
   if (settings.running) {
-    await browserApi.alarms.create(ALARM, { periodInMinutes: Math.max(settings.intervalSeconds, 5) / 60 });
+    // Never under the browser's 30 s alarm floor; an older stored value is raised (#2257).
+    await browserApi.alarms.create(ALARM, { periodInMinutes: clampIntervalSeconds(settings.intervalSeconds) / 60 });
   }
   // Keep the toolbar icon in sync with capture state (recording dot vs idle ring).
   await setActionIcon(settings.running).catch(() => {});
@@ -370,9 +373,12 @@ async function rescheduleAlarm(): Promise<void> {
 async function toggleCapture(): Promise<void> {
   const settings = await getSettings();
   if (!settings.running) {
+    // No case, or no site access: record why and do NOT show REC (#2257) — see captureToggle.ts.
     const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab || !(await tabHasPersistentAccess(tab))) {
-      await recordBlockedCapture("manual", "site access is required; open the extension on this site");
+    const hasAccess = tab ? await tabHasPersistentAccess(tab) : false;
+    const blocked = startCaptureBlockReason(settings, hasAccess);
+    if (blocked) {
+      await recordBlockedCapture("manual", blocked);
       return;
     }
   }

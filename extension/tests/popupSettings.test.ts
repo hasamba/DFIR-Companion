@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "../src/types.js";
+import { DEFAULT_SETTINGS, MIN_INTERVAL_SECONDS } from "../src/types.js";
 import {
   caseListFailure,
+  clampIntervalSeconds,
   settingsFromForm,
   type PopupForm,
 } from "../src/popupSettings.js";
@@ -11,8 +12,7 @@ function form(overrides: Partial<PopupForm> = {}): PopupForm {
     caseId: "CASE-1",
     companionUrl: "http://127.0.0.1:4773",
     serviceToken: "tok-abc",
-    intervalSeconds: "10",
-    dedupThreshold: "5",
+    intervalSeconds: "60",
     ...overrides,
   };
 }
@@ -66,22 +66,56 @@ describe("settingsFromForm", () => {
     );
   });
 
-  it("clamps the interval to the 5-second floor", () => {
+  // Chrome alarms in packed extensions fire at most every 30 s (#2257): a shorter interval was
+  // accepted, then silently not honoured.
+  it("clamps the interval to the 30-second browser floor", () => {
+    expect(MIN_INTERVAL_SECONDS).toBe(30);
     expect(
-      settingsFromForm(form({ intervalSeconds: "1" }), false).intervalSeconds,
-    ).toBe(5);
+      settingsFromForm(form({ intervalSeconds: "5" }), false).intervalSeconds,
+    ).toBe(30);
+  });
+
+  it("keeps an interval above the floor", () => {
+    expect(
+      settingsFromForm(form({ intervalSeconds: "45" }), false).intervalSeconds,
+    ).toBe(45);
+  });
+
+  it("defaults the interval to 30 seconds", () => {
+    expect(DEFAULT_SETTINGS.intervalSeconds).toBe(30);
   });
 
   it("falls back to the default interval when the field is not a number", () => {
     expect(
       settingsFromForm(form({ intervalSeconds: "abc" }), false).intervalSeconds,
-    ).toBe(10);
+    ).toBe(30);
   });
 
-  it("clamps a negative dedup threshold to zero", () => {
-    expect(
-      settingsFromForm(form({ dedupThreshold: "-3" }), false).dedupThreshold,
-    ).toBe(0);
+  it("no longer stores a dedup threshold (dedup is companion-side, #2257)", () => {
+    expect(settingsFromForm(form(), false)).not.toHaveProperty("dedupThreshold");
+    expect(DEFAULT_SETTINGS).not.toHaveProperty("dedupThreshold");
+  });
+});
+
+describe("clampIntervalSeconds", () => {
+  it("raises an old stored value under 30 s to the floor", () => {
+    expect(clampIntervalSeconds(10)).toBe(30);
+    expect(clampIntervalSeconds(5)).toBe(30);
+  });
+
+  it("keeps a valid value", () => {
+    expect(clampIntervalSeconds(120)).toBe(120);
+  });
+
+  it("falls back to the default for missing or invalid values", () => {
+    expect(clampIntervalSeconds(undefined)).toBe(30);
+    expect(clampIntervalSeconds("abc")).toBe(30);
+    expect(clampIntervalSeconds(0)).toBe(30);
+    expect(clampIntervalSeconds(Number.NaN)).toBe(30);
+  });
+
+  it("accepts a numeric string from the form", () => {
+    expect(clampIntervalSeconds("90")).toBe(90);
   });
 });
 

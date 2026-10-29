@@ -41,3 +41,18 @@ describe("service-worker capture triggers", () => {
     expect(blocked.length).toBe(2);
   });
 });
+
+describe("service-worker capture toggle and timer (#2257)", () => {
+  it("refuses to start from the shortcut without a case or site access", () => {
+    const toggle = /async function toggleCapture\(\)[\s\S]*?\n\}/.exec(sw)?.[0];
+    expect(toggle, "toggleCapture not found in serviceWorker.ts").toBeDefined();
+    const guard = toggle?.indexOf("startCaptureBlockReason(settings, hasAccess)") ?? -1;
+    const rec = toggle?.indexOf("running: !settings.running") ?? -1;
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(rec);
+  });
+
+  it("never schedules the timer under the browser's 30 s alarm floor", () => {
+    expect(sw).toMatch(/periodInMinutes: clampIntervalSeconds\(settings\.intervalSeconds\) \/ 60/);
+  });
+});
