@@ -23,6 +23,7 @@ import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
+import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -78,19 +79,8 @@ export interface StoredArtifact {
 export type ArtifactStoredListener = (artifact: StoredArtifact) => void | Promise<void>;
 
 export class CaseStore {
-  // Serializes evidence-sequence allocation per case+kind (#214). Reading "audit-log length + 1"
-  // is a read-modify-write: two ingestions racing for the same case both read the same length and
-  // both got the same number, and when their filenames also matched, one evidence file silently
-  // overwrote the other. The lock makes allocation atomic; the high-water mark below makes it
-  // correct even before the audit line lands.
-  private readonly seqLock = new StateLock();
-
-  // Highest sequence number handed out per `<kind>:<caseId>` in this process. The audit line is
-  // appended AFTER the evidence is written, so between reserving a number and recording it the log
-  // still has its old length — without this, a second caller arriving in that window would read the
-  // same length and reuse the number. Numbers are therefore never reused, only ever skipped (a
-  // failed ingestion burns its number, which is the safe direction for provenance).
-  private readonly seqHighWater = new Map<string, number>();
+  // Evidence sequence numbers per case+kind (#214, #1119, #2253) — see SequenceAllocator.
+  private readonly sequences: SequenceAllocator;
 
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
@@ -122,6 +112,7 @@ export class CaseStore {
     opts: { writeQuiesceMs?: number } = {},
   ) {
     this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
+    this.sequences = new SequenceAllocator(root);
   }
 
   get casesRoot(): string {
@@ -143,22 +134,11 @@ export class CaseStore {
 
   /** Reserve the next never-yet-used sequence number for this case+kind. */
   private reserveSequence(
-    kind: "capture" | "import" | "custody",
+    kind: SequenceKind,
     caseId: string,
     maxOnDisk: () => Promise<number>,
   ): Promise<number> {
-    const key = `${kind}:${caseId}`;
-    return this.seqLock.runExclusive(key, async () => {
-      // Disk is authoritative across restarts (the map starts empty); the map is authoritative
-      // for numbers already handed out but not yet appended. The later of the two is correct.
-      // `maxOnDisk` must return the HIGHEST recorded sequence number, never a line count (#1119):
-      // a reservation burned by a failed append (no line written) still consumed a number, so a
-      // line count under-reports how many numbers were actually issued once the process restarts
-      // and `seqHighWater` resets — max(sequenceNumber) is correct regardless of any such gaps.
-      const next = Math.max((await maxOnDisk()) + 1, (this.seqHighWater.get(key) ?? 0) + 1);
-      this.seqHighWater.set(key, next);
-      return next;
-    });
+    return this.sequences.reserve(kind, caseId, maxOnDisk);
   }
 
   // A case normally lives at <root>/<caseId>. Once archived (see archiveCaseFolder), it moves to
@@ -244,9 +224,7 @@ export class CaseStore {
   // #1866: a deleted or replaced case's in-memory state (sequence high-water marks, and every
   // CaseKeyedMap/Set under this root, clearing their timers) never carries into a same-id successor.
   private forgetInMemory(caseId: string): void {
-    for (const key of [...this.seqHighWater.keys()]) {
-      if (key.slice(key.indexOf(":") + 1) === caseId) this.seqHighWater.delete(key);
-    }
+    this.sequences.forget(caseId);
     forgetCaseKeyedState(this.root, caseId);
   }
 
