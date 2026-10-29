@@ -49,7 +49,7 @@ function flaky(kind: ProviderErrorKind, failures: number) {
       if (calls <= failures) throw new ProviderError(`${kind} #${calls}`, kind);
       return { rawText: DELTA };
     },
-  } as unknown as AIProvider;
+  };
   return { provider, calls: () => calls };
 }
 
