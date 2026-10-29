@@ -129,7 +129,7 @@ forgotten at once, so a wrong one costs a single attempt against the case's lock
 
 ## Capture interval note
 
-The periodic capture timer is implemented with `chrome.alarms`, which clamps `periodInMinutes` to a minimum of roughly 1 minute for packed/published extensions — so sub-minute intervals (e.g. 5 s) will only fire at that cadence in unpacked/dev loads. Event-based triggers (tab switch, navigation, and manual capture) are not subject to this floor and fire immediately regardless of the alarm schedule.
+The periodic capture timer is implemented with `chrome.alarms`, which clamps `periodInMinutes` to a minimum of roughly 1 minute for packed/published extensions — so sub-minute intervals (e.g. 5 s) will only fire at that cadence in unpacked/dev loads. Event-based triggers (tab switch, navigation, click, and manual capture) are not subject to this floor and do not wait for the alarm schedule. They do share one throttle: only one screenshot runs at a time, with at least 0.6 s between them, so Chrome's limit of about two screenshots per second is never hit. An automatic trigger (timer, tab switch, navigation, click) that arrives inside that window is dropped; a manual or one-off capture waits its turn instead. The navigation shot is taken when the page has finished loading. An automatic trigger on a page the extension may not capture is skipped silently, so the badge keeps showing the real capture state; only a manual or one-off capture records a "blocked" result.
 
 ## Publishing (Chrome Web Store)
 

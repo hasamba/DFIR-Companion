@@ -2,6 +2,7 @@ import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { describeCaptureOutcome } from "./captureOutcome.js";
+import { CaptureGate, isAutomaticTrigger, isCaptureRateLimitError } from "./captureGate.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { browserApi } from "./browser.js";
@@ -28,6 +29,8 @@ import {
 
 const ALARM = "dfir-capture-timer";
 const queue = new CaptureQueue();
+// Single-flight + minimum gap between captures (#2255) — see captureGate.ts.
+const captureGate = new CaptureGate();
 
 interface CaptureAttemptResult {
   ok: boolean;
@@ -62,24 +65,48 @@ async function recordBlockedCapture(trigger: TriggerType, error: string): Promis
   return { ok: false, error };
 }
 
-async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<CaptureAttemptResult> {
+// Every capture goes through the gate (#2255): automatic triggers that arrive while a capture is in
+// flight or inside the minimum gap are dropped silently; manual and one-off captures wait their turn.
+function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<CaptureAttemptResult> {
+  const automatic = isAutomaticTrigger(trigger, oneOff);
+  return captureGate.run(
+    automatic,
+    () => captureActiveTabNow(trigger, oneOff, automatic),
+    { ok: false, error: "capture throttled" },
+  );
+}
+
+async function captureActiveTabNow(
+  trigger: TriggerType,
+  oneOff: boolean,
+  automatic: boolean,
+): Promise<CaptureAttemptResult> {
   const settings = await getSettings();
   if ((!settings.running && !oneOff) || !settings.caseId) {
     return { ok: false, error: "select a case before capturing" };
   }
 
   const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
+  // An automatic trigger on a page we may not capture is skipped silently (#2255): recording it
+  // would overwrite the real status on the badge with NO on every tab switch while recording.
+  // Manual and one-off captures still record why they were blocked.
   if (!tab || tab.id === undefined || !tab.url || !isCapturableTab(tab)) {
-    return recordBlockedCapture(trigger, "this browser or private page cannot be captured");
+    const error = "this browser or private page cannot be captured";
+    return automatic ? { ok: false, error } : recordBlockedCapture(trigger, error);
   }
   if (!oneOff && !(await tabHasPersistentAccess(tab))) {
-    return recordBlockedCapture(trigger, "site access is not granted; open the extension on this site");
+    const error = "site access is not granted; open the extension on this site";
+    return automatic ? { ok: false, error } : recordBlockedCapture(trigger, error);
   }
 
   let dataUrl: string;
   try {
     dataUrl = await browserApi.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-  } catch {
+  } catch (e) {
+    // Chrome's per-second quota is not a denial: skip quietly and leave the badge alone (#2255).
+    if (isCaptureRateLimitError(e)) {
+      return { ok: false, error: "the browser is rate-limiting screenshots; try again in a moment" };
+    }
     return recordBlockedCapture(trigger, "the browser denied screenshot access; click the extension and try again");
   }
   const imageBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
@@ -361,11 +388,12 @@ browserApi.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void captureActiveTab("timer");
 });
 browserApi.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
-browserApi.webNavigation.onCommitted.addListener((d) => {
-  if (d.frameId === 0) void captureActiveTab("navigation");
-});
+// The navigation shot waits for onCompleted (#2255): onCommitted fires before the new page renders,
+// so the screenshot often showed the previous page.
 browserApi.webNavigation.onCompleted.addListener((details) => {
-  if (details.frameId === 0) void activateSite(details.tabId);
+  if (details.frameId !== 0) return;
+  void activateSite(details.tabId);
+  void captureActiveTab("navigation");
 });
 browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }
