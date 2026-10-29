@@ -18,6 +18,40 @@ export interface AiControl {
   // When true, the analyst notebook entries are appended to the synthesis prompt so the
   // AI can incorporate investigator hypotheses and open questions. Off by default (opt-in).
   includeNotebook?: boolean;
+  // #2248: set while a failed screenshot window is still owed. lastAnalyzedSeq stays below the
+  // lowest failed capture until recovery analyzes it. See composition/captureRecovery.ts.
+  analysisHold?: AnalysisHold;
+  // #2265: the live window whose model call is running right now, written before the call and
+  // cleared when it ends. A restart that finds it set adopts those captures into the hold, so a
+  // window cut off mid-call is still owed even when a later window moved the watermark past it.
+  inFlightSeqs?: number[];
+}
+
+export interface AnalysisHold {
+  /** Captures whose window failed and that have not been analyzed since. */
+  failedSeqs: number[];
+  /** The highest capture analyzed while the hold was open; newer ones are still owed. */
+  analyzedThrough: number;
+  /** Automatic recovery attempts used so far. */
+  attempts: number;
+  /** ISO time before which no automatic recovery runs (backoff). */
+  nextAttemptAt?: string;
+  /** Recovery hit its cap. The captures stay owed; only the AI off→on catch-up retries them. */
+  gaveUp?: boolean;
+  lastError?: string;
+}
+
+/**
+ * #2265: the analyst-facing line for screenshots still owed by a failed window, or undefined when
+ * nothing is held. Shared by the pushed idle status and the derived pill state (analysis/aiState.ts)
+ * so the two never word it differently.
+ */
+export function describeAnalysisHold(hold: AnalysisHold | undefined): string | undefined {
+  const count = hold?.failedSeqs.length ?? 0;
+  if (!hold || count === 0) return undefined;
+  return hold.gaveUp
+    ? `${count} screenshot(s) could not be analyzed — turn AI off and on to retry`
+    : `${count} screenshot(s) waiting for retry`;
 }
 
 const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };

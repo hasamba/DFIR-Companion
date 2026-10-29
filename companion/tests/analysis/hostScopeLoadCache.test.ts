@@ -99,7 +99,8 @@ describe("loadHostEvidence (#1881)", () => {
     await loadHostEvidence(source, "c1", index);
     await loadHostEvidence(source, "c1", index);
     expect(scans).toBe(2);
-  });
+    // ~7 s alone on Linux against the 15 s default, and it timed out once under load (#2262).
+  }, 30_000);
 
   it("a caller's changes to the result never reach the next load", async () => {
     const index = buildHostAliasIndex([], {});

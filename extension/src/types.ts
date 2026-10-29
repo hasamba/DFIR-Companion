@@ -13,17 +13,21 @@ export interface Settings {
   caseId: string;
   companionUrl: string;    // default http://127.0.0.1:4773
   serviceToken: string;    // optional case-scoped team-mode identity
-  intervalSeconds: number; // default 10
-  dedupThreshold: number;  // default 5 (informational; dedup runs companion-side)
+  intervalSeconds: number; // default and minimum MIN_INTERVAL_SECONDS
   running: boolean;
 }
+
+// Chrome alarms in packed extensions fire at most every 30 s, so a shorter timer interval would be
+// accepted and then silently not honoured (#2257). Duplicate screenshots are dropped by the
+// companion (DFIR_DEDUP); an older build stored a client-side `dedupThreshold` that did nothing —
+// a stale stored value is ignored and dropped on the next save.
+export const MIN_INTERVAL_SECONDS = 30;
 
 export const DEFAULT_SETTINGS: Settings = {
   caseId: "",
   companionUrl: "http://127.0.0.1:4773",
   serviceToken: "",
-  intervalSeconds: 10,
-  dedupThreshold: 5,
+  intervalSeconds: MIN_INTERVAL_SECONDS,
   running: false,
 };
 
@@ -41,6 +45,7 @@ export interface DroppedCapture {
   payload: CapturePayload;
   status: number;         // the HTTP status that made it unsendable (0 = fetch itself failed)
   errorMessage?: string;  // the companion's explanation, when it gave one
+  errorCode?: string;     // the companion's machine-readable reason, e.g. "capture-log-needs-repair"
 }
 
 export interface ConnectionStatus {
@@ -60,6 +65,18 @@ export interface ConnectionStatus {
   // is password-locked (#2185). It stays queued. Distinct from `locked`: this capture was saved,
   // and the selected case's password (if any) was accepted, so it must not be forgotten.
   lockedQueuedCaseId?: string;
+  // The current capture was refused for access — a non-locked 401 (missing/rotated service token),
+  // a 403 (case role cannot capture) — or a 409 capture-log-needs-repair (#2252). Not a verdict on
+  // the screenshot, so it is KEPT in the queue (#2254). The HTTP status, message and body code.
+  held?: number;
+  heldMessage?: string;
+  heldCode?: string;
+  // Previously-queued captures refused for the same reasons during this drain (or team auth's 404
+  // "case not found or access denied"). Kept in the queue and skipped, never discarded (#2254).
+  kept?: DroppedCapture[];
+  // The capture had to be queued but the queue write itself failed (quota, aborted transaction) —
+  // it is NOT saved anywhere. The reason, for the popup (#2256).
+  queueWriteFailed?: string;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in
@@ -83,6 +100,7 @@ export interface ImportPayload {
   text?: string;           // raw text (context-menu selection / link push)
   filename: string;        // synthetic name (adapter id + timestamp) — detection hint + audit label
   minSeverity?: string;
+  sourceUrl?: string;      // page the push came from — import audit log only, never AI input (#2258)
 }
 
 // content script → service worker: inject the MAIN-world fetch/XHR hook into this tab. The SW uses
@@ -110,6 +128,8 @@ export interface PushArtifactResult {
   rows?: number;
   caseId?: string;
   error?: string;
+  analyzed?: boolean;      // false + reason "ai-off" → saved as evidence, NOT analyzed (#2258)
+  reason?: string;
 }
 
 // ── Context-menu send (#new) ──────────────────────────────────────────────────────────────────

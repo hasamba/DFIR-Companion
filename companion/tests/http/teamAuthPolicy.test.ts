@@ -351,6 +351,23 @@ describe("case permission buckets are chosen by route, not by path content", () 
     }
   });
 
+  // The legacy per-case spelling of the rule update (#2264). Rules belong to the TOOL, not to the
+  // case in the path, so the case id buys nothing: holding "write" on any one case must not let an
+  // investigator run a global, process-spawning action the global route reserves for a global admin.
+  it("gives the per-case update-rules route the global-admin policy in every spelling", () => {
+    for (const path of [
+      "/cases/c1/tools/suricata/update-rules",
+      "/cases/c1/tools/suricata/update-rules/",
+      "/cases/c1/TOOLS/suricata/UPDATE-RULES",
+      "/cases/c1/Tools/Suricata/Update-Rules//",
+    ]) {
+      expect(resolveRequestPolicy("POST", path), path).toEqual({ kind: "global", permission: "admin" });
+    }
+    // The tool id fills only its own slot: other per-case tool routes keep the case "write" bucket.
+    expect(permission("POST", "/cases/c1/tools/suricata/run")).toBe("write");
+    expect(permission("POST", "/cases/c1/tools/update-rules/run")).toBe("write");
+  });
+
   it("keeps export out of a reader's reach on anything that is not an export route", () => {
     // The concrete escalation: reader holds "export", so any route that lands in that bucket by
     // accident is reachable by the least-privileged role in the case.

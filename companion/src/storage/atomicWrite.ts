@@ -82,6 +82,13 @@ export interface AtomicWriteDeps {
 // the other write — which then breaks every endpoint that loads state. A unique tmp means each
 // write lands in its own file and the final `rename` replaces the target atomically; the worst
 // case is a lost update (last writer wins), never a malformed file.
+//
+// THE GUARANTEE IS ATOMIC, NOT DURABLE (#2262). Readers see either the old file or the whole new
+// one, never a half-written mix — across concurrent writers and a process crash. Nothing is
+// fsynced, so after a power loss or OS crash the target can come back empty or stale: the rename
+// may reach the disk before the temp file's bytes do. That is a deliberate tradeoff — fsync on
+// every sidecar save is costly on Windows and on synced folders, and no writer here relies on
+// surviving a power cut. A caller that needs durability must add it itself.
 export async function atomicWrite(
   target: string,
   content: string | Uint8Array,

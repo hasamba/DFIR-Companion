@@ -66,6 +66,13 @@ const CASE_ADMIN_SEGMENTS = [
 // Holding "write" on one case must not let a user name a path outside that case and have its bytes
 // copied in as evidence. Same trust as /nsrl and /kev import-file, already global-admin prefixes.
 const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file", "/import-mac-login-item"];
+// Case-scoped spellings of a GLOBAL action, where the case id in the path authorises nothing. The
+// legacy POST /cases/:id/tools/:toolId/update-rules runs the same process-spawning rule update as
+// POST /tools/:toolId/update-rules (#2259) — rules belong to the tool, not the case — so it gets the
+// same global-admin bar. In the case "write" bucket, an investigator on ANY case could run it (#2264).
+// Anchored like the review/export patterns below (a tool id only fills its own slot) and matched
+// against the same lowercased, trailing-slash-stripped suffix.
+const CASE_GLOBAL_ADMIN_PATTERNS = [/^\/tools\/[^/]+\/update-rules$/];
 // The only /cases/* paths that are NOT a case: the two whole-case imports (the encrypted bundle and
 // the plain "Archive to ZIP" file, #1784) and the demo seeder.
 // "import" and "seed-demo" are themselves valid case ids (isValidCaseId accepts both) and any
@@ -163,7 +170,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   // checks above do not need it (a prefix match already tolerates a trailing segment separator),
   // and collectionPath() does the same job for NON_CASE_PATHS.
   const matchSuffix = lowerSuffix.replace(/\/+$/, "") || "/";
-  if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
+  if (
+    CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment)) ||
+    CASE_GLOBAL_ADMIN_PATTERNS.some((pattern) => pattern.test(matchSuffix))
+  ) {
     return { kind: "global", permission: "admin" };
   }
   if (CASE_READ_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {

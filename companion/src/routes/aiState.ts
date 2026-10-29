@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { deriveAiState, effectiveOutOfDate, type AiState } from "../analysis/aiState.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
-import { AiControlStore } from "../analysis/aiControl.js";
+import { AiControlStore, describeAnalysisHold } from "../analysis/aiControl.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 import type { RouteContext } from "./context.js";
 
@@ -57,12 +57,18 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
     }
   }
 
-  /** The per-case AI toggle. Defaults to enabled, matching the control store's own default. */
-  async function enabled(caseId: string): Promise<boolean> {
+  /**
+   * The per-case AI toggle (defaults to enabled on a read failure) and the failed-window hold
+   * (#2265), from one read of the control record.
+   */
+  async function control(caseId: string) {
     try {
-      return (await new AiControlStore(store).load(caseId)).enabled;
+      const c = await new AiControlStore(store).load(caseId);
+      const detail = describeAnalysisHold(c.analysisHold);
+      const screenshotHold = detail ? { detail, gaveUp: c.analysisHold?.gaveUp === true } : null;
+      return { enabled: c.enabled, screenshotHold };
     } catch {
-      return true;
+      return { enabled: true, screenshotHold: null };
     }
   }
 
@@ -82,17 +88,18 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
       if (!(await store.caseExists(caseId))) {
         return res.status(404).json({ error: `case ${caseId} does not exist` });
       }
-      const [dupes, presidio, isEnabled, stale] = await Promise.all([
+      const [dupes, presidio, ctl, stale] = await Promise.all([
         hostDuplicates(caseId),
         presidioPending(caseId),
-        enabled(caseId),
+        control(caseId),
         outOfDate(caseId),
       ]);
       const state: AiState = deriveAiState({
         // Mirrors server.ts's own hasAiProvider: the explicit flag wins, the pipeline answers
         // otherwise. Without this an install that sets aiConfigured directly would derive "off".
         aiConfigured: options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider()),
-        enabled: isEnabled,
+        enabled: ctl.enabled,
+        screenshotHold: ctl.screenshotHold,
         hostDuplicates: dupes,
         presidioPending: presidio,
         jobs: options.jobManager?.list(caseId) ?? [],

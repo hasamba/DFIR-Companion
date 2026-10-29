@@ -35,6 +35,14 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **When to use it.** Automatic — after each import, and once enough new screenshots have accumulated. Screenshots need a **vision** model; CSV and log triage are text-only and run on the synthesis model.
 
+**How screenshots are batched.** Screenshots are analyzed in batches of four, in the order they were taken. A navigation or tab switch sends the current batch early, and a batch that is not full is sent after about five minutes. Batches do not overlap: each screenshot is sent in one batch only. Screenshots marked as duplicates are kept as evidence but are not sent for analysis. So if one page or artifact is captured across several screenshots, it can fall into two batches, and the AI reads each part separately. This is by design. The batch size is fixed; there is no setting for it.
+
+**If a batch of screenshots fails.** A rate limit (HTTP 429) or a timeout is retried a few times at once. If the batch still fails, the header shows the error and those screenshots are kept as still owed. Later batches are analyzed as normal. The Companion then retries the failed screenshots in the background, up to three times, with a wait between tries. If all three tries fail (for example a bad API key or a removed model), it stops retrying. The screenshots stay owed, and the Diagnostics page still counts the case as a failed analysis. Fix the cause, then turn AI off and on again for the case to retry them. A screenshot whose image file cannot be read (for example, it was deleted from the case folder) is skipped and written to the server log. The other screenshots in its batch are still analyzed, and the skipped one is not retried.
+
+**After a restart.** Screenshots that were waiting for a full batch when the Companion stopped are not lost. About five minutes after the Companion starts, it analyzes them for every case that has AI on.
+
+**Pausing AI during a catch-up.** If you turn AI off while it is catching up on screenshots, it stops after the current batch. The rest are analyzed when you turn AI on again.
+
 **Settings.** `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` (screenshots), `DFIR_AI_SYNTH_*` (CSV and log triage), `DFIR_AI_TIMEOUT_MS`, `DFIR_AI_MAX_TOKENS`, `DFIR_AI_CONTEXT_TOKENS`, and `DFIR_AI_SYSTEM_PROMPT_FILE` / `DFIR_AI_CSV_PROMPT_FILE` / `DFIR_AI_LOG_PROMPT_FILE` to override the prompts.
 
 ### 3. Synthesis — the normal run

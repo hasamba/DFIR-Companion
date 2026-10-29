@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, stat, mkdir, rename, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -447,5 +447,87 @@ describe("CaseStore retired case ids", () => {
     const store = new CaseStore(root);
     await store.retireCaseId("INC-2026-003");
     expect(await store.listCases()).toEqual([]);
+  });
+});
+
+// #2253: every reservation used to re-read and parse the whole audit log, so a long capture session
+// did O(n²) work per case. The log is read once per case incarnation per process (the #1119 cold
+// start); after that the in-memory high-water mark is the answer.
+describe("CaseStore sequence high-water reuse (#2253)", () => {
+  const capture = (caseId: string, sequenceNumber: number): CaptureMetadata => ({
+    caseId,
+    timestamp: "2026-05-28T10:00:00.000Z",
+    url: "u",
+    tabTitle: "t",
+    triggerType: "timer",
+    contentHash: "0000000000000000",
+    isDuplicate: false,
+    screenshotFile: `${String(sequenceNumber).padStart(6, "0")}_t.webp`,
+    sequenceNumber,
+  });
+  // The private log reader, counted on the prototype so a fresh store is covered too.
+  const spyLogReads = () =>
+    vi.spyOn(
+      CaseStore.prototype as unknown as { maxSequenceInLog: () => Promise<number> },
+      "maxSequenceInLog",
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads the log once, then reuses the high-water mark for every later reservation", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "hw-1", name: "n", investigator: "i", aiProvider: null });
+    const reads = spyLogReads();
+    for (let n = 1; n <= 5; n++) {
+      expect(await store.nextSequenceNumber("hw-1")).toBe(n);
+      await store.appendCapture("hw-1", capture("hw-1", n));
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reads the log on a cold start and resumes past its highest number", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "hw-2", name: "n", investigator: "i", aiProvider: null });
+    await store.appendCapture("hw-2", capture("hw-2", 7));
+    const reads = spyLogReads();
+    const restarted = new CaseStore(root);
+    expect(await restarted.nextSequenceNumber("hw-2")).toBe(8);
+    expect(await restarted.nextSequenceNumber("hw-2")).toBe(9);
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps failing closed on a corrupted log — a refused cold start caches nothing", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "hw-3", name: "n", investigator: "i", aiProvider: null });
+    await writeFile(store.capturesLogPath("hw-3"), '{"caseId":"hw-3","sequenceNum\n', "utf8");
+    await expect(store.nextSequenceNumber("hw-3")).rejects.toThrow(/corrupted\/truncated/);
+    await expect(store.nextSequenceNumber("hw-3")).rejects.toThrow(/corrupted\/truncated/);
+  });
+
+  it("starts a deleted-and-recreated case id from its own (empty) log", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "hw-4", name: "n", investigator: "i", aiProvider: null });
+    expect(await store.nextSequenceNumber("hw-4")).toBe(1);
+    expect(await store.nextSequenceNumber("hw-4")).toBe(2);
+    await store.deleteCaseFolder("hw-4");
+    await store.createCase({ caseId: "hw-4", name: "n", investigator: "i", aiProvider: null });
+    expect(await store.nextSequenceNumber("hw-4")).toBe(1);
+  });
+
+  it("re-reads the log when a new incarnation of the id appears without going through the store", async () => {
+    // A whole-case import publishes its folder with a rename, never through createCase. A mark held
+    // for that id from before must not hide the numbers the imported log already carries.
+    const store = new CaseStore(root);
+    expect(await store.nextSequenceNumber("hw-5")).toBe(1);
+    await mkdir(store.metadataDir("hw-5"), { recursive: true });
+    await writeFile(
+      store.caseMetaPath("hw-5"),
+      JSON.stringify({ caseId: "hw-5", name: "n", investigator: "i", generation: "imported-gen" }),
+      "utf8",
+    );
+    await writeFile(store.capturesLogPath("hw-5"), JSON.stringify(capture("hw-5", 40)) + "\n", "utf8");
+    expect(await store.nextSequenceNumber("hw-5")).toBe(41);
   });
 });

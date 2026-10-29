@@ -288,8 +288,17 @@
     var url = "/cases/" + encodeURIComponent(caseId) + "/presentation" + (sev ? "?minSeverity=" + sev : "");
     document.getElementById("card").innerHTML = '<div class="empty">Loading…</div>';
     fetch(url).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status + " — is the companion server running?");
+      // Expired team session → sign in and come back (#2260). "Is the server running?" is kept for a
+      // server error or no answer at all; any other status is reported as itself.
+      if (r.status === 401) {
+        location.assign("/login?returnTo=" + encodeURIComponent(location.pathname + location.search + location.hash));
+        throw new Error("Signing in again…");
+      }
+      if (r.status >= 500) throw new Error("HTTP " + r.status + " — is the companion server running?");
+      if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
+    }, function () {
+      throw new Error("could not reach the companion — is the companion server running?");
     }).then(setDeck).catch(function (e) {
       document.getElementById("card").innerHTML = '<div class="empty">Failed to load: ' + esc(e.message) + "</div>";
     });

@@ -1,8 +1,21 @@
 import {
   DEFAULT_SETTINGS,
+  MIN_INTERVAL_SECONDS,
   normalizeCompanionUrl,
   type Settings,
 } from "./types.js";
+
+/**
+ * The capture-timer interval to use, never under the browser's 30 s alarm floor (#2257).
+ *
+ * Accepts the raw form string or a stored number; a missing, zero or non-numeric value falls back
+ * to the default. An interval stored by an older build (e.g. the old 10 s default) is raised.
+ */
+export function clampIntervalSeconds(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SETTINGS.intervalSeconds;
+  return Math.max(MIN_INTERVAL_SECONDS, n);
+}
 
 /**
  * The popup's editable fields, as raw strings straight out of the DOM.
@@ -15,7 +28,6 @@ export interface PopupForm {
   companionUrl: string;
   serviceToken: string;
   intervalSeconds: string;
-  dedupThreshold: string;
 }
 
 /**
@@ -31,14 +43,7 @@ export function settingsFromForm(form: PopupForm, running: boolean): Settings {
     caseId: form.caseId.trim(),
     companionUrl: normalizeCompanionUrl(form.companionUrl),
     serviceToken: form.serviceToken.trim(),
-    intervalSeconds: Math.max(
-      5,
-      Number(form.intervalSeconds) || DEFAULT_SETTINGS.intervalSeconds,
-    ),
-    dedupThreshold: Math.max(
-      0,
-      Number(form.dedupThreshold) || DEFAULT_SETTINGS.dedupThreshold,
-    ),
+    intervalSeconds: clampIntervalSeconds(form.intervalSeconds),
     running,
   };
 }

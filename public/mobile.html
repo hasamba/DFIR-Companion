@@ -199,8 +199,18 @@
     function lsGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 
+    // Team sign-in on and the session expired: send the analyst to /login and back here, the way
+    // dashboard.html does — not "offline" or "could not reach the companion" (#2260).
+    function redirectToLogin() {
+      location.assign("/login?returnTo=" + encodeURIComponent(location.pathname + location.search + location.hash));
+    }
+
     async function getJson(url) {
       const res = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
+      if (res.status === 401) {
+        redirectToLogin();
+        const err = new Error("Signing in again…"); err.status = 401; throw err;
+      }
       if (!res.ok) {
         let msg = "HTTP " + res.status;
         try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}

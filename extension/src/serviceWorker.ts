@@ -2,8 +2,14 @@ import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { describeCaptureOutcome } from "./captureOutcome.js";
+import {
+  CaptureGate, captureThroughGate, isAutomaticTrigger, isCaptureRateLimitError, type SnapshotOutcome,
+} from "./captureGate.js";
+import { startCaptureBlockReason } from "./captureToggle.js";
+import { clampIntervalSeconds } from "./popupSettings.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
+import { artifactPushErrorText, artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
   forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, pushErrorMessage,
@@ -28,6 +34,8 @@ import {
 
 const ALARM = "dfir-capture-timer";
 const queue = new CaptureQueue();
+// Single-flight + minimum gap between captures (#2255) — see captureGate.ts.
+const captureGate = new CaptureGate();
 
 interface CaptureAttemptResult {
   ok: boolean;
@@ -62,33 +70,76 @@ async function recordBlockedCapture(trigger: TriggerType, error: string): Promis
   return { ok: false, error };
 }
 
-async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<CaptureAttemptResult> {
+// A screenshot taken under the gate, waiting to be uploaded outside it (#2255).
+interface ActiveTabSnapshot {
+  settings: Settings;
+  caseId: string;
+  url: string;
+  tabTitle: string;
+  imageBase64: string;
+}
+
+// Every snapshot goes through the gate (#2255): automatic triggers that arrive while a snapshot is
+// being taken or inside the minimum gap are dropped silently; manual and one-off captures wait their
+// turn. The upload runs AFTER the gate is released, so a slow companion cannot drop screenshots.
+function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<CaptureAttemptResult> {
+  const automatic = isAutomaticTrigger(trigger, oneOff);
+  return captureThroughGate(
+    captureGate,
+    automatic,
+    () => captureActiveTabNow(trigger, oneOff, automatic),
+    (snapshot) => uploadSnapshot(trigger, snapshot),
+    { ok: false, error: "capture throttled" },
+  );
+}
+
+async function captureActiveTabNow(
+  trigger: TriggerType,
+  oneOff: boolean,
+  automatic: boolean,
+): Promise<SnapshotOutcome<ActiveTabSnapshot, CaptureAttemptResult>> {
+  // Any early exit is a final answer: nothing to upload.
+  const result = async (r: CaptureAttemptResult | Promise<CaptureAttemptResult>) => ({ result: await r });
   const settings = await getSettings();
   if ((!settings.running && !oneOff) || !settings.caseId) {
-    return { ok: false, error: "select a case before capturing" };
+    return result({ ok: false, error: "select a case before capturing" });
   }
 
   const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
+  // An automatic trigger on a page we may not capture is skipped silently (#2255): recording it
+  // would overwrite the real status on the badge with NO on every tab switch while recording.
+  // Manual and one-off captures still record why they were blocked.
   if (!tab || tab.id === undefined || !tab.url || !isCapturableTab(tab)) {
-    return recordBlockedCapture(trigger, "this browser or private page cannot be captured");
+    const error = "this browser or private page cannot be captured";
+    return result(automatic ? { ok: false, error } : recordBlockedCapture(trigger, error));
   }
   if (!oneOff && !(await tabHasPersistentAccess(tab))) {
-    return recordBlockedCapture(trigger, "site access is not granted; open the extension on this site");
+    const error = "site access is not granted; open the extension on this site";
+    return result(automatic ? { ok: false, error } : recordBlockedCapture(trigger, error));
   }
 
   let dataUrl: string;
   try {
     dataUrl = await browserApi.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-  } catch {
-    return recordBlockedCapture(trigger, "the browser denied screenshot access; click the extension and try again");
+  } catch (e) {
+    // Chrome's per-second quota is not a denial: skip quietly and leave the badge alone (#2255).
+    if (isCaptureRateLimitError(e)) {
+      return result({ ok: false, error: "the browser is rate-limiting screenshots; try again in a moment" });
+    }
+    return result(recordBlockedCapture(trigger, "the browser denied screenshot access; click the extension and try again"));
   }
   const imageBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  return { snapshot: { settings, caseId: settings.caseId, url: tab.url, tabTitle: tab.title ?? "", imageBase64 } };
+}
 
-  const credential = await readCaseCredential(sessionArea(), settings.caseId, settings.companionUrl);
+// Upload a snapshot and record the outcome — runs OUTSIDE the capture gate (#2255).
+async function uploadSnapshot(trigger: TriggerType, snap: ActiveTabSnapshot): Promise<CaptureAttemptResult> {
+  const { settings, imageBase64 } = snap;
+  const credential = await readCaseCredential(sessionArea(), snap.caseId, settings.companionUrl);
   const controller = new CaptureController(clientFor(settings, credential), queue);
-  const status = await controller.capture(settings.caseId, trigger, {
-    url: tab.url,
-    tabTitle: tab.title ?? "",
+  const status = await controller.capture(snap.caseId, trigger, {
+    url: snap.url,
+    tabTitle: snap.tabTitle,
     imageBase64,
   });
 
@@ -101,7 +152,7 @@ async function captureActiveTab(trigger: TriggerType, oneOff = false): Promise<C
 
   // Record the last capture outcome so the popup can surface it.
   await browserApi.storage.local.set({
-    lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag: outcome.diag },
+    lastCapture: { at: new Date().toISOString(), trigger, url: snap.url, bytes: imageBase64.length, diag: outcome.diag },
   });
   await browserApi.action.setBadgeText({ text: outcome.badgeText });
   await browserApi.action.setBadgeBackgroundColor({ color: outcome.badgeColor });
@@ -197,9 +248,16 @@ async function pushArtifact(
   // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
   // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
   // an uploaded file, so no format hint beyond the filename is needed.
-  const result = rows?.length
-    ? await client.postImport(settings.caseId, { json: JSON.stringify(rows), filename })
-    : await client.postImport(settings.caseId, { text: text as string, filename });
+  // The page URL goes to the import audit log as provenance only — never to the AI (#2258).
+  const sourceUrl = importSourceUrl(msg.sourceUrl);
+  const meta = { filename, ...(sourceUrl ? { sourceUrl } : {}) };
+  // One automatic retry ~2 s later on a 429 ONLY — refused before persistence. A 0 / 5xx may
+  // already be saved, so it is never repeated automatically; the analyst is told to check (#2258).
+  const result = await postWithOneRetry(() =>
+    rows?.length
+      ? client.postImport(settings.caseId, { json: JSON.stringify(rows), ...meta })
+      : client.postImport(settings.caseId, { text: text as string, ...meta }),
+  );
 
   const rowCount = rows?.length ?? 0;
   await browserApi.storage.local.set({
@@ -209,10 +267,19 @@ async function pushArtifact(
     },
   });
 
-  if (result.ok) return { ok: true, status: result.status, rows: rowCount, caseId: settings.caseId };
+  if (result.ok) {
+    const { analyzed, reason } = result; // AI off: saved but not analyzed — the toast says so (#2258)
+    return {
+      ok: true, status: result.status, rows: rowCount, caseId: settings.caseId,
+      ...(analyzed !== undefined ? { analyzed } : {}), ...(reason ? { reason } : {}),
+    };
+  }
   // One attempt per typed password — see captureActiveTab (#2135).
   if (credential && isLockedRejection(result.status, result.errorMessage)) await forgetCaseCredential(sessionArea());
-  const error = pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl);
+  const error = artifactPushErrorText(
+    result.status,
+    pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl),
+  );
   return { ok: false, status: result.status, error };
 }
 
@@ -289,7 +356,8 @@ async function handleContextMenuClick(
     ...(rows ? { rows } : { text }),
   };
   const res = await pushArtifact(msg);
-  void sendContextToast(tabId, res.ok, res.ok ? `Pushed to "${res.caseId}"` : (res.error ?? "Push failed"));
+  const okText = artifactPushSuccessText({ ...res, rows: undefined }); // AI-off aware (#2258)
+  void sendContextToast(tabId, res.ok, res.ok ? okText : (res.error ?? "Push failed"));
 }
 
 function changedOrigins(change: chrome.permissions.Permissions): string[] {
@@ -330,7 +398,8 @@ async function rescheduleAlarm(): Promise<void> {
   const settings = await getSettings();
   await browserApi.alarms.clear(ALARM);
   if (settings.running) {
-    await browserApi.alarms.create(ALARM, { periodInMinutes: Math.max(settings.intervalSeconds, 5) / 60 });
+    // Never under the browser's 30 s alarm floor; an older stored value is raised (#2257).
+    await browserApi.alarms.create(ALARM, { periodInMinutes: clampIntervalSeconds(settings.intervalSeconds) / 60 });
   }
   // Keep the toolbar icon in sync with capture state (recording dot vs idle ring).
   await setActionIcon(settings.running).catch(() => {});
@@ -343,9 +412,12 @@ async function rescheduleAlarm(): Promise<void> {
 async function toggleCapture(): Promise<void> {
   const settings = await getSettings();
   if (!settings.running) {
+    // No case, or no site access: record why and do NOT show REC (#2257) — see captureToggle.ts.
     const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab || !(await tabHasPersistentAccess(tab))) {
-      await recordBlockedCapture("manual", "site access is required; open the extension on this site");
+    const hasAccess = tab ? await tabHasPersistentAccess(tab) : false;
+    const blocked = startCaptureBlockReason(settings, hasAccess);
+    if (blocked) {
+      await recordBlockedCapture("manual", blocked);
       return;
     }
   }
@@ -361,11 +433,12 @@ browserApi.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void captureActiveTab("timer");
 });
 browserApi.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
-browserApi.webNavigation.onCommitted.addListener((d) => {
-  if (d.frameId === 0) void captureActiveTab("navigation");
-});
+// The navigation shot waits for onCompleted (#2255): onCommitted fires before the new page renders,
+// so the screenshot often showed the previous page.
 browserApi.webNavigation.onCompleted.addListener((details) => {
-  if (details.frameId === 0) void activateSite(details.tabId);
+  if (details.frameId !== 0) return;
+  void activateSite(details.tabId);
+  void captureActiveTab("navigation");
 });
 browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }

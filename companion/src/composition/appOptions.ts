@@ -173,6 +173,9 @@ export interface AppOptions {
   // Safety-net interval that drains capture buffers even when a window never fills.
   // Default 5 min; set 0 to disable.
   flushIntervalMs?: number;
+  // #2248: how often, and how soon, a failed screenshot window is retried. Defaults in
+  // composition/captureRecovery.ts (3 attempts, 1 min doubling); tests shorten them.
+  captureRecovery?: { maxAttempts?: number; backoffMs?: number };
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
   // OCR backend for the redacted case export (#54), used to blur PII text in screenshots. Provided

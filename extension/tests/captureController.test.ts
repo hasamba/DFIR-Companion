@@ -93,16 +93,19 @@ describe("CaptureController — locked case (#2135)", () => {
     expect(seen[0]).not.toHaveProperty("casePassword");
   });
 
-  it("keeps a plain 401 (bad team token) permanent — not queued", async () => {
+  // #2254: a plain 401 (bad/rotated team token) is not a verdict on the screenshot — it is queued
+  // (held), but NOT reported as locked, so the case password is never forgotten for it.
+  it("holds a plain 401 (bad team token) in the queue, distinct from locked", async () => {
     const client = new CompanionClient(
       "http://x",
       vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
     );
     const controller = new CaptureController(client, queue);
     const status = await controller.capture("c1", "timer", snapshot);
-    expect(status.rejected).toBe(401);
+    expect(status.rejected).toBeUndefined();
+    expect(status.held).toBe(401);
     expect(status.locked).toBeUndefined();
-    expect(await queue.size()).toBe(0);
+    expect(await queue.size()).toBe(1);
   });
 
   it("uploads the waiting captures once the password is accepted", async () => {

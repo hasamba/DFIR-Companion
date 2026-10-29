@@ -14,7 +14,7 @@ import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
@@ -23,6 +23,8 @@ import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
+import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
+import { AuditLogNeedsRepairError } from "./auditLogNeedsRepairError.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -78,19 +80,8 @@ export interface StoredArtifact {
 export type ArtifactStoredListener = (artifact: StoredArtifact) => void | Promise<void>;
 
 export class CaseStore {
-  // Serializes evidence-sequence allocation per case+kind (#214). Reading "audit-log length + 1"
-  // is a read-modify-write: two ingestions racing for the same case both read the same length and
-  // both got the same number, and when their filenames also matched, one evidence file silently
-  // overwrote the other. The lock makes allocation atomic; the high-water mark below makes it
-  // correct even before the audit line lands.
-  private readonly seqLock = new StateLock();
-
-  // Highest sequence number handed out per `<kind>:<caseId>` in this process. The audit line is
-  // appended AFTER the evidence is written, so between reserving a number and recording it the log
-  // still has its old length — without this, a second caller arriving in that window would read the
-  // same length and reuse the number. Numbers are therefore never reused, only ever skipped (a
-  // failed ingestion burns its number, which is the safe direction for provenance).
-  private readonly seqHighWater = new Map<string, number>();
+  // Evidence sequence numbers per case+kind (#214, #1119, #2253) — see SequenceAllocator.
+  private readonly sequences: SequenceAllocator;
 
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
@@ -122,6 +113,7 @@ export class CaseStore {
     opts: { writeQuiesceMs?: number } = {},
   ) {
     this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
+    this.sequences = new SequenceAllocator(root);
   }
 
   get casesRoot(): string {
@@ -143,22 +135,11 @@ export class CaseStore {
 
   /** Reserve the next never-yet-used sequence number for this case+kind. */
   private reserveSequence(
-    kind: "capture" | "import" | "custody",
+    kind: SequenceKind,
     caseId: string,
     maxOnDisk: () => Promise<number>,
   ): Promise<number> {
-    const key = `${kind}:${caseId}`;
-    return this.seqLock.runExclusive(key, async () => {
-      // Disk is authoritative across restarts (the map starts empty); the map is authoritative
-      // for numbers already handed out but not yet appended. The later of the two is correct.
-      // `maxOnDisk` must return the HIGHEST recorded sequence number, never a line count (#1119):
-      // a reservation burned by a failed append (no line written) still consumed a number, so a
-      // line count under-reports how many numbers were actually issued once the process restarts
-      // and `seqHighWater` resets — max(sequenceNumber) is correct regardless of any such gaps.
-      const next = Math.max((await maxOnDisk()) + 1, (this.seqHighWater.get(key) ?? 0) + 1);
-      this.seqHighWater.set(key, next);
-      return next;
-    });
+    return this.sequences.reserve(kind, caseId, maxOnDisk);
   }
 
   // A case normally lives at <root>/<caseId>. Once archived (see archiveCaseFolder), it moves to
@@ -244,9 +225,7 @@ export class CaseStore {
   // #1866: a deleted or replaced case's in-memory state (sequence high-water marks, and every
   // CaseKeyedMap/Set under this root, clearing their timers) never carries into a same-id successor.
   private forgetInMemory(caseId: string): void {
-    for (const key of [...this.seqHighWater.keys()]) {
-      if (key.slice(key.indexOf(":") + 1) === caseId) this.seqHighWater.delete(key);
-    }
+    this.sequences.forget(caseId);
     forgetCaseKeyedState(this.root, caseId);
   }
 
@@ -579,7 +558,7 @@ export class CaseStore {
 
   async nextSequenceNumber(caseId: string): Promise<number> {
     return this.reserveSequence("capture", caseId, () =>
-      this.maxSequenceInLog(this.capturesLogPath(caseId), "sequenceNumber"),
+      this.maxSequenceInLog(caseId, "capture", this.capturesLogPath(caseId), "sequenceNumber"),
     );
   }
 
@@ -600,8 +579,14 @@ export class CaseStore {
    * indistinguishable from a line count alone, so this fails closed and asks for repair instead of
    * guessing). A row that parses but simply lacks `field` (the legacy-custody case above) is not an
    * error — it still counts toward the line-count floor, just not toward the field's own max.
+   * The throw is an AuditLogNeedsRepairError (#2252), so a route can name the case and the line.
    */
-  private async maxSequenceInLog(path: string, field: "sequenceNumber" | "seq"): Promise<number> {
+  private async maxSequenceInLog(
+    caseId: string,
+    kind: SequenceKind,
+    path: string,
+    field: "sequenceNumber" | "seq",
+  ): Promise<number> {
     let raw: string;
     try {
       raw = await readFile(path, "utf8");
@@ -611,16 +596,14 @@ export class CaseStore {
     }
     let count = 0;
     let maxField = 0;
-    for (const line of raw.split("\n")) {
+    for (const [index, line] of raw.split("\n").entries()) {
       if (!line.trim()) continue;
       count += 1;
       let row: Record<string, unknown>;
       try {
         row = JSON.parse(line) as Record<string, unknown>;
       } catch (err) {
-        throw new Error(
-          `${path} has a corrupted/truncated line at record ${count} — refusing to allocate a sequence number past it until it is repaired: ${(err as Error).message}`,
-        );
+        throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
       }
       const value = row[field];
       if (typeof value === "number" && Number.isFinite(value) && value > maxField) maxField = value;
@@ -758,13 +741,13 @@ export class CaseStore {
   // gaps are the safe direction for provenance, reuse is not.
   async nextCustodySeq(caseId: string): Promise<number> {
     return this.reserveSequence("custody", caseId, () =>
-      this.maxSequenceInLog(this.custodyLogPath(caseId), "seq"),
+      this.maxSequenceInLog(caseId, "custody", this.custodyLogPath(caseId), "seq"),
     );
   }
 
   async nextImportSeq(caseId: string): Promise<number> {
     return this.reserveSequence("import", caseId, () =>
-      this.maxSequenceInLog(this.importsLogPath(caseId), "sequenceNumber"),
+      this.maxSequenceInLog(caseId, "import", this.importsLogPath(caseId), "sequenceNumber"),
     );
   }
 

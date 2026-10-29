@@ -1,0 +1,229 @@
+/**
+ * The watermark rule for screenshot analysis, and the hold that keeps failed captures owed (#2248).
+ *
+ * `lastAnalyzedSeq` means "every capture at or below this sequence number has been dealt with".
+ * Before #2248 a successful window simply moved it to its own highest sequence number, so a failed
+ * window below it was skipped for good — and backfill, which selects `seq > lastAnalyzedSeq`, could
+ * never find it again.
+ *
+ * Now a failed window opens a HOLD. While a hold exists, the watermark stays below the lowest failed
+ * capture, and the hold remembers which captures failed and the highest one analyzed since. The
+ * captures still owed are then re-derived from captures.jsonl: the failed ones, plus anything newer
+ * than the highest analyzed one. Windows that succeeded in between are not sent again.
+ *
+ * Recovery is capped and backed off, so a permanent error (bad key, model gone, a missing image)
+ * stops after `maxAttempts` tries instead of re-spending a paid call every sweep. A hold that gave
+ * up stays on disk, with the failure marker, so the analyst can see it; the AI off→on catch-up
+ * still tries it again on request.
+ *
+ * Pure functions only: the caller reads the control, asks for a patch, and writes it.
+ */
+import type { AiControl, AnalysisHold } from "../analysis/aiControl.js";
+import type { CaptureMetadata } from "../types.js";
+
+export interface RecoveryPolicy {
+  maxAttempts: number;
+  backoffMs: number;
+}
+
+/** Three tries, the first a minute after the failure; the 5-minute sweep is the real cadence. */
+export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = { maxAttempts: 3, backoffMs: 60_000 };
+
+export function recoveryPolicy(opts?: Partial<RecoveryPolicy>): RecoveryPolicy {
+  return { ...DEFAULT_RECOVERY_POLICY, ...(opts ?? {}) };
+}
+
+/** captures.jsonl, one capture per line. A torn line (crash mid-append) is skipped and counted. */
+export function parseCaptureLog(text: string): { captures: CaptureMetadata[]; skipped: number } {
+  const captures: CaptureMetadata[] = [];
+  let skipped = 0;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      captures.push(JSON.parse(trimmed) as CaptureMetadata);
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { captures, skipped };
+}
+
+/**
+ * The captures still owed, oldest first. `exclude` is what the live buffer already holds — those
+ * go out with the next flush, so sending them here too would analyze them twice. `skipHeld` leaves
+ * the hold's failed captures out — for a pass that must not spend a recovery attempt (#2249).
+ */
+export function pendingCaptures(
+  captures: readonly CaptureMetadata[],
+  control: AiControl,
+  exclude: ReadonlySet<number> = new Set(),
+  skipHeld = false,
+): CaptureMetadata[] {
+  const hold = control.analysisHold;
+  const failed = new Set(hold?.failedSeqs ?? []);
+  const owed = (seq: number) =>
+    !hold || seq > hold.analyzedThrough ? !(skipHeld && failed.has(seq)) : failed.has(seq) && !skipHeld;
+  return captures
+    .filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq)
+    .filter((c) => owed(c.sequenceNumber))
+    .filter((c) => !exclude.has(c.sequenceNumber))
+    .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+}
+
+/** The control patch after a window of `seqs` was analyzed. Never lowers the watermark. */
+export function afterWindowSuccess(control: AiControl, seqs: readonly number[]): Partial<AiControl> {
+  const maxSeq = Math.max(...seqs);
+  const hold = control.analysisHold;
+  if (!hold) return maxSeq > control.lastAnalyzedSeq ? { lastAnalyzedSeq: maxSeq } : {};
+  const done = new Set(seqs);
+  const failedSeqs = hold.failedSeqs.filter((s) => !done.has(s));
+  const analyzedThrough = Math.max(hold.analyzedThrough, maxSeq);
+  if (failedSeqs.length === 0) {
+    return { lastAnalyzedSeq: Math.max(control.lastAnalyzedSeq, analyzedThrough), analysisHold: undefined };
+  }
+  return {
+    lastAnalyzedSeq: Math.max(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: { ...hold, failedSeqs, analyzedThrough },
+  };
+}
+
+/** Recovery found nothing owed (e.g. the failed captures are not in the log): release the hold. */
+export function releaseHold(control: AiControl): Partial<AiControl> {
+  const hold = control.analysisHold;
+  if (!hold) return {};
+  return {
+    lastAnalyzedSeq: Math.max(control.lastAnalyzedSeq, hold.analyzedThrough),
+    analysisHold: undefined,
+  };
+}
+
+/**
+ * The control patch after a window of `seqs` failed. `recovery` says whether this was a recovery
+ * attempt: only those count against `maxAttempts`, so the cap bounds the EXTRA calls recovery makes.
+ */
+export function afterWindowFailure(
+  control: AiControl,
+  seqs: readonly number[],
+  error: string,
+  recovery: boolean,
+  policy: RecoveryPolicy,
+  now: number = Date.now(),
+): Partial<AiControl> {
+  const prior: AnalysisHold = control.analysisHold ?? {
+    failedSeqs: [],
+    analyzedThrough: control.lastAnalyzedSeq,
+    attempts: 0,
+  };
+  const failedSeqs = [...new Set([...prior.failedSeqs, ...seqs])].sort((a, b) => a - b);
+  const attempts = prior.attempts + (recovery ? 1 : 0);
+  const delay = policy.backoffMs * 2 ** Math.max(0, attempts - 1);
+  const hold: AnalysisHold = {
+    failedSeqs,
+    analyzedThrough: prior.analyzedThrough,
+    attempts,
+    nextAttemptAt: new Date(now + delay).toISOString(),
+    lastError: error,
+    ...(prior.gaveUp || attempts >= policy.maxAttempts ? { gaveUp: true } : {}),
+  };
+  return {
+    lastAnalyzedSeq: Math.min(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: hold,
+  };
+}
+
+/** Is an automatic recovery attempt due now? */
+export function recoveryDue(control: AiControl, now: number = Date.now()): boolean {
+  const hold = control.analysisHold;
+  if (!hold || hold.gaveUp) return false;
+  return !hold.nextAttemptAt || now >= Date.parse(hold.nextAttemptAt);
+}
+
+/**
+ * #2265: adopt a live window left in flight (a restart cut its model call off) into the hold. Its
+ * captures are usually still above the watermark and owed anyway — then the record is just dropped.
+ * Only captures a later window already moved the watermark (or the hold's high mark) past are
+ * added as failed. A new hold has no backoff, so the next pass retries it; an existing hold keeps
+ * its attempts, so the cap still holds across restarts.
+ */
+export function adoptInFlight(control: AiControl): Partial<AiControl> {
+  const seqs = control.inFlightSeqs;
+  if (!seqs) return {};
+  const hold = control.analysisHold;
+  const failed = new Set(hold?.failedSeqs ?? []);
+  const owed = (seq: number) =>
+    seq > control.lastAnalyzedSeq && (!hold || seq > hold.analyzedThrough || failed.has(seq));
+  const lost = seqs.filter((seq) => !owed(seq));
+  if (lost.length === 0) return { inFlightSeqs: undefined };
+  const prior: AnalysisHold = hold ?? {
+    failedSeqs: [],
+    analyzedThrough: control.lastAnalyzedSeq,
+    attempts: 0,
+  };
+  const failedSeqs = [...new Set([...prior.failedSeqs, ...lost])].sort((a, b) => a - b);
+  return {
+    inFlightSeqs: undefined,
+    lastAnalyzedSeq: Math.min(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: { ...prior, failedSeqs },
+  };
+}
+
+/** Everything at or below this is dealt with, apart from the hold's failed captures. */
+function dealtWithThrough(control: AiControl): number {
+  return Math.max(control.lastAnalyzedSeq, control.analysisHold?.analyzedThrough ?? control.lastAnalyzedSeq);
+}
+
+/**
+ * #2249: the watermark only ever advances contiguously. Before a window of `seqs` moves it, could a
+ * capture between what is dealt with and the window's lowest one still be owed? `accounted` is
+ * every sequence number the window carried, duplicates included. Answered without reading the
+ * log, so the usual contiguous window costs nothing.
+ */
+export function mayHaveSkippedBelow(
+  control: AiControl,
+  seqs: readonly number[],
+  accounted: readonly number[] = seqs,
+): boolean {
+  const known = new Set([...(control.analysisHold?.failedSeqs ?? []), ...accounted]);
+  const low = Math.min(...seqs);
+  for (let seq = dealtWithThrough(control) + 1; seq < low; seq += 1) if (!known.has(seq)) return true;
+  return false;
+}
+
+/**
+ * The owed captures a window of `seqs` would skip: logged, not duplicates, above what is dealt
+ * with, below the window, and neither held already nor waiting in the live buffer (`exclude`).
+ */
+export function skippedBelow(
+  captures: readonly CaptureMetadata[],
+  control: AiControl,
+  seqs: readonly number[],
+  exclude: ReadonlySet<number> = new Set(),
+): number[] {
+  const floor = dealtWithThrough(control);
+  const failed = new Set(control.analysisHold?.failedSeqs ?? []);
+  const low = Math.min(...seqs);
+  const skipped = captures
+    .filter((c) => !c.isDuplicate && c.sequenceNumber > floor && c.sequenceNumber < low)
+    .map((c) => c.sequenceNumber)
+    .filter((seq) => !failed.has(seq) && !exclude.has(seq));
+  return [...new Set(skipped)].sort((a, b) => a - b);
+}
+
+/**
+ * Hold captures a successful window would otherwise have skipped, so recovery analyzes them. They
+ * did not fail, so no attempt is counted and no backoff starts; an existing hold keeps its own.
+ */
+export function holdSkipped(control: AiControl, skipped: readonly number[]): Partial<AiControl> {
+  if (skipped.length === 0) return {};
+  const prior: AnalysisHold = control.analysisHold ?? {
+    failedSeqs: [],
+    analyzedThrough: control.lastAnalyzedSeq,
+    attempts: 0,
+  };
+  const failedSeqs = [...new Set([...prior.failedSeqs, ...skipped])].sort((a, b) => a - b);
+  return {
+    lastAnalyzedSeq: Math.min(control.lastAnalyzedSeq, Math.min(...failedSeqs) - 1),
+    analysisHold: { ...prior, failedSeqs },
+  };
+}

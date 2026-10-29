@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
-import { caseListFailure, settingsFromForm } from "./popupSettings.js";
+import { caseListFailure, clampIntervalSeconds, settingsFromForm } from "./popupSettings.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
 import {
@@ -192,7 +192,6 @@ function readForm(running: boolean): Settings {
       companionUrl: $("companionUrl").value,
       serviceToken: $("serviceToken").value,
       intervalSeconds: $("intervalSeconds").value,
-      dedupThreshold: $("dedupThreshold").value,
     },
     running,
   );
@@ -319,8 +318,8 @@ async function init() {
   const s = await load();
   $("companionUrl").value = s.companionUrl;
   $("serviceToken").value = s.serviceToken;
-  $("intervalSeconds").value = String(s.intervalSeconds);
-  $("dedupThreshold").value = String(s.dedupThreshold);
+  // A value stored by an older build may be under the 30 s floor — show what will actually run.
+  $("intervalSeconds").value = String(clampIntervalSeconds(s.intervalSeconds));
   await loadCases(s.companionUrl, s.caseId, s.serviceToken);
   await refreshCasePasswordField(caseSelect().value, s.companionUrl, lockedCases.has(caseSelect().value));
   wireCasePasswordField(() => {
@@ -340,7 +339,7 @@ async function init() {
   //
   // "change" rather than "input": it fires on blur for a text box and immediately for the case
   // dropdown, which keeps the write count low without ever losing a value.
-  for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds", "dedupThreshold"]) {
+  for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds"]) {
     document.getElementById(id)!.addEventListener("change", () => void persistForm());
   }
   caseSelect().addEventListener("change", () => {

@@ -341,21 +341,17 @@
       .catch(() => {});
   }
   function updateToolRules(toolId, btn) {
-    const caseId = (document.getElementById("caseId").value || "").trim();
     const msg = document.getElementById("toolsMsg");
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Updating…";
     }
-    // Case id is only needed for the route path; use the connected case, or "_" (the command is global).
-    fetch(
-      `/cases/${encodeURIComponent(caseId || "_")}/tools/${toolId}/update-rules`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      },
-    )
+    // Rules belong to the tool, not to a case — the global route works with no case connected (#2259).
+    fetch(`/tools/${encodeURIComponent(toolId)}/update-rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (btn) {
@@ -365,8 +361,7 @@
         if (msg)
           msg.textContent = ok
             ? `${toolId}: ${(j.output || "updated").slice(0, 200)}`
-            : (j.error || "update failed") +
-              " — restart the companion server if this 404s";
+            : `${toolId}: ${j.error || "update failed"}`;
       })
       .catch((e) => {
         if (btn) {

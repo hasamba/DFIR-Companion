@@ -171,10 +171,13 @@ test("US-156: the external tool catalogue lists tools and validates a run", asyn
 test("US-157: update-rules is per-tool and refuses an unknown tool", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
-  // The route is /cases/:id/tools/:toolId/update-rules — per tool, not global. An unknown tool id
-  // must 404 rather than run some default, which is how a typo silently updates the wrong ruleset.
-  const unknown = await page.request.post(`/cases/${demoCase}/tools/no-such-tool/update-rules`, { data: {} });
-  expect([400, 404, 501], await unknown.text()).toContain(unknown.status());
+  // Per tool: an unknown tool id must be refused rather than run some default, which is how a typo
+  // silently updates the wrong ruleset. The dashboard calls the case-free /tools/:toolId/update-rules
+  // (#2259); the legacy per-case spelling must refuse the same way.
+  const unknown = await page.request.post(`/tools/no-such-tool/update-rules`, { data: {} });
+  expect([400, 501], await unknown.text()).toContain(unknown.status());
+  const legacy = await page.request.post(`/cases/${demoCase}/tools/no-such-tool/update-rules`, { data: {} });
+  expect([400, 404, 501], await legacy.text()).toContain(legacy.status());
 });
 
 test("US-158: custom tool definitions round-trip and validate", async ({ page }) => {

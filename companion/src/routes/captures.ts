@@ -10,6 +10,7 @@ import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
 import { checkCaseWriteCredential, sendCaseWriteRefusal } from "../analysis/caseWriteCredential.js";
 import type { RouteContext } from "./context.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { AuditLogNeedsRepairError } from "../storage/auditLogNeedsRepairError.js";
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
 // served as text/plain so a click opens them in a tab rather than downloading.
@@ -58,7 +59,10 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
   // check-on-connect for the cross-case capture warning.
   let lastCapture: { caseId: string; at: number } | null = null;
 
-  // How many captures have been recorded for a case (counts the audit-log lines).
+  // How many captures have been recorded for a case (counts the audit-log lines). Duplicate frames
+  // (isDuplicate) are counted ON PURPOSE (#2262): every one is saved to screenshots/ as evidence and
+  // logged, and the only caller — the dashboard's "Screenshots: N" header — shows how many
+  // screenshots the case holds, not how many were analyzed.
   app.get("/cases/:id/captures/count", async (req: Request, res: Response) => {
     try {
       const log = await readFile(store.capturesLogPath(req.params.id), "utf8");
@@ -88,6 +92,19 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
     const bodyCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
     return runInCaseScope(store.casesRoot, bodyCaseId, () => postCapture(req, res));
   });
+
+  // #2252: a corrupted capture-log line blocks numbering for the case (fail-closed, never skipped).
+  // 409 + code tells the extension to keep the capture queued instead of dropping it, and the AI
+  // status line tells an analyst on the dashboard which line to fix — without the extension open.
+  const refuseUntilLogRepaired = (res: Response, err: AuditLogNeedsRepairError) => {
+    serverLogger.warn(err.message, { caseId: err.caseId });
+    options.onAiStatus?.(err.caseId, {
+      status: "error",
+      at: new Date().toISOString(),
+      detail: `${err.kind} log needs repair — line ${err.lineNumber} of ${err.logFile} is corrupted; new captures are refused (the extension keeps them queued) until it is fixed`,
+    });
+    return res.status(409).json({ error: err.message, code: err.code });
+  };
 
   const postCapture = async (req: Request, res: Response) => {
     try {
@@ -166,6 +183,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
           .status(404)
           .json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
       }
+      if (err instanceof AuditLogNeedsRepairError) return refuseUntilLogRepaired(res, err);
       return res.status(500).json({ error: (err as Error).message });
     }
   };
