@@ -9,7 +9,7 @@ import { startCaptureBlockReason } from "./captureToggle.js";
 import { clampIntervalSeconds } from "./popupSettings.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
-import { artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
+import { artifactPushErrorText, artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
   forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, pushErrorMessage,
@@ -251,7 +251,8 @@ async function pushArtifact(
   // The page URL goes to the import audit log as provenance only — never to the AI (#2258).
   const sourceUrl = importSourceUrl(msg.sourceUrl);
   const meta = { filename, ...(sourceUrl ? { sourceUrl } : {}) };
-  // One automatic retry ~2 s later on 0 / 429 / 5xx — a transient blip, not a verdict (#2258).
+  // One automatic retry ~2 s later on a 429 ONLY — refused before persistence. A 0 / 5xx may
+  // already be saved, so it is never repeated automatically; the analyst is told to check (#2258).
   const result = await postWithOneRetry(() =>
     rows?.length
       ? client.postImport(settings.caseId, { json: JSON.stringify(rows), ...meta })
@@ -275,7 +276,10 @@ async function pushArtifact(
   }
   // One attempt per typed password — see captureActiveTab (#2135).
   if (credential && isLockedRejection(result.status, result.errorMessage)) await forgetCaseCredential(sessionArea());
-  const error = pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl);
+  const error = artifactPushErrorText(
+    result.status,
+    pushErrorMessage(result.status, result.errorMessage, settings.caseId, settings.companionUrl),
+  );
   return { ok: false, status: result.status, error };
 }
 

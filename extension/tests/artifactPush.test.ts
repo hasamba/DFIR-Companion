@@ -1,8 +1,12 @@
 // #2258 — feedback, provenance and retry for one-click artifact pushes.
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+  artifactPushErrorText,
   artifactPushSuccessText,
   importSourceUrl,
+  isAmbiguousPushStatus,
   isRetryablePushStatus,
   postWithOneRetry,
   PUSH_RETRY_DELAY_MS,
@@ -39,16 +43,37 @@ describe("importSourceUrl", () => {
 });
 
 describe("isRetryablePushStatus", () => {
-  it("retries unreachable, rate-limited and server errors only", () => {
-    for (const s of [0, 429, 500, 502, 503]) expect(isRetryablePushStatus(s)).toBe(true);
-    for (const s of [202, 400, 401, 404, 409, 423]) expect(isRetryablePushStatus(s)).toBe(false);
+  it("retries only a 429 — refused before the companion persisted anything", () => {
+    expect(isRetryablePushStatus(429)).toBe(true);
+    for (const s of [0, 202, 400, 401, 404, 409, 423, 500, 502, 503]) expect(isRetryablePushStatus(s)).toBe(false);
+  });
+});
+
+describe("isAmbiguousPushStatus", () => {
+  it("flags a lost response and server errors as possibly already saved", () => {
+    for (const s of [0, 500, 502, 503]) expect(isAmbiguousPushStatus(s)).toBe(true);
+    for (const s of [202, 400, 404, 423, 429]) expect(isAmbiguousPushStatus(s)).toBe(false);
+  });
+});
+
+describe("artifactPushErrorText", () => {
+  it("tells the analyst to check the case before re-pushing on 0 / 5xx", () => {
+    for (const s of [0, 500, 503]) {
+      expect(artifactPushErrorText(s, "Import rejected")).toMatch(
+        /may already be saved — check the case before pushing again/,
+      );
+    }
+  });
+
+  it("leaves a considered rejection's message alone", () => {
+    for (const s of [400, 404, 429]) expect(artifactPushErrorText(s, "nope")).toBe("nope");
   });
 });
 
 describe("postWithOneRetry", () => {
-  it("retries exactly once, after the delay, on a 503", async () => {
+  it("retries exactly once, after the delay, on a 429", async () => {
     const send = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: false, status: 429 })
       .mockResolvedValueOnce({ ok: true, status: 202 });
     const sleep = vi.fn(async () => undefined);
     expect(await postWithOneRetry(send, sleep)).toEqual({ ok: true, status: 202 });
@@ -57,10 +82,20 @@ describe("postWithOneRetry", () => {
   });
 
   it("gives up after the single retry", async () => {
-    const send = vi.fn().mockResolvedValue({ ok: false, status: 0 });
+    const send = vi.fn().mockResolvedValue({ ok: false, status: 429 });
     const sleep = vi.fn(async () => undefined);
-    expect(await postWithOneRetry(send, sleep)).toEqual({ ok: false, status: 0 });
+    expect(await postWithOneRetry(send, sleep)).toEqual({ ok: false, status: 429 });
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("never repeats a push that may already be saved (0 / 5xx)", async () => {
+    for (const first of [{ ok: false, status: 0 }, { ok: false, status: 500 }, { ok: false, status: 503 }]) {
+      const send = vi.fn().mockResolvedValue(first);
+      const sleep = vi.fn(async () => undefined);
+      expect(await postWithOneRetry(send, sleep)).toEqual(first);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    }
   });
 
   it("does not retry a success or a considered rejection", async () => {
@@ -71,5 +106,16 @@ describe("postWithOneRetry", () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(sleep).not.toHaveBeenCalled();
     }
+  });
+});
+
+// serviceWorker.ts registers listeners at import time, so its wiring is asserted against source.
+describe("service-worker artifact push wiring", () => {
+  const sw = readFileSync(resolve(__dirname, "../src/serviceWorker.ts"), "utf-8");
+  const body = /async function pushArtifact\([\s\S]*?\n\}/.exec(sw)?.[0] ?? "";
+
+  it("sends through the 429-only retry and warns on an ambiguous failure", () => {
+    expect(body).toContain("postWithOneRetry(");
+    expect(body).toMatch(/artifactPushErrorText\(\s*result\.status,/);
   });
 });
