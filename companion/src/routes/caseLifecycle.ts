@@ -737,10 +737,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     res.status(200).json({
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
       velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
-      iris: inDefault("iris") || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
-      timesketch:
-        inDefault("timesketch") ||
-        (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
+      iris: inDefault("iris"),
+      timesketch: inDefault("timesketch"),
       notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),
       clickup: !!options.clickupClient || has("DFIR_CLICKUP_TOKEN"),
       push: !!options.pushTokenStore || has("DFIR_PUSH_TOKEN"),

@@ -31,6 +31,9 @@ async function fakeIris(): Promise<FakeIris> {
   return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, auths };
 }
 
+// Calls one push makes against the fake IRIS below before it stops.
+const IRIS_CALLS_PER_PUSH = 7;
+
 let dir: string;
 let sets: ServerSetStore;
 let a: FakeIris;
@@ -76,8 +79,11 @@ describe("IRIS and Timesketch routes use the case's own server set", () => {
       request(app).post("/cases/c1/push/iris").send({}),
       request(app).post("/cases/c2/push/iris").send({}),
     ]);
-    expect(a.auths.length).toBeGreaterThan(0);
-    expect(b.auths.length).toBeGreaterThan(0);
+    // One push makes exactly 7 IRIS calls against this fake (the legacy-name lookup, case
+    // create/lookup and the type maps) before the fake's empty answers stop it with a 502. Each
+    // server must see exactly its own push's calls, all carrying its own key.
+    expect(a.auths).toHaveLength(IRIS_CALLS_PER_PUSH);
+    expect(b.auths).toHaveLength(IRIS_CALLS_PER_PUSH);
     expect(new Set(a.auths)).toEqual(new Set(["Bearer iris-key-sentinel-alpha"]));
     expect(new Set(b.auths)).toEqual(new Set(["Bearer iris-key-sentinel-bravo"]));
   });
