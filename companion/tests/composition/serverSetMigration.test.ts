@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seedServerSets, listCaseIdsSync } from "../../src/composition/serverSetMigration.js";
+import {
+  seedServerSets,
+  listCaseIdsSync,
+  runServerSetSeed,
+} from "../../src/composition/serverSetMigration.js";
 import { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
 import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.js";
 
@@ -77,5 +81,18 @@ describe("seedServerSets", () => {
     seedServerSets(store, env, listCaseIdsSync(root));
     expect(snap()).toEqual(before);
     expect(listCaseIdsSync(root)).toEqual(["a"]);
+  });
+});
+
+describe("runServerSetSeed", () => {
+  it("startup survives a store that cannot be decrypted", () => {
+    const sdir = join(dir, "server-sets");
+    seedServerSets(store, { ...env, DFIR_IRIS_KEY: "iris-key-sentinel-alpha" }, ["a"]);
+    const other = new ServerSetStore(sdir, deriveServerSetKey(Buffer.alloc(32, 9)));
+    const lines: string[] = [];
+    expect(() => runServerSetSeed(other, env, ["a"], sdir, (l) => lines.push(l))).not.toThrow();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("cannot decrypt");
+    expect(lines[0]).not.toContain("iris-key-sentinel-alpha");
   });
 });

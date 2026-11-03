@@ -17,7 +17,7 @@
 import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
-import { listCaseIdsSync, seedServerSets } from "./serverSetMigration.js";
+import { listCaseIdsSync, runServerSetSeed } from "./serverSetMigration.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
@@ -57,7 +57,8 @@ import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
 import { numEnv } from "./env.js";
 import { redactAiStatusEvent } from "./aiStatusRedact.js";
 import { createAiStatusHandler } from "./aiStatusHandler.js";
-import { getServerLogger } from "../logging/serverLogger.js";
+import { getServerLogger, logLine } from "../logging/serverLogger.js";
+import { dirname, join } from "node:path";
 
 export interface AppWiringDeps {
   teamAuth?: TeamAuth;
@@ -76,7 +77,13 @@ export interface AppWiringDeps {
 
 export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOptions {
   // Before the integration clients below: seed the "Testing" server set from the current DFIR_* settings.
-  seedServerSets(rt.serverSetStore, process.env, listCaseIdsSync(rt.store.casesRoot));
+  runServerSetSeed(
+    rt.serverSetStore,
+    process.env,
+    listCaseIdsSync(rt.store.casesRoot),
+    join(dirname(rt.store.casesRoot), "server-sets"),
+    logLine,
+  );
   const {
     store,
     hub,

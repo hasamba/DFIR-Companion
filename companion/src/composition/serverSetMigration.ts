@@ -95,3 +95,23 @@ export function listCaseIdsSync(casesRoot: string): string[] {
   }
   return ids;
 }
+
+const OWN_ERROR = /^server set secret cannot decrypt[^\n]*$/;
+
+// Startup wrapper: a broken store (corrupt file, changed instance secret) must not stop the
+// server. Logs one line with the store directory and a safe reason, never a secret value.
+export function runServerSetSeed(
+  store: ServerSetStore,
+  env: NodeJS.ProcessEnv,
+  caseIds: string[],
+  storeDir: string,
+  log: (line: string) => void,
+): void {
+  try {
+    seedServerSets(store, env, caseIds);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    const reason = OWN_ERROR.test(msg) ? msg : err instanceof Error ? err.name : "unknown error";
+    log(`[server-sets] could not read the server set store in ${storeDir}: ${reason}`);
+  }
+}
