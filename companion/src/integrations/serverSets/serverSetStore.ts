@@ -36,6 +36,9 @@ export class ServerSetStore {
   }
 
   create(input: ServerSetInput): ServerSet {
+    if (input.iris?.apiKey === MASKED_SECRET || input.timesketch?.password === MASKED_SECRET) {
+      throw new Error("secret required");
+    }
     const clean = this.validate(input);
     const set: ServerSet = { ...clean, id: randomUUID(), revision: 1 };
     this.writeSets([...this.readRaw(), this.sealSet(set)]);

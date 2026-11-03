@@ -105,6 +105,20 @@ describe("ServerSetStore", () => {
     expect(() => s.create({ ...input(), name: "x".repeat(81) })).toThrow(/80/);
   });
 
+  it("create rejects a masked secret", () => {
+    const s = new ServerSetStore(dir, KEY);
+    expect(() =>
+      s.create({ name: "a", iris: { url: "https://iris.example.com", apiKey: MASKED_SECRET } }),
+    ).toThrow("secret required");
+    expect(() =>
+      s.create({
+        name: "b",
+        timesketch: { url: "https://ts.example.com", user: "u", password: MASKED_SECRET },
+      }),
+    ).toThrow("secret required");
+    expect(s.list()).toHaveLength(0);
+  });
+
   it("rejects non http(s) urls", () => {
     const s = new ServerSetStore(dir, KEY);
     expect(() => s.create({ name: "a", iris: { url: "ftp://x", apiKey: "k" } })).toThrow(
