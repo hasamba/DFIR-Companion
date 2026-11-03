@@ -9,11 +9,23 @@ import { createApp } from "../../src/server.js";
 
 // The guard resolves every hostname before it connects, and refuses one it cannot resolve. These
 // tests must not depend on the machine having DNS or on what a name really points at, so the
-// lookup is stubbed to one public address. globalThis.fetch is stubbed per test as well, so the
-// pinned dispatcher is built but never opens a socket.
+// lookup is stubbed to one public address. The fetch is stubbed per test as well, so the pinned
+// dispatcher is built but never opens a socket. The stub replaces undici's fetch, not
+// globalThis.fetch: the guard sends with undici's own fetch so it matches the pinned Agent (see
+// outboundFetchRealStack.test.ts), and a globalThis.fetch stub would never be called.
 vi.mock("node:dns/promises", () => ({
   lookup: async () => [{ address: "93.184.216.34", family: 4 }],
 }));
+
+const stub = vi.hoisted(() => ({ fetch: null as null | ((...args: unknown[]) => Promise<Response>) }));
+vi.mock("undici", async (importOriginal) => {
+  const real = await importOriginal<typeof import("undici")>();
+  return {
+    ...real,
+    fetch: (...args: unknown[]) =>
+      stub.fetch ? stub.fetch(...args) : (real.fetch as (...a: unknown[]) => Promise<Response>)(...args),
+  };
+});
 
 // POST /kev/import-url fetches a caller-supplied URL server-side (issue #760). The route is
 // global-admin gated, but an admin is still not an authorization to make the companion connect to
@@ -23,7 +35,6 @@ vi.mock("node:dns/promises", () => ({
 // catalogVersion/dateReleased.
 let app: ReturnType<typeof createApp>;
 let catalogFile: string;
-const originalFetch = globalThis.fetch;
 
 const KEV_FEED = {
   catalogVersion: "2026.09.01",
@@ -51,14 +62,14 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  globalThis.fetch = originalFetch;
+  stub.fetch = null;
   delete process.env.DFIR_KEV_ALLOW_INTERNAL_URL;
 });
 
 describe("POST /kev/import-url — SSRF guard", () => {
   it("refuses the cloud metadata address with 400, without fetching it", async () => {
     let called = false;
-    globalThis.fetch = async () => {
+    stub.fetch = async () => {
       called = true;
       return new Response("ami-id\nami-launch-index\n", { status: 200 });
     };
@@ -77,7 +88,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
     "https://10.0.0.5/internal.json",
     "file:///etc/passwd",
   ])("refuses %s with 400", async (url) => {
-    globalThis.fetch = async () => new Response("{}", { status: 200 });
+    stub.fetch = async () => new Response("{}", { status: 200 });
     const res = await request(app).post("/kev/import-url").send({ url });
     expect(res.status).toBe(400);
   });
@@ -86,7 +97,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
   // "ami-id\nam"... is not valid JSON`. Echoing err.message turned the SSRF into a read primitive
   // against ANY endpoint, not only KEV-shaped ones.
   it("never echoes fetched response content back in an error message", async () => {
-    globalThis.fetch = async () => new Response("SECRET-TOKEN-abc123 not json at all", { status: 200 });
+    stub.fetch = async () => new Response("SECRET-TOKEN-abc123 not json at all", { status: 200 });
 
     const res = await request(app).post("/kev/import-url").send({ url: "https://mirror.example/x.json" });
 
@@ -95,7 +106,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
   });
 
   it("caps the response body instead of reading it all into memory", async () => {
-    globalThis.fetch = async () =>
+    stub.fetch = async () =>
       new Response("x".repeat(64), {
         status: 200,
         headers: { "content-length": String(64 * 1024 * 1024) },
@@ -108,7 +119,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
   });
 
   it("imports a real KEV feed from a public https URL", async () => {
-    globalThis.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
+    stub.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
 
     const res = await request(app)
       .post("/kev/import-url")
@@ -120,7 +131,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
 
   it("defaults to the CISA feed when no url is given (what the dashboard sends)", async () => {
     let requested = "";
-    globalThis.fetch = async (input: unknown) => {
+    stub.fetch = async (input: unknown) => {
       requested = String(input);
       return new Response(JSON.stringify(KEV_FEED), { status: 200 });
     };
@@ -135,7 +146,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
     "allows an internal mirror when the operator opts in with %s",
     async (flag) => {
       process.env.DFIR_KEV_ALLOW_INTERNAL_URL = flag;
-      globalThis.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
+      stub.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
 
       const res = await request(app).post("/kev/import-url").send({ url: "http://10.0.0.5/kev.json" });
 
@@ -149,7 +160,7 @@ describe("POST /kev/import-url — SSRF guard", () => {
   // could never be turned back off from there.
   it.each(["", "false", "0", "off"])("treats %s as off", async (flag) => {
     process.env.DFIR_KEV_ALLOW_INTERNAL_URL = flag;
-    globalThis.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
+    stub.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
 
     const res = await request(app).post("/kev/import-url").send({ url: "http://10.0.0.5/kev.json" });
 
@@ -162,10 +173,10 @@ describe("POST /kev/import-url — catalog integrity", () => {
   // catalogVersion and dateReleased straight back out of that file — a second read-back channel,
   // and a way to destroy a working catalog with one bad URL.
   it("does not overwrite the catalog with a body that is not a KEV feed", async () => {
-    globalThis.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
+    stub.fetch = async () => new Response(JSON.stringify(KEV_FEED), { status: 200 });
     await request(app).post("/kev/import-url").send({});
 
-    globalThis.fetch = async () =>
+    stub.fetch = async () =>
       new Response(JSON.stringify({ catalogVersion: "LEAKED-INTERNAL-VALUE", tokens: ["s3cr3t"] }), {
         status: 200,
       });
