@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../storage/caseStore.js";
@@ -37,6 +37,11 @@ export class IrisExportStore {
     const next: IrisExport = { caseName };
     await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
     return next;
+  }
+
+  /** Forget the remembered IRIS case name, so the next push creates a new IRIS case. */
+  async clear(caseId: string): Promise<void> {
+    await rm(this.path(caseId), { force: true });
   }
 }
 

@@ -8,10 +8,12 @@
  *   POST   /server-sets/:setId/default   global admin: make it the default for new cases
  *   POST   /server-sets/:setId/test      global admin: probe each tool of THAT set
  *   GET    /cases/:id/server-set         case reader: the case's set and the tools it uses
+ *   POST   /cases/:id/server-set         case administrator: change the case's set (warn, stop, forget, relink)
  *
  * No response, log line or audit entry carries a key, a password or a Velociraptor config.
  */
 import type { Express, Request, Response } from "express";
+import { logActivity } from "../analysis/activityLog.js";
 import { requestAuthentication } from "../auth/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import {
@@ -113,6 +115,81 @@ function withStore(
   };
 }
 
+type Work = { monitors: number; irisCase?: string; hunts: number };
+
+async function remoteWork(ctx: RouteContext, caseId: string): Promise<Work> {
+  const o = ctx.options;
+  const monitors = o.veloMonitorStore ? (await o.veloMonitorStore.list(caseId)).length : 0;
+  const hunts = o.veloHuntStore ? (await o.veloHuntStore.list(caseId)).length : 0;
+  const irisCase = o.irisExportStore ? (await o.irisExportStore.load(caseId)).caseName : "";
+  return { monitors, hunts, ...(irisCase && { irisCase }) };
+}
+
+// Stops each monitor while the old set is still linked, so the release goes to the old server. A
+// failure is logged (no URL, no key) and the next monitor still runs.
+async function stopMonitors(ctx: RouteContext, caseId: string): Promise<number> {
+  const store = ctx.options.veloMonitorStore;
+  if (!store) return 0;
+  let stopped = 0;
+  for (const m of await store.list(caseId)) {
+    try {
+      await ctx.deleteVeloMonitor(caseId, m.id);
+      stopped++;
+    } catch (err) {
+      ctx.serverLogger.error(
+        `[server-sets] case ${caseId}: monitor ${m.id} could not be released on the old server: ${(err as Error).message}`,
+      );
+    }
+  }
+  return stopped;
+}
+
+function changeText(
+  oldName: string,
+  newName: string,
+  stopped: number,
+  iris: string | undefined,
+  hunts: number,
+) {
+  const parts = [
+    stopped > 0 ? `${stopped} monitors stopped` : "",
+    iris ? `IRIS link '${iris}' forgotten` : "",
+    hunts > 0 ? `${hunts} hunts forgotten` : "",
+  ].filter(Boolean);
+  return `Server set changed from '${oldName}' to '${newName}'${parts.length ? `: ${parts.join(", ")}` : ""}`;
+}
+
+async function changeCaseSet(ctx: RouteContext, sets: ServerSetStore, req: Request, res: Response) {
+  const caseId = req.params.id;
+  const body = (req.body ?? {}) as { setId?: unknown; confirm?: unknown };
+  if (typeof body.setId !== "string" || !body.setId)
+    return res.status(400).json({ error: "setId is required." });
+  const target = sets.get(body.setId);
+  if (!target) return res.status(404).json({ error: NOT_FOUND });
+  const currentId = sets.caseSetId(caseId);
+  if (currentId === target.id) return res.json({ changed: false });
+  const work = await remoteWork(ctx, caseId);
+  if (body.confirm !== true && (work.monitors > 0 || work.hunts > 0 || work.irisCase)) {
+    return res.status(409).json({ needsConfirm: true, work });
+  }
+  const oldName = (currentId && sets.get(currentId)?.name) || "(none)";
+  const stopped = await stopMonitors(ctx, caseId);
+  await ctx.options.irisExportStore?.clear(caseId);
+  const hunts = (await ctx.options.veloHuntStore?.clear(caseId)) ?? 0;
+  ctx.cancelVeloHuntTimersForCase(caseId); // no old hunt id may be polled against the new server
+  sets.linkCase(caseId, target.id);
+  audit(ctx, req, "case-server-set-changed", target);
+  await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, caseId, {
+    category: "settings",
+    action: "server-set-changed",
+    detail: changeText(oldName, target.name, stopped, work.irisCase, hunts),
+    targetType: "server-set",
+    targetId: target.id,
+    outcome: "success",
+  });
+  return res.json({ changed: true, stopped, hunts, irisForgotten: !!work.irisCase });
+}
+
 export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
   app.get(
     "/server-sets",
@@ -208,4 +285,9 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
     const tools = TOOLS.filter((t) => r.servers[t] !== undefined);
     return res.json({ setId: r.servers.setId, name: r.servers.setName, tools });
   });
+
+  app.post(
+    "/cases/:id/server-set",
+    withStore(ctx, (sets, req, res) => changeCaseSet(ctx, sets, req, res)),
+  );
 }

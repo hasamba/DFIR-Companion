@@ -180,6 +180,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   if (CASE_READ_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "read", caseId };
   }
+  // Changing a case's server set stops its monitors and forgets its links: case administrator.
+  // GET /cases/:id/server-set (read) is not affected.
+  if (method === "POST" && matchSuffix === "/server-set")
+    return { kind: "case", permission: "admin", caseId };
   if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
   }

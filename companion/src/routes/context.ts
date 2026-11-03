@@ -287,6 +287,7 @@ export interface RouteContext {
   pollVeloMonitor(caseId: string, id: string): Promise<void>;
   stopVeloMonitorTimer(caseId: string, id: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
+  cancelVeloHuntTimersForCase(caseId: string): void; // pending collect + status-poll timers of one case
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;

@@ -121,6 +121,8 @@ export interface VeloHunts {
    * (#770), and a re-collect says "imported" both before its first write and after its last one.
    */
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
+  /** Cancel every pending collect and status-poll timer of one case (its server set changed). */
+  cancelVeloHuntTimersForCase(caseId: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -206,6 +208,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
     stopVeloHuntStatusPoll,
+    stopVeloHuntStatusPollsForCase,
     resumeVeloHuntStatusPolls,
   } = createVeloHuntStatusTimers({
     store,
@@ -778,6 +781,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
 
   return {
     veloHuntTimers,
+    cancelVeloHuntTimersForCase: (caseId) => {
+      veloHuntTimers.forget(caseId);
+      stopVeloHuntStatusPollsForCase(caseId);
+    },
     startVeloHuntCollect,
     listVeloHuntJobViews,
     scheduleVeloHuntStatusPoll,

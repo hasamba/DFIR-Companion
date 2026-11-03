@@ -364,6 +364,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     pollVeloMonitor: monitors.pollVeloMonitor,
     stopVeloMonitorTimer: monitors.stopVeloMonitorTimer,
     scheduleVeloHuntStatusPoll: hunts.scheduleVeloHuntStatusPoll,
+    cancelVeloHuntTimersForCase: hunts.cancelVeloHuntTimersForCase,
     pollVeloHuntStatus: hunts.pollVeloHuntStatus,
     startVeloHuntCollect: hunts.startVeloHuntCollect,
     listVeloHuntJobViews: hunts.listVeloHuntJobViews,

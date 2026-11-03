@@ -37,6 +37,8 @@ export interface VeloHuntStatusTimers {
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
+  /** Cancel every pending status poll of one case (its server set changed). */
+  stopVeloHuntStatusPollsForCase(caseId: string): void;
   /** Re-arm status polling for every non-terminal hunt across all cases (server restart). */
   resumeVeloHuntStatusPolls(): Promise<void>;
 }
@@ -127,6 +129,10 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     veloStatusTimers.delete(caseId, huntId);
   }
 
+  function stopVeloHuntStatusPollsForCase(caseId: string): void {
+    veloStatusTimers.forget(caseId); // clears each timer, then drops the entries
+  }
+
   // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
   // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
   // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
@@ -169,6 +175,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
     stopVeloHuntStatusPoll,
+    stopVeloHuntStatusPollsForCase,
     resumeVeloHuntStatusPolls,
   };
 }

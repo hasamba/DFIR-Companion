@@ -46,6 +46,7 @@
     "ROUTE POST /server-sets/:setId/default",
     "ROUTE POST /server-sets/:setId/test",
     "ROUTE GET /cases/:id/server-set",
+    "ROUTE POST /cases/:id/server-set",
     "ROUTE GET /cases/:id/captures/count",
     "ROUTE GET /captures/recent",
     "ROUTE POST /captures",
