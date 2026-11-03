@@ -9,8 +9,17 @@ import { type NotionPushOptions } from "../integrations/notion/notionPush.js";
 import { ServiceNowClient } from "../integrations/servicenow/servicenowClient.js";
 import { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
 import { type TimesketchPushOptions } from "../integrations/timesketch/timesketchPush.js";
-import { positiveIntEnv } from "./env.js";
-import { tlsFetchFor } from "./tlsFetch.js";
+import { isEnvFlag, positiveIntEnv } from "./env.js";
+import { tlsFetchFor, tlsFetchForSettings } from "./tlsFetch.js";
+import {
+  buildVelociraptorClient,
+  type VelociraptorClient,
+} from "../integrations/velociraptor/velociraptorApi.js";
+import type {
+  IrisSettings,
+  TimesketchSettings,
+  VelociraptorSettings,
+} from "../integrations/serverSets/types.js";
 
 /**
  * Outbound integration clients, built from environment variables (#384, moved from server.ts).
@@ -33,15 +42,35 @@ export function buildIrisClient(): IrisClient | undefined {
   const baseUrl = process.env.DFIR_IRIS_URL;
   const apiKey = process.env.DFIR_IRIS_KEY;
   if (!baseUrl || !apiKey) return undefined;
-  return new IrisClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("IRIS") });
+  return buildIrisClientFrom({
+    url: baseUrl,
+    apiKey,
+    ca: process.env.DFIR_IRIS_CA,
+    insecure: isEnvFlag(process.env.DFIR_IRIS_INSECURE),
+  });
+}
+
+// Per-set builders: same clients, built from a server set's settings instead of env.
+export function buildIrisClientFrom(s: IrisSettings): IrisClient {
+  const fetchFn = tlsFetchForSettings({ url: s.url, ca: s.ca, insecure: s.insecure, label: "IRIS" });
+  return new IrisClient({ baseUrl: s.url, apiKey: s.apiKey, fetchFn });
+}
+
+export function irisPushOptionsFrom(s: IrisSettings): IrisPushOptions {
+  return {
+    baseUrl: s.url || undefined,
+    customerId: Number(s.customerId) || undefined,
+    classificationId: Number(s.classificationId) || undefined,
+  };
 }
 
 export function irisPushOptions(): IrisPushOptions {
-  return {
-    baseUrl: process.env.DFIR_IRIS_URL,
-    customerId: Number(process.env.DFIR_IRIS_CUSTOMER_ID) || undefined,
-    classificationId: Number(process.env.DFIR_IRIS_CLASSIFICATION_ID) || undefined,
-  };
+  return irisPushOptionsFrom({
+    url: process.env.DFIR_IRIS_URL ?? "",
+    apiKey: "",
+    customerId: process.env.DFIR_IRIS_CUSTOMER_ID,
+    classificationId: process.env.DFIR_IRIS_CLASSIFICATION_ID,
+  });
 }
 
 // Build the Timesketch push client from env (DFIR_TIMESKETCH_URL + USER + PASSWORD). Returns
@@ -52,14 +81,49 @@ export function buildTimesketchClient(): TimesketchClient | undefined {
   const username = process.env.DFIR_TIMESKETCH_USER;
   const password = process.env.DFIR_TIMESKETCH_PASSWORD;
   if (!baseUrl || !username || !password) return undefined;
-  return new TimesketchClient({ baseUrl, username, password, fetchFn: tlsFetchFor("TIMESKETCH") });
+  return buildTimesketchClientFrom({
+    url: baseUrl,
+    user: username,
+    password,
+    ca: process.env.DFIR_TIMESKETCH_CA,
+    insecure: isEnvFlag(process.env.DFIR_TIMESKETCH_INSECURE),
+  });
+}
+
+export function buildTimesketchClientFrom(s: TimesketchSettings): TimesketchClient {
+  const fetchFn = tlsFetchForSettings({ url: s.url, ca: s.ca, insecure: s.insecure, label: "TIMESKETCH" });
+  return new TimesketchClient({ baseUrl: s.url, username: s.user, password: s.password, fetchFn });
+}
+
+export function timesketchPushOptionsFrom(s: TimesketchSettings): TimesketchPushOptions {
+  return { baseUrl: s.url || undefined, timelineName: s.timeline || undefined };
 }
 
 export function timesketchPushOptions(): TimesketchPushOptions {
+  return timesketchPushOptionsFrom({
+    url: process.env.DFIR_TIMESKETCH_URL ?? "",
+    user: "",
+    password: "",
+    timeline: process.env.DFIR_TIMESKETCH_TIMELINE,
+  });
+}
+
+// A set stores only the Velociraptor connection. Binary, VQL overrides and limits stay global, so
+// the set's three values are laid over the base env and the existing builder does the rest.
+export function velociraptorEnvFrom(s: VelociraptorSettings, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
-    baseUrl: process.env.DFIR_TIMESKETCH_URL,
-    timelineName: process.env.DFIR_TIMESKETCH_TIMELINE || undefined,
+    ...base,
+    DFIR_VELOCIRAPTOR_API_CONFIG: s.apiConfigPath,
+    DFIR_VELOCIRAPTOR_ORG: s.org ?? "",
+    DFIR_VELOCIRAPTOR_GUI_URL: s.guiUrl ?? "",
   };
+}
+
+export function buildVelociraptorClientFrom(
+  s: VelociraptorSettings,
+  base: NodeJS.ProcessEnv,
+): VelociraptorClient | undefined {
+  return buildVelociraptorClient(velociraptorEnvFrom(s, base));
 }
 
 // Build the MISP push client from env (DFIR_MISP_URL + DFIR_MISP_KEY). Returns undefined

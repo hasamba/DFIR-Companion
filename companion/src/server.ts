@@ -41,6 +41,7 @@ import { startMaintenanceTasks, startPostListenTasks } from "./composition/maint
 import { buildAiRuntime } from "./composition/aiRuntime.js";
 import { buildBulkImportSink } from "./composition/bulkImportSink.js";
 import { buildAppOptions } from "./composition/appWiring.js";
+import { unavailableServerClients } from "./composition/serverSetClients.js";
 import { createStateBroadcaster } from "./composition/stateBroadcast.js";
 import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
 import { createCaseAppliers } from "./composition/caseAppliers.js";
@@ -337,6 +338,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     synthInFlight: () => analysis.synthInFlight,
     importerRegistry: imports.importerRegistry,
     irisClient: () => irisClient,
+    serverClients: options.serverClients ?? unavailableServerClients,
     setIrisClient: (client) => {
       irisClient = client;
     },

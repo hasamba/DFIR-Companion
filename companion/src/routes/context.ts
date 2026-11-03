@@ -10,6 +10,7 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
 import type { IrisClient } from "../integrations/iris/irisClient.js";
+import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
@@ -355,6 +356,8 @@ export interface RouteContext {
   importerPrecedence(): ImporterPrecedence;
   setImporterPrecedence(precedence: ImporterPrecedence): void;
   irisClient(): IrisClient | undefined;
+  // Per-case integration clients from the case's server set (replaces the env accessors above).
+  readonly serverClients: ServerClients;
   // The DFIR-IRIS client is a MUTABLE shared handle: POST /iris/reconnect (routes/reportsExport.ts)
   // rebuilds it at runtime and createApp's /cases/:id/push/iris reads it. Mirrors nsrlDb()/setNsrlDb():
   //   setIrisClient    — reassign the shared binding (both the moved iris routes and the createApp

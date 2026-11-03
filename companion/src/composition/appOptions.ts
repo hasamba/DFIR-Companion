@@ -75,6 +75,7 @@ import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { CustomerExposureProvider } from "../analysis/customerExposure.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { IrisClient } from "../integrations/iris/irisClient.js";
+import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { IrisPushOptions } from "../integrations/iris/irisPush.js";
 import type { IrisExportStore } from "../integrations/iris/irisExportStore.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
@@ -447,6 +448,8 @@ export interface AppOptions {
   // DFIR-IRIS push: a configured client (when DFIR_IRIS_URL/KEY are set) + mapping options
   // (customer/classification ids, base URL for the case link).
   irisClient?: IrisClient;
+  // Per-case server-set client resolver; tests that omit it get an always-error stand-in.
+  serverClients?: ServerClients;
   irisOptions?: IrisPushOptions;
   // Rebuilds the IRIS client from current config (used by POST /iris/reconnect so config saved
   // via Settings, or IRIS coming back online, applies without a server restart). Defaults to the

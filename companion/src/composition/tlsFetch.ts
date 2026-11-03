@@ -69,7 +69,31 @@ export type TlsIntegration =
   | "SERVICENOW";
 
 export function tlsFetchFor(name: TlsIntegration) {
-  return fromEnv(name, buildTlsFetch);
+  const hostSource = TLS_HOST_URL[name];
+  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
+  return tlsFetchForSettings({
+    url: hostUrl,
+    ca: process.env[`DFIR_${name}_CA`],
+    insecure: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
+    label: name,
+  });
+}
+
+/** The same TLS trust, from explicit settings (a server set) instead of env. */
+export function tlsFetchForSettings(s: { url?: string; ca?: string; insecure?: boolean; label?: string }) {
+  const label = s.label ?? "server set";
+  try {
+    return buildTlsFetch({
+      caCertPath: s.ca || undefined,
+      insecureSkipVerify: Boolean(s.insecure),
+      hostUrl: s.url,
+      onWarn: (m) => warnLine(`[DFIR] ${label}: ${m}`),
+    });
+  } catch (err) {
+    // Same containment as fromEnv below: one integration's TLS misconfiguration must not crash the server.
+    warnLine(`[DFIR] ${label}: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 /**

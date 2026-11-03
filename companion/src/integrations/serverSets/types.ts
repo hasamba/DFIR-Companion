@@ -1,6 +1,12 @@
 // Server sets: named bundles of IRIS / Timesketch / Velociraptor connection settings. A case
 // links to one set. Secrets are sealed on disk and masked in every API response.
 
+import type { IrisClient } from "../iris/irisClient.js";
+import type { IrisPushOptions } from "../iris/irisPush.js";
+import type { TimesketchClient } from "../timesketch/timesketchClient.js";
+import type { TimesketchPushOptions } from "../timesketch/timesketchPush.js";
+import type { VelociraptorClient } from "../velociraptor/velociraptorApi.js";
+
 export const MASKED_SECRET = "••••••";
 
 export interface IrisSettings {
@@ -72,4 +78,24 @@ export function maskServerSet(set: ServerSet): ServerSet {
   if (set.timesketch)
     out.timesketch = { ...set.timesketch, password: set.timesketch.password ? MASKED_SECRET : "" };
   return out;
+}
+
+// The clients one set yields. A tool the set does not use is undefined.
+export interface CaseServers {
+  setId: string;
+  setName: string;
+  iris?: IrisClient;
+  irisPush?: IrisPushOptions;
+  timesketch?: TimesketchClient;
+  timesketchPush?: TimesketchPushOptions;
+  velociraptor?: VelociraptorClient;
+}
+
+export type ResolveResult = { ok: true; servers: CaseServers } | { ok: false; status: 409; error: string };
+
+export interface ServerClients {
+  forCase(caseId: string): ResolveResult;
+  forDefault(): ResolveResult;
+  forSet(setId: string): ResolveResult;
+  invalidate(setId?: string): void;
 }
