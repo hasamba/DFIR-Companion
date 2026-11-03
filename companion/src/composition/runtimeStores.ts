@@ -49,6 +49,8 @@ import { CustomToolStore } from "../integrations/tools/customToolStore.js";
 import { McpServerStore } from "../integrations/mcp/mcpServerStore.js";
 import { KevStore } from "../analysis/kevStore.js";
 import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
+import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { deriveServerSetKey } from "../integrations/serverSets/secretBox.js";
 import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
 import { getAppVersion } from "../version.js";
 import { NotificationConfigStore } from "../analysis/notificationStore.js";
@@ -269,6 +271,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   // Settings → KEV. The pipeline lazy-loads it so an import during a session is picked up.
   const kevStore = new KevStore(join(dirname(casesRoot), "kev", "catalog.json"));
   const updateCheckStore = new UpdateCheckStore(join(dirname(casesRoot), "updates", "update-check.json"));
+  // Server sets: named IRIS/Timesketch/Velociraptor bundles; secrets sealed with a key derived from the instance secret.
+  const serverSetStore = new ServerSetStore(
+    join(dirname(casesRoot), "server-sets"),
+    deriveServerSetKey(loadOrCreateInstanceSecret(casesRoot)),
+  );
   const appVersion = getAppVersion();
   const updateRepo = (() => {
     const envRepo = process.env.DFIR_UPDATE_REPO;
@@ -493,6 +500,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     nsrlDb,
     kevStore,
     updateCheckStore,
+    serverSetStore,
     appVersion,
     updateRepo,
     notificationStore,

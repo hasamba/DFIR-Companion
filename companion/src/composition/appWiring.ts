@@ -17,6 +17,7 @@
 import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
+import { listCaseIdsSync, seedServerSets } from "./serverSetMigration.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
@@ -74,6 +75,8 @@ export interface AppWiringDeps {
 }
 
 export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOptions {
+  // Before the integration clients below: seed the "Testing" server set from the current DFIR_* settings.
+  seedServerSets(rt.serverSetStore, process.env, listCaseIdsSync(rt.store.casesRoot));
   const {
     store,
     hub,
