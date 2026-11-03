@@ -13,6 +13,7 @@
  * No response, log line or audit entry carries a key, a password or a Velociraptor config.
  */
 import type { Express, Request, Response } from "express";
+import { StateLock } from "../analysis/stateLock.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { requestAuthentication } from "../auth/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
@@ -26,6 +27,7 @@ import type { RouteContext } from "./context.js";
 import { parseServerSetInput, probeError } from "./serverSetBody.js";
 
 const NOT_FOUND = "Server set not found."; // the resolver's own wording for an unknown set id
+const CHANGE_FAILED = "The server set change did not finish. Check the server log and try again.";
 const UNAVAILABLE = "Server sets are not available.";
 const IS_DEFAULT = "The default server set cannot be deleted. Make another set the default first.";
 const TOOLS: ToolName[] = ["iris", "timesketch", "velociraptor"];
@@ -125,8 +127,9 @@ async function remoteWork(ctx: RouteContext, caseId: string): Promise<Work> {
   return { monitors, hunts, ...(irisCase && { irisCase }) };
 }
 
-// Stops each monitor while the old set is still linked, so the release goes to the old server. A
-// failure is logged (no URL, no key) and the next monitor still runs.
+// Stops each monitor while the old set is still linked, so the release goes to the old server. The
+// record is removed even when the stop throws, so no old monitor can stay on the new set. Returns how
+// many records are gone. Log lines carry ids only: no URL, key or path.
 async function stopMonitors(ctx: RouteContext, caseId: string): Promise<number> {
   const store = ctx.options.veloMonitorStore;
   if (!store) return 0;
@@ -135,10 +138,18 @@ async function stopMonitors(ctx: RouteContext, caseId: string): Promise<number> 
     try {
       await ctx.deleteVeloMonitor(caseId, m.id);
       stopped++;
-    } catch (err) {
+      continue;
+    } catch {
       ctx.serverLogger.error(
-        `[server-sets] case ${caseId}: monitor ${m.id} could not be released on the old server: ${(err as Error).message}`,
+        `[server-sets] case ${caseId}: monitor ${m.id} did not stop cleanly; removing it`,
       );
+    }
+    try {
+      ctx.stopVeloMonitorTimer(caseId, m.id);
+      await store.remove(caseId, m.id);
+      stopped++;
+    } catch {
+      ctx.serverLogger.error(`[server-sets] case ${caseId}: monitor ${m.id} could not be removed`);
     }
   }
   return stopped;
@@ -159,13 +170,27 @@ function changeText(
   return `Server set changed from '${oldName}' to '${newName}'${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
+const changeLock = new StateLock(); // one set change per case at a time
+
 async function changeCaseSet(ctx: RouteContext, sets: ServerSetStore, req: Request, res: Response) {
   const caseId = req.params.id;
-  const body = (req.body ?? {}) as { setId?: unknown; confirm?: unknown };
+  const body = (req.body ?? {}) as { setId?: unknown };
   if (typeof body.setId !== "string" || !body.setId)
     return res.status(400).json({ error: "setId is required." });
   const target = sets.get(body.setId);
   if (!target) return res.status(404).json({ error: NOT_FOUND });
+  return changeLock.runExclusive(caseId, () => applyChange(ctx, sets, req, res, target));
+}
+
+async function applyChange(
+  ctx: RouteContext,
+  sets: ServerSetStore,
+  req: Request,
+  res: Response,
+  target: ServerSet,
+) {
+  const caseId = req.params.id;
+  const body = (req.body ?? {}) as { confirm?: unknown };
   const currentId = sets.caseSetId(caseId);
   if (currentId === target.id) return res.json({ changed: false });
   const work = await remoteWork(ctx, caseId);
@@ -173,11 +198,23 @@ async function changeCaseSet(ctx: RouteContext, sets: ServerSetStore, req: Reque
     return res.status(409).json({ needsConfirm: true, work });
   }
   const oldName = (currentId && sets.get(currentId)?.name) || "(none)";
-  const stopped = await stopMonitors(ctx, caseId);
-  await ctx.options.irisExportStore?.clear(caseId);
-  const hunts = (await ctx.options.veloHuntStore?.clear(caseId)) ?? 0;
-  ctx.cancelVeloHuntTimersForCase(caseId); // no old hunt id may be polled against the new server
-  sets.linkCase(caseId, target.id);
+  const done = { stopped: 0, iris: false, hunts: 0 };
+  try {
+    done.stopped = await stopMonitors(ctx, caseId);
+    await ctx.options.irisExportStore?.clear(caseId);
+    done.iris = !!work.irisCase;
+    done.hunts = (await ctx.options.veloHuntStore?.clear(caseId)) ?? 0;
+    ctx.cancelVeloHuntTimersForCase(caseId); // no old hunt id may be polled against the new server
+    sets.linkCase(caseId, target.id);
+  } catch (err) {
+    const why = (err as NodeJS.ErrnoException).code ?? (err as Error).name; // never the message: it may hold a path
+    ctx.serverLogger.error(
+      `[server-sets] case ${caseId}: change to set ${target.id} did not finish (${why}); ` +
+        `${done.stopped} monitors stopped, IRIS link ${done.iris ? "forgotten" : "kept"}, ${done.hunts} hunts forgotten; the case is still linked to ${currentId ?? "no set"}`,
+    );
+    return res.status(500).json({ error: CHANGE_FAILED });
+  }
+  const { stopped, hunts } = done;
   audit(ctx, req, "case-server-set-changed", target);
   await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, caseId, {
     category: "settings",

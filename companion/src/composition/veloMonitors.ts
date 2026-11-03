@@ -332,7 +332,13 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     options.onVeloMonitor?.(caseId);
     if (!monitor || monitor.veloTableEntry !== "added") return;
     const client = tickVelo(caseId);
-    if (!client) return;
+    if (!client) {
+      // One line per monitor, so a change of server set can tell which entries stay on the old server.
+      logLine(
+        `[velo-monitor] monitor ${id} of case ${caseId} was not released: the case's server set does not resolve to a Velociraptor server`,
+      );
+      return;
+    }
     // Another monitor (any case on this set; this one is already removed) still watches the artifact →
     // its entry stays.
     if (await someMonitor(caseSetIdOf(serverClients(), caseId), (m) => m.artifact === monitor.artifact))
