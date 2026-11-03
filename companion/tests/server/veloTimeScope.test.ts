@@ -15,6 +15,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -75,7 +76,7 @@ async function makeApp(runnerOverride: VqlRunner = runner) {
     pipeline,
     stateStore,
     importMetaStore: new ImportMetaStore(store),
-    velociraptorClient: new VelociraptorClient(veloCfg, runnerOverride),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, runnerOverride)),
     artifactBundleStore,
     veloHuntStore: new VeloHuntStore(store),
   });

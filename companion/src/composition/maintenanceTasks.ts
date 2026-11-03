@@ -28,7 +28,8 @@ import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateC
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import type { AuthStore } from "../auth/authStore.js";
-import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
+import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import {
   EXPORT_STAGING_DIRNAME,
@@ -229,8 +230,10 @@ export function startMaintenanceTasks({
 export interface PostListenDeps {
   store: CaseStore;
   demoMode: boolean;
-  velociraptorClient?: VelociraptorClient;
-  velociraptorClientStore: VelociraptorClientStore;
+  /** The server sets: the startup fleet refresh runs once per set that has Velociraptor. */
+  serverSets: Pick<ServerSetStore, "list">;
+  serverClients: ServerClients;
+  clientInventoryFor: (setId: string) => VelociraptorClientStore;
   updateCheckStore: UpdateCheckStore;
   updateRepo: string;
   /** SIEM audit export (#929). Absent → the feature is off and nothing is resumed. */
@@ -245,8 +248,9 @@ export interface PostListenDeps {
 export function startPostListenTasks({
   store,
   demoMode,
-  velociraptorClient,
-  velociraptorClientStore,
+  serverSets,
+  serverClients,
+  clientInventoryFor,
   updateCheckStore,
   updateRepo,
   auditExporter,
@@ -275,36 +279,9 @@ export function startPostListenTasks({
     logLine(`[demo] demo mode active — writes blocked, case resets every ${resetHours}h`);
   }
 
-  // Snapshot the enrolled Velociraptor fleet into the client inventory at startup (#70), so a single-
-  // endpoint collection can resolve a host → client_id from the file. RETRY WITH BACKOFF: if the
-  // Velociraptor server is down when the companion boots (a common ordering), keep retrying for a while
-  // so the inventory self-heals once it comes up — the analyst shouldn't have to restart the companion
-  // (Settings → Velociraptor → Reconnect also forces it). Best-effort; timers .unref() so they never
-  // block exit. Live monitors self-heal on their own poll timers, so this only covers the inventory.
-  if (velociraptorClient) {
-    const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000]; // ~18 min of attempts
-    const attempt = (i: number): void => {
-      velociraptorClient
-        .listClients()
-        .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
-        .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
-        .catch((e) => {
-          const next = i + 1;
-          if (next < backoffMs.length) {
-            logLine(
-              `[velociraptor] startup inventory refresh failed (${(e as Error).message}) — retrying in ${backoffMs[next] / 1000}s`,
-            );
-            const t = setTimeout(() => attempt(next), backoffMs[next]);
-            t.unref?.();
-          } else {
-            logLine(
-              `[velociraptor] startup inventory refresh still failing — use Settings → Velociraptor → Reconnect once the server is up`,
-            );
-          }
-        });
-    };
-    attempt(0);
-  }
+  // Snapshot each server set's enrolled Velociraptor fleet into that set's client inventory at
+  // startup (#70), so a single-endpoint collection can resolve a host → client_id from the file.
+  refreshFleetInventories(serverSets, serverClients, clientInventoryFor);
 
   // Opt-in update check (issue #127): when enabled (and not env-locked), check GitHub at most
   // once / 24h on startup and on a daily timer. Best-effort, never blocks startup, never throws.
@@ -353,5 +330,52 @@ export function startPostListenTasks({
         }
       })
       .catch((e) => warnLine(`[audit-export] resume failed: ${(e as Error).message}`));
+  }
+}
+
+// RETRY WITH BACKOFF, per set: if a Velociraptor server is down when the companion boots (a common
+// ordering), keep retrying for a while so its inventory self-heals once it comes up — the analyst
+// shouldn't have to restart the companion (Settings → Velociraptor → Reconnect also forces it).
+// Best-effort; timers .unref() so they never block exit. Live monitors self-heal on their own poll
+// timers, so this only covers the inventories.
+function refreshFleetInventories(
+  serverSets: Pick<ServerSetStore, "list">,
+  serverClients: ServerClients,
+  clientInventoryFor: (setId: string) => VelociraptorClientStore,
+): void {
+  let ids: string[];
+  try {
+    ids = serverSets.list().flatMap((set) => (set.velociraptor?.apiConfigPath ? [set.id] : []));
+  } catch (e) {
+    warnLine(`[velociraptor] startup inventory refresh skipped: ${(e as Error).message}`);
+    return;
+  }
+  const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000]; // ~18 min of attempts
+  for (const setId of ids) {
+    const r = serverClients.forSet(setId);
+    const client = r.ok ? r.servers.velociraptor : undefined;
+    if (!r.ok || !client) continue;
+    const label = `server set '${r.servers.setName}'`;
+    const attempt = (i: number): void => {
+      client
+        .listClients()
+        .then((clients) => clientInventoryFor(setId).save(clients, new Date().toISOString()))
+        .then((inv) => logLine(`[velociraptor] ${label} inventory: ${inv.clients.length} enrolled client(s)`))
+        .catch((e) => {
+          const next = i + 1;
+          if (next < backoffMs.length) {
+            logLine(
+              `[velociraptor] ${label} startup inventory refresh failed (${(e as Error).message}) — retrying in ${backoffMs[next] / 1000}s`,
+            );
+            const t = setTimeout(() => attempt(next), backoffMs[next]);
+            t.unref?.();
+          } else {
+            logLine(
+              `[velociraptor] ${label} startup inventory refresh still failing — use Settings → Velociraptor → Reconnect once the server is up`,
+            );
+          }
+        });
+    };
+    attempt(0);
   }
 }

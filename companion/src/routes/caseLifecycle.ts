@@ -76,16 +76,14 @@ import type { RouteContext } from "./context.js";
  * logLine/errLine mirror createApp's (serverLogger.info/error) so the moved call sites stay verbatim.
  *
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
- * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the live irisClient() accessor, plus five
- * members GRADUATED for this domain (see context.ts):
+ * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the per-case serverClients resolver, plus
+ * the members GRADUATED for this domain (see context.ts):
  *   - ensureDropFolders — create-case makes the drop inbox; the drop watcher (stays) also calls it.
  *   - runStateExclusive — the manual-event write serializes on the per-case state mutex the staying
  *     import/enrich/synthesis paths also use.
  *   - reloadImporters + importerPrecedence()/setImporterPrecedence — the importer CRUD routes mutate the
  *     in-memory registry + precedence that the staying detection seam (dispatchImport/resolveImportKind)
  *     reads, so the reload function + precedence accessor/setter were graduated rather than moved.
- *   - rebuildTimesketchClient — /timesketch/reconnect rebuilds the client from .env (mirrors
- *     ctx.rebuildIrisClient); the reconnect reassigns options.timesketchClient, which the push routes read.
  */
 export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): void {
   const {
@@ -733,10 +731,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.get("/setup/status", (_req: Request, res: Response) => {
     const has = (k: string): boolean => !!(process.env[k] && process.env[k].trim());
     const d = ctx.serverClients.forDefault();
-    const inDefault = (tool: "iris" | "timesketch"): boolean => d.ok && !!d.servers[tool];
+    const inDefault = (tool: "iris" | "timesketch" | "velociraptor"): boolean => d.ok && !!d.servers[tool];
     res.status(200).json({
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
-      velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
+      velociraptor: inDefault("velociraptor"),
       iris: inDefault("iris"),
       timesketch: inDefault("timesketch"),
       notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),

@@ -7,7 +7,6 @@ import { injectPrintTrigger } from "../reports/html.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
 import { milestoneEvent } from "../analysis/notifications.js";
-import { reloadEnvPrefix } from "../settings/envManager.js";
 import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
@@ -48,13 +47,8 @@ import { withNonce } from "../http/securityHeaders.js";
  *   - dispatchNotify — GRADUATED for this domain (see context.ts): the POST /cases/:id/report route
  *     fires the "Report generated" milestone through it. It's a stable const arrow in createApp
  *     (also used by create-case + the drop-import path, which stay), so it was graduated, not moved.
- *   - irisClient() / setIrisClient() / rebuildIrisClient() — the DFIR-IRIS client is a MUTABLE shared
- *     handle: POST /iris/reconnect rebuilds it at runtime and createApp's /cases/:id/push/iris (which
- *     stays) reads it. irisClient() (live accessor) already existed; setIrisClient() + rebuildIrisClient()
- *     were GRADUATED here (mirrors the nsrlDb()/setNsrlDb() pattern) so the moved reconnect route swaps
- *     the SAME binding createApp still reads. rebuildIrisClient() wraps createApp's
- *     `options.rebuildIrisClient ?? buildIrisClient`, keeping buildIrisClient's use inside server.ts
- *     (no route module imports a value from ../server.js).
+ *   - serverClients — the IRIS client comes from the case's server set (the case-less IRIS routes
+ *     use the default set). Resolved inside each handler, so a set edit applies on the next request.
  *
  * Module-private: logLine — a wrapper mirroring createApp's (serverLogger.info), so the moved
  * iris-import handler keeps its original logLine(...) calls verbatim.

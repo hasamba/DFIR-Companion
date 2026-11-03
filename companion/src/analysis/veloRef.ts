@@ -41,7 +41,7 @@ const UPLOADS_PATH = /\/uploads(?:[/?#]|$)/i;
 // it as a pointless requirement, so the message names what would be contacted and hands them
 // import-velociraptor, which parses pasted JSON and needs no server at all.
 export const EXTERNAL_IMPORT_NEEDS_SERVER =
-  "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG). This endpoint does not import an export you paste in — it takes a hunt/flow reference and fetches that collection's results from your Velociraptor server, so it needs a live connection to it. To import Velociraptor JSON you already have (a colleague's export, a saved collection), use POST /cases/:id/import-velociraptor instead, which is fully offline.";
+  "Velociraptor is not configured in this case's server set (Settings → Server sets). This endpoint does not import an export you paste in — it takes a hunt/flow reference and fetches that collection's results from your Velociraptor server, so it needs a live connection to it. To import Velociraptor JSON you already have (a colleague's export, a saved collection), use POST /cases/:id/import-velociraptor instead, which is fully offline.";
 
 function tokens(s: string, re: RegExp): string[] {
   return [...s.matchAll(re)].map((m) => m[1]);

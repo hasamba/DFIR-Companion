@@ -6,7 +6,6 @@ import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.
 import { preflightBundleArtifacts } from "../integrations/velociraptor/bundlePreflight.js";
 import { launchWithUnheldToolHint } from "../integrations/velociraptor/artifactTools.js";
 import {
-  buildVelociraptorClient,
   matchClient,
   normalizeHuntExpirySeconds,
   type HuntTarget,
@@ -27,6 +26,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
+import { caseVelo, defaultVelo, type VeloTarget } from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
@@ -71,37 +71,37 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
     return [];
   };
-  // Builds the Velociraptor client from current env (used by POST /velociraptor/reconnect). Defaults
-  // to the env-based factory; tests inject a stub so no process is spawned. NOTE: a rebuild returns a
-  // NEW client, so the artifact-catalog cache is inherently cold after a reconnect.
-  const rebuildVelo = options.rebuildVelociraptorClient ?? buildVelociraptorClient;
   // `?refresh=1` on the artifact-catalog routes = bypass the client's short-TTL catalog cache.
   const isRefresh = (req: Request): boolean => {
     const v = String(req.query?.refresh ?? "").toLowerCase();
     return v === "1" || v === "true";
   };
 
-  // Resolve a hostname → client_id from the persisted inventory (refreshing once on a miss) and launch a
-  // single-client collection. Throws when no client matches. Shared by the global /velociraptor/collect-host
-  // route and the case-scoped /cases/:id/velociraptor/deploy-hunt route (#157). Requires the API client set.
-  async function collectHostResolved(hostname: string, vql: string, description: string) {
-    const client = options.velociraptorClient!;
-    const store = options.velociraptorClientStore;
+  // Resolve a hostname → client_id from the set's persisted inventory (refreshing once on a miss) and launch
+  // a single-client collection. Throws when no client matches. Shared by the global /velociraptor/collect-host
+  // route and the case-scoped /cases/:id/velociraptor/deploy-hunt route (#157).
+  async function collectHostResolved(vc: VeloTarget, hostname: string, vql: string, description: string) {
+    const store = options.clientInventoryFor?.(vc.setId);
     if (store) {
       // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
       let rec = matchClient((await store.load()).clients, hostname);
       if (!rec) {
-        await ctx.refreshVeloClients();
+        await ctx.refreshVeloClients(vc.setId);
         rec = matchClient((await store.load()).clients, hostname);
       }
       if (!rec)
         throw new Error(
           `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead`,
         );
-      return await client.collectOnClient(rec.clientId, vql, description, hostname);
+      return await vc.client.collectOnClient(rec.clientId, vql, description, hostname);
     }
-    return await client.collectFromHost(hostname, vql, description);
+    return await vc.client.collectFromHost(hostname, vql, description);
   }
+  // The default set's inventory, or undefined when the default set has no Velociraptor.
+  const defaultInventory = () => {
+    const d = ctx.serverClients.forDefault();
+    return d.ok && d.servers.velociraptor ? options.clientInventoryFor?.(d.servers.setId) : undefined;
+  };
 
   // The bare VQL run + fleet-hunt routes live in routes/velociraptorVql.ts (#832): they take an
   // optional caseId and record the action in that case's activity log.
@@ -109,10 +109,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Read a launched hunt's results (rows collected from the endpoints so far). Polled by the dashboard.
   app.post("/velociraptor/hunt-results", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     const huntId = typeof req.body?.huntId === "string" ? req.body.huntId.trim() : "";
     const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
     const sources = Array.isArray(req.body?.sources)
@@ -120,35 +118,34 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       : [];
     if (!huntId || !artifact) return res.status(400).json({ error: "huntId and artifact are required" });
     try {
-      const result = await options.velociraptorClient.huntResults(huntId, artifact, sources);
+      const result = await vc.client.huntResults(huntId, artifact, sources);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
   });
 
-  // Read the persisted client inventory (host ↔ client_id map). Empty when never refreshed.
+  // Read the default set's persisted client inventory (host ↔ client_id map). Empty when never refreshed.
   app.get("/velociraptor/clients", async (_req: Request, res: Response) => {
-    if (!options.velociraptorClientStore) return res.status(200).json({ updatedAt: "", clients: [] });
+    const inventory = defaultInventory();
+    if (!inventory) return res.status(200).json({ updatedAt: "", clients: [] });
     try {
-      return res.status(200).json(await options.velociraptorClientStore.load());
+      return res.status(200).json(await inventory.load());
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
-  // Refresh the client inventory now (Settings → Velociraptor "Refresh client list"). 501 when the
-  // API / store isn't configured; 502 on a query failure.
+  // Refresh the default set's client inventory now (Settings → Velociraptor "Refresh client list").
+  // 409/501 when the default set has no Velociraptor; 502 on a query failure.
   app.post("/velociraptor/clients/refresh", async (_req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
-    if (!options.velociraptorClientStore)
-      return res.status(501).json({ error: "client inventory store not configured" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
+    const inventory = options.clientInventoryFor?.(vc.setId);
+    if (!inventory) return res.status(501).json({ error: "client inventory store not configured" });
     try {
-      const count = await ctx.refreshVeloClients();
-      const inv = await options.velociraptorClientStore.load();
+      const count = await ctx.refreshVeloClients(vc.setId);
+      const inv = await inventory.load();
       return res.status(200).json({ count, updatedAt: inv.updatedAt, clients: inv.clients });
     } catch (err) {
       logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
@@ -161,59 +158,53 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // GetClientMonitoringState() shape. Hit it in a browser (localhost) and share the JSON to pin down a
   // version's monitoring proto. 501 when the API isn't configured.
   app.get("/velociraptor/diag", async (_req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     try {
-      return res.status(200).json(await options.velociraptorClient.diagnostics());
+      return res.status(200).json(await vc.client.diagnostics());
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
   });
 
-  // Whether the Velociraptor API is configured + the inventory's freshness (so the dashboard can show
-  // connection state without a probe). `configured` reflects the LIVE client (reconnect can flip it).
+  // Whether the default set has Velociraptor + its inventory's freshness (so the dashboard can show
+  // connection state without a probe). `configured` follows the default set live.
   app.get("/velociraptor/status", async (_req: Request, res: Response) => {
     let updatedAt = "",
       clientCount = 0;
-    if (options.velociraptorClientStore) {
+    const inventory = defaultInventory();
+    if (inventory) {
       try {
-        const inv = await options.velociraptorClientStore.load();
+        const inv = await inventory.load();
         updatedAt = inv.updatedAt;
         clientCount = inv.clients.length;
       } catch {
         /* empty */
       }
     }
+    const d = ctx.serverClients.forDefault();
     return res
       .status(200)
-      .json({ configured: !!options.velociraptorClient, updatedAt, clients: clientCount });
+      .json({ configured: d.ok && !!d.servers.velociraptor, updatedAt, clients: clientCount });
   });
 
-  // Re-read DFIR_VELOCIRAPTOR_* from .env (settings saved via the dashboard only write the file),
-  // REBUILD the client, and refresh the client inventory — which doubles as a reachability probe
-  // (`clients()` round-trips to the server). Lets the analyst connect after configuring Velociraptor,
-  // or after the Velociraptor server comes back online, WITHOUT the #1-gotcha restart (the client is
-  // stateless — it spawns the binary per query — but a rebuild also applies newly-saved config and
-  // flips it on if the config path wasn't set at boot). Also re-arms any persisted live monitors that
-  // couldn't be scheduled while the client was absent. Always 200; the body says configured/reachable.
+  // Re-read DFIR_VELOCIRAPTOR_* from .env (the binary and limits stay global), DROP the cached server-set
+  // clients so the next lookup rebuilds them, and refresh the default set's client inventory — which
+  // doubles as a reachability probe (`clients()` round-trips to the server). Lets the analyst connect
+  // after the Velociraptor server comes back online WITHOUT the #1-gotcha restart. Also re-arms any
+  // persisted live monitors and hunt status polls. Always 200; the body says configured/reachable.
   app.post("/velociraptor/reconnect", async (_req: Request, res: Response) => {
     try {
       await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
-      options.velociraptorClient = rebuildVelo();
-      if (!options.velociraptorClient) {
-        return res.status(200).json({
-          configured: false,
-          ok: false,
-          error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)",
-        });
+      ctx.serverClients.invalidate();
+      const d = ctx.serverClients.forDefault();
+      if (!d.ok || !d.servers.velociraptor) {
+        const error = d.ok ? `Velociraptor is not configured in server set '${d.servers.setName}'` : d.error;
+        return res.status(200).json({ configured: false, ok: false, error });
       }
       try {
-        const count = await ctx.refreshVeloClients();
-        const inv = options.velociraptorClientStore
-          ? await options.velociraptorClientStore.load()
-          : { updatedAt: "", clients: [] };
+        const count = await ctx.refreshVeloClients(d.servers.setId);
+        const inv = (await options.clientInventoryFor?.(d.servers.setId).load()) ?? { updatedAt: "" };
         void ctx.resumeVeloMonitors(); // arm monitors that couldn't start while the client was absent
         void ctx.resumeVeloHuntStatusPolls(); // and any hunt status polling that couldn't start either
         logLine(`[velociraptor] reconnected — ${count} enrolled client(s)`);
@@ -231,10 +222,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
   // flow + a GUI deep link. 501 when the Velociraptor API is off; 502 when no client matches the host.
   app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     const description = typeof req.body?.description === "string" ? req.body.description : "";
@@ -243,7 +232,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
     try {
       logLine(`[velociraptor] collect on host ${hostname}: ${description.slice(0, 80)}`);
-      const result = await collectHostResolved(hostname, vql, description);
+      const result = await collectHostResolved(vc, hostname, vql, description);
       logLine(
         `[velociraptor] collection launched -> flow ${result.flowId} on ${result.clientId} (${result.hostname})`,
       );
@@ -257,10 +246,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Read a single COLLECTION flow's result rows so the dashboard can show them inline + auto-poll (the
   // per-flow analog of /velociraptor/hunt-results). Body `{ clientId, flowId, artifact, sources }`.
   app.post("/velociraptor/collect-results", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
     const flowId = typeof req.body?.flowId === "string" ? req.body.flowId.trim() : "";
     const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
@@ -270,13 +257,13 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     if (!clientId || !flowId || !artifact)
       return res.status(400).json({ error: "clientId, flowId and artifact are required" });
     try {
-      const result = await options.velociraptorClient.collectionResults(clientId, flowId, artifact, sources);
+      const result = await vc.client.collectionResults(clientId, flowId, artifact, sources);
       // Also report the flow's terminal STATE so the dashboard can surface an endpoint-side failure
       // (e.g. a bad plugin arg) instead of polling "no results yet". Best-effort — never fail the read.
       let flowState = "";
       let flowError = "";
       try {
-        const st = await options.velociraptorClient.flowStatus(clientId, flowId);
+        const st = await vc.client.flowStatus(clientId, flowId);
         flowState = st.state;
         flowError = st.error;
       } catch {
@@ -322,12 +309,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // "Browse server artifacts" button sends it, since a deliberate browse is exactly the moment an
   // analyst who just added an artifact on the server expects to see it.
   app.get("/velociraptor/artifacts", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     try {
-      const artifacts = await options.velociraptorClient.listClientArtifacts("client", {
+      const artifacts = await vc.client.listClientArtifacts("client", {
         refresh: isRefresh(req),
       });
       return res.status(200).json({ artifacts });
@@ -340,10 +325,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // artifacts get bounded (and via which parameter), and which have no date parameter and so collect in
   // full. Bundles are global, so this route is too. Body: {preset} or {start,end}.
   app.post("/velociraptor/bundles/:id/time-scope-preview", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     let bundle;
     try {
@@ -370,7 +353,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         .json({ error: "a time scope is required — pass a preset (24h/7d/30d/90d) or a custom start" });
 
     try {
-      const definitions = await options.velociraptorClient.listClientArtifacts("client");
+      const definitions = await vc.client.listClientArtifacts("client");
       const plan = buildTimeScopePlan({
         artifacts: bundle.artifacts,
         definitions,
@@ -448,10 +431,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // waitMinutes (default DFIR_VELO_HUNT_WAIT_MIN / bundle default / 10; clamped 1..1440), and respond
   // immediately. The hunt stays open on the server until its expiry — we just snapshot results later.
   app.post("/cases/:id/velociraptor/run-bundle", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = caseVelo(ctx, req.params.id, res);
+    if (!vc) return;
     if (!options.artifactBundleStore || !options.veloHuntStore)
       return res.status(501).json({ error: "bundle store not configured" });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
@@ -509,7 +490,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       // only "no hunt id". Launch what can run and say what was left out (see veloBundlePreflight.ts).
       // `unknownArtifacts`/`unavailableArtifacts` are distinct from the JOB's collect-time
       // `skippedArtifacts`, which are artifacts that launched but failed to FETCH.
-      const velo = options.velociraptorClient;
+      const velo = vc.client;
       const pre = await preflightBundleArtifacts(
         bundle.artifacts,
         () => velo.listClientArtifacts("client", { refresh: true }),
@@ -600,7 +581,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Paste a hunt id / flow / GUI URL; discover what it collected (for a flow, resolve the host) and
   // import via the SAME chain as every other Velociraptor import — optionally to the super-timeline only.
   app.post("/cases/:id/velociraptor/import-external", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient) return res.status(501).json({ error: EXTERNAL_IMPORT_NEEDS_SERVER });
+    const vc = caseVelo(ctx, req.params.id, res, EXTERNAL_IMPORT_NEEDS_SERVER);
+    if (!vc) return;
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const ref = parseVeloRef(String(req.body?.ref ?? ""));
@@ -624,7 +606,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           "uploaded-file import doesn't support super-timeline-only mode — collect upload-based artifacts via a normal (forensic-timeline) import instead",
       });
     }
-    const client = options.velociraptorClient;
+    const client = vc.client;
     const importJobDeps = { jobManager: options.jobManager, onAiStatus: options.onAiStatus, logLine };
     try {
       // Already pulled into this case? Answer before any Velociraptor call (#1965); "Re-import anyway" skips it.
@@ -790,10 +772,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // follow-up pass that starts when it finishes — still honored, just not immediately (#195). The 202
   // means the request WILL take effect either way; it never silently evaporates.
   app.post("/cases/:id/velociraptor/collect", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!caseVelo(ctx, req.params.id, res)) return;
     if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
     const caseId = req.params.id;
     const wantedHuntId = String(req.body?.huntId ?? "").trim();
@@ -813,10 +792,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // (mirrors the live-monitor .../poll route) — used by ops to force a check, and by tests instead of
   // waiting out DFIR_VELO_HUNT_POLL_S. Awaits the poll so the response already reflects its outcome.
   app.post("/cases/:id/velociraptor/hunt-jobs/:huntId/poll-status", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!caseVelo(ctx, req.params.id, res)) return;
     if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
     const caseId = req.params.id;
     const huntId = req.params.huntId;
@@ -827,10 +803,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   });
 
   app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = caseVelo(ctx, req.params.id, res);
+    if (!vc) return;
     const caseId = req.params.id;
     // Body parsing lives in huntDeployBody.ts (#803): this file sits at its size cap.
     const {
@@ -849,7 +823,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     try {
       if (mode === "collection") {
         logLine(`[velociraptor] deploy-hunt collection "${title}" on ${hostname}`);
-        const result = await collectHostResolved(hostname, vql, description);
+        const result = await collectHostResolved(vc, hostname, vql, description);
         await ctx.recordHuntDeploy(caseId, {
           source,
           title,
@@ -869,7 +843,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       }
       const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
       logLine(`[velociraptor] deploy-hunt fleet "${title}" (expires in ${expirySeconds}s)`);
-      const launch = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
+      const launch = await vc.client.launchHunt(vql, description, { expirySeconds });
       const reqWait = Number(req.body?.waitMinutes);
       const waitMinutes = Math.min(
         1440,
@@ -944,10 +918,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // isn't an enrolled client, the server-side backstop to the dashboard's own known-host gating. 400
   // when the directive names nothing collectable (the UI then shows a manual checklist instead).
   app.post("/cases/:id/velociraptor/collect-directive", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = caseVelo(ctx, req.params.id, res);
+    if (!vc) return;
     const caseId = req.params.id;
     const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
     const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
@@ -965,7 +937,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const title = `Collect ${resolved.artifact} on ${hostname}`;
     try {
       logLine(`[velociraptor] collect-directive ${resolved.artifact} on ${hostname}`);
-      const result = await collectHostResolved(hostname, resolved.vql, title);
+      const result = await collectHostResolved(vc, hostname, resolved.vql, title);
       await ctx.recordHuntDeploy(caseId, {
         source: "playbook",
         title,
@@ -990,10 +962,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // id), so the analyst can review what a hunt found from the persistent profile after the ephemeral
   // suggestion card is gone. 404 when the job aged out of the (capped) list; 501 without the API.
   app.post("/cases/:id/velociraptor/hunt-rows", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = caseVelo(ctx, req.params.id, res);
+    if (!vc) return;
     if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
     const huntId = String(req.body?.huntId ?? "").trim();
     if (!huntId) return res.status(400).json({ error: "huntId is required" });
@@ -1005,7 +975,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         });
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
-      const { results, skipped, unread, truncated } = await options.velociraptorClient.huntResultsByArtifact(
+      const { results, skipped, unread, truncated } = await vc.client.huntResultsByArtifact(
         job.huntId,
         job.artifacts,
         job.filters,

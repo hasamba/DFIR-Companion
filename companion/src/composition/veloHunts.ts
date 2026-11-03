@@ -44,6 +44,8 @@ import { readInIncidentWindow, readScope } from "../integrations/velociraptor/ve
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
+import { unavailableServerClients } from "./serverSetClients.js";
+import { createTickVelo } from "./veloCaseClient.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
@@ -209,6 +211,11 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
   });
+  const collectVelo = createTickVelo(
+    () => options.serverClients ?? unavailableServerClients,
+    logLine,
+    "velo-hunt",
+  );
   const admittedCollect = createHuntCollectAdmission(store, logLine, scheduleVeloHuntStatusPoll);
 
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
@@ -219,10 +226,11 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   //
   // ONE pass. Concurrency is owned by startVeloHuntCollect — call that, not this.
   async function collectVeloHuntOnce(caseId: string, huntId: string): Promise<void> {
-    const client = options.velociraptorClient;
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
-    if (!client || !huntStore || !pipeline) return;
+    if (!huntStore || !pipeline) return;
+    const client = collectVelo(caseId); // the case's own server set, resolved per collect
+    if (!client) return;
     const pending = veloHuntTimers.get(caseId, huntId);
     if (pending) {
       clearTimeout(pending);

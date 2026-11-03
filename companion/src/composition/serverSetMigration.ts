@@ -1,6 +1,6 @@
 // First-start migration: build the "Testing" server set from the current DFIR_* settings and link
 // every existing case to it. Runs on every start; after the first it only links unlinked cases.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { ServerSetInput } from "../integrations/serverSets/types.js";
@@ -46,12 +46,27 @@ function buildInput(env: NodeJS.ProcessEnv, skip: ReadonlySet<string>): ServerSe
   return input;
 }
 
+// The Velociraptor client inventory is per set (clients-<setId>.json). The one global file that
+// existed before server sets belongs to the server the Testing set was seeded from.
+function adoptLegacyInventory(inventoryDir: string, setId: string): void {
+  const legacy = join(inventoryDir, "clients.json");
+  const target = join(inventoryDir, `clients-${setId}.json`);
+  if (!existsSync(legacy) || existsSync(target)) return;
+  try {
+    renameSync(legacy, target);
+  } catch (err) {
+    // Not fatal: the set starts with an empty inventory and the next fleet refresh fills it.
+    logLine(`[server-sets] could not move clients.json to ${target}: ${(err as Error).message}`);
+  }
+}
+
 // Creates "Testing" when the store is empty (a tool the store rejects is dropped with a warning),
 // then links every case that has no link to the default set. Returns what it did.
 export function seedServerSets(
   store: ServerSetStore,
   env: NodeJS.ProcessEnv,
   caseIds: string[],
+  opts: { inventoryDir?: string } = {},
 ): { seeded: boolean; linked: number } {
   let seeded = false;
   if (store.list().length === 0) {
@@ -61,6 +76,7 @@ export function seedServerSets(
         const set = store.create(buildInput(env, skip));
         store.setDefault(set.id);
         seeded = true;
+        if (opts.inventoryDir) adoptLegacyInventory(opts.inventoryDir, set.id);
       } catch (err) {
         const tool = /^(iris|timesketch) url must be http/.exec((err as Error).message)?.[1];
         if (!tool || skip.has(tool)) throw err;
@@ -106,9 +122,10 @@ export function runServerSetSeed(
   caseIds: string[],
   storeDir: string,
   log: (line: string) => void,
+  inventoryDir?: string,
 ): void {
   try {
-    seedServerSets(store, env, caseIds);
+    seedServerSets(store, env, caseIds, { inventoryDir });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     const reason = OWN_ERROR.test(msg) ? msg : err instanceof Error ? err.name : "unknown error";

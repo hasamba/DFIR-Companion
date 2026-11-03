@@ -24,6 +24,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1874 item 4. The Velociraptor hunt collect and the external hunt/flow ingest used to store their
 // fetched rows INSIDE the import section, so they could pass the memory guard no size hint: a refusal
@@ -111,7 +112,7 @@ async function makeCollectApp(rows: unknown[] = PSTREE_ROWS) {
     superTimelineStore: new SuperTimelineStore(store),
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
     importLock: new ImportLock(admission),
-    velociraptorClient: new VelociraptorClient(veloCfg, huntRunner(rows)),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, huntRunner(rows))),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
   });
@@ -272,9 +273,7 @@ async function makeExternalApp(uploads: { name: string; clientId: string; conten
     superTimelineStore: new SuperTimelineStore(store),
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
     importLock: new ImportLock(admission),
-    velociraptorClient: client as unknown as NonNullable<
-      Parameters<typeof createApp>[1]
-    >["velociraptorClient"],
+    serverClients: veloServerClients(client),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store, stateStore, admission, rows };

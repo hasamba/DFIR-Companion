@@ -78,12 +78,19 @@ export function createServerClients(
     return { ok: true, servers };
   }
 
-  function guarded(read: () => ResolveResult): ResolveResult {
+  // The last error logged per lookup key. Background loops resolve on every tick, so a broken store
+  // logs once, then stays quiet until a resolve for that key succeeds.
+  const logged = new Map<string, string>();
+  function guarded(key: string, read: () => ResolveResult): ResolveResult {
     try {
-      return read();
+      const r = read();
+      if (r.ok) logged.delete(key);
+      return r;
     } catch (err) {
-      // The message names no secret: decrypt errors carry no plaintext. Log it once, never return it.
-      warnLine(`[server-sets] ${(err as Error).message}`);
+      // The message names no secret: decrypt errors carry no plaintext. Log it, never return it.
+      const msg = (err as Error).message;
+      if (logged.get(key) !== msg) warnLine(`[server-sets] ${msg}`);
+      logged.set(key, msg);
       return fail(UNREADABLE);
     }
   }
@@ -95,16 +102,16 @@ export function createServerClients(
 
   return {
     forCase: (caseId) =>
-      guarded(() => {
+      guarded(`case:${caseId}`, () => {
         const setId = store.caseSetId(caseId);
         return setId ? bySetId(setId, DANGLING) : fail(NO_LINK);
       }),
     forDefault: () =>
-      guarded(() => {
+      guarded("default", () => {
         const id = store.defaultId();
         return id ? bySetId(id, NO_DEFAULT) : fail(NO_DEFAULT);
       }),
-    forSet: (setId) => guarded(() => bySetId(setId, "Server set not found.")),
+    forSet: (setId) => guarded(`set:${setId}`, () => bySetId(setId, "Server set not found.")),
     invalidate: (setId) => {
       if (setId === undefined) cache.clear();
       else cache.delete(setId);

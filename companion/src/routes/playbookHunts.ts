@@ -201,6 +201,11 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
+      // The case's own Velociraptor server, if its server set has one (best-effort below when not).
+      const caseServers = ctx.serverClients.forCase(req.params.id);
+      const velo = caseServers.ok ? caseServers.servers.velociraptor : undefined;
+      const refreshCaseFleet = (): Promise<number> =>
+        caseServers.ok && velo ? refreshVeloClients(caseServers.servers.setId) : Promise.resolve(0);
 
       // SINGLE-TASK REGEN: body carries `{ taskId, excludeVql }` — force-regenerate just that one
       // task, passing the existing VQL so the model produces something different.
@@ -210,12 +215,12 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
         if (!task) return res.status(404).json({ error: "task not found" });
         const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
         const [, artifactNames] = await Promise.all([
-          refreshVeloClients().catch((e) => {
+          refreshCaseFleet().catch((e) => {
             logLine(`[velociraptor] inventory refresh before regen failed: ${(e as Error).message}`);
             return 0;
           }),
-          options.velociraptorClient
-            ? options.velociraptorClient
+          velo
+            ? velo
                 .listClientArtifacts()
                 .then((a) => a.map((x) => x.name))
                 .catch(() => [] as string[])
@@ -268,12 +273,12 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // The artifact list may come from the client's short-TTL catalog cache — fine here: it only steers
       // the model's suggestions (already best-effort, `catch → []`), and run-bundle/deploy re-checks.
       const [, artifactNames] = await Promise.all([
-        refreshVeloClients().catch((e) => {
+        refreshCaseFleet().catch((e) => {
           logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`);
           return 0;
         }),
-        pending.length && options.velociraptorClient
-          ? options.velociraptorClient
+        pending.length && velo
+          ? velo
               .listClientArtifacts()
               .then((a) => a.map((x) => x.name))
               .catch(() => [] as string[])

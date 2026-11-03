@@ -13,6 +13,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -89,7 +90,7 @@ async function makeApp(runnerOverride: VqlRunner = runner) {
     pipeline,
     stateStore,
     importMetaStore: new ImportMetaStore(store),
-    velociraptorClient: new VelociraptorClient(veloCfg, runnerOverride),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, runnerOverride)),
     veloMonitorStore: new VeloMonitorStore(store),
     veloMonitorPollSeconds: 30,
   });
@@ -254,7 +255,7 @@ describe("Velociraptor live monitors — routes", () => {
   it("monitors route returns [] and start is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velomon-noclient-"));
     const store = new CaseStore(root);
-    const bare = createApp(store, {});
+    const bare = createApp(store, { serverClients: stubServerClients({}) }); // a set without Velociraptor
     // The case has to be REAL for this to be a test about the 200/501: the case-exists gate on
     // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the wrong reason.
     await request(bare).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });

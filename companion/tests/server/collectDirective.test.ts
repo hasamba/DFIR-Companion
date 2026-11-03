@@ -13,6 +13,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -39,7 +40,9 @@ async function makeApp(opts: { withVelo?: boolean } = {}) {
     veloHuntStore: new VeloHuntStore(store),
     huntOutcomeStore: new HuntOutcomeStore(store),
     aiConfigured: false,
-    ...(opts.withVelo === false ? {} : { velociraptorClient: new VelociraptorClient(veloCfg, runner) }),
+    ...(opts.withVelo === false
+      ? { serverClients: stubServerClients({}) }
+      : { serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)) }),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app };

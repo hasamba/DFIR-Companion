@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
+import { caseVelo, defaultVelo } from "./veloServers.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { ALL_CLIENTS } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
@@ -32,13 +33,11 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
   // List the server's CLIENT_EVENT (continuous monitoring) artifacts for the Monitor-mode picker.
   // Same short-TTL catalog cache + `?refresh=1` bypass as /velociraptor/artifacts above.
   app.get("/velociraptor/event-artifacts", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = defaultVelo(ctx, res);
+    if (!vc) return;
     try {
       return res.status(200).json({
-        artifacts: await options.velociraptorClient.listClientArtifacts("client_event", {
+        artifacts: await vc.client.listClientArtifacts("client_event", {
           refresh: isRefresh(req),
         }),
       });
@@ -62,10 +61,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
   // artifact) — re-adding the same pair updates it in place. The cursor starts at "now" so only events
   // that arrive AFTER the monitor is created are ingested (no history backfill).
   app.post("/cases/:id/velociraptor/monitors", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!caseVelo(ctx, req.params.id, res)) return;
     if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
@@ -109,22 +105,20 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
   // for each (idempotent: an existing monitor for the same artifact is refreshed, not duplicated). 422
   // with guidance when nothing is configured / the version's proto differs (set the override env var).
   app.post("/cases/:id/velociraptor/monitors/auto", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    const vc = caseVelo(ctx, req.params.id, res);
+    if (!vc) return;
     if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
     try {
-      const discovered = await options.velociraptorClient.listMonitoredArtifacts();
+      const discovered = await vc.client.listMonitoredArtifacts();
       if (!discovered.length) {
         // Capture the RAW monitoring-state shape (which varies by version) — logged AND returned in the
         // response so the analyst can see it in the dashboard and we can model DFIR_VELOCIRAPTOR_MONITORED_VQL.
         let rawSample = "";
         try {
-          const raw = await options.velociraptorClient.monitoringStateRaw();
+          const raw = await vc.client.monitoringStateRaw();
           rawSample = JSON.stringify(raw).slice(0, 2000);
           logLine(
             `[velo-monitor] auto: monitoring table returned no artifacts. Raw get_client_monitoring() shape: ${rawSample}`,
@@ -184,10 +178,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
 
   // Resume a stopped monitor (re-arms its timer; keeps the persisted cursor so no re-ingest).
   app.post("/cases/:id/velociraptor/monitors/:mid/start", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!caseVelo(ctx, req.params.id, res)) return;
     if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
     const caseId = req.params.id,
       id = req.params.mid;
@@ -213,10 +204,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
   // Poll a monitor NOW (don't wait for its timer) — a "check now" for the analyst. Runs one poll cycle
   // (which also re-arms an active monitor's timer) and returns the updated monitor.
   app.post("/cases/:id/velociraptor/monitors/:mid/poll", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!caseVelo(ctx, req.params.id, res)) return;
     if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
     const caseId = req.params.id,
       id = req.params.mid;

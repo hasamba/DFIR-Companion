@@ -36,19 +36,15 @@ import {
 } from "./enrichmentProviders.js";
 import {
   buildClickUpClient,
-  buildIrisClient,
   buildJiraClient,
   buildMispPushClient,
   buildNotionClient,
   buildServiceNowClient,
-  buildTimesketchClient,
   clickupOptions,
-  irisPushOptions,
   jiraOptions,
   mispPushOptions,
   notionPushOptions,
   servicenowOptions,
-  timesketchPushOptions,
 } from "./integrationClients.js";
 import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
@@ -84,6 +80,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     listCaseIdsSync(rt.store.casesRoot),
     join(dirname(rt.store.casesRoot), "server-sets"),
     logLine,
+    join(dirname(rt.store.casesRoot), "velociraptor"),
   );
   const {
     store,
@@ -145,7 +142,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     mcpServerStore,
     importUndoStore,
     jobManager,
-    velociraptorClient,
+    clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
@@ -361,9 +358,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.
     enrichHealthTtlMs: numEnv("DFIR_ENRICH_HEALTH_TTL_MS"),
     enrichHealthPollMs: numEnv("DFIR_ENRICH_HEALTH_POLL_MS") ?? 60_000,
-    irisClient: buildIrisClient(),
     serverClients: createServerClients(rt.serverSetStore, process.env),
-    velociraptorClient,
+    clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
@@ -386,11 +382,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     onPushToken: (caseId) => hub.broadcastTo(caseId, { type: "push_token_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
     huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
-    irisOptions: irisPushOptions(),
     irisExportStore,
-    timesketchClient: buildTimesketchClient(),
-    timesketchOptions: timesketchPushOptions(),
-    rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
     incidentTypeStore,
     collectionPlanStore,

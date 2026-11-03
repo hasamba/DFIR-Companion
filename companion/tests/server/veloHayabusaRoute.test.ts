@@ -14,6 +14,7 @@ import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { VelociraptorClient, type VqlRunner } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1756 — one Windows.Hayabusa.Rules result imported through the native Hayabusa importer from the drop
 // folder, but through the Velociraptor row mapper from a fleet pull. The same file then gave different
@@ -154,9 +155,7 @@ async function makeExternalApp(results: Record<string, unknown[]>, partlyRead = 
     pipeline: base.pipeline,
     stateStore: base.stateStore,
     superTimelineStore: base.superTimelineStore,
-    velociraptorClient: externalClient(results, partlyRead) as unknown as NonNullable<
-      Parameters<typeof createApp>[1]
-    >["velociraptorClient"],
+    serverClients: veloServerClients(externalClient(results, partlyRead)),
   });
   await newCase(app, "pull");
   await newCase(app, "drop");
@@ -236,7 +235,7 @@ describe("a Hayabusa result imports the same way on every path (#1756)", () => {
         pipeline: base.pipeline,
         stateStore: base.stateStore,
         importMetaStore: new ImportMetaStore(base.store),
-        velociraptorClient: client,
+        serverClients: veloServerClients(client),
         artifactBundleStore: new ArtifactBundleStore(privateBundleDir(base.root)),
         veloHuntStore: new VeloHuntStore(base.store),
       });

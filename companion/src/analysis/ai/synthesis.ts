@@ -16,7 +16,7 @@ import { yieldToEventLoop } from "../yieldToEventLoop.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
@@ -124,7 +124,7 @@ export interface SynthesisContext
       onSynth?: (caseId: string, diff: FindingsDiff, state: InvestigationState) => void;
       onState?: (state: InvestigationState) => void;
       assetOverridesStore?: AssetOverridesStore;
-      velociraptorClientStore?: VelociraptorClientStore;
+      velociraptorClientStore?: CaseFleetInventory;
       hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
       evidenceAttestationStore?: EvidenceAttestationStore;
       findingTaskStore?: FindingTaskStore;

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServerClients } from "../../src/composition/serverSetClients.js";
+import { getServerLogger } from "../../src/logging/serverLogger.js";
 import { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
 import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.js";
 import type { IrisSettings } from "../../src/integrations/serverSets/types.js";
@@ -147,5 +148,26 @@ describe("createServerClients", () => {
     const other = new ServerSetStore(join(dir, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 9)));
     const r = createServerClients(other, {}, fakes().builders).forCase("c1");
     expect(r).toEqual({ ok: false, status: 409, error: "Server sets cannot be read. Check the server log." });
+  });
+
+  it("logs a read error once per key until a resolve for that key succeeds", () => {
+    const set = store.create({ name: "Acme", iris: iris() });
+    store.linkCase("c1", set.id);
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => undefined);
+    const broken = vi.spyOn(store, "caseSetId").mockImplementation(() => {
+      throw new Error("server set secret cannot decrypt");
+    });
+    const sc = createServerClients(store, {}, fakes().builders);
+    sc.forCase("c1");
+    sc.forCase("c1");
+    expect(warn).toHaveBeenCalledTimes(1);
+    broken.mockRestore();
+    expect(sc.forCase("c1").ok).toBe(true);
+    vi.spyOn(store, "caseSetId").mockImplementation(() => {
+      throw new Error("server set secret cannot decrypt");
+    });
+    sc.forCase("c1");
+    expect(warn).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
   });
 });

@@ -59,7 +59,6 @@ import { createOcrIndexer } from "./composition/ocrIndexer.js";
 import { createAiControlCache } from "./composition/aiControlCache.js";
 import { jobModelResolver } from "./composition/jobModel.js";
 import { servedModels } from "./analysis/servedModels.js";
-import { buildIrisClient, buildTimesketchClient } from "./composition/integrationClients.js";
 import { createConclusionsOutOfDate } from "./composition/conclusionsOutOfDate.js";
 
 // Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
@@ -189,10 +188,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // be. Where a genuine cycle exists (a service the routes rebind at runtime, or one that reaches
   // back into a later one) the dependency is passed as a thunk, exactly as RouteContext does.
 
-  // The active DFIR-IRIS client. Mutable: POST /iris/reconnect (routes/reportsExport.ts) can rebuild
-  // it at runtime — via ctx.setIrisClient() — without a server restart (config saved via Settings, or
-  // IRIS coming back online). Starts from options.
-  let irisClient = options.irisClient;
   // The active NSRL RDS SQLite connection (#63). Mutable: the Settings → NSRL connect/disconnect
   // routes can swap it at runtime (unless env-managed). Starts from the startup-resolved DB.
   let nsrlDb = options.nsrlDb;
@@ -292,9 +287,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options,
     invalidateServerClients: () => (options.serverClients ?? unavailableServerClients).invalidate(),
     setEnrichmentProviders: enrichment.setProviders,
-    setIrisClient: (client) => {
-      irisClient = client;
-    },
   });
 
   const ctx: RouteContext = {
@@ -311,9 +303,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     hasAiProvider,
     // Case-lifecycle graduations (routes/caseLifecycle.ts + routes/casePassword.ts): the unlock-cookie
     // secret, the per-case state mutex, the drop-inbox creator, the importer registry-reload + precedence
-    // accessor/setter, and the runtime Timesketch-client rebuild — all shared with code that STAYS in
-    // createApp (see context.ts for why each was graduated rather than moved). buildTimesketchClient is a
-    // module-level function (kept in server.ts so no route imports a value from ../server.js).
+    // accessor/setter — all shared with code that STAYS in createApp (see context.ts for why each was
+    // graduated rather than moved).
     instanceSecret,
     runStateExclusive,
     importLock,
@@ -321,7 +312,6 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     reloadImporters: imports.reloadImporters,
     importerPrecedence: imports.importerPrecedence,
     setImporterPrecedence: imports.setImporterPrecedence,
-    rebuildTimesketchClient: () => (options.rebuildTimesketchClient ?? buildTimesketchClient)(),
     rebuildForPrefix,
     getControl,
     setControl,
@@ -338,12 +328,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     captureBuffers: () => analysis.captureBuffers,
     synthInFlight: () => analysis.synthInFlight,
     importerRegistry: imports.importerRegistry,
-    irisClient: () => irisClient,
     serverClients: options.serverClients ?? unavailableServerClients,
-    setIrisClient: (client) => {
-      irisClient = client;
-    },
-    rebuildIrisClient: () => (options.rebuildIrisClient ?? buildIrisClient)(),
     dispatchNotify,
     dropWatchEnabled: () => drops.watchEnabled,
     enrichmentProviders: enrichment.providers,
@@ -474,7 +459,6 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     updateRepo,
     notifier,
     dashboardBaseUrl,
-    velociraptorClient,
     velociraptorClientStore,
     hub,
     analysisRunStore,
@@ -539,22 +523,20 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
 
   // The ~120-member AppOptions literal binding every store to its live-broadcast callback.
   // See composition/appWiring.ts.
-  const app = createApp(
-    store,
-    buildAppOptions(rt, {
-      teamAuth,
-      pipeline: wiredPipeline,
-      provider,
-      secondOpinionProvider,
-      ocrRunner,
-      bulkImportSink,
-      backupManager,
-      integrityMonitor,
-      onPreflightReady: (run) => {
-        scheduledPreflight = run;
-      },
-    }),
-  );
+  const appOptions = buildAppOptions(rt, {
+    teamAuth,
+    pipeline: wiredPipeline,
+    provider,
+    secondOpinionProvider,
+    ocrRunner,
+    bulkImportSink,
+    backupManager,
+    integrityMonitor,
+    onPreflightReady: (run) => {
+      scheduledPreflight = run;
+    },
+  });
+  const app = createApp(store, appOptions);
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
   // filenames only; browsers that auto-request /favicon.ico get the crisp 32px PNG.
@@ -634,8 +616,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   startPostListenTasks({
     store,
     demoMode,
-    velociraptorClient,
-    velociraptorClientStore,
+    serverSets: rt.serverSetStore,
+    serverClients: appOptions.serverClients ?? unavailableServerClients,
+    clientInventoryFor: rt.clientInventoryFor,
     updateCheckStore,
     updateRepo,
     auditExporter: rt.auditExporter,

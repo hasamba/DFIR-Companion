@@ -25,7 +25,7 @@ import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 import type { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
-import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../analysis/velociraptorClientStore.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
@@ -64,7 +64,7 @@ export interface AiRuntimeDeps {
   analysisRunStore: AnalysisRunStore;
   operationalMetrics: OperationalMetricsStore;
   secondOpinionStore: SecondOpinionStore;
-  velociraptorClientStore?: VelociraptorClientStore;
+  velociraptorClientStore?: CaseFleetInventory;
   bulkImportSink?: BulkImportSink;
   notifier: Notifier;
   dashboardBaseUrl: string;

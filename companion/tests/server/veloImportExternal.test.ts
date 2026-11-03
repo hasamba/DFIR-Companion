@@ -14,6 +14,7 @@ import {
   type VelociraptorRunResult,
   type VqlRunner,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
 
 // The import-external route only calls four VelociraptorClient methods: getHuntArtifacts +
 // huntResultsByArtifact for a hunt ref, getFlowInfo + collectionResults for a flow ref. A hand-rolled
@@ -132,9 +133,7 @@ async function makeApp(
     stateStore,
     superTimelineStore,
     jobManager,
-    velociraptorClient: client as unknown as NonNullable<
-      Parameters<typeof createApp>[1]
-    >["velociraptorClient"],
+    serverClients: veloServerClients(client),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return {
@@ -162,7 +161,12 @@ async function makeUnconfiguredApp() {
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, superTimelineStore });
+  const app = createApp(store, {
+    pipeline,
+    stateStore,
+    superTimelineStore,
+    serverClients: stubServerClients({}),
+  });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return app;
 }
@@ -176,7 +180,7 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     const app = await makeUnconfiguredApp();
     const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
     expect(res.status).toBe(501);
-    expect(res.body.error).toMatch(/DFIR_VELOCIRAPTOR_API_CONFIG/);
+    expect(res.body.error).toMatch(/server set/);
     expect(res.body.error).toMatch(/fetches/i); // says it makes an outbound call
     expect(res.body.error).toMatch(/import-velociraptor/); // names the offline alternative
   });
@@ -566,7 +570,7 @@ async function makeRealClientApp() {
     pipeline,
     stateStore,
     superTimelineStore,
-    velociraptorClient: new VelociraptorClient(cfg, runner),
+    serverClients: veloServerClients(new VelociraptorClient(cfg, runner)),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, asked };
@@ -661,7 +665,7 @@ async function makeStreamingApp() {
   const app = createApp(store, {
     pipeline,
     stateStore,
-    velociraptorClient: new VelociraptorClient(cfg, runner),
+    serverClients: veloServerClients(new VelociraptorClient(cfg, runner)),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, root };
