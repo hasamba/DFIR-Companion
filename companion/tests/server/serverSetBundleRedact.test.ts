@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, getServerLogger } from "../../src/server.js";
 import { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
 import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.js";
+import { veloApiConfigYaml, veloKeyBodyLine, VELO_SHORT_LAST_LINE } from "../helpers/veloApiConfig.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 
 const IRIS_KEY = "iris-key-sentinel-alpha";
@@ -21,10 +22,7 @@ let restorePaths: () => void = () => undefined;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ss-bundle-"));
   velo = join(dir, "api.config.yaml");
-  writeFileSync(
-    velo,
-    `client_private_key: |\n  -----BEGIN RSA PRIVATE KEY-----\n  ${VELO_CERT}\n  -----END RSA PRIVATE KEY-----\napi_connection_string: velo.example.com:8001\n`,
-  );
+  writeFileSync(velo, veloApiConfigYaml(VELO_CERT));
   sets = new ServerSetStore(join(dir, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 7)));
   sets.create({
     name: "Alpha",
@@ -47,7 +45,8 @@ describe("support bundle redacts server set secrets", () => {
       [
         `2026-11-03T10:00:00.000Z ERROR iris call failed with key ${IRIS_KEY}`,
         `2026-11-03T10:00:01.000Z ERROR timesketch login ${TS_PASS} refused`,
-        `2026-11-03T10:00:02.000Z ERROR bad key material ${VELO_CERT}`,
+        `2026-11-03T10:00:02.000Z ERROR bad key material ${veloKeyBodyLine(VELO_CERT)}`,
+        `2026-11-03T10:00:03.000Z ERROR bad pem tail ${VELO_SHORT_LAST_LINE}`,
         "",
       ].join("\n"),
     );
@@ -75,14 +74,17 @@ describe("support bundle redacts server set secrets", () => {
     expect(text).toContain("iris call failed"); // the line is there, only the secret is gone
     for (const e of entries) {
       const body = Buffer.from(e.data).toString("utf8");
-      for (const s of [IRIS_KEY, TS_PASS, VELO_CERT]) expect(body, `${e.path} ${s}`).not.toContain(s);
+      for (const s of [IRIS_KEY, TS_PASS, VELO_CERT, VELO_SHORT_LAST_LINE])
+        expect(body, `${e.path} ${s}`).not.toContain(s);
     }
   });
 });
 
 describe("ServerSetStore.secretValues", () => {
   it("returns every secret and skips a set it cannot decrypt", () => {
-    expect(sets.secretValues().sort()).toEqual([IRIS_KEY, TS_PASS, VELO_CERT].sort());
+    const values = sets.secretValues();
+    expect(values).toEqual(expect.arrayContaining([IRIS_KEY, TS_PASS, VELO_SHORT_LAST_LINE]));
+    expect(values.some((v) => v.includes(VELO_CERT))).toBe(true);
     const wrongKey = new ServerSetStore(join(dir, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 9)));
     expect(wrongKey.secretValues()).toEqual([]);
   });

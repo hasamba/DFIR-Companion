@@ -23,10 +23,11 @@ import { VelociraptorClient, type VqlRunner } from "../../src/integrations/veloc
 import { AuditExportStore } from "../../src/analysis/auditExportStore.js";
 import { AuditCursorStore } from "../../src/analysis/auditExportCursor.js";
 import { createAuditExporter } from "../../src/integrations/audit/auditExporter.js";
+import { veloApiConfigYaml } from "../helpers/veloApiConfig.js";
 import { decryptBuffer } from "../../src/analysis/caseEncryption.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
-import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
-import type { TimesketchClient } from "../../src/integrations/timesketch/timesketchClient.js";
+import { IrisClient } from "../../src/integrations/iris/irisClient.js";
+import { TimesketchClient } from "../../src/integrations/timesketch/timesketchClient.js";
 
 // Task 8: a stored key never leaves the server set store. Three sentinels, one per tool, are pushed
 // through every surface that could carry them; each surface is searched as raw bytes (and, for zips
@@ -45,42 +46,74 @@ let capture: string[];
 let auditBodies: string[];
 let veloConfigPath: string;
 
+// Fake remote servers. The clients below are the REAL IrisClient / TimesketchClient / VelociraptorClient
+// built from the set's decrypted settings; only the transport (fetch, VQL runner) is faked. Each fake
+// records what it was handed, so the test can prove the keys really flowed to the wire.
+const sawIrisAuth: string[] = [];
+const sawTsPasswords: string[] = [];
+const veloConfigsRead: string[] = [];
+let irisMode: "ok" | "fail" = "ok";
+let tsMode: "ok" | "fail" = "ok";
+let veloFail = false;
+
+const json = (data: unknown, status = 200): Response =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+
+const irisFetch = (async (url: string, init?: { headers?: Record<string, string> }) => {
+  const auth = init?.headers?.Authorization ?? "";
+  sawIrisAuth.push(auth);
+  // A misbehaving server that echoes the credential back in its error body.
+  if (irisMode === "fail") return json({ status: "error", message: `rejected ${auth}` }, 500);
+  const u = new URL(url);
+  if (u.pathname.endsWith("/manage/cases/filter")) return json({ status: "success", data: { cases: [] } });
+  if (u.pathname.endsWith("/manage/cases/add"))
+    return json({ status: "success", data: { case_id: 7, case_name: "Case c1" } });
+  return json({ status: "success", data: [] });
+}) as never;
+
+const tsFetch = (async (url: string, init?: { method?: string; body?: unknown }) => {
+  const u = new URL(url);
+  if (u.pathname.startsWith("/login")) {
+    if (init?.method === "POST") {
+      sawTsPasswords.push(String(init.body));
+      if (tsMode === "fail") return new Response(`bad login ${String(init.body)}`, { status: 500 });
+      return new Response(null, { status: 302, headers: { "set-cookie": "session=abc; Path=/" } });
+    }
+    return new Response('<input name="csrf_token" type="hidden" value="tok-word"/>', {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  }
+  // The session is cached after the first login, so a failure has to come from the API itself.
+  if (tsMode === "fail")
+    return new Response(`server error for ${sawTsPasswords.at(-1) ?? ""}`, { status: 500 });
+  if (u.pathname.startsWith("/api/v1/sketches/5"))
+    return json({ objects: [{ id: 5, timelines: [] }], meta: {} });
+  if (u.pathname.startsWith("/api/v1/sketches"))
+    return json({ objects: [{ id: 5, timelines: [] }], meta: {} });
+  return json({ objects: [], meta: {} });
+}) as never;
+
 // A tiny stateful Client Monitoring table: add_client_monitoring puts the artifact in, rm takes it out.
 const monitored = new Set<string>();
-const veloRunner: VqlRunner = async (statements) => {
-  const vql = statements.join("\n");
-  const art = /artifact='([^']+)'/.exec(vql)?.[1];
-  if (art && vql.includes("add_client_monitoring")) monitored.add(art);
-  if (art && vql.includes("rm_client_monitoring")) monitored.delete(art);
-  return { rows: [], raw: "" };
-};
+const veloRunnerFor =
+  (configPath: string): VqlRunner =>
+  async (statements) => {
+    // Reading the set's API config proves the real client resolved the path from the set.
+    readFileSync(configPath, "utf8");
+    veloConfigsRead.push(configPath);
+    if (veloFail) throw new Error(`velociraptor query failed using ${configPath}`);
+    const vql = statements.join("\n");
+    const art = /artifact='([^']+)'/.exec(vql)?.[1];
+    if (art && vql.includes("add_client_monitoring")) monitored.add(art);
+    if (art && vql.includes("rm_client_monitoring")) monitored.delete(art);
+    return { rows: [], raw: "" };
+  };
 
 const builders: ServerClientBuilders = {
-  iris: (_s: IrisSettings) =>
-    ({
-      ping: async () => undefined,
-      findCaseByName: async () => null,
-      createCase: async (b: { case_name: string }) => ({ caseId: 2, caseName: b.case_name }),
-      setSummary: async () => undefined,
-      iocTypeMap: async () => new Map(),
-      assetTypeMap: async () => new Map(),
-      eventCategoryMap: async () => new Map(),
-      taskStatusMap: async () => new Map([["to do", 1]]),
-      listAssets: async () => [],
-      addAsset: async () => 1,
-      listIocs: async () => [],
-      addIoc: async () => 1,
-      listEvents: async () => [],
-      addEvent: async () => 1,
-      listTasks: async () => [],
-      addTask: async () => 1,
-      listDirectories: async () => [],
-      addDirectory: async () => 1,
-      deleteDirectory: async () => undefined,
-      addNote: async () => 1,
-    }) as unknown as IrisClient,
-  timesketch: (_s: TimesketchSettings) =>
-    ({ login: async () => undefined, listSketches: async () => [] }) as unknown as TimesketchClient,
+  iris: (s: IrisSettings) => new IrisClient({ baseUrl: s.url, apiKey: s.apiKey, fetchFn: irisFetch }),
+  timesketch: (s: TimesketchSettings) =>
+    new TimesketchClient({ baseUrl: s.url, username: s.user, password: s.password, fetchFn: tsFetch }),
   velociraptor: (s: VelociraptorSettings) => {
     const client = new VelociraptorClient(
       {
@@ -90,11 +123,53 @@ const builders: ServerClientBuilders = {
         maxRows: 1000,
         maxOutputBytes: 1024 * 1024,
       },
-      veloRunner,
+      veloRunnerFor(s.apiConfigPath),
     );
     client.listMonitoredArtifacts = async () => [...monitored];
     return client;
   },
+};
+
+// Expected [status, emptyBodyAllowed] for every surface the leak search reads.
+const EXPECTED: Record<string, [number, boolean]> = {
+  "POST /server-sets": [201, false],
+  "POST /server-sets (2)": [201, false],
+  "POST /server-sets (3)": [201, false],
+  "GET /server-sets": [200, false],
+  "PUT /server-sets/:id": [200, false],
+  "POST /server-sets/:id/test": [200, false],
+  "POST /server-sets/:id/default": [204, true],
+  "DELETE /server-sets/:id": [204, true],
+  "POST /cases": [201, false],
+  "GET /cases/c1/server-set": [200, false],
+  "GET /cases/c1/server-set (2)": [200, false],
+  "POST /cases/c1/server-set": [200, false],
+  "POST /cases/c1/push/iris": [200, false],
+  "POST /cases/c1/push/iris (IRIS error)": [502, false],
+  "POST /cases/c1/push/timesketch": [200, false],
+  "POST /cases/c1/push/timesketch (API error)": [502, false],
+  "POST monitors": [202, false],
+  "POST monitors (Velociraptor error)": [502, false],
+  "POST monitors/:mid/stop": [200, false],
+  "POST report": [200, false],
+  "GET report.md": [200, false],
+  "GET report.html": [200, false],
+  "GET report.docx": [200, false],
+  "GET report/interactive": [200, false],
+  "GET export/stix": [200, false],
+  "GET iris-export": [200, false],
+  "GET clickup-export": [501, false], // known: ClickUp is not configured in the test app
+  "GET incident-timeline.csv": [200, false],
+  "GET timeline.jsonl": [200, true], // an empty case has no forensic events
+  "GET super-timeline.jsonl": [501, false], // known: no super-timeline store in the test app
+  "GET handoff": [200, false],
+  "GET activity-log": [200, false],
+  "GET export/redacted": [200, false],
+  "POST support-bundle": [200, false],
+  "POST /audit-export": [201, false],
+  "POST audit backfill": [200, false],
+  "POST export/encrypted (container)": [200, false],
+  "POST archive": [200, false],
 };
 
 const fullSet = (name: string) => ({
@@ -206,15 +281,18 @@ function spyAllLogOutput(): void {
 beforeEach(() => {
   capture = [];
   monitored.clear();
+  sawIrisAuth.length = 0;
+  sawTsPasswords.length = 0;
+  veloConfigsRead.length = 0;
+  irisMode = "ok";
+  tsMode = "ok";
+  veloFail = false;
   auditBodies = [];
   dir = mkdtempSync(join(tmpdir(), "ss-noleak-"));
   casesRoot = join(dir, "cases");
   mkdirSync(casesRoot, { recursive: true });
   veloConfigPath = join(dir, "velo-api.config.yaml");
-  writeFileSync(
-    veloConfigPath,
-    `ca_certificate: |\n  -----BEGIN CERTIFICATE-----\n  ${VELO_CERT}\n  -----END CERTIFICATE-----\nclient_private_key: |\n  -----BEGIN RSA PRIVATE KEY-----\n  ${VELO_CERT}\n  -----END RSA PRIVATE KEY-----\napi_connection_string: velo.example.com:8001\n`,
-  );
+  writeFileSync(veloConfigPath, veloApiConfigYaml(VELO_CERT));
   sets = new ServerSetStore(join(dir, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 7)));
   cases = new CaseStore(casesRoot);
   activity = new ActivityLogStore(cases);
@@ -271,14 +349,36 @@ describe("no key ever leaves the server set store", () => {
     check("POST /cases", make);
     check("GET /cases/c1/server-set", await request(app).get("/cases/c1/server-set"));
     const push = await request(app).post("/cases/c1/push/iris").send({});
-    expect(push.status).toBe(200);
     check("POST /cases/c1/push/iris", push);
+    // Positive control: the decrypted key really reached the (fake) IRIS wire.
+    expect(sawIrisAuth).toContain(`Bearer ${IRIS_KEY}`);
+    // Failure path: IRIS answers 500 and echoes the credential back in its body.
+    irisMode = "fail";
+    check("POST /cases/c1/push/iris (IRIS error)", await request(app).post("/cases/c1/push/iris").send({}));
+    irisMode = "ok";
+    // Timesketch: the real client logs in with the set's password (positive control), then a failed login.
+    check("POST /cases/c1/push/timesketch", await request(app).post("/cases/c1/push/timesketch").send({}));
+    expect(sawTsPasswords.some((b) => b.includes(TS_PASS))).toBe(true);
+    tsMode = "fail";
+    check(
+      "POST /cases/c1/push/timesketch (API error)",
+      await request(app).post("/cases/c1/push/timesketch").send({}),
+    );
+    tsMode = "ok";
     const mon = await request(app)
       .post("/cases/c1/velociraptor/monitors")
       .send({ clientId: "C.1", artifact: "Windows.Events.ProcessCreation", pollSeconds: 60 });
-    expect(mon.status).toBe(202);
     check("POST monitors", mon);
     const mid = mon.body.monitor.id as string;
+    // The real Velociraptor client resolved the set's API config path, and one failing call carries it in its error text.
+    expect(veloConfigsRead).toContain(veloConfigPath);
+    veloFail = true;
+    const veloErr = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ clientId: "C.1", artifact: "Windows.Events.ServiceCreation", pollSeconds: 60 });
+    veloFail = false;
+    check("POST monitors (Velociraptor error)", veloErr);
+    expect(veloErr.text).toContain("velociraptor query failed"); // the route scrubs the path itself
     check("POST monitors/:mid/stop", await request(app).post(`/cases/c1/velociraptor/monitors/${mid}/stop`));
     const change = await request(app).post("/cases/c1/server-set").send({ setId: setB, confirm: true });
     expect(change.status).toBe(200);
@@ -352,33 +452,17 @@ describe("no key ever leaves the server set store", () => {
     expect(files.length).toBeGreaterThan(3);
     for (const f of files) found.push(...leaksIn(f.slice(dir.length), readFileSync(f)));
 
-    // The search is only worth something if each surface really answered with content.
-    const empty = [...seen]
-      .filter(([, v]) => v.status >= 400 || v.bytes === 0)
-      .map(([k, v]) => `${k}=${v.status}`);
-    const mustAnswer = [
-      "POST report",
-      "GET report.md",
-      "GET report.html",
-      "GET report.docx",
-      "GET handoff",
-      "GET activity-log",
-      "GET export/redacted",
-      "POST support-bundle",
-      "POST /audit-export",
-      "POST audit backfill",
-      "POST export/encrypted (container)",
-      "POST archive",
-    ];
-    for (const label of mustAnswer) {
-      expect(seen.get(label), label).toBeDefined();
-      expect(
-        empty.filter((e) => e.startsWith(`${label}=`)),
-        label,
-      ).toEqual([]);
+    // Every surface read above must answer as listed: a real surface is 2xx with a body, the known
+    // 501s are named, and the two 204s and the empty timeline are listed as empty on purpose.
+    const failures: string[] = [];
+    for (const [label, [status, empty]] of Object.entries(EXPECTED)) {
+      const got = seen.get(label);
+      if (!got) failures.push(`${label}: never requested`);
+      else if (got.status !== status) failures.push(`${label}: status ${got.status}, expected ${status}`);
+      else if (!empty && got.bytes === 0) failures.push(`${label}: empty body`);
     }
-    // The activity log names the change, so the leak search covered a real entry.
-    expect(seen.get("GET activity-log")!.bytes).toBeGreaterThan(50);
+    for (const label of seen.keys()) if (!(label in EXPECTED)) failures.push(`${label}: not in the table`);
+    expect(failures).toEqual([]);
 
     expect(found).toEqual([]);
   });
