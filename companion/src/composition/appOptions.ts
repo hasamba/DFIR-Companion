@@ -75,6 +75,7 @@ import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { CustomerExposureProvider } from "../analysis/customerExposure.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ServerClients } from "../integrations/serverSets/types.js";
+import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { IrisExportStore } from "../integrations/iris/irisExportStore.js";
 import type { ToolRunner } from "../integrations/tools/toolRunner.js";
 import type { ToolId, ToolConfig } from "../integrations/tools/toolConfig.js";
@@ -443,6 +444,9 @@ export interface AppOptions {
   // Per-case IRIS / Timesketch / Velociraptor clients, resolved from the case's server set. Tests
   // that omit it get an always-error stand-in.
   serverClients?: ServerClients;
+  // The server set store behind /server-sets and the link a new case gets. Tests that omit it get
+  // 503 from /server-sets, and new cases stay unlinked.
+  serverSetStore?: ServerSetStore;
   // Remembers the IRIS case name used on the last push per Companion case, so a re-push with
   // no explicit override still targets the same IRIS case (find-or-create is name-based).
   irisExportStore?: IrisExportStore;

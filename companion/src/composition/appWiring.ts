@@ -359,6 +359,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     enrichHealthTtlMs: numEnv("DFIR_ENRICH_HEALTH_TTL_MS"),
     enrichHealthPollMs: numEnv("DFIR_ENRICH_HEALTH_POLL_MS") ?? 60_000,
     serverClients: createServerClients(rt.serverSetStore, process.env),
+    serverSetStore: rt.serverSetStore,
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,

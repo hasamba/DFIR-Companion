@@ -16,11 +16,16 @@ export interface CaseCreateBody {
   name?: unknown;
   investigator?: unknown;
   aiProvider?: unknown;
+  serverSetId?: unknown;
 }
 
 /** The rejection message, or null when the body is well-formed. The caller stores `name` trimmed. */
-export function validateCaseCreateBody(body: CaseCreateBody): string | null {
-  const { caseId, name, investigator, aiProvider } = body;
+/** `setExists` answers whether a `serverSetId` names a stored server set. */
+export function validateCaseCreateBody(
+  body: CaseCreateBody,
+  setExists: (id: string) => boolean = () => false,
+): string | null {
+  const { caseId, name, investigator, aiProvider, serverSetId } = body;
   // A whitespace-only name is as missing as an absent one: it saves a case the list shows blank.
   if (!caseId || !name || (typeof name === "string" && !name.trim())) return "caseId and name are required";
   if (typeof caseId !== "string" || !isValidCaseId(caseId)) {
@@ -29,5 +34,9 @@ export function validateCaseCreateBody(body: CaseCreateBody): string | null {
   if (typeof name !== "string") return "name must be a string";
   if (investigator != null && typeof investigator !== "string") return "investigator must be a string";
   if (aiProvider != null && typeof aiProvider !== "string") return "aiProvider must be a string or null";
+  if (serverSetId != null) {
+    if (typeof serverSetId !== "string") return "serverSetId must be a string";
+    if (!setExists(serverSetId)) return "unknown server set";
+  }
   return null;
 }

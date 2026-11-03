@@ -30,6 +30,11 @@ export class ServerSetStore {
     return this.readRaw().map((s) => this.openSet(s));
   }
 
+  // Whether a set with this id exists. Reads no secret, so a store with a changed key still answers.
+  has(id: string): boolean {
+    return this.readRaw().some((s) => s.id === id);
+  }
+
   get(id: string): ServerSet | undefined {
     const raw = this.readRaw().find((s) => s.id === id);
     return raw ? this.openSet(raw) : undefined;
@@ -96,6 +101,21 @@ export class ServerSetStore {
     if (!this.readRaw().some((s) => s.id === setId)) throw new Error("server set not found");
     const links = this.readLinks();
     this.writeLinks({ ...links, cases: { ...links.cases, [caseId]: setId } });
+  }
+
+  // Links a newly created case to the default set and returns that set's id. With no usable default
+  // the case stays unlinked (any stale link from a deleted case of the same id is dropped).
+  // `keepExisting` leaves a case that already has a link alone (a demo reseed keeps its set).
+  linkToDefault(caseId: string, opts: { keepExisting?: boolean } = {}): string | undefined {
+    const current = this.caseSetId(caseId);
+    if (opts.keepExisting && current) return current;
+    const id = this.defaultId();
+    if (id && this.has(id)) {
+      this.linkCase(caseId, id);
+      return id;
+    }
+    if (current) this.unlinkCase(caseId);
+    return undefined;
   }
 
   unlinkCase(caseId: string): void {

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
+import { linkNewCase } from "./serverSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
@@ -122,8 +123,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // Optional `templateId` seeds key questions; `incidentTypeId` (#236) also applies its auto-playbook.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
-      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
-      const invalid = validateCaseCreateBody({ caseId, name, investigator, aiProvider });
+      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId, serverSetId } =
+        req.body ?? {};
+      const invalid = validateCaseCreateBody(
+        { caseId, name, investigator, aiProvider, serverSetId },
+        (id) => !!options.serverSetStore?.has(id),
+      );
       if (invalid) return res.status(400).json({ error: invalid });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
@@ -139,6 +144,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity),
       });
       options.teamAuth?.grantCreator(req, caseId);
+      linkNewCase(ctx, caseId, { setId: serverSetId ?? undefined }); // no serverSetId → the default set
       if (templateId && options.templateStore && options.stateStore) {
         const template = await options.templateStore.get(String(templateId));
         if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {

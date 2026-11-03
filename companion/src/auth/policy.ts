@@ -53,6 +53,7 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/audit-export",
   "/velociraptor",
   "/importers",
+  "/server-sets",
 ];
 const CASE_ADMIN_SEGMENTS = [
   "/password",
@@ -240,6 +241,8 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     // Both whole-case imports create a NEW case, like POST /cases, so anyone signed in may run them.
     collectionPath(path) === "/cases/import/encrypted" ||
     collectionPath(path) === "/cases/import/zip" ||
+    // The set picker on New case and in the case header. Members get names only; the route decides.
+    (normalizedMethod === "GET" && collectionPath(path) === "/server-sets") ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

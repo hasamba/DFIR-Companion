@@ -87,9 +87,9 @@ test("US-173: a collect directive refuses cleanly without Velociraptor", async (
     data: {},
   });
   // Directives become playbook tasks and report entries, but issuing one needs a server to issue
-  // it to. 501 naming the setting, not a 500 — see velociraptor.spec.ts for the same contract.
+  // it to. 501 naming the case's server set, not a 500 — see velociraptor.spec.ts for the same contract.
   expect(res.status(), await res.text()).toBe(501);
-  expect(await res.text()).toMatch(/DFIR_VELOCIRAPTOR_API_CONFIG/);
+  expect(await res.text()).toMatch(/not configured in server set/);
 });
 
 test("US-216: the manual link is keyboard-reachable and explains itself", async ({ page }) => {

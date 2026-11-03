@@ -230,8 +230,9 @@ export function startMaintenanceTasks({
 export interface PostListenDeps {
   store: CaseStore;
   demoMode: boolean;
-  /** The server sets: the startup fleet refresh runs once per set that has Velociraptor. */
-  serverSets: Pick<ServerSetStore, "list">;
+  /** The server sets: the startup fleet refresh runs once per set that has Velociraptor, and the
+   * demo case is linked to the default set. */
+  serverSets: Pick<ServerSetStore, "list"> & Partial<Pick<ServerSetStore, "linkToDefault">>;
   serverClients: ServerClients;
   clientInventoryFor: (setId: string) => VelociraptorClientStore;
   updateCheckStore: UpdateCheckStore;
@@ -266,11 +267,12 @@ export function startPostListenTasks({
         seedDemoCase(store.casesRoot, { force: true, generation });
       void store
         .withSeedSlot(DEMO_CASE_ID_DEFAULT, reseed)
-        .then((r) =>
+        .then((r) => {
+          serverSets.linkToDefault?.(DEMO_CASE_ID_DEFAULT, { keepExisting: true });
           logLine(
             `[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`,
-          ),
-        )
+          );
+        })
         .catch((e) => logLine(`[demo] demo case seed failed: ${(e as Error).message}`));
     };
     seedDemo();

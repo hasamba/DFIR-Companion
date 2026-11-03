@@ -31,9 +31,11 @@ import { revealSections } from "../fixtures/sections.js";
 // Two shapes, and the difference matters to the dashboard:
 //   * status and clients answer 200 with an empty/false payload, because their panels render on
 //     every page load and must not error merely because the integration is absent.
-//   * everything that would TALK to Velociraptor answers 501. The case-less routes use the default
-//     server set and name it ("not configured in server set …"); the case routes still name
-//     DFIR_VELOCIRAPTOR_API_CONFIG here until new cases are linked to a set.
+//   * everything that would TALK to Velociraptor answers 501 and names the server set. The harness
+//     seeds a default "Testing" set with no tools, and every new case (the demo case included) is
+//     linked to it, so case and case-less routes alike answer "not configured in server set …".
+//     import-external has its own wording ("… in this case's server set") that also says how to
+//     import offline.
 //
 // NOTED WHILE WRITING THIS, not a test failure: /cases/:id/velociraptor/import-external is gated
 // on the API config too. Importing results that were collected ELSEWHERE is the one operation in
@@ -68,9 +70,9 @@ for (const { story, method, path } of NEEDS_SERVER) {
     // 501, not 500: nothing is broken, the integration is simply not set up. And the message must
     // name the setting, or an operator has to read the source to discover what is missing.
     expect(res.status(), await res.text()).toBe(501);
-    const caseLess = !path.startsWith("/cases/");
+    const externalImport = path.endsWith("/import-external");
     expect(await res.text()).toMatch(
-      caseLess ? /not configured in server set/ : /DFIR_VELOCIRAPTOR_API_CONFIG/,
+      externalImport ? /not configured in this case's server set/ : /not configured in server set/,
     );
   });
 }
