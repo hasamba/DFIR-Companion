@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Guarded downloads** — "Download latest release" for Velociraptor, Sigma rule downloads, KEV import from a URL, webhooks and audit export no longer fail with `fetch failed — invalid onRequestStart method`
 - **Sigma re-grade apply guard** — one re-grade per case at a time (a second one is refused), and the import memory guard now sizes and can refuse a re-grade without changing either timeline (closes #2227)
 - **Undo error reporting** — when an Undo or Redo step fails and its rollback also fails, the original error is shown and the rollback failure is logged; both halves of the rollback always run (closes #2228)
 - **Decision-model review spend** — a review that stops on an error still records the cost of the requests that already ran, and a cost-ledger failure no longer fails a finished review (closes #2235)

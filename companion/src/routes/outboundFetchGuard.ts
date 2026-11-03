@@ -1,4 +1,4 @@
-import { Agent, type Dispatcher } from "undici";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import { isGloballyRoutable } from "./publicAddress.js";
 import {
@@ -87,7 +87,7 @@ export interface OutboundFetchOptions {
   signal?: AbortSignal;
   /** Injected by tests so they never touch real DNS. Defaults to a DNS A/AAAA lookup. */
   resolveHost?: (host: string) => Promise<PinnedAddress[]>;
-  /** Injected by tests. Defaults to the global fetch. */
+  /** Injected by tests. Defaults to undici's own fetch — see defaultFetch. */
   fetchImpl?: typeof fetch;
   /** Injected by tests to observe what the connection was pinned to. Defaults to an undici Agent. */
   agentFactory?: (pins: PinnedAddress[], tls?: OutboundTlsOptions) => Dispatcher;
@@ -142,6 +142,12 @@ export function pinnedLookup(
     return callback(null, pins[0].address, pins[0].family);
   };
 }
+
+// The pinned Agent comes from the npm `undici` package, so the fetch that carries it must come from
+// the SAME package. Node's global fetch runs its own bundled undici (v6 in Node 22), and that older
+// copy rejects a newer Agent with "invalid onRequestStart method" — which broke every guarded
+// download until tests/server/outboundFetchRealStack.test.ts pinned the pairing.
+const defaultFetch = undiciFetch as unknown as typeof fetch;
 
 function defaultAgent(pins: PinnedAddress[], tls?: OutboundTlsOptions): Dispatcher {
   return new Agent({
@@ -296,7 +302,7 @@ export async function fetchOutbound(
   raw: string,
   opts: OutboundFetchOptions = {},
 ): Promise<OutboundFetchResult> {
-  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const doFetch = opts.fetchImpl ?? defaultFetch;
   const makeAgent = opts.agentFactory ?? defaultAgent;
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   // ONE signal for the whole chain, and it covers the DNS lookups as well as the fetches. A fresh
