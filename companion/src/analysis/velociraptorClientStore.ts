@@ -1,6 +1,7 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { warnLine } from "../logging/serverLogger.js";
 import type { VeloClientRecord } from "../integrations/velociraptor/velociraptorApi.js";
 
 // Persisted inventory of one Velociraptor server's enrolled clients (issue #70), one file per server
@@ -75,12 +76,18 @@ export function caseFleetInventory(
   caseSetId: (caseId: string) => string | undefined,
   inventoryFor: (setId: string) => VelociraptorClientStore,
 ): CaseFleetInventory {
+  let lastError = ""; // a broken link file is logged once per message, not on every host lookup
   return {
     async load(caseId) {
       let setId: string | undefined;
       try {
         setId = caseSetId(caseId);
-      } catch {
+        lastError = "";
+      } catch (err) {
+        // The link file holds case ids and set ids only, so its read error names no secret.
+        const msg = (err as Error).message;
+        if (msg !== lastError) warnLine(`[velociraptor] case fleet inventory unavailable: ${msg}`);
+        lastError = msg;
         return EMPTY_INVENTORY;
       }
       return setId ? inventoryFor(setId).load() : EMPTY_INVENTORY;

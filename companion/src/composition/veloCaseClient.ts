@@ -1,7 +1,11 @@
 // A case's Velociraptor client, resolved from the case's server set on every use. Background loops
 // (live monitors, hunt status polls, hunt collects) call this on every tick, so a set edit applies
 // on the next tick and a broken link never falls back to another set.
-import type { ServerClients, ResolveResult } from "../integrations/serverSets/types.js";
+import {
+  ServerSetUnavailableError,
+  type ResolveResult,
+  type ServerClients,
+} from "../integrations/serverSets/types.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 
 // Why a resolve gave no Velociraptor client, or "" when it gave one.
@@ -10,12 +14,18 @@ function problemOf(r: ResolveResult): string {
   return r.servers.velociraptor ? "" : `Server set '${r.servers.setName}' has no Velociraptor server.`;
 }
 
-/** The case's client, or a thrown Error with the plain-language reason. For request paths. */
-export function requireCaseVelo(serverClients: ServerClients, caseId: string): VelociraptorClient {
+/**
+ * The case's client and its set id, from one resolve. Throws ServerSetUnavailableError carrying the
+ * route status: 409 when the set does not resolve, 501 when it has no Velociraptor. For request paths.
+ */
+export function requireCaseVelo(
+  serverClients: ServerClients,
+  caseId: string,
+): { client: VelociraptorClient; setId: string } {
   const r = serverClients.forCase(caseId);
-  const problem = problemOf(r);
-  if (problem || !r.ok || !r.servers.velociraptor) throw new Error(problem);
-  return r.servers.velociraptor;
+  if (!r.ok) throw new ServerSetUnavailableError(r.error, r.status);
+  if (!r.servers.velociraptor) throw new ServerSetUnavailableError(problemOf(r), 501);
+  return { client: r.servers.velociraptor, setId: r.servers.setId };
 }
 
 /** The set id the case resolves to, or undefined when it does not resolve. */

@@ -21,6 +21,8 @@ import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.
 import type { VelociraptorSettings } from "../../src/integrations/serverSets/types.js";
 import { createServerClients } from "../../src/composition/serverSetClients.js";
 import { createVeloMonitors } from "../../src/composition/veloMonitors.js";
+import { createVeloHunts } from "../../src/composition/veloHunts.js";
+import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { startPostListenTasks } from "../../src/composition/maintenanceTasks.js";
 import { seedServerSets } from "../../src/composition/serverSetMigration.js";
 import { VeloMonitorStore, type VeloMonitor } from "../../src/analysis/veloMonitorStore.js";
@@ -194,5 +196,73 @@ describe("Velociraptor per server set", () => {
     const testingId = sets.defaultId()!;
     expect(existsSync(join(inventoryDir, "clients.json"))).toBe(false);
     expect(readFileSync(join(inventoryDir, `clients-${testingId}.json`), "utf8")).toBe(content);
+  });
+
+  it("case-launched hunt and collection results come from the case's set, not the default", async () => {
+    const a = sets.create({ name: "A", velociraptor: velo("/a/api.yaml") });
+    const b = sets.create({ name: "B", velociraptor: velo("/b/api.yaml") });
+    sets.setDefault(a.id);
+    sets.linkCase("c2", b.id);
+    const app = createApp(cases, { serverClients: clients() });
+    const hunt = await request(app)
+      .post("/velociraptor/hunt-results")
+      .send({ huntId: "H.1", artifact: "Windows.System.Pslist", caseId: "c2" });
+    expect(hunt.status).toBe(200);
+    const flow = await request(app)
+      .post("/velociraptor/collect-results")
+      .send({ clientId: "C.1", flowId: "F.1", artifact: "Windows.System.Pslist", caseId: "c2" });
+    expect(flow.status).toBe(200);
+    expect(runnerFor("/b/api.yaml")).toHaveBeenCalled();
+    expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
+  });
+
+  it("a named case that does not resolve is refused, never answered from the default set", async () => {
+    const a = sets.create({ name: "A", velociraptor: velo("/a/api.yaml") });
+    sets.setDefault(a.id);
+    const app = createApp(cases, { serverClients: clients() });
+    const res = await request(app)
+      .post("/velociraptor/hunt-results")
+      .send({ huntId: "H.1", artifact: "Windows.System.Pslist", caseId: "unlinked" });
+    expect(res.status).toBe(409);
+    const art = await request(app).get("/velociraptor/artifacts?caseId=unlinked");
+    expect(art.status).toBe(409);
+    expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
+  });
+
+  it("a hunt collect whose set does not resolve stays armed and runs once the set is fixed", async () => {
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const s = sets.create({ name: "A", velociraptor: velo("/a/api.yaml") });
+    sets.linkCase("c1", s.id);
+    const huntStore = new VeloHuntStore(cases);
+    const now = new Date().toISOString();
+    await huntStore.upsert("c1", {
+      bundleId: "b1",
+      bundleName: "Bundle",
+      artifacts: ["Windows.System.Pslist"],
+      huntId: "H.1",
+      launchedAt: now,
+      waitMinutes: 1,
+      collectAt: now,
+      status: "running",
+    });
+    const p = join(dir, "server-sets", "sets.json");
+    const saved = readFileSync(p, "utf8");
+    writeFileSync(p, "[]"); // the case's set is gone
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const options = {
+      veloHuntStore: huntStore,
+      pipeline: {},
+      serverClients: clients(),
+    } as unknown as AppOptions;
+    const hunts = createVeloHunts({ store: cases, options } as unknown as Parameters<
+      typeof createVeloHunts
+    >[0]);
+    hunts.startVeloHuntCollect("c1", "H.1");
+    await vi.waitFor(() => expect(hunts.veloHuntTimers.has("c1", "H.1")).toBe(true));
+    expect(logs.lines.filter((l) => l.includes("server set was deleted"))).toHaveLength(1);
+    writeFileSync(p, saved); // the set is back
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(runnerFor("/a/api.yaml")).toHaveBeenCalled());
+    hunts.stopVeloHuntStatusPoll("c1", "H.1");
   });
 });

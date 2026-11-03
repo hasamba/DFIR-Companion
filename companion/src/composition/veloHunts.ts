@@ -24,6 +24,7 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase, RouteContext } from "../routes/context.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -216,6 +217,19 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     logLine,
     "velo-hunt",
   );
+  // The case's set did not resolve (collectVelo logged why, once). A hunt still waiting to be collected
+  // keeps a collect armed on the status-poll cadence, so it runs once the set is fixed.
+  async function rearmCollect(caseId: string, huntId: string): Promise<void> {
+    const job = await options.veloHuntStore?.get(caseId, huntId).catch(() => null);
+    if (!job || !["running", "unreachable", "collecting"].includes(job.status)) return;
+    const pending = veloHuntTimers.get(caseId, huntId);
+    if (pending) clearTimeout(pending);
+    const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
+    const retry = () => void startVeloHuntCollect(caseId, huntId);
+    const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(retry, seconds * 1000));
+    timer.unref?.();
+    veloHuntTimers.set(caseId, timer, huntId);
+  }
   const admittedCollect = createHuntCollectAdmission(store, logLine, scheduleVeloHuntStatusPoll);
 
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
@@ -230,7 +244,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     const pipeline = options.pipeline;
     if (!huntStore || !pipeline) return;
     const client = collectVelo(caseId); // the case's own server set, resolved per collect
-    if (!client) return;
+    if (!client) return rearmCollect(caseId, huntId);
     const pending = veloHuntTimers.get(caseId, huntId);
     if (pending) {
       clearTimeout(pending);

@@ -254,8 +254,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     },
   ): Promise<VeloMonitor> {
     const monStore = options.veloMonitorStore!;
-    const client = requireCaseVelo(serverClients(), caseId);
-    const setId = caseSetIdOf(serverClients(), caseId);
+    const { client, setId } = requireCaseVelo(serverClients(), caseId); // one resolve for both
     const nowEpoch = Math.floor(Date.now() / 1000);
     const id = monitorId(spec.clientId, spec.artifact);
     const existing = await monStore.get(caseId, id);

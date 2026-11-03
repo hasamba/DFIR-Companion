@@ -91,6 +91,17 @@ export interface CaseServers {
   velociraptor?: VelociraptorClient;
 }
 
+/** A case's set gave no usable client. `status` is what a route answers: 409 unresolved, 501 tool absent. */
+export class ServerSetUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly status: 409 | 501,
+  ) {
+    super(message);
+    this.name = "ServerSetUnavailableError";
+  }
+}
+
 export type ResolveResult = { ok: true; servers: CaseServers } | { ok: false; status: 409; error: string };
 
 export interface ServerClients {

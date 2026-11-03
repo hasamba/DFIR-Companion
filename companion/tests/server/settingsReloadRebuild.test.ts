@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, setServerLogger } from "../../src/server.js";
 import { createConsoleLogger } from "../../src/logging/logger.js";
+import { stubServerClients } from "../helpers/serverClientsStub.js";
 
 // Issue #178: POST /settings/reload used to apply the just-saved DFIR_<PREFIX>_* group into
 // process.env and stop there — every client built at startup (MISP push, the enrichment provider
@@ -61,6 +62,7 @@ const TOUCHED = [
   "DFIR_CLICKUP_LIST_ID",
   "DFIR_LEAKCHECK_KEY",
   "DFIR_TELEGRAM_BOT_TOKEN",
+  "DFIR_VELOCIRAPTOR_BINARY",
 ];
 
 beforeEach(async () => {
@@ -97,6 +99,20 @@ describe("/settings/reload rebuilds the live client for the prefix (#178)", () =
     const status = await request(app).get("/misp/status");
     expect(status.body.configured).toBe(true);
     expect(status.body.baseUrl).toBe("https://127.0.0.1:4430/");
+  });
+
+  it("a global Velociraptor setting drops the cached server-set clients and says so", async () => {
+    // DFIR_VELOCIRAPTOR_BINARY stays global, but every set's client is built with it. The reload must
+    // drop the cached clients and report it, or the dashboard tells the analyst to restart.
+    const invalidate = vi.fn();
+    app = createApp(new CaseStore(await mkdtemp(join(tmpdir(), "dfir-reload-velo-"))), {
+      serverClients: { ...stubServerClients({}), invalidate },
+    });
+    await writeFile(envPath, "DFIR_VELOCIRAPTOR_BINARY=/opt/velociraptor\n", "utf8");
+    const res = await reload("DFIR_VELOCIRAPTOR_");
+    expect(res.status).toBe(200);
+    expect(res.body.rebuilt).toContain("server-sets");
+    expect(invalidate).toHaveBeenCalled();
   });
 
   it("rebuilds the enrichment provider set so a newly-saved key is usable", async () => {

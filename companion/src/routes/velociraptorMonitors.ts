@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
-import { caseVelo, defaultVelo } from "./veloServers.js";
+import { caseVelo, requestVelo, veloErrorStatus } from "./veloServers.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { ALL_CLIENTS } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
@@ -33,7 +33,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
   // List the server's CLIENT_EVENT (continuous monitoring) artifacts for the Monitor-mode picker.
   // Same short-TTL catalog cache + `?refresh=1` bypass as /velociraptor/artifacts above.
   app.get("/velociraptor/event-artifacts", async (req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     try {
       return res.status(200).json({
@@ -96,7 +96,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
       });
       return res.status(202).json({ accepted: true, monitor });
     } catch (err) {
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(veloErrorStatus(err)).json({ error: (err as Error).message });
     }
   });
 
@@ -159,7 +159,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
       );
       return res.status(202).json({ accepted: true, discovered, started });
     } catch (err) {
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(veloErrorStatus(err)).json({ error: (err as Error).message });
     }
   });
 
@@ -196,7 +196,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
         allClients: monitor.allClients,
       });
     } catch (err) {
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(veloErrorStatus(err)).json({ error: (err as Error).message });
     }
     return res.status(200).json({ ok: true });
   });

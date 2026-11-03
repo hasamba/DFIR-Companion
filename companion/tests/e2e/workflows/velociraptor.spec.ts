@@ -31,7 +31,9 @@ import { revealSections } from "../fixtures/sections.js";
 // Two shapes, and the difference matters to the dashboard:
 //   * status and clients answer 200 with an empty/false payload, because their panels render on
 //     every page load and must not error merely because the integration is absent.
-//   * everything that would TALK to Velociraptor answers 501 naming DFIR_VELOCIRAPTOR_API_CONFIG.
+//   * everything that would TALK to Velociraptor answers 501. The case-less routes use the default
+//     server set and name it ("not configured in server set …"); the case routes still name
+//     DFIR_VELOCIRAPTOR_API_CONFIG here until new cases are linked to a set.
 //
 // NOTED WHILE WRITING THIS, not a test failure: /cases/:id/velociraptor/import-external is gated
 // on the API config too. Importing results that were collected ELSEWHERE is the one operation in
@@ -59,12 +61,17 @@ for (const { story, method, path } of NEEDS_SERVER) {
     await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
     const url = path.replace("CASE", demoCase);
 
-    const res = method === "get" ? await page.request.get(url) : await page.request.post(url, { data: {} });
+    // A non-empty vql so /velociraptor/run passes its body check and reaches the server check.
+    const data = path === "/velociraptor/run" ? { vql: "SELECT 1 FROM info()" } : {};
+    const res = method === "get" ? await page.request.get(url) : await page.request.post(url, { data });
 
     // 501, not 500: nothing is broken, the integration is simply not set up. And the message must
     // name the setting, or an operator has to read the source to discover what is missing.
     expect(res.status(), await res.text()).toBe(501);
-    expect(await res.text()).toMatch(/DFIR_VELOCIRAPTOR_API_CONFIG/);
+    const caseLess = !path.startsWith("/cases/");
+    expect(await res.text()).toMatch(
+      caseLess ? /not configured in server set/ : /DFIR_VELOCIRAPTOR_API_CONFIG/,
+    );
   });
 }
 

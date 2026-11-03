@@ -94,7 +94,10 @@ export function createSettingsReload({
     }
     // IRIS / Timesketch / Velociraptor clients come from the server sets, not from env. The global
     // keys that remain (the Velociraptor binary, limits) are read when a set's client is built.
-    if (SERVER_SET_PREFIXES.has(prefix)) invalidateServerClients?.();
+    if (SERVER_SET_PREFIXES.has(prefix)) {
+      invalidateServerClients?.();
+      rebuilt.push("server-sets"); // the next lookup rebuilds each set's clients — no restart
+    }
     if (prefix === "DFIR_NOTION_") {
       options.notionClient = (options.rebuildNotionClient ?? buildNotionClient)();
       options.notionOptions = notionPushOptions();

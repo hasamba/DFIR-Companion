@@ -26,7 +26,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
-import { caseVelo, defaultVelo, type VeloTarget } from "./veloServers.js";
+import { caseVelo, defaultVelo, requestVelo, type VeloTarget } from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
@@ -109,7 +109,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Read a launched hunt's results (rows collected from the endpoints so far). Polled by the dashboard.
   app.post("/velociraptor/hunt-results", async (req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const huntId = typeof req.body?.huntId === "string" ? req.body.huntId.trim() : "";
     const artifact = typeof req.body?.artifact === "string" ? req.body.artifact.trim() : "";
@@ -246,7 +246,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Read a single COLLECTION flow's result rows so the dashboard can show them inline + auto-poll (the
   // per-flow analog of /velociraptor/hunt-results). Body `{ clientId, flowId, artifact, sources }`.
   app.post("/velociraptor/collect-results", async (req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
     const flowId = typeof req.body?.flowId === "string" ? req.body.flowId.trim() : "";
@@ -309,7 +309,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // "Browse server artifacts" button sends it, since a deliberate browse is exactly the moment an
   // analyst who just added an artifact on the server expects to see it.
   app.get("/velociraptor/artifacts", async (req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     try {
       const artifacts = await vc.client.listClientArtifacts("client", {
