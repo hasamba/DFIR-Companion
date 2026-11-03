@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { open, seal } from "./secretBox.js";
+import { secretsOfSet } from "./setSecrets.js";
 import { MASKED_SECRET, type ServerSet, type ServerSetInput } from "./types.js";
 
 interface Links {
@@ -28,6 +29,19 @@ export class ServerSetStore {
 
   list(): ServerSet[] {
     return this.readRaw().map((s) => this.openSet(s));
+  }
+
+  // The decrypted secrets of every set, for log redaction. A set that cannot be opened is skipped.
+  secretValues(): string[] {
+    const out: string[] = [];
+    for (const raw of this.readRaw()) {
+      try {
+        out.push(...secretsOfSet(this.openSet(raw)));
+      } catch {
+        /* undecryptable set: nothing to redact, keep going */
+      }
+    }
+    return out;
   }
 
   // Whether a set with this id exists. Reads no secret, so a store with a changed key still answers.

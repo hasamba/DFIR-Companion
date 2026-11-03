@@ -48,6 +48,13 @@ export function registerSupportBundleRoutes(app: Express, ctx: RouteContext): vo
           logPaths: getServerLogger().paths?.() ?? null,
           recentImportFailures: ctx.recentImportFailures,
           canSee,
+          extraSecrets: () => {
+            try {
+              return options.serverSetStore?.secretValues() ?? [];
+            } catch {
+              return [];
+            }
+          },
         },
         {
           generatedAt: payload.report.generatedAt,

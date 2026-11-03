@@ -1,0 +1,26 @@
+import { readFileSync } from "node:fs";
+import type { ServerSet } from "./types.js";
+
+// A PEM body line or a bare token: no spaces, no key: prefix. Header lines and YAML keys do not match.
+const SECRET_LINE = /^[A-Za-z0-9+/=_-]{16,}$/;
+
+/** The key and certificate lines of a Velociraptor API config file. Empty when it cannot be read. */
+export function veloConfigSecrets(path: string): string[] {
+  try {
+    return readFileSync(path, "utf8")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => SECRET_LINE.test(l));
+  } catch {
+    return [];
+  }
+}
+
+/** Every secret value one opened set holds: IRIS key, Timesketch password, Velociraptor key material. */
+export function secretsOfSet(set: ServerSet): string[] {
+  const out: string[] = [];
+  if (set.iris?.apiKey) out.push(set.iris.apiKey);
+  if (set.timesketch?.password) out.push(set.timesketch.password);
+  if (set.velociraptor?.apiConfigPath) out.push(...veloConfigSecrets(set.velociraptor.apiConfigPath));
+  return out;
+}
