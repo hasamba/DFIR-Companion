@@ -1153,7 +1153,23 @@ export const FEATURES: Feature[] = [
     file: "dashboard-new-case.js",
     initializer: "initNewCase",
     publish: ["initNewCase", "openNewCase", "closeNewCase", "createNewCase", "loadDemoCase"],
-    private: [],
+    private: ["lastServerSet"],
+  },
+  {
+    // Settings → Server sets and the set editor. fetchServerSets is shared with the New Case picker
+    // and the case header's Change… dialog.
+    file: "dashboard-server-sets.js",
+    initializer: "initServerSets",
+    publish: ["initServerSets", "loadServerSets", "fetchServerSets", "openServerSetEditor"],
+    private: ["lastList", "editing", "dirty", "editorOpts"],
+  },
+  {
+    // The open case's server set: header label, Change… and its dialogs, and the one writer of the
+    // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
+    file: "dashboard-case-servers.js",
+    initializer: "initCaseServers",
+    publish: ["initCaseServers", "refreshCaseServers", "caseToolEnabled", "setDefaultServerTools"],
+    private: ["current", "defaults", "pendingSetId"],
   },
   {
     // Case templates and incident types. Its `_cachedTemplates` was written from

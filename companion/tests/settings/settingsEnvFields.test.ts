@@ -115,7 +115,7 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
     const fields = await envFields();
     // Sanity: the regex actually matched the modal, so an empty result can't pass the tests below.
     expect(fields.length).toBeGreaterThan(200);
-    expect(fields.map((f) => f.key)).toContain("DFIR_TIMESKETCH_URL");
+    expect(fields.map((f) => f.key)).toContain("DFIR_NOTION_TOKEN");
   });
 
   it("accepts every editable field — no analyst can type into a key the server rejects", async () => {
@@ -133,7 +133,52 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
   });
 });
 
+/**
+ * Keys .env.example documents that the Settings modal deliberately does NOT render.
+ *
+ * A NEW EXCEPTION, NOT A REUSE. Deployment-only keys are handled by rendering them read-only, and
+ * the allowlist test above requires every read-only field to be one the server refuses. These keys
+ * are still writable, so read-only rendering would fail that test and lie to the analyst.
+ *
+ * The reason: per-case server sets. These keys are a FIRST-RUN SEED for the "Testing" server set
+ * only (composition/serverSetMigration.ts reads them once). After that, the IRIS, Timesketch and
+ * Velociraptor connection of every case lives in Settings → Server sets, and an `env-` input for
+ * them would edit a value nothing reads any more. They stay in .env.example because the seed reads
+ * them. The other DFIR_VELOCIRAPTOR_* keys (binary, limits, VQL overrides) are global and keep
+ * their inputs.
+ */
+const SERVER_SET_SEED_KEYS = new Set([
+  "DFIR_IRIS_URL",
+  "DFIR_IRIS_KEY",
+  "DFIR_IRIS_CA",
+  "DFIR_IRIS_INSECURE",
+  "DFIR_IRIS_CUSTOMER_ID",
+  "DFIR_IRIS_CLASSIFICATION_ID",
+  "DFIR_TIMESKETCH_URL",
+  "DFIR_TIMESKETCH_USER",
+  "DFIR_TIMESKETCH_PASSWORD",
+  "DFIR_TIMESKETCH_TIMELINE",
+  "DFIR_TIMESKETCH_CA",
+  "DFIR_TIMESKETCH_INSECURE",
+  "DFIR_VELOCIRAPTOR_API_CONFIG",
+  "DFIR_VELOCIRAPTOR_GUI_URL",
+  "DFIR_VELOCIRAPTOR_ORG",
+]);
+
 describe("Settings modal \u21c4 .env.example", () => {
+  // The exception cannot rot: each seed key is still documented (the seed reads it), says so in
+  // .env.example, and has no Settings input.
+  it("keeps every server-set seed key documented, marked as a seed, and out of the Settings modal", async () => {
+    const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
+    const documented = documentedEnvKeys(example);
+    const html = await dashboardHtml();
+    for (const key of SERVER_SET_SEED_KEYS) {
+      expect(documented.has(key), `${key} is no longer documented in .env.example`).toBe(true);
+      expect(html, `${key} has a Settings input again`).not.toContain(`id="env-${key}"`);
+    }
+    expect(example).toContain("first-run seed for the Testing server set only");
+  });
+
   // The reverse of the allowlist contract above: a documented setting the UI never renders is
   // invisible to any analyst who does not read .env.example, and nothing failed when one drifted
   // out. 48 had — every auth and network-access key, the whole Jira/ServiceNow/Slack/Teams/Telegram
@@ -157,7 +202,7 @@ describe("Settings modal \u21c4 .env.example", () => {
       ...[...wizard.matchAll(/F\(\s*"(DFIR_[A-Z0-9_]+)"/g)].map((m) => m[1]),
     ]);
 
-    const missing = [...documented].filter((k) => !reachable.has(k)).sort();
+    const missing = [...documented].filter((k) => !reachable.has(k) && !SERVER_SET_SEED_KEYS.has(k)).sort();
     expect(missing, `documented in .env.example but nowhere in the UI: ${missing.join(", ")}`).toEqual([]);
   });
 

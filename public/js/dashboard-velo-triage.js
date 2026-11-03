@@ -150,7 +150,7 @@
           return;
         }
         // Reflect the (possibly newly) configured client across the velo UI without a page reload.
-        veloEnabled = !!j.configured;
+        veloEnabled = typeof caseToolEnabled === "function" ? caseToolEnabled("velociraptor", !!j.configured) : !!j.configured; // an open case's own set decides
         applyVeloEnabled();
         if (!j.configured) {
           if (msg)

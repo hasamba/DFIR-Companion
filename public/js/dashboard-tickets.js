@@ -97,11 +97,17 @@
     function addIrisImportOption() {
       document.getElementById("importCaseIris").style.display = "";
     }
+    // These two status checks read the DEFAULT server set. With a case open, its own set decides
+    // the IRIS and Timesketch push options (js/dashboard-case-servers.js), so a default-set answer
+    // must not add an option the open case's set lacks. Import from IRIS is case-less: default set.
+    const caseAllows = (tool, configured) =>
+      typeof caseToolEnabled !== "function" || caseToolEnabled(tool, configured);
     fetch("/iris/status").then((r) => r.json()).then((s) => {
-      if (s && s.configured) { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); }
+      if (s && s.configured) addIrisImportOption();
+      if (s && s.configured && caseAllows("iris", true)) addPushOption("iris", "Push to DFIR-IRIS");
     }).catch(() => {});
     fetch("/timesketch/status").then((r) => r.json()).then((s) => {
-      if (s && s.configured) {
+      if (s && s.configured && caseAllows("timesketch", true)) {
         addPushOption("timesketch", "Timesketch export (Forensic Timeline)");
         addPushOption("timesketch-super", "Timesketch export (Super Timeline)");
       }
@@ -297,13 +303,14 @@
     const INTEGRATION_TESTS = [
       {
         btn: "irisReconnectBtn", msg: "irisReconnectMsg", url: "/iris/reconnect", save: true,
-        missing: "not configured — set IRIS URL + key above and reconnect",
-        onOk: () => { addPushOption("iris", "Push to DFIR-IRIS"); addIrisImportOption(); },
+        missing: "not configured — add IRIS to the default server set above",
+        onOk: () => { addIrisImportOption(); if (caseAllows("iris", true)) addPushOption("iris", "Push to DFIR-IRIS"); },
       },
       {
         btn: "timesketchReconnectBtn", msg: "timesketchReconnectMsg", url: "/timesketch/reconnect", save: true,
-        missing: "not configured — set the Timesketch URL, user + password above and reconnect",
+        missing: "not configured — add Timesketch to the default server set above",
         onOk: () => {
+          if (!caseAllows("timesketch", true)) return;
           addPushOption("timesketch", "Timesketch export (Forensic Timeline)");
           addPushOption("timesketch-super", "Timesketch export (Super Timeline)");
         },

@@ -243,6 +243,9 @@
     // cost live updates, never the case load itself.
     if (typeof closeCaseSocket === "function") closeCaseSocket();
     retirePanelReloads(caseId);
+    // The case's own server set decides its IRIS / Timesketch / Velociraptor controls (guarded: a
+    // missing module costs the header label, never the case load).
+    if (typeof refreshCaseServers === "function") refreshCaseServers(caseId);
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
     if (typeof syncCasePicker === "function") syncCasePicker();
@@ -498,7 +501,10 @@
         // cockpit two panels below. refreshAiState() below asks the case instead. Only the
         // no-provider answer survives here, as the immediate paint before that request returns.
         if (!h.aiEnabled) setAi("off", "off (no provider configured)");
-        veloEnabled = !!h.velociraptorEnabled; // gates the "Run in Velociraptor" button in the hunt modal
+        // The default set's flags. They gate "Run in Velociraptor" only while no case is open; an
+        // open case's own set decides (js/dashboard-case-servers.js).
+        if (typeof setDefaultServerTools === "function") setDefaultServerTools(h);
+        else veloEnabled = !!h.velociraptorEnabled;
         applyVeloEnabled(); // gates the triage panel's Run buttons + disabled note
         if (Array.isArray(h.huntPlatforms))
           enabledHuntPlatforms = new Set(h.huntPlatforms); // hunt-modal allowlist

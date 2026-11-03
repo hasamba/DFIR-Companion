@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-case server sets** — each case remembers its IRIS, Timesketch and Velociraptor servers
+
 ### Changed
 
 - **Decision model picker** — pick any OpenRouter decision model (priced, filtered list) for the missed-evidence review and containment check; "Jev" is now labelled "Decision model", default `typesafe/jev-1.14`, and a rejected question stops the run and names the model (closes #2224)
