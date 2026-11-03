@@ -290,6 +290,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   });
   const rebuildForPrefix = createSettingsReload({
     options,
+    invalidateServerClients: () => (options.serverClients ?? unavailableServerClients).invalidate(),
     setEnrichmentProviders: enrichment.setProviders,
     setIrisClient: (client) => {
       irisClient = client;

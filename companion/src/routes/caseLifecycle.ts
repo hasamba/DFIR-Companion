@@ -732,12 +732,14 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // values — only booleans. (Per-feature deep status/connectivity lives in /iris/status etc.)
   app.get("/setup/status", (_req: Request, res: Response) => {
     const has = (k: string): boolean => !!(process.env[k] && process.env[k].trim());
+    const d = ctx.serverClients.forDefault();
+    const inDefault = (tool: "iris" | "timesketch"): boolean => d.ok && !!d.servers[tool];
     res.status(200).json({
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
       velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
-      iris: !!ctx.irisClient() || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
+      iris: inDefault("iris") || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
       timesketch:
-        !!options.timesketchClient ||
+        inDefault("timesketch") ||
         (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
       notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),
       clickup: !!options.clickupClient || has("DFIR_CLICKUP_TOKEN"),

@@ -55,6 +55,8 @@ const ENRICHMENT_PREFIXES = new Set([
   "DFIR_ROCKYRACCOON_",
   "DFIR_GEOIP_",
 ]);
+// Prefixes the per-case server sets are seeded from; a reload drops the cached set clients.
+const SERVER_SET_PREFIXES = new Set(["DFIR_IRIS_", "DFIR_TIMESKETCH_", "DFIR_VELOCIRAPTOR_"]);
 // DFIR_SHODAN_ feeds both sets — the one key backs the IOC provider and the attack-surface check.
 const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_SHODAN_"]);
 
@@ -64,6 +66,8 @@ const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASH
 
 export interface SettingsReloadDeps {
   options: AppOptions;
+  /** Drop the per-set clients so the next lookup rebuilds them from the (possibly edited) sets. */
+  invalidateServerClients?: () => void;
   /** Swap the live enrichment provider set (the engine reads it through an accessor). */
   setEnrichmentProviders: (next: EnrichmentProvider[]) => void;
   /** Swap the live IRIS client, which createApp also rebinds on POST /iris/reconnect. */
@@ -76,6 +80,7 @@ export interface SettingsReloadDeps {
  */
 export function createSettingsReload({
   options,
+  invalidateServerClients,
   setEnrichmentProviders,
   setIrisClient,
 }: SettingsReloadDeps): (prefix: string) => string[] {
@@ -96,6 +101,7 @@ export function createSettingsReload({
       options.mispPushOptions = mispPushOptions();
       rebuilt.push("misp");
     }
+    if (SERVER_SET_PREFIXES.has(prefix)) invalidateServerClients?.();
     if (prefix === "DFIR_IRIS_") {
       setIrisClient((options.rebuildIrisClient ?? buildIrisClient)());
       options.irisOptions = irisPushOptions();

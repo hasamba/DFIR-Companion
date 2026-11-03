@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
 import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import { waitForEvents } from "../helpers/caseWaits.js";
+import type { ServerClients } from "../../src/integrations/serverSets/types.js";
 
 // A lightweight stand-in for the IRIS client — only the read methods the import path calls.
 function mockIris(over: Partial<Record<string, unknown>> = {}): IrisClient {
@@ -44,6 +45,27 @@ function mockIris(over: Partial<Record<string, unknown>> = {}): IrisClient {
   return base as unknown as IrisClient;
 }
 
+// Every case and the default set hold one IRIS client. invalidate() (what POST /iris/reconnect
+// calls) swaps in whatever `rebuildIrisClient` yields, like a set edited and re-resolved.
+function irisServerClients(opts: {
+  irisClient?: IrisClient;
+  rebuildIrisClient?: () => IrisClient | undefined;
+}): ServerClients {
+  let current = opts.irisClient;
+  const result = () => ({
+    ok: true as const,
+    servers: { setId: "s", setName: "S", iris: current, irisPush: { baseUrl: "https://iris.example.com" } },
+  });
+  return {
+    forCase: result,
+    forDefault: result,
+    forSet: result,
+    invalidate: () => {
+      if (opts.rebuildIrisClient) current = opts.rebuildIrisClient();
+    },
+  };
+}
+
 async function makeApp(
   opts: { irisClient?: IrisClient; rebuildIrisClient?: () => IrisClient | undefined } = {},
 ) {
@@ -60,8 +82,7 @@ async function makeApp(
   const app = createApp(store, {
     pipeline,
     stateStore,
-    irisClient: opts.irisClient,
-    rebuildIrisClient: opts.rebuildIrisClient,
+    serverClients: irisServerClients(opts),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };

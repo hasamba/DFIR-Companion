@@ -240,51 +240,50 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Whether a DFIR-IRIS push/import target is configured (so the dashboard can show/hide the buttons).
+  // Whether a DFIR-IRIS push/import target is configured in the DEFAULT server set (so the dashboard
+  // can show/hide the buttons). The per-case routes resolve the case's own set.
   app.get("/iris/status", (_req: Request, res: Response) => {
+    const d = ctx.serverClients.forDefault();
     res.status(200).json({
-      configured: !!ctx.irisClient(),
-      baseUrl: process.env.DFIR_IRIS_URL || options.irisOptions?.baseUrl,
+      configured: d.ok && !!d.servers.iris,
+      baseUrl: d.ok ? d.servers.irisPush?.baseUrl : undefined,
     });
   });
 
-  // Re-read DFIR_IRIS_* from .env (settings saved via the dashboard only write the file), rebuild
-  // the client, and ping to verify connectivity. Lets the analyst connect after configuring IRIS —
-  // or after IRIS comes back online — without the #1-gotcha restart. Always 200; the body says
+  // Drop the cached clients and ping IRIS through the default set. Lets the analyst connect after
+  // editing a set — or after IRIS comes back online — without a restart. Always 200; the body says
   // whether it's configured and reachable.
   app.post("/iris/reconnect", async (_req: Request, res: Response) => {
     try {
-      await reloadEnvPrefix("DFIR_IRIS_");
-      const client = ctx.rebuildIrisClient();
-      ctx.setIrisClient(client);
-      if (!client)
-        return res
-          .status(200)
-          .json({ configured: false, ok: false, error: "DFIR_IRIS_URL and DFIR_IRIS_KEY are not set" });
+      ctx.serverClients.invalidate();
+      const d = ctx.serverClients.forDefault();
+      const client = d.ok ? d.servers.iris : undefined;
+      if (!d.ok || !client)
+        return res.status(200).json({
+          configured: false,
+          ok: false,
+          error: d.ok ? "IRIS is not set up in the default server set" : d.error,
+        });
+      const baseUrl = d.servers.irisPush?.baseUrl;
       try {
         await client.ping();
-        return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_IRIS_URL });
+        return res.status(200).json({ configured: true, ok: true, baseUrl });
       } catch (err) {
-        return res.status(200).json({
-          configured: true,
-          ok: false,
-          baseUrl: process.env.DFIR_IRIS_URL,
-          error: (err as Error).message,
-        });
+        return res.status(200).json({ configured: true, ok: false, baseUrl, error: (err as Error).message });
       }
     } catch (err) {
       return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
     }
   });
 
-  // List the cases on the configured DFIR-IRIS instance — powers the "Import from IRIS" picker
+  // List the cases on the default set's DFIR-IRIS instance — powers the "Import from IRIS" picker
   // (issue #88). 501 when not configured. Errors map to 502 (the remote IRIS is unreachable).
   app.get("/iris/cases", async (_req: Request, res: Response) => {
-    const irisClient = ctx.irisClient();
+    const d = ctx.serverClients.forDefault();
+    if (!d.ok) return res.status(d.status).json({ error: d.error });
+    const irisClient = d.servers.iris;
     if (!irisClient)
-      return res
-        .status(501)
-        .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
+      return res.status(501).json({ error: "DFIR-IRIS not configured (add IRIS to the default server set)" });
     try {
       const cases = await irisClient.listCases();
       return res.status(200).json({ cases });
@@ -296,9 +295,12 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // The IRIS case name a push would use right now (saved override, or the computed default) —
   // lets the dashboard prefill the "Push to DFIR-IRIS" case-name field.
   app.get("/cases/:id/iris-export", async (req: Request, res: Response) => {
-    if (!options.irisExportStore) return res.status(501).json({ error: "DFIR-IRIS not configured" });
+    const caseId = req.params.id;
+    const resolved = ctx.serverClients.forCase(caseId);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    if (!resolved.servers.iris || !options.irisExportStore)
+      return res.status(501).json({ error: "DFIR-IRIS not configured" });
     try {
-      const caseId = req.params.id;
       const saved = await options.irisExportStore.load(caseId);
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
       return res
@@ -315,13 +317,13 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // into the forensic timeline + IOCs and re-synthesize. The fetched payload is the imported
   // "file" so the case keeps a faithful import audit row.
   app.post("/cases/:id/iris-import", async (req: Request, res: Response) => {
-    const irisClient = ctx.irisClient();
-    if (!irisClient)
-      return res
-        .status(501)
-        .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
+    const resolved = ctx.serverClients.forCase(caseId);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const irisClient = resolved.servers.iris;
+    if (!irisClient)
+      return res.status(501).json({ error: "DFIR-IRIS not configured (add IRIS to this case's server set)" });
+    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const irisCaseId = Number(req.body?.irisCaseId);
     const irisCaseName = typeof req.body?.irisCaseName === "string" ? req.body.irisCaseName.trim() : "";
     if (!Number.isFinite(irisCaseId) && !irisCaseName) {

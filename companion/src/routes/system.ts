@@ -97,7 +97,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   // Read once, like registerCrossCaseRoutes does, so /health reports what those routes decided.
   const crossCaseEnabled = isCrossCaseEnabled();
   app.get("/health", (_req: Request, res: Response) => {
-    const irisClient = ctx.irisClient();
+    const defaultServers = ctx.serverClients.forDefault();
     const dropWatchEnabled = ctx.dropWatchEnabled();
     const importerRegistry = ctx.importerRegistry();
     res.status(200).json({
@@ -111,8 +111,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0,
       customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0,
       velociraptorEnabled: !!options.velociraptorClient,
-      irisEnabled: !!irisClient,
-      timesketchEnabled: !!options.timesketchClient,
+      irisEnabled: defaultServers.ok && !!defaultServers.servers.iris,
+      timesketchEnabled: defaultServers.ok && !!defaultServers.servers.timesketch,
       notionEnabled: !!options.notionClient,
       clickupEnabled: !!options.clickupClient,
       jiraEnabled: !!options.jiraClient,
