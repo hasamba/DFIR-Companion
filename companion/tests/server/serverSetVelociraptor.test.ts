@@ -266,3 +266,67 @@ describe("Velociraptor per server set", () => {
     hunts.stopVeloHuntStatusPoll("c1", "H.1");
   });
 });
+
+describe("an in-flight hunt collect across a set change", () => {
+  it("a collect whose download resolves after a confirmed change never re-creates the forgotten hunt", async () => {
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const a = sets.create({ name: "A", velociraptor: velo("/a/api.yaml") });
+    const b = sets.create({ name: "B", velociraptor: velo("/b/api.yaml") });
+    sets.linkCase("c1", a.id);
+    const huntStore = new VeloHuntStore(cases);
+    const now = new Date().toISOString();
+    await huntStore.upsert("c1", {
+      bundleId: "b1",
+      bundleName: "Bundle",
+      artifacts: ["Windows.System.Pslist"],
+      huntId: "H.1",
+      launchedAt: now,
+      waitMinutes: 1,
+      collectAt: now,
+      status: "running",
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let downloading = false;
+    runners["/a/api.yaml"] = vi.fn<VqlRunner>(async (statements) => {
+      if (statements.join("\n").includes("hunt_results(")) {
+        downloading = true;
+        await gate; // the download is in flight while the analyst changes the set
+        return { rows: [{ Pid: 1, Name: "x.exe" }], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    });
+    const upsert = vi.spyOn(huntStore, "upsert");
+    const options = {
+      veloHuntStore: huntStore,
+      pipeline: {},
+      serverClients: clients(),
+    } as unknown as AppOptions;
+    const persistEvidence = vi.fn(async () => ({ storedName: "e.json", importedAt: now, seq: 1 }));
+    const hunts = createVeloHunts({
+      store: cases,
+      options,
+      persistEvidence,
+      resolveImportKind: () => "velociraptor",
+      getControl: async () => ({ enabled: false }),
+      importLock: { acquire: async () => () => undefined },
+    } as unknown as Parameters<typeof createVeloHunts>[0]);
+    hunts.startVeloHuntCollect("c1", "H.1");
+    await vi.waitFor(() => expect(downloading).toBe(true));
+    // The confirmed change: hunts forgotten, timers cancelled, case relinked.
+    await huntStore.clear("c1");
+    hunts.cancelVeloHuntTimersForCase("c1");
+    sets.linkCase("c1", b.id);
+    upsert.mockClear();
+    release();
+    await vi.waitFor(async () =>
+      expect((await hunts.listVeloHuntJobViews("c1")).every((j) => !j.collectActive)).toBe(true),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(upsert).not.toHaveBeenCalled();
+    expect(await huntStore.get("c1", "H.1")).toBeNull();
+    expect(hunts.veloHuntTimers.has("c1", "H.1")).toBe(false);
+    expect(runnerFor("/b/api.yaml")).not.toHaveBeenCalled();
+    expect(persistEvidence).not.toHaveBeenCalled(); // nothing from the old server lands in the case
+  });
+});

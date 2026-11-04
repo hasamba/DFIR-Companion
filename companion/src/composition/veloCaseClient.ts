@@ -35,6 +35,22 @@ export function caseSetIdOf(serverClients: ServerClients, caseId: string): strin
 }
 
 /**
+ * For a background pass that awaits the network: true while the case still resolves to the set it
+ * had when the pass started AND the hunt is still recorded. A confirmed set change forgets the hunts,
+ * so a pass whose download finished after it must not write the hunt back or re-arm it.
+ */
+export function huntPassCurrent(
+  serverClients: () => ServerClients,
+  hunts: { get(caseId: string, huntId: string): Promise<unknown> } | undefined,
+  caseId: string,
+  huntId: string,
+): () => Promise<boolean> {
+  const setId = caseSetIdOf(serverClients(), caseId);
+  return async () =>
+    caseSetIdOf(serverClients(), caseId) === setId && !!(await hunts?.get(caseId, huntId).catch(() => null));
+}
+
+/**
  * A per-loop resolver for background ticks. A case that does not resolve to a Velociraptor client
  * gets undefined, and its reason is logged once per case per reason text. A later success clears it,
  * so the next failure logs again.

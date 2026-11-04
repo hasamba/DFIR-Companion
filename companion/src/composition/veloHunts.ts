@@ -46,7 +46,7 @@ import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import { unavailableServerClients } from "./serverSetClients.js";
-import { createTickVelo } from "./veloCaseClient.js";
+import { createTickVelo, huntPassCurrent } from "./veloCaseClient.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
@@ -215,11 +215,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
   });
-  const collectVelo = createTickVelo(
-    () => options.serverClients ?? unavailableServerClients,
-    logLine,
-    "velo-hunt",
-  );
+  const servers = () => options.serverClients ?? unavailableServerClients;
+  const collectVelo = createTickVelo(servers, logLine, "velo-hunt");
   // The case's set did not resolve (collectVelo logged why, once). A hunt still waiting to be collected
   // keeps a collect armed on the status-poll cadence, so it runs once the set is fixed.
   async function rearmCollect(caseId: string, huntId: string): Promise<void> {
@@ -248,6 +245,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     if (!huntStore || !pipeline) return;
     const client = collectVelo(caseId); // the case's own server set, resolved per collect
     if (!client) return rearmCollect(caseId, huntId);
+    const current = huntPassCurrent(servers, huntStore, caseId, huntId); // false once the set changes
     const pending = veloHuntTimers.get(caseId, huntId);
     if (pending) {
       clearTimeout(pending);
@@ -273,6 +271,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // A last live check before the rows, for every entry point: was the hunt stopped before its expiry,
       // and how many clients did it reach (#1612)? A failed read leaves coverage unknown: nothing settles.
       const { live, reachedClients } = await readHuntCoverage(client, job.huntId); // + who finished (#1625)
+      if (!(await current())) return; // the set changed during the read: the hunt was forgotten
       const stoppedEarly = job.stoppedEarly === true || isHuntStoppedEarly(live, Date.now());
       job = {
         ...job,
@@ -388,6 +387,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         );
       }
 
+      if (!(await current())) return; // the set changed during the download: nothing lands, nothing re-arms
       // Evidence first (#1874): store every artifact and upload BEFORE the import section, so the
       // memory guard can refuse the import below without losing a row — see veloEvidenceFirst.ts.
       const evidence = await ev.storeHuntEvidence(
@@ -412,6 +412,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       );
       // Sized: the memory guard may refuse here — the pass fails with its message on the hunt card.
       releaseImportLock = await importLock.acquire(caseId, evidence.hint);
+      if (!(await current())) return; // the set changed while this pass waited its turn
       job = { ...job, collectPhase: "importing" };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -685,7 +686,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         unreadArtifacts: unread.length ? unread : undefined,
         superCappedArtifacts: superCapped.length ? superCapped : undefined,
       };
-      await huntStore.upsert(caseId, job);
+      if (await current()) await huntStore.upsert(caseId, job); // a forgotten hunt is not written back
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
       else if (inventorySignature([before]) !== inventorySignature([job]))
