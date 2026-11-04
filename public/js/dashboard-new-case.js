@@ -21,6 +21,7 @@
     document.getElementById("ncMsg").textContent = "";
     document.getElementById("ncTemplateDesc").style.display = "none";
     populateTemplateSelect(); // async, fills while user edits fields
+    populateServerSetSelect(); // async too; preselects the default server set
     document.getElementById("newCaseOverlay").classList.add("open");
     // Auto-suggest the next incident id — still fully editable (focus + select so a
     // manually-typed id overtypes it in one keystroke).
@@ -47,6 +48,44 @@
       return `INC-${year}-${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
     }
   }
+  // The "Servers" picker: every server set, the default preselected. The last entry opens the set
+  // editor, and the set saved there becomes the pick. Names go in with textContent: an analyst
+  // typed them. Members see no "+ New" entry — only an administrator can create a set.
+  const NEW_SET = "__new__";
+  let lastServerSet = "";
+  async function populateServerSetSelect(selectId) {
+    const select = document.getElementById("ncServerSet");
+    if (!select || typeof fetchServerSets !== "function") return;
+    select.textContent = "";
+    const add = (value, label) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      select.appendChild(opt);
+    };
+    try {
+      const list = await fetchServerSets();
+      for (const set of list.sets) add(set.id, set.name);
+      if (list.editable) add(NEW_SET, "+ Create a new server set…");
+      select.value = selectId || list.defaultId;
+    } catch {
+      add("", "Default server set"); // the server links a case with no serverSetId to the default
+      select.value = "";
+    }
+    lastServerSet = select.value;
+  }
+  function onServerSetChange() {
+    const select = document.getElementById("ncServerSet");
+    if (select.value !== NEW_SET) {
+      lastServerSet = select.value;
+      return;
+    }
+    select.value = lastServerSet; // stays on the previous pick unless a new set is saved
+    openServerSetEditor(null, {
+      closeOnSave: true,
+      onSaved: (set) => populateServerSetSelect(set.id),
+    });
+  }
   function closeNewCase() {
     document.getElementById("newCaseOverlay").classList.remove("open");
   }
@@ -55,6 +94,9 @@
     const name = document.getElementById("ncName").value.trim();
     const investigator = document.getElementById("ncInvestigator").value.trim();
     const picked = selectedNewCasePlaybook();
+    const serverSet = document.getElementById("ncServerSet");
+    const serverSetId =
+      serverSet && serverSet.value && serverSet.value !== NEW_SET ? serverSet.value : undefined;
     const msg = document.getElementById("ncMsg");
     if (!caseId || !name) {
       msg.textContent = "case id and name are required";
@@ -72,6 +114,7 @@
           aiProvider: null,
           templateId: picked.kind === "tpl" ? picked.id : undefined,
           incidentTypeId: picked.kind === "type" ? picked.id : undefined,
+          serverSetId, // undefined → the server links the default set
         }),
       });
       if (res.status === 201) {
@@ -142,6 +185,7 @@
     document.getElementById("ncCreate").onclick = createNewCase;
     document.getElementById("ncCancel").onclick = closeNewCase;
     document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
+    document.getElementById("ncServerSet").onchange = onServerSetChange;
     document.getElementById("newCaseOverlay").addEventListener("click", (e) => {
       if (e.target.id === "newCaseOverlay") closeNewCase();
     });

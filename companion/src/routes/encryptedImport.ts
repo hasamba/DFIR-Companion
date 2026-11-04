@@ -11,6 +11,7 @@ import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { hashFile, RECEIVED_PATH_PREFIX } from "../analysis/custody.js";
 import type { RouteContext } from "./context.js";
 import { importedCaseIdClaim } from "./caseIdentity.js";
+import { linkNewCase } from "./serverSets.js";
 import { receiptName, receivedOf } from "./importReceipt.js";
 
 /**
@@ -92,6 +93,7 @@ export function registerEncryptedImportRoutes(app: Express, ctx: RouteContext): 
         },
       );
       options.teamAuth?.grantCreator(req, meta.caseId);
+      linkNewCase(ctx, meta.caseId); // an imported case uses the default set, never the archive's
       await recordReceipt(ctx, meta.caseId, DFIRCASE_ARRIVAL, fileBuffer, filename);
       await recordArrival(ctx, meta.caseId, DFIRCASE_ARRIVAL, provenance?.sourceCaseId);
       // An archived case.json is written back byte-for-byte on import (see
@@ -172,6 +174,7 @@ function registerZipImportRoute(app: Express, ctx: RouteContext): void {
       });
       const { meta, verified, sourceCaseId } = result;
       options.teamAuth?.grantCreator(req, meta.caseId);
+      linkNewCase(ctx, meta.caseId);
       await recordReceipt(ctx, meta.caseId, ZIP_ARRIVAL, archive, filename);
       await recordArrival(ctx, meta.caseId, ZIP_ARRIVAL, sourceCaseId);
       const counts = await countsFromState(ctx, meta.caseId, result.counts);

@@ -75,6 +75,7 @@ import { isIP } from "node:net";
 import type { MappedEvent } from "./siemImport.js";
 import { STRONG_CMD, tradecraftSignal } from "./tradecraftRules.js";
 import { commandCandidates } from "./commandNormalize.js";
+import { collectorEndpoints, type CollectorEndpoint } from "./collectorEndpointSource.js";
 
 export interface CollectorInfrastructure {
   /** Lower-cased hostnames / IPs of the configured Velociraptor server(s). Empty ⇒ rule 1 is inert. */
@@ -185,22 +186,21 @@ export function isLocalOrUnspecifiedHost(host: string): boolean {
 }
 
 /**
- * The configured Velociraptor server host(s), from `DFIR_VELOCIRAPTOR_GUI_URL` and the
- * `api_connection_string` in the file `DFIR_VELOCIRAPTOR_API_CONFIG` names. Read at call time, so a
- * settings reload (or a test's stubbed env) is seen without a restart. Lower-cased, de-duplicated,
- * and never loopback: a `localhost` GUI URL or a `127.0.0.1:8001` api_connection_string yields
- * nothing, so rule 1 stays inert instead of matching every host's own loopback traffic.
+ * The analyst's Velociraptor server host(s): the GUI URL host and the `api_connection_string` host
+ * (from the API config file) of every server set, as composition registered them. Read at call time,
+ * so an edited set is seen without a restart. Lower-cased, de-duplicated, and never loopback: a
+ * `localhost` GUI URL or a `127.0.0.1:8001` api_connection_string yields nothing, so rule 1 stays
+ * inert instead of matching every host's own loopback traffic.
  */
-export function configuredCollectorServers(env: NodeJS.ProcessEnv = process.env): string[] {
-  const hosts = [
-    urlHost(env.DFIR_VELOCIRAPTOR_GUI_URL ?? ""),
-    apiConfigHost(env.DFIR_VELOCIRAPTOR_API_CONFIG ?? ""),
-  ];
+export function configuredCollectorServers(endpoints: CollectorEndpoint[] = collectorEndpoints()): string[] {
+  const hosts = endpoints.flatMap((e) => [urlHost(e.guiUrl ?? ""), apiConfigHost(e.apiConfigPath ?? "")]);
   return [...new Set(hosts.filter((h) => h && !isLocalOrUnspecifiedHost(h)))];
 }
 
-export function loadCollectorInfrastructure(env: NodeJS.ProcessEnv = process.env): CollectorInfrastructure {
-  return { servers: new Set(configuredCollectorServers(env)) };
+export function loadCollectorInfrastructure(
+  endpoints: CollectorEndpoint[] = collectorEndpoints(),
+): CollectorInfrastructure {
+  return { servers: new Set(configuredCollectorServers(endpoints)) };
 }
 
 // ───────────────────────────── description fields ─────────────────────────────

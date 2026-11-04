@@ -1,7 +1,8 @@
 // Push a case to DFIR-IRIS from the command line. Find-or-create the IRIS case by name
 // (the last-used name for this Companion case, or "<case id> — <friendly name>" on the
 // first push), then push assets→assets, IOCs→IOCs, forensic timeline→timeline, executive
-// summary→case summary, and every other section→notes. Reads DFIR_IRIS_* from .env.
+// summary→case summary, and every other section→notes. Uses the IRIS server of the case's server
+// set (Settings → Server sets); fails when the case has no usable set. DFIR_IRIS_* in .env is not read.
 //
 //   npm run iris:push -- <caseId> [--name "custom IRIS case name"]
 import { config as loadDotenv } from "dotenv";
@@ -16,7 +17,8 @@ import { PlaybookStore } from "../src/analysis/playbookStore.js";
 import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { pushCaseToIris } from "../src/integrations/iris/irisPush.js";
 import { IrisExportStore, defaultIrisCaseName } from "../src/integrations/iris/irisExportStore.js";
-import { buildIrisClient, irisPushOptions } from "../src/server.js";
+import { cliCaseTool } from "../src/composition/cliCaseServers.js";
+import { expandHome } from "../src/storage/expandHome.js";
 
 function parseArgs(argv: string[]): { caseId?: string; name?: string } {
   const caseId = argv[0] && !argv[0].startsWith("--") ? argv[0] : undefined;
@@ -32,15 +34,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const client = buildIrisClient();
-  if (!client) {
-    console.error("DFIR-IRIS not configured. Set DFIR_IRIS_URL and DFIR_IRIS_KEY in companion/.env.");
-    process.exit(1);
-  }
-
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
+  const picked = cliCaseTool(casesRoot, caseId, "iris");
+  if (!picked.ok) {
+    console.error(picked.error);
+    process.exit(1);
+  }
+  const client = picked.servers.iris!;
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
@@ -68,11 +70,13 @@ async function main(): Promise<void> {
     caseName = legacy ? caseId : defaultIrisCaseName(caseId, caseMeta?.name);
   }
 
-  console.log(`Pushing "${caseId}" to ${process.env.DFIR_IRIS_URL} as IRIS case "${caseName}" …`);
+  console.log(
+    `Pushing "${caseId}" to DFIR-IRIS (server set '${picked.setName}') as IRIS case "${caseName}" …`,
+  );
   const res = await pushCaseToIris(
     client,
     { caseName, state, meta, playbookTasks: playbookTasks.length ? playbookTasks : undefined },
-    irisPushOptions(),
+    picked.servers.irisPush,
   );
   await irisExportStore.record(caseId, caseName);
 

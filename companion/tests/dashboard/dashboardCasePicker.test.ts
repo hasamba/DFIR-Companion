@@ -242,6 +242,31 @@ describe("dashboard-case-picker.js", () => {
     expect(h.connected()).toBe(1);
   });
 
+  // The server set moved out of the toolbar into this second line: `<id> · <set name>`, after any
+  // markers. A server with no server set store sends no serverSet field, and the line stays as it was.
+  it("shows each case's server set on the line under its name", async () => {
+    const h = harness([
+      { caseId: "CASE-A", name: "Client A case", serverSet: { id: "s1", name: "Client A" } },
+      { caseId: "CASE-B", name: "Other case", serverSet: null },
+      { caseId: "CASE-C", name: "Old", status: "archived", serverSet: { id: "s1", name: "Client A" } },
+      { caseId: "CASE-D", name: "CASE-D", serverSet: { id: "s2", name: "Lab" } },
+    ]);
+    h.archived.checked = true;
+    await h.mod.loadCaseList();
+    expect(h.options.map((o) => o.value)).toEqual(["Client A case", "Other case", "Old", "CASE-D"]);
+    expect(h.options[0].label).toBe("CASE-A · Client A");
+    expect(h.options[1].label).toBe("CASE-B · no server set");
+    expect(h.options[2].label).toBe("[Archived] CASE-C · Client A");
+    expect(h.options[3].label).toBe("CASE-D · Lab"); // name == id: the set still shows
+  });
+
+  it("writes a set name with markup into the label as plain text", async () => {
+    const evil = '<img src=x onerror="alert(1)">';
+    const h = harness([{ caseId: "CASE-A", name: "A", serverSet: { id: "s1", name: evil } }]);
+    await h.mod.loadCaseList();
+    expect(h.options[0].label).toBe(`CASE-A · ${evil}`);
+  });
+
   it("the Demo case button shows only on an empty instance", async () => {
     const empty = harness([]);
     await empty.mod.loadCaseList();

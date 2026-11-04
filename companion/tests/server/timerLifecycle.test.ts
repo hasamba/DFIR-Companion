@@ -56,6 +56,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -273,7 +274,7 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
       const { runner, vql } = countingRunner();
       const app = createApp(store, {
         pipeline: offlinePipeline(store),
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloMonitorStore: new VeloMonitorStore(store),
       });
       await settle();
@@ -304,7 +305,7 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
       const { runner, vql } = countingRunner();
       const app = createApp(store, {
         pipeline: offlinePipeline(store),
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloMonitorStore: new VeloMonitorStore(store),
       });
       await settle();
@@ -361,7 +362,7 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
       const { runner, vql } = countingRunner();
       // Constructing the app IS the restart: createApp fires resumeVeloMonitors() on the way out.
       createApp(store, {
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloMonitorStore: monitors,
       });
       await settle();
@@ -393,7 +394,7 @@ describe("Velociraptor hunt status polls — timer lifecycle", () => {
 
       const { runner, vql } = countingRunner();
       createApp(store, {
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloHuntStore: hunts,
       });
       await settle();
@@ -421,7 +422,7 @@ describe("Velociraptor hunt status polls — timer lifecycle", () => {
 
       const { runner, vql } = countingRunner({ huntState: "STOPPED" });
       createApp(store, {
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloHuntStore: hunts,
       });
       await settle();

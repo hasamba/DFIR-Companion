@@ -11,6 +11,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #832: the bare (case-less) VQL routes are the two Velociraptor actions that reached the fleet
 // without a line in any case's activity log. When the caller names the case it is working in,
@@ -31,7 +32,7 @@ async function makeApp(runner: VqlRunner, activityLogStoreOverride?: ActivityLog
   const activityLogStore = activityLogStoreOverride ?? new ActivityLogStore(store);
   const app = createApp(store, {
     activityLogStore,
-    velociraptorClient: new VelociraptorClient(veloCfg, runner),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, activityLogStore };

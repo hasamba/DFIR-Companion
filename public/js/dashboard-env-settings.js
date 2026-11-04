@@ -478,9 +478,7 @@
   const RELOADABLE_ENV_PREFIXES = [
     "DFIR_VISION_",
     "DFIR_AI_",
-    "DFIR_IRIS_",
     "DFIR_VELOCIRAPTOR_",
-    "DFIR_TIMESKETCH_",
     "DFIR_NOTION_",
     "DFIR_CLICKUP_",
     "DFIR_VT_",

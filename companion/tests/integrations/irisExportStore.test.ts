@@ -37,3 +37,16 @@ describe("IrisExportStore", () => {
     expect(await store.load("c1")).toEqual({ caseName: "renamed-case" });
   });
 });
+
+describe("IrisExportStore.clear", () => {
+  it("forgets the remembered name, and is a no-op when nothing was pushed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-iris-export-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new IrisExportStore(cases);
+    await store.clear("c1");
+    await store.record("c1", "acme-breach-2026");
+    await store.clear("c1");
+    expect(await store.load("c1")).toEqual({ caseName: "" });
+  });
+});

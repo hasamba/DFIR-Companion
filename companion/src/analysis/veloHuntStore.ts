@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
@@ -298,6 +298,16 @@ export class VeloHuntStore {
       const next = idx >= 0 ? jobs.map((j, i) => (i === idx ? job : j)) : [job, ...jobs].slice(0, MAX_JOBS);
       await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
       return job;
+    });
+  }
+
+  // Forget every tracked hunt of the case (its server set changed, so the ids mean nothing to the
+  // new server). Returns how many were removed.
+  clear(caseId: string): Promise<number> {
+    return veloHuntLock.runExclusive(caseId, async () => {
+      const count = (await this.list(caseId)).length;
+      await rm(this.path(caseId), { force: true });
+      return count;
     });
   }
 }

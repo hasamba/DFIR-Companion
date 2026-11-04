@@ -24,6 +24,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1736: the import entry points that are not an HTTP import route — the drop folder, a Velociraptor
 // hunt collect, the external-import loop, and /push — each carry one debug recorder per attempt,
@@ -225,7 +226,7 @@ async function makeVeloApp() {
     importMetaStore: new ImportMetaStore(store),
     superTimelineStore: new SuperTimelineStore(store),
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
-    velociraptorClient: new VelociraptorClient(veloCfg, runner),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
   });

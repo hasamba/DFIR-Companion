@@ -11,7 +11,7 @@ import { maxPromptEvents } from "../synthGroup.js";
 import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
 import type { PresidioCoverage } from "./providerCall.js";
 import { SynthesisModelChoice, type SynthesisFallback } from "./synthesisFallback.js";
@@ -264,7 +264,7 @@ export async function loadScopedEvents(
  * CaseReportContext, AnalystQueryContext and HuntContext's `opts` all satisfy it without a cast.
  */
 export async function loadCtxAliasIndex(
-  opts: { assetOverridesStore?: AssetOverridesStore; velociraptorClientStore?: VelociraptorClientStore },
+  opts: { assetOverridesStore?: AssetOverridesStore; velociraptorClientStore?: CaseFleetInventory },
   caseId: string,
 ): Promise<HostAliasIndex> {
   return loadHostAliasIndex(

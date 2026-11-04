@@ -53,6 +53,7 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/audit-export",
   "/velociraptor",
   "/importers",
+  "/server-sets",
 ];
 const CASE_ADMIN_SEGMENTS = [
   "/password",
@@ -179,6 +180,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   if (CASE_READ_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "read", caseId };
   }
+  // Changing a case's server set stops its monitors and forgets its links: case administrator.
+  // GET /cases/:id/server-set (read) is not affected.
+  if (method === "POST" && matchSuffix === "/server-set")
+    return { kind: "case", permission: "admin", caseId };
   if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
   }
@@ -240,6 +245,8 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     // Both whole-case imports create a NEW case, like POST /cases, so anyone signed in may run them.
     collectionPath(path) === "/cases/import/encrypted" ||
     collectionPath(path) === "/cases/import/zip" ||
+    // The set picker on New case and in the case header. Members get names only; the route decides.
+    (normalizedMethod === "GET" && collectionPath(path) === "/server-sets") ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

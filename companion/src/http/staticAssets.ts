@@ -256,6 +256,9 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-case-picker.js": "application/javascript; charset=utf-8",
   // New case creation — name a case, pick a template, seed the demo case.
   "/js/dashboard-new-case.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-server-sets.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-case-servers.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-wizard-server-set.js": "application/javascript; charset=utf-8",
   // Case templates and incident types — the new-case template picker and its caches.
   "/js/dashboard-case-templates.js": "application/javascript; charset=utf-8",
   // Velociraptor triage — bundles, clients, hunt jobs and the collection they drive.

@@ -107,6 +107,7 @@ const OUTSIDE_GATE_GLOBAL_PREFIXES = [
   "/kev",
   "/mcp/",
   "/notifications",
+  "/server-sets", // the global server set store beside the cases root, no case folder
   "/diagnostics/",
   "/system/",
   "/log-level",
@@ -135,7 +136,7 @@ const OUTSIDE_GATE: Record<string, string> = {
   "post /integrations/teams/command": "scoped: captureCaseScope once the case guard passed",
   "post /integrations/telegram/command": "scoped: captureCaseScope once the case guard passed",
   "post /velociraptor/hunt-results": "global: reads hunt rows from the server; no case write",
-  "post /velociraptor/clients/refresh": "global: fleet inventory file at the cases root",
+  "post /velociraptor/clients/refresh": "global: one set's fleet inventory file beside the cases root",
   "post /velociraptor/reconnect": "global: client reconnect",
   "post /velociraptor/collect-host": "global: launches a server collection; no case write",
   "post /velociraptor/collect-results": "global: reads collection rows; no case write",

@@ -17,6 +17,8 @@
 import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
+import { listCaseIdsSync, runServerSetSeed } from "./serverSetMigration.js";
+import { serverSetMigrationMarker, serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
@@ -35,20 +37,17 @@ import {
 } from "./enrichmentProviders.js";
 import {
   buildClickUpClient,
-  buildIrisClient,
   buildJiraClient,
   buildMispPushClient,
   buildNotionClient,
   buildServiceNowClient,
-  buildTimesketchClient,
   clickupOptions,
-  irisPushOptions,
   jiraOptions,
   mispPushOptions,
   notionPushOptions,
   servicenowOptions,
-  timesketchPushOptions,
 } from "./integrationClients.js";
+import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
@@ -56,7 +55,8 @@ import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
 import { numEnv } from "./env.js";
 import { redactAiStatusEvent } from "./aiStatusRedact.js";
 import { createAiStatusHandler } from "./aiStatusHandler.js";
-import { getServerLogger } from "../logging/serverLogger.js";
+import { getServerLogger, warnLine } from "../logging/serverLogger.js";
+import { dirname, join } from "node:path";
 
 export interface AppWiringDeps {
   teamAuth?: TeamAuth;
@@ -74,6 +74,14 @@ export interface AppWiringDeps {
 }
 
 export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOptions {
+  // Before the integration clients below: seed the "Testing" server set from the current DFIR_* settings.
+  runServerSetSeed(rt.serverSetStore, process.env, {
+    caseIds: listCaseIdsSync(rt.store.casesRoot),
+    storeDir: serverSetStoreDir(rt.store.casesRoot),
+    log: warnLine, // both lines it can write are warnings: an unreadable store, a store gone empty
+    inventoryDir: join(dirname(rt.store.casesRoot), "velociraptor"),
+    markerPath: serverSetMigrationMarker(rt.store.casesRoot),
+  });
   const {
     store,
     hub,
@@ -134,7 +142,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     mcpServerStore,
     importUndoStore,
     jobManager,
-    velociraptorClient,
+    clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
@@ -350,8 +358,9 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.
     enrichHealthTtlMs: numEnv("DFIR_ENRICH_HEALTH_TTL_MS"),
     enrichHealthPollMs: numEnv("DFIR_ENRICH_HEALTH_POLL_MS") ?? 60_000,
-    irisClient: buildIrisClient(),
-    velociraptorClient,
+    serverClients: createServerClients(rt.serverSetStore, process.env),
+    serverSetStore: rt.serverSetStore,
+    clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
     iocWhitelistStore,
@@ -374,11 +383,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     onPushToken: (caseId) => hub.broadcastTo(caseId, { type: "push_token_changed" }),
     // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
     huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
-    irisOptions: irisPushOptions(),
     irisExportStore,
-    timesketchClient: buildTimesketchClient(),
-    timesketchOptions: timesketchPushOptions(),
-    rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
     incidentTypeStore,
     collectionPlanStore,

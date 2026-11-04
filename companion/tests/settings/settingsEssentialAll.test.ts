@@ -87,13 +87,8 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
   // design (a security boundary the dashboard must not move), and Essential never shows read-only.
   integrations: [
     "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
-    "DFIR_IRIS_URL",
-    "DFIR_IRIS_KEY",
-    "DFIR_IRIS_INSECURE",
-    "DFIR_TIMESKETCH_URL",
-    "DFIR_TIMESKETCH_USER",
-    "DFIR_TIMESKETCH_PASSWORD",
-    "DFIR_TIMESKETCH_INSECURE",
+    // The IRIS, Timesketch and Velociraptor connection keys (with their Skip-TLS flags) moved into
+    // Settings → Server sets, an Essential panel with no env- inputs of its own.
     "DFIR_NOTION_TOKEN",
     "DFIR_NOTION_DATABASE_ID",
     "DFIR_NOTION_PARENT_PAGE_ID",
@@ -102,9 +97,7 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_CLICKUP_LIST_ID",
     "DFIR_CLICKUP_INSECURE",
     "DFIR_NOTIFY_INSECURE",
-    "DFIR_VELOCIRAPTOR_API_CONFIG",
     "DFIR_VELOCIRAPTOR_BINARY",
-    "DFIR_VELOCIRAPTOR_GUI_URL",
     "DFIR_PUSH_TOKEN",
   ],
   // Tools is All-only in full — no entry here, and its tab is hidden in Essential. Every external

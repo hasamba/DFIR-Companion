@@ -45,7 +45,7 @@ import {
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import { getHuntSuggestPrompt, getPlaybookHuntPrompt, getQueryTranslatePrompt } from "./prompts/index.js";
 import { callAiJson, loadCtxAliasIndex, loadScopedEvents, retryPolicy } from "./aiContext.js";
 import { knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
@@ -72,7 +72,7 @@ export interface HuntContext extends PromptBlockContext {
     velociraptorProvider?: AIProvider;
     huntOutcomeStore?: HuntOutcomeStore;
     assetOverridesStore?: AssetOverridesStore;
-    velociraptorClientStore?: VelociraptorClientStore;
+    velociraptorClientStore?: CaseFleetInventory;
   };
 }
 

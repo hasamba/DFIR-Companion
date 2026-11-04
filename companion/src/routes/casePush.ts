@@ -76,13 +76,14 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   // Body: { caseName? } — an explicit override; otherwise the name from the last push is reused
   // (irisExportStore), falling back to "<case id> — <friendly name>" on the very first push.
   app.post("/cases/:id/push/iris", async (req: Request, res: Response) => {
-    const irisClient = ctx.irisClient(); // live accessor — POST /iris/reconnect can rebuild it at runtime
-    if (!irisClient)
-      return res
-        .status(501)
-        .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
+    // The case's own server set — never the default, never another case's (no fallback).
+    const resolved = ctx.serverClients.forCase(caseId);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const irisClient = resolved.servers.iris;
+    if (!irisClient)
+      return res.status(501).json({ error: "DFIR-IRIS not configured (add IRIS to this case's server set)" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       // The report projection, not the raw state (#951): scope, clock-skew alignment and the
       // analyst's false-positive markers all apply. IRIS never retracts a pushed timeline row, so a
@@ -115,7 +116,7 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
           meta,
           playbookTasks: playbookTasks?.length ? playbookTasks : undefined,
         },
-        options.irisOptions,
+        resolved.servers.irisPush,
       );
       if (options.irisExportStore) await options.irisExportStore.record(caseId, targetCaseName);
       logLine(
@@ -135,38 +136,35 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       return res.status(502).json({ error: (err as Error).message });
     }
   });
-  // Whether a Timesketch push target is configured (so the dashboard can show/hide the button).
+  // Whether a Timesketch push target is configured in the DEFAULT server set (so the dashboard can
+  // show/hide the button). Per-case routes below resolve the case's own set.
   app.get("/timesketch/status", (_req: Request, res: Response) => {
-    res
-      .status(200)
-      .json({ configured: !!options.timesketchClient, baseUrl: options.timesketchOptions?.baseUrl });
+    const d = ctx.serverClients.forDefault();
+    const ts = d.ok ? d.servers.timesketch : undefined;
+    res.status(200).json({ configured: !!ts, baseUrl: d.ok ? d.servers.timesketchPush?.baseUrl : undefined });
   });
 
-  // Re-read DFIR_TIMESKETCH_* from .env (Settings only writes the file), rebuild the client, and log
-  // in to verify connectivity — so the Setup wizard / Settings can connect after configuring Timesketch
-  // (or after it comes back online) WITHOUT the #1-gotcha restart. Mirrors /iris/reconnect. Always 200;
-  // the body says whether it's configured and reachable.
+  // Drop the cached clients and log in through the default set to verify connectivity — so Settings
+  // can connect after a set was edited (or Timesketch came back online) WITHOUT a restart. Always
+  // 200; the body says whether it's configured and reachable.
   app.post("/timesketch/reconnect", async (_req: Request, res: Response) => {
     try {
-      await reloadEnvPrefix("DFIR_TIMESKETCH_");
-      options.timesketchClient = ctx.rebuildTimesketchClient();
-      if (!options.timesketchClient) {
+      ctx.serverClients.invalidate();
+      const d = ctx.serverClients.forDefault();
+      const client = d.ok ? d.servers.timesketch : undefined;
+      if (!d.ok || !client) {
         return res.status(200).json({
           configured: false,
           ok: false,
-          error: "DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD are not all set",
+          error: d.ok ? "Timesketch is not set up in the default server set" : d.error,
         });
       }
+      const baseUrl = d.servers.timesketchPush?.baseUrl;
       try {
-        await options.timesketchClient.login();
-        return res.status(200).json({ configured: true, ok: true, baseUrl: process.env.DFIR_TIMESKETCH_URL });
+        await client.login();
+        return res.status(200).json({ configured: true, ok: true, baseUrl });
       } catch (err) {
-        return res.status(200).json({
-          configured: true,
-          ok: false,
-          baseUrl: process.env.DFIR_TIMESKETCH_URL,
-          error: (err as Error).message,
-        });
+        return res.status(200).json({ configured: true, ok: false, baseUrl, error: (err as Error).message });
       }
     } catch (err) {
       return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
@@ -177,20 +175,22 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   // then upload the forensic timeline as a timeline. The managed timeline is clean-replaced so a
   // re-push never duplicates events.
   app.post("/cases/:id/push/timesketch", async (req: Request, res: Response) => {
-    if (!options.timesketchClient)
-      return res.status(501).json({
-        error:
-          "Timesketch not configured (set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD)",
-      });
-    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
+    const resolved = ctx.serverClients.forCase(caseId);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const timesketch = resolved.servers.timesketch;
+    if (!timesketch)
+      return res
+        .status(501)
+        .json({ error: "Timesketch not configured (add Timesketch to this case's server set)" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const state = await options.reportWriter.filteredState(caseId);
       logLine(`[timesketch] ${caseId} push START`);
       const result = await pushCaseToTimesketch(
-        options.timesketchClient,
+        timesketch,
         { sketchName: caseId, state },
-        options.timesketchOptions,
+        resolved.servers.timesketchPush,
       );
       logLine(
         `[timesketch] ${caseId} push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
@@ -213,20 +213,22 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   // ("DFIR Companion super timeline") so the two pushes never clean-replace each other. NOT
   // scope/false-positive filtered — the super-timeline is the raw complete record.
   app.post("/cases/:id/push/timesketch-super", async (req: Request, res: Response) => {
-    if (!options.timesketchClient)
-      return res.status(501).json({
-        error:
-          "Timesketch not configured (set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD)",
-      });
-    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const caseId = req.params.id;
+    const resolved = ctx.serverClients.forCase(caseId);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const timesketch = resolved.servers.timesketch;
+    if (!timesketch)
+      return res
+        .status(501)
+        .json({ error: "Timesketch not configured (add Timesketch to this case's server set)" });
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     try {
       logLine(`[timesketch] ${caseId} super-timeline push START`);
       // Streamed in store batches and uploaded in chunks (#1444) — never the whole timeline at once.
       const result = await pushSuperTimelineToTimesketch(
-        options.timesketchClient,
+        timesketch,
         { sketchName: caseId, events: options.superTimelineStore.eventBatches(caseId) },
-        options.timesketchOptions,
+        resolved.servers.timesketchPush,
       );
       logLine(
         `[timesketch] ${caseId} super-timeline push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +

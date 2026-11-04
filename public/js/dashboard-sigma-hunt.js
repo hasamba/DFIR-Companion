@@ -581,7 +581,8 @@
     return fetch("/velociraptor/hunt-results", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ huntId, artifact, sources }),
+      // The open case's id: the hunt ran on that case's server set, so its results live there.
+      body: JSON.stringify({ huntId, artifact, sources, ...(bareHuntCaseId() ? { caseId: bareHuntCaseId() } : {}) }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {

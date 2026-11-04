@@ -81,6 +81,9 @@ export async function clearStateOutlivingCase(
     ["revoke case access", () => options.teamAuth?.store.deleteCaseAccess(id, actor)],
     ["forget background jobs", () => options.jobManager?.forgetCase(id)],
     ["retire case id", () => store.retireCaseId(id)],
+    // The server-set link: a same-id successor must not inherit the deleted case's set, and the
+    // set's "in use" count must drop. Only a hard delete reaches here; an archived case keeps it.
+    ["unlink server set", () => options.serverSetStore?.unlinkCase(id)],
     // A chat channel bound to the deleted case must not become bound to a same-id successor (#1866).
     ["unbind chat channels", async () => void (await options.slashCommandChannelStore?.unbindCase(id))],
     // The SIEM export position lives outside the case folder; a same-id successor must start at line

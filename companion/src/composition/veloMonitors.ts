@@ -31,6 +31,8 @@ import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis
 import { emitImportDebug } from "../routes/importDebugEmit.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { unavailableServerClients } from "./serverSetClients.js";
+import { caseSetIdOf, createTickVelo, requireCaseVelo } from "./veloCaseClient.js";
 
 export interface VeloMonitorsDeps {
   store: CaseStore;
@@ -49,8 +51,8 @@ export interface VeloMonitorsDeps {
 }
 
 export interface VeloMonitors {
-  /** Snapshot the enrolled fleet into the persisted client inventory (#70). Returns the count. */
-  refreshVeloClients(): Promise<number>;
+  /** Snapshot one server set's enrolled fleet into its client inventory (#70). Returns the count. */
+  refreshVeloClients(setId: string): Promise<number>;
   createVeloMonitor(
     caseId: string,
     spec: {
@@ -91,12 +93,16 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     (timer) => clearTimeout(timer),
   );
 
-  async function refreshVeloClients(): Promise<number> {
-    const client = options.velociraptorClient;
-    const clientStore = options.velociraptorClientStore;
-    if (!client || !clientStore) return 0;
+  const serverClients = () => options.serverClients ?? unavailableServerClients;
+  // Every tick resolves the case's set again, so a set edit applies on the next poll.
+  const tickVelo = createTickVelo(serverClients, logLine, "velo-monitor");
+
+  async function refreshVeloClients(setId: string): Promise<number> {
+    const r = serverClients().forSet(setId);
+    const client = r.ok ? r.servers.velociraptor : undefined;
+    if (!client || !options.clientInventoryFor) return 0;
     const clients = await client.listClients();
-    await clientStore.save(clients, new Date().toISOString());
+    await options.clientInventoryFor(setId).save(clients, new Date().toISOString());
     logLine(`[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)`);
     return clients.length;
   }
@@ -136,8 +142,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
   // broadcast, and reschedule the next tick (unless it was removed/stopped). Never throws.
   async function pollVeloMonitor(caseId: string, id: string): Promise<void> {
     const monStore = options.veloMonitorStore;
-    const client = options.velociraptorClient;
-    if (!monStore || !client) {
+    if (!monStore) {
       timers.delete(caseId, id);
       return;
     }
@@ -149,6 +154,13 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     }
     if (!monitor || monitor.status === "stopped") {
       timers.delete(caseId, id);
+      return;
+    }
+    // No client for this case right now (set deleted, edited, or without Velociraptor): skip this
+    // tick and keep the monitor armed, so it resumes once the set is fixed.
+    const client = tickVelo(caseId);
+    if (!client) {
+      if (timers.has(caseId, id)) scheduleVeloMonitor(caseId, monitor);
       return;
     }
 
@@ -194,7 +206,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
   // survives the #1-gotcha restart). Best-effort — a single bad case must not abort the sweep.
   async function resumeVeloMonitors(): Promise<void> {
     const monStore = options.veloMonitorStore;
-    if (!monStore || !options.velociraptorClient) return;
+    if (!monStore) return;
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -242,6 +254,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     },
   ): Promise<VeloMonitor> {
     const monStore = options.veloMonitorStore!;
+    const { client, setId } = requireCaseVelo(serverClients(), caseId); // one resolve for both
     const nowEpoch = Math.floor(Date.now() / 1000);
     const id = monitorId(spec.clientId, spec.artifact);
     const existing = await monStore.get(caseId, id);
@@ -249,14 +262,12 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     // artifact no client collects polls an empty stream forever while looking healthy. Throws (so the
     // route answers 502 and nothing is persisted) when the table does not take it. A re-armed monitor
     // keeps its "added" mark so the delete path still knows the companion owns the entry.
-    const ensured = spec.alreadyEnabled
-      ? "present"
-      : await ensureClientMonitoring(options.velociraptorClient!, spec.artifact);
+    const ensured = spec.alreadyEnabled ? "present" : await ensureClientMonitoring(client, spec.artifact);
     // "present" because ANOTHER companion monitor put it there → this one inherits the "added" mark, so
     // the entry is still released once the last monitor for the artifact is deleted.
     const veloTableEntry =
       ensured === "present" &&
-      (await someMonitor((m) => m.artifact === spec.artifact && m.veloTableEntry === "added"))
+      (await someMonitor(setId, (m) => m.artifact === spec.artifact && m.veloTableEntry === "added"))
         ? "added"
         : ensured;
     const monitor: VeloMonitor = {
@@ -285,7 +296,7 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
   }
 
   async function verifyVeloMonitorEnabled(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
-    const client = options.velociraptorClient;
+    const client = tickVelo(caseId);
     const monStore = options.veloMonitorStore;
     if (!client || !monStore) return monitor;
     if (await isClientMonitoringEnabled(client, monitor.artifact)) return monitor;
@@ -299,11 +310,15 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     return flagged;
   }
 
-  // True when any persisted monitor, in any case, matches — the cross-case view the table needs,
-  // since one Velociraptor entry serves every case.
-  async function someMonitor(match: (m: VeloMonitor) => boolean): Promise<boolean> {
+  // True when any persisted monitor of a case on the same server set matches — the cross-case view
+  // the table needs, since one Velociraptor entry serves every case on that server.
+  async function someMonitor(
+    setId: string | undefined,
+    match: (m: VeloMonitor) => boolean,
+  ): Promise<boolean> {
     const monStore = options.veloMonitorStore!;
     for (const c of await store.listCases()) {
+      if (caseSetIdOf(serverClients(), c.caseId) !== setId) continue;
       for (const m of await monStore.list(c.caseId)) if (match(m)) return true;
     }
     return false;
@@ -315,12 +330,22 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     stopVeloMonitorTimer(caseId, id);
     await monStore.remove(caseId, id);
     options.onVeloMonitor?.(caseId);
-    if (!monitor || monitor.veloTableEntry !== "added" || !options.velociraptorClient) return;
-    // Another monitor (any case; this one is already removed) still watches the artifact → its entry stays.
-    if (await someMonitor((m) => m.artifact === monitor.artifact)) return;
+    if (!monitor || monitor.veloTableEntry !== "added") return;
+    const client = tickVelo(caseId);
+    if (!client) {
+      // One line per monitor, so a change of server set can tell which entries stay on the old server.
+      logLine(
+        `[velo-monitor] monitor ${id} of case ${caseId} was not released: the case's server set does not resolve to a Velociraptor server`,
+      );
+      return;
+    }
+    // Another monitor (any case on this set; this one is already removed) still watches the artifact →
+    // its entry stays.
+    if (await someMonitor(caseSetIdOf(serverClients(), caseId), (m) => m.artifact === monitor.artifact))
+      return;
     // Best-effort: the monitor is gone either way; a failed release is logged, not surfaced as a 5xx.
     try {
-      await releaseClientMonitoring(options.velociraptorClient, monitor.artifact);
+      await releaseClientMonitoring(client, monitor.artifact);
       logLine(`[velo-monitor] removed ${monitor.artifact} from Velociraptor's Client Monitoring table`);
     } catch (err) {
       logLine(

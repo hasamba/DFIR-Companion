@@ -1,7 +1,7 @@
 // Import an EXISTING DFIR-IRIS case into a Companion case from the command line — the reverse
 // of `iris:push`. Pull the IRIS case's assets/IOCs/timeline (by IRIS case id or exact name) and
 // map them DETERMINISTICALLY (no AI call) into the Companion case's forensic timeline + IOCs.
-// Reads DFIR_IRIS_* from .env.
+// Uses the IRIS server of the case's server set; fails when the case has no usable set.
 //
 //   npm run iris:import -- <companionCaseId> <irisCaseIdOrName>
 import { config as loadDotenv } from "dotenv";
@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { fetchIrisCase } from "../src/integrations/iris/irisImportFetch.js";
-import { buildIrisClient, buildRuntimePipeline } from "../src/server.js";
+import { buildRuntimePipeline } from "../src/server.js";
+import { cliCaseTool } from "../src/composition/cliCaseServers.js";
+import { expandHome } from "../src/storage/expandHome.js";
 
 async function main(): Promise<void> {
   const caseId = process.argv[2];
@@ -22,15 +24,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const client = buildIrisClient();
-  if (!client) {
-    console.error("DFIR-IRIS not configured. Set DFIR_IRIS_URL and DFIR_IRIS_KEY in companion/.env.");
-    process.exit(1);
-  }
-
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
+  const picked = cliCaseTool(casesRoot, caseId, "iris");
+  if (!picked.ok) {
+    console.error(picked.error);
+    process.exit(1);
+  }
+  const client = picked.servers.iris!;
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   const pipeline = buildRuntimePipeline({ stateStore, store });
@@ -39,7 +41,7 @@ async function main(): Promise<void> {
   const ref =
     Number.isFinite(numericId) && /^\d+$/.test(irisRef) ? { irisCaseId: numericId } : { caseName: irisRef };
 
-  console.log(`Importing IRIS case ${irisRef} from ${process.env.DFIR_IRIS_URL} into "${caseId}" …`);
+  console.log(`Importing IRIS case ${irisRef} (server set '${picked.setName}') into "${caseId}" …`);
   const data = await fetchIrisCase(client, ref);
   console.log(
     `  fetched: ${data.timeline.length} timeline event(s), ${data.assets.length} asset(s), ${data.iocs.length} IOC(s) from IRIS case ${data.caseName ?? `#${data.irisCaseId}`}`,

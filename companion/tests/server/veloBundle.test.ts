@@ -17,6 +17,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -81,7 +82,7 @@ async function makeApp(runnerOverride: VqlRunner = runner, cfg: Partial<Velocira
     pipeline,
     stateStore,
     importMetaStore,
-    velociraptorClient: client,
+    serverClients: veloServerClients(client),
     artifactBundleStore,
     veloHuntStore,
   });
@@ -937,7 +938,7 @@ describe("Velociraptor triage bundles — routes", () => {
   it("run-bundle is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
     const store = new CaseStore(root);
-    const bare = createApp(store, {}); // no velociraptorClient / pipeline
+    const bare = createApp(store, { serverClients: stubServerClients({}) }); // a set without Velociraptor, no pipeline
     // The case has to be REAL for this to be a test about the 501: the case-exists gate on
     // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the wrong reason.
     await request(bare).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -1160,7 +1161,7 @@ describe("Velociraptor hunt status polling — routes", () => {
   it("poll-status is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient2-"));
     const store = new CaseStore(root);
-    const bare = createApp(store, {});
+    const bare = createApp(store, { serverClients: stubServerClients({}) }); // a set without Velociraptor
     // The case has to be REAL for this to be a test about the 501: the case-exists gate on
     // /cases/:id/velociraptor now answers 404 first, and would have made this pass for the
     // wrong reason.

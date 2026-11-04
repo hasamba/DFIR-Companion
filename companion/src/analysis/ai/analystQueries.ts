@@ -10,7 +10,7 @@ import {
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { buildSynthesisContext } from "../synthSelect.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 import {
@@ -63,7 +63,7 @@ export interface AnalystQueryContext extends AiCallContext {
     AnalystDecisionStores & {
       superTimelineStore?: SuperTimelineStore;
       assetOverridesStore?: AssetOverridesStore;
-      velociraptorClientStore?: VelociraptorClientStore;
+      velociraptorClientStore?: CaseFleetInventory;
       hypothesisStore?: HypothesisStore;
       huntOutcomeStore?: HuntOutcomeStore;
       notebookStore?: NotebookStore;

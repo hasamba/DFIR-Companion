@@ -41,6 +41,8 @@ export interface SupportBundleDeps {
   /** True when this requester may see this case (no password, or unlocked in this session). */
   canSee: (caseId: string) => boolean;
   env?: Record<string, string | undefined>;
+  /** Extra secret values to redact (the server sets' decrypted secrets). Must not throw. */
+  extraSecrets?: () => string[];
   /** The last `maxBytes` of a file and its full size. Injectable for tests; see readFileTail. */
   readTail?: (path: string, maxBytes: number) => Promise<{ bytes: Buffer; size: number }>;
 }
@@ -297,7 +299,7 @@ export async function buildSupportBundleZip(
   const redactor = createSupportRedactor({
     cases: cases.map((c) => ({ caseId: c.caseId, title: c.name })),
     fileNames: [...fileNames],
-    secrets: collectEnvSecrets(deps.env ?? process.env),
+    secrets: [...collectEnvSecrets(deps.env ?? process.env), ...(deps.extraSecrets?.() ?? [])],
     roots,
     known,
   });

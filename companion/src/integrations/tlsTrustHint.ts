@@ -55,3 +55,34 @@ export function tlsTrustHint(err: unknown, name: string): string {
     ` unverified (lab only — a non-loopback host also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true).`
   );
 }
+
+// Node's fetch() throws a generic `TypeError: fetch failed` for every low-level network
+// failure (connection refused, DNS lookup failure, TLS error, timeout) — the actual reason
+// lives in `.cause` (an errno-style error with a `.code` like ECONNREFUSED/ENOTFOUND/
+// CERT_HAS_EXPIRED), which is easy to lose if only `.message` is read. Walk the cause chain
+// so the real reason reaches the user instead of a bare "fetch failed".
+export function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [err.message];
+  let cause: unknown = (err as { cause?: unknown }).cause;
+  while (cause instanceof Error) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    parts.push(code ? `${cause.message} (${code})` : cause.message);
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return parts.join(" -> ");
+}
+
+/**
+ * A server-set client's network failure, short enough for the editor's 200-character test line.
+ * A rejected certificate drops Node's own words (its --use-system-ca advice is not a fix we own)
+ * and keeps only the code plus the fix in the set. Any other failure keeps the full cause chain.
+ */
+export function serverSetFetchError(err: unknown, tool: string): string {
+  const code = tlsCauseCode(err);
+  if (!isCertFailureCode(code)) return describeFetchError(err);
+  return (
+    `the certificate is not trusted (${code}). Set the CA bundle for ${tool} in this server set` +
+    ` (Settings → Server sets), or tick "Skip TLS verify" (lab only).`
+  );
+}

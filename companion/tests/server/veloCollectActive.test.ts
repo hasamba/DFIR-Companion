@@ -13,6 +13,7 @@ import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { VelociraptorClient, type VqlRunner } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1662: the collect route answers 202 and says "poll hunt-jobs". A re-collect of a hunt that already
 // says "imported" keeps saying "imported" until the pass writes "collecting", and the pass writes
@@ -55,7 +56,7 @@ async function makeApp(runner: VqlRunner) {
     pipeline,
     stateStore,
     importMetaStore: new ImportMetaStore(store),
-    velociraptorClient: client,
+    serverClients: veloServerClients(client),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
   });

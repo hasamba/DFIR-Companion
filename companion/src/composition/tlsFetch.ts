@@ -4,7 +4,9 @@ import {
   type TlsConnectOptions,
   type TlsFetchOptions,
 } from "../enrichment/tlsFetch.js";
+import type { FetchFn } from "../enrichment/provider.js";
 import { warnLine } from "../logging/serverLogger.js";
+import { isLoopbackHost } from "../providers/urlValidation.js";
 import { isEnvFlag } from "./env.js";
 
 /**
@@ -69,7 +71,60 @@ export type TlsIntegration =
   | "SERVICENOW";
 
 export function tlsFetchFor(name: TlsIntegration) {
-  return fromEnv(name, buildTlsFetch);
+  const hostSource = TLS_HOST_URL[name];
+  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
+  return settingsFetch(
+    {
+      url: hostUrl,
+      ca: process.env[`DFIR_${name}_CA`],
+      insecure: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
+      label: name,
+    },
+    false,
+  );
+}
+
+type TlsSettings = { url?: string; ca?: string; insecure?: boolean; label?: string };
+
+/**
+ * The same TLS trust, from a server set's settings instead of env. The set's "Skip TLS verify" box
+ * is the analyst's consent for that set's server, loopback or not, so the #246 guard is not applied
+ * here; every env-based integration (tlsFetchFor / tlsConnectFor) keeps it.
+ */
+export function tlsFetchForSettings(s: TlsSettings) {
+  if (s.insecure && s.url && !isLoopbackUrl(s.url)) {
+    // Host only: a URL can carry credentials.
+    warnLine(`[DFIR] ${s.label ?? "server set"}: server set skips TLS verification for ${hostOf(s.url)}`);
+  }
+  return settingsFetch(s, true);
+}
+
+// A set's CA bundle that cannot be read. The default trust would only fail later with a certificate
+// error that points at the CA bundle the analyst already set, so every request fails with the path
+// instead (the path is not secret; the file's contents never reach the message).
+function unreadableCaFetch(ca: string): FetchFn {
+  return async () => {
+    throw new Error(`CA bundle '${ca}' could not be read`);
+  };
+}
+
+function settingsFetch(s: TlsSettings, isServerSet: boolean) {
+  const label = s.label ?? "server set";
+  try {
+    return buildTlsFetch({
+      caCertPath: s.ca || undefined,
+      insecureSkipVerify: Boolean(s.insecure),
+      hostUrl: s.url,
+      allowInsecureExternal: isServerSet,
+      onWarn: (m) => warnLine(`[DFIR] ${label}: ${m}`),
+    });
+  } catch (err) {
+    // Same containment as fromEnv below: one integration's TLS misconfiguration must not crash the server.
+    warnLine(`[DFIR] ${label}: ${(err as Error).message}`);
+    // A read error carries an errno code (ENOENT, EACCES, EISDIR); the insecure guard's does not.
+    if (isServerSet && s.ca && (err as NodeJS.ErrnoException).code) return unreadableCaFetch(s.ca);
+    return undefined;
+  }
 }
 
 /**
@@ -102,5 +157,21 @@ function fromEnv<T>(name: TlsIntegration, build: (opts: TlsFetchOptions) => T | 
     // not a server-wide outage) and say why loudly so the operator can see it in the logs.
     warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
     return undefined;
+  }
+}
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    return isLoopbackHost(new URL(url).host);
+  } catch {
+    return false;
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "an unreadable host";
   }
 }

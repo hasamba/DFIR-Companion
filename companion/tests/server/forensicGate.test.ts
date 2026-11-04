@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import type { VelociraptorRunResult } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // Info telemetry (an ungraded MFT row) — routed to the super-timeline only under the default gate; a
 // High YARA detection stays in the forensic timeline. Mirrors veloImportExternal.test.ts's fixtures.
@@ -84,9 +85,7 @@ async function makeApp(
     stateStore,
     superTimelineStore,
     forensicGateControlStore,
-    velociraptorClient: client as unknown as NonNullable<
-      Parameters<typeof createApp>[1]
-    >["velociraptorClient"],
+    serverClients: veloServerClients(client),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, superTimelineStore };

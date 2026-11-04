@@ -163,7 +163,7 @@
     }
     if (btn) btn.disabled = true;
     if (sel) sel.innerHTML = `<option value="">loading…</option>`;
-    fetch("/velociraptor/event-artifacts?refresh=1")
+    fetch("/velociraptor/event-artifacts?refresh=1" + (veloCaseId() ? `&caseId=${encodeURIComponent(veloCaseId())}` : ""))
       .then((r) => r.json().then((j) => ({ ok: r.ok, j }))) // see veloBrowseArtifacts: deliberate Browse bypasses the catalog cache
       .then(({ ok, j }) => {
         if (!ok || j.error) {

@@ -12,15 +12,16 @@ import { test, expect } from "../fixtures/test.js";
 // service because someone's environment happened to be configured would be a genuinely bad
 // outcome for a forensics tool. So these assert the UNCONFIGURED path, which is also the path
 // every user hits before they set anything up: status reports it honestly, and a push refuses
-// with 501 and names the environment variables to set rather than hanging or 500ing.
+// with 501 and names what to set — the case's server set for IRIS and Timesketch, the environment
+// variables for the rest — rather than hanging or 500ing.
 //
 // US-219 (the MISP forensic-timeline payload) is deliberately NOT claimed: verifying WHAT the
 // export sends needs a configured MISP to send it to, so only the refusal path is reachable here.
 
 /** Every outbound integration, with the config hint its refusal must name. */
 const INTEGRATIONS: ReadonlyArray<{ story: string; slug: string; hint: RegExp }> = [
-  { story: "US-090", slug: "iris", hint: /DFIR_IRIS_URL/ },
-  { story: "US-091", slug: "timesketch", hint: /DFIR_TIMESKETCH_URL/ },
+  { story: "US-090", slug: "iris", hint: /this case's server set/ },
+  { story: "US-091", slug: "timesketch", hint: /this case's server set/ },
   { story: "US-092", slug: "misp", hint: /DFIR_MISP_URL/ },
   { story: "US-093", slug: "notion", hint: /DFIR_NOTION_TOKEN/ },
   { story: "US-094", slug: "clickup", hint: /DFIR_CLICKUP_TOKEN/ },

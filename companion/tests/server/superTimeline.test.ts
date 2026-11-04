@@ -23,6 +23,7 @@ import {
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { pollFor, pollBudget, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // Fills the three array fields every ForensicEvent carries but no super-timeline assertion in
 // this file reads, so each literal below stays about the fields the route actually filters on.
@@ -161,7 +162,7 @@ async function makeSuperBundleApp(runner: VqlRunner = superBundleRunner) {
     pipeline,
     stateStore,
     importMetaStore,
-    velociraptorClient: new VelociraptorClient(superVeloCfg, runner),
+    serverClients: veloServerClients(new VelociraptorClient(superVeloCfg, runner)),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
@@ -214,7 +215,7 @@ async function makeSuperUploadApp() {
   const app = createApp(store, {
     pipeline,
     stateStore,
-    velociraptorClient: new VelociraptorClient(superVeloCfg, superUploadRunner),
+    serverClients: veloServerClients(new VelociraptorClient(superVeloCfg, superUploadRunner)),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     superTimelineStore: new SuperTimelineStore(store),
@@ -1013,9 +1014,7 @@ async function makeCatalogApp(catalog: CatalogEntry[], bundleArtifacts: string[]
     pipeline,
     stateStore,
     // The route only touches listClientArtifacts + launchArtifactHunt on the client for this path.
-    velociraptorClient: client as unknown as NonNullable<
-      Parameters<typeof createApp>[1]
-    >["velociraptorClient"],
+    serverClients: veloServerClients(client),
     artifactBundleStore: bundleStore,
     veloHuntStore: new VeloHuntStore(store),
   });

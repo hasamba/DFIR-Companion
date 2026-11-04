@@ -24,6 +24,7 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportBase, RouteContext } from "../routes/context.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -44,6 +45,8 @@ import { readInIncidentWindow, readScope } from "../integrations/velociraptor/ve
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
+import { unavailableServerClients } from "./serverSetClients.js";
+import { createTickVelo, huntPassCurrent } from "./veloCaseClient.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
@@ -118,6 +121,8 @@ export interface VeloHunts {
    * (#770), and a re-collect says "imported" both before its first write and after its last one.
    */
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
+  /** Cancel every pending collect and status-poll timer of one case (its server set changed). */
+  cancelVeloHuntTimersForCase(caseId: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -203,12 +208,28 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
     stopVeloHuntStatusPoll,
+    stopVeloHuntStatusPollsForCase,
     resumeVeloHuntStatusPolls,
   } = createVeloHuntStatusTimers({
     store,
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
   });
+  const servers = () => options.serverClients ?? unavailableServerClients;
+  const collectVelo = createTickVelo(servers, logLine, "velo-hunt");
+  // The case's set did not resolve (collectVelo logged why, once). A hunt still waiting to be collected
+  // keeps a collect armed on the status-poll cadence, so it runs once the set is fixed.
+  async function rearmCollect(caseId: string, huntId: string): Promise<void> {
+    const job = await options.veloHuntStore?.get(caseId, huntId).catch(() => null);
+    if (!job || !["running", "unreachable", "collecting"].includes(job.status)) return;
+    const pending = veloHuntTimers.get(caseId, huntId);
+    if (pending) clearTimeout(pending);
+    const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
+    const retry = () => void startVeloHuntCollect(caseId, huntId);
+    const timer = runInCaseScope(store.casesRoot, caseId, () => setTimeout(retry, seconds * 1000));
+    timer.unref?.();
+    veloHuntTimers.set(caseId, timer, huntId);
+  }
   const admittedCollect = createHuntCollectAdmission(store, logLine, scheduleVeloHuntStatusPoll);
 
   // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
@@ -219,10 +240,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   //
   // ONE pass. Concurrency is owned by startVeloHuntCollect — call that, not this.
   async function collectVeloHuntOnce(caseId: string, huntId: string): Promise<void> {
-    const client = options.velociraptorClient;
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
-    if (!client || !huntStore || !pipeline) return;
+    if (!huntStore || !pipeline) return;
+    const client = collectVelo(caseId); // the case's own server set, resolved per collect
+    if (!client) return rearmCollect(caseId, huntId);
+    const current = huntPassCurrent(servers, huntStore, caseId, huntId); // false once the set changes
     const pending = veloHuntTimers.get(caseId, huntId);
     if (pending) {
       clearTimeout(pending);
@@ -248,6 +271,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // A last live check before the rows, for every entry point: was the hunt stopped before its expiry,
       // and how many clients did it reach (#1612)? A failed read leaves coverage unknown: nothing settles.
       const { live, reachedClients } = await readHuntCoverage(client, job.huntId); // + who finished (#1625)
+      if (!(await current())) return; // the set changed during the read: the hunt was forgotten
       const stoppedEarly = job.stoppedEarly === true || isHuntStoppedEarly(live, Date.now());
       job = {
         ...job,
@@ -363,6 +387,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         );
       }
 
+      if (!(await current())) return; // the set changed during the download: nothing lands, nothing re-arms
       // Evidence first (#1874): store every artifact and upload BEFORE the import section, so the
       // memory guard can refuse the import below without losing a row — see veloEvidenceFirst.ts.
       const evidence = await ev.storeHuntEvidence(
@@ -378,6 +403,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // The reads are done and the writes have not started: this collect is now waiting its turn.
       // Published BEFORE the await, because the wait is the part the analyst cannot otherwise see —
       // on a busy case it is minutes of a card that says nothing at all (#770).
+      if (!(await current())) return; // the set changed while the evidence was stored
       job = { ...job, collectPhase: "queued", collectRows: totalRows };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -387,6 +413,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       );
       // Sized: the memory guard may refuse here — the pass fails with its message on the hunt card.
       releaseImportLock = await importLock.acquire(caseId, evidence.hint);
+      if (!(await current())) return; // the set changed while this pass waited its turn
       job = { ...job, collectPhase: "importing" };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
@@ -660,7 +687,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         unreadArtifacts: unread.length ? unread : undefined,
         superCappedArtifacts: superCapped.length ? superCapped : undefined,
       };
-      await huntStore.upsert(caseId, job);
+      if (await current()) await huntStore.upsert(caseId, job); // a forgotten hunt is not written back
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
       else if (inventorySignature([before]) !== inventorySignature([job]))
@@ -756,6 +783,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
 
   return {
     veloHuntTimers,
+    cancelVeloHuntTimersForCase: (caseId) => {
+      veloHuntTimers.forget(caseId);
+      stopVeloHuntStatusPollsForCase(caseId);
+    },
     startVeloHuntCollect,
     listVeloHuntJobViews,
     scheduleVeloHuntStatusPoll,
