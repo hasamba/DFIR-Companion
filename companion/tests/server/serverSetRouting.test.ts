@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -127,10 +127,14 @@ describe("IRIS and Timesketch routes use the case's own server set", () => {
     const sa = sets.create({ name: "A", iris: { url: a.url, apiKey: "iris-key-sentinel-alpha" } });
     sets.linkCase("c1", sa.id);
     await request(app).post("/cases/c1/push/iris").send({});
+    // The push answers when its first parallel lookup fails; the other lookup may still be in
+    // flight. Wait for all of this push's calls before clearing, so none lands after the edit.
+    await vi.waitFor(() => expect(a.auths).toHaveLength(IRIS_CALLS_PER_PUSH));
     expect(new Set(a.auths)).toEqual(new Set(["Bearer iris-key-sentinel-alpha"]));
     a.auths.length = 0;
     sets.update(sa.id, { name: "A", iris: { url: a.url, apiKey: "iris-key-sentinel-charlie" } });
     await request(app).post("/cases/c1/push/iris").send({});
+    await vi.waitFor(() => expect(a.auths).toHaveLength(IRIS_CALLS_PER_PUSH));
     expect(new Set(a.auths)).toEqual(new Set(["Bearer iris-key-sentinel-charlie"]));
   });
 });

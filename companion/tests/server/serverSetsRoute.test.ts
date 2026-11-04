@@ -98,7 +98,17 @@ beforeEach(() => {
   probed = [];
   secretsSeen = [];
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+// Windows cannot unlink an open SQLite file, so close every auth store before removing the dir.
+const authStores: AuthStore[] = [];
+afterEach(() => {
+  for (const store of authStores.splice(0)) store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+function trackAuthStore(store: AuthStore): AuthStore {
+  authStores.push(store);
+  return store;
+}
 
 async function teamApp() {
   await cases.createCase({ caseId: "c1", name: "Case c1", investigator: "i", aiProvider: null });
@@ -106,7 +116,7 @@ async function teamApp() {
     serverClients: spyClients(),
     serverSetStore: sets,
     teamAuth: new TeamAuth({
-      store: new AuthStore(join(dir, "auth.sqlite")),
+      store: trackAuthStore(new AuthStore(join(dir, "auth.sqlite"))),
       bootstrapToken: BOOTSTRAP_TOKEN,
       cookieSecure: false,
       sessionTtlMs: 60 * 60_000,
