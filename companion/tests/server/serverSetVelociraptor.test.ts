@@ -384,3 +384,49 @@ describe("the case-less client list and time-scope preview follow the open case"
     expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
   });
 });
+
+describe("startup fleet inventory retries", () => {
+  const start = () =>
+    startPostListenTasks({
+      store: cases,
+      demoMode: false,
+      serverSets: sets,
+      serverClients: clients(),
+      clientInventoryFor: (id) =>
+        new VelociraptorClientStore(join(dir, "velociraptor", `clients-${id}.json`)),
+      updateCheckStore: new UpdateCheckStore(join(dir, "update-check.json")),
+      updateRepo: "",
+    });
+  const failing = (path: string) =>
+    (runners[path] = vi.fn<VqlRunner>(async () => {
+      throw new Error("server down");
+    }));
+
+  it("a retry uses the set's current Velociraptor, not the client from the first attempt", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const s = sets.create({ name: "A", velociraptor: velo("/old/api.yaml") });
+    const old = failing("/old/api.yaml");
+    start();
+    await vi.waitFor(() => expect(old).toHaveBeenCalledTimes(1));
+    sets.update(s.id, { name: "A", velociraptor: velo("/new/api.yaml") });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(runnerFor("/new/api.yaml")).toHaveBeenCalled());
+    expect(old).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries stop once the set is deleted or loses its Velociraptor", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const gone = sets.create({ name: "Gone", velociraptor: velo("/gone/api.yaml") });
+    const off = sets.create({ name: "Off", velociraptor: velo("/off/api.yaml") });
+    const g = failing("/gone/api.yaml");
+    const o = failing("/off/api.yaml");
+    start();
+    await vi.waitFor(() => expect(g).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(o).toHaveBeenCalledTimes(1));
+    sets.remove(gone.id);
+    sets.update(off.id, { name: "Off" });
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(g).toHaveBeenCalledTimes(1);
+    expect(o).toHaveBeenCalledTimes(1);
+  });
+});

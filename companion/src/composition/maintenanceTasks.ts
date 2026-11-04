@@ -354,11 +354,13 @@ function refreshFleetInventories(
   }
   const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000]; // ~18 min of attempts
   for (const setId of ids) {
-    const r = serverClients.forSet(setId);
-    const client = r.ok ? r.servers.velociraptor : undefined;
-    if (!r.ok || !client) continue;
-    const label = `server set '${r.servers.setName}'`;
+    // Resolved again on every attempt: an edited set retries against its new server, and a set that
+    // was deleted or lost its Velociraptor stops retrying.
     const attempt = (i: number): void => {
+      const r = serverClients.forSet(setId);
+      const client = r.ok ? r.servers.velociraptor : undefined;
+      if (!r.ok || !client) return;
+      const label = `server set '${r.servers.setName}'`;
       client
         .listClients()
         .then((clients) => clientInventoryFor(setId).save(clients, new Date().toISOString()))
