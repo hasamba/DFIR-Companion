@@ -51,6 +51,7 @@ import { KevStore } from "../analysis/kevStore.js";
 import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
+import { registerCollectorEndpoints } from "./collectorEndpoints.js";
 import { deriveServerSetKey } from "../integrations/serverSets/secretBox.js";
 import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
 import { getAppVersion } from "../version.js";
@@ -276,6 +277,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     serverSetStoreDir(casesRoot),
     deriveServerSetKey(loadOrCreateInstanceSecret(casesRoot)),
   );
+  registerCollectorEndpoints(serverSetStore);
   const appVersion = getAppVersion();
   const updateRepo = (() => {
     const envRepo = process.env.DFIR_UPDATE_REPO;

@@ -330,6 +330,7 @@
     "collectDirectiveResolve.ts": "analysis/workflow",
     "collectSatisfaction.ts": "analysis/workflow",
     "collectorDeployment.ts": "analysis/ingest",
+    "collectorEndpointSource.ts": "analysis/ingest",
     "collectorChildren.ts": "analysis/ingest",
     "collectorLineage.ts": "analysis/ingest",
     "processParentage.ts": "analysis/ingest",

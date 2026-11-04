@@ -92,7 +92,12 @@ describe("runServerSetSeed", () => {
     const lines: string[] = [];
     const marker = join(dir, ".server-sets-migrated");
     const run = () =>
-      runServerSetSeed(other, env, { caseIds: ["a"], storeDir: sdir, log: (l) => lines.push(l), markerPath: marker });
+      runServerSetSeed(other, env, {
+        caseIds: ["a"],
+        storeDir: sdir,
+        log: (l) => lines.push(l),
+        markerPath: marker,
+      });
     expect(run).not.toThrow();
     expect(existsSync(marker)).toBe(false);
     expect(lines).toHaveLength(1);

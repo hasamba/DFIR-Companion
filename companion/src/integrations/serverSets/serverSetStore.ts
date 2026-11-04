@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import { open, seal } from "./secretBox.js";
 import { secretsOfSet } from "./setSecrets.js";
-import { MASKED_SECRET, type ServerSet, type ServerSetInput } from "./types.js";
+import { MASKED_SECRET, type ServerSet, type ServerSetInput, type VelociraptorSettings } from "./types.js";
 
 interface Links {
   defaultId?: string;
@@ -47,6 +47,11 @@ export class ServerSetStore {
   // Whether a set with this id exists. Reads no secret, so a store with a changed key still answers.
   has(id: string): boolean {
     return this.readRaw().some((s) => s.id === id);
+  }
+
+  // Every set's Velociraptor settings. Reads no secret, so a set that cannot decrypt still answers.
+  velociraptorSettings(): VelociraptorSettings[] {
+    return this.readRaw().flatMap((s) => (s.velociraptor ? [{ ...s.velociraptor }] : []));
   }
 
   get(id: string): ServerSet | undefined {
