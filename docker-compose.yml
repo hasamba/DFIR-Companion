@@ -3,8 +3,9 @@
 # Localhost-only by design: the container binds 0.0.0.0 internally (DFIR_HOST) and the port is
 # published to 127.0.0.1 on the HOST, so it is never exposed on your machine's network interfaces.
 # Forensic evidence + case state persist in ./cases on the host, and the server sets (IRIS /
-# Timesketch / Velociraptor connections, keys encrypted) in ./server-sets. The pre-built browser
-# add-on is written to ./addon so you can load it unpacked into Chrome/Comet.
+# Timesketch / Velociraptor connections, keys encrypted) in ./server-sets, and team-mode accounts in
+# ./auth. The pre-built browser add-on is written to ./addon so you can load it unpacked into
+# Chrome/Comet.
 #
 # No Ollama / LiteLLM here. For AI, point DFIR_AI_* at any OpenAI-compatible endpoint (a model you
 # host, a remote provider, or an Ollama/LiteLLM you run separately).
@@ -37,6 +38,10 @@ services:
       DFIR_PORT: "4773"
       DFIR_CASES_ROOT: "/data/cases"
       DFIR_MAX_BODY_MB: "256"
+      # Team-mode accounts, sessions, case roles and the auth audit (DFIR_AUTH_MODE=team). Pinned to
+      # the ./auth mount below: left unset, the store lands in an unmounted folder under /data, and
+      # every container recreate (`docker compose up -d` after an edit) deletes every account.
+      DFIR_AUTH_DATA_DIR: "/data/auth"
       # --- AI analysis (optional). Leave DFIR_VISION_PROVIDER unset for capture/import-only. ---
       # DFIR_VISION_* is the SCREENSHOT (vision) model; DFIR_AI_SYNTH_* does all text work.
       # (Legacy DFIR_AI_PROVIDER/MODEL/KEY/BASE_URL still work as a deprecated fallback.)
@@ -61,7 +66,7 @@ services:
     # image's `node` user. Either way the server never parses evidence as root.
     # Hardening (#2155): no-new-privileges stops a SUID binary from regaining root after the drop.
     # Every capability is dropped except the five the ROOT entrypoint needs before it drops
-    # privileges: CHOWN + FOWNER + DAC_OVERRIDE to hand ./cases, ./server-sets and ./addon (which may
+    # privileges: CHOWN + FOWNER + DAC_OVERRIDE to hand ./cases, ./server-sets, ./auth and ./addon (which may
     # be owned by your host user) to the run user, SETUID + SETGID for setpriv to switch to it. Once setpriv
     # runs, the server's effective capability set is empty. `cap_drop: [ALL]` without these
     # cap_add entries stops the container from starting.
@@ -78,6 +83,7 @@ services:
     volumes:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./server-sets:/data/server-sets  # server sets: IRIS/Timesketch/Velociraptor connections, keys encrypted (persists across restarts)
+      - ./auth:/data/auth       # team-mode accounts, sessions, roles, auth audit (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
     healthcheck:
       # Probe /health, not /dashboard: /health is auth- and host-check-exempt, so the probe stays
