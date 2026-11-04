@@ -257,6 +257,18 @@ describe("case header", () => {
   // (dashboard-case-picker.js) and to the icon-only Change… button's tooltip and accessible name.
   const tipFor = (name: string) => `Server set: ${name} \u2014 click to change`;
 
+  it("the button carries a visible label, so an analyst can find it without hovering", () => {
+    // An icon-only button looked like every other toolbar icon; the analyst could not find it.
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const tag = html.match(/<button id="caseServersChangeBtn"[^>]*>([^<]*)<\/button>/);
+    expect(tag?.[1]).toBe("Server set\u2026");
+    const css = readFileSync(new URL("../../../public/css/dashboard-toolbar.css", import.meta.url), "utf8");
+    // No rule of its own hides the label, and the tight-toolbar collapse (.icons-only) keeps it.
+    expect(css).not.toMatch(/#caseServersChangeBtn\s*\{[^}]*font-size:\s*0/);
+    const tight = css.match(/\.toolbar-main\.icons-only #caseServersChangeBtn\s*\{([^}]*)\}/);
+    expect(tight?.[1]).toMatch(/font-size:\s*12px/);
+  });
+
   it("Change… names the open case's set and updates on case switch", async () => {
     const { api, el } = loadCaseServers({
       "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },

@@ -1,4 +1,4 @@
-// The open case's server set: the icon-only "Change…" button beside the case picker (its tooltip and
+// The open case's server set: the "Server set…" button beside the case picker (its tooltip and
 // accessible name carry the set name; the case list shows each case's set under its name), its two
 // dialogs, and the gating of the IRIS / Timesketch / Velociraptor controls by the tools that set uses.
 //

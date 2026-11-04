@@ -544,10 +544,11 @@ body { padding-bottom: var(--preflight-banner-h, 0px); }
 /* ── Server sets (js/dashboard-server-sets.js, js/dashboard-case-servers.js) ────────────────── */
 /* explicit — the global `button { display:inline-flex }` would beat the [hidden] UA rule */
 #caseServersChangeBtn[hidden], #serverSetAddBtn[hidden] { display: none; }
-/* Change… is always icon-only: the toolbar has no room for its label. Its data-tip and aria-label
-   name the open case's set. A case with no usable set gets a red ring instead of a text label. */
-#caseServersChangeBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
-#caseServersChangeBtn::before { margin-right: 0; }
+/* "Server set…" keeps a short visible label, even in the tight .icons-only collapse: as a bare
+   icon it looked like every other toolbar button and the analyst could not find it. Its data-tip
+   and aria-label name the open case's set. A case with no usable set gets a red ring. */
+.toolbar-main.icons-only #caseServersChangeBtn { font-size: 12px; padding-left: 10px; padding-right: 10px; }
+.toolbar-main.icons-only #caseServersChangeBtn::before { margin-right: 6px; }
 #caseServersChangeBtn.case-servers-error { box-shadow: inset 0 0 0 2px var(--badge-danger-text); }
 .server-set-default-label { font-size: 12px; color: var(--text-muted); }
 .server-set-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 8px;

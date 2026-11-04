@@ -218,7 +218,7 @@ servers. You do not enter keys again when you move between cases.
 - **The case list.** Open the case list in the header. Under each case name, the list shows the
   case ID and the name of its set, for example **CASE-A · Client A**. A case with no set shows
   **no server set**.
-- **Change….** The server-rack button next to the case name attaches a different set to the
+- **Server set….** The **Server set…** button next to the case name attaches a different set to the
   case. Point at it to see the open case's set: **Server set: *set name* — click to change**. If
   the case has no usable set, the button has a red ring and says **No usable server set — click
   to choose one**. If the case
@@ -229,7 +229,7 @@ servers. You do not enter keys again when you move between cases.
   them. Events, IOCs and findings in the case stay. The next IRIS push makes a new IRIS case on
   the new server. The case's activity log records the change.
 - **Who can change what.** In team mode, only an administrator edits, adds or deletes sets. Other
-  users see the list without the buttons. Only an administrator of the case can use **Change…**.
+  users see the list without the buttons. Only an administrator of the case can use **Server set…**.
 - **Keys stay on this machine.** The Companion stores the keys and passwords of every set
   encrypted on this machine. They never go into case exports, archives, reports, support bundles
   or logs.
