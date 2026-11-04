@@ -1,6 +1,6 @@
-// The open case's server set: the "Server set: <set name>" label beside the case picker, the
-// "Change…" button and its two dialogs, and the gating of the IRIS / Timesketch / Velociraptor
-// controls by the tools that set uses.
+// The open case's server set: the icon-only "Change…" button beside the case picker (its tooltip and
+// accessible name carry the set name; the case list shows each case's set under its name), its two
+// dialogs, and the gating of the IRIS / Timesketch / Velociraptor controls by the tools that set uses.
 //
 // ONE WRITER FOR THE TOOL FLAGS. With a case open, GET /cases/:id/server-set decides which tools
 // the dashboard offers. With no case open, the default set decides (the /health flags). Every
@@ -94,13 +94,19 @@
     return !!(auth.caseRoles && auth.caseRoles[caseId] === "administrator");
   }
 
-  function paintLabel(text, error) {
-    const label = byId("caseServersLabel");
-    if (!label) return;
-    label.textContent = text;
-    label.title = error || "The Velociraptor, IRIS and Timesketch servers this case uses";
-    label.classList.toggle("case-servers-error", !!error);
-    label.hidden = false;
+  // The toolbar has no room for a "Server set: <name>" label, so the button says it. setAttribute
+  // writes the name as an attribute value, never as markup.
+  function paintChange(tip, error) {
+    const change = byId("caseServersChangeBtn");
+    if (!change) return;
+    change.setAttribute("data-tip", tip);
+    change.setAttribute("aria-label", tip);
+    change.classList.toggle("case-servers-error", !!error);
+  }
+
+  // A confirmed change alters the case list's server set line for this case.
+  function reloadCaseList() {
+    if (typeof loadCaseList === "function") loadCaseList();
   }
 
   /** Reads the open case's set and re-gates the tool controls. Called on every case switch. */
@@ -109,14 +115,12 @@
     current = { caseId: id, setId: "", tools: id ? null : [] };
     const change = byId("caseServersChangeBtn");
     if (!id) {
-      const label = byId("caseServersLabel");
-      if (label) label.hidden = true;
       if (change) change.hidden = true;
       applyCaseTools();
       return;
     }
     applyCaseTools(); // hide the tools until the case's own answer arrives
-    paintLabel("Server set: …");
+    paintChange("Server set: … \u2014 click to change", false);
     if (change) change.hidden = !canAdministerCase(id);
     let res;
     let body;
@@ -130,10 +134,10 @@
     if (current.caseId !== id) return; // the analyst moved on; this answer is for the old case
     if (res.ok) {
       current = { caseId: id, setId: body.setId || "", tools: Array.isArray(body.tools) ? body.tools : [] };
-      paintLabel(`Server set: ${body.name || ""}`);
+      paintChange(`Server set: ${body.name || ""} \u2014 click to change`, false);
     } else {
       current = { caseId: id, setId: "", tools: [] };
-      paintLabel("Server set: none", body.error || `HTTP ${res.status}`);
+      paintChange("No usable server set \u2014 click to choose one", true);
     }
     applyCaseTools();
   }
@@ -194,12 +198,16 @@
     try {
       const { res, body, caseId } = await postChange(setId, false);
       // The analyst opened another case while the request ran: its header and tools are not ours.
-      if (current.caseId !== caseId) return closeOverlay("caseServersPickOverlay");
+      if (current.caseId !== caseId) {
+        if (res.ok) reloadCaseList(); // the case list still shows the old case's set
+        return closeOverlay("caseServersPickOverlay");
+      }
       if (res.status === 409 && body.needsConfirm) {
         closeOverlay("caseServersPickOverlay");
         openConfirm(setId, body.work || {});
       } else if (res.ok) {
         closeOverlay("caseServersPickOverlay");
+        reloadCaseList();
         await refreshCaseServers(caseId);
       } else {
         setMsg("caseServersPickMsg", changeError(res, body));
@@ -259,6 +267,7 @@
         return;
       }
       cancelConfirm();
+      reloadCaseList();
       if (current.caseId === caseId) await refreshCaseServers(caseId); // not after a case switch
     } catch (e) {
       setMsg("caseServersConfirmMsg", `The change did not finish: ${e.message}`);

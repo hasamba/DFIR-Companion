@@ -588,6 +588,66 @@ describe("GET /cases/:id/server-set", () => {
   });
 });
 
+// The case list carries each case's set id and name, so the dashboard's case dropdown can show it
+// under the case without one request per case. Names and ids only: never a URL or a secret.
+describe("GET /cases names each case's server set", () => {
+  it("gives a linked case its set and an unlinked case null, with no secret or URL", async () => {
+    const s = sets.create(fullSet("Client A"));
+    await cases.createCase({ caseId: "CASE-A", name: "A", investigator: "i", aiProvider: null });
+    await cases.createCase({ caseId: "CASE-B", name: "B", investigator: "i", aiProvider: null });
+    sets.linkCase("CASE-A", s.id);
+    const res = await request(singleUserApp()).get("/cases");
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(
+      (res.body as Array<{ caseId: string; serverSet: unknown }>).map((c) => [c.caseId, c.serverSet]),
+    );
+    expect(byId).toEqual({ "CASE-A": { id: s.id, name: "Client A" }, "CASE-B": null });
+    const text = JSON.stringify(res.body);
+    expect(text).not.toContain(IRIS_KEY);
+    expect(text).not.toContain(TS_PASSWORD);
+    expect(text).not.toContain("example.com");
+    expect(text).not.toContain("api.config.yaml");
+  });
+
+  it("a link to a set that no longer exists reads as null", async () => {
+    await cases.createCase({ caseId: "CASE-A", name: "A", investigator: "i", aiProvider: null });
+    writeFileSync(join(dir, "server-sets", "links.json"), JSON.stringify({ cases: { "CASE-A": "gone" } }));
+    const res = await request(singleUserApp()).get("/cases");
+    expect(res.body[0].serverSet).toBeNull();
+  });
+
+  it("a member sees only their own cases, each with its set", async () => {
+    const s = sets.create({ name: "Lab" });
+    const { member } = await teamApp();
+    await cases.createCase({ caseId: "c2", name: "Hidden", investigator: "i", aiProvider: null });
+    sets.linkCase("c1", s.id);
+    sets.linkCase("c2", s.id);
+    const res = await member.get("/cases");
+    expect(res.status).toBe(200);
+    expect(res.body.map((c: { caseId: string }) => c.caseId)).toEqual(["c1"]);
+    expect(res.body[0].serverSet).toEqual({ id: s.id, name: "Lab" });
+  });
+
+  it("an unreadable store still lists the cases, every set null, and logs once", async () => {
+    sets.create(fullSet("Lab"));
+    await cases.createCase({ caseId: "CASE-A", name: "A", investigator: "i", aiProvider: null });
+    writeFileSync(join(dir, "server-sets", "sets.json"), "[x iris-key-sentinel-snippet");
+    const app = singleUserApp();
+    const logged: string[] = [];
+    const error = vi.spyOn(getServerLogger(), "error").mockImplementation((m: string) => void logged.push(m));
+    const first = await request(app).get("/cases");
+    const second = await request(app).get("/cases");
+    error.mockRestore();
+    expect(first.status).toBe(200);
+    expect(first.body.map((c: { serverSet: unknown }) => c.serverSet)).toEqual([null]);
+    expect(second.body[0].serverSet).toBeNull();
+    const lines = logged.filter((l) => l.includes("[server-sets]"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("SyntaxError");
+    expect(logged.join("\n")).not.toContain("iris-key");
+  });
+});
+
 describe("probeError", () => {
   it("keeps one line, strips URL credentials and cuts the text an IRIS server sent back", async () => {
     const { probeError } = await import("../../src/routes/serverSetBody.js");

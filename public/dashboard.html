@@ -512,8 +512,8 @@
     <input id="casePicker" placeholder="Case name" aria-label="Case" list="caseList" autocomplete="off" />
     <input id="caseId" type="hidden" />
     <datalist id="caseList"></datalist>
-    <!-- The open case's server set (js/dashboard-case-servers.js). Set names are written as text. -->
-    <span id="caseServersLabel" class="case-servers-label" role="status" hidden></span>
+    <!-- The open case's server set (js/dashboard-case-servers.js): an icon-only button whose tooltip
+         and accessible name carry the set name. The case list shows each case's set under its name. -->
     <button id="caseServersChangeBtn" type="button" aria-label="Change this case's server set" data-tip="Attach a different server set (IRIS, Timesketch, Velociraptor) to this case" hidden>Change…</button>
     <label data-safe-style="display:inline-flex;align-items:center;gap:2px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Include archived cases in the case picker above (prefixed '[Archived]')">
       <input type="checkbox" id="showArchivedToggle" data-safe-style="margin:0;cursor:pointer" />

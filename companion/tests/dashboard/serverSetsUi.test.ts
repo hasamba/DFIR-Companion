@@ -91,7 +91,7 @@ function serverSetMarkup(doc: FakeDocument): void {
 }
 
 function caseServerMarkup(doc: FakeDocument): void {
-  doc.add("span", "caseServersLabel", "caseServersPickMsg", "caseServersConfirmMsg");
+  doc.add("span", "caseServersPickMsg", "caseServersConfirmMsg");
   doc.add("button", "caseServersChangeBtn", "caseServersPickApply", "caseServersPickCancel");
   doc.add("button", "caseServersConfirmBtn", "caseServersConfirmCancel");
   doc.add("div", "caseServersPickOverlay", "caseServersConfirmOverlay", "caseServersConfirmList");
@@ -112,15 +112,29 @@ function loadCaseServers(routes: Routes, globals: Record<string, unknown> = {}) 
   caseServerMarkup(doc);
   const net = routedFetch({ "GET /server-sets": { body: TWO_SETS }, ...routes });
   let veloApplied = 0;
+  let listLoads = 0;
   const api = loadDashboardModule<CaseServersApi>("dashboard-case-servers.js", ["dashboard-server-sets.js"], {
     document: doc,
     fetch: net.fetch,
     veloEnabled: false,
     applyVeloEnabled: () => void veloApplied++,
+    loadCaseList: () => void listLoads++,
     ...globals,
   });
   api.initCaseServers();
-  return { api, doc, net, el: (id: string) => doc.getElementById(id) as FakeEl, applied: () => veloApplied };
+  return {
+    api,
+    doc,
+    net,
+    el: (id: string) => doc.getElementById(id) as FakeEl,
+    applied: () => veloApplied,
+    listLoads: () => listLoads,
+  };
+}
+
+/** The Change… button's tooltip and accessible name: the open case's set lives there now. */
+function changeTip(el: FakeEl): { tip: string | null; aria: string | null } {
+  return { tip: el.getAttribute("data-tip"), aria: el.getAttribute("aria-label") };
 }
 
 function el(doc: FakeDocument, id: string): FakeEl {
@@ -239,16 +253,29 @@ describe("New Case form", () => {
 });
 
 describe("case header", () => {
-  it("header shows the open case's set name and updates on case switch", async () => {
+  // The toolbar has no room for a "Server set: <name>" label. The set name moved to the case list
+  // (dashboard-case-picker.js) and to the icon-only Change… button's tooltip and accessible name.
+  const tipFor = (name: string) => `Server set: ${name} \u2014 click to change`;
+  const NO_SET_TIP = "No usable server set \u2014 click to choose one";
+
+  it("Change… names the open case's set and updates on case switch", async () => {
     const { api, el } = loadCaseServers({
       "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },
       "GET /cases/C2/server-set": { body: { setId: "b", name: "Beta", tools: [] } },
     });
     await api.refreshCaseServers("C1");
-    expect(el("caseServersLabel").textContent).toBe("Server set: Alpha");
-    expect(el("caseServersLabel").hidden).toBe(false);
+    const btn = el("caseServersChangeBtn");
+    expect(changeTip(btn)).toEqual({ tip: tipFor("Alpha"), aria: tipFor("Alpha") });
+    expect(btn.hidden).toBe(false);
+    expect(btn.classList.contains("case-servers-error")).toBe(false);
     await api.refreshCaseServers("C2");
-    expect(el("caseServersLabel").textContent).toBe("Server set: Beta");
+    expect(changeTip(btn)).toEqual({ tip: tipFor("Beta"), aria: tipFor("Beta") });
+  });
+
+  it("the toolbar shows no server set label", () => {
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).not.toContain('id="caseServersLabel"');
+    expect(html).not.toMatch(/>Server set:/);
   });
 
   it("ignores a late answer for the case the analyst already left", async () => {
@@ -263,21 +290,30 @@ describe("case header", () => {
     release({ body: { setId: "a", name: "Alpha", tools: ["iris"] } });
     await first;
     await flush();
-    expect(el("caseServersLabel").textContent).toBe("Server set: Beta");
+    expect(changeTip(el("caseServersChangeBtn")).tip).toBe(tipFor("Beta"));
   });
 
-  it("shows 'Server set: none' in the error style, with the resolver message as the tooltip", async () => {
+  it("a case with no usable set puts Change… in the error style", async () => {
     const message = "This case has no server set. Pick one with Change… in the case header.";
     const { api, el, doc } = loadCaseServers({
       "GET /cases/C1/server-set": { status: 409, body: { error: message } },
     });
     await api.refreshCaseServers("C1");
-    const label = el("caseServersLabel");
-    expect(label.textContent).toBe("Server set: none");
-    expect(label.classList.contains("case-servers-error")).toBe(true);
-    expect(label.title).toBe(message);
+    const btn = el("caseServersChangeBtn");
+    expect(changeTip(btn)).toEqual({ tip: NO_SET_TIP, aria: NO_SET_TIP });
+    expect(btn.classList.contains("case-servers-error")).toBe(true);
     expect(pushValues(doc)).toEqual([""]);
     expect(api.veloEnabled).toBe(false);
+  });
+
+  it("the error style clears when the next case has a set", async () => {
+    const { api, el } = loadCaseServers({
+      "GET /cases/C1/server-set": { status: 409, body: { error: "no set" } },
+      "GET /cases/C2/server-set": { body: { setId: "b", name: "Beta", tools: [] } },
+    });
+    await api.refreshCaseServers("C1");
+    await api.refreshCaseServers("C2");
+    expect(el("caseServersChangeBtn").classList.contains("case-servers-error")).toBe(false);
   });
 
   it("a set name with <img onerror> renders as text", async () => {
@@ -290,7 +326,7 @@ describe("case header", () => {
     });
     await api.refreshCaseServers("C1");
     await api.loadServerSets();
-    expect(el("caseServersLabel").textContent).toBe(`Server set: ${evil}`);
+    expect(changeTip(el("caseServersChangeBtn")).aria).toBe(tipFor(evil));
     expect(el("serverSetsList").textContent).toContain(evil);
     expect(el("veloDefaultLabel").textContent).toBe(`Using server set: ${evil}`);
     expect(doc.htmlWrites()).toEqual([]);
@@ -380,6 +416,7 @@ describe("Change… flow", () => {
     await flush();
     expect(posts(h).map((c) => c.body)).toEqual([{ setId: "b" }, { setId: "b", confirm: true }]);
     expect(h.el("caseServersConfirmOverlay").classList.contains("open")).toBe(false);
+    expect(h.listLoads(), "the case list re-reads, so its server set line is current").toBe(1);
   });
 
   it("cancel sends nothing", async () => {
@@ -390,6 +427,7 @@ describe("Change… flow", () => {
     expect(h.el("caseServersConfirmOverlay").classList.contains("open")).toBe(false);
     expect(posts(h)).toHaveLength(1);
     expect(posts(h)[0].body?.confirm).toBeUndefined();
+    expect(h.listLoads(), "nothing changed, so the case list is not re-read").toBe(0);
   });
 
   // a11y/modal-autowire.js watches the overlay's class: on "open" its MutationObserver runs in a
@@ -448,6 +486,7 @@ describe("Change… flow", () => {
     expect(h.el("caseServersConfirmOverlay").classList.contains("open")).toBe(false);
     expect(h.el("caseServersPickOverlay").classList.contains("open")).toBe(false);
     expect(posts(h)).toHaveLength(1);
+    expect(h.listLoads(), "the case list re-reads, so its server set line is current").toBe(1);
   });
 
   it("a 403 shows a plain error and keeps the picker usable", async () => {
@@ -471,7 +510,6 @@ describe("Change… flow", () => {
       },
     );
     await h.api.refreshCaseServers("C1");
-    expect(h.el("caseServersLabel").textContent).toBe("Server set: Alpha");
     expect(h.el("caseServersChangeBtn").hidden).toBe(true);
   });
   // Fix round 1: a change that finishes after the analyst opened another case must not repaint the
@@ -501,7 +539,9 @@ describe("Change… flow", () => {
     await h.api.refreshCaseServers("C2");
     h.release({ body: { changed: true } });
     await flush();
-    expect(h.el("caseServersLabel").textContent).toBe("Server set: Other case");
+    expect(h.el("caseServersChangeBtn").getAttribute("data-tip")).toBe(
+      "Server set: Other case \u2014 click to change",
+    );
     expect(h.c1Reads(), "no re-read of the case the analyst left").toBe(1);
   });
 
@@ -515,7 +555,9 @@ describe("Change… flow", () => {
     await h.api.refreshCaseServers("C2");
     h.release({ body: { changed: true } });
     await flush();
-    expect(h.el("caseServersLabel").textContent).toBe("Server set: Other case");
+    expect(h.el("caseServersChangeBtn").getAttribute("data-tip")).toBe(
+      "Server set: Other case \u2014 click to change",
+    );
     expect(h.c1Reads()).toBe(1);
   });
 });

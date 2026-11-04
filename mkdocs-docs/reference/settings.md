@@ -211,9 +211,13 @@ servers. You do not enter keys again when you move between cases.
 - **New Case form.** The **Velociraptor / IRIS / Timesketch servers (optional)** list preselects the default set. Pick another set, or pick
   **+ Create a new server set…** to make one. Test each tool before you save. **Save** closes the
   editor and selects the new set.
-- **The case header.** Next to the case name, the header shows **Server set: *set name***. If the
-  case has no usable set, the header shows **Server set: none** in red. Point at it to see why.
-- **Change….** The button next to the label attaches a different set to the case. If the case
+- **The case list.** Open the case list in the header. Under each case name, the list shows the
+  case ID and the name of its set, for example **CASE-A · Client A**. A case with no set shows
+  **no server set**.
+- **Change….** The server-rack button next to the case name attaches a different set to the
+  case. Point at it to see the open case's set: **Server set: *set name* — click to change**. If
+  the case has no usable set, the button has a red ring and says **No usable server set — click
+  to choose one**. If the case
   has work on its old servers, the Companion warns first. The warning lists the live monitors
   that will stop, the IRIS case link that will be forgotten and the Velociraptor hunts that will
   be forgotten. Click **Change server set** to go on, or **Cancel** to change nothing.
@@ -229,7 +233,7 @@ servers. You do not enter keys again when you move between cases.
   folder. In Docker, that folder is `/data/server-sets`. The supplied `docker-compose.yml` mounts
   `./server-sets:/data/server-sets`, next to `./cases:/data/cases`. If you start the container
   yourself, mount both folders. If you mount only the cases folder, a restart loses every set, and
-  each case then shows **Server set: none**. Back up both folders together: the key that decrypts
+  each case then shows **no server set**. Back up both folders together: the key that decrypts
   the sets is in the cases folder.
 
 The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`

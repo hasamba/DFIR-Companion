@@ -66,6 +66,18 @@ export class ServerSetStore {
     return this.readRaw().find((s) => s.id === id)?.name;
   }
 
+  // Each linked case's set id and name, from one read of each file and without opening any secret
+  // (the case list). A link to a set that no longer exists is left out.
+  caseSetRefs(): Map<string, { id: string; name: string }> {
+    const names = new Map(this.readRaw().map((s) => [s.id, s.name]));
+    const out = new Map<string, { id: string; name: string }>();
+    for (const [caseId, setId] of Object.entries(this.readLinks().cases)) {
+      const name = typeof setId === "string" ? names.get(setId) : undefined;
+      if (typeof name === "string") out.set(caseId, { id: setId, name });
+    }
+    return out;
+  }
+
   get(id: string): ServerSet | undefined {
     const raw = this.readRaw().find((s) => s.id === id);
     return raw ? this.openSet(raw) : undefined;

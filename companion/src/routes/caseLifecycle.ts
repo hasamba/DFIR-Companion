@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
 import { linkNewCase } from "./serverSets.js";
+import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
@@ -102,13 +103,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // moved call sites stay verbatim.
   const logLine = (msg: string): void => serverLogger.info(msg);
   const errLine = (msg: string): void => serverLogger.error(msg);
+  const withServerSets = createCaseListServerSets(ctx); // each case's set name, for the case list
   app.get("/cases", async (req: Request, res: Response) => {
     try {
       const listed = await store.listCases();
       const visible = options.teamAuth?.visibleCaseIds(req);
-      return res
-        .status(200)
-        .json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
+      const shown = listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta);
+      return res.status(200).json(withServerSets(shown));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
