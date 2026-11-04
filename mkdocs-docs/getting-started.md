@@ -43,7 +43,8 @@ Choose one option. Windows and Linux users should start with the release downloa
     ```
 
     `--no-build` stops Compose from falling back to a source build, which fails without the repo.
-    Cases persist in `./cases` and server sets in `./server-sets`, beside the compose file.
+    Cases persist in `./cases`, server sets in `./server-sets` and team-mode accounts in `./auth`,
+    beside the compose file.
 
     To run the image without Compose:
 

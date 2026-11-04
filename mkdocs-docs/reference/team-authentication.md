@@ -61,7 +61,37 @@ must match, whatever address the server is bound to and wherever the browser run
 refuses to start team mode without one while no identity exists. A loopback bind is not a
 substitute — behind a same-host reverse proxy every client arrives as a loopback peer. Remove
 `DFIR_AUTH_BOOTSTRAP_TOKEN` from the environment after setup; the server starts without it once
-the first administrator exists.
+the first administrator exists. In Docker, first make sure the account folder is mounted (see
+[Where accounts are stored](#where-accounts-are-stored)). If it is not mounted, the restart that
+removes the token also deletes the administrator.
+
+### Where accounts are stored
+
+Team mode keeps its accounts, sessions, case roles, service tokens and authentication audit in one
+folder. `DFIR_AUTH_DATA_DIR` sets that folder. If you do not set it, the server uses a hidden
+`.dfir-auth-<hash>` folder next to the cases folder.
+
+**Docker Compose.** The supplied `docker-compose.yml` sets `DFIR_AUTH_DATA_DIR=/data/auth` and
+mounts `./auth:/data/auth`. The accounts are kept in `./auth`, next to `./cases` and
+`./server-sets`. Back up all three folders. `./auth` holds password hashes, so keep it private.
+
+**Older compose files.** Compose files before this change did not mount the account folder. Docker
+recreates the container when you edit the compose file and run `docker compose up -d`. With an old
+compose file, that recreate deletes every account. The next start then stops with
+`first team-mode startup requires DFIR_AUTH_BOOTSTRAP_TOKEN while no identity exists`. To repair
+it, add these two lines to the `companion` service, set a new bootstrap token, and create the first
+administrator again:
+
+```yaml
+    environment:
+      DFIR_AUTH_DATA_DIR: "/data/auth"
+    volumes:
+      - ./auth:/data/auth
+```
+
+**`docker run`.** Add `-v /your/auth:/data/auth -e DFIR_AUTH_DATA_DIR=/data/auth`.
+
+### Emergency access
 
 The first local administrator is the emergency-access account. Local sign-in while OIDC is
 configured is recorded as emergency access, and the final active global administrator cannot be
