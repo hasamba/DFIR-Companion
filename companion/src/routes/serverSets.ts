@@ -81,7 +81,7 @@ export function linkNewCase(
     if (opts.setId) sets.linkCase(caseId, opts.setId);
     else sets.linkToDefault(caseId, { keepExisting: opts.keepExisting });
   } catch (err) {
-    ctx.serverLogger.error(`[server-sets] could not link case ${caseId}: ${(err as Error).message}`);
+    ctx.serverLogger.error(`[server-sets] could not link case ${caseId}: ${logSafeError(err)}`);
   }
 }
 

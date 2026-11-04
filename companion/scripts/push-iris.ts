@@ -18,6 +18,7 @@ import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { pushCaseToIris } from "../src/integrations/iris/irisPush.js";
 import { IrisExportStore, defaultIrisCaseName } from "../src/integrations/iris/irisExportStore.js";
 import { cliCaseTool } from "../src/composition/cliCaseServers.js";
+import { expandHome } from "../src/storage/expandHome.js";
 
 function parseArgs(argv: string[]): { caseId?: string; name?: string } {
   const caseId = argv[0] && !argv[0].startsWith("--") ? argv[0] : undefined;
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
   const picked = cliCaseTool(casesRoot, caseId, "iris");

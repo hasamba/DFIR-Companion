@@ -14,6 +14,7 @@ import { StateStore } from "../src/analysis/stateStore.js";
 import { fetchIrisCase } from "../src/integrations/iris/irisImportFetch.js";
 import { buildRuntimePipeline } from "../src/server.js";
 import { cliCaseTool } from "../src/composition/cliCaseServers.js";
+import { expandHome } from "../src/storage/expandHome.js";
 
 async function main(): Promise<void> {
   const caseId = process.argv[2];
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
   const picked = cliCaseTool(casesRoot, caseId, "iris");
