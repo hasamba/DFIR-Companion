@@ -5,6 +5,11 @@ import { join } from "node:path";
 const SECRET_FILE = ".instance-secret";
 const SECRET_LEN = 32;
 
+/** Where the instance secret lives: `<casesRoot>/.instance-secret`. */
+export function instanceSecretPath(casesRoot: string): string {
+  return join(casesRoot, SECRET_FILE);
+}
+
 /** Load this installation's HMAC signing secret from `<casesRoot>/.instance-secret`,
  * generating and persisting a fresh one on first use. Synchronous and meant to be called
  * once at server startup (createApp is itself synchronous) — verification is stateless
@@ -13,7 +18,7 @@ const SECRET_LEN = 32;
  * invalidates every previously-issued unlock cookie (a safe fallback, not a security hole —
  * it just requires re-entering case passwords once). */
 export function loadOrCreateInstanceSecret(casesRoot: string): Buffer {
-  const path = join(casesRoot, SECRET_FILE);
+  const path = instanceSecretPath(casesRoot);
   try {
     const hex = readFileSync(path, "utf8").trim();
     const secret = Buffer.from(hex, "hex");
