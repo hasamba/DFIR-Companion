@@ -1,4 +1,10 @@
-import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type Dispatcher,
+  type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
+} from "undici";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import { isGloballyRoutable } from "./publicAddress.js";
 import {
@@ -87,13 +93,25 @@ export interface OutboundFetchOptions {
   signal?: AbortSignal;
   /** Injected by tests so they never touch real DNS. Defaults to a DNS A/AAAA lookup. */
   resolveHost?: (host: string) => Promise<PinnedAddress[]>;
-  /** Injected by tests. Defaults to undici's own fetch — see defaultFetch. */
-  fetchImpl?: typeof fetch;
+  /** Injected by tests. Defaults to undici's own fetch — see defaultFetch and GuardedFetch. */
+  fetchImpl?: GuardedFetch;
   /** Injected by tests to observe what the connection was pinned to. Defaults to an undici Agent. */
   agentFactory?: (pins: PinnedAddress[], tls?: OutboundTlsOptions) => Dispatcher;
 }
 
+/**
+ * The fetch fetchOutbound calls (#2268). Production passes undici's own fetch, which must come from
+ * the same package as the pinned Agent (see defaultFetch), so `init` is undici's RequestInit — the
+ * one that declares `dispatcher`. Test doubles may answer with a global Response, so the result is
+ * EITHER class: read status/headers/body only, never instanceof-check it.
+ */
+export type GuardedFetch = (
+  input: string | URL,
+  init: UndiciRequestInit,
+) => Promise<UndiciResponse | Response>;
+
 export interface OutboundFetchResult {
+  /** Typed as the global Response, but may be undici's class at runtime — see asResultResponse. */
   response: Response;
   /** The URL the bytes actually came from — the last hop, not necessarily the one asked for. */
   url: URL;
@@ -102,6 +120,69 @@ export interface OutboundFetchResult {
 }
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+// WHAT a followed redirect re-sends (#2269) is the guard's job as much as WHERE it goes. Fetch-spec
+// rules: 303 (for anything but GET/HEAD) and POST on 301/302 become a bodiless GET with the body
+// headers dropped; 307/308 and other 301/302 resend as-is. Each hop is built from the previous one,
+// never from the caller's original request. A hop to ANOTHER ORIGIN is refused while the request
+// still carries any caller header or a body: an API key is often a custom header, and a body can
+// hold a credential too, so stripping a fixed list (Authorization, Cookie) would not be enough.
+// A one-shot ReadableStream body cannot be resent on 307/308; no caller sends one.
+type HopRequest = Readonly<{ method?: string; headers: Headers; body?: BodyInit | null }>;
+
+const BODY_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-language",
+  "content-location",
+];
+
+function firstHopRequest(request: OutboundFetchOptions["request"]): HopRequest {
+  return { method: request?.method, headers: new Headers(request?.headers), body: request?.body };
+}
+
+function nextHopRequest(prev: HopRequest, status: number): HopRequest {
+  const method = (prev.method ?? "GET").toUpperCase();
+  const toGet =
+    (status === 303 && method !== "GET" && method !== "HEAD") ||
+    ((status === 301 || status === 302) && method === "POST");
+  if (!toGet) return { ...prev, headers: new Headers(prev.headers) };
+  const headers = new Headers(prev.headers);
+  for (const name of BODY_HEADERS) headers.delete(name);
+  return { method: "GET", headers, body: undefined };
+}
+
+/**
+ * Request-in boundary (#2268): one hop's request as undici's RequestInit. HopRequest is built from
+ * the caller's global-typed `request`; the global and undici Headers/BodyInit declarations differ
+ * only at the type level (their Blob/ReadableStream lib types), and at runtime they are the same
+ * objects handed to the same fetch. This is the one place that difference is asserted away.
+ */
+function toUndiciHopInit(req: HopRequest, signal: AbortSignal): UndiciRequestInit {
+  const sameObjects = req as unknown as Pick<UndiciRequestInit, "method" | "headers" | "body">;
+  return { ...sameObjects, redirect: "manual", signal };
+}
+
+/**
+ * Response-out boundary (#2268): the public result keeps the global Response type so every caller's
+ * status/headers/body reads compile unchanged. With the default fetch it is undici's class, NOT the
+ * global one (pinned by tests/server/outboundFetchRealStack.test.ts), so never instanceof-check it.
+ */
+function asResultResponse(response: UndiciResponse | Response): Response {
+  return response as Response;
+}
+
+function assertCrossOriginHopCarriesNothing(req: HopRequest, from: URL, to: URL): void {
+  if (from.origin === to.origin) return;
+  const hasHeaders = [...req.headers.keys()].length > 0;
+  const hasBody = req.body !== undefined && req.body !== null;
+  if (!hasHeaders && !hasBody) return;
+  throw new OutboundUrlBlockedError(
+    `the redirect from ${from.origin} to another origin (${to.origin}) is not followed while the request carries headers or a body`,
+  );
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 
@@ -147,7 +228,7 @@ export function pinnedLookup(
 // the SAME package. Node's global fetch runs its own bundled undici (v6 in Node 22), and that older
 // copy rejects a newer Agent with "invalid onRequestStart method" — which broke every guarded
 // download until tests/server/outboundFetchRealStack.test.ts pinned the pairing.
-const defaultFetch = undiciFetch as unknown as typeof fetch;
+const defaultFetch: GuardedFetch = undiciFetch;
 
 function defaultAgent(pins: PinnedAddress[], tls?: OutboundTlsOptions): Dispatcher {
   return new Agent({
@@ -281,17 +362,6 @@ async function validateLan(
 }
 
 /**
- * Parses and checks one URL. Returns the parsed URL when it is allowed; throws
- * OutboundUrlBlockedError when it is not. Call it for the URL the caller supplied AND for every
- * redirect target — a first-hop check alone is exactly the hole that makes redirect-based SSRF work.
- */
-export async function assertOutboundUrlAllowed(raw: string, opts: OutboundFetchOptions = {}): Promise<URL> {
-  // Its own deadline: this resolves a hostname too, so on its own it must not hang either.
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  return (await validateAndResolve(raw, opts, signal)).url;
-}
-
-/**
  * fetch() with every redirect hop re-checked AND its connection pinned to the address that was
  * checked. Redirects are followed by hand (`redirect: "manual"`) because the automatic follow does
  * the one thing this module exists to prevent: connect to an address nothing checked.
@@ -319,9 +389,10 @@ export async function fetchOutbound(
 
   try {
     let target = await validateAndResolve(raw, opts, signal);
+    let hopRequest = firstHopRequest(opts.request);
     for (let hop = 0; ; hop += 1) {
-      // The caller's method/body ride along; redirect mode and signal are always the guard's.
-      const init: RequestInit & { dispatcher?: Dispatcher } = { ...opts.request, redirect: "manual", signal };
+      // This hop's method/headers/body (see nextHopRequest); redirect mode and signal are the guard's.
+      const init = toUndiciHopInit(hopRequest, signal);
       if (target.pins) {
         const agent = makeAgent(target.pins, opts.tls);
         agents.push(agent);
@@ -333,7 +404,9 @@ export async function fetchOutbound(
         throw new OutboundUrlBlockedError("the connection could not be pinned to a checked address");
       }
       const response = await doFetch(target.url, init);
-      if (!REDIRECT_STATUS.has(response.status)) return { response, url: target.url, dispose };
+      if (!REDIRECT_STATUS.has(response.status)) {
+        return { response: asResultResponse(response), url: target.url, dispose };
+      }
 
       const location = response.headers.get("location");
       // Tear the hop down rather than leaving its body to be drained or to sit on the connection.
@@ -350,13 +423,16 @@ export async function fetchOutbound(
       if (hop >= maxRedirects) {
         throw new OutboundUrlBlockedError(`more than ${maxRedirects} redirects`);
       }
-      let next: string;
+      let next: URL;
       try {
-        next = new URL(location, target.url).toString();
+        next = new URL(location, target.url);
       } catch {
         throw new OutboundUrlBlockedError("the redirect Location is not a valid URL");
       }
-      target = await validateAndResolve(next, opts, signal);
+      const nextRequest = nextHopRequest(hopRequest, response.status);
+      assertCrossOriginHopCarriesNothing(nextRequest, target.url, next);
+      target = await validateAndResolve(next.toString(), opts, signal);
+      hopRequest = nextRequest;
     }
   } catch (err) {
     // Nothing will read a body now, so the sockets opened on the way here are ours to close.

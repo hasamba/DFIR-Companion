@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { isSeaRuntime } from "../serverAssets.js";
 import { legacyVisionAlias, withVisionEnvAliases } from "../config/aiEnv.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { encodeEnvValue, parseEnvText } from "./envCodec.js";
 
 const SECRET_SUFFIXES = ["_KEY", "_SECRET", "_PASSWORD", "_TOKEN"];
 
@@ -293,11 +294,17 @@ const WRITABLE_ENV_PREFIXES = [
  *   - keys must be a plain POSIX environment name;
  *   - values must be strings containing no control characters at all. Real values here are API
  *     keys, URLs, numbers and booleans — none needs a control character, and rejecting the whole
- *     class beats reasoning about which of CR / LF / NUL each .env reader treats as a separator
- *     (parseLines below splits on "\n"; the startup loader is a different parser again).
+ *     class beats reasoning about which of CR / LF / NUL each .env reader treats as a separator;
+ *   - values must survive a round trip through every reader of the file (#2280): envCodec.ts
+ *     quotes a value only when it needs it, and a value no shared quoting can hold is refused.
  */
 const ENV_KEY_SYNTAX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_VALUE_CONTROL_CHAR = /\p{Cc}/u;
+
+/** True when `value` is a string that can be written as one lossless dotenv record. */
+function isStorableValue(value: unknown): value is string {
+  return typeof value === "string" && !ENV_VALUE_CONTROL_CHAR.test(value) && encodeEnvValue(value) !== null;
+}
 
 /** A rejected key is echoed into a 400 body and the server log — never let it carry the payload. */
 function safeKeyLabel(key: string): string {
@@ -317,7 +324,7 @@ export function validateEnvUpdates(updates: Record<string, unknown>, unset: unkn
     unset.length > 0 ? validateEnvUpdates(Object.fromEntries(unset.map((key) => [key, ""]))) : [];
   for (const key of Object.keys(updates)) if (removed.has(key)) rejected.push(safeKeyLabel(key));
   for (const [key, value] of Object.entries(updates)) {
-    if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
+    if (!ENV_KEY_SYNTAX.test(key) || !isStorableValue(value)) {
       rejected.push(safeKeyLabel(key));
       continue;
     }
@@ -378,19 +385,9 @@ async function readRaw(): Promise<string> {
   }
 }
 
-function parseLines(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim();
-    if (key) result[key] = value;
-  }
-  return result;
-}
+// Every reader of the file goes through the startup loader's own parser (#2280), so a value
+// reads the same on Test / reconnect as it will after a restart.
+const parseLines = parseEnvText;
 
 /** The .env file's values as saved, unmasked. Server-internal: never send the result to a browser. */
 export async function readEnvFile(): Promise<Record<string, string>> {
@@ -480,7 +477,7 @@ export async function updateEnv(
   // server reads its security configuration from. The allowlist stays the route's business — this
   // only refuses to write something that would not be a single well-formed dotenv record.
   for (const [key, value] of Object.entries(updates)) {
-    if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
+    if (!ENV_KEY_SYNTAX.test(key) || !isStorableValue(value)) {
       throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
     }
   }
@@ -535,14 +532,14 @@ function applyEnvUpdates(
       const key = trimmed.slice(0, eq).trim();
       if (key in updates) {
         updatedKeys.add(key);
-        return `${key}=${updates[key]}`;
+        return `${key}=${encodeEnvValue(updates[key]) ?? ""}`;
       }
       return line;
     });
 
   for (const [key, val] of Object.entries(updates)) {
     if (!updatedKeys.has(key) && val !== "") {
-      newLines.push(`${key}=${val}`);
+      newLines.push(`${key}=${encodeEnvValue(val) ?? ""}`);
     }
   }
 
@@ -561,7 +558,7 @@ export async function updateEnvFrom<T>(
     const raw = await readRaw();
     const { updates, result } = compute(parseLines(raw));
     for (const [key, value] of Object.entries(updates)) {
-      if (!ENV_KEY_SYNTAX.test(key) || ENV_VALUE_CONTROL_CHAR.test(value)) {
+      if (!ENV_KEY_SYNTAX.test(key) || !isStorableValue(value)) {
         throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
       }
     }

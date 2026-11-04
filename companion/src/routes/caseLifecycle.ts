@@ -670,12 +670,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (rejected.length > 0) {
         // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
         // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.
-        errLine(
-          `POST /settings/env rejected ${rejected.length} key(s) not on the writable allowlist: ${rejected.join(", ")}`,
-        );
-        return res
-          .status(400)
-          .json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
+        // A key is also rejected when its value cannot be saved losslessly (#2280).
+        const why = "not on the writable allowlist, or a value that cannot be saved as written";
+        errLine(`POST /settings/env rejected ${rejected.length} key(s) (${why}): ${rejected.join(", ")}`);
+        return res.status(400).json({ error: `rejected keys (${why}): ${rejected.join(", ")}` });
       }
       await updateEnvFile(updates as Record<string, string>, unset as string[]);
       return res.json({ ok: true });

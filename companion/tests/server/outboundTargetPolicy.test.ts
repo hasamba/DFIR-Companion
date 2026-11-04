@@ -39,7 +39,7 @@ describe('fetchOutbound — policy: "lan"', () => {
       const r = await fetchOutbound(raw, {
         policy: "lan",
         resolveHost: resolver({ "10.0.0.5": ["10.0.0.5"], "127.0.0.1": ["127.0.0.1"] }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
         agentFactory: (pins) => {
           pinsSeen.push(pins);
           return fakeAgent();
@@ -65,9 +65,9 @@ describe('fetchOutbound — policy: "lan"', () => {
   ])("refuses the metadata / link-local literal %s before any lookup or connection", async (raw) => {
     const resolveHost = vi.fn(LAN);
     const fetchImpl = vi.fn();
-    await expect(
-      fetchOutbound(raw, { policy: "lan", resolveHost, fetchImpl: fetchImpl as unknown as typeof fetch }),
-    ).rejects.toThrow(/blocked because it is a cloud-metadata or link-local address/);
+    await expect(fetchOutbound(raw, { policy: "lan", resolveHost, fetchImpl: fetchImpl })).rejects.toThrow(
+      /blocked because it is a cloud-metadata or link-local address/,
+    );
     expect(resolveHost).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -80,7 +80,7 @@ describe('fetchOutbound — policy: "lan"', () => {
         fetchOutbound("http://evil.example/hook", {
           policy: "lan",
           resolveHost: resolver({ "evil.example": answers }),
-          fetchImpl: fetchImpl as unknown as typeof fetch,
+          fetchImpl: fetchImpl,
         }),
       ).rejects.toThrow(/resolves to a cloud-metadata or link-local address/);
       expect(fetchImpl).not.toHaveBeenCalled();
@@ -94,7 +94,7 @@ describe('fetchOutbound — policy: "lan"', () => {
         resolveHost: async () => {
           throw new Error("ENOTFOUND");
         },
-        fetchImpl: vi.fn() as unknown as typeof fetch,
+        fetchImpl: vi.fn(),
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
   });
@@ -115,7 +115,7 @@ describe('fetchOutbound — policy: "lan"', () => {
         policy: "lan",
         maxRedirects: 0,
         resolveHost: LAN,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
         agentFactory: () => {
           const a = fakeAgent();
           agents.push(a);
@@ -133,7 +133,7 @@ describe('fetchOutbound — policy: "lan"', () => {
       policy: "lan",
       resolveHost: LAN,
       tls: { ca: "PEM", rejectUnauthorized: true },
-      fetchImpl: (async () => new Response("ok")) as unknown as typeof fetch,
+      fetchImpl: async () => new Response("ok"),
       agentFactory: (pins, tls) => {
         seen.push({ pins, tls });
         return fakeAgent();
@@ -151,7 +151,7 @@ describe('fetchOutbound — policy: "lan"', () => {
       policy: "lan",
       resolveHost: LAN,
       agentFactory: () => fakeAgent(),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
       request: { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
     });
     const init = fetchImpl.mock.calls[0][1] as RequestInit;
@@ -167,7 +167,7 @@ describe('fetchOutbound — policy: "lan"', () => {
         policy: "lan",
         resolveHost: LAN,
         signal: ac.signal,
-        fetchImpl: vi.fn() as unknown as typeof fetch,
+        fetchImpl: vi.fn(),
       }),
     ).rejects.toThrow();
   });

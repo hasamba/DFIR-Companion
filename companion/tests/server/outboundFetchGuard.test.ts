@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
+import { fetch as undiciFetch, type Dispatcher } from "undici";
 import {
-  assertOutboundUrlAllowed,
   fetchOutbound,
   pinnedLookup,
   OutboundUrlBlockedError,
+  type GuardedFetch,
+  type OutboundFetchOptions,
 } from "../../src/routes/outboundFetchGuard.js";
 
 // Resolver stub so the unit tests never touch real DNS. A host not listed here resolves to a
@@ -22,37 +24,49 @@ function response(status: number, headers: Record<string, string> = {}): Respons
   return new Response(status === 204 || status >= 300 ? null : "{}", { status, headers });
 }
 
-describe("assertOutboundUrlAllowed", () => {
-  it("accepts an ordinary https URL to a public host", async () => {
-    const url = await assertOutboundUrlAllowed("https://www.cisa.gov/feed.json", {
-      resolveHost: PUBLIC,
-    });
-    expect(url.href).toBe("https://www.cisa.gov/feed.json");
-  });
+// Runs fetchOutbound against a URL the guard must refuse, and proves the refusal happened BEFORE
+// any request: the stubbed fetch is never called. Returns the error for message assertions.
+async function blockedWithoutFetch(raw: string, opts: OutboundFetchOptions = {}): Promise<Error> {
+  let called = false;
+  const fetchImpl = async () => {
+    called = true;
+    return response(200);
+  };
+  const err = await fetchOutbound(raw, { resolveHost: PUBLIC, ...opts, fetchImpl }).then(
+    () => new Error("expected the URL to be blocked"),
+    (e: unknown) => e as Error,
+  );
+  expect(called).toBe(false);
+  return err;
+}
 
+describe("outboundFetchGuard module surface", () => {
+  // Every runtime export either IS the pin or sends through it. A validate-only helper that returns
+  // a URL invites validate-then-plain-fetch, which re-resolves unpinned (DNS rebinding) — #2271.
+  it("exports nothing that validates a URL without pinning the connection", async () => {
+    const mod = await import("../../src/routes/outboundFetchGuard.js");
+    expect(Object.keys(mod).sort()).toEqual(["OutboundUrlBlockedError", "fetchOutbound", "pinnedLookup"]);
+  });
+});
+
+describe("fetchOutbound — target checks before any request", () => {
   it("rejects a string that is not an absolute URL", async () => {
-    await expect(assertOutboundUrlAllowed("not a url", { resolveHost: PUBLIC })).rejects.toBeInstanceOf(
-      OutboundUrlBlockedError,
-    );
+    expect(await blockedWithoutFetch("not a url")).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   it("rejects a non-http scheme", async () => {
-    await expect(assertOutboundUrlAllowed("file:///etc/passwd", { resolveHost: PUBLIC })).rejects.toThrow(
-      /https:/,
-    );
+    expect((await blockedWithoutFetch("file:///etc/passwd")).message).toMatch(/https:/);
   });
 
   it("rejects http:// by default", async () => {
-    await expect(
-      assertOutboundUrlAllowed("http://www.cisa.gov/feed.json", { resolveHost: PUBLIC }),
-    ).rejects.toThrow(/https:/);
+    expect((await blockedWithoutFetch("http://www.cisa.gov/feed.json")).message).toMatch(/https:/);
   });
 
   // The reason the issue was filed: cloud instance credentials one POST body away.
   it("rejects the cloud metadata address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://169.254.169.254/latest/meta-data/", { resolveHost: PUBLIC }),
-    ).rejects.toThrow(/link-local/i);
+    expect((await blockedWithoutFetch("https://169.254.169.254/latest/meta-data/")).message).toMatch(
+      /link-local/i,
+    );
   });
 
   it.each([
@@ -66,94 +80,85 @@ describe("assertOutboundUrlAllowed", () => {
     "https://[::1]/x",
     "https://[fd00::1]/x",
   ])("rejects the literal internal target %s", async (raw) => {
-    await expect(assertOutboundUrlAllowed(raw, { resolveHost: PUBLIC })).rejects.toBeInstanceOf(
-      OutboundUrlBlockedError,
-    );
+    expect(await blockedWithoutFetch(raw)).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   // An IPv4-mapped IPv6 literal is the same address wearing a different spelling; iocValue.ts
   // carries the parser for it precisely so a guard cannot be walked around this way.
   it("rejects an IPv4-mapped IPv6 spelling of the metadata address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://[::ffff:169.254.169.254]/", { resolveHost: PUBLIC }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    expect(await blockedWithoutFetch("https://[::ffff:169.254.169.254]/")).toBeInstanceOf(
+      OutboundUrlBlockedError,
+    );
   });
 
   // A literal-only check stops at the URL text. This is the case that needs the resolver.
   it("rejects a public-looking hostname that RESOLVES to an internal address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://metadata.evil.example/", {
-        resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
-      }),
-    ).rejects.toThrow(/resolve/i);
+    const err = await blockedWithoutFetch("https://metadata.evil.example/", {
+      resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
+    });
+    expect(err.message).toMatch(/resolve/i);
   });
 
   it("rejects when ANY resolved address is internal, not just the first", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://split.example/", {
-        resolveHost: resolver({ "split.example": ["93.184.216.34", "10.1.2.3"] }),
-      }),
-    ).rejects.toThrow(/resolve/i);
+    const err = await blockedWithoutFetch("https://split.example/", {
+      resolveHost: resolver({ "split.example": ["93.184.216.34", "10.1.2.3"] }),
+    });
+    expect(err.message).toMatch(/resolve/i);
   });
 
   // Fails closed, because the ATTACKER decides when the lookup fails: the nameserver for their own
   // domain can answer SERVFAIL here and the metadata address to the lookup fetch makes next. Letting
   // an unresolvable host through skipped the resolved-address check and the pin together.
   it("refuses a host that cannot be resolved", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://nope.example/", {
-        resolveHost: async () => {
-          throw new Error("SERVFAIL");
-        },
-      }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    const err = await blockedWithoutFetch("https://nope.example/", {
+      resolveHost: async () => {
+        throw new Error("SERVFAIL");
+      },
+    });
+    expect(err).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   // Same hole, different shape: a resolver that returns nothing instead of throwing.
   it("refuses a host whose resolution returns no addresses", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://empty.example/", { resolveHost: async () => [] }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    const err = await blockedWithoutFetch("https://empty.example/", { resolveHost: async () => [] });
+    expect(err).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   it("names DNS as the cause, so an outage is not read as a policy block", async () => {
-    const err: Error = await assertOutboundUrlAllowed("https://nope.example/", {
+    const err = await blockedWithoutFetch("https://nope.example/", {
       resolveHost: async () => {
         throw new Error("SERVFAIL");
       },
-    }).then(
-      () => new Error("expected the URL to be blocked"),
-      (e: unknown) => e as Error,
-    );
+    });
     expect(err.message).toMatch(/could not be resolved/i);
   });
 
   // The blocked message must not name the address the host resolved to — that IS the internal
   // detail the guard exists to withhold.
   it("does not disclose the resolved internal address in the error", async () => {
-    const err: Error = await assertOutboundUrlAllowed("https://metadata.evil.example/", {
+    const err = await blockedWithoutFetch("https://metadata.evil.example/", {
       resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
-    }).then(
-      () => new Error("expected the URL to be blocked"),
-      (e: unknown) => e as Error,
-    );
+    });
     expect(err).toBeInstanceOf(OutboundUrlBlockedError);
     expect(err.message).not.toContain("169.254.169.254");
   });
 
   describe("allowInternal opt-in", () => {
     it("permits http:// to a private host", async () => {
-      const url = await assertOutboundUrlAllowed("http://10.0.0.5/kev.json", {
+      const fetchImpl = vi.fn(async () => response(200));
+      const { url, dispose } = await fetchOutbound("http://10.0.0.5/kev.json", {
         allowInternal: true,
         resolveHost: PUBLIC,
+        fetchImpl: fetchImpl,
       });
+      await dispose();
       expect(url.href).toBe("http://10.0.0.5/kev.json");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     it("still rejects a non-http scheme", async () => {
-      await expect(
-        assertOutboundUrlAllowed("file:///etc/passwd", { allowInternal: true, resolveHost: PUBLIC }),
-      ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+      const err = await blockedWithoutFetch("file:///etc/passwd", { allowInternal: true });
+      expect(err).toBeInstanceOf(OutboundUrlBlockedError);
     });
   });
 });
@@ -163,18 +168,18 @@ describe("fetchOutbound", () => {
     const fetchImpl = vi.fn(async () => response(200));
     const { response: resp, url } = await fetchOutbound("https://www.cisa.gov/feed.json", {
       resolveHost: PUBLIC,
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
     });
     expect(resp.status).toBe(200);
     expect(url.href).toBe("https://www.cisa.gov/feed.json");
   });
 
   it("fetches with redirect: manual so no hop is followed unchecked", async () => {
-    let init: RequestInit | undefined;
-    const fetchImpl = (async (_url: unknown, given: RequestInit) => {
+    let init: Parameters<GuardedFetch>[1] | undefined;
+    const fetchImpl: GuardedFetch = async (_url, given) => {
       init = given;
       return response(200);
-    }) as unknown as typeof fetch;
+    };
     await fetchOutbound("https://www.cisa.gov/feed.json", { resolveHost: PUBLIC, fetchImpl });
     expect(init).toMatchObject({ redirect: "manual" });
   });
@@ -188,7 +193,7 @@ describe("fetchOutbound", () => {
     await expect(
       fetchOutbound("https://www.cisa.gov/feed.json", {
         resolveHost: PUBLIC,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
   });
@@ -200,7 +205,7 @@ describe("fetchOutbound", () => {
       .mockResolvedValueOnce(response(200));
     const { url } = await fetchOutbound("https://www.cisa.gov/feed.json", {
       resolveHost: PUBLIC,
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
     });
     expect(url.href).toBe("https://mirror.example/feed.json");
   });
@@ -212,7 +217,7 @@ describe("fetchOutbound", () => {
       .mockResolvedValueOnce(response(200));
     const { url } = await fetchOutbound("https://www.cisa.gov/feed.json", {
       resolveHost: PUBLIC,
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
     });
     expect(url.href).toBe("https://www.cisa.gov/other/feed.json");
   });
@@ -223,7 +228,7 @@ describe("fetchOutbound", () => {
       fetchOutbound("https://www.cisa.gov/feed.json", {
         maxRedirects: 2,
         resolveHost: PUBLIC,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toThrow(/redirect/i);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
@@ -234,7 +239,7 @@ describe("fetchOutbound", () => {
     await expect(
       fetchOutbound("https://www.cisa.gov/feed.json", {
         resolveHost: PUBLIC,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
   });
@@ -254,7 +259,7 @@ describe("fetchOutbound", () => {
       });
     await fetchOutbound("https://www.cisa.gov/feed.json", {
       resolveHost: PUBLIC,
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
     });
     expect(signals).toHaveLength(2);
     expect(signals[0]).toBe(signals[1]);
@@ -269,7 +274,7 @@ describe("fetchOutbound", () => {
 describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
   it("pins the connection to the address the guard approved", async () => {
     const pins: Array<{ address: string; family: number }> = [];
-    const fetchImpl = (async () => response(200)) as unknown as typeof fetch;
+    const fetchImpl = async () => response(200);
     await fetchOutbound("https://feed.example/x.json", {
       resolveHost: resolver({ "feed.example": ["93.184.216.9"] }),
       agentFactory: (given) => {
@@ -283,11 +288,11 @@ describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
 
   it("passes the pinned dispatcher to fetch, so the socket cannot re-resolve", async () => {
     const agent = { close: async () => {} } as never;
-    let init: (RequestInit & { dispatcher?: unknown }) | undefined;
-    const fetchImpl = (async (_u: unknown, given: RequestInit) => {
+    let init: Parameters<GuardedFetch>[1] | undefined;
+    const fetchImpl: GuardedFetch = async (_u, given) => {
       init = given;
       return response(200);
-    }) as unknown as typeof fetch;
+    };
     await fetchOutbound("https://feed.example/x.json", {
       resolveHost: PUBLIC,
       agentFactory: () => agent,
@@ -323,14 +328,14 @@ describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
         pins.push(given[0].address);
         return { close: async () => {} } as never;
       },
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      fetchImpl: fetchImpl,
     });
     expect(pins).toEqual(["93.184.216.1", "93.184.216.2"]);
   });
 
   it("closes every pinned connection when dispose is called", async () => {
     let closed = 0;
-    const fetchImpl = (async () => response(200)) as unknown as typeof fetch;
+    const fetchImpl = async () => response(200);
     const { dispose } = await fetchOutbound("https://feed.example/x.json", {
       resolveHost: PUBLIC,
       agentFactory: () =>
@@ -360,7 +365,7 @@ describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
               closed += 1;
             },
           }) as never,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
     expect(closed).toBe(1);
@@ -370,7 +375,7 @@ describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
   // to pin to and no rebinding threat to defend against.
   it("does not pin when the operator opted into internal targets", async () => {
     let made = 0;
-    const fetchImpl = (async () => response(200)) as unknown as typeof fetch;
+    const fetchImpl = async () => response(200);
     await fetchOutbound("http://10.0.0.5/kev.json", {
       allowInternal: true,
       resolveHost: PUBLIC,
@@ -389,10 +394,10 @@ describe("fetchOutbound — connection pinning (DNS rebinding)", () => {
 describe("fetchOutbound — no unpinned request escapes", () => {
   it("sends nothing when the first hop cannot be resolved", async () => {
     let called = false;
-    const fetchImpl = (async () => {
+    const fetchImpl = async () => {
       called = true;
       return response(200);
-    }) as unknown as typeof fetch;
+    };
     await expect(
       fetchOutbound("https://nope.example/x.json", {
         resolveHost: async () => {
@@ -416,7 +421,7 @@ describe("fetchOutbound — no unpinned request escapes", () => {
           return [{ address: "93.184.216.1", family: 4 }];
         },
         agentFactory: () => ({ close: async () => {} }) as never,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -426,10 +431,10 @@ describe("fetchOutbound — no unpinned request escapes", () => {
   // an unpinned fetch, whatever else changes in this file.
   it("refuses rather than fetching unpinned if a pin is ever missing", async () => {
     let called = false;
-    const fetchImpl = (async () => {
+    const fetchImpl = async () => {
       called = true;
       return response(200);
-    }) as unknown as typeof fetch;
+    };
     await expect(
       fetchOutbound("https://feed.example/x.json", {
         resolveHost: async () => [],
@@ -445,10 +450,10 @@ describe("fetchOutbound — reserved ranges reached through DNS", () => {
     "refuses a host that resolves to %s",
     async (address) => {
       let called = false;
-      const fetchImpl = (async () => {
+      const fetchImpl = async () => {
         called = true;
         return response(200);
-      }) as unknown as typeof fetch;
+      };
       await expect(
         fetchOutbound("https://feed.example/x.json", {
           resolveHost: resolver({ "feed.example": [address] }),
@@ -465,7 +470,7 @@ describe("fetchOutbound — reserved ranges reached through DNS", () => {
     await expect(
       fetchOutbound("https://mixed.example/x.json", {
         resolveHost: resolver({ "mixed.example": ["93.184.216.34", "240.0.0.1"] }),
-        fetchImpl: (async () => response(200)) as unknown as typeof fetch,
+        fetchImpl: async () => response(200),
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
   });
@@ -483,10 +488,10 @@ describe("fetchOutbound — the deadline covers DNS", () => {
       fetchOutbound("https://slow.example/x.json", {
         timeoutMs: 120,
         resolveHost: () => new Promise(() => {}), // never settles, like a black-holed nameserver
-        fetchImpl: (async () => {
+        fetchImpl: async () => {
           called = true;
           return response(200);
-        }) as unknown as typeof fetch,
+        },
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
     expect(called, "nothing should be sent when the name never resolved").toBe(false);
@@ -497,7 +502,7 @@ describe("fetchOutbound — the deadline covers DNS", () => {
     const err: Error = await fetchOutbound("https://slow.example/x.json", {
       timeoutMs: 60,
       resolveHost: () => new Promise(() => {}),
-      fetchImpl: (async () => response(200)) as unknown as typeof fetch,
+      fetchImpl: async () => response(200),
     }).then(
       () => new Error("expected a refusal"),
       (e: unknown) => e as Error,
@@ -521,7 +526,7 @@ describe("fetchOutbound — the deadline covers DNS", () => {
           return [{ address: "93.184.216.2", family: 4 }];
         },
         agentFactory: () => ({ close: async () => {} }) as never,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
     expect(Date.now() - started).toBeLessThan(3000);
@@ -532,7 +537,7 @@ describe("fetchOutbound — the deadline covers DNS", () => {
       resolveHost: async () => {
         throw new Error("SERVFAIL");
       },
-      fetchImpl: (async () => response(200)) as unknown as typeof fetch,
+      fetchImpl: async () => response(200),
     }).then(
       () => new Error("expected a refusal"),
       (e: unknown) => e as Error,
@@ -555,7 +560,7 @@ describe("fetchOutbound — every checked address is offered, not just the first
         given = pins;
         return { close: async () => {} } as never;
       },
-      fetchImpl: (async () => response(200)) as unknown as typeof fetch,
+      fetchImpl: async () => response(200),
     });
     expect(given).toEqual([
       { address: "2606:4700::1111", family: 6 },
@@ -598,9 +603,36 @@ describe("fetchOutbound — every checked address is offered, not just the first
           made += 1;
           return { close: async () => {} } as never;
         },
-        fetchImpl: (async () => response(200)) as unknown as typeof fetch,
+        fetchImpl: async () => response(200),
       }),
     ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
     expect(made).toBe(0);
+  });
+});
+
+// #2268: the fetch seam is typed for what production actually injects. These are compile-time
+// assertions (`npm run typecheck` covers tests): undici's own fetch, the default, must satisfy
+// GuardedFetch with no cast, and so must a test double that returns a global Response and reads
+// the undici-only `dispatcher` option.
+describe("GuardedFetch — the injected fetch type", () => {
+  it("is satisfied by undici's fetch with no cast", () => {
+    const real: GuardedFetch = undiciFetch;
+    expect(real).toBe(undiciFetch);
+  });
+
+  it("is satisfied by a global-Response double that reads the dispatcher", async () => {
+    let seen: Dispatcher | undefined;
+    const double: GuardedFetch = async (_input, init) => {
+      seen = init.dispatcher;
+      return new Response("ok");
+    };
+    const { response, dispose } = await fetchOutbound("https://feeds.example/x", {
+      resolveHost: PUBLIC,
+      fetchImpl: double,
+      agentFactory: () => ({ close: async () => {} }) as unknown as Dispatcher,
+    });
+    await dispose();
+    expect(response.status).toBe(200);
+    expect(seen).toBeDefined();
   });
 });

@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Response as UndiciResponse } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fetchOutbound } from "../../src/routes/outboundFetchGuard.js";
 
@@ -36,6 +37,10 @@ describe("fetchOutbound — real fetch + real pinned Agent", () => {
     });
     try {
       expect(response.status).toBe(200);
+      // #2268: the result is typed as the global Response, but the real stack hands back undici's
+      // own class. Consumers must read status/headers/body only, never instanceof-check it.
+      expect(response).toBeInstanceOf(UndiciResponse);
+      expect(response instanceof globalThis.Response).toBe(false);
       expect(await response.text()).toBe("pinned-ok");
     } finally {
       await dispose();

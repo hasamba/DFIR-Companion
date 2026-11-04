@@ -44,6 +44,15 @@ Hiding a field never changes what is saved. Save posts only the keys whose value
 changed, so a field you cannot see cannot blank a `.env` key, and switching modes mid-edit keeps
 whatever you have typed.
 
+A value is saved exactly as you typed it, including `#`, quotes and leading or trailing spaces.
+Save puts quotes around the value in `.env` only when the value needs them. **Test / reconnect**
+then reads the value the same way the server reads it after a restart. Save refuses a value it
+cannot store without changing it: a value that contains both a single quote and a double quote,
+together with a `#`, a leading or trailing space, or a quote as its first character. The error names
+the field; change the value and save again.
+In versions before this fix, a value containing `#` was cut at the `#` after a restart. **Test**
+still passed. Enter any such secret again and save it.
+
 ---
 
 ## Search

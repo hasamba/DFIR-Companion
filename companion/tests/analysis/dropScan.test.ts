@@ -5,6 +5,10 @@ import {
   rawToolInputExt,
   shouldIgnoreDropFile,
   selectReadyFiles,
+  excludeStuck,
+  stuckMoveNote,
+  moveFailureNote,
+  type StuckDropFile,
   isOversize,
   DROP_PROCESSED,
   DROP_FAILED,
@@ -142,5 +146,71 @@ describe("classifyDropFile with a content sample", () => {
   it("never lets the sniff override a known text extension", () => {
     // A .csv with an odd byte is still a csv for the native importer, not a malware sample.
     expect(classifyDropFile("data.csv", Buffer.from([0x00, 0x41, 0x42]))).toBe("artifact");
+  });
+});
+
+// #2281: a file whose move to _processed/ or _failed/ failed stays in drop/. The sweep must not
+// import it again while it is unchanged, but changed bytes are new evidence.
+describe("excludeStuck", () => {
+  const stuckOf = (entries: [string, StuckDropFile][]) => new Map(entries);
+
+  it("removes an unchanged stuck file from the ready list and keeps its entry", () => {
+    const listing = [f("a.csv", 10, 1000), f("b.csv", 20, 2000)];
+    const prev = stuckOf([["a.csv", { size: 10, mtimeMs: 1000, ok: true }]]);
+    const { ready, nextStuck } = excludeStuck(listing, listing, prev);
+    expect(ready.map((x) => x.relpath)).toEqual(["b.csv"]);
+    expect(nextStuck.get("a.csv")).toEqual({ size: 10, mtimeMs: 1000, ok: true });
+  });
+
+  it("keeps the entry of an unchanged stuck file that is not ready this sweep", () => {
+    const listing = [f("a.csv", 10, 1000)];
+    const prev = stuckOf([["a.csv", { size: 10, mtimeMs: 1000, ok: false }]]);
+    const { ready, nextStuck } = excludeStuck([], listing, prev);
+    expect(ready).toEqual([]);
+    expect(nextStuck.has("a.csv")).toBe(true);
+  });
+
+  it("lets a stuck file whose size or mtime changed through, and drops its entry", () => {
+    const listing = [f("a.csv", 11, 1000), f("b.csv", 20, 2500)];
+    const prev = stuckOf([
+      ["a.csv", { size: 10, mtimeMs: 1000, ok: true }],
+      ["b.csv", { size: 20, mtimeMs: 2000, ok: true }],
+    ]);
+    const { ready, nextStuck } = excludeStuck(listing, listing, prev);
+    expect(ready.map((x) => x.relpath)).toEqual(["a.csv", "b.csv"]);
+    expect(nextStuck.size).toBe(0);
+  });
+
+  it("drops the entry of a stuck file that has vanished", () => {
+    const prev = stuckOf([["gone.csv", { size: 10, mtimeMs: 1000, ok: true }]]);
+    expect(excludeStuck([], [], prev).nextStuck.size).toBe(0);
+  });
+
+  it("does not mutate its inputs", () => {
+    const listing = [f("a.csv", 10, 1000)];
+    const ready = [...listing];
+    const prev = stuckOf([
+      ["a.csv", { size: 10, mtimeMs: 1000, ok: true }],
+      ["gone.csv", { size: 1, mtimeMs: 1, ok: true }],
+    ]);
+    const res = excludeStuck(ready, listing, prev);
+    expect(ready).toHaveLength(1);
+    expect(prev.size).toBe(2);
+    expect(res.nextStuck).not.toBe(prev);
+  });
+});
+
+describe("stuckMoveNote", () => {
+  it("names the destination, the error and the no-re-import promise", () => {
+    expect(stuckMoveNote(true, "EPERM: denied")).toMatch(/_processed\/.*EPERM: denied.*left in drop\//);
+    expect(stuckMoveNote(false, "EBUSY")).toMatch(/_failed\/.*EBUSY/);
+  });
+});
+
+describe("moveFailureNote", () => {
+  it("is empty when the move succeeded and a '; '-prefixed caveat when it failed", async () => {
+    expect(await moveFailureNote(Promise.resolve(), true)).toBe("");
+    const note = await moveFailureNote(Promise.reject(new Error("EBUSY: locked")), false);
+    expect(note).toMatch(/^; could not be moved to _failed\/ \(EBUSY: locked\)/);
   });
 });
