@@ -57,10 +57,11 @@ dist-choco/
 
 # Docker: the pre-built browser add-on the companion container copies out for "Load unpacked".
 /addon/
-# Docker Compose runtime folders beside docker-compose.yml: encrypted server-set keys, and
-# team-mode password hashes and session digests.
+# Docker Compose runtime folders beside docker-compose.yml: encrypted server-set keys, team-mode
+# password hashes and session digests, and the Settings file with API keys.
 /server-sets/
 /auth/
+/data/
 
 # Atomic-write temp files. atomicWrite.ts writes `<target>.tmp` then renames it over
 # the target; formatters (Prettier-style write-file-atomic) write `<src>.tmp.<pid>.<hex>`.

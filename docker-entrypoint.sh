@@ -257,6 +257,17 @@ if [ "$(id -u)" = "0" ]; then
       echo "dfir-entrypoint: DFIR_CASES_ROOT=${DFIR_CASES_ROOT:-/data/cases} resolves under the root-owned /app code tree ($cases_lexical); its sibling stores (logs, templates, team-auth) will be unwritable — set DFIR_CASES_ROOT to an absolute path on a mounted volume (e.g. /data/cases)" >&2
       ;;
     *)
+      # The image's OWN data tree is the one parent that is never shared: compose mounts ./data
+      # there whole, and nothing but the app's state lives in it (handoff_dir_untrusted already
+      # trusts /data/* for the same reason). Hand over its entry — not its contents — so the server
+      # can create the dashboard-written companion.env and any store missing from KNOWN_STORES
+      # (audit-export, Sigma rules, a future one). Before, /data became writable only by accident,
+      # as the default env file's directory; an operator who moved DFIR_ENV_FILE lost that.
+      case "$data_root" in
+        /data)
+          handoff_entry "$data_root"
+          ;;
+      esac
       for name in $KNOWN_STORES; do "$cases_handoff" "${data_root%/}/$name"; done
       if [ -z "${DFIR_AUTH_DATA_DIR:-}" ]; then
         # authFactory: .dfir-auth-<sha256(path.resolve(casesRoot))[:12]> beside the lexically

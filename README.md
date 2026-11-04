@@ -708,7 +708,7 @@ you run that command yourself.
 ├── docs/
 │   └── superpowers/plans/   The original 4 implementation plans.
 ├── Dockerfile         Single-image build (server + dashboard + add-on); no Ollama/LiteLLM.
-├── docker-compose.yml Localhost-only Compose: ./cases + ./server-sets + ./auth volumes, add-on → ./addon.
+├── docker-compose.yml Localhost-only Compose: ./data + ./cases + ./server-sets + ./auth volumes, add-on → ./addon.
 └── cases/             Evidence + state output (gitignored). Location set by DFIR_CASES_ROOT.
 ```
 
@@ -843,6 +843,9 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
   **`./server-sets`** (mounted volume). Mount it too when you run the image by hand.
 - Team-mode accounts, sessions and case roles persist in **`./auth`** (mounted volume). It holds
   password hashes — back it up and keep it private.
+- Everything else the server saves persists in **`./data`** (mounted volume): the Settings file
+  (`companion.env`, holds API keys), dashboard views, report templates, tagger rules,
+  notifications, Sigma rules and logs. Back up all four folders.
 - Configure via the `environment:` block in [`docker-compose.yml`](docker-compose.yml), or
   uncomment `env_file: - .env` to use a `.env` file (copy `companion/.env.example`).
 - To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
