@@ -1,5 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  closeSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
+import { hostname } from "node:os";
 import { dirname } from "node:path";
 
 // How long a guard — or a recovery claim — may sit in an inconsistent state before the process that
@@ -7,11 +17,23 @@ import { dirname } from "node:path";
 // enough that an operator restarting after a crash is not locked out for a shift.
 const ABANDONED_AFTER_MS = 30_000;
 
+// A live owner touches its guard this often, so a record whose liveness cannot be probed (#2278)
+// can still be judged by whether anyone keeps it fresh. The lease is several missed beats long, so a
+// busy event loop does not hand the guard to a second writer.
+export const WRITER_GUARD_HEARTBEAT_MS = 10_000;
+const LEASE_MS = 60_000;
+
 interface GuardRecord {
   pid: number;
   token: string;
   startedAt: string;
+  /** Absent on records written before #2278. Docker sets the hostname to the container id. */
+  host?: string;
 }
+
+// The exact contents of every guard this process holds. Ownership is tracked per module instance:
+// the guard is acquired once, on the main thread, at startup — no worker acquires it.
+const heldGuards = new Set<string>();
 
 export interface WriterGuard {
   path: string;
@@ -26,7 +48,8 @@ function guardRecord(value: string): GuardRecord | null {
     if (typeof source.pid !== "number" || !Number.isInteger(source.pid) || source.pid <= 0) return null;
     if (typeof source.token !== "string" || !source.token) return null;
     if (typeof source.startedAt !== "string") return null;
-    return { pid: source.pid, token: source.token, startedAt: source.startedAt };
+    if (source.host !== undefined && typeof source.host !== "string") return null;
+    return { pid: source.pid, token: source.token, startedAt: source.startedAt, host: source.host };
   } catch {
     return null;
   }
@@ -39,6 +62,51 @@ function processIsAlive(pid: number): boolean {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+// In a container the server is always PID 1, so a guard left by an unclean exit names PID 1 and the
+// liveness probe in the NEXT container answers for itself (#2278). A record that names our own PID
+// but is not one we hold cannot be probed. From our own host (same container restarted, or PID
+// reuse after a reboot) no other live process can have our PID, so it is stale. From another host
+// — a recreated container, or a second container on a shared volume — only the lease can tell: a
+// live owner keeps the file fresh. A record older than the host field was never refreshed, so its
+// age proves nothing; a live older-version server would look expired. Refuse it and name the file.
+type Liveness = { live: false } | { live: true; reason: string };
+
+function judgeRecord(path: string, text: string, record: GuardRecord): Liveness {
+  const owned = `process ${record.pid} already owns it`;
+  if (heldGuards.has(text)) return { live: true, reason: owned };
+  if (record.pid !== process.pid)
+    return processIsAlive(record.pid) ? { live: true, reason: owned } : { live: false };
+  if (record.host === hostname()) return { live: false };
+  if (record.host === undefined) {
+    return {
+      live: true,
+      reason: `an older DFIR Companion recorded process ${record.pid}; if no other server uses this cases folder, delete ${path} and restart`,
+    };
+  }
+  const touchedAt = mtimeMsIfPresent(path);
+  if (touchedAt === null) return { live: false };
+  const remainingMs = LEASE_MS - (Date.now() - touchedAt);
+  if (remainingMs <= 0) return { live: false };
+  return {
+    live: true,
+    reason: `a server on host ${record.host} holds it; if that server has stopped, retry in ${Math.ceil(remainingMs / 1000)} seconds`,
+  };
+}
+
+function startHeartbeat(path: string, contents: string): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    try {
+      if (readIfPresent(path) !== contents) return;
+      const now = new Date();
+      utimesSync(path, now, now);
+    } catch {
+      // A missed beat only shortens the lease another host sees; the next beat retries.
+    }
+  }, WRITER_GUARD_HEARTBEAT_MS);
+  timer.unref();
+  return timer;
 }
 
 // ENOENT is never a fault on the paths below: we are inspecting a file that belongs to ANOTHER
@@ -124,6 +192,7 @@ export function acquireWriterGuard(path: string): WriterGuard {
     pid: process.pid,
     token,
     startedAt: new Date().toISOString(),
+    host: hostname(),
   } satisfies GuardRecord);
 
   for (;;) {
@@ -134,12 +203,16 @@ export function acquireWriterGuard(path: string): WriterGuard {
       } finally {
         closeSync(descriptor);
       }
+      heldGuards.add(contents);
+      const heartbeat = startHeartbeat(path, contents);
       let released = false;
       return {
         path,
         release(): void {
           if (released) return;
           released = true;
+          clearInterval(heartbeat);
+          heldGuards.delete(contents);
           removeIfUnchanged(path, contents);
         },
       };
@@ -148,10 +221,9 @@ export function acquireWriterGuard(path: string): WriterGuard {
       const existingText = readIfPresent(path);
       if (existingText === null) continue; // the owner released it — compete for it again
       const existing = guardRecord(existingText);
-      if (existing && processIsAlive(existing.pid)) {
-        throw new Error(
-          `team mode requires one DFIR Companion writer per cases root; process ${existing.pid} already owns it`,
-        );
+      const liveness = existing ? judgeRecord(path, existingText, existing) : { live: false as const };
+      if (liveness.live) {
+        throw new Error(`team mode requires one DFIR Companion writer per cases root; ${liveness.reason}`);
       }
       if (!existing) {
         const writtenAt = mtimeMsIfPresent(path);

@@ -48,6 +48,11 @@ const FILES = sources().map((file) => ({ path: rel(file), text: code(file) }));
 // entries must scope that work per case (the file must use a scope helper).
 const INTERVALS: Record<string, { count: number; kind: "global" | "per-case"; why: string }> = {
   "analysis/operationalCapacity.ts": { count: 1, kind: "global", why: "capacity sampling; writes no case" },
+  "auth/writerGuard.ts": {
+    count: 1,
+    kind: "global",
+    why: "writer-lock heartbeat; touches the lock beside the cases root, no case folder (#2278)",
+  },
   "composition/captureAnalysis.ts": {
     count: 1,
     kind: "per-case",
