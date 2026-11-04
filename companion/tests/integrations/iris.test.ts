@@ -799,3 +799,37 @@ describe("#1471 -- irisMap.mapIoc says mentioned first, and never 'Observed by' 
     expect(body.ioc_description).not.toContain("Observed by");
   });
 });
+
+describe("IrisClient network failure", () => {
+  const failing = (cause: Error) =>
+    new IrisClient({
+      baseUrl: "https://iris.example.org",
+      apiKey: "word-like-iris-key",
+      fetchFn: async () => {
+        throw new TypeError("fetch failed", { cause });
+      },
+    });
+  const errorOf = (c: IrisClient) =>
+    c.ping().then(
+      () => null,
+      (e: Error) => e,
+    );
+
+  it("keeps the cause under 'fetch failed', as Timesketch does", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED 192.0.2.5:443"), { code: "ECONNREFUSED" });
+    const err = await errorOf(failing(cause));
+    expect(err?.message).toBe(
+      "IRIS request failed: fetch failed -> connect ECONNREFUSED 192.0.2.5:443 (ECONNREFUSED)",
+    );
+  });
+
+  it("names the set's CA bundle for a rejected certificate", async () => {
+    const cause = Object.assign(new Error("self-signed certificate"), {
+      code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
+    const err = await errorOf(failing(cause));
+    expect(err?.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err?.message).toContain("Set the CA bundle for IRIS in this server set (Settings → Server sets)");
+    expect(err?.message).not.toContain("word-like-iris-key");
+  });
+});

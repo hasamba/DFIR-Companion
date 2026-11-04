@@ -1001,7 +1001,7 @@
         <div class="sfield"><label for="sseIrisCustomer">Customer ID</label><input id="sseIrisCustomer" placeholder="1" /></div>
         <div class="sfield"><label for="sseIrisClassification">Classification ID</label><input id="sseIrisClassification" placeholder="1" /></div>
       </div>
-      <label class="server-set-check"><input id="sseIrisInsecure" type="checkbox" /> Skip TLS verify (lab only)</label>
+      <label class="server-set-check"><input id="sseIrisInsecure" type="checkbox" /> Skip TLS verify (lab only — anyone on the network path could read this server's key)</label>
       <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
         <button id="sseTestIris" type="button">Test IRIS</button>
         <span id="sseTestIrisResult" role="status" data-safe-style="font-size:12px;"></span>
@@ -1016,7 +1016,7 @@
         <div class="sfield"><label for="sseTsCa">CA bundle</label><input id="sseTsCa" placeholder="path/to/ca.pem" /></div>
         <div class="sfield"><label for="sseTsTimeline">Timeline name</label><input id="sseTsTimeline" placeholder="DFIR-Companion Forensic Timeline" /></div>
       </div>
-      <label class="server-set-check"><input id="sseTsInsecure" type="checkbox" /> Skip TLS verify (lab only)</label>
+      <label class="server-set-check"><input id="sseTsInsecure" type="checkbox" /> Skip TLS verify (lab only — anyone on the network path could read this server's key)</label>
       <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
         <button id="sseTestTs" type="button">Test Timesketch</button>
         <span id="sseTestTsResult" role="status" data-safe-style="font-size:12px;"></span>

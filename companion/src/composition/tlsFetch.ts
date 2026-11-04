@@ -5,6 +5,7 @@ import {
   type TlsFetchOptions,
 } from "../enrichment/tlsFetch.js";
 import { warnLine } from "../logging/serverLogger.js";
+import { isLoopbackHost } from "../providers/urlValidation.js";
 import { isEnvFlag } from "./env.js";
 
 /**
@@ -71,22 +72,40 @@ export type TlsIntegration =
 export function tlsFetchFor(name: TlsIntegration) {
   const hostSource = TLS_HOST_URL[name];
   const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
-  return tlsFetchForSettings({
-    url: hostUrl,
-    ca: process.env[`DFIR_${name}_CA`],
-    insecure: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-    label: name,
-  });
+  return settingsFetch(
+    {
+      url: hostUrl,
+      ca: process.env[`DFIR_${name}_CA`],
+      insecure: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
+      label: name,
+    },
+    false,
+  );
 }
 
-/** The same TLS trust, from explicit settings (a server set) instead of env. */
-export function tlsFetchForSettings(s: { url?: string; ca?: string; insecure?: boolean; label?: string }) {
+type TlsSettings = { url?: string; ca?: string; insecure?: boolean; label?: string };
+
+/**
+ * The same TLS trust, from a server set's settings instead of env. The set's "Skip TLS verify" box
+ * is the analyst's consent for that set's server, loopback or not, so the #246 guard is not applied
+ * here; every env-based integration (tlsFetchFor / tlsConnectFor) keeps it.
+ */
+export function tlsFetchForSettings(s: TlsSettings) {
+  if (s.insecure && s.url && !isLoopbackUrl(s.url)) {
+    // Host only: a URL can carry credentials.
+    warnLine(`[DFIR] ${s.label ?? "server set"}: server set skips TLS verification for ${hostOf(s.url)}`);
+  }
+  return settingsFetch(s, true);
+}
+
+function settingsFetch(s: TlsSettings, allowInsecureExternal: boolean) {
   const label = s.label ?? "server set";
   try {
     return buildTlsFetch({
       caCertPath: s.ca || undefined,
       insecureSkipVerify: Boolean(s.insecure),
       hostUrl: s.url,
+      allowInsecureExternal,
       onWarn: (m) => warnLine(`[DFIR] ${label}: ${m}`),
     });
   } catch (err) {
@@ -126,5 +145,21 @@ function fromEnv<T>(name: TlsIntegration, build: (opts: TlsFetchOptions) => T | 
     // not a server-wide outage) and say why loudly so the operator can see it in the logs.
     warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
     return undefined;
+  }
+}
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    return isLoopbackHost(new URL(url).host);
+  } catch {
+    return false;
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "an unreadable host";
   }
 }

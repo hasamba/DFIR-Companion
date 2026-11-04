@@ -203,6 +203,11 @@ servers. You do not enter keys again when you move between cases.
   (Velociraptor: the API config path). A key or password that still shows `••••••` tests with
   the stored value. An empty one tests with no secret. **Test connection** at the bottom tests
   every tool you filled in.
+- **Skip TLS verify.** Tick it on a set's IRIS or Timesketch fields to accept that server's
+  certificate without a check. In a set, the tick alone is enough, also for a server on another
+  machine: you do not need `DFIR_TLS_ALLOW_INSECURE_EXTERNAL`. Use it in a lab only. Anyone on the
+  network path can then read that server's key. Give the server's CA bundle instead to keep the
+  check on. When a certificate is refused, the error tells you to set the CA bundle in the set.
 - **New Case form.** The **Velociraptor / IRIS / Timesketch servers (optional)** list preselects the default set. Pick another set, or pick
   **+ Create a new server set…** to make one. Test each tool before you save. **Save** closes the
   editor and selects the new set.

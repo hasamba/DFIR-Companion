@@ -55,3 +55,32 @@ export function tlsTrustHint(err: unknown, name: string): string {
     ` unverified (lab only — a non-loopback host also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true).`
   );
 }
+
+/**
+ * The same hint for a client built from a server set: the CA bundle and "Skip TLS verify" live in
+ * the set's editor, not in `.env`. `tool` is the label the editor shows ("IRIS", "Timesketch").
+ */
+export function serverSetTrustHint(err: unknown, tool: string): string {
+  if (!isCertFailureCode(tlsCauseCode(err))) return "";
+  return (
+    ` — the certificate is not trusted. Set the CA bundle for ${tool} in this server set` +
+    ` (Settings → Server sets) to keep verification ON, or tick "Skip TLS verify" there (lab only).`
+  );
+}
+
+// Node's fetch() throws a generic `TypeError: fetch failed` for every low-level network
+// failure (connection refused, DNS lookup failure, TLS error, timeout) — the actual reason
+// lives in `.cause` (an errno-style error with a `.code` like ECONNREFUSED/ENOTFOUND/
+// CERT_HAS_EXPIRED), which is easy to lose if only `.message` is read. Walk the cause chain
+// so the real reason reaches the user instead of a bare "fetch failed".
+export function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [err.message];
+  let cause: unknown = (err as { cause?: unknown }).cause;
+  while (cause instanceof Error) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    parts.push(code ? `${cause.message} (${code})` : cause.message);
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return parts.join(" -> ");
+}
