@@ -210,6 +210,12 @@ servers. You do not enter keys again when you move between cases.
 - **Keys stay on this machine.** The Companion stores the keys and passwords of every set
   encrypted on this machine. They never go into case exports, archives, reports, support bundles
   or logs.
+- **Where the sets are stored.** The sets are in the `server-sets` folder next to the cases
+  folder. In Docker, that folder is `/data/server-sets`. The supplied `docker-compose.yml` mounts
+  `./server-sets:/data/server-sets`, next to `./cases:/data/cases`. If you start the container
+  yourself, mount both folders. If you mount only the cases folder, a restart loses every set, and
+  each case then shows **Servers: none**. Back up both folders together: the key that decrypts
+  the sets is in the cases folder.
 
 The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`
 and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the

@@ -76,6 +76,7 @@ services:
       - SETUID
     volumes:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
+      - ./server-sets:/data/server-sets  # server sets: IRIS/Timesketch/Velociraptor connections, keys encrypted (persists across restarts)
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
     healthcheck:
       # Probe /health, not /dashboard: /health is auth- and host-check-exempt, so the probe stays

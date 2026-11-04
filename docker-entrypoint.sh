@@ -157,7 +157,7 @@ if [ "$(id -u)" = "0" ]; then
   handoff_entry_untrusted() { handoff_dir_untrusted "$1"; }
   # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
   # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
-  KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates tagger templates tools updates velociraptor whitelist"
+  KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates server-sets tagger templates tools updates velociraptor whitelist"
 
   # Writable-path overrides may be saved through Settings into the dotenv file that the server
   # loads only AFTER the privilege drop, so they are absent from THIS process's environment. Read

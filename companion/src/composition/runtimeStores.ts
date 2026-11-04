@@ -50,6 +50,7 @@ import { McpServerStore } from "../integrations/mcp/mcpServerStore.js";
 import { KevStore } from "../analysis/kevStore.js";
 import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import { deriveServerSetKey } from "../integrations/serverSets/secretBox.js";
 import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
 import { getAppVersion } from "../version.js";
@@ -272,7 +273,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const updateCheckStore = new UpdateCheckStore(join(dirname(casesRoot), "updates", "update-check.json"));
   // Server sets: named IRIS/Timesketch/Velociraptor bundles; secrets sealed with a key derived from the instance secret.
   const serverSetStore = new ServerSetStore(
-    join(dirname(casesRoot), "server-sets"),
+    serverSetStoreDir(casesRoot),
     deriveServerSetKey(loadOrCreateInstanceSecret(casesRoot)),
   );
   const appVersion = getAppVersion();

@@ -18,6 +18,7 @@ import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
 import { listCaseIdsSync, runServerSetSeed } from "./serverSetMigration.js";
+import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
@@ -78,7 +79,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     rt.serverSetStore,
     process.env,
     listCaseIdsSync(rt.store.casesRoot),
-    join(dirname(rt.store.casesRoot), "server-sets"),
+    serverSetStoreDir(rt.store.casesRoot),
     logLine,
     join(dirname(rt.store.casesRoot), "velociraptor"),
   );
