@@ -38,7 +38,7 @@ import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { rankHosts, type HostRankingResult } from "../analysis/hostRanking.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
-import { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../analysis/velociraptorClientStore.js";
 import {
   buildMobileSummary,
   mobileSummaryEnvOptions,
@@ -137,7 +137,7 @@ export interface ReportWriterOptions {
   // spellings onto one canonical name for hostRanking, the same recipe loadHostAliasIndex's other
   // callers (caseAppliers.syncPlaybook, the hostScope callback below) use. Optional: when absent,
   // hostRanking still honours any explicit analyst merges, just not fleet-derived pairing.
-  fleet?: VelociraptorClientStore;
+  fleet?: CaseFleetInventory;
   playbook?: PlaybookStore;
   reportTemplates?: ReportTemplateStore;
   reportTemplateControl?: ReportTemplateControlStore;
@@ -162,7 +162,7 @@ export class ReportWriter {
   private readonly customerExposure?: CustomerExposureStore;
   private readonly notebook?: NotebookStore;
   private readonly assetOverrides?: AssetOverridesStore;
-  private readonly fleet?: VelociraptorClientStore;
+  private readonly fleet?: CaseFleetInventory;
   private readonly playbook?: PlaybookStore;
   private readonly reportTemplates?: ReportTemplateStore;
   private readonly reportTemplateControl?: ReportTemplateControlStore;

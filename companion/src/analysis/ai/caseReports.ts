@@ -16,7 +16,7 @@ import {
 } from "../responseSchema.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext } from "../synthSelect.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import {
   getExecSummaryPrompt,
   getHypothesisReviewPrompt,
@@ -57,7 +57,7 @@ export interface CaseReportContext extends AiCallContext {
   readonly opts: AiCallContext["opts"] & {
     hypothesisStore?: HypothesisStore;
     assetOverridesStore?: AssetOverridesStore;
-    velociraptorClientStore?: VelociraptorClientStore;
+    velociraptorClientStore?: CaseFleetInventory;
   };
 }
 

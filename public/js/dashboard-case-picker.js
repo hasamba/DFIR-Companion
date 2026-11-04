@@ -32,6 +32,13 @@
     return dups;
   }
 
+  // The server set part of a case's second line. Set names come from analysts: they only ever reach
+  // option.label, which the browser shows as text.
+  function setLabelOf(c) {
+    const name = c.serverSet && typeof c.serverSet.name === "string" ? c.serverSet.name : "";
+    return name || "no server set";
+  }
+
   // Populate the datalist with existing cases from the server, so the field shows a dropdown of
   // available cases while still accepting free text. Safe on older servers / offline — it just
   // leaves the field as free text.
@@ -62,12 +69,15 @@
           // [Archived] prefix marks cases moved to _archived/ (both can apply at once). Shown
           // beside the name, never typed into it. A case whose name IS its id adds no id line.
           // The open case gets a "● Current" prefix: a native datalist cannot style one row, so
-          // the label is the only place to mark it.
+          // the label is the only place to mark it. The case's server set follows the id
+          // (`id · set`), so this line is the one place the toolbar's old set label went. A server
+          // with no server set store sends no serverSet field, and the line stays as it was.
           const prefix =
             (c.caseId === currentId ? "\u25CF Current \u00B7 " : "") +
             (c.status === "archived" ? "[Archived] " : "") +
             (c.hasPassword ? "\u{1F512} " : "");
-          if (text !== c.caseId || prefix) o.label = prefix + c.caseId;
+          if (c.serverSet !== undefined) o.label = prefix + c.caseId + " \u00B7 " + setLabelOf(c);
+          else if (text !== c.caseId || prefix) o.label = prefix + c.caseId;
           dl.appendChild(o);
         }
         byId = nextById;

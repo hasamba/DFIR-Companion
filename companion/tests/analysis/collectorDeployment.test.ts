@@ -24,6 +24,7 @@ import {
 import { aggregateEvents } from "../../src/analysis/eventAggregate.js";
 import { parseHayabusaTimeline } from "../../src/analysis/hayabusaImport.js";
 import { mapWindows, type MappedEvent } from "../../src/analysis/siemImport.js";
+import { setCollectorEndpointSource } from "../../src/analysis/collectorEndpointSource.js";
 
 const SERVER = "10.20.30.40";
 const INSTALL_EXE = "C:\\Program Files\\Velociraptor\\Velociraptor.exe";
@@ -114,12 +115,18 @@ function hayabusa(row: HayabusaRow): MappedEvent {
   return { ...e, mitre: e.mitreTechniques, aggKey: e.description };
 }
 
-afterEach(() => vi.unstubAllEnvs());
+// The analyst's Velociraptor servers, as composition registers them from the server sets.
+const useVelo = (guiUrl: string, apiConfigPath: string): void =>
+  setCollectorEndpointSource(() => [{ guiUrl, apiConfigPath }]);
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  setCollectorEndpointSource(() => []);
+});
 
 describe("configuredCollectorServers — known infrastructure comes from config only", () => {
   it("reads the GUI URL's host", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     expect(configuredCollectorServers()).toEqual([SERVER]);
   });
 
@@ -130,14 +137,12 @@ describe("configuredCollectorServers — known infrastructure comes from config 
       file,
       `ca_certificate: |\n  -----BEGIN-----\napi_connection_string: https://velo.example.com:8001\nname: api\n`,
     );
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", file);
+    useVelo("", file);
     expect(configuredCollectorServers()).toEqual(["velo.example.com"]);
   });
 
   it("is empty with nothing configured, and a missing config file is not an error", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", join(tmpdir(), "does-not-exist", "api.yaml"));
+    useVelo("", join(tmpdir(), "does-not-exist", "api.yaml"));
     expect(configuredCollectorServers()).toEqual([]);
   });
 
@@ -145,8 +150,7 @@ describe("configuredCollectorServers — known infrastructure comes from config 
     const dir = mkdtempSync(join(tmpdir(), "velo-api-"));
     const file = join(dir, "api_client.yaml");
     writeFileSync(file, `api_connection_string: https://VELO:8001\n`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://velo:8889");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", file);
+    useVelo("https://velo:8889", file);
     expect(configuredCollectorServers()).toEqual(["velo"]);
   });
 
@@ -154,14 +158,12 @@ describe("configuredCollectorServers — known infrastructure comes from config 
   // GUI URL is often https://localhost:8889 when the Companion runs on the server. From a client's
   // point of view loopback is itself, never the server, so it must not become known infrastructure.
   it("drops the loopback pair the default server-side setup produces, leaving rule 1 inert", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://localhost:8889");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    useVelo("https://localhost:8889", apiConfig("127.0.0.1:8001"));
     expect(configuredCollectorServers()).toEqual([]);
   });
 
   it("keeps a real address configured next to a loopback one", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    useVelo(`https://${SERVER}:8889`, apiConfig("127.0.0.1:8001"));
     expect(configuredCollectorServers()).toEqual([SERVER]);
   });
 
@@ -184,8 +186,7 @@ describe("configuredCollectorServers — known infrastructure comes from config 
     "[::ffff:127.1.2.3]",
     "[::ffff:7f01:203]",
   ])("yields nothing for the loopback / unspecified spelling %s, from either source", (host) => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${host}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig(`${host}:8001`));
+    useVelo(`https://${host}:8889`, apiConfig(`${host}:8001`));
     expect(configuredCollectorServers()).toEqual([]);
   });
 
@@ -533,8 +534,7 @@ describe("isMsiexecCreationTimeChange — Sysmon EID 2 written by the system msi
 
 describe("applyCollectorDeployment — the f31 sequence", () => {
   it("grades the download and the install Info, and strips T1070.006 from the msiexec EID 2", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const rows = [download(), install(), timeChange()];
     applyCollectorDeployment(rows);
 
@@ -571,7 +571,7 @@ describe("applyCollectorDeployment — the f31 sequence", () => {
   });
 
   it("leaves a real timestomp and a masquerading velociraptor.exe alone", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    useVelo(`https://${SERVER}:8889`, "");
     const stomp = ev({
       description: `Sysmon File creation time changed (timestomp) (EID 2) - Image=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe - TargetFilename=C:\\Users\\Public\\svchost.exe`,
       mitre: ["T1070.006"],
@@ -590,8 +590,7 @@ describe("applyCollectorDeployment — the f31 sequence", () => {
   // http://127.0.0.1:8080 and a Medium EID 3 from %TEMP% to 127.0.0.1:4444 came out Info with the
   // download note — on every host, since every host is its own loopback.
   it("a loopback server configuration demotes nothing: local staging keeps its grade", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://localhost:8889");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    useVelo("https://localhost:8889", apiConfig("127.0.0.1:8001"));
     const cradle = ev({
       description: `PowerShell Script block (EID 4104) - ScriptBlockText=IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:8080/stage.ps1') @ WS01`,
       severity: "High",
@@ -615,8 +614,7 @@ describe("applyCollectorDeployment — the f31 sequence", () => {
   });
 
   it("with no server configured, the download keeps its grade and the other two rules still run", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo("", "");
     const rows = [download(), install(), timeChange()];
     applyCollectorDeployment(rows);
     expect(rows[0].severity).toBe("High");
@@ -769,8 +767,7 @@ describe("applyCollectorDeployment — a foreign destination refuses the folder-
     });
 
   it("with a server configured: the client's connection to another server keeps its grade, to ours is Info", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const foreign = clientConn(FOREIGN);
     const before = structuredClone(foreign);
     const ours = clientConn(SERVER);
@@ -782,8 +779,7 @@ describe("applyCollectorDeployment — a foreign destination refuses the folder-
   });
 
   it("with a server configured: the MSI fetched from another server keeps its grade, from ours is Info", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const foreign = msiFrom(FOREIGN);
     const before = structuredClone(foreign);
     const ours = msiFrom(SERVER);
@@ -798,8 +794,7 @@ describe("applyCollectorDeployment — a foreign destination refuses the folder-
       ["", ""],
       ["https://localhost:8889", apiConfig("127.0.0.1:8001")],
     ]) {
-      vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", gui);
-      vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", api);
+      useVelo(gui, api);
       const rows = [clientConn(FOREIGN), clientConn(SERVER)];
       applyCollectorDeployment(rows);
       expect(rows.map((r) => r.severity)).toEqual(["Info", "Info"]);
@@ -807,16 +802,14 @@ describe("applyCollectorDeployment — a foreign destination refuses the folder-
   });
 
   it("rows that name no destination are untouched by the check: the #1460 lsass access stays Info", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const rows = [thorAccess(), install()];
     applyCollectorDeployment(rows);
     expect(rows.map((r) => r.severity)).toEqual(["Info", "Info"]);
   });
 
   it("a name-configured server does not vouch for an IP-only connection: the row keeps its grade", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://velo.example.com:8889");
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo("https://velo.example.com:8889", "");
     const row = clientConn(FOREIGN);
     applyCollectorDeployment([row]);
     expect(row.severity).toBe("High");
@@ -834,8 +827,7 @@ describe("applyCollectorDeployment — a foreign destination refuses the folder-
 
 describe("aggregateEvents runs the collector-deployment overlay", () => {
   it("emits the f31 download as Info with the deployment note", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const { events } = aggregateEvents([download(), timeChange()]);
     const dl = events.find((e) => /DestinationIp=/.test(e.description))!;
     expect(dl.severity).toBe("Info");
@@ -848,8 +840,7 @@ describe("aggregateEvents runs the collector-deployment overlay", () => {
   });
 
   it("a demoted row falls under a severity floor, so the floor sees the collector grade", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const { events } = aggregateEvents([download()], { minSeverity: "Low" });
     expect(events).toHaveLength(0);
   });
@@ -1203,8 +1194,7 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
   });
 
   it("the earlier collector rules stamp origin:collector too, so the tagger cannot re-raise them", () => {
-    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
-    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    useVelo(`https://${SERVER}:8889`, "");
     const rows = [download(), install()];
     applyCollectorDeployment(rows);
     for (const r of rows) {

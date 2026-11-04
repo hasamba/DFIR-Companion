@@ -17,6 +17,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // Canned model reply: one endpoint-related hunt for the finding-derived task, scoped to WEB01.
 const cannedPlaybookHunts = JSON.stringify({
@@ -82,8 +83,9 @@ async function makeApp(
     playbookStore,
     playbookHuntStore,
     playbookControlStore,
-    velociraptorClient: opts.velociraptorClient,
-    velociraptorClientStore: opts.velociraptorClientStore,
+    serverClients: veloServerClients(opts.velociraptorClient),
+    // The stub resolves every case to one set; its inventory is the injected file.
+    ...(opts.velociraptorClientStore ? { clientInventoryFor: () => opts.velociraptorClientStore! } : {}),
     aiConfigured: Boolean(opts.provider),
   });
   await request(app)

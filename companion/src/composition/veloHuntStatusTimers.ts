@@ -19,6 +19,8 @@ import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velocirap
 import { logLine } from "../logging/serverLogger.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { unavailableServerClients } from "./serverSetClients.js";
+import { createTickVelo } from "./veloCaseClient.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -35,12 +37,20 @@ export interface VeloHuntStatusTimers {
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
+  /** Cancel every pending status poll of one case (its server set changed). */
+  stopVeloHuntStatusPollsForCase(caseId: string): void;
   /** Re-arm status polling for every non-terminal hunt across all cases (server restart). */
   resumeVeloHuntStatusPolls(): Promise<void>;
 }
 
 export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): VeloHuntStatusTimers {
   const { store, options, startVeloHuntCollect } = deps;
+  // Every tick resolves the case's server set again, so a set edit applies on the next poll.
+  const tickVelo = createTickVelo(
+    () => options.serverClients ?? unavailableServerClients,
+    logLine,
+    "velo-hunt-status",
+  );
 
   // Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
   // overlap itself), .unref()'d so a pending poll never blocks process exit. Interval from
@@ -57,8 +67,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   // throws (pollHuntStatusOnce itself never throws; store I/O failures are best-effort).
   async function pollVeloHuntStatus(caseId: string, huntId: string): Promise<void> {
     const huntStore = options.veloHuntStore;
-    const client = options.velociraptorClient;
-    if (!huntStore || !client) {
+    if (!huntStore) {
       veloStatusTimers.delete(caseId, huntId);
       return;
     }
@@ -70,6 +79,13 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     }
     if (!job) {
       veloStatusTimers.delete(caseId, huntId);
+      return;
+    }
+    // No client for this case right now: skip this tick and keep polling, so it resumes once the
+    // case's server set is fixed.
+    const client = tickVelo(caseId);
+    if (!client) {
+      if (veloStatusTimers.has(caseId, huntId)) scheduleVeloHuntStatusPoll(caseId, huntId);
       return;
     }
 
@@ -113,13 +129,17 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     veloStatusTimers.delete(caseId, huntId);
   }
 
+  function stopVeloHuntStatusPollsForCase(caseId: string): void {
+    veloStatusTimers.forget(caseId); // clears each timer, then drops the entries
+  }
+
   // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
   // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
   // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
   // collect even though the original setTimeout is gone. Best-effort per case.
   async function resumeVeloHuntStatusPolls(): Promise<void> {
     const huntStore = options.veloHuntStore;
-    if (!huntStore || !options.velociraptorClient) return;
+    if (!huntStore) return;
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -155,6 +175,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
     stopVeloHuntStatusPoll,
+    stopVeloHuntStatusPollsForCase,
     resumeVeloHuntStatusPolls,
   };
 }

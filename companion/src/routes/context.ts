@@ -9,8 +9,7 @@ import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
-import type { IrisClient } from "../integrations/iris/irisClient.js";
-import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
+import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
@@ -36,8 +35,8 @@ import type { PerCaseMap, PerCaseSet } from "../storage/caseKeyedState.js";
  * it stays as closure state inside the owning domain module. Fields are added here only when a
  * second domain needs them ("graduate on demand").
  *
- * Live state that createApp constructs AFTER this object (or rebinds at runtime, e.g. irisClient
- * on /iris/reconnect, importerRegistry after an async load) is exposed as an accessor function so
+ * Live state that createApp constructs AFTER this object (or rebinds at runtime, e.g. nsrlDb on
+ * Settings → NSRL, importerRegistry after an async load) is exposed as an accessor function so
  * consumers always read the current binding rather than a value captured at construction time.
  */
 /**
@@ -264,7 +263,7 @@ export interface RouteContext {
   // fully PRIVATE to createApp — no route mutates them directly (they go through the helpers below); only
   // veloHuntTimers is exposed (live accessor, further down) because two routes set a collect timer on it.
   // All hoisted `function` declarations, so safe to bind at construction:
-  //   refreshVeloClients          — snapshot the enrolled fleet into the persisted client inventory.
+  //   refreshVeloClients          — snapshot one server set's enrolled fleet into that set's client inventory.
   //   resumeVeloMonitors / resumeVeloHuntStatusPolls — re-arm persisted monitors / hunt-status polls
   //                                 (the reconnect route reuses the SAME functions createApp fires at boot).
   //   scheduleVeloMonitor / pollVeloMonitor / stopVeloMonitorTimer — arm / run-once / cancel a monitor.
@@ -281,13 +280,14 @@ export interface RouteContext {
   //   verifyVeloMonitorEnabled    — flag a monitor whose artifact left that table (check-now route).
   //   deleteVeloMonitor           — remove a monitor + release its table entry when the companion owns it.
   //   recordHuntDeploy            — record a deployed hunt in the #157 hunting-feedback-loop ledger.
-  refreshVeloClients(): Promise<number>;
+  refreshVeloClients(setId: string): Promise<number>;
   resumeVeloMonitors(): Promise<void>;
   resumeVeloHuntStatusPolls(): Promise<void>;
   scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void;
   pollVeloMonitor(caseId: string, id: string): Promise<void>;
   stopVeloMonitorTimer(caseId: string, id: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
+  cancelVeloHuntTimersForCase(caseId: string): void; // pending collect + status-poll timers of one case
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
@@ -343,7 +343,7 @@ export interface RouteContext {
   // ── LIVE accessors ───────────────────────────────────────────────────────────────────
   // Call these INSIDE the request handler (or inside per-request logic like a preflight run),
   // never hoist to registration scope. They must be re-read per request: the underlying binding
-  // is created AFTER this ctx literal or reassigned at runtime (e.g. irisClient on /iris/reconnect,
+  // is created AFTER this ctx literal or reassigned at runtime (e.g. nsrlDb on Settings → NSRL,
   // importerRegistry after its async load), so a value captured once would silently go stale.
   captureBuffers(): PerCaseMap<CaptureMetadata[]> & { values(): Iterable<CaptureMetadata[]> };
   synthInFlight(): PerCaseSet;
@@ -354,28 +354,15 @@ export interface RouteContext {
   // importerRegistry()); the setter reassigns the SAME createApp binding the detection seam reads.
   importerPrecedence(): ImporterPrecedence;
   setImporterPrecedence(precedence: ImporterPrecedence): void;
-  irisClient(): IrisClient | undefined;
-  // The DFIR-IRIS client is a MUTABLE shared handle: POST /iris/reconnect (routes/reportsExport.ts)
-  // rebuilds it at runtime and createApp's /cases/:id/push/iris reads it. Mirrors nsrlDb()/setNsrlDb():
-  //   setIrisClient    — reassign the shared binding (both the moved iris routes and the createApp
-  //                      push/iris route read the SAME `let irisClient`); call INSIDE the handler.
-  //   rebuildIrisClient — build a fresh client from the current .env, wrapping createApp's
-  //                       `options.rebuildIrisClient ?? buildIrisClient` so buildIrisClient's use stays
-  //                       inside server.ts (no route module imports a value from ../server.js).
-  setIrisClient(client: IrisClient | undefined): void;
-  rebuildIrisClient(): IrisClient | undefined;
-  // Rebuild the Timesketch client from the current .env (mirrors rebuildIrisClient). Graduated for
-  // routes/caseLifecycle.ts's POST /timesketch/reconnect, which reassigns options.timesketchClient with the
-  // result; the timesketch push routes read options.timesketchClient live. Wraps createApp's
-  // `options.rebuildTimesketchClient ?? buildTimesketchClient` so buildTimesketchClient's use stays in
-  // server.ts (no route module imports a value from ../server.js). Call INSIDE the handler.
-  rebuildTimesketchClient(): TimesketchClient | undefined;
+  // Per-case IRIS / Timesketch / Velociraptor clients from the case's server set. Resolve INSIDE the
+  // handler: a set edit takes effect on the next lookup.
+  readonly serverClients: ServerClients;
   // Rebuild every live component fed by one DFIR_<PREFIX>_* group from the CURRENT env, returning the
   // component names rebuilt (#178). Graduated for routes/caseLifecycle.ts's POST /settings/reload:
   // applying the group into process.env is not enough on its own, because the integration clients and
   // provider sets are built once at startup — without this, "change config without a restart" changed
-  // nothing. Lives in createApp because it reassigns createApp's own bindings (irisClient, the
-  // enrichment provider set) alongside `options`, and keeps every build* function's use inside
+  // nothing. Lives in createApp because it reassigns createApp's own bindings (the enrichment
+  // provider set) alongside `options`, and keeps every build* function's use inside
   // server.ts. Constructor calls only (no network) — call INSIDE the handler.
   rebuildForPrefix(prefix: string): string[];
   dropWatchEnabled(): boolean;

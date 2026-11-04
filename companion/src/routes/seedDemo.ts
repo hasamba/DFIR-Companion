@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
 import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../analysis/seedDemoCase.js";
 import { isTerminal } from "../analysis/jobRegistry.js";
+import { linkNewCase } from "./serverSets.js";
 import type { RouteContext } from "./context.js";
 import { stoppingMessage } from "./caseIdentity.js";
 import { requestAuthentication } from "../auth/types.js";
@@ -81,6 +82,7 @@ export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
         return seedDemoCase(store.casesRoot, { caseId, force, generation });
       });
       options.teamAuth?.grantCreator(req, result.caseId);
+      linkNewCase(ctx, result.caseId, { keepExisting: true }); // a reseed keeps the case's set
       return res.status(201).json(result);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;

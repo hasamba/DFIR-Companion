@@ -5,7 +5,10 @@ import { join, dirname } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
-import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
+import { setInventories } from "../../src/analysis/velociraptorClientStore.js";
+import { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
+import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.js";
+import { createServerClients } from "../../src/composition/serverSetClients.js";
 import {
   VelociraptorClient,
   type VqlRunner,
@@ -30,28 +33,43 @@ const downRunner: VqlRunner = async () => {
   throw new Error("connection refused");
 };
 
+// The default server set names a Velociraptor API config. `armed` stands for "the server came up /
+// the config was saved": until then the set's client builds as undefined (not configured at boot).
+// Reconnect drops the cached set clients, so the next lookup builds again — with whatever `rebuild`
+// returns now.
 async function makeApp(rebuild: () => VelociraptorClient | undefined) {
   const root = await mkdtemp(join(tmpdir(), "dfir-veloreconnect-"));
   const store = new CaseStore(root);
-  const velociraptorClientStore = new VelociraptorClientStore(
-    join(dirname(root), "velociraptor", "clients.json"),
+  const sets = new ServerSetStore(join(root, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 7)));
+  sets.setDefault(sets.create({ name: "Testing", velociraptor: { apiConfigPath: "/x/api.yaml" } }).id);
+  const state = { armed: false };
+  const serverClients = createServerClients(
+    sets,
+    {},
+    {
+      velociraptor: () => (state.armed ? rebuild() : undefined),
+    },
   );
   const app = createApp(store, {
-    velociraptorClient: undefined, // not configured / down at boot
-    velociraptorClientStore,
-    rebuildVelociraptorClient: rebuild,
+    serverClients,
+    clientInventoryFor: setInventories(join(dirname(root), "velociraptor")),
   });
-  return { app, velociraptorClientStore };
+  // The reconnect itself is what must make the new client live — arming alone changes nothing cached.
+  const reconnect = () => {
+    state.armed = true;
+    return request(app).post("/velociraptor/reconnect");
+  };
+  return { app, reconnect };
 }
 
 describe("POST /velociraptor/reconnect", () => {
-  it("rebuilds the client + refreshes the inventory when the server is up", async () => {
-    const { app } = await makeApp(() => new VelociraptorClient(cfg, upRunner));
+  it("rebuilds the set clients + refreshes the default set inventory when the server is up", async () => {
+    const { app, reconnect } = await makeApp(() => new VelociraptorClient(cfg, upRunner));
 
     // Before reconnect: not configured.
     expect((await request(app).get("/health")).body.velociraptorEnabled).toBe(false);
 
-    const res = await request(app).post("/velociraptor/reconnect");
+    const res = await reconnect();
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ configured: true, ok: true, clients: 1 });
 
@@ -62,8 +80,8 @@ describe("POST /velociraptor/reconnect", () => {
   });
 
   it("reports configured-but-unreachable when the rebuilt client can't reach the server", async () => {
-    const { app } = await makeApp(() => new VelociraptorClient(cfg, downRunner));
-    const res = await request(app).post("/velociraptor/reconnect");
+    const { reconnect } = await makeApp(() => new VelociraptorClient(cfg, downRunner));
+    const res = await reconnect();
     expect(res.status).toBe(200);
     expect(res.body.configured).toBe(true);
     expect(res.body.ok).toBe(false);
@@ -71,18 +89,18 @@ describe("POST /velociraptor/reconnect", () => {
   });
 
   it("reports not-configured when no API config is present", async () => {
-    const { app } = await makeApp(() => undefined);
-    const res = await request(app).post("/velociraptor/reconnect");
+    const { app, reconnect } = await makeApp(() => undefined);
+    const res = await reconnect();
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ configured: false, ok: false });
     expect((await request(app).get("/health")).body.velociraptorEnabled).toBe(false);
   });
 
   it("GET /velociraptor/status reports configured + inventory freshness", async () => {
-    const { app } = await makeApp(() => new VelociraptorClient(cfg, upRunner));
+    const { app, reconnect } = await makeApp(() => new VelociraptorClient(cfg, upRunner));
     let status = (await request(app).get("/velociraptor/status")).body;
     expect(status.configured).toBe(false);
-    await request(app).post("/velociraptor/reconnect");
+    await reconnect();
     status = (await request(app).get("/velociraptor/status")).body;
     expect(status.configured).toBe(true);
     expect(status.clients).toBe(1);

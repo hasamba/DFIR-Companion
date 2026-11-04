@@ -12,7 +12,7 @@ import type { CommentsStore } from "../comments.js";
 import type { DwellWindowStore } from "../dwellWindowStore.js";
 import type { HostScopeStore } from "../hostScopeStore.js";
 import type { TagsStore } from "../tags.js";
-import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
+import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
@@ -237,7 +237,7 @@ export interface PipelineOptions {
   // FQDN and client id onto one canonical identity, so synthesis reads and ranks one host instead
   // of two. Absent → no resolution (the pre-gate behavior).
   assetOverridesStore?: AssetOverridesStore;
-  velociraptorClientStore?: VelociraptorClientStore;
+  velociraptorClientStore?: CaseFleetInventory;
   // Pairs the analyst has judged to be different machines. Presence of this store is what ENABLES
   // the pre-synthesis merge gate: absent → the gate never runs, so CLI scripts and older tests are
   // unaffected. See analysis/hostDuplicateGate.ts.

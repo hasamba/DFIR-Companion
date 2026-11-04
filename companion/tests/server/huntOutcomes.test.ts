@@ -21,6 +21,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -73,8 +74,8 @@ async function makeApp(
     aiConfigured: Boolean(provider),
     ...(opts.activityLogStore ? { activityLogStore: opts.activityLogStore(store) } : {}),
     ...(opts.withVelo === false
-      ? {}
-      : { velociraptorClient: new VelociraptorClient(veloCfg, opts.runner ?? runner) }),
+      ? { serverClients: stubServerClients({}) }
+      : { serverClients: veloServerClients(new VelociraptorClient(veloCfg, opts.runner ?? runner)) }),
   });
   await request(app)
     .post("/cases")

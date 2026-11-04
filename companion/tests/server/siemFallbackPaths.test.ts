@@ -28,6 +28,7 @@ import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
 import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
 import { createImportDebugRecorder } from "../../src/analysis/importDebug.js";
 import { approvalRecorder, stagedDetection } from "../../src/routes/mcpPreviewDetection.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1824: #1795's "unrecognised JSON — imported as generic SIEM" warning reached only /import and
 // /import-file. The drop folder, /push and the Velociraptor collectors use the same detector; each now
@@ -196,9 +197,7 @@ describe("Velociraptor uploads-only import names a guessed JSON kind (#1824)", (
       stateStore,
       superTimelineStore: new SuperTimelineStore(store),
       jobManager: new JobManager({ perCaseConcurrency: 1 }),
-      velociraptorClient: client as unknown as NonNullable<
-        Parameters<typeof createApp>[1]
-      >["velociraptorClient"],
+      serverClients: veloServerClients(client),
     });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     return app;
@@ -277,7 +276,7 @@ describe("Velociraptor hunt collect names a guessed uploaded JSON kind (#1824)",
         importMetaStore: new ImportMetaStore(store),
         superTimelineStore: new SuperTimelineStore(store),
         jobManager: new JobManager({ perCaseConcurrency: 1 }),
-        velociraptorClient: new VelociraptorClient(veloCfg, runner),
+        serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
         veloHuntStore: new VeloHuntStore(store),
       });

@@ -28,6 +28,11 @@
 
   // Fetch a launched collection flow's rows into `target`; resolves to the row count. Reuses
   // renderVqlRows() (the same table the hunt-results flow renders).
+  function collectCaseIdField() {
+    const el = document.getElementById("caseId");
+    const caseId = ((el && el.value) || "").trim();
+    return caseId ? { caseId } : {};
+  }
   function fetchCollectionResults(rb, target) {
     const clientId = rb.dataset.cid,
       flowId = rb.dataset.fid,
@@ -38,7 +43,8 @@
     return fetch("/velociraptor/collect-results", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientId, flowId, artifact, sources }),
+      // The open case's id: the collection ran on that case's server set, so its rows live there.
+      body: JSON.stringify({ clientId, flowId, artifact, sources, ...collectCaseIdField() }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {

@@ -1,0 +1,404 @@
+/**
+ * Server sets — named IRIS / Timesketch / Velociraptor bundles, and the set each case uses.
+ *
+ *   GET    /server-sets                  any signed-in user; admins see masked sets, others names only
+ *   POST   /server-sets                  global admin: create
+ *   PUT    /server-sets/:setId           global admin: edit (a masked secret keeps the stored one)
+ *   DELETE /server-sets/:setId           global admin: delete an unused, non-default set
+ *   POST   /server-sets/:setId/default   global admin: make it the default for new cases
+ *   POST   /server-sets/test             global admin: probe the typed values of a new set (saves nothing)
+ *   POST   /server-sets/:setId/test      global admin: probe THAT set — as saved, or the typed values
+ *                                        in the body, a masked secret standing for the stored one
+ *   GET    /cases/:id/server-set         case reader: the case's set and the tools it uses
+ *   POST   /cases/:id/server-set         case administrator: change the case's set (warn, stop, forget, relink)
+ *
+ * No response, log line or audit entry carries a key, a password or a Velociraptor config.
+ */
+import type { Express, Request, Response } from "express";
+import { StateLock } from "../analysis/stateLock.js";
+import { logActivity } from "../analysis/activityLog.js";
+import { requestAuthentication } from "../auth/types.js";
+import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { checkUrl } from "../integrations/serverSets/serverSetStore.js";
+import {
+  hasMaskedSecret,
+  maskServerSet,
+  withStoredSecrets,
+  type CaseServers,
+  type ServerSet,
+  type ServerSetInput,
+  type ToolName,
+} from "../integrations/serverSets/types.js";
+import { logSafeError } from "../integrations/serverSets/logSafeError.js";
+import type { RouteContext } from "./context.js";
+import { parseServerSetInput, parseTestTools, probeError } from "./serverSetBody.js";
+
+const NOT_FOUND = "Server set not found."; // the resolver's own wording for an unknown set id
+const CHANGE_FAILED = "The server set change did not finish. Check the server log and try again.";
+const UNAVAILABLE = "Server sets are not available.";
+const IS_DEFAULT = "The default server set cannot be deleted. Make another set the default first.";
+const TOOLS: ToolName[] = ["iris", "timesketch", "velociraptor"];
+type Results = Partial<Record<ToolName, Probe>>;
+
+type Probe = { ok: boolean; error?: string };
+
+function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
+  const teamAuth = ctx.options.teamAuth;
+  if (!teamAuth) return true; // single-user mode: the one operator is the administrator
+  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
+  return !!auth && teamAuth.isGlobalAdministrator(auth);
+}
+
+// `caseId` is set for a case's set change, so the audit entry names the case it touched.
+function audit(
+  ctx: RouteContext,
+  req: Request,
+  action: string,
+  set: Pick<ServerSet, "id" | "name">,
+  caseId?: string,
+): void {
+  const auth = requestAuthentication(req);
+  if (auth?.kind === "session") {
+    ctx.options.teamAuth?.store.addAudit(auth.identity, action, set.id, caseId, set.name);
+  }
+  const onCase = caseId ? ` case=${caseId}` : "";
+  ctx.serverLogger.info(`[server-sets] ${action}${onCase} id=${set.id} name=${JSON.stringify(set.name)}`);
+}
+
+// The store's own refusals are the caller's mistake (400) except an unknown id (404).
+function storeError(res: Response, err: unknown): Response {
+  const msg = (err as Error).message;
+  if (msg === "server set not found") return res.status(404).json({ error: NOT_FOUND });
+  if (/^(name |secret required|\w+ url must be)/.test(msg)) return res.status(400).json({ error: msg });
+  return res.status(500).json({ error: "Server sets cannot be saved. Check the server log." });
+}
+
+/**
+ * Links a new case to `setId` or, without one, to the default set. Never fails the case creation:
+ * a case left unlinked gets the "no server set" message on its first server action.
+ */
+export function linkNewCase(
+  ctx: RouteContext,
+  caseId: string,
+  opts: { setId?: string; keepExisting?: boolean } = {},
+): void {
+  const sets = ctx.options.serverSetStore;
+  if (!sets) return;
+  try {
+    if (opts.setId) sets.linkCase(caseId, opts.setId);
+    else sets.linkToDefault(caseId, { keepExisting: opts.keepExisting });
+  } catch (err) {
+    ctx.serverLogger.error(`[server-sets] could not link case ${caseId}: ${logSafeError(err)}`);
+  }
+}
+
+async function probe(run: () => Promise<unknown>): Promise<Probe> {
+  try {
+    await run();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: probeError(err) };
+  }
+}
+
+// A tool the servers leave out, or the filter does not name, is left out of the answer.
+async function testServers(
+  servers: CaseServers,
+  tools: ToolName[] = TOOLS,
+  errors: Partial<Record<ToolName, string>> = {},
+): Promise<Results> {
+  const { iris, timesketch, velociraptor } = servers;
+  const run: Record<ToolName, (() => Promise<unknown>) | undefined> = {
+    iris: iris && (() => iris.ping()),
+    timesketch: timesketch && (() => timesketch.login()),
+    velociraptor: velociraptor && (() => velociraptor.listClients()),
+  };
+  const out: Results = {};
+  await Promise.all(
+    tools.map(async (tool) => {
+      const why = errors[tool];
+      const go = run[tool];
+      if (why) out[tool] = { ok: false, error: probeError(new Error(why)) };
+      else if (go) out[tool] = await probe(go);
+    }),
+  );
+  return Object.fromEntries(TOOLS.filter((t) => out[t]).map((t) => [t, out[t]]));
+}
+
+// The editor's typed values as an answer: 400 for a body the create route would also refuse.
+async function testInput(
+  ctx: RouteContext,
+  res: Response,
+  body: unknown,
+  stored?: ServerSet,
+): Promise<Response> {
+  const parsed = parseServerSetInput(body);
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const tools = parseTestTools(body);
+  if (!tools.ok) return res.status(400).json({ error: tools.error });
+  let input: ServerSetInput = parsed.value;
+  if (stored) input = withStoredSecrets(input, stored);
+  else if (hasMaskedSecret(input)) return res.status(400).json({ error: "secret required" });
+  try {
+    checkUrl("iris", input.iris?.url);
+    checkUrl("timesketch", input.timesketch?.url);
+  } catch (err) {
+    return res.status(400).json({ error: (err as Error).message });
+  }
+  const typed = ctx.serverClients.forInput({ ...input, id: stored?.id ?? "", revision: 0 });
+  return res.json(await testServers(typed.servers, tools.value, typed.errors));
+}
+
+// Express parses a request with no JSON body to {}; only a body that names the set holds values.
+const hasTypedValues = (body: unknown): boolean =>
+  !!body && typeof body === "object" && typeof (body as { name?: unknown }).name === "string";
+
+async function caseNames(ctx: RouteContext, ids: string[]): Promise<Array<{ id: string; name: string }>> {
+  const metas = await ctx.store.listCases();
+  const byId = new Map(metas.map((m) => [m.caseId, m.name]));
+  return ids.map((id) => ({ id, name: byId.get(id) ?? id }));
+}
+
+function withStore(
+  ctx: RouteContext,
+  handler: (sets: ServerSetStore, req: Request, res: Response) => unknown,
+) {
+  return async (req: Request, res: Response) => {
+    const sets = ctx.options.serverSetStore;
+    if (!sets) return res.status(503).json({ error: UNAVAILABLE });
+    try {
+      return await handler(sets, req, res);
+    } catch (err) {
+      ctx.serverLogger.error(`[server-sets] ${req.method} ${req.path}: ${logSafeError(err)}`);
+      return res.status(500).json({ error: "Server sets cannot be read. Check the server log." });
+    }
+  };
+}
+
+type Work = { monitors: number; irisCase?: string; hunts: number };
+
+async function remoteWork(ctx: RouteContext, caseId: string): Promise<Work> {
+  const o = ctx.options;
+  const monitors = o.veloMonitorStore ? (await o.veloMonitorStore.list(caseId)).length : 0;
+  const hunts = o.veloHuntStore ? (await o.veloHuntStore.list(caseId)).length : 0;
+  const irisCase = o.irisExportStore ? (await o.irisExportStore.load(caseId)).caseName : "";
+  return { monitors, hunts, ...(irisCase && { irisCase }) };
+}
+
+// Stops each monitor while the old set is still linked, so the release goes to the old server. The
+// record is removed even when the stop throws, so no old monitor can stay on the new set. Returns how
+// many records are gone. Log lines carry ids only: no URL, key or path.
+async function stopMonitors(ctx: RouteContext, caseId: string): Promise<number> {
+  const store = ctx.options.veloMonitorStore;
+  if (!store) return 0;
+  let stopped = 0;
+  for (const m of await store.list(caseId)) {
+    try {
+      await ctx.deleteVeloMonitor(caseId, m.id);
+      stopped++;
+      continue;
+    } catch {
+      ctx.serverLogger.error(
+        `[server-sets] case ${caseId}: monitor ${m.id} did not stop cleanly; removing it`,
+      );
+    }
+    try {
+      ctx.stopVeloMonitorTimer(caseId, m.id);
+      await store.remove(caseId, m.id);
+      stopped++;
+    } catch {
+      ctx.serverLogger.error(`[server-sets] case ${caseId}: monitor ${m.id} could not be removed`);
+    }
+  }
+  return stopped;
+}
+
+function changeText(
+  oldName: string,
+  newName: string,
+  stopped: number,
+  iris: string | undefined,
+  hunts: number,
+) {
+  const parts = [
+    stopped > 0 ? `${stopped} monitors stopped` : "",
+    iris ? `IRIS link '${iris}' forgotten` : "",
+    hunts > 0 ? `${hunts} hunts forgotten` : "",
+  ].filter(Boolean);
+  return `Server set changed from '${oldName}' to '${newName}'${parts.length ? `: ${parts.join(", ")}` : ""}`;
+}
+
+const changeLock = new StateLock(); // one set change per case at a time
+
+async function changeCaseSet(ctx: RouteContext, sets: ServerSetStore, req: Request, res: Response) {
+  const caseId = req.params.id;
+  const body = (req.body ?? {}) as { setId?: unknown };
+  if (typeof body.setId !== "string" || !body.setId)
+    return res.status(400).json({ error: "setId is required." });
+  const target = sets.get(body.setId);
+  if (!target) return res.status(404).json({ error: NOT_FOUND });
+  return changeLock.runExclusive(caseId, () => applyChange(ctx, sets, req, res, target));
+}
+
+async function applyChange(
+  ctx: RouteContext,
+  sets: ServerSetStore,
+  req: Request,
+  res: Response,
+  target: ServerSet,
+) {
+  const caseId = req.params.id;
+  const body = (req.body ?? {}) as { confirm?: unknown };
+  const currentId = sets.caseSetId(caseId);
+  if (currentId === target.id) return res.json({ changed: false });
+  const work = await remoteWork(ctx, caseId);
+  if (body.confirm !== true && (work.monitors > 0 || work.hunts > 0 || work.irisCase)) {
+    return res.status(409).json({ needsConfirm: true, work });
+  }
+  const oldName = (currentId && sets.get(currentId)?.name) || "(none)";
+  const done = { stopped: 0, iris: false, hunts: 0 };
+  try {
+    done.stopped = await stopMonitors(ctx, caseId);
+    await ctx.options.irisExportStore?.clear(caseId);
+    done.iris = !!work.irisCase;
+    done.hunts = (await ctx.options.veloHuntStore?.clear(caseId)) ?? 0;
+    ctx.cancelVeloHuntTimersForCase(caseId); // no old hunt id may be polled against the new server
+    sets.linkCase(caseId, target.id);
+  } catch (err) {
+    const why = (err as NodeJS.ErrnoException).code ?? (err as Error).name; // never the message: it may hold a path
+    ctx.serverLogger.error(
+      `[server-sets] case ${caseId}: change to set ${target.id} did not finish (${why}); ` +
+        `${done.stopped} monitors stopped, IRIS link ${done.iris ? "forgotten" : "kept"}, ${done.hunts} hunts forgotten; the case is still linked to ${currentId ?? "no set"}`,
+    );
+    return res.status(500).json({ error: CHANGE_FAILED });
+  }
+  const { stopped, hunts } = done;
+  audit(ctx, req, "case-server-set-changed", target, caseId);
+  await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, caseId, {
+    category: "settings",
+    action: "server-set-changed",
+    detail: changeText(oldName, target.name, stopped, work.irisCase, hunts),
+    targetType: "server-set",
+    targetId: target.id,
+    outcome: "success",
+  });
+  return res.json({ changed: true, stopped, hunts, irisForgotten: !!work.irisCase });
+}
+
+export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
+  app.get(
+    "/server-sets",
+    withStore(ctx, (sets, req, res) => {
+      const list = sets.list();
+      const defaultId = sets.defaultId();
+      if (!isGlobalAdmin(ctx, req)) {
+        return res.json({ defaultId, sets: list.map(({ id, name }) => ({ id, name })) });
+      }
+      const out = list.map((s) => ({ ...maskServerSet(s), usedBy: sets.casesUsing(s.id).length }));
+      return res.json({ defaultId, sets: out });
+    }),
+  );
+
+  app.post(
+    "/server-sets",
+    withStore(ctx, (sets, req, res) => {
+      const parsed = parseServerSetInput(req.body);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      let made: ServerSet;
+      try {
+        made = sets.create(parsed.value);
+      } catch (err) {
+        return storeError(res, err);
+      }
+      audit(ctx, req, "server-set-created", made);
+      return res.status(201).json(maskServerSet(made));
+    }),
+  );
+
+  // Registered before the :setId routes, so "test" is never read as a set id.
+  app.post(
+    "/server-sets/test",
+    withStore(ctx, (_sets, req, res) => testInput(ctx, res, req.body)),
+  );
+
+  app.put(
+    "/server-sets/:setId",
+    withStore(ctx, (sets, req, res) => {
+      const { setId } = req.params;
+      if (!sets.get(setId)) return res.status(404).json({ error: NOT_FOUND });
+      const parsed = parseServerSetInput(req.body);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      let saved: ServerSet;
+      try {
+        saved = sets.update(setId, parsed.value);
+      } catch (err) {
+        return storeError(res, err);
+      }
+      ctx.serverClients.invalidate(setId);
+      audit(ctx, req, "server-set-updated", saved);
+      return res.json(maskServerSet(saved));
+    }),
+  );
+
+  app.delete(
+    "/server-sets/:setId",
+    withStore(ctx, async (sets, req, res) => {
+      // No decrypt: a set whose secret no longer opens must still be deletable.
+      const id = req.params.setId;
+      if (!sets.has(id)) return res.status(404).json({ error: NOT_FOUND });
+      const set = { id, name: sets.nameOf(id) ?? "" };
+      const result = sets.remove(set.id);
+      if (!result.ok) {
+        if (result.usedBy.length === 0) return res.status(409).json({ error: IS_DEFAULT });
+        // Case names are data the dashboard renders as text; nothing here builds markup.
+        return res
+          .status(409)
+          .json({ error: "Server set is in use", usedBy: await caseNames(ctx, result.usedBy) });
+      }
+      ctx.serverClients.invalidate(set.id);
+      audit(ctx, req, "server-set-deleted", set);
+      return res.status(204).end();
+    }),
+  );
+
+  app.post(
+    "/server-sets/:setId/default",
+    withStore(ctx, (sets, req, res) => {
+      const id = req.params.setId;
+      if (!sets.has(id)) return res.status(404).json({ error: NOT_FOUND });
+      const set = { id, name: sets.nameOf(id) ?? "" };
+      sets.setDefault(set.id);
+      ctx.serverClients.invalidate(); // default-set clients (the case-less routes) refresh
+      audit(ctx, req, "server-set-default", set);
+      return res.status(204).end();
+    }),
+  );
+
+  app.post(
+    "/server-sets/:setId/test",
+    withStore(ctx, async (sets, req, res) => {
+      if (hasTypedValues(req.body)) {
+        const stored = sets.get(req.params.setId);
+        if (!stored) return res.status(404).json({ error: NOT_FOUND });
+        return testInput(ctx, res, req.body, stored);
+      }
+      const tools = parseTestTools(req.body);
+      if (!tools.ok) return res.status(400).json({ error: tools.error });
+      const r = ctx.serverClients.forSet(req.params.setId);
+      if (!r.ok) return res.status(r.error === NOT_FOUND ? 404 : r.status).json({ error: r.error });
+      return res.json(await testServers(r.servers, tools.value));
+    }),
+  );
+
+  app.get("/cases/:id/server-set", (req: Request, res: Response) => {
+    const r = ctx.serverClients.forCase(req.params.id);
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    const tools = TOOLS.filter((t) => r.servers[t] !== undefined);
+    return res.json({ setId: r.servers.setId, name: r.servers.setName, tools });
+  });
+
+  app.post(
+    "/cases/:id/server-set",
+    withStore(ctx, (sets, req, res) => changeCaseSet(ctx, sets, req, res)),
+  );
+}

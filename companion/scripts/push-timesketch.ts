@@ -1,7 +1,8 @@
 // Push a case to Timesketch from the command line. Log in, find-or-create the sketch by name
 // (= the Companion case id), then upload the forensic timeline as a Timesketch timeline (the
-// managed timeline is clean-replaced so re-pushes never duplicate events). Reads DFIR_TIMESKETCH_*
-// from .env. The timeline matches the report / "Export Timesketch JSONL" (scope + legitimate filters).
+// managed timeline is clean-replaced so re-pushes never duplicate events). Uses the Timesketch server
+// of the case's server set; fails when the case has no usable set. The timeline matches the report /
+// "Export Timesketch JSONL" (scope + legitimate filters).
 //
 //   npm run timesketch:push -- <caseId>
 import { config as loadDotenv } from "dotenv";
@@ -16,7 +17,8 @@ import { FalsePositiveStore } from "../src/analysis/falsePositive.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { pushCaseToTimesketch } from "../src/integrations/timesketch/timesketchPush.js";
-import { buildTimesketchClient, timesketchPushOptions } from "../src/server.js";
+import { cliCaseTool } from "../src/composition/cliCaseServers.js";
+import { expandHome } from "../src/storage/expandHome.js";
 
 async function main(): Promise<void> {
   const caseId = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : undefined;
@@ -25,17 +27,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const client = buildTimesketchClient();
-  if (!client) {
-    console.error(
-      "Timesketch not configured. Set DFIR_TIMESKETCH_URL, DFIR_TIMESKETCH_USER and DFIR_TIMESKETCH_PASSWORD in companion/.env.",
-    );
-    process.exit(1);
-  }
-
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
+  const picked = cliCaseTool(casesRoot, caseId, "timesketch");
+  if (!picked.ok) {
+    console.error(picked.error);
+    process.exit(1);
+  }
+  const client = picked.servers.timesketch!;
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   // Build a ReportWriter so the pushed timeline matches the report (same scope/legitimate filters).
@@ -46,8 +46,12 @@ async function main(): Promise<void> {
   });
   const state = await reportWriter.filteredState(caseId);
 
-  console.log(`Pushing "${caseId}" to ${process.env.DFIR_TIMESKETCH_URL} …`);
-  const res = await pushCaseToTimesketch(client, { sketchName: caseId, state }, timesketchPushOptions());
+  console.log(`Pushing "${caseId}" to Timesketch (server set '${picked.setName}') …`);
+  const res = await pushCaseToTimesketch(
+    client,
+    { sketchName: caseId, state },
+    picked.servers.timesketchPush,
+  );
 
   console.log(
     `\nTimesketch sketch #${res.sketchId} ${res.created ? "CREATED" : "UPDATED"} ("${res.sketchName}")`,

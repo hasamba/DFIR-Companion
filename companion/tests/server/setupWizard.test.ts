@@ -6,6 +6,9 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, setServerLogger } from "../../src/server.js";
 import { createConsoleLogger } from "../../src/logging/logger.js";
+import { createServerClients } from "../../src/composition/serverSetClients.js";
+import { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
+import { deriveServerSetKey } from "../../src/integrations/serverSets/secretBox.js";
 
 // Backend for the comprehensive Setup wizard (#181): generic /settings/reload (allowlisted prefix),
 // /setup/status (configured?-per-integration, derived live from env), /timesketch/reconnect (hot
@@ -20,6 +23,7 @@ let envPath: string;
 let envRoot: string;
 
 let app: ReturnType<typeof createApp>;
+let sets: ServerSetStore;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-setup-"));
@@ -28,7 +32,8 @@ beforeEach(async () => {
   process.env.DFIR_ENV_FILE = envPath;
   const store = new CaseStore(root);
   setServerLogger(createConsoleLogger("info"));
-  app = createApp(store, {});
+  sets = new ServerSetStore(join(root, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 5)));
+  app = createApp(store, { serverClients: createServerClients(sets, {}) });
   for (const k of ["DFIR_IRIS_URL", "DFIR_IRIS_KEY", "DFIR_VT_KEY", "DFIR_NSRL_DB", "DFIR_NSRL_FILE"])
     delete process.env[k];
 });
@@ -62,24 +67,32 @@ describe("/settings/reload", () => {
 });
 
 describe("/setup/status", () => {
-  it("reports each integration as configured or not, derived from env", async () => {
+  it("reports iris and timesketch from the default server set only, never from env", async () => {
     const before = await request(app).get("/setup/status");
     expect(before.status).toBe(200);
     expect(before.body.iris).toBe(false);
-    expect(before.body.enrichment.virustotal).toBe(false);
+    expect(before.body.timesketch).toBe(false);
 
-    // Save + reload IRIS + a VT key, then re-check — status reflects the live env (no restart).
-    await writeFile(
-      envPath,
-      "DFIR_IRIS_URL=https://iris.example\nDFIR_IRIS_KEY=abc\nDFIR_VT_KEY=zzz\n",
-      "utf8",
-    );
-    await request(app).post("/settings/reload").send({ prefix: "DFIR_IRIS_" });
-    await request(app).post("/settings/reload").send({ prefix: "DFIR_VT_" });
+    // Env keys alone do not enable a tool: the default set decides.
+    process.env.DFIR_IRIS_URL = "https://iris.example.com";
+    process.env.DFIR_IRIS_KEY = "iris-key-sentinel-alpha";
+    expect((await request(app).get("/setup/status")).body.iris).toBe(false);
 
+    const set = sets.create({
+      name: "Default",
+      iris: { url: "https://iris.example.com", apiKey: "iris-key-sentinel-alpha" },
+    });
+    sets.setDefault(set.id);
     const after = await request(app).get("/setup/status");
     expect(after.body.iris).toBe(true);
-    expect(after.body.enrichment.virustotal).toBe(true);
+    expect(after.body.timesketch).toBe(false);
+  });
+
+  it("reports an enrichment key as configured from env", async () => {
+    expect((await request(app).get("/setup/status")).body.enrichment.virustotal).toBe(false);
+    await writeFile(envPath, "DFIR_VT_KEY=zzz\n", "utf8");
+    await request(app).post("/settings/reload").send({ prefix: "DFIR_VT_" });
+    expect((await request(app).get("/setup/status")).body.enrichment.virustotal).toBe(true);
   });
 });
 

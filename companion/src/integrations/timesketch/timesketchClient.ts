@@ -16,7 +16,7 @@ import {
   RESPONSE_SIZE_LIMITS,
   rethrowIfTooLarge,
 } from "../../providers/boundedResponse.js";
-import { tlsTrustHint } from "../tlsTrustHint.js";
+import { describeFetchError, serverSetFetchError } from "../tlsTrustHint.js";
 
 export interface TimesketchClientOptions {
   baseUrl: string; // e.g. https://timesketch.example.org
@@ -74,22 +74,7 @@ function firstObject(json: unknown): Record<string, unknown> | undefined {
   return objectList(json)[0];
 }
 
-// Node's fetch() throws a generic `TypeError: fetch failed` for every low-level network
-// failure (connection refused, DNS lookup failure, TLS error, timeout) — the actual reason
-// lives in `.cause` (an errno-style error with a `.code` like ECONNREFUSED/ENOTFOUND/
-// CERT_HAS_EXPIRED), which is easy to lose if only `.message` is read. Walk the cause chain
-// so the real reason reaches the user instead of a bare "fetch failed".
-export function describeFetchError(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
-  const parts: string[] = [err.message];
-  let cause: unknown = (err as { cause?: unknown }).cause;
-  while (cause instanceof Error) {
-    const code = (cause as NodeJS.ErrnoException).code;
-    parts.push(code ? `${cause.message} (${code})` : cause.message);
-    cause = (cause as { cause?: unknown }).cause;
-  }
-  return parts.join(" -> ");
-}
+export { describeFetchError };
 
 interface SendOptions {
   body?: BodyInit;
@@ -152,12 +137,10 @@ export class TimesketchClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
-      // The cause chain reaches the message twice on purpose: describeFetchError quotes Node's own
-      // words (which end in an unhelpful --use-system-ca suggestion), and tlsTrustHint adds the
-      // DFIR_TIMESKETCH_CA / DFIR_TIMESKETCH_INSECURE pair Node cannot know about — and only when
-      // the failure really is a rejected certificate.
+      // serverSetFetchError keeps the cause chain, but a rejected certificate gets the set's CA
+      // bundle instead of Node's --use-system-ca advice. This client is built from a server set only.
       throw new TimesketchApiError(
-        `Timesketch request failed: ${describeFetchError(err)}${tlsTrustHint(err, "TIMESKETCH")}`,
+        `Timesketch request failed: ${serverSetFetchError(err, "Timesketch")}`,
         0,
         "network",
       );
@@ -194,7 +177,7 @@ export class TimesketchClient {
     );
     if (!this.csrf) {
       throw new TimesketchApiError(
-        "Timesketch login: no CSRF token on the login page (check DFIR_TIMESKETCH_URL and that local auth is enabled)",
+        "Timesketch login: no CSRF token on the login page (check the Timesketch URL in this server set and that local auth is enabled)",
         page.status,
         "auth",
       );
@@ -212,7 +195,7 @@ export class TimesketchClient {
     const check = await this.send("GET", `${this.apiRoot}/sketches/?per_page=1`);
     if (check.status === 401 || check.status === 403) {
       throw new TimesketchApiError(
-        "Timesketch auth failed (check DFIR_TIMESKETCH_USER / DFIR_TIMESKETCH_PASSWORD)",
+        "Timesketch auth failed (check the Timesketch username and password in this server set)",
         check.status,
         "auth",
       );

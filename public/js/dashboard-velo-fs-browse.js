@@ -104,21 +104,17 @@
     document.getElementById("fsBrowseCancelBtn").onclick = closeFsBrowseModal;
     document.getElementById("fsBrowseSelectBtn").onclick = () => {
       if (!state || !state.selected) return;
-      document.getElementById(state.targetInputId).value = state.selected;
+      const target = document.getElementById(state.targetInputId);
+      target.value = state.selected;
+      // Tell the form its value changed, the way typing does: the server-set editor keeps Test
+      // disabled until a change is saved, and it listens for this event.
+      target.dispatchEvent(new Event("input", { bubbles: true }));
       closeFsBrowseModal();
     };
 
-    const apiConfigInput = document.getElementById(
-      "env-DFIR_VELOCIRAPTOR_API_CONFIG",
-    );
+    // The API config path moved into each server set; the set editor wires its own Browse… through
+    // wirePathBrowseControls() below.
     const binaryInput = document.getElementById("env-DFIR_VELOCIRAPTOR_BINARY");
-    document.getElementById("veloBrowseApiConfigBtn").onclick = () => {
-      openFsBrowseModal(
-        "Select Velociraptor API config file",
-        apiConfigInput.value.trim(),
-        apiConfigInput.id,
-      );
-    };
     document.getElementById("veloBrowseBinaryBtn").onclick = () => {
       openFsBrowseModal(
         "Select Velociraptor binary",

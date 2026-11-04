@@ -23,6 +23,9 @@ export interface TlsFetchOptions {
   caCertPath?: string; // PEM bundle for an internal/private CA
   insecureSkipVerify?: boolean; // skip cert verification entirely (self-signed)
   hostUrl?: string; // the provider's base URL, used to check if insecureSkipVerify targets a loopback host
+  // The caller's own explicit consent to skip verification for a non-loopback host (a server set's
+  // "Skip TLS verify" box). Env-configured integrations never pass it.
+  allowInsecureExternal?: boolean;
   onWarn?: (message: string) => void;
 }
 
@@ -68,7 +71,8 @@ export function buildTlsConnect(
     // verification disabled is a MITM risk — an on-path attacker can harvest the API key and
     // every queried IOC. The operator can override with DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true,
     // but they must explicitly opt in.
-    const allowInsecureExternal = process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL === "true";
+    const allowInsecureExternal =
+      opts.allowInsecureExternal === true || process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL === "true";
     const isLoopback = opts.hostUrl ? isLoopbackUrl(opts.hostUrl) : true;
     if (!isLoopback && !allowInsecureExternal) {
       throw new Error(

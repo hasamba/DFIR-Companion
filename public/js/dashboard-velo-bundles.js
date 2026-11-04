@@ -24,7 +24,8 @@
     if (btn) btn.disabled = true;
     // refresh=1: a deliberate Browse bypasses the server-side catalog cache, so an artifact just
     // added on the Velociraptor server shows up immediately instead of after the cache TTL.
-    fetch("/velociraptor/artifacts?refresh=1")
+    // The open case's server set lists the artifacts; with no case open, the default set does.
+    fetch("/velociraptor/artifacts?refresh=1" + (veloCaseId() ? `&caseId=${encodeURIComponent(veloCaseId())}` : ""))
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (!ok || j.error) {

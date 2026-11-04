@@ -70,7 +70,7 @@ async function walkCaseFiles(
  * Reference template for the router-split domains. Conventions established here:
  * - Handlers are moved VERBATIM out of createApp — only free variables are rebound to `ctx`.
  * - Destructure the STABLE ctx fields/helpers once at the top if you like, but CALL LIVE
- *   ACCESSORS (ctx.importerRegistry(), ctx.irisClient(), …) INSIDE each handler so the current
+ *   ACCESSORS (ctx.importerRegistry(), ctx.serverClients.forDefault(), …) INSIDE each handler so the current
  *   binding is re-read per request; never hoist them to this registration scope (see RouteContext).
  * - Keep domain-local helpers (e.g. walkCaseFiles, currentUpdateMode, the preflight cache) private
  *   to this file — module scope for stateless helpers, closure scope for per-app state.
@@ -97,7 +97,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   // Read once, like registerCrossCaseRoutes does, so /health reports what those routes decided.
   const crossCaseEnabled = isCrossCaseEnabled();
   app.get("/health", (_req: Request, res: Response) => {
-    const irisClient = ctx.irisClient();
+    const defaultServers = ctx.serverClients.forDefault();
     const dropWatchEnabled = ctx.dropWatchEnabled();
     const importerRegistry = ctx.importerRegistry();
     res.status(200).json({
@@ -110,9 +110,9 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(),
       enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0,
       customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0,
-      velociraptorEnabled: !!options.velociraptorClient,
-      irisEnabled: !!irisClient,
-      timesketchEnabled: !!options.timesketchClient,
+      velociraptorEnabled: defaultServers.ok && !!defaultServers.servers.velociraptor,
+      irisEnabled: defaultServers.ok && !!defaultServers.servers.iris,
+      timesketchEnabled: defaultServers.ok && !!defaultServers.servers.timesketch,
       notionEnabled: !!options.notionClient,
       clickupEnabled: !!options.clickupClient,
       jiraEnabled: !!options.jiraClient,
@@ -469,9 +469,10 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     }
 
     // 3. Velociraptor — non-critical (hunt-only feature).
-    if (options.velociraptorClient) {
+    const velo = ctx.serverClients.forDefault();
+    if (velo.ok && velo.servers.velociraptor) {
       try {
-        await options.velociraptorClient.listClients();
+        await velo.servers.velociraptor.listClients();
         items.push({ name: "Velociraptor", ok: true, critical: false, detail: "API reachable" });
       } catch (err) {
         items.push({ name: "Velociraptor", ok: false, critical: false, detail: (err as Error).message });

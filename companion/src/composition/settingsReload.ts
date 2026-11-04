@@ -25,21 +25,15 @@
  */
 import type { AppOptions } from "./appOptions.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
-import type { IrisClient } from "../integrations/iris/irisClient.js";
 import { buildEnrichmentProviders, buildCustomerExposureProviders } from "./enrichmentProviders.js";
 import {
   buildClickUpClient,
-  buildIrisClient,
   buildMispPushClient,
   buildNotionClient,
-  buildTimesketchClient,
   clickupOptions,
-  irisPushOptions,
   mispPushOptions,
   notionPushOptions,
-  timesketchPushOptions,
 } from "./integrationClients.js";
-import { buildVelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import { logLine } from "../logging/serverLogger.js";
 
 const ENRICHMENT_PREFIXES = new Set([
@@ -55,6 +49,8 @@ const ENRICHMENT_PREFIXES = new Set([
   "DFIR_ROCKYRACCOON_",
   "DFIR_GEOIP_",
 ]);
+// Prefixes the per-case server sets are seeded from; a reload drops the cached set clients.
+const SERVER_SET_PREFIXES = new Set(["DFIR_IRIS_", "DFIR_TIMESKETCH_", "DFIR_VELOCIRAPTOR_"]);
 // DFIR_SHODAN_ feeds both sets — the one key backs the IOC provider and the attack-surface check.
 const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_SHODAN_"]);
 
@@ -64,10 +60,10 @@ const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASH
 
 export interface SettingsReloadDeps {
   options: AppOptions;
+  /** Drop the per-set clients so the next lookup rebuilds them from the (possibly edited) sets. */
+  invalidateServerClients?: () => void;
   /** Swap the live enrichment provider set (the engine reads it through an accessor). */
   setEnrichmentProviders: (next: EnrichmentProvider[]) => void;
-  /** Swap the live IRIS client, which createApp also rebinds on POST /iris/reconnect. */
-  setIrisClient: (client: IrisClient | undefined) => void;
 }
 
 /**
@@ -76,8 +72,8 @@ export interface SettingsReloadDeps {
  */
 export function createSettingsReload({
   options,
+  invalidateServerClients,
   setEnrichmentProviders,
-  setIrisClient,
 }: SettingsReloadDeps): (prefix: string) => string[] {
   return function rebuildForPrefix(prefix: string): string[] {
     const rebuilt: string[] = [];
@@ -96,19 +92,11 @@ export function createSettingsReload({
       options.mispPushOptions = mispPushOptions();
       rebuilt.push("misp");
     }
-    if (prefix === "DFIR_IRIS_") {
-      setIrisClient((options.rebuildIrisClient ?? buildIrisClient)());
-      options.irisOptions = irisPushOptions();
-      rebuilt.push("iris");
-    }
-    if (prefix === "DFIR_TIMESKETCH_") {
-      options.timesketchClient = (options.rebuildTimesketchClient ?? buildTimesketchClient)();
-      options.timesketchOptions = timesketchPushOptions();
-      rebuilt.push("timesketch");
-    }
-    if (prefix === "DFIR_VELOCIRAPTOR_") {
-      options.velociraptorClient = (options.rebuildVelociraptorClient ?? buildVelociraptorClient)();
-      rebuilt.push("velociraptor");
+    // IRIS / Timesketch / Velociraptor clients come from the server sets, not from env. The global
+    // keys that remain (the Velociraptor binary, limits) are read when a set's client is built.
+    if (SERVER_SET_PREFIXES.has(prefix)) {
+      invalidateServerClients?.();
+      rebuilt.push("server-sets"); // the next lookup rebuilds each set's clients — no restart
     }
     if (prefix === "DFIR_NOTION_") {
       options.notionClient = (options.rebuildNotionClient ?? buildNotionClient)();

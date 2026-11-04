@@ -198,7 +198,7 @@ describe("TimesketchClient network failure", () => {
     await expect(client.login()).rejects.toThrow(/^(?!.*DFIR_TIMESKETCH_INSECURE)/s);
   });
 
-  it("points a rejected certificate at DFIR_TIMESKETCH_CA / _INSECURE, not Node's --use-system-ca", async () => {
+  it("points a rejected certificate at the set's CA bundle, not Node's --use-system-ca", async () => {
     // The reported failure verbatim: a self-hosted Timesketch behind its own cert. Node's message
     // ends in --use-system-ca, which is not a setting this app has — the analyst needs the two it
     // does have, and the global opt-in a non-loopback host additionally requires.
@@ -221,9 +221,11 @@ describe("TimesketchClient network failure", () => {
       (e: Error) => e,
     );
     expect(err?.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT"); // Node's own words are kept
-    expect(err?.message).toContain("DFIR_TIMESKETCH_CA");
-    expect(err?.message).toContain("DFIR_TIMESKETCH_INSECURE=1");
-    expect(err?.message).toContain("DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true");
+    // The client is built from a server set, so the fix is in the set, not in .env.
+    expect(err?.message).toContain(
+      "Set the CA bundle for Timesketch in this server set (Settings → Server sets)",
+    );
+    expect(err?.message).not.toContain("DFIR_TIMESKETCH_CA");
   });
 });
 

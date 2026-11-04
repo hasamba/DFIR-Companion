@@ -376,6 +376,13 @@
   <script src="/js/dashboard-case-picker.js"></script>
   <!-- New case creation. initNewCase() wires its eight controls. -->
   <script src="/js/dashboard-new-case.js"></script>
+  <!-- Server sets (per-case IRIS / Timesketch / Velociraptor). initServerSets() wires the Settings
+       list and the set editor; initCaseServers() wires the case header label and Change…. Both
+       run from initCaseConnect(), the case-load path they belong to, not from the inline script. -->
+  <script src="/js/dashboard-server-sets.js"></script>
+  <script src="/js/dashboard-case-servers.js"></script>
+  <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
+  <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
   <script src="/js/dashboard-case-templates.js"></script>
   <!-- Velociraptor triage. Owns the bundle/client caches behind accessors. -->
@@ -505,6 +512,9 @@
     <input id="casePicker" placeholder="Case name" aria-label="Case" list="caseList" autocomplete="off" />
     <input id="caseId" type="hidden" />
     <datalist id="caseList"></datalist>
+    <!-- The open case's server set (js/dashboard-case-servers.js): an icon-only button whose tooltip
+         and accessible name carry the set name. The case list shows each case's set under its name. -->
+    <button id="caseServersChangeBtn" type="button" aria-label="Change this case's server set" data-tip="Attach a different server set (IRIS, Timesketch, Velociraptor) to this case" hidden>Change…</button>
     <label data-safe-style="display:inline-flex;align-items:center;gap:2px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Include archived cases in the case picker above (prefixed '[Archived]')">
       <input type="checkbox" id="showArchivedToggle" data-safe-style="margin:0;cursor:pointer" />
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
@@ -959,6 +969,9 @@
         <input id="ncName" placeholder="short description" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Investigator
         <input id="ncInvestigator" placeholder="your name" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
+      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Velociraptor / IRIS / Timesketch servers (optional)
+        <select id="ncServerSet" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select></label>
+      <div data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px;">Uses your default set. Choose a different saved set, or create a new one for this investigation.</div>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Incident type (optional)
         <select id="ncTemplate" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;">
           <option value="">No incident type — blank case</option>
@@ -968,6 +981,95 @@
         <button id="ncCreate">Create case</button>
         <button id="ncCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="ncMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <!-- Server set editor (js/dashboard-server-sets.js). Opened from Settings → Server sets and from
+       the New Case "Servers" picker, so it sits above both. A stored secret shows the mask and is
+       kept unless the analyst types a new value. Each Test button tests the typed values, saved or not. -->
+  <div id="serverSetEditorOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="serverSetEditorTitle">
+    <div class="comment-modal server-set-editor">
+      <h3 id="serverSetEditorTitle">Server set</h3>
+      <div class="sfield"><label for="sseName">Name</label><input id="sseName" placeholder="e.g. Client A production" autocomplete="off" /></div>
+      <div class="settings-group-head">DFIR-IRIS</div>
+      <div class="sfield-row">
+        <div class="sfield"><label for="sseIrisUrl">IRIS URL</label><input id="sseIrisUrl" placeholder="https://iris.example.org" /></div>
+        <div class="sfield"><label for="sseIrisKey">API key</label><input id="sseIrisKey" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+      </div>
+      <div class="sfield-row3">
+        <div class="sfield"><label for="sseIrisCa">CA bundle</label><input id="sseIrisCa" placeholder="path/to/ca.pem" /></div>
+        <div class="sfield"><label for="sseIrisCustomer">Customer ID</label><input id="sseIrisCustomer" placeholder="1" /></div>
+        <div class="sfield"><label for="sseIrisClassification">Classification ID</label><input id="sseIrisClassification" placeholder="1" /></div>
+      </div>
+      <label class="server-set-check"><input id="sseIrisInsecure" type="checkbox" /> Skip TLS verify (lab only — anyone on the network path could read this server's key)</label>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestIris" type="button">Test IRIS</button>
+        <span id="sseTestIrisResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
+      <div class="settings-group-head">Timesketch</div>
+      <div class="sfield-row">
+        <div class="sfield"><label for="sseTsUrl">Timesketch URL</label><input id="sseTsUrl" placeholder="https://timesketch.example.org" /></div>
+        <div class="sfield"><label for="sseTsUser">Username</label><input id="sseTsUser" autocomplete="off" /></div>
+      </div>
+      <div class="sfield-row3">
+        <div class="sfield"><label for="sseTsPassword">Password</label><input id="sseTsPassword" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield"><label for="sseTsCa">CA bundle</label><input id="sseTsCa" placeholder="path/to/ca.pem" /></div>
+        <div class="sfield"><label for="sseTsTimeline">Timeline name</label><input id="sseTsTimeline" placeholder="DFIR-Companion Forensic Timeline" /></div>
+      </div>
+      <label class="server-set-check"><input id="sseTsInsecure" type="checkbox" /> Skip TLS verify (lab only — anyone on the network path could read this server's key)</label>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestTs" type="button">Test Timesketch</button>
+        <span id="sseTestTsResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
+      <div class="settings-group-head">Velociraptor</div>
+      <div class="sfield"><label for="sseVeloConfig">API config path</label>
+        <div data-safe-style="display:flex; gap:6px; align-items:center">
+          <input id="sseVeloConfig" placeholder="path/to/api.config.yaml" data-safe-style="flex:1; min-width:0" />
+          <button type="button" id="sseVeloBrowse" data-wiz-browse="sseVeloConfig" data-wiz-browse-title="Select Velociraptor API config file">Browse…</button>
+        </div>
+      </div>
+      <div class="sfield-row">
+        <div class="sfield"><label for="sseVeloOrg">GUI org</label><input id="sseVeloOrg" placeholder="root" /></div>
+        <div class="sfield"><label for="sseVeloGuiUrl">GUI URL</label><input id="sseVeloGuiUrl" placeholder="https://velo.example.org:8889" aria-describedby="sseVeloGuiUrlHint" />
+          <span id="sseVeloGuiUrlHint" class="sfield-hint" data-safe-style="display:block; margin-top:4px">The address you open the Velociraptor GUI at, with its path if it has one (for example https://host/velociraptor). You can paste the browser address.</span></div>
+      </div>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestVelo" type="button">Test Velociraptor</button>
+        <span id="sseTestVeloResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
+      <p class="server-set-note">Leave a tool empty when the cases on this set do not use it. Keys are stored encrypted on this machine and are never exported.</p>
+      <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button id="sseSave" type="button">Save</button>
+        <button id="sseTest" type="button">Test connection</button>
+        <button id="sseClose" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
+        <span id="sseMsg" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
+      <div id="sseTestResult" role="status" data-safe-style="font-size:12px; margin-top:6px;"></div>
+    </div>
+  </div>
+  <!-- Change… on the case header (js/dashboard-case-servers.js): pick a set, then confirm when the
+       case has work on its old servers. -->
+  <div id="caseServersPickOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="caseServersPickTitle">
+    <div class="comment-modal">
+      <h3 id="caseServersPickTitle">Velociraptor / IRIS / Timesketch servers for this case</h3>
+      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Server set
+        <select id="caseServersPick" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select></label>
+      <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="caseServersPickApply" type="button">Change</button>
+        <button id="caseServersPickCancel" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
+        <span id="caseServersPickMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+  <div id="caseServersConfirmOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="caseServersConfirmTitle">
+    <div class="comment-modal">
+      <h3 id="caseServersConfirmTitle">Change server set?</h3>
+      <ul id="caseServersConfirmList" data-safe-style="font-size:13px; margin:8px 0; padding-left:18px;"></ul>
+      <p id="caseServersConfirmNote" data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 10px">Nothing on the old servers is deleted. Evidence in this case is kept.</p>
+      <div data-safe-style="display:flex; gap:8px; align-items:center;">
+        <button id="caseServersConfirmBtn" type="button">Change server set</button>
+        <button id="caseServersConfirmCancel" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
+        <span id="caseServersConfirmMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -2132,39 +2234,21 @@
           <button type="button" id="presidioTestBtn">Test connection</button>
           <span id="presidioTestResult" data-safe-style="margin-left:8px;font-size:12px;color:var(--text-muted)"></span>
         </div>
-        <div class="settings-group-head" data-essential>DFIR-IRIS</div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_IRIS_URL">IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_IRIS_KEY">IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-        </div>
-        <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_IRIS_CA">CA bundle<span class="sfield-hint">DFIR_IRIS_CA</span></label><input id="env-DFIR_IRIS_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label for="env-DFIR_IRIS_CUSTOMER_ID">Customer ID<span class="sfield-hint">DFIR_IRIS_CUSTOMER_ID</span></label><input id="env-DFIR_IRIS_CUSTOMER_ID" placeholder="1" /></div>
-          <div class="sfield"><label for="env-DFIR_IRIS_CLASSIFICATION_ID">Classification ID<span class="sfield-hint">DFIR_IRIS_CLASSIFICATION_ID</span></label><input id="env-DFIR_IRIS_CLASSIFICATION_ID" placeholder="1" /></div>
-        </div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_IRIS_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
-        </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
-          <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
-          <span id="irisReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
-        </div>
-        <div class="settings-group-head" data-essential>Timesketch</div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_TIMESKETCH_URL">Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_TIMESKETCH_USER">Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
-        </div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_TIMESKETCH_PASSWORD">Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label for="env-DFIR_TIMESKETCH_TIMELINE">Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR-Companion Forensic Timeline" /></div>
-        </div>
-        <div class="sfield-row" data-essential>
-          <div class="sfield"><label for="env-DFIR_TIMESKETCH_CA">CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_TIMESKETCH_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
-        </div>
-        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
-          <button id="timesketchReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Timesketch settings, rebuilds the client, and logs in to test the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
-          <span id="timesketchReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+        <div class="settings-group-head" data-essential>Server sets (DFIR-IRIS, Timesketch, Velociraptor)</div>
+        <div id="serverSetsPanel" data-essential>
+          <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">A server set holds the DFIR-IRIS, Timesketch and Velociraptor connection that a case uses. Each case remembers its own set. New cases use the <strong>default</strong> set. Changes apply at once, with no restart. Keys are stored encrypted on this machine and are never exported.</p>
+          <div id="serverSetsList" role="list"></div>
+          <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <button id="serverSetAddBtn" type="button">+ Add server set</button>
+            <span id="serverSetsMsg" role="status" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+          </div>
+          <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+            <button id="irisReconnectBtn" type="button" data-tip="Rebuilds the DFIR-IRIS client of the DEFAULT server set and tests the connection. To test another set, open it with Edit.">Test IRIS</button>
+            <span id="irisReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+            <button id="timesketchReconnectBtn" type="button" data-tip="Rebuilds the Timesketch client of the DEFAULT server set and logs in to test the connection. To test another set, open it with Edit.">Test Timesketch</button>
+            <span id="timesketchReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+            <span data-server-set-default class="server-set-default-label"></span>
+          </div>
         </div>
         <div class="settings-group-head" data-essential>Notion</div>
         <div class="sfield-row" data-essential>
@@ -2198,13 +2282,8 @@
           <span id="clickupReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
         </div>
         <div class="settings-group-head" data-essential>Velociraptor</div>
+        <p data-essential data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">The API config path, the GUI org and the GUI URL belong to each server set (above). These settings apply to every server.</p>
         <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label>
-            <div data-safe-style="display:flex; gap:6px; align-items:center">
-              <input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" data-safe-style="flex:1; min-width:0" />
-              <button type="button" id="veloBrowseApiConfigBtn">Browse…</button>
-            </div>
-          </div>
           <div class="sfield" data-essential><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label>
             <div data-safe-style="display:flex; gap:6px; align-items:center">
               <input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" data-safe-style="flex:1; min-width:0" />
@@ -2214,9 +2293,7 @@
             <span id="veloDownloadMsg" class="sfield-hint" data-safe-style="display:block; margin-top:2px"></span>
           </div>
         </div>
-        <div class="sfield-row3" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_VELOCIRAPTOR_GUI_URL">GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
-          <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_ORG">GUI org<span class="sfield-hint">DFIR_VELOCIRAPTOR_ORG — for deep links (default root)</span></label><input id="env-DFIR_VELOCIRAPTOR_ORG" placeholder="root" /></div>
+        <div class="sfield-row3">
           <div class="sfield"><label for="env-DFIR_HUNT_PLATFORMS">Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
         </div>
         <div class="sfield-row3">
@@ -2249,8 +2326,9 @@
           <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES">Binary spawn retries<span class="sfield-hint">DFIR_VELOCIRAPTOR_SPAWN_RETRIES — retries on transient EPERM/EBUSY lock when spawning the velociraptor binary (default 6)</span></label><input id="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES" placeholder="6" /></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
-          <button id="veloSettingsReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Velociraptor settings, rebuilds the connection, and refreshes the client list — applies WITHOUT restarting the server. Same action as the Reconnect button on the Velociraptor tab.">Test / reconnect</button>
+          <button id="veloSettingsReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Velociraptor settings, rebuilds the connection of the DEFAULT server set, and refreshes its client list — applies WITHOUT restarting the server. Same action as the Reconnect button on the Velociraptor tab.">Test / reconnect</button>
           <span id="veloSettingsReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+          <span data-server-set-default class="server-set-default-label"></span>
         </div>
 
         <!-- Push ingest (#84) -->
@@ -2332,6 +2410,7 @@
           <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
           <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
           <span id="veloClientsMsg" data-safe-style="font-size:12px;color:var(--text-muted)">—</span>
+          <span data-server-set-default class="server-set-default-label"></span>
         </div>
         <div id="veloBundleList" data-safe-style="margin-bottom:14px">—</div>
 
@@ -3293,7 +3372,7 @@
     <div class="wiz-modal stepped">
       <div class="wiz-head">
         <h2 id="wizTitle">⚙️ Set up DFIR Companion</h2>
-        <p class="wiz-sub" data-safe-style="margin:4px 0 0">Configure the providers and integrations you want. Everything here is optional — capture and artifact imports work without any of it. Each step saves to your local <code>.env</code> (gitignored) and can be tested right away.</p>
+        <p class="wiz-sub" data-safe-style="margin:4px 0 0">Configure the providers and integrations you want. Everything here is optional — capture and artifact imports work without any of it. The DFIR-IRIS, Timesketch and Velociraptor steps save to the default server set. The other steps save to your local <code>.env</code> (gitignored). You can test each step right away.</p>
       </div>
       <div class="wiz-body-wrap">
         <div class="wiz-rail" id="wizRail"></div>

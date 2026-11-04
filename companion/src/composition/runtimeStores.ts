@@ -49,6 +49,10 @@ import { CustomToolStore } from "../integrations/tools/customToolStore.js";
 import { McpServerStore } from "../integrations/mcp/mcpServerStore.js";
 import { KevStore } from "../analysis/kevStore.js";
 import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
+import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
+import { registerCollectorEndpoints } from "./collectorEndpoints.js";
+import { deriveServerSetKey } from "../integrations/serverSets/secretBox.js";
 import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
 import { getAppVersion } from "../version.js";
 import { NotificationConfigStore } from "../analysis/notificationStore.js";
@@ -67,8 +71,7 @@ import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
 import { VeloMonitorStore } from "../analysis/veloMonitorStore.js";
 import { PushTokenStore } from "../analysis/pushTokenStore.js";
-import { buildVelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
-import { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
+import { caseFleetInventory, setInventories } from "../analysis/velociraptorClientStore.js";
 import { LiveHub } from "../live/hub.js";
 import { JobManager } from "../analysis/jobManager.js";
 import { JobLedgerStore } from "../analysis/jobLedgerStore.js";
@@ -269,6 +272,12 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   // Settings → KEV. The pipeline lazy-loads it so an import during a session is picked up.
   const kevStore = new KevStore(join(dirname(casesRoot), "kev", "catalog.json"));
   const updateCheckStore = new UpdateCheckStore(join(dirname(casesRoot), "updates", "update-check.json"));
+  // Server sets: named IRIS/Timesketch/Velociraptor bundles; secrets sealed with a key derived from the instance secret.
+  const serverSetStore = new ServerSetStore(
+    serverSetStoreDir(casesRoot),
+    deriveServerSetKey(loadOrCreateInstanceSecret(casesRoot)),
+  );
+  registerCollectorEndpoints(serverSetStore);
   const appVersion = getAppVersion();
   const updateRepo = (() => {
     const envRepo = process.env.DFIR_UPDATE_REPO;
@@ -313,11 +322,13 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const pushTokenStore = new PushTokenStore(store);
   const pushToken = process.env.DFIR_PUSH_TOKEN?.trim() || undefined;
   const veloMonitorPollSeconds = Number(process.env.DFIR_VELO_MONITOR_POLL_S) || 30;
-  // Velociraptor API client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) + the persisted client inventory
-  // (host ↔ client_id map, #70) in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl).
-  const velociraptorClient = buildVelociraptorClient();
-  const velociraptorClientStore = new VelociraptorClientStore(
-    join(dirname(casesRoot), "velociraptor", "clients.json"),
+  // The persisted Velociraptor client inventory (host ↔ client_id map, #70), one file per server set,
+  // in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl). Host resolution
+  // reads it per case through the case's set.
+  const clientInventoryFor = setInventories(join(dirname(casesRoot), "velociraptor"));
+  const velociraptorClientStore = caseFleetInventory(
+    (id) => serverSetStore.caseSetId(id),
+    clientInventoryFor,
   );
   const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
   const jobManager = new JobManager({
@@ -493,6 +504,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     nsrlDb,
     kevStore,
     updateCheckStore,
+    serverSetStore,
     appVersion,
     updateRepo,
     notificationStore,
@@ -506,7 +518,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     pushTokenStore,
     pushToken,
     veloMonitorPollSeconds,
-    velociraptorClient,
+    clientInventoryFor,
     velociraptorClientStore,
     hub,
     jobManager,

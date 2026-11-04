@@ -85,7 +85,8 @@ sketch (so neither clobbers the other):
 
 **Configure:** Settings → Integrations → Timesketch. Reconnect without restart after saving credentials.
 
-Command-line: `npm run timesketch:push -- <caseId>`
+Command-line: `npm run timesketch:push -- <caseId>`. The script uses the Timesketch server of the
+case's server set. If the case has no usable set, the script stops with an error.
 
 ---
 

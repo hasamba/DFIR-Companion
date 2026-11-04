@@ -1,3 +1,4 @@
+import { stubServerClients } from "../helpers/serverClientsStub.js";
 import { describe, it, expect } from "vitest";
 import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,11 +35,11 @@ function stubVelociraptor() {
         truncated: [],
       };
     },
-  } as unknown as NonNullable<AppOptions["velociraptorClient"]>;
+  } as unknown;
 }
 
 const stubToolRunner = {} as unknown as NonNullable<AppOptions["toolRunner"]>;
-const stubIris = {} as unknown as NonNullable<AppOptions["irisClient"]>;
+const stubIris = {} as unknown;
 
 async function makeApp() {
   const root = await mkdtemp(join(tmpdir(), "dfir-ingest-closed-"));
@@ -56,12 +57,11 @@ async function makeApp() {
     pipeline,
     stateStore,
     importMetaStore: new ImportMetaStore(store),
-    velociraptorClient: stubVelociraptor(),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore,
     toolRunner: stubToolRunner,
     dropStatusStore: new DropStatusStore(store),
-    irisClient: stubIris,
+    serverClients: stubServerClients({ iris: stubIris as never, velociraptor: stubVelociraptor() as never }),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   await veloHuntStore.upsert("c1", {

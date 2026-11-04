@@ -45,10 +45,14 @@
       status: "velociraptor",
       blurb:
         "Endpoint visibility, hunts, and live monitoring across your fleet.",
+      // The API config path and GUI URL go into the default server set
+      // (js/dashboard-wizard-server-set.js); the binary is global and stays in .env.
+      serverSet: true,
       reload: "DFIR_VELOCIRAPTOR_",
       test: { method: "POST", url: "/velociraptor/reconnect" },
       fields: [
         F("DFIR_VELOCIRAPTOR_API_CONFIG", "API config path", {
+          set: "velociraptor.apiConfigPath",
           hint: "Path to the velociraptor --api_config YAML (api_client.yaml).",
           browse: "Select Velociraptor API config file",
         }),
@@ -58,6 +62,7 @@
           download: true,
         }),
         F("DFIR_VELOCIRAPTOR_GUI_URL", "GUI URL", {
+          set: "velociraptor.guiUrl",
           hint: "Base URL for client links (optional).",
         }),
       ],
@@ -68,18 +73,23 @@
       label: "DFIR-IRIS",
       status: "iris",
       blurb: "Push / import cases to a DFIR-IRIS case-management instance.",
-      reload: "DFIR_IRIS_",
+      // Saved into the default server set, not .env (js/dashboard-wizard-server-set.js).
+      serverSet: true,
       test: { method: "POST", url: "/iris/reconnect" },
       fields: [
-        F("DFIR_IRIS_URL", "IRIS URL", { hint: "https://iris.example.com" }),
-        F("DFIR_IRIS_KEY", "API key", { secret: true }),
+        F("DFIR_IRIS_URL", "IRIS URL", { set: "iris.url", hint: "https://iris.example.com" }),
+        F("DFIR_IRIS_KEY", "API key", { set: "iris.apiKey", secret: true }),
         F("DFIR_IRIS_CUSTOMER_ID", "Customer ID", {
+          set: "iris.customerId",
           hint: "Numeric (optional).",
         }),
         F("DFIR_IRIS_CLASSIFICATION_ID", "Classification ID", {
+          set: "iris.classificationId",
           hint: "Numeric (optional).",
         }),
         F("DFIR_IRIS_INSECURE", "Skip TLS verify", {
+          set: "iris.insecure",
+          bool: true,
           hint: "true = accept a self-signed IRIS cert without verifying (lab only).",
         }),
         // Global key, not DFIR_IRIS_: the step's reload prefix won't apply it, so the field
@@ -96,18 +106,22 @@
       label: "Timesketch",
       status: "timesketch",
       blurb: "Push the forensic timeline to a Timesketch instance.",
-      reload: "DFIR_TIMESKETCH_",
+      // Saved into the default server set, not .env (js/dashboard-wizard-server-set.js).
+      serverSet: true,
       test: { method: "POST", url: "/timesketch/reconnect" },
       fields: [
         F("DFIR_TIMESKETCH_URL", "Timesketch URL", {
+          set: "timesketch.url",
           hint: "https://timesketch.example.com",
         }),
-        F("DFIR_TIMESKETCH_USER", "Username"),
-        F("DFIR_TIMESKETCH_PASSWORD", "Password", { secret: true }),
+        F("DFIR_TIMESKETCH_USER", "Username", { set: "timesketch.user" }),
+        F("DFIR_TIMESKETCH_PASSWORD", "Password", { set: "timesketch.password", secret: true }),
         // Timesketch is nearly always self-hosted behind its own cert, so Test lands on
         // "self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)" — a dead end while this pair
         // lived only in Settings › All. Same reasoning as the IRIS step above.
         F("DFIR_TIMESKETCH_INSECURE", "Skip TLS verify", {
+          set: "timesketch.insecure",
+          bool: true,
           hint: "true = accept a self-signed Timesketch cert without verifying (lab only).",
         }),
         // Global key, not DFIR_TIMESKETCH_: the step's reload prefix won't apply it, so the field

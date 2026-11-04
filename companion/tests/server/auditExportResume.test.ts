@@ -6,6 +6,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
 import { UpdateCheckStore } from "../../src/analysis/updateCheckStore.js";
 import { startPostListenTasks } from "../../src/composition/maintenanceTasks.js";
+import { stubServerClients } from "../helpers/serverClientsStub.js";
 import type { AuditExporter } from "../../src/integrations/audit/auditExporter.js";
 
 // #929: the delivery position only advances on an accepted batch, so a crash or a collector outage
@@ -19,7 +20,9 @@ async function deps(auditExporter?: AuditExporter) {
   return {
     store,
     demoMode: false,
-    velociraptorClientStore: new VelociraptorClientStore(join(root, "velo-clients.json")),
+    serverSets: { list: () => [] },
+    serverClients: stubServerClients({}),
+    clientInventoryFor: () => new VelociraptorClientStore(join(root, "velo-clients.json")),
     updateCheckStore: new UpdateCheckStore(join(root, "update-check.json")),
     updateRepo: "hasamba/DFIR-Companion",
     ...(auditExporter ? { auditExporter } : {}),

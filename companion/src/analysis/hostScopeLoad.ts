@@ -27,7 +27,7 @@ import type { HostScopeStore } from "./hostScopeStore.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import type { ScopeWindow } from "./scope.js";
 import type { AssetOverrides } from "./assetOverrides.js";
-import type { VeloClientInventory } from "./velociraptorClientStore.js";
+import type { CaseFleetInventory } from "./velociraptorClientStore.js";
 import { abortError } from "./abortable.js";
 import { trackedWork } from "./pendingWork.js";
 
@@ -49,7 +49,7 @@ export interface HostScopeSources {
   decisions: Pick<HostScopeStore, "load">;
   scope?: { load(caseId: string): Promise<ScopeWindow> };
   assetOverrides?: { load(caseId: string): Promise<AssetOverrides> };
-  fleet?: { load(): Promise<VeloClientInventory> };
+  fleet?: CaseFleetInventory;
   /** Pairs the analyst ruled out. Without it the ledger lists every near-duplicate, ruled out or not. */
   dismissals?: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
 }
@@ -122,7 +122,7 @@ export async function loadHostAliasIndex(
   caseId: string,
 ): Promise<HostAliasIndex> {
   const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
-  const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
+  const inventory = sources.fleet ? await sources.fleet.load(caseId) : { updatedAt: "", clients: [] };
   return buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));
 }
 
@@ -215,7 +215,7 @@ export async function loadHostScopeLedger(
   const state = await sources.state.load(caseId, { signal: opts.signal });
   const window = sources.scope ? await sources.scope.load(caseId) : { start: null, end: null };
   const overrides = sources.assetOverrides ? await sources.assetOverrides.load(caseId) : null;
-  const inventory = sources.fleet ? await sources.fleet.load() : { updatedAt: "", clients: [] };
+  const inventory = sources.fleet ? await sources.fleet.load(caseId) : { updatedAt: "", clients: [] };
 
   // overrides.merges is keyed by asset id, not host name — see hostMergesFromAssetIds.
   const index = buildHostAliasIndex(inventory.clients, hostMergesFromAssetIds(overrides?.merges ?? {}));

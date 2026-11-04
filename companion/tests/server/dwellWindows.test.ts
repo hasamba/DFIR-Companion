@@ -15,6 +15,7 @@ import {
   type VqlRunner,
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 async function makeApp(opts: { withStore?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-dwell-"));
@@ -164,7 +165,7 @@ async function makeBundleApp() {
   const app = createApp(store, {
     pipeline,
     stateStore,
-    velociraptorClient: new VelociraptorClient(veloCfg, bundleRunner),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, bundleRunner)),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore: new VeloHuntStore(store),
     dwellWindowStore: new DwellWindowStore(store),

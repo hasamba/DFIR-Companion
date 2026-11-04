@@ -173,10 +173,77 @@ Customer exposure check configuration:
 
 ## Integrations
 
-- DFIR-IRIS (URL, key, reconnect)
-- Timesketch (URL, credentials, reconnect)
+- [Server sets](#server-sets) — the DFIR-IRIS, Timesketch and Velociraptor connections
 - Notion (API token)
 - ClickUp (API token)
+
+### Server sets
+
+A server set is one named group of connections: a DFIR-IRIS server, a Timesketch server and a
+Velociraptor server. Each case uses one set. When you open a case, the Companion uses that case's
+servers. You do not enter keys again when you move between cases.
+
+- **The list.** Settings → Integrations → **Server sets** shows every set. Each row shows the
+  tools the set uses and **Used by *n* cases**. Use **+ Add server set**, **Edit**, **Make
+  default** and **Delete** to manage the sets. A change applies at once, with no restart.
+- **The default set.** One set has the **default** badge. New cases use it, and so do actions that
+  run with no case open, such as the client list on the Velociraptor tab. Those actions show
+  **Using server set: *name*** next to them. When a case is open, the client list, **↻ Refresh
+  client list** and the time-scope preview use the case's set. The client list then names that
+  set. After the upgrade, your old IRIS, Timesketch and
+  Velociraptor settings become a set named **Testing**, and it is the default.
+- **The editor.** Leave a tool empty when the cases on the set do not use it. The Companion then
+  hides that tool's buttons for those cases. A stored key or password shows as `••••••`. It stays
+  the same unless you type a new value. **Save** keeps the editor open and shows **Saved.**.
+  Click **Close** to close it.
+- **Testing a connection.** **Test IRIS**, **Test Timesketch** and **Test Velociraptor** sit under
+  each tool's fields. Each one tests the values in the editor now, for a new set or an edited one.
+  You do not have to save first, and a test saves nothing. The result shows under the button:
+  **Connected.** or **Failed:** and the reason. A button stays off until you type that tool's URL
+  (Velociraptor: the API config path). A key or password that still shows `••••••` tests with
+  the stored value. An empty one tests with no secret. **Test connection** at the bottom tests
+  every tool you filled in.
+- **Velociraptor GUI URL.** Give the address you open the Velociraptor GUI at. If the GUI has a
+  path, include it, for example `https://host/velociraptor`. You can paste the address from the
+  browser bar: the Companion removes `/app/index.html` and everything after it. Hunt links then
+  open under that path.
+- **Skip TLS verify.** Tick it on a set's IRIS or Timesketch fields to accept that server's
+  certificate without a check. In a set, the tick alone is enough, also for a server on another
+  machine: you do not need `DFIR_TLS_ALLOW_INSECURE_EXTERNAL`. Use it in a lab only. Anyone on the
+  network path can then read that server's key. Give the server's CA bundle instead to keep the
+  check on. When a certificate is refused, the error tells you to set the CA bundle in the set.
+- **New Case form.** The **Velociraptor / IRIS / Timesketch servers (optional)** list preselects the default set. Pick another set, or pick
+  **+ Create a new server set…** to make one. Test each tool before you save. **Save** closes the
+  editor and selects the new set.
+- **The case list.** Open the case list in the header. Under each case name, the list shows the
+  case ID and the name of its set, for example **CASE-A · Client A**. A case with no set shows
+  **no server set**.
+- **Change….** The server-rack button next to the case name attaches a different set to the
+  case. Point at it to see the open case's set: **Server set: *set name* — click to change**. If
+  the case has no usable set, the button has a red ring and says **No usable server set — click
+  to choose one**. If the case
+  has work on its old servers, the Companion warns first. The warning lists the live monitors
+  that will stop, the IRIS case link that will be forgotten and the Velociraptor hunts that will
+  be forgotten. Click **Change server set** to go on, or **Cancel** to change nothing.
+- **What is kept.** Nothing on the old servers is deleted. The Companion only stops talking to
+  them. Events, IOCs and findings in the case stay. The next IRIS push makes a new IRIS case on
+  the new server. The case's activity log records the change.
+- **Who can change what.** In team mode, only an administrator edits, adds or deletes sets. Other
+  users see the list without the buttons. Only an administrator of the case can use **Change…**.
+- **Keys stay on this machine.** The Companion stores the keys and passwords of every set
+  encrypted on this machine. They never go into case exports, archives, reports, support bundles
+  or logs.
+- **Where the sets are stored.** The sets are in the `server-sets` folder next to the cases
+  folder. In Docker, that folder is `/data/server-sets`. The supplied `docker-compose.yml` mounts
+  `./server-sets:/data/server-sets`, next to `./cases:/data/cases`. If you start the container
+  yourself, mount both folders. If you mount only the cases folder, a restart loses every set, and
+  each case then shows **no server set**. Back up both folders together: the key that decrypts
+  the sets is in the cases folder.
+
+The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`
+and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the
+upgrade, to make the **Testing** set. After that, edit the sets here. The setup wizard's
+DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not into `.env`.
 
 ---
 
@@ -191,8 +258,10 @@ The shared bundle library — global, like every other Settings tab.
 
 Running a bundle, importing a hunt from the Velociraptor GUI and live monitoring act on the
 connected case, so they live on the dashboard's
-[Fleet Collection panel](dashboard.md#fleet-collection). The API config path is set under
-[Integrations](#integrations).
+[Fleet Collection panel](dashboard.md#fleet-collection). The API config path, the GUI org and
+the GUI URL belong to each [server set](#server-sets). **Reconnect** uses the default set. The
+client list and **↻ Refresh client list** use the open case's set, or the default set when no case
+is open.
 
 ---
 

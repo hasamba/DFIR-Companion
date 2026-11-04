@@ -74,17 +74,16 @@ import type { ScopeWindow } from "../analysis/scope.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { CustomerExposureProvider } from "../analysis/customerExposure.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
-import type { IrisClient } from "../integrations/iris/irisClient.js";
-import type { IrisPushOptions } from "../integrations/iris/irisPush.js";
+import type { ServerClients } from "../integrations/serverSets/types.js";
+import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { IrisExportStore } from "../integrations/iris/irisExportStore.js";
-import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import type { ToolRunner } from "../integrations/tools/toolRunner.js";
 import type { ToolId, ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomToolStore } from "../integrations/tools/customToolStore.js";
 import type { McpServerStore } from "../integrations/mcp/mcpServerStore.js";
 import type { ClaudeRunner } from "../providers/claudeRunner.js";
 import type { TransferRunner } from "../integrations/mcp/mcpDelivery.js";
-import type { VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
+import type { CaseFleetInventory, VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import type { ArtifactBundleStore } from "../analysis/artifactBundleStore.js";
 import type { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import type { JobManager } from "../analysis/jobManager.js";
@@ -98,8 +97,6 @@ import type { NsrlStore } from "../analysis/nsrlStore.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { HuntPlatform } from "../analysis/huntPlatforms.js";
-import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
-import type { TimesketchPushOptions } from "../integrations/timesketch/timesketchPush.js";
 import type { TemplateStore } from "../analysis/templateStore.js";
 import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
@@ -444,24 +441,15 @@ export interface AppOptions {
   // dashboard is subscribed to the case (composition/stateBroadcast.ts), so a writer that changed a
   // few rows does not have to hold, or load, the whole case just to announce it.
   onStateChanged?: (caseId: string) => void;
-  // DFIR-IRIS push: a configured client (when DFIR_IRIS_URL/KEY are set) + mapping options
-  // (customer/classification ids, base URL for the case link).
-  irisClient?: IrisClient;
-  irisOptions?: IrisPushOptions;
-  // Rebuilds the IRIS client from current config (used by POST /iris/reconnect so config saved
-  // via Settings, or IRIS coming back online, applies without a server restart). Defaults to the
-  // env-based buildIrisClient; tests inject a stub (no network).
-  rebuildIrisClient?: () => IrisClient | undefined;
+  // Per-case IRIS / Timesketch / Velociraptor clients, resolved from the case's server set. Tests
+  // that omit it get an always-error stand-in.
+  serverClients?: ServerClients;
+  // The server set store behind /server-sets and the link a new case gets. Tests that omit it get
+  // 503 from /server-sets, and new cases stay unlinked.
+  serverSetStore?: ServerSetStore;
   // Remembers the IRIS case name used on the last push per Companion case, so a re-push with
   // no explicit override still targets the same IRIS case (find-or-create is name-based).
   irisExportStore?: IrisExportStore;
-  // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
-  // dashboard run the generated hunt VQL against the server and show the rows inline.
-  velociraptorClient?: VelociraptorClient;
-  // Rebuilds the Velociraptor client from current config (used by POST /velociraptor/reconnect so
-  // config saved via Settings, or the Velociraptor server coming back online, applies without a server
-  // restart). Defaults to the env-based buildVelociraptorClient; tests inject a stub (no spawn).
-  rebuildVelociraptorClient?: () => VelociraptorClient | undefined;
   // External forensic tools (#211): a runner that spawns the analyst-configured LOCAL binaries
   // (Hayabusa/Velociraptor CLI/Suricata/Snort/YARA) against raw evidence and hands the output to the
   // existing importers. Absent → the tools feature is off (routes 501, drops surface a "configure"
@@ -484,10 +472,13 @@ export interface AppOptions {
   mcpTransferRunner?: TransferRunner;
   // Drives agentic MCP mode (spawns the claude CLI). Tests inject; absent = the real spawn.
   mcpAgentRunner?: ClaudeRunner;
-  // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
-  // collection resolves the host against this file instead of a brittle live `clients(search=...)`
-  // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
-  velociraptorClientStore?: VelociraptorClientStore;
+  // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map), one file per server
+  // set. A single-endpoint collection resolves the host against its set's file instead of a brittle
+  // live `clients(search=...)` lookup; refreshed at startup, on demand (Settings), and lazily on a
+  // collect miss. velociraptorClientStore is the read side for host resolution: a case reads its
+  // own set's file. clientInventoryFor writes and reads one set's file.
+  velociraptorClientStore?: CaseFleetInventory;
+  clientInventoryFor?: (setId: string) => VelociraptorClientStore;
   // Triage bundles (global, shared across cases): named selections of Velociraptor CLIENT artifacts
   // the analyst runs as a hunt. Per-case veloHuntStore tracks the in-flight/last bundle hunt so the
   // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
@@ -541,14 +532,6 @@ export interface AppOptions {
   // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
   // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
   huntPlatforms?: HuntPlatform[];
-  // Timesketch push: a configured client (when DFIR_TIMESKETCH_URL/USER/PASSWORD are set) +
-  // options (base URL for the sketch link, managed timeline name).
-  timesketchClient?: TimesketchClient;
-  timesketchOptions?: TimesketchPushOptions;
-  // Rebuild the Timesketch client at runtime so POST /timesketch/reconnect can apply newly-saved
-  // DFIR_TIMESKETCH_* (or recover a server that came back online) WITHOUT the #1-gotcha restart.
-  // Defaults to the env-based buildTimesketchClient; tests inject a stub (no network).
-  rebuildTimesketchClient?: () => TimesketchClient | undefined;
   // Case templates: built-in + user-saved templates selectable at case creation.
   templateStore?: TemplateStore;
   // Incident-type auto-playbooks (#236): the built-in + custom incident-type library plus the
@@ -579,7 +562,7 @@ export interface AppOptions {
   notionOptions?: NotionPushOptions;
   notionExportStore?: NotionExportStore;
   // Rebuild the Notion client from current config (used by POST /notion/reconnect so a token saved
-  // via Settings applies without a server restart). Mirrors rebuildIrisClient; defaults to the
+  // via Settings applies without a server restart). Defaults to the
   // env-based buildNotionClient, and tests inject a stub (no network).
   rebuildNotionClient?: () => NotionClient | undefined;
   // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes

@@ -10,6 +10,7 @@ import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { FalsePositiveStore, markerId } from "../../src/analysis/falsePositive.js";
 import { IrisExportStore } from "../../src/integrations/iris/irisExportStore.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { stubServerClients } from "../helpers/serverClientsStub.js";
 import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
 import type {
   MispPushClientLike,
@@ -153,7 +154,7 @@ describe("push routes honour false-positive markers (#951)", () => {
     const app = createApp(store, {
       stateStore,
       reportWriter,
-      irisClient: client,
+      serverClients: stubServerClients({ iris: client }),
       irisExportStore: new IrisExportStore(store),
     });
     const res = await request(app).post("/cases/c1/push/iris").send({});

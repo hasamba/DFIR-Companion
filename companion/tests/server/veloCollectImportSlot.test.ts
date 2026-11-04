@@ -18,6 +18,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // A hunt collect writes to the same forensic timeline the dashboard's imports write to, and reports
 // "+N events" as a diff of that timeline. Two things follow, and this file pins both:
@@ -138,7 +139,7 @@ async function makeApp(vqlRunner: VqlRunner = runner) {
     importMetaStore,
     superTimelineStore,
     jobManager,
-    velociraptorClient: new VelociraptorClient(veloCfg, vqlRunner),
+    serverClients: veloServerClients(new VelociraptorClient(veloCfg, vqlRunner)),
     artifactBundleStore: new ArtifactBundleStore(privateBundleDir(root)),
     veloHuntStore,
   });

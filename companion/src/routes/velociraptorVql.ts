@@ -4,6 +4,7 @@ import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
+import { caseVelo, defaultVelo } from "./veloServers.js";
 
 // The two bare (case-less) VQL routes: run a query, launch a fleet hunt. Split out of
 // routes/velociraptor.ts for #832 — they were the only Velociraptor actions that reached the fleet
@@ -84,22 +85,21 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
   const withWarning = <T extends object>(body: T, auditWarning?: string): T =>
     auditWarning ? { ...body, auditWarning } : body;
 
-  // Run a VQL query against the configured Velociraptor server (via its API) and return the rows.
-  // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when not configured. The VQL is
+  // Run a VQL query against the case's (or the default set's) Velociraptor server and return the rows.
+  // Powers the hunt-pivot modal's "Run in Velociraptor" button. 501 when the set has no Velociraptor. The VQL is
   // analyst-authored (from the generated pivots) — localhost only, opt-in via DFIR_VELOCIRAPTOR_*.
   async function runVql(req: Request, res: Response) {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     if (!vql) return res.status(400).json({ error: "vql is required" });
     if (vqlSizeProblem(vql)) return res.status(400).json({ error: vqlSizeProblem(vql) });
     const caseId = await auditCase(req, res);
     if (caseId === null) return;
+    // The named case's own server set, or the default set for a case-less call. Never a fallback.
+    const vc = caseId ? caseVelo(ctx, caseId, res) : defaultVelo(ctx, res);
+    if (!vc) return;
     try {
       logLine(`[velociraptor] run query (${vql.length} chars)`);
-      const result = await options.velociraptorClient.run(vql);
+      const result = await vc.client.run(vql);
       logLine(`[velociraptor] query DONE -> ${result.total} rows${result.truncated ? " (truncated)" : ""}`);
       const auditWarning = await record(
         caseId,
@@ -124,10 +124,6 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
   // Launch a HUNT that runs the pivot VQL on ALL enrolled endpoints (packages it as a CLIENT
   // artifact, then creates the hunt). This is the dashboard's "Run hunt on all clients" action.
   async function launchHunt(req: Request, res: Response) {
-    if (!options.velociraptorClient)
-      return res
-        .status(501)
-        .json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     const vql = typeof req.body?.vql === "string" ? req.body.vql.trim() : "";
     const description = typeof req.body?.description === "string" ? req.body.description : "";
     if (!vql) return res.status(400).json({ error: "vql is required" });
@@ -135,9 +131,12 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
     const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
     const caseId = await auditCase(req, res);
     if (caseId === null) return;
+    // The named case's own server set, or the default set for a case-less call. Never a fallback.
+    const vc = caseId ? caseVelo(ctx, caseId, res) : defaultVelo(ctx, res);
+    if (!vc) return;
     try {
       logLine(`[velociraptor] launch hunt: ${description.slice(0, 80)} (expires in ${expirySeconds}s)`);
-      const result = await options.velociraptorClient.launchHunt(vql, description, { expirySeconds });
+      const result = await vc.client.launchHunt(vql, description, { expirySeconds });
       logLine(
         `[velociraptor] hunt launched -> ${result.huntId} (artifact ${result.artifact}, ${result.sources.length} source(s))`,
       );

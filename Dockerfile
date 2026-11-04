@@ -74,7 +74,7 @@ COPY docker-entrypoint.sh /usr/local/bin/dfir-entrypoint
 # with setpriv before exec'ing the server (see docker-entrypoint.sh). /app stays root-owned
 # on purpose: a compromised server must not be able to rewrite its own code.
 RUN chmod +x /usr/local/bin/dfir-entrypoint \
-  && mkdir -p /data/cases /data/ocr-cache /out \
+  && mkdir -p /data/cases /data/server-sets /data/ocr-cache /out \
   && chown -R node:node /data /out
 # Strip SUID/SGID bits from the base image (su, mount, passwd, …). Nothing at runtime needs them,
 # and a compromised server must not be able to exec one to regain root (#2155). The entrypoint's

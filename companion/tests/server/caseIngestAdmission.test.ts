@@ -28,6 +28,7 @@ import {
 import { createHuntCollectAdmission } from "../../src/composition/veloHuntAdmission.js";
 import { detectImportWithCustom } from "../../src/analysis/importDecision.js";
 import { VelociraptorClient, type VqlRunner } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
 
 // #1920: ONE admission point between evidence ingest and a whole-case archive. Every ingest path
 // writes its raw evidence before it queues for the import section, so the import lock cannot tell an
@@ -221,15 +222,17 @@ describe("Velociraptor monitor", () => {
       pipeline,
       stateStore,
       importMetaStore: new ImportMetaStore(store),
-      velociraptorClient: new VelociraptorClient(
-        {
-          apiConfigPath: "/x/api.yaml",
-          binary: "velociraptor",
-          timeoutMs: 5000,
-          maxRows: 1000,
-          maxOutputBytes: 1 << 20,
-        },
-        runner,
+      serverClients: veloServerClients(
+        new VelociraptorClient(
+          {
+            apiConfigPath: "/x/api.yaml",
+            binary: "velociraptor",
+            timeoutMs: 5000,
+            maxRows: 1000,
+            maxOutputBytes: 1 << 20,
+          },
+          runner,
+        ),
       ),
       veloMonitorStore: new VeloMonitorStore(store),
       veloMonitorPollSeconds: 30,

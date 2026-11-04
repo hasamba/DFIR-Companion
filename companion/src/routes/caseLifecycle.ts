@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
+import { linkNewCase } from "./serverSets.js";
+import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
@@ -76,16 +78,14 @@ import type { RouteContext } from "./context.js";
  * logLine/errLine mirror createApp's (serverLogger.info/error) so the moved call sites stay verbatim.
  *
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
- * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the live irisClient() accessor, plus five
- * members GRADUATED for this domain (see context.ts):
+ * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the per-case serverClients resolver, plus
+ * the members GRADUATED for this domain (see context.ts):
  *   - ensureDropFolders — create-case makes the drop inbox; the drop watcher (stays) also calls it.
  *   - runStateExclusive — the manual-event write serializes on the per-case state mutex the staying
  *     import/enrich/synthesis paths also use.
  *   - reloadImporters + importerPrecedence()/setImporterPrecedence — the importer CRUD routes mutate the
  *     in-memory registry + precedence that the staying detection seam (dispatchImport/resolveImportKind)
  *     reads, so the reload function + precedence accessor/setter were graduated rather than moved.
- *   - rebuildTimesketchClient — /timesketch/reconnect rebuilds the client from .env (mirrors
- *     ctx.rebuildIrisClient); the reconnect reassigns options.timesketchClient, which the push routes read.
  */
 export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): void {
   const {
@@ -103,13 +103,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // moved call sites stay verbatim.
   const logLine = (msg: string): void => serverLogger.info(msg);
   const errLine = (msg: string): void => serverLogger.error(msg);
+  const withServerSets = createCaseListServerSets(ctx); // each case's set name, for the case list
   app.get("/cases", async (req: Request, res: Response) => {
     try {
       const listed = await store.listCases();
       const visible = options.teamAuth?.visibleCaseIds(req);
-      return res
-        .status(200)
-        .json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
+      const shown = listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta);
+      return res.status(200).json(withServerSets(shown));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -124,8 +124,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // Optional `templateId` seeds key questions; `incidentTypeId` (#236) also applies its auto-playbook.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
-      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
-      const invalid = validateCaseCreateBody({ caseId, name, investigator, aiProvider });
+      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId, serverSetId } =
+        req.body ?? {};
+      const invalid = validateCaseCreateBody(
+        { caseId, name, investigator, aiProvider, serverSetId },
+        (id) => !!options.serverSetStore?.has(id),
+      );
       if (invalid) return res.status(400).json({ error: invalid });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
@@ -141,6 +145,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity),
       });
       options.teamAuth?.grantCreator(req, caseId);
+      linkNewCase(ctx, caseId, { setId: serverSetId ?? undefined }); // no serverSetId → the default set
       if (templateId && options.templateStore && options.stateStore) {
         const template = await options.templateStore.get(String(templateId));
         if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
@@ -732,13 +737,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // values — only booleans. (Per-feature deep status/connectivity lives in /iris/status etc.)
   app.get("/setup/status", (_req: Request, res: Response) => {
     const has = (k: string): boolean => !!(process.env[k] && process.env[k].trim());
+    const d = ctx.serverClients.forDefault();
+    const inDefault = (tool: "iris" | "timesketch" | "velociraptor"): boolean => d.ok && !!d.servers[tool];
     res.status(200).json({
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
-      velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
-      iris: !!ctx.irisClient() || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
-      timesketch:
-        !!options.timesketchClient ||
-        (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),
+      velociraptor: inDefault("velociraptor"),
+      iris: inDefault("iris"),
+      timesketch: inDefault("timesketch"),
       notion: !!options.notionClient || has("DFIR_NOTION_TOKEN"),
       clickup: !!options.clickupClient || has("DFIR_CLICKUP_TOKEN"),
       push: !!options.pushTokenStore || has("DFIR_PUSH_TOKEN"),

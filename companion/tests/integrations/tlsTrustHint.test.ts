@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { tlsCauseCode, isCertFailureCode, tlsTrustHint } from "../../src/integrations/tlsTrustHint.js";
+import {
+  describeFetchError,
+  isCertFailureCode,
+  serverSetFetchError,
+  tlsCauseCode,
+  tlsTrustHint,
+} from "../../src/integrations/tlsTrustHint.js";
 
 /**
  * The bug this closes is a message, so the tests are about a message: a self-signed Timesketch
@@ -67,5 +73,28 @@ describe("tlsTrustHint", () => {
   it("stays silent on every non-certificate failure", () => {
     expect(tlsTrustHint(fetchFailure("ECONNREFUSED"), "TIMESKETCH")).toBe("");
     expect(tlsTrustHint(new Error("boom"), "TIMESKETCH")).toBe("");
+  });
+});
+
+describe("serverSetFetchError", () => {
+  it("points at the tool's CA bundle in its server set, not an env var, and keeps the code", () => {
+    const msg = serverSetFetchError(fetchFailure("DEPTH_ZERO_SELF_SIGNED_CERT"), "Timesketch");
+    expect(msg).toContain("Set the CA bundle for Timesketch in this server set (Settings → Server sets)");
+    expect(msg).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(msg).not.toContain("DFIR_");
+  });
+
+  it("keeps the full cause chain for every non-certificate failure", () => {
+    expect(serverSetFetchError(fetchFailure("ECONNREFUSED", "connect ECONNREFUSED"), "IRIS")).toBe(
+      "fetch failed -> connect ECONNREFUSED (ECONNREFUSED)",
+    );
+  });
+});
+
+describe("describeFetchError", () => {
+  it("walks the cause chain so 'fetch failed' carries the reason", () => {
+    expect(describeFetchError(fetchFailure("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:443"))).toBe(
+      "fetch failed -> connect ECONNREFUSED 127.0.0.1:443 (ECONNREFUSED)",
+    );
   });
 });
