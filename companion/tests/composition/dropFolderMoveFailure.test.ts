@@ -14,7 +14,7 @@ import { createDropFolder, dropDirOf, type DropFolderDeps } from "../../src/comp
 // polls after that: duplicate forensic-timeline events for per-import-id importers, duplicate
 // evidence copies, duplicate AI runs, all without a word to the analyst.
 
-const hooks = vi.hoisted(() => ({ failRename: false }));
+const hooks = vi.hoisted(() => ({ failRename: false, growOnFail: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -22,6 +22,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     rename: (async (...args: Parameters<typeof actual.rename>) => {
       // Only the drop folder's own move fails; atomicWrite (drop-status.json) renames too.
       if (hooks.failRename && /[\\/]_(processed|failed)[\\/]/.test(String(args[1]))) {
+        // A writer still appending while the move runs (one shot): the file in drop/ is no longer
+        // the version that was imported.
+        if (hooks.growOnFail) {
+          hooks.growOnFail = false;
+          await actual.appendFile(String(args[0]), "2\n", "utf8");
+        }
         throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
       }
       return actual.rename(...args);
@@ -31,6 +37,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 afterEach(() => {
   hooks.failRename = false;
+  hooks.growOnFail = false;
 });
 
 async function seed(kind = "csv", overrides: Partial<DropFolderDeps> = {}) {
@@ -131,6 +138,23 @@ describe("a dropped file whose move failed is not imported again (#2281)", () =>
     await sweep(drops, 3);
 
     expect(ingestStreamed).toHaveBeenCalledTimes(2);
+  });
+
+  it("imports records appended while the failed move ran, before archiving the file", async () => {
+    // Codex review: remembering the post-failure version as "handled" let the move retry archive
+    // the appended records to _processed/ without ever importing them — lost evidence.
+    const { dropDir, drops, ingestStreamed } = await seed();
+    await writeFile(join(dropDir, "a.csv"), "h\n1\n", "utf8");
+    hooks.failRename = true;
+    hooks.growOnFail = true;
+    await sweep(drops, 2);
+    expect(ingestStreamed).toHaveBeenCalledTimes(1);
+
+    hooks.failRename = false;
+    await sweep(drops, 3);
+
+    expect(ingestStreamed).toHaveBeenCalledTimes(2);
+    expect(await readFile(join(dropDir, "_processed", "a.csv"), "utf8")).toBe("h\n1\n2\n");
   });
 
   it("fails an unrecognised, unmovable file once: one FAILED line, one notification", async () => {

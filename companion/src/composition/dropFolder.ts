@@ -70,7 +70,7 @@ import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
-import { createDropStuckTracker, joinReasons } from "./dropStuck.js";
+import { createDropStuckTracker, joinReasons, type DropFingerprint } from "./dropStuck.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
@@ -162,7 +162,7 @@ export interface DropFolder {
   /** Handled files whose move out of drop/ failed, held back from re-import while unchanged (#2281). */
   readonly stuck: PerCaseMap<Map<string, StuckDropFile>>;
   ensureDropFolders(caseId: string): Promise<void>;
-  moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
+  moveDropFile(dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint): Promise<void>;
   scanCaseDrops(caseId: string): Promise<void>;
   /** Arm the global poller. Idempotent — a second call is a no-op. */
   startDropWatcher(): void;
@@ -271,11 +271,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   // A move is one admitted write (#1855): refused for a deleted or replaced case, never a new folder.
   // A failed move leaves a handled file in drop/, where the next stable poll would import it again;
   // both callers (the sweep and run-pending) get it remembered as stuck here (#2281).
-  function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+  function moveDropFile(
+    dropDir: string,
+    relpath: string,
+    ok: boolean,
+    processed?: DropFingerprint,
+  ): Promise<void> {
     return store
       .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok))
       .catch(async (e: unknown) => {
-        await stuckFiles.record(dropDir, relpath, ok);
+        await stuckFiles.record(dropDir, relpath, ok, processed);
         throw e;
       });
   }
@@ -649,7 +654,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
               }
               // A failed move is named to the analyst, merged into the file's one warning or failure
               // entry (buildSweepLogEntries reads only the first warning per file) (#2281).
-              const moveNote = await moveDropFile(dropDir, file.relpath, res.ok).then(
+              const moveNote = await moveDropFile(dropDir, file.relpath, res.ok, file).then(
                 () => undefined,
                 (e) => {
                   logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`);

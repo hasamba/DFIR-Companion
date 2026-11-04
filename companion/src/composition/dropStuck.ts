@@ -21,24 +21,42 @@ import { logLine } from "../logging/serverLogger.js";
 export interface DropStuckTracker {
   /** Per case (keyed like the settle map, #1866): relpath → the stat it had when its move failed. */
   readonly stuck: PerCaseMap<Map<string, StuckDropFile>>;
-  /** Remember a file whose move failed, if it is still a regular file inside drop/. */
-  record(dropDir: string, relpath: string, ok: boolean): Promise<void>;
+  /**
+   * Remember a file whose move failed, if it is still a regular file inside drop/ — and, when the
+   * caller knows which version it imported (`processed`), only if the file is still that version.
+   */
+  record(dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint): Promise<void>;
   /** Retry the move (only the move — never the import) of each held file; quiet when it fails again. */
   retry(
     dropDir: string,
     held: ReadonlyMap<string, StuckDropFile>,
-    move: (dropDir: string, relpath: string, ok: boolean) => Promise<void>,
+    move: (dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint) => Promise<void>,
   ): Promise<void>;
+}
+
+/** The size + mtime of the version of a drop file that was actually imported. */
+export interface DropFingerprint {
+  size: number;
+  mtimeMs: number;
 }
 
 export function createDropStuckTracker(casesRoot: () => string): DropStuckTracker {
   const stuck = new CaseKeyedMap<Map<string, StuckDropFile>>(casesRoot);
 
-  async function record(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+  async function record(
+    dropDir: string,
+    relpath: string,
+    ok: boolean,
+    processed?: DropFingerprint,
+  ): Promise<void> {
     // Only a relpath inside drop/: a refused traversal relpath (#919) must not even be stat'd.
     if (!isSafeDropRelpath(relpath)) return;
     const st = await lstat(join(dropDir, relpath)).catch(() => null);
     if (!st?.isFile()) return;
+    // Changed since it was imported (a writer still appending, the #2270 growth refusal): holding
+    // it back would let the move retry archive the new records unread. Leave it to settle and be
+    // imported again — a duplicate of the old part beats lost evidence.
+    if (processed && (st.size !== processed.size || st.mtimeMs !== processed.mtimeMs)) return;
     const caseId = basename(dirname(dropDir)); // dropDirOf: <caseDir>/drop, active or archived
     const next = new Map(stuck.get(caseId) ?? []);
     next.set(relpath, { size: st.size, mtimeMs: st.mtimeMs, ok });
@@ -48,11 +66,11 @@ export function createDropStuckTracker(casesRoot: () => string): DropStuckTracke
   async function retry(
     dropDir: string,
     held: ReadonlyMap<string, StuckDropFile>,
-    move: (dropDir: string, relpath: string, ok: boolean) => Promise<void>,
+    move: (dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint) => Promise<void>,
   ): Promise<void> {
     for (const [relpath, s] of held) {
       // A moved file leaves the listing, so excludeStuck drops its entry on the next sweep.
-      await move(dropDir, relpath, s.ok).then(
+      await move(dropDir, relpath, s.ok, s).then(
         () => logLine(`[drop] moved previously stuck ${relpath}`),
         () => {},
       );
