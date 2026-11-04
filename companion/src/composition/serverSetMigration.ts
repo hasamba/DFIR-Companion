@@ -1,6 +1,7 @@
 // First-start migration: build the "Testing" server set from the current DFIR_* settings and link
-// every existing case to it. Runs on every start; after the first it only links unlinked cases.
-import { existsSync, readdirSync, renameSync } from "node:fs";
+// every existing case to it. Runs once per install: a marker beside the cases root records that it
+// finished, and later starts neither seed nor link (a case left unlinked stays unlinked).
+import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { ServerSetInput } from "../integrations/serverSets/types.js";
@@ -60,41 +61,73 @@ function adoptLegacyInventory(inventoryDir: string, setId: string): void {
   }
 }
 
-// Creates "Testing" when the store is empty (a tool the store rejects is dropped with a warning),
-// then links every case that has no link to the default set. Returns what it did.
+export interface SeedOptions {
+  inventoryDir?: string;
+  /** `<casesRoot>/.server-sets-migrated`. When given, the migration runs only while it is absent. */
+  markerPath?: string;
+  /** For the warning text only. */
+  storeDir?: string;
+  log?: (line: string) => void;
+}
+
+// Creates "Testing" from env when the store is empty (a tool the store rejects is dropped with a
+// warning) and makes it the default. A partial earlier run that left "Testing" without a default
+// gets the default; a second "Testing" is never made.
+function seedTesting(store: ServerSetStore, env: NodeJS.ProcessEnv, opts: SeedOptions): boolean {
+  if (store.defaultId() === undefined) {
+    const partial = store.list().find((s) => s.name === SEED_NAME);
+    if (partial) store.setDefault(partial.id);
+  }
+  if (store.list().length > 0) return false;
+  const skip = new Set<string>();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const set = store.create(buildInput(env, skip));
+      store.setDefault(set.id);
+      if (opts.inventoryDir) adoptLegacyInventory(opts.inventoryDir, set.id);
+      return true;
+    } catch (err) {
+      const tool = /^(iris|timesketch) url must be http/.exec((err as Error).message)?.[1];
+      if (!tool || skip.has(tool)) throw err;
+      skip.add(tool);
+      logLine(`[server-sets] ${tool} settings were not valid and were left out of the Testing set`);
+    }
+  }
+  return false;
+}
+
+function linkUnlinked(store: ServerSetStore, caseIds: string[]): number {
+  const def = store.defaultId();
+  if (!def) return 0;
+  let linked = 0;
+  for (const id of caseIds) {
+    if (store.caseSetId(id) === undefined) {
+      store.linkCase(id, def);
+      linked++;
+    }
+  }
+  return linked;
+}
+
+// Seeds "Testing" and links every case that has no link to the default set, then writes the
+// marker. With the marker present it does neither; an empty store then logs one warning.
 export function seedServerSets(
   store: ServerSetStore,
   env: NodeJS.ProcessEnv,
   caseIds: string[],
-  opts: { inventoryDir?: string } = {},
+  opts: SeedOptions = {},
 ): { seeded: boolean; linked: number } {
-  let seeded = false;
-  if (store.list().length === 0) {
-    const skip = new Set<string>();
-    for (let attempt = 0; attempt < 4 && !seeded; attempt++) {
-      try {
-        const set = store.create(buildInput(env, skip));
-        store.setDefault(set.id);
-        seeded = true;
-        if (opts.inventoryDir) adoptLegacyInventory(opts.inventoryDir, set.id);
-      } catch (err) {
-        const tool = /^(iris|timesketch) url must be http/.exec((err as Error).message)?.[1];
-        if (!tool || skip.has(tool)) throw err;
-        skip.add(tool);
-        logLine(`[server-sets] ${tool} settings were not valid and were left out of the Testing set`);
-      }
+  if (opts.markerPath && existsSync(opts.markerPath)) {
+    if (store.list().length === 0) {
+      (opts.log ?? logLine)(
+        `[server-sets] Server set store is empty but this install was already migrated; cases have no server set until you create one in Settings → Server sets. Check that ${opts.storeDir ?? "the server-sets folder"} is persisted.`,
+      );
     }
+    return { seeded: false, linked: 0 };
   }
-  const def = store.defaultId();
-  let linked = 0;
-  if (def) {
-    for (const id of caseIds) {
-      if (store.caseSetId(id) === undefined) {
-        store.linkCase(id, def);
-        linked++;
-      }
-    }
-  }
+  const seeded = seedTesting(store, env, opts);
+  const linked = linkUnlinked(store, caseIds);
+  if (opts.markerPath) writeFileSync(opts.markerPath, `${new Date().toISOString()}\n`);
   return { seeded, linked };
 }
 
@@ -119,16 +152,13 @@ const OWN_ERROR = /^server set secret cannot decrypt[^\n]*$/;
 export function runServerSetSeed(
   store: ServerSetStore,
   env: NodeJS.ProcessEnv,
-  caseIds: string[],
-  storeDir: string,
-  log: (line: string) => void,
-  inventoryDir?: string,
+  opts: SeedOptions & { caseIds: string[]; storeDir: string; log: (line: string) => void },
 ): void {
   try {
-    seedServerSets(store, env, caseIds, { inventoryDir });
+    seedServerSets(store, env, opts.caseIds, opts);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     const reason = OWN_ERROR.test(msg) ? msg : err instanceof Error ? err.name : "unknown error";
-    log(`[server-sets] could not read the server set store in ${storeDir}: ${reason}`);
+    opts.log(`[server-sets] could not read the server set store in ${opts.storeDir}: ${reason}`);
   }
 }

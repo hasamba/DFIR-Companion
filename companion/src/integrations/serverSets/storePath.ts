@@ -5,3 +5,8 @@ import { dirname, join } from "node:path";
 export function serverSetStoreDir(casesRoot: string): string {
   return join(dirname(casesRoot), "server-sets");
 }
+
+// Written once the first-start migration has run; beside `.instance-secret`, never in a case folder.
+export function serverSetMigrationMarker(casesRoot: string): string {
+  return join(casesRoot, ".server-sets-migrated");
+}

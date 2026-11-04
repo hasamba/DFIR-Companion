@@ -18,7 +18,7 @@ import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
 import { listCaseIdsSync, runServerSetSeed } from "./serverSetMigration.js";
-import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
+import { serverSetMigrationMarker, serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
@@ -75,14 +75,13 @@ export interface AppWiringDeps {
 
 export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOptions {
   // Before the integration clients below: seed the "Testing" server set from the current DFIR_* settings.
-  runServerSetSeed(
-    rt.serverSetStore,
-    process.env,
-    listCaseIdsSync(rt.store.casesRoot),
-    serverSetStoreDir(rt.store.casesRoot),
-    logLine,
-    join(dirname(rt.store.casesRoot), "velociraptor"),
-  );
+  runServerSetSeed(rt.serverSetStore, process.env, {
+    caseIds: listCaseIdsSync(rt.store.casesRoot),
+    storeDir: serverSetStoreDir(rt.store.casesRoot),
+    log: logLine,
+    inventoryDir: join(dirname(rt.store.casesRoot), "velociraptor"),
+    markerPath: serverSetMigrationMarker(rt.store.casesRoot),
+  });
   const {
     store,
     hub,
