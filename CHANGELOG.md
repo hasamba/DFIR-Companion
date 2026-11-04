@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Team-mode Docker restart loop after a crash** — a writer lock left by an unclean exit (OOM, `docker kill`) no longer blocks the next container, and a second live container is still refused (closes #2278)
 - **Settings and saved views survive a container recreate** — `docker-compose.yml` now mounts `./data`, so the Settings file, dashboard views, report templates, tagger rules, notifications and logs persist
 - **Team accounts survive a container recreate** — `docker-compose.yml` now keeps team-mode accounts in `./auth`; before, `docker compose up -d` after an edit deleted every account
 - **Guarded downloads** — "Download latest release" for Velociraptor, Sigma rule downloads, KEV import from a URL, webhooks and audit export no longer fail with `fetch failed — invalid onRequestStart method`

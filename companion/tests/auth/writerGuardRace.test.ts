@@ -1,5 +1,5 @@
 import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -88,6 +88,48 @@ describe("acquireWriterGuard under concurrent startup", () => {
     expect(acquired).toHaveLength(1);
     // The guard on disk belongs to the starter that won, and to nobody else.
     expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ pid: process.pid });
+  });
+
+  it("lets only one of two starters recover a stale guard that names our own PID (#2278)", () => {
+    // The container case: the dead owner was PID 1 and so is this process. The record is stale by
+    // host, not by probe — and the claim file must still let exactly one starter replace it.
+    const path = join(guardDir(), "writer.lock");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        pid: process.pid,
+        token: "dead-owner",
+        startedAt: "2020-01-01T00:00:00.000Z",
+        host: hostname(),
+      }),
+      "utf8",
+    );
+
+    const acquired: string[] = [];
+    let interleaved = false;
+    onUnlink = (unlinked) => {
+      if (interleaved || unlinked !== path) return;
+      interleaved = true;
+      try {
+        acquireWriterGuard(path);
+        acquired.push("second");
+      } catch {
+        /* refused */
+      }
+    };
+
+    let guard: ReturnType<typeof acquireWriterGuard> | undefined;
+    try {
+      guard = acquireWriterGuard(path);
+      acquired.push("first");
+    } catch {
+      /* refused */
+    }
+
+    expect(interleaved).toBe(true);
+    expect(acquired).toEqual(["first"]);
+    expect(JSON.parse(readFileSync(path, "utf8")).token).not.toBe("dead-owner");
+    guard?.release();
   });
 
   it("retries when the guard disappears before it can be read", () => {

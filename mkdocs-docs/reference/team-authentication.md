@@ -204,7 +204,9 @@ does not overwrite another's.
 Team mode intentionally supports one Companion writer process per cases root. Startup acquires an
 exclusive process guard and refuses a second live process. Run one server process and scale the
 reverse proxy, not the Companion process. A stale guard left by a crashed process is detected and
-replaced on the next startup.
+replaced on the next startup. In Docker, a restarted container replaces it at once. A container
+that was recreated after a crash (for example, on an image upgrade) waits up to one minute, because
+a live server refreshes its guard and the new container must see that no server does.
 
 Authentication data defaults to a dedicated sibling directory keyed to the cases-root path. A
 deployment may move it with `DFIR_AUTH_DATA_DIR`. Treat that directory and the cases root as one
