@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Settings and saved views survive a container recreate** — `docker-compose.yml` now mounts `./data`, so the Settings file, dashboard views, report templates, tagger rules, notifications and logs persist
 - **Team accounts survive a container recreate** — `docker-compose.yml` now keeps team-mode accounts in `./auth`; before, `docker compose up -d` after an edit deleted every account
 - **Guarded downloads** — "Download latest release" for Velociraptor, Sigma rule downloads, KEV import from a URL, webhooks and audit export no longer fail with `fetch failed — invalid onRequestStart method`
 - **Sigma re-grade apply guard** — one re-grade per case at a time (a second one is refused), and the import memory guard now sizes and can refuse a re-grade without changing either timeline (closes #2227)

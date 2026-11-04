@@ -72,8 +72,9 @@ folder. `DFIR_AUTH_DATA_DIR` sets that folder. If you do not set it, the server 
 `.dfir-auth-<hash>` folder next to the cases folder.
 
 **Docker Compose.** The supplied `docker-compose.yml` sets `DFIR_AUTH_DATA_DIR=/data/auth` and
-mounts `./auth:/data/auth`. The accounts are kept in `./auth`, next to `./cases` and
-`./server-sets`. Back up all three folders. `./auth` holds password hashes, so keep it private.
+mounts `./auth:/data/auth`. The accounts are kept in `./auth`, next to `./cases`,
+`./server-sets` and `./data`. Back up all four folders. `./auth` holds password hashes, so keep it
+private.
 
 **Older compose files.** Compose files before this change did not mount the account folder. Docker
 recreates the container when you edit the compose file and run `docker compose up -d`. With an old

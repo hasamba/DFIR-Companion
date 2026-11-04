@@ -44,7 +44,24 @@ Choose one option. Windows and Linux users should start with the release downloa
 
     `--no-build` stops Compose from falling back to a source build, which fails without the repo.
     Cases persist in `./cases`, server sets in `./server-sets` and team-mode accounts in `./auth`,
-    beside the compose file.
+    beside the compose file. Everything else the server saves persists in `./data`: the Settings
+    file (`companion.env`, holds API keys), dashboard views, report templates, tagger rules,
+    notifications, Sigma rules and logs. Back up all four folders.
+
+    **Upgrading from a compose file without `./data`?** Your saved settings are still inside the
+    running container. The first `docker compose up -d` with the new file recreates the container
+    and deletes them. Copy them out first, while the old container still runs:
+
+    ```bash
+    mkdir -p data
+    for d in companion.env dashboard-views report-templates tagger notifications \
+      templates incident-types whitelist tools; do
+      docker cp -q dfir-companion:/data/$d data/
+    done
+    ```
+
+    A "Could not find the file" line only means that you never saved that item. Then download the
+    new `docker-compose.yml` and run `docker compose up -d`.
 
     To run the image without Compose:
 
@@ -53,6 +70,7 @@ Choose one option. Windows and Linux users should start with the release downloa
       --security-opt no-new-privileges:true \
       --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
       --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
+      -v /your/data:/data \
       -v /your/cases:/data/cases \
       -v /your/server-sets:/data/server-sets \
       -e DFIR_CASES_ROOT=/data/cases \
@@ -60,10 +78,11 @@ Choose one option. Windows and Linux users should start with the release downloa
       ghcr.io/hasamba/dfir-companion:latest
     ```
 
-    Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount both volumes: the server keeps
-    the server sets (IRIS / Timesketch / Velociraptor connections, keys encrypted) in a
-    `server-sets` folder beside the cases folder, so without the second mount they are lost when
-    the container is removed.
+    Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount all three volumes. The server
+    keeps the server sets (IRIS / Timesketch / Velociraptor connections, keys encrypted) in a
+    `server-sets` folder beside the cases folder, and the Settings file, dashboard views, report
+    templates, tagger rules, notifications and logs directly in `/data`. Without those mounts, they
+    are lost when the container is removed.
 
     The `--security-opt` and `--cap-*` flags are optional hardening: the container keeps only the
     permissions it needs to hand your case folder to an unprivileged user, and the server can never
