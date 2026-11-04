@@ -33,18 +33,36 @@ Choose one option. Windows and Linux users should start with the release downloa
 
 === "Docker"
 
+    The simplest way is Docker Compose with the prebuilt image. You need only the compose file,
+    not the whole repo:
+
+    ```bash
+    mkdir dfir-companion && cd dfir-companion
+    curl -fsSLO https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/docker-compose.yml
+    docker compose pull && docker compose up -d --no-build
+    ```
+
+    `--no-build` stops Compose from falling back to a source build, which fails without the repo.
+    Cases persist in `./cases` and server sets in `./server-sets`, beside the compose file.
+
+    To run the image without Compose:
+
     ```bash
     docker run -p 127.0.0.1:4773:4773 \
       --security-opt no-new-privileges:true \
       --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
       --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
-      -v /your/cases:/cases \
-      -e DFIR_CASES_ROOT=/cases \
+      -v /your/cases:/data/cases \
+      -v /your/server-sets:/data/server-sets \
+      -e DFIR_CASES_ROOT=/data/cases \
       -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
       ghcr.io/hasamba/dfir-companion:latest
     ```
 
-    Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
+    Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount both volumes: the server keeps
+    the server sets (IRIS / Timesketch / Velociraptor connections, keys encrypted) in a
+    `server-sets` folder beside the cases folder, so without the second mount they are lost when
+    the container is removed.
 
     The `--security-opt` and `--cap-*` flags are optional hardening: the container keeps only the
     permissions it needs to hand your case folder to an unprivileged user, and the server can never
