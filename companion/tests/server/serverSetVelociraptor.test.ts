@@ -34,6 +34,8 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
+import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
+import { privateBundleDir } from "../helpers/bundleDir.js";
 
 const cfg = (apiConfigPath: string): VelociraptorApiConfig => ({
   apiConfigPath,
@@ -328,5 +330,57 @@ describe("an in-flight hunt collect across a set change", () => {
     expect(hunts.veloHuntTimers.has("c1", "H.1")).toBe(false);
     expect(runnerFor("/b/api.yaml")).not.toHaveBeenCalled();
     expect(persistEvidence).not.toHaveBeenCalled(); // nothing from the old server lands in the case
+  });
+});
+
+describe("the case-less client list and time-scope preview follow the open case", () => {
+  async function twoSetApp() {
+    const a = sets.create({ name: "A", velociraptor: velo("/a/api.yaml") });
+    const b = sets.create({ name: "B", velociraptor: velo("/b/api.yaml") });
+    sets.setDefault(a.id);
+    sets.linkCase("c2", b.id);
+    const inventoryDir = join(dir, "velociraptor");
+    const app = createApp(cases, {
+      serverClients: clients(),
+      clientInventoryFor: (id) => new VelociraptorClientStore(join(inventoryDir, `clients-${id}.json`)),
+      artifactBundleStore: new ArtifactBundleStore(privateBundleDir(dir)),
+    });
+    return { app, a, b };
+  }
+
+  it("refresh and read of the client list with a caseId use that case's set and inventory", async () => {
+    const { app } = await twoSetApp();
+    const refreshed = await request(app).post("/velociraptor/clients/refresh").send({ caseId: "c2" });
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.clients[0].clientId).toBe("C.bapiyaml");
+    expect(refreshed.body.setName).toBe("B");
+    expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
+    const read = await request(app).get("/velociraptor/clients?caseId=c2");
+    expect(read.status).toBe(200);
+    expect(read.body.clients[0].clientId).toBe("C.bapiyaml");
+    expect(read.body.setName).toBe("B");
+    const def = await request(app).get("/velociraptor/clients");
+    expect(def.body.clients).toEqual([]); // the default set's inventory was never refreshed
+  });
+
+  it("time-scope preview with a caseId asks that case's server", async () => {
+    const { app } = await twoSetApp();
+    const res = await request(app)
+      .post("/velociraptor/bundles/super-timeline-triage/time-scope-preview")
+      .send({ preset: "7d", caseId: "c2" });
+    expect(res.status).toBe(200);
+    expect(runnerFor("/b/api.yaml")).toHaveBeenCalled();
+    expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
+  });
+
+  it("a named case without a set is refused on all three, never answered from the default set", async () => {
+    const { app } = await twoSetApp();
+    const r1 = await request(app).get("/velociraptor/clients?caseId=unlinked");
+    const r2 = await request(app).post("/velociraptor/clients/refresh").send({ caseId: "unlinked" });
+    const r3 = await request(app)
+      .post("/velociraptor/bundles/super-timeline-triage/time-scope-preview")
+      .send({ preset: "7d", caseId: "unlinked" });
+    expect([r1.status, r2.status, r3.status]).toEqual([409, 409, 409]);
+    expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
   });
 });

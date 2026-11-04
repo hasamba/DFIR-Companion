@@ -70,14 +70,25 @@
     const msg = document.getElementById("veloClientsMsg");
     if (!msg) return;
     const n = _veloClients.length;
+    const from = inv.setName ? ` in server set '${inv.setName}'` : "";
     msg.textContent = n
-      ? `${n} enrolled client${n === 1 ? "" : "s"} · updated ${veloClientsAge(inv.updatedAt)}`
+      ? `${n} enrolled client${n === 1 ? "" : "s"}${from} · updated ${veloClientsAge(inv.updatedAt)}`
       : veloEnabled
         ? "no clients cached yet — click Refresh to snapshot the fleet"
         : "Velociraptor API not configured";
   }
+  // The open case's id on a case-less Velociraptor call: the server then answers from the case's own
+  // server set. With no case open, the call names no case and the server uses the default set.
+  function veloCaseQuery() {
+    const caseId = veloCaseId();
+    return caseId ? `?caseId=${encodeURIComponent(caseId)}` : "";
+  }
+  function veloCaseBody(body) {
+    const caseId = veloCaseId();
+    return caseId ? { ...body, caseId } : body;
+  }
   function loadVeloClients() {
-    fetch("/velociraptor/clients")
+    fetch(`/velociraptor/clients${veloCaseQuery()}`)
       .then((r) => (r.ok ? r.json() : { updatedAt: "", clients: [] }))
       .then(renderVeloClients)
       .catch(() => {});
@@ -96,7 +107,7 @@
     fetch("/velociraptor/clients/refresh", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(veloCaseBody({})),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
@@ -108,7 +119,7 @@
               " — try Reconnect if the server was down";
           return;
         }
-        renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [] });
+        renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [], setName: j.setName });
       })
       .catch((e) => {
         if (msg) msg.textContent = "error: " + e.message;
@@ -264,7 +275,7 @@
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(veloCaseBody(body)),
       },
     )
       .then((r) =>

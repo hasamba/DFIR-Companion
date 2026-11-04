@@ -188,7 +188,9 @@ servers. You do not enter keys again when you move between cases.
   default** and **Delete** to manage the sets. A change applies at once, with no restart.
 - **The default set.** One set has the **default** badge. New cases use it, and so do actions that
   run with no case open, such as the client list on the Velociraptor tab. Those actions show
-  **Using server set: *name*** next to them. After the upgrade, your old IRIS, Timesketch and
+  **Using server set: *name*** next to them. When a case is open, the client list, **↻ Refresh
+  client list** and the time-scope preview use the case's set. The client list then names that
+  set. After the upgrade, your old IRIS, Timesketch and
   Velociraptor settings become a set named **Testing**, and it is the default.
 - **The editor.** Leave a tool empty when the cases on the set do not use it. The Companion then
   hides that tool's buttons for those cases. A stored key or password shows as `••••••`. It stays
@@ -236,7 +238,9 @@ The shared bundle library — global, like every other Settings tab.
 Running a bundle, importing a hunt from the Velociraptor GUI and live monitoring act on the
 connected case, so they live on the dashboard's
 [Fleet Collection panel](dashboard.md#fleet-collection). The API config path, the GUI org and
-the GUI URL belong to each [server set](#server-sets). This tab uses the default set.
+the GUI URL belong to each [server set](#server-sets). **Reconnect** uses the default set. The
+client list and **↻ Refresh client list** use the open case's set, or the default set when no case
+is open.
 
 ---
 

@@ -10,6 +10,7 @@ export interface VeloTarget {
   client: VelociraptorClient;
   /** The server set the client belongs to — it names that server's client inventory file. */
   setId: string;
+  setName: string;
 }
 
 const notInSet = (setName: string): string =>
@@ -27,7 +28,7 @@ function pick(r: ResolveResult, res: Response, missing?: string): VeloTarget | u
     res.status(501).json({ error: missing ?? notInSet(r.servers.setName) });
     return undefined;
   }
-  return { client, setId: r.servers.setId };
+  return { client, setId: r.servers.setId, setName: r.servers.setName };
 }
 
 export function caseVelo(ctx: RouteContext, caseId: string, res: Response, missing?: string) {
@@ -52,6 +53,12 @@ export function requestVelo(ctx: RouteContext, req: Request, res: Response) {
     return undefined;
   }
   return caseVelo(ctx, caseId, res);
+}
+
+/** True when the request names a case (`body.caseId` or `?caseId=`), so requestVelo resolves that case. */
+export function namesCase(req: Request): boolean {
+  const raw = req.body?.caseId ?? req.query?.caseId;
+  return raw !== undefined && raw !== null && raw !== "";
 }
 
 /** The status for an error from a path that resolved the case itself: its 409/501, else 502. */

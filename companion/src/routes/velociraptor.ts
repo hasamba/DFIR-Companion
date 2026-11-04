@@ -26,7 +26,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
-import { caseVelo, defaultVelo, requestVelo, type VeloTarget } from "./veloServers.js";
+import { caseVelo, defaultVelo, namesCase, requestVelo, type VeloTarget } from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
@@ -125,28 +125,33 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     }
   });
 
-  // Read the default set's persisted client inventory (host ↔ client_id map). Empty when never refreshed.
-  app.get("/velociraptor/clients", async (_req: Request, res: Response) => {
-    const inventory = defaultInventory();
+  // Read a set's persisted client inventory (host ↔ client_id map): the case's set with `?caseId=`,
+  // else the default set (empty when it has no Velociraptor). Empty when never refreshed.
+  app.get("/velociraptor/clients", async (req: Request, res: Response) => {
+    const vc = namesCase(req) ? requestVelo(ctx, req, res) : undefined;
+    if (namesCase(req) && !vc) return;
+    const inventory = vc ? options.clientInventoryFor?.(vc.setId) : defaultInventory();
     if (!inventory) return res.status(200).json({ updatedAt: "", clients: [] });
     try {
-      return res.status(200).json(await inventory.load());
+      return res.status(200).json({ ...(await inventory.load()), ...(vc ? { setName: vc.setName } : {}) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
 
-  // Refresh the default set's client inventory now (Settings → Velociraptor "Refresh client list").
-  // 409/501 when the default set has no Velociraptor; 502 on a query failure.
-  app.post("/velociraptor/clients/refresh", async (_req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+  // Refresh a set's client inventory now (Settings → Velociraptor "Refresh client list"): the case's set
+  // with body.caseId, else the default. 409/501 when that set has no Velociraptor; 502 on a query failure.
+  app.post("/velociraptor/clients/refresh", async (req: Request, res: Response) => {
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const inventory = options.clientInventoryFor?.(vc.setId);
     if (!inventory) return res.status(501).json({ error: "client inventory store not configured" });
     try {
       const count = await ctx.refreshVeloClients(vc.setId);
       const inv = await inventory.load();
-      return res.status(200).json({ count, updatedAt: inv.updatedAt, clients: inv.clients });
+      return res
+        .status(200)
+        .json({ count, updatedAt: inv.updatedAt, clients: inv.clients, setName: vc.setName });
     } catch (err) {
       logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
@@ -323,9 +328,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Preview how ONE time scope maps onto a bundle's artifacts, WITHOUT launching anything: which
   // artifacts get bounded (and via which parameter), and which have no date parameter and so collect in
-  // full. Bundles are global, so this route is too. Body: {preset} or {start,end}.
+  // full. Bundles are global; the artifact definitions come from body.caseId's set, else the default.
+  // Body: {preset} or {start,end}, optional caseId.
   app.post("/velociraptor/bundles/:id/time-scope-preview", async (req: Request, res: Response) => {
-    const vc = defaultVelo(ctx, res);
+    const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     let bundle;
