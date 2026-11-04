@@ -171,3 +171,18 @@ describe("createServerClients", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("a corrupt sets.json never reaches the log", () => {
+  it("guarded() logs the error name for a parse error, not the file text V8 quotes", () => {
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => undefined);
+    const set = store.create({ name: "Acme", iris: iris() });
+    store.linkCase("c1", set.id);
+    writeFileSync(join(dir, "server-sets", "sets.json"), "[x iris-key-sentinel-snippet");
+    const r = createServerClients(store, {}, fakes().builders).forCase("c1");
+    expect(r.ok).toBe(false);
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("SyntaxError");
+    expect(logged).not.toContain("iris-key");
+    warn.mockRestore();
+  });
+});

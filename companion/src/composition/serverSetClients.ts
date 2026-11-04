@@ -3,6 +3,7 @@ import type { IrisClient } from "../integrations/iris/irisClient.js";
 import type { TimesketchClient } from "../integrations/timesketch/timesketchClient.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { logSafeError } from "../integrations/serverSets/logSafeError.js";
 import {
   incompleteTools,
   type CaseServers,
@@ -87,8 +88,8 @@ export function createServerClients(
       if (r.ok) logged.delete(key);
       return r;
     } catch (err) {
-      // The message names no secret: decrypt errors carry no plaintext. Log it, never return it.
-      const msg = (err as Error).message;
+      // Decrypt errors carry no plaintext; a parse error quotes the file, so only its name. Never returned.
+      const msg = logSafeError(err);
       if (logged.get(key) !== msg) warnLine(`[server-sets] ${msg}`);
       logged.set(key, msg);
       return fail(UNREADABLE);

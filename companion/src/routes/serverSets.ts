@@ -23,6 +23,7 @@ import {
   type ServerSet,
   type ToolName,
 } from "../integrations/serverSets/types.js";
+import { logSafeError } from "../integrations/serverSets/logSafeError.js";
 import type { RouteContext } from "./context.js";
 import { parseServerSetInput, probeError } from "./serverSetBody.js";
 
@@ -119,7 +120,7 @@ function withStore(
     try {
       return await handler(sets, req, res);
     } catch (err) {
-      ctx.serverLogger.error(`[server-sets] ${req.method} ${req.path}: ${(err as Error).message}`);
+      ctx.serverLogger.error(`[server-sets] ${req.method} ${req.path}: ${logSafeError(err)}`);
       return res.status(500).json({ error: "Server sets cannot be read. Check the server log." });
     }
   };

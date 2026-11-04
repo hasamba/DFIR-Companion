@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { createApp } from "../../src/server.js";
+import { createApp, getServerLogger } from "../../src/server.js";
 import { readFile } from "node:fs/promises";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
@@ -311,6 +311,19 @@ describe("POST / PUT / DELETE / default", () => {
     expect(sets.defaultId()).toBe(other.id);
     expect((await request(app).delete(`/server-sets/${broken.id}`)).status).toBe(204);
     expect(sets.has(broken.id)).toBe(false);
+  });
+
+  it("a corrupt sets.json answers 500 and the log names the error, never the file text", async () => {
+    sets.create(fullSet("Lab"));
+    writeFileSync(join(dir, "server-sets", "sets.json"), "[x iris-key-sentinel-snippet");
+    const app = singleUserApp();
+    const logged: string[] = [];
+    const error = vi.spyOn(getServerLogger(), "error").mockImplementation((m: string) => void logged.push(m));
+    const res = await request(app).get("/server-sets");
+    error.mockRestore();
+    expect(res.status).toBe(500);
+    expect(logged.join("\n")).toContain("SyntaxError");
+    expect(logged.join("\n")).not.toContain("iris-key");
   });
 
   it("reports usedBy as a count", async () => {
