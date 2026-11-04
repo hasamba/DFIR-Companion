@@ -969,8 +969,9 @@
         <input id="ncName" placeholder="short description" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Investigator
         <input id="ncInvestigator" placeholder="your name" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
-      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Servers
+      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Velociraptor / IRIS / Timesketch servers (optional)
         <select id="ncServerSet" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select></label>
+      <div data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px;">Uses your default set. Choose a different saved set, or create a new one for this investigation.</div>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Incident type (optional)
         <select id="ncTemplate" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;">
           <option value="">No incident type — blank case</option>
@@ -1038,8 +1039,8 @@
        case has work on its old servers. -->
   <div id="caseServersPickOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="caseServersPickTitle">
     <div class="comment-modal">
-      <h3 id="caseServersPickTitle">Server set for this case</h3>
-      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Servers
+      <h3 id="caseServersPickTitle">Velociraptor / IRIS / Timesketch servers for this case</h3>
+      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Server set
         <select id="caseServersPick" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select></label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="caseServersPickApply" type="button">Change</button>
@@ -1054,7 +1055,7 @@
       <ul id="caseServersConfirmList" data-safe-style="font-size:13px; margin:8px 0; padding-left:18px;"></ul>
       <p id="caseServersConfirmNote" data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 10px">Nothing on the old servers is deleted. Evidence in this case is kept.</p>
       <div data-safe-style="display:flex; gap:8px; align-items:center;">
-        <button id="caseServersConfirmBtn" type="button">Change servers</button>
+        <button id="caseServersConfirmBtn" type="button">Change server set</button>
         <button id="caseServersConfirmCancel" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="caseServersConfirmMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>

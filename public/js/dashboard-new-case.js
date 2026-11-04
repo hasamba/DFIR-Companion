@@ -66,7 +66,7 @@
     try {
       const list = await fetchServerSets();
       for (const set of list.sets) add(set.id, set.name);
-      if (list.editable) add(NEW_SET, "+ New server set…");
+      if (list.editable) add(NEW_SET, "+ Create a new server set…");
       select.value = selectId || list.defaultId;
     } catch {
       add("", "Default server set"); // the server links a case with no serverSetId to the default

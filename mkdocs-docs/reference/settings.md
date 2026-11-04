@@ -196,14 +196,14 @@ servers. You do not enter keys again when you move between cases.
   hides that tool's buttons for those cases. A stored key or password shows as `••••••`. It stays
   the same unless you type a new value. **Test connection** tests the saved set, so save your
   edits first.
-- **New Case form.** The **Servers** list preselects the default set. Pick another set, or pick
-  **+ New server set…** to make one. The new set is selected when you save it.
-- **The case header.** Next to the case name, the header shows **Servers: *set name***. If the
-  case has no usable set, the header shows **Servers: none** in red. Point at it to see why.
+- **New Case form.** The **Velociraptor / IRIS / Timesketch servers (optional)** list preselects the default set. Pick another set, or pick
+  **+ Create a new server set…** to make one. The new set is selected when you save it.
+- **The case header.** Next to the case name, the header shows **Server set: *set name***. If the
+  case has no usable set, the header shows **Server set: none** in red. Point at it to see why.
 - **Change….** The button next to the label attaches a different set to the case. If the case
   has work on its old servers, the Companion warns first. The warning lists the live monitors
   that will stop, the IRIS case link that will be forgotten and the Velociraptor hunts that will
-  be forgotten. Click **Change servers** to go on, or **Cancel** to change nothing.
+  be forgotten. Click **Change server set** to go on, or **Cancel** to change nothing.
 - **What is kept.** Nothing on the old servers is deleted. The Companion only stops talking to
   them. Events, IOCs and findings in the case stay. The next IRIS push makes a new IRIS case on
   the new server. The case's activity log records the change.
@@ -216,7 +216,7 @@ servers. You do not enter keys again when you move between cases.
   folder. In Docker, that folder is `/data/server-sets`. The supplied `docker-compose.yml` mounts
   `./server-sets:/data/server-sets`, next to `./cases:/data/cases`. If you start the container
   yourself, mount both folders. If you mount only the cases folder, a restart loses every set, and
-  each case then shows **Servers: none**. Back up both folders together: the key that decrypts
+  each case then shows **Server set: none**. Back up both folders together: the key that decrypts
   the sets is in the cases folder.
 
 The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`

@@ -162,7 +162,7 @@ describe("New Case form", () => {
     await api.openNewCase();
     await flush();
     const select = el("ncServerSet");
-    expect(select.options.map((o) => o.textContent)).toEqual(["Alpha", "Beta", "+ New server set…"]);
+    expect(select.options.map((o) => o.textContent)).toEqual(["Alpha", "Beta", "+ Create a new server set…"]);
     expect(select.value).toBe("b");
   });
 
@@ -177,7 +177,7 @@ describe("New Case form", () => {
     expect(post?.body?.serverSetId).toBe("a");
   });
 
-  it("opens the editor from '+ New server set…' and selects the new set on save", async () => {
+  it("opens the editor from '+ Create a new server set…' and selects the new set on save", async () => {
     const h = newCaseHarnessWith({
       "POST /server-sets": { status: 201, body: { id: "c", name: "Gamma", revision: 1 } },
     });
@@ -244,10 +244,10 @@ describe("case header", () => {
       "GET /cases/C2/server-set": { body: { setId: "b", name: "Beta", tools: [] } },
     });
     await api.refreshCaseServers("C1");
-    expect(el("caseServersLabel").textContent).toBe("Servers: Alpha");
+    expect(el("caseServersLabel").textContent).toBe("Server set: Alpha");
     expect(el("caseServersLabel").hidden).toBe(false);
     await api.refreshCaseServers("C2");
-    expect(el("caseServersLabel").textContent).toBe("Servers: Beta");
+    expect(el("caseServersLabel").textContent).toBe("Server set: Beta");
   });
 
   it("ignores a late answer for the case the analyst already left", async () => {
@@ -262,17 +262,17 @@ describe("case header", () => {
     release({ body: { setId: "a", name: "Alpha", tools: ["iris"] } });
     await first;
     await flush();
-    expect(el("caseServersLabel").textContent).toBe("Servers: Beta");
+    expect(el("caseServersLabel").textContent).toBe("Server set: Beta");
   });
 
-  it("shows 'Servers: none' in the error style, with the resolver message as the tooltip", async () => {
+  it("shows 'Server set: none' in the error style, with the resolver message as the tooltip", async () => {
     const message = "This case has no server set. Pick one with Change… in the case header.";
     const { api, el, doc } = loadCaseServers({
       "GET /cases/C1/server-set": { status: 409, body: { error: message } },
     });
     await api.refreshCaseServers("C1");
     const label = el("caseServersLabel");
-    expect(label.textContent).toBe("Servers: none");
+    expect(label.textContent).toBe("Server set: none");
     expect(label.classList.contains("case-servers-error")).toBe(true);
     expect(label.title).toBe(message);
     expect(pushValues(doc)).toEqual([""]);
@@ -289,7 +289,7 @@ describe("case header", () => {
     });
     await api.refreshCaseServers("C1");
     await api.loadServerSets();
-    expect(el("caseServersLabel").textContent).toBe(`Servers: ${evil}`);
+    expect(el("caseServersLabel").textContent).toBe(`Server set: ${evil}`);
     expect(el("serverSetsList").textContent).toContain(evil);
     expect(el("veloDefaultLabel").textContent).toBe(`Using server set: ${evil}`);
     expect(doc.htmlWrites()).toEqual([]);
@@ -355,7 +355,7 @@ describe("Change… flow", () => {
   const posts = (h: ReturnType<typeof changeHarness>) =>
     h.net.calls.filter((c) => c.method === "POST" && c.url === "/cases/C1/server-set");
 
-  it("change with work shows the confirm text and sends confirm:true only on Change servers", async () => {
+  it("change with work shows the confirm text and sends confirm:true only on Change server set", async () => {
     const h = changeHarness((call) =>
       call.body?.confirm === true ? { body: { changed: true } } : { status: 409, body: WORK },
     );
@@ -371,7 +371,7 @@ describe("Change… flow", () => {
     expect(h.el("caseServersConfirmNote").textContent).toBe(
       "Nothing on the old servers is deleted. Evidence in this case is kept.",
     );
-    expect(h.el("caseServersConfirmBtn").textContent).toBe("Change servers");
+    expect(h.el("caseServersConfirmBtn").textContent).toBe("Change server set");
     expect(h.el("caseServersConfirmCancel").textContent).toBe("Cancel");
     expect(posts(h).map((c) => c.body)).toEqual([{ setId: "b" }]);
 
@@ -470,7 +470,7 @@ describe("Change… flow", () => {
       },
     );
     await h.api.refreshCaseServers("C1");
-    expect(h.el("caseServersLabel").textContent).toBe("Servers: Alpha");
+    expect(h.el("caseServersLabel").textContent).toBe("Server set: Alpha");
     expect(h.el("caseServersChangeBtn").hidden).toBe(true);
   });
   // Fix round 1: a change that finishes after the analyst opened another case must not repaint the
@@ -500,7 +500,7 @@ describe("Change… flow", () => {
     await h.api.refreshCaseServers("C2");
     h.release({ body: { changed: true } });
     await flush();
-    expect(h.el("caseServersLabel").textContent).toBe("Servers: Other case");
+    expect(h.el("caseServersLabel").textContent).toBe("Server set: Other case");
     expect(h.c1Reads(), "no re-read of the case the analyst left").toBe(1);
   });
 
@@ -514,7 +514,7 @@ describe("Change… flow", () => {
     await h.api.refreshCaseServers("C2");
     h.release({ body: { changed: true } });
     await flush();
-    expect(h.el("caseServersLabel").textContent).toBe("Servers: Other case");
+    expect(h.el("caseServersLabel").textContent).toBe("Server set: Other case");
     expect(h.c1Reads()).toBe(1);
   });
 });

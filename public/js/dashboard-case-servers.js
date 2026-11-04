@@ -1,4 +1,4 @@
-// The open case's server set: the "Servers: <set name>" label beside the case picker, the
+// The open case's server set: the "Server set: <set name>" label beside the case picker, the
 // "Change…" button and its two dialogs, and the gating of the IRIS / Timesketch / Velociraptor
 // controls by the tools that set uses.
 //
@@ -98,7 +98,7 @@
     const label = byId("caseServersLabel");
     if (!label) return;
     label.textContent = text;
-    label.title = error || "";
+    label.title = error || "The Velociraptor, IRIS and Timesketch servers this case uses";
     label.classList.toggle("case-servers-error", !!error);
     label.hidden = false;
   }
@@ -116,7 +116,7 @@
       return;
     }
     applyCaseTools(); // hide the tools until the case's own answer arrives
-    paintLabel("Servers: …");
+    paintLabel("Server set: …");
     if (change) change.hidden = !canAdministerCase(id);
     let res;
     let body;
@@ -130,10 +130,10 @@
     if (current.caseId !== id) return; // the analyst moved on; this answer is for the old case
     if (res.ok) {
       current = { caseId: id, setId: body.setId || "", tools: Array.isArray(body.tools) ? body.tools : [] };
-      paintLabel(`Servers: ${body.name || ""}`);
+      paintLabel(`Server set: ${body.name || ""}`);
     } else {
       current = { caseId: id, setId: "", tools: [] };
-      paintLabel("Servers: none", body.error || `HTTP ${res.status}`);
+      paintLabel("Server set: none", body.error || `HTTP ${res.status}`);
     }
     applyCaseTools();
   }
@@ -232,7 +232,7 @@
       list.appendChild(li);
     }
     byId("caseServersConfirmNote").textContent = NOTE;
-    byId("caseServersConfirmBtn").textContent = "Change servers";
+    byId("caseServersConfirmBtn").textContent = "Change server set";
     byId("caseServersConfirmCancel").textContent = "Cancel";
     setMsg("caseServersConfirmMsg", "");
     byId("caseServersConfirmOverlay").classList.add("open");
