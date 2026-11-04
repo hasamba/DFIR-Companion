@@ -206,6 +206,25 @@ describe("POST /cases/:id/server-set", () => {
     expect(res.body.error).toBe("Server set not found.");
   });
 
+  it("404s for a case that does not exist and writes no link", async () => {
+    const app = await makeApp();
+    const res = await request(app)
+      .post("/cases/no-such-case/server-set")
+      .send({ setId: setB, confirm: true });
+    expect(res.status).toBe(404);
+    expect(sets.caseSetId("no-such-case")).toBeUndefined();
+  });
+
+  it("the change's audit line names the case", async () => {
+    const app = await makeApp();
+    const info = vi.spyOn(getServerLogger(), "info");
+    const res = await request(app).post("/cases/c1/server-set").send({ setId: setB });
+    expect(res.status).toBe(200);
+    const line = info.mock.calls.map((c) => String(c[0])).find((l) => l.includes("case-server-set-changed"));
+    expect(line).toContain("case=c1");
+    info.mockRestore();
+  });
+
   it("answers changed:false for the set the case already uses", async () => {
     const app = await makeApp();
     const res = await request(app).post("/cases/c1/server-set").send({ setId: setA });

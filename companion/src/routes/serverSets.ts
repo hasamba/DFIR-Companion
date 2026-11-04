@@ -41,12 +41,20 @@ function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
   return !!auth && teamAuth.isGlobalAdministrator(auth);
 }
 
-function audit(ctx: RouteContext, req: Request, action: string, set: Pick<ServerSet, "id" | "name">): void {
+// `caseId` is set for a case's set change, so the audit entry names the case it touched.
+function audit(
+  ctx: RouteContext,
+  req: Request,
+  action: string,
+  set: Pick<ServerSet, "id" | "name">,
+  caseId?: string,
+): void {
   const auth = requestAuthentication(req);
   if (auth?.kind === "session") {
-    ctx.options.teamAuth?.store.addAudit(auth.identity, action, set.id, undefined, set.name);
+    ctx.options.teamAuth?.store.addAudit(auth.identity, action, set.id, caseId, set.name);
   }
-  ctx.serverLogger.info(`[server-sets] ${action} id=${set.id} name=${JSON.stringify(set.name)}`);
+  const onCase = caseId ? ` case=${caseId}` : "";
+  ctx.serverLogger.info(`[server-sets] ${action}${onCase} id=${set.id} name=${JSON.stringify(set.name)}`);
 }
 
 // The store's own refusals are the caller's mistake (400) except an unknown id (404).
@@ -215,7 +223,7 @@ async function applyChange(
     return res.status(500).json({ error: CHANGE_FAILED });
   }
   const { stopped, hunts } = done;
-  audit(ctx, req, "case-server-set-changed", target);
+  audit(ctx, req, "case-server-set-changed", target, caseId);
   await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, caseId, {
     category: "settings",
     action: "server-set-changed",
