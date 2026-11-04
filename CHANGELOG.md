@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Settings values with # or quotes** — saved as written and read the same at restart and on Test / reconnect; re-save any secret that contains # (closes #2280)
+- **Drop folder no longer re-imports a stuck file** — a file whose move out of `drop/` fails is held back and reported instead of being imported again every two polls (closes #2281)
+- **Drop-folder move across disks is memory-bounded** — the cross-filesystem move streams the file instead of reading it whole (closes #2270)
+- **Outbound redirects follow HTTP rules** — 303 and POST-301/302 become GET without the body, and a redirect to another server is refused while the request still carries headers or a body (closes #2269)
+- **Outbound URL guard cleanup** — removed the unpinned validate-only helper (closes #2271) and the fetch type casts that hid undici's Response type (closes #2268)
 - **Team-mode Docker restart loop after a crash** — a writer lock left by an unclean exit (OOM, `docker kill`) no longer blocks the next container, and a second live container is still refused (closes #2278)
 - **Settings and saved views survive a container recreate** — `docker-compose.yml` now mounts `./data`, so the Settings file, dashboard views, report templates, tagger rules, notifications and logs persist
 - **Team accounts survive a container recreate** — `docker-compose.yml` now keeps team-mode accounts in `./auth`; before, `docker compose up -d` after an edit deleted every account
