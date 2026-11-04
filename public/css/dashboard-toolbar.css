@@ -557,4 +557,6 @@ body { padding-bottom: var(--preflight-banner-h, 0px); }
 .server-set-check { display: block; font-size: 12px; margin: 2px 0 6px; }
 /* Above Settings and New Case, the two overlays that open it; below the Browse… picker (65). */
 #serverSetEditorOverlay { z-index: 60; }
+/* The case's set picker and its warning open from Settings → Server sets, so they sit above it too. */
+#caseServersPickOverlay, #caseServersConfirmOverlay { z-index: 60; }
 .server-set-editor { width: min(720px, 94vw); }

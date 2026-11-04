@@ -269,6 +269,16 @@ describe("case header", () => {
     expect(panel).toMatch(/<button id="caseServersChangeBtn"[^>]*>Change\u2026<\/button>/);
   });
 
+  it("the picker and the warning open above Settings, which launches them", () => {
+    // Settings (#settingsOverlay) is a .comment-overlay at z-index 50 and comes later in the page,
+    // so a dialog on the same layer opened behind it.
+    const css = readFileSync(new URL("../../../public/css/dashboard-toolbar.css", import.meta.url), "utf8");
+    for (const id of ["caseServersPickOverlay", "caseServersConfirmOverlay"]) {
+      const rule = css.match(new RegExp(`#${id}[^{]*\\{[^}]*z-index:\\s*(\\d+)`));
+      expect(Number(rule?.[1]), id).toBeGreaterThan(50);
+    }
+  });
+
   it("the Settings line names the open case's set, and says why when it is unusable", async () => {
     const ok = loadCaseServers({
       "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },
