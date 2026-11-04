@@ -808,25 +808,25 @@ left unset the container still does full capture and all the deterministic impor
 **Localhost-only by design:** the container binds `0.0.0.0` internally, but Compose publishes the
 port to `127.0.0.1` on your host — so the dashboard is never exposed on your network.
 
-1. **Start it** (build from source):
+1. **Start it** with the prebuilt image from GHCR. This needs only the compose file, not the
+   whole repo:
+
+   ```
+   mkdir dfir-companion && cd dfir-companion
+   curl -fsSLO https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/docker-compose.yml
+   docker compose pull && docker compose up -d --no-build   # → http://127.0.0.1:4773/dashboard
+   # image: ghcr.io/hasamba/dfir-companion:<current release>
+   ```
+
+   `--no-build` stops Compose from falling back to a source build, which fails without the repo.
+
+   Or build from source instead:
 
    ```
    git clone https://github.com/hasamba/DFIR-Companion.git
    cd DFIR-Companion
    docker compose up -d --build      # → http://127.0.0.1:4773/dashboard
    ```
-
-   Or pull the prebuilt image from GHCR instead of building. This needs only the compose file,
-   not the whole repo:
-
-   ```
-   mkdir dfir-companion && cd dfir-companion
-   curl -fsSLO https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/docker-compose.yml
-   docker compose pull && docker compose up -d --no-build
-   # image: ghcr.io/hasamba/dfir-companion:<current release>
-   ```
-
-   `--no-build` stops Compose from falling back to a source build, which fails without the repo.
 
 2. **Load the add-on** (capture). The container writes the pre-built, unpacked extension to
    `./addon` on first start. In Chrome/Comet open `chrome://extensions`, enable **Developer
