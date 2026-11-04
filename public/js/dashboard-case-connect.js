@@ -723,6 +723,10 @@
   // handler that forgets an unremembered unlock. All four bind to markup, so they are load-time
   // work.
   function initCaseConnect() {
+    // The server-set modules wire here, beside the case-load path that drives them (guarded: a
+    // missing module costs its own controls, never this wiring).
+    if (typeof initServerSets === "function") initServerSets();
+    if (typeof initCaseServers === "function") initCaseServers();
     // Guarded like every other markup binding here: an older cached dashboard.html without the
     // button must not throw and take the rest of this wiring — the mismatch banner and the
     // unlock-forgetting pagehide handler — down with it.

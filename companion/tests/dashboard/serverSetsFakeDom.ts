@@ -136,6 +136,16 @@ export class FakeEl {
     if (prop) prop.call(this, e);
     for (const fn of this.listeners.get(type) ?? []) fn.call(this, e);
   }
+  /** The browser's dispatchEvent, enough for `new Event(type)`. */
+  dispatchEvent(e: { type: string }): boolean {
+    this.fire(e.type);
+    return true;
+  }
+  closest(sel: string): FakeEl | null {
+    let node: FakeEl | null = this;
+    while (node && !node.matches(sel)) node = node.parent;
+    return node;
+  }
   click(): void {
     if (!this.disabled) this.fire("click");
   }

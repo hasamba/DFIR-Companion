@@ -1158,16 +1158,16 @@ export const FEATURES: Feature[] = [
   {
     // Settings → Server sets and the set editor. fetchServerSets is shared with the New Case picker
     // and the case header's Change… dialog.
+    // No `initializer`: initCaseConnect() runs initServerSets(), not the inline script.
     file: "dashboard-server-sets.js",
-    initializer: "initServerSets",
     publish: ["initServerSets", "loadServerSets", "fetchServerSets", "openServerSetEditor"],
     private: ["lastList", "editing", "dirty", "editorOpts"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
+    // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.
     file: "dashboard-case-servers.js",
-    initializer: "initCaseServers",
     publish: ["initCaseServers", "refreshCaseServers", "caseToolEnabled", "setDefaultServerTools"],
     private: ["current", "defaults", "pendingSetId"],
   },
@@ -2087,4 +2087,5 @@ export const NON_FEATURES = new Set([
   "dashboard-sigma-coverage.js", // Hunt Workbench → Sigma coverage (#2217): reads the DOM, calls one route, holds no state
   "dashboard-sigma-dryrun.js", // Sigma paste card → Dry-run on this case (#2211): called by the card, calls one route, holds no state
   "dashboard-facade.js",
+  "dashboard-wizard-server-set.js", // the wizard's save into the default server set: calls routes, holds no state
 ]);

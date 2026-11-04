@@ -207,7 +207,11 @@
         : "") +
       wizRenderFields(step.fields) +
       '<div class="wiz-actions"><button class="wiz-btn" id="wizStepSaveBtn">Save &amp; test</button>' +
-      '<span data-safe-style="font-size:11px;color:var(--text-muted)">Saved to your local .env (gitignored).</span></div>' +
+      '<span data-safe-style="font-size:11px;color:var(--text-muted)">' +
+      (step.serverSet
+        ? "Saved to the default server set. Edit sets in Settings → Server sets."
+        : "Saved to your local .env (gitignored).") +
+      "</span></div>" +
       '<div id="wizStepResult" class="wiz-result"></div>'
     );
   }
@@ -356,9 +360,13 @@
     } else {
       const btn = wizEl("wizStepSaveBtn"),
         res = wizEl("wizStepResult");
+      // The IRIS / Timesketch / Velociraptor steps save into the default server set (the server
+      // reads their .env keys only once, as a first-run seed): js/dashboard-wizard-server-set.js.
       if (btn)
         btn.onclick = () =>
-          wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
+          step.serverSet && typeof wizSaveServerSetStep === "function"
+            ? wizSaveServerSetStep(step, res, btn)
+            : wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
     }
     // Path fields render their own Browse… / Download-latest buttons (wizRenderFields), and this
     // pane is rebuilt on every visit — so they are re-bound here rather than once at load.

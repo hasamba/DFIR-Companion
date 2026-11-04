@@ -377,9 +377,12 @@
   <!-- New case creation. initNewCase() wires its eight controls. -->
   <script src="/js/dashboard-new-case.js"></script>
   <!-- Server sets (per-case IRIS / Timesketch / Velociraptor). initServerSets() wires the Settings
-       list and the set editor; initCaseServers() wires the case header label and Change…. -->
+       list and the set editor; initCaseServers() wires the case header label and Change…. Both
+       run from initCaseConnect(), the case-load path they belong to, not from the inline script. -->
   <script src="/js/dashboard-server-sets.js"></script>
   <script src="/js/dashboard-case-servers.js"></script>
+  <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
+  <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
   <script src="/js/dashboard-case-templates.js"></script>
   <!-- Velociraptor triage. Owns the bundle/client caches behind accessors. -->
@@ -5515,7 +5518,7 @@
     // facade reports at load rather than stubbing — see that file's header for why.
     // The case-load path lives in public/js/dashboard-case-connect.js. Like render(), the facade
     // reports it missing at load rather than stubbing it — see that file's header.
-    if (typeof initCaseConnect === "function") initCaseConnect(); if (typeof initServerSets === "function") initServerSets(); if (typeof initCaseServers === "function") initCaseServers();
+    if (typeof initCaseConnect === "function") initCaseConnect();
     // instead of writing _cachedTemplates across the shared global lexical environment.
     // Save as Template moved to js/dashboard-save-template.js (#415 tier 3).
     // IOC block-list export moved to js/dashboard-ioc-blocklist.js (#415 tier 3).

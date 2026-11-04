@@ -193,6 +193,8 @@
     setMsg("caseServersPickMsg", "Changing…");
     try {
       const { res, body, caseId } = await postChange(setId, false);
+      // The analyst opened another case while the request ran: its header and tools are not ours.
+      if (current.caseId !== caseId) return closeOverlay("caseServersPickOverlay");
       if (res.status === 409 && body.needsConfirm) {
         closeOverlay("caseServersPickOverlay");
         openConfirm(setId, body.work || {});
@@ -254,7 +256,7 @@
         return;
       }
       cancelConfirm();
-      await refreshCaseServers(caseId);
+      if (current.caseId === caseId) await refreshCaseServers(caseId); // not after a case switch
     } catch (e) {
       setMsg("caseServersConfirmMsg", `The change did not finish: ${e.message}`);
     } finally {

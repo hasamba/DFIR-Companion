@@ -121,6 +121,10 @@ function loadCaseServers(routes: Routes, globals: Record<string, unknown> = {}) 
   return { api, doc, net, el: (id: string) => doc.getElementById(id) as FakeEl, applied: () => veloApplied };
 }
 
+function el(doc: FakeDocument, id: string): FakeEl {
+  return doc.getElementById(id) as FakeEl;
+}
+
 function pushValues(doc: FakeDocument): string[] {
   return (doc.getElementById("pushSelect") as FakeEl).options.map((o) => o.value);
 }
@@ -441,6 +445,50 @@ describe("Change… flow", () => {
     expect(h.el("caseServersLabel").textContent).toBe("Servers: Alpha");
     expect(h.el("caseServersChangeBtn").hidden).toBe(true);
   });
+  // Fix round 1: a change that finishes after the analyst opened another case must not repaint the
+  // header or re-gate the tools for the old case.
+  function racedHarness() {
+    let release: (r: Route) => void = () => {};
+    let confirmFirst = false;
+    const h = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },
+      "GET /cases/C2/server-set": { body: { setId: "a", name: "Other case", tools: [] } },
+      "POST /cases/C1/server-set": (call) => {
+        if (confirmFirst && call.body?.confirm !== true) return { status: 409, body: WORK };
+        return new Promise<Route>((r) => (release = r));
+      },
+    });
+    return {
+      ...h,
+      needConfirm: () => (confirmFirst = true),
+      release: (r: Route) => release(r),
+      c1Reads: () => h.net.calls.filter((c) => c.url === "/cases/C1/server-set" && c.method === "GET").length,
+    };
+  }
+
+  it("a change that lands after a case switch leaves the new case's header alone", async () => {
+    const h = racedHarness();
+    await pickBeta(h);
+    await h.api.refreshCaseServers("C2");
+    h.release({ body: { changed: true } });
+    await flush();
+    expect(h.el("caseServersLabel").textContent).toBe("Servers: Other case");
+    expect(h.c1Reads(), "no re-read of the case the analyst left").toBe(1);
+  });
+
+  it("a confirmed change that lands after a case switch leaves the new case's header alone", async () => {
+    const h = racedHarness();
+    h.needConfirm();
+    await pickBeta(h);
+    expect(h.el("caseServersConfirmOverlay").classList.contains("open")).toBe(true);
+    h.el("caseServersConfirmBtn").click();
+    await flush();
+    await h.api.refreshCaseServers("C2");
+    h.release({ body: { changed: true } });
+    await flush();
+    expect(h.el("caseServersLabel").textContent).toBe("Servers: Other case");
+    expect(h.c1Reads()).toBe(1);
+  });
 });
 
 describe("Settings → Server sets", () => {
@@ -588,5 +636,94 @@ describe("Settings → Server sets", () => {
     expect(rows.map((r) => r.querySelectorAll("button").length)).toEqual([0, 0]);
     expect(rows[1].querySelector(".server-set-badge")?.textContent).toBe("default");
     expect(el("serverSetAddBtn").hidden).toBe(true);
+  });
+  // Fix round 1 — the Browse… picker sets the value without an input event, so the editor compares
+  // its fields with the saved set instead of trusting a dirty flag alone.
+  it("refuses to test when a field differs from the saved set, even with no input event", async () => {
+    const { api, el, net } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "POST /server-sets/b/test": { body: { velociraptor: { ok: true } } },
+    });
+    await api.loadServerSets();
+    api.openServerSetEditor(STORED);
+    el("sseVeloConfig").value = "/srv/velo/other.config.yaml"; // what Browse… does
+    el("sseTest").click();
+    await flush();
+    expect(net.calls.some((c) => c.url === "/server-sets/b/test")).toBe(false);
+    expect(el("sseTest").disabled).toBe(true);
+    expect(el("sseTestHint").textContent).toBe("Save first to test");
+  });
+
+  it("Browse… marks the editor dirty: Test waits for a save", async () => {
+    const doc = new FakeDocument();
+    serverSetMarkup(doc);
+    doc.add("input", "fsBrowseSearch", "env-DFIR_VELOCIRAPTOR_BINARY");
+    doc.add("div", "fsBrowseEntries", "fsBrowseOverlay", "fsBrowseMsg");
+    doc.add("span", "fsBrowseTitle", "fsBrowsePath", "veloDownloadMsg");
+    doc.add(
+      "button",
+      "fsBrowseCancelBtn",
+      "fsBrowseSelectBtn",
+      "veloBrowseBinaryBtn",
+      "veloDownloadLatestBtn",
+    );
+    el(doc, "sseVeloBrowse").dataset.wizBrowse = "sseVeloConfig";
+    el(doc, "serverSetEditorOverlay").appendChild(el(doc, "sseVeloBrowse"));
+    const net = routedFetch({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "GET /settings/browse-fs?dir=%2Fsrv%2Fvelo%2Fapi.config.yaml": {
+        body: { dir: "/srv/velo", parent: "/srv", entries: [] },
+      },
+    });
+    const api = loadDashboardModule<ServerSetsApi & { initFsBrowse(): void }>(
+      "dashboard-server-sets.js",
+      ["dashboard-velo-fs-browse.js"],
+      {
+        document: doc,
+        fetch: net.fetch,
+        esc: (v: unknown) => String(v),
+        Event: class {
+          constructor(readonly type: string) {}
+        },
+      },
+    );
+    api.initFsBrowse();
+    api.initServerSets();
+    await api.loadServerSets();
+    api.openServerSetEditor(STORED);
+    expect(el(doc, "sseTest").disabled).toBe(false);
+
+    el(doc, "sseVeloBrowse").click();
+    await flush();
+    const row = doc.createElement("div");
+    row.className = "merge-candidate-row";
+    row.dataset.id = "/srv/velo/other.config.yaml";
+    el(doc, "fsBrowseEntries").fire("click", { target: row });
+    el(doc, "fsBrowseSelectBtn").click();
+
+    expect(el(doc, "sseVeloConfig").value).toBe("/srv/velo/other.config.yaml");
+    expect(el(doc, "sseTest").disabled).toBe(true);
+    expect(el(doc, "sseTestHint").textContent).toBe("Save first to test");
+  });
+
+  it("warns about an incomplete tool on save, and still saves", async () => {
+    const { api, el, net } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "POST /server-sets": { status: 201, body: { id: "c", name: "Half", revision: 1 } },
+    });
+    await api.loadServerSets();
+    api.openServerSetEditor(null);
+    el("sseName").value = "Half";
+    el("sseIrisUrl").value = "https://iris.example.com"; // no key
+    el("sseTsPassword").value = "word-like-password"; // no URL, no user
+    el("sseSave").click();
+    await flush();
+    expect(net.calls.some((c) => c.method === "POST" && c.url === "/server-sets")).toBe(true);
+    const text = el("sseMsg").textContent;
+    expect(text).toContain("IRIS is incomplete: cases on this set cannot use IRIS until it is complete.");
+    expect(text).toContain(
+      "Timesketch is incomplete: cases on this set cannot use Timesketch until it is complete.",
+    );
+    expect(text).not.toContain("Velociraptor is incomplete");
   });
 });

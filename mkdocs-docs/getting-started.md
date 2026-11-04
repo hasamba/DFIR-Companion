@@ -90,9 +90,9 @@ When you open the dashboard for the first time with no AI provider configured, a
 |------|--------------------|
 | **AI analysis** | Provider (OpenAI, Anthropic/Claude, OpenRouter, Gemini, Ollama, LiteLLM), model name, API key. A "Save & test" button confirms the key works before you proceed. |
 | **Presidio PII scan** | Optional analyzer URL, confidence floor and timeout for the extra PII detector in front of the AI. Save, then restart — these keys are read at startup. |
-| **Velociraptor** | API config path for hunt-and-collect integration. |
-| **DFIR-IRIS** | URL + key for bidirectional case sync. |
-| **Timesketch** | URL + credentials to push the timeline to Timesketch. |
+| **Velociraptor** | API config path for hunt-and-collect integration. The path and GUI URL go into the default [server set](reference/settings.md#server-sets); the binary path stays global. |
+| **DFIR-IRIS** | URL + key for bidirectional case sync. Saved to the default [server set](reference/settings.md#server-sets). |
+| **Timesketch** | URL + credentials to push the timeline to Timesketch. Saved to the default [server set](reference/settings.md#server-sets). |
 | **Notion** | API token for exporting cases to Notion pages. |
 | **ClickUp** | API token for pushing the response playbook to ClickUp. |
 | **Threat-intel enrichment** | API keys for VirusTotal, AbuseIPDB, Hunting.ch, CrowdStrike, Shodan, MISP, YETI, OpenCTI, RockyRaccoon, GeoIP. |

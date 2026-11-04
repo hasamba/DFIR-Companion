@@ -213,7 +213,8 @@ servers. You do not enter keys again when you move between cases.
 
 The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`
 and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the
-upgrade, to make the **Testing** set. After that, edit the sets here.
+upgrade, to make the **Testing** set. After that, edit the sets here. The setup wizard's
+DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not into `.env`.
 
 ---
 

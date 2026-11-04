@@ -35,6 +35,7 @@
   let lastList = null; // the last GET /server-sets answer, with `editable`
   let editing = null; // the set open in the editor; null for a new set
   let dirty = false; // the editor holds edits that are not saved
+  let loadedSnapshot = ""; // readEditor() as it stood right after the set was loaded or saved
   let editorOpts = {}; // { onSaved, closeOnSave } from the caller that opened the editor
 
   const byId = (id) => document.getElementById(id);
@@ -190,9 +191,31 @@
     return body;
   }
 
+  // The flag catches typing; the comparison catches a value set with no event (Browse… did that).
+  function isDirty() {
+    return dirty || JSON.stringify(readEditor()) !== loadedSnapshot;
+  }
+
+  // Required fields per tool, as the server judges them (integrations/serverSets/types.ts).
+  const REQUIRED = { iris: ["url", "apiKey"], timesketch: ["url", "user", "password"], velociraptor: ["apiConfigPath"] };
+
+  /** One warning line per tool with some text but a required field empty. The save still goes. */
+  function incompleteWarnings(body) {
+    return Object.keys(REQUIRED)
+      .filter((tool) => {
+        const fields = body[tool] || {};
+        const used = Object.values(fields).some((v) => typeof v === "string" && v !== "");
+        return used && REQUIRED[tool].some((f) => !fields[f]);
+      })
+      .map((tool) => {
+        const name = TOOL_LABELS[tool];
+        return `${name} is incomplete: cases on this set cannot use ${name} until it is complete.`;
+      });
+  }
+
   function syncTestButton() {
     const test = byId("sseTest");
-    const canTest = !!editing && !dirty;
+    const canTest = !!editing && !isDirty();
     if (test) test.disabled = !canTest;
     const hint = byId("sseTestHint");
     if (hint) hint.textContent = canTest ? "" : SAVE_FIRST;
@@ -204,6 +227,7 @@
     editorOpts = opts || {};
     dirty = false;
     fillEditor(editing);
+    loadedSnapshot = JSON.stringify(readEditor());
     const title = byId("serverSetEditorTitle");
     if (title) title.textContent = editing ? `Edit server set '${editing.name}'` : "New server set";
     setMsg("sseMsg", "");
@@ -245,7 +269,9 @@
     editing = saved;
     dirty = false;
     fillEditor(saved);
-    setMsg("sseMsg", "Saved.");
+    loadedSnapshot = JSON.stringify(readEditor());
+    const warnings = incompleteWarnings(body);
+    setMsg("sseMsg", ["Saved.", ...warnings].join(" "), warnings.length > 0);
     syncTestButton();
     const { onSaved, closeOnSave } = editorOpts;
     await loadServerSets();
@@ -254,7 +280,7 @@
   }
 
   async function testEditor() {
-    if (!editing || dirty) return syncTestButton();
+    if (!editing || isDirty()) return syncTestButton();
     setMsg("sseTestResult", "Testing…");
     let res;
     try {
