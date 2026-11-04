@@ -40,7 +40,7 @@ import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { logImportActivity } from "./importActivity.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
-import { moveFailureNote } from "../analysis/dropScan.js";
+import { moveFailureNote, type DropFingerprint } from "../analysis/dropScan.js";
 import {
   toolForExtension,
   suggestedToolForExtension,
@@ -80,6 +80,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     getControl,
     pushImportCheckpoint,
     moveDropFile,
+    fingerprintDropFile,
     dispatchImport,
     resynthesizeInBackground,
     applyWhitelistToCase,
@@ -155,15 +156,17 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) });
           continue;
         }
+        let processed: DropFingerprint | null = null;
         try {
           // Dispatch by transport: a spawn tool runs and imports inline; SO-CRATES hands off to its
           // background poller and the verdicts land when the analysis finishes.
+          processed = await fingerprintDropFile(dropDir, p.relpath); // the version the tool runs on (#2283)
           const async_ = await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), {
             name: basename(p.relpath),
             dropRelpath: p.relpath,
             cache: runCache,
           });
-          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, true), true); // named (#2281)
+          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, true, processed), true); // named (#2281)
           // SO-CRATES has only been HANDED the file at this point; the job appends the outcome when
           // its analysis resolves, so do not claim an import that has not happened.
           resolvedEntries.push(
@@ -179,7 +182,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         } catch (err) {
           failed++;
           recordImportFailure(caseId, "drop-tool", p.relpath, err);
-          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, false), false);
+          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, false, processed), false);
           resolvedEntries.push({
             status: "FAILED",
             relpath: p.relpath,

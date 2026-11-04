@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, access, appendFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, access, appendFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -188,5 +188,45 @@ describe("a dropped file whose move failed is not imported again (#2281)", () =>
     await sweep(drops, 4);
 
     expect(runDropToolAndIngest).not.toHaveBeenCalled();
+  });
+});
+
+describe("fingerprintDropFile: the version a run-pending tool run starts from (#2283)", () => {
+  it("returns size + mtime of a regular file inside drop/", async () => {
+    const { dropDir, drops } = await seed();
+    await writeFile(join(dropDir, "a.evtx"), "12345", "utf8");
+    expect(await drops.fingerprintDropFile(dropDir, "a.evtx")).toEqual({
+      size: 5,
+      mtimeMs: expect.any(Number),
+    });
+  });
+
+  it("returns null for a traversal relpath, a missing file and a directory", async () => {
+    const { dropDir, drops } = await seed();
+    await mkdir(join(dropDir, "sub"), { recursive: true });
+    expect(await drops.fingerprintDropFile(dropDir, "../state/x")).toBeNull();
+    expect(await drops.fingerprintDropFile(dropDir, "gone.evtx")).toBeNull();
+    expect(await drops.fingerprintDropFile(dropDir, "sub")).toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "returns null through a symlinked parent or at a symlinked file",
+    async () => {
+      const { dropDir, drops } = await seed();
+      const outside = await mkdtemp(join(tmpdir(), "dfir-drop-outside-"));
+      await writeFile(join(outside, "secret.evtx"), "outside", "utf8");
+      await symlink(outside, join(dropDir, "linked"));
+      await symlink(join(outside, "secret.evtx"), join(dropDir, "link.evtx"));
+      expect(await drops.fingerprintDropFile(dropDir, "linked/secret.evtx")).toBeNull();
+      expect(await drops.fingerprintDropFile(dropDir, "link.evtx")).toBeNull();
+    },
+  );
+
+  it("never holds back a file whose version could not be verified (null)", async () => {
+    const { dropDir, drops } = await seed();
+    await writeFile(join(dropDir, "a.evtx"), "12345", "utf8");
+    hooks.failRename = true;
+    await expect(drops.moveDropFile(dropDir, "a.evtx", true, null)).rejects.toThrow(/EPERM/);
+    expect([...(drops.stuck.get("c1")?.keys() ?? [])]).toEqual([]);
   });
 });

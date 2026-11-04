@@ -70,7 +70,12 @@ import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
-import { createDropStuckTracker, joinReasons, type DropFingerprint } from "./dropStuck.js";
+import {
+  createDropStuckTracker,
+  joinReasons,
+  type DropFingerprint,
+  type ProcessedVersion,
+} from "./dropStuck.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
@@ -162,7 +167,9 @@ export interface DropFolder {
   /** Handled files whose move out of drop/ failed, held back from re-import while unchanged (#2281). */
   readonly stuck: PerCaseMap<Map<string, StuckDropFile>>;
   ensureDropFolders(caseId: string): Promise<void>;
-  moveDropFile(dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint): Promise<void>;
+  moveDropFile(dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion): Promise<void>;
+  /** The version of a drop file about to be processed, to pass to moveDropFile (#2283). */
+  fingerprintDropFile(dropDir: string, relpath: string): Promise<DropFingerprint | null>;
   scanCaseDrops(caseId: string): Promise<void>;
   /** Arm the global poller. Idempotent — a second call is a no-op. */
   startDropWatcher(): void;
@@ -275,7 +282,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     dropDir: string,
     relpath: string,
     ok: boolean,
-    processed?: DropFingerprint,
+    processed?: ProcessedVersion,
   ): Promise<void> {
     return store
       .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok))
@@ -783,6 +790,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     stuck,
     ensureDropFolders,
     moveDropFile,
+    fingerprintDropFile: stuckFiles.fingerprint,
     scanCaseDrops,
     startDropWatcher,
   };

@@ -180,6 +180,15 @@ export function selectReadyFiles(
 
 /** A file whose move to _processed/ or _failed/ failed, so it is still in drop/ (#2281). `ok`
  *  records which of the two it was bound for, so a later sweep can finish the move. */
+/** The size + mtime of the version of a drop file that was actually imported. */
+export interface DropFingerprint {
+  size: number;
+  mtimeMs: number;
+}
+
+/** A fingerprint; `null` = looked but could not verify; omitted = the caller does not track it. */
+export type ProcessedVersion = DropFingerprint | null;
+
 export interface StuckDropFile {
   size: number;
   mtimeMs: number;
