@@ -160,4 +160,26 @@ describe("secretBox", () => {
     expect(open(sealed, k)).toBe("hello");
     expect(seal("hello", k)).not.toBe(sealed);
   });
+
+  it("refuses a truncated auth tag, even one that is a correct prefix of the real tag", () => {
+    const k = deriveServerSetKey(Buffer.from("instance-secret"));
+    const [v, iv, tag, ct] = seal("hello", k).split(":");
+    const short = Buffer.from(tag, "base64").subarray(0, 4).toString("base64");
+    expect(() => open([v, iv, short, ct].join(":"), k)).toThrow(/cannot decrypt/);
+  });
+});
+
+describe("links with prototype-named case ids", () => {
+  it("a case id like 'constructor' or '__proto__' has no set until linked", () => {
+    const store = new ServerSetStore(dir, KEY);
+    const a = store.create({ name: "A" });
+    for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(store.caseSetId(id)).toBeUndefined();
+    }
+    expect(store.casesUsing(a.id)).toEqual([]);
+    store.linkCase("constructor", a.id);
+    expect(store.caseSetId("constructor")).toBe(a.id);
+    expect(store.casesUsing(a.id)).toEqual(["constructor"]);
+    expect(store.caseSetId("toString")).toBeUndefined();
+  });
 });

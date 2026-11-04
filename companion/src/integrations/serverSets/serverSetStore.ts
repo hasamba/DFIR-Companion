@@ -143,8 +143,11 @@ export class ServerSetStore {
     this.writeLinks({ ...links, cases: rest });
   }
 
+  // Own keys only: a case id such as "constructor" must not read Object.prototype.
   caseSetId(caseId: string): string | undefined {
-    return this.readLinks().cases[caseId];
+    const { cases } = this.readLinks();
+    const id = Object.hasOwn(cases, caseId) ? cases[caseId] : undefined;
+    return typeof id === "string" ? id : undefined;
   }
 
   casesUsing(setId: string): string[] {

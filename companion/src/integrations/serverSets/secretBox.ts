@@ -23,7 +23,8 @@ export function open(sealed: string, key: Buffer): string {
     throw new Error("server set secret cannot decrypt: bad format");
   try {
     const [, iv, tag, ct] = parts.map((p) => Buffer.from(p, "base64"));
-    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    // A fixed 16-byte tag: without it GCM accepts a truncated tag, so a forger needs only 4 bytes.
+    const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");
   } catch {
