@@ -5,13 +5,22 @@
 // never innerHTML. The server never sends a stored secret: it sends "••••••", and the editor sends
 // that mask back unchanged, which tells the server to keep the stored value.
 //
+// Each Test button sends what the editor holds now, saved or not: a new set to /server-sets/test,
+// a saved set to /server-sets/<id>/test, where a mask stands for the stored secret. A test saves
+// nothing.
+//
 // fetchServerSets() is shared: the New Case picker and the case header's Change… dialog list the
 // sets through it. It also paints every [data-server-set-default] label with the default set's name
 // — the case-less actions (the fleet tab, the Settings connection checks) run on that set.
 (function () {
   "use strict";
 
-  const SAVE_FIRST = "Save first to test";
+  // tool → [button id, result line id, the field the test needs, the hint while that field is empty]
+  const TOOL_TESTS = {
+    iris: ["sseTestIris", "sseTestIrisResult", "sseIrisUrl", "Enter the URL first"],
+    timesketch: ["sseTestTs", "sseTestTsResult", "sseTsUrl", "Enter the URL first"],
+    velociraptor: ["sseTestVelo", "sseTestVeloResult", "sseVeloConfig", "Enter the API config path first"],
+  };
   const TOOL_LABELS = { iris: "IRIS", timesketch: "Timesketch", velociraptor: "Velociraptor" };
   // [input id, tool, field, kind]. The field names are the server's (routes/serverSetBody.ts).
   const FIELDS = [
@@ -34,8 +43,6 @@
 
   let lastList = null; // the last GET /server-sets answer, with `editable`
   let editing = null; // the set open in the editor; null for a new set
-  let dirty = false; // the editor holds edits that are not saved
-  let loadedSnapshot = ""; // readEditor() as it stood right after the set was loaded or saved
   let editorOpts = {}; // { onSaved, closeOnSave } from the caller that opened the editor
 
   const byId = (id) => document.getElementById(id);
@@ -191,11 +198,6 @@
     return body;
   }
 
-  // The flag catches typing; the comparison catches a value set with no event (Browse… did that).
-  function isDirty() {
-    return dirty || JSON.stringify(readEditor()) !== loadedSnapshot;
-  }
-
   // Required fields per tool, as the server judges them (integrations/serverSets/types.ts).
   const REQUIRED = { iris: ["url", "apiKey"], timesketch: ["url", "user", "password"], velociraptor: ["apiConfigPath"] };
 
@@ -213,26 +215,29 @@
       });
   }
 
-  function syncTestButton() {
-    const test = byId("sseTest");
-    const canTest = !!editing && !isDirty();
-    if (test) test.disabled = !canTest;
-    const hint = byId("sseTestHint");
-    if (hint) hint.textContent = canTest ? "" : SAVE_FIRST;
+  // A tool's Test button waits for its URL (Velociraptor: its API config path). The values are
+  // read on every check, so a value set with no event (Browse… does that) still counts.
+  function syncTestButtons() {
+    for (const [btnId, , fieldId, hint] of Object.values(TOOL_TESTS)) {
+      const btn = byId(btnId);
+      const field = byId(fieldId);
+      if (!btn) continue;
+      btn.disabled = !(field && field.value.trim());
+      btn.title = btn.disabled ? hint : "";
+    }
   }
 
   /** Opens the editor on `set`, or on a blank set when `set` is null. */
   function openServerSetEditor(set, opts) {
     editing = set && set.id ? set : null;
     editorOpts = opts || {};
-    dirty = false;
     fillEditor(editing);
-    loadedSnapshot = JSON.stringify(readEditor());
     const title = byId("serverSetEditorTitle");
     if (title) title.textContent = editing ? `Edit server set '${editing.name}'` : "New server set";
     setMsg("sseMsg", "");
     setMsg("sseTestResult", "");
-    syncTestButton();
+    for (const [, resultId] of Object.values(TOOL_TESTS)) setMsg(resultId, "");
+    syncTestButtons();
     byId("serverSetEditorOverlay").classList.add("open");
     byId("sseName").focus();
   }
@@ -267,31 +272,53 @@
       return;
     }
     editing = saved;
-    dirty = false;
     fillEditor(saved);
-    loadedSnapshot = JSON.stringify(readEditor());
     const warnings = incompleteWarnings(body);
     setMsg("sseMsg", ["Saved.", ...warnings].join(" "), warnings.length > 0);
-    syncTestButton();
+    syncTestButtons();
     const { onSaved, closeOnSave } = editorOpts;
     await loadServerSets();
     if (typeof onSaved === "function") await onSaved(saved);
     if (closeOnSave) closeEditor();
   }
 
-  async function testEditor() {
-    if (!editing || isDirty()) return syncTestButton();
-    setMsg("sseTestResult", "Testing…");
-    let res;
+  /** POSTs the editor's values as they stand to the test route; `tools` limits the tools run. */
+  async function postTest(tools) {
+    const body = readEditor();
+    if (tools) body.tools = tools;
+    const url = editing ? `/server-sets/${encodeURIComponent(editing.id)}/test` : "/server-sets/test";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const answer = await readJson(res);
+    if (!res.ok) throw new Error(answer.error || `HTTP ${res.status}`);
+    return answer;
+  }
+
+  async function testTool(tool) {
+    const [btnId, resultId] = TOOL_TESTS[tool];
+    syncTestButtons();
+    if (byId(btnId).disabled) return;
+    setMsg(resultId, "Testing…");
     try {
-      res = await fetch(`/server-sets/${encodeURIComponent(editing.id)}/test`, { method: "POST" });
+      const r = (await postTest([tool]))[tool];
+      if (r && r.ok) setMsg(resultId, "Connected.");
+      else setMsg(resultId, `Failed: ${(r && r.error) || "no result"}`, true);
+    } catch (e) {
+      setMsg(resultId, `Failed: ${e.message}`, true);
+    }
+  }
+
+  // The bottom button: every filled-in tool, from the typed values too.
+  async function testEditor() {
+    setMsg("sseTestResult", "Testing…");
+    let body;
+    try {
+      body = await postTest();
     } catch (e) {
       setMsg("sseTestResult", `Test failed: ${e.message}`, true);
-      return;
-    }
-    const body = await readJson(res);
-    if (!res.ok) {
-      setMsg("sseTestResult", body.error || `HTTP ${res.status}`, true);
       return;
     }
     const box = byId("sseTestResult");
@@ -305,21 +332,20 @@
     }
   }
 
-  function markDirty() {
-    dirty = true;
-    syncTestButton();
-  }
-
   function initServerSets() {
     byId("serverSetAddBtn").onclick = () => openServerSetEditor(null);
     byId("sseSave").onclick = saveEditor;
     byId("sseTest").onclick = testEditor;
+    for (const [tool, [btnId]] of Object.entries(TOOL_TESTS)) {
+      const btn = byId(btnId);
+      if (btn) btn.onclick = () => testTool(tool);
+    }
     byId("sseClose").onclick = closeEditor;
     for (const id of ["sseName", ...FIELDS.map((f) => f[0])]) {
       const input = byId(id);
       if (!input) continue;
-      input.addEventListener("input", markDirty);
-      input.addEventListener("change", markDirty);
+      input.addEventListener("input", syncTestButtons);
+      input.addEventListener("change", syncTestButtons);
     }
     const overlay = byId("serverSetEditorOverlay");
     overlay.addEventListener("keydown", (e) => {

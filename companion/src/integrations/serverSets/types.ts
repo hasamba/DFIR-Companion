@@ -44,6 +44,12 @@ export interface ServerSet {
 
 export type ServerSetInput = Omit<ServerSet, "id" | "revision">;
 export type ToolName = "iris" | "timesketch" | "velociraptor";
+export const TOOL_NAMES: readonly ToolName[] = ["iris", "timesketch", "velociraptor"];
+export const TOOL_LABEL: Record<ToolName, string> = {
+  iris: "IRIS",
+  timesketch: "Timesketch",
+  velociraptor: "Velociraptor",
+};
 
 const has = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
 
@@ -80,6 +86,28 @@ export function maskServerSet(set: ServerSet): ServerSet {
   return out;
 }
 
+/** True when the input still holds the mask in place of a secret. */
+export function hasMaskedSecret(input: ServerSetInput): boolean {
+  return input.iris?.apiKey === MASKED_SECRET || input.timesketch?.password === MASKED_SECRET;
+}
+
+/** The input with each masked secret replaced by the stored one from `prev` ("" when none). */
+export function withStoredSecrets(input: ServerSetInput, prev: ServerSetInput): ServerSetInput {
+  const out: ServerSetInput = { ...input };
+  if (input.iris) {
+    const apiKey = input.iris.apiKey === MASKED_SECRET ? (prev.iris?.apiKey ?? "") : input.iris.apiKey;
+    out.iris = { ...input.iris, apiKey };
+  }
+  if (input.timesketch) {
+    const keep = input.timesketch.password === MASKED_SECRET;
+    out.timesketch = {
+      ...input.timesketch,
+      password: keep ? (prev.timesketch?.password ?? "") : input.timesketch.password,
+    };
+  }
+  return out;
+}
+
 // The clients one set yields. A tool the set does not use is undefined.
 export interface CaseServers {
   setId: string;
@@ -104,9 +132,17 @@ export class ServerSetUnavailableError extends Error {
 
 export type ResolveResult = { ok: true; servers: CaseServers } | { ok: false; status: 409; error: string };
 
+/** Clients built from typed values, and why a tool got none (incomplete, or its build failed). */
+export interface InputServers {
+  servers: CaseServers;
+  errors: Partial<Record<ToolName, string>>;
+}
+
 export interface ServerClients {
   forCase(caseId: string): ResolveResult;
   forDefault(): ResolveResult;
   forSet(setId: string): ResolveResult;
+  /** Builds clients from `set` as given: no cache, no store. For the editor's connection tests. */
+  forInput(set: ServerSet): InputServers;
   invalidate(setId?: string): void;
 }

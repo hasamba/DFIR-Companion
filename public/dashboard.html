@@ -986,7 +986,7 @@
   </div>
   <!-- Server set editor (js/dashboard-server-sets.js). Opened from Settings → Server sets and from
        the New Case "Servers" picker, so it sits above both. A stored secret shows the mask and is
-       kept unless the analyst types a new value. -->
+       kept unless the analyst types a new value. Each Test button tests the typed values, saved or not. -->
   <div id="serverSetEditorOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="serverSetEditorTitle">
     <div class="comment-modal server-set-editor">
       <h3 id="serverSetEditorTitle">Server set</h3>
@@ -1002,6 +1002,10 @@
         <div class="sfield"><label for="sseIrisClassification">Classification ID</label><input id="sseIrisClassification" placeholder="1" /></div>
       </div>
       <label class="server-set-check"><input id="sseIrisInsecure" type="checkbox" /> Skip TLS verify (lab only)</label>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestIris" type="button">Test IRIS</button>
+        <span id="sseTestIrisResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
       <div class="settings-group-head">Timesketch</div>
       <div class="sfield-row">
         <div class="sfield"><label for="sseTsUrl">Timesketch URL</label><input id="sseTsUrl" placeholder="https://timesketch.example.org" /></div>
@@ -1013,6 +1017,10 @@
         <div class="sfield"><label for="sseTsTimeline">Timeline name</label><input id="sseTsTimeline" placeholder="DFIR-Companion Forensic Timeline" /></div>
       </div>
       <label class="server-set-check"><input id="sseTsInsecure" type="checkbox" /> Skip TLS verify (lab only)</label>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestTs" type="button">Test Timesketch</button>
+        <span id="sseTestTsResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
       <div class="settings-group-head">Velociraptor</div>
       <div class="sfield"><label for="sseVeloConfig">API config path</label>
         <div data-safe-style="display:flex; gap:6px; align-items:center">
@@ -1024,11 +1032,14 @@
         <div class="sfield"><label for="sseVeloOrg">GUI org</label><input id="sseVeloOrg" placeholder="root" /></div>
         <div class="sfield"><label for="sseVeloGuiUrl">GUI URL</label><input id="sseVeloGuiUrl" placeholder="https://velo.example.org:8889" /></div>
       </div>
+      <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
+        <button id="sseTestVelo" type="button">Test Velociraptor</button>
+        <span id="sseTestVeloResult" role="status" data-safe-style="font-size:12px;"></span>
+      </div>
       <p class="server-set-note">Leave a tool empty when the cases on this set do not use it. Keys are stored encrypted on this machine and are never exported.</p>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button id="sseSave" type="button">Save</button>
         <button id="sseTest" type="button">Test connection</button>
-        <span id="sseTestHint" class="server-set-note"></span>
         <button id="sseClose" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span id="sseMsg" role="status" data-safe-style="font-size:12px;"></span>
       </div>

@@ -60,6 +60,7 @@ function irisServerClients(opts: {
     forCase: result,
     forDefault: result,
     forSet: result,
+    forInput: () => ({ servers: result().servers, errors: {} }),
     invalidate: () => {
       if (opts.rebuildIrisClient) current = opts.rebuildIrisClient();
     },

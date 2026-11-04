@@ -1,11 +1,13 @@
 // Boundary checks for the /server-sets routes: the request body becomes a ServerSetInput that holds
 // only the known fields, and a connection-test error becomes a short message that can name no
 // secret and echo no remote response.
-import type {
-  IrisSettings,
-  ServerSetInput,
-  TimesketchSettings,
-  VelociraptorSettings,
+import {
+  TOOL_NAMES,
+  type IrisSettings,
+  type ServerSetInput,
+  type TimesketchSettings,
+  type ToolName,
+  type VelociraptorSettings,
 } from "../integrations/serverSets/types.js";
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -102,6 +104,16 @@ export function parseServerSetInput(raw: unknown): Parsed<ServerSetInput> {
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+}
+
+/** The optional `tools` list of a connection test: every tool when absent, else the named ones. */
+export function parseTestTools(raw: unknown): Parsed<ToolName[]> {
+  const tools = (raw as { tools?: unknown } | undefined)?.tools;
+  if (tools === undefined || tools === null) return { ok: true, value: [...TOOL_NAMES] };
+  if (!Array.isArray(tools) || !tools.every((t) => TOOL_NAMES.includes(t as ToolName))) {
+    return { ok: false, error: `tools must be a list of: ${TOOL_NAMES.join(", ")}` };
+  }
+  return { ok: true, value: TOOL_NAMES.filter((t) => tools.includes(t)) };
 }
 
 /**

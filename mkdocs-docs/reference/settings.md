@@ -194,10 +194,18 @@ servers. You do not enter keys again when you move between cases.
   Velociraptor settings become a set named **Testing**, and it is the default.
 - **The editor.** Leave a tool empty when the cases on the set do not use it. The Companion then
   hides that tool's buttons for those cases. A stored key or password shows as `••••••`. It stays
-  the same unless you type a new value. **Test connection** tests the saved set, so save your
-  edits first.
+  the same unless you type a new value. **Save** keeps the editor open and shows **Saved.**.
+  Click **Close** to close it.
+- **Testing a connection.** **Test IRIS**, **Test Timesketch** and **Test Velociraptor** sit under
+  each tool's fields. Each one tests the values in the editor now, for a new set or an edited one.
+  You do not have to save first, and a test saves nothing. The result shows under the button:
+  **Connected.** or **Failed:** and the reason. A button stays off until you type that tool's URL
+  (Velociraptor: the API config path). A key or password that still shows `••••••` tests with
+  the stored value. An empty one tests with no secret. **Test connection** at the bottom tests
+  every tool you filled in.
 - **New Case form.** The **Velociraptor / IRIS / Timesketch servers (optional)** list preselects the default set. Pick another set, or pick
-  **+ Create a new server set…** to make one. The new set is selected when you save it.
+  **+ Create a new server set…** to make one. Test each tool before you save. **Save** closes the
+  editor and selects the new set.
 - **The case header.** Next to the case name, the header shows **Server set: *set name***. If the
   case has no usable set, the header shows **Server set: none** in red. Point at it to see why.
 - **Change….** The button next to the label attaches a different set to the case. If the case

@@ -76,10 +76,11 @@ const EDITOR_FIELDS = [
 /** The markup both server-set modules read, as the page provides it. */
 function serverSetMarkup(doc: FakeDocument): void {
   doc.add("div", "serverSetsPanel", "serverSetsList", "serverSetsMsg", "sseMsg", "sseTestResult");
+  doc.add("span", "sseTestIrisResult", "sseTestTsResult", "sseTestVeloResult");
   doc.add("div", "serverSetEditorOverlay");
   doc.add("h3", "serverSetEditorTitle");
   doc.add("button", "serverSetAddBtn", "sseSave", "sseTest", "sseClose", "sseVeloBrowse");
-  doc.add("span", "sseTestHint");
+  doc.add("button", "sseTestIris", "sseTestTs", "sseTestVelo");
   doc.add("input", ...EDITOR_FIELDS);
   const boxes = doc.add("input", "sseIrisInsecure", "sseTsInsecure");
   for (const b of Object.values(boxes)) b.type = "checkbox";
@@ -579,31 +580,121 @@ describe("Settings → Server sets", () => {
     });
   });
 
-  it("tests only a saved set, and asks to save unsaved edits first", async () => {
+  it("the bottom Test connection tests the typed values of a new or an edited set", async () => {
     const { api, el, net } = settingsHarness({
       "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "POST /server-sets/test": { body: { velociraptor: { ok: true } } },
       "POST /server-sets/b/test": {
         body: { iris: { ok: true }, timesketch: { ok: false, error: "login failed" } },
       },
     });
     await api.loadServerSets();
     api.openServerSetEditor(null);
-    expect(el("sseTest").disabled, "a new set cannot be tested").toBe(true);
-    expect(el("sseTestHint").textContent).toBe("Save first to test");
-
-    api.openServerSetEditor(STORED);
-    expect(el("sseTest").disabled).toBe(false);
-    el("sseIrisUrl").value = "https://iris2.example.com";
-    el("sseIrisUrl").fire("input");
-    expect(el("sseTest").disabled).toBe(true);
-    expect(el("sseTestHint").textContent).toBe("Save first to test");
-
-    api.openServerSetEditor(STORED);
+    expect(el("sseTest").disabled, "a new set can be tested").toBe(false);
+    el("sseVeloConfig").value = "/srv/new/api.config.yaml";
     el("sseTest").click();
     await flush();
-    expect(net.calls.some((c) => c.method === "POST" && c.url === "/server-sets/b/test")).toBe(true);
+    const typed = net.calls.find((c) => c.url === "/server-sets/test");
+    expect(typed?.body).toMatchObject({ velociraptor: { apiConfigPath: "/srv/new/api.config.yaml" } });
+    expect(typed?.body).not.toHaveProperty("tools");
+    expect(el("sseTestResult").textContent).toContain("Velociraptor: connected");
+
+    api.openServerSetEditor(STORED);
+    el("sseIrisUrl").value = "https://iris2.example.com";
+    el("sseIrisUrl").fire("input");
+    expect(el("sseTest").disabled, "an unsaved edit can be tested").toBe(false);
+    el("sseTest").click();
+    await flush();
+    const edited = net.calls.find((c) => c.url === "/server-sets/b/test");
+    expect(edited?.body).toMatchObject({ iris: { url: "https://iris2.example.com", apiKey: MASK } });
     expect(el("sseTestResult").textContent).toContain("IRIS: connected");
     expect(el("sseTestResult").textContent).toContain("Timesketch: login failed");
+    expect(
+      net.calls.some((c) => c.method === "PUT" || (c.method === "POST" && c.url === "/server-sets")),
+    ).toBe(false);
+  });
+
+  it("Test IRIS on a new unsaved set posts the typed values for IRIS only", async () => {
+    const { api, el, net } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "POST /server-sets/test": { body: { iris: { ok: true } } },
+    });
+    await api.loadServerSets();
+    api.openServerSetEditor(null);
+    expect(el("sseTestIris").disabled).toBe(true);
+    expect(el("sseTestIris").title).toBe("Enter the URL first");
+    expect(el("sseTestTs").title).toBe("Enter the URL first");
+    expect(el("sseTestVelo").title).toBe("Enter the API config path first");
+    el("sseIrisUrl").value = "https://iris.example.com";
+    el("sseIrisUrl").fire("input");
+    el("sseIrisKey").value = "typed-key-word";
+    el("sseIrisKey").fire("input");
+    expect(el("sseTestIris").disabled).toBe(false);
+    expect(el("sseTestIris").title).toBe("");
+    el("sseTestIris").click();
+    expect(el("sseTestIrisResult").textContent).toBe("Testing…");
+    await flush();
+    const post = net.calls.find((c) => c.url === "/server-sets/test");
+    expect(post?.method).toBe("POST");
+    expect(post?.body).toMatchObject({
+      tools: ["iris"],
+      iris: { url: "https://iris.example.com", apiKey: "typed-key-word" },
+    });
+    expect(el("sseTestIrisResult").textContent).toBe("Connected.");
+    expect(el("sseTestTsResult").textContent).toBe("");
+  });
+
+  it("a tool button stays disabled with an empty URL and sends nothing", async () => {
+    const { api, el, net } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+    });
+    await api.loadServerSets();
+    api.openServerSetEditor(null);
+    el("sseIrisKey").value = "typed-key-word";
+    el("sseIrisKey").fire("input");
+    el("sseTestIris").click();
+    await flush();
+    expect(el("sseTestIris").disabled).toBe(true);
+    expect(net.calls.some((c) => c.url.endsWith("/test"))).toBe(false);
+  });
+
+  it("Test Timesketch on a saved set sends the untouched mask to that set's test", async () => {
+    const { api, el, net } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "POST /server-sets/b/test": { body: { timesketch: { ok: false, error: "login failed" } } },
+    });
+    await api.loadServerSets();
+    api.openServerSetEditor(STORED);
+    el("sseTestTs").click();
+    await flush();
+    const post = net.calls.find((c) => c.url === "/server-sets/b/test");
+    expect(post?.body).toMatchObject({
+      tools: ["timesketch"],
+      timesketch: { url: "https://ts.example.com", user: "analyst", password: MASK },
+    });
+    expect(el("sseTestTsResult").textContent).toBe("Failed: login failed");
+  });
+
+  it("Save from the Settings list keeps the editor open with the test buttons usable", async () => {
+    const { api, el } = settingsHarness({
+      "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
+      "PUT /server-sets/b": { body: STORED },
+    });
+    await api.loadServerSets();
+    const edit = el("serverSetsList")
+      .children[0].querySelectorAll("button")
+      .find((b) => b.textContent === "Edit");
+    edit?.click();
+    el("sseSave").click();
+    await flush();
+    expect(el("sseMsg").textContent).toBe("Saved.");
+    expect(el("serverSetEditorOverlay").classList.contains("open")).toBe(true);
+    expect(["sseTestIris", "sseTestTs", "sseTestVelo", "sseTest"].map((id) => el(id).disabled)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 
   it("shows the case names when a set in use cannot be deleted", async () => {
@@ -665,9 +756,8 @@ describe("Settings → Server sets", () => {
     expect(rows[1].querySelector(".server-set-badge")?.textContent).toBe("default");
     expect(el("serverSetAddBtn").hidden).toBe(true);
   });
-  // Fix round 1 — the Browse… picker sets the value without an input event, so the editor compares
-  // its fields with the saved set instead of trusting a dirty flag alone.
-  it("refuses to test when a field differs from the saved set, even with no input event", async () => {
+  // Browse… sets the value without an input event: the buttons read the fields, not a flag.
+  it("tests a value set with no input event, as typed", async () => {
     const { api, el, net } = settingsHarness({
       "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
       "POST /server-sets/b/test": { body: { velociraptor: { ok: true } } },
@@ -675,14 +765,17 @@ describe("Settings → Server sets", () => {
     await api.loadServerSets();
     api.openServerSetEditor(STORED);
     el("sseVeloConfig").value = "/srv/velo/other.config.yaml"; // what Browse… does
-    el("sseTest").click();
+    el("sseTestVelo").click();
     await flush();
-    expect(net.calls.some((c) => c.url === "/server-sets/b/test")).toBe(false);
-    expect(el("sseTest").disabled).toBe(true);
-    expect(el("sseTestHint").textContent).toBe("Save first to test");
+    const post = net.calls.find((c) => c.url === "/server-sets/b/test");
+    expect(post?.body).toMatchObject({
+      tools: ["velociraptor"],
+      velociraptor: { apiConfigPath: "/srv/velo/other.config.yaml" },
+    });
+    expect(el("sseTestVeloResult").textContent).toBe("Connected.");
   });
 
-  it("Browse… marks the editor dirty: Test waits for a save", async () => {
+  it("Browse… on a new set enables Test Velociraptor", async () => {
     const doc = new FakeDocument();
     serverSetMarkup(doc);
     doc.add("input", "fsBrowseSearch", "env-DFIR_VELOCIRAPTOR_BINARY");
@@ -699,7 +792,7 @@ describe("Settings → Server sets", () => {
     el(doc, "serverSetEditorOverlay").appendChild(el(doc, "sseVeloBrowse"));
     const net = routedFetch({
       "GET /server-sets": { body: { defaultId: "b", sets: [STORED] } },
-      "GET /settings/browse-fs?dir=%2Fsrv%2Fvelo%2Fapi.config.yaml": {
+      "GET /settings/browse-fs?dir=": {
         body: { dir: "/srv/velo", parent: "/srv", entries: [] },
       },
     });
@@ -718,8 +811,8 @@ describe("Settings → Server sets", () => {
     api.initFsBrowse();
     api.initServerSets();
     await api.loadServerSets();
-    api.openServerSetEditor(STORED);
-    expect(el(doc, "sseTest").disabled).toBe(false);
+    api.openServerSetEditor(null);
+    expect(el(doc, "sseTestVelo").disabled).toBe(true);
 
     el(doc, "sseVeloBrowse").click();
     await flush();
@@ -730,8 +823,7 @@ describe("Settings → Server sets", () => {
     el(doc, "fsBrowseSelectBtn").click();
 
     expect(el(doc, "sseVeloConfig").value).toBe("/srv/velo/other.config.yaml");
-    expect(el(doc, "sseTest").disabled).toBe(true);
-    expect(el(doc, "sseTestHint").textContent).toBe("Save first to test");
+    expect(el(doc, "sseTestVelo").disabled).toBe(false);
   });
 
   it("warns about an incomplete tool on save, and still saves", async () => {

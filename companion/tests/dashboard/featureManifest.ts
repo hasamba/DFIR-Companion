@@ -1168,7 +1168,7 @@ export const FEATURES: Feature[] = [
     // No `initializer`: initCaseConnect() runs initServerSets(), not the inline script.
     file: "dashboard-server-sets.js",
     publish: ["initServerSets", "loadServerSets", "fetchServerSets", "openServerSetEditor"],
-    private: ["lastList", "editing", "dirty", "editorOpts"],
+    private: ["lastList", "editing", "editorOpts"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the

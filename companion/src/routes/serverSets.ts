@@ -6,7 +6,9 @@
  *   PUT    /server-sets/:setId           global admin: edit (a masked secret keeps the stored one)
  *   DELETE /server-sets/:setId           global admin: delete an unused, non-default set
  *   POST   /server-sets/:setId/default   global admin: make it the default for new cases
- *   POST   /server-sets/:setId/test      global admin: probe each tool of THAT set
+ *   POST   /server-sets/test             global admin: probe the typed values of a new set (saves nothing)
+ *   POST   /server-sets/:setId/test      global admin: probe THAT set — as saved, or the typed values
+ *                                        in the body, a masked secret standing for the stored one
  *   GET    /cases/:id/server-set         case reader: the case's set and the tools it uses
  *   POST   /cases/:id/server-set         case administrator: change the case's set (warn, stop, forget, relink)
  *
@@ -17,21 +19,26 @@ import { StateLock } from "../analysis/stateLock.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { requestAuthentication } from "../auth/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
+import { checkUrl } from "../integrations/serverSets/serverSetStore.js";
 import {
+  hasMaskedSecret,
   maskServerSet,
+  withStoredSecrets,
   type CaseServers,
   type ServerSet,
+  type ServerSetInput,
   type ToolName,
 } from "../integrations/serverSets/types.js";
 import { logSafeError } from "../integrations/serverSets/logSafeError.js";
 import type { RouteContext } from "./context.js";
-import { parseServerSetInput, probeError } from "./serverSetBody.js";
+import { parseServerSetInput, parseTestTools, probeError } from "./serverSetBody.js";
 
 const NOT_FOUND = "Server set not found."; // the resolver's own wording for an unknown set id
 const CHANGE_FAILED = "The server set change did not finish. Check the server log and try again.";
 const UNAVAILABLE = "Server sets are not available.";
 const IS_DEFAULT = "The default server set cannot be deleted. Make another set the default first.";
 const TOOLS: ToolName[] = ["iris", "timesketch", "velociraptor"];
+type Results = Partial<Record<ToolName, Probe>>;
 
 type Probe = { ok: boolean; error?: string };
 
@@ -94,15 +101,57 @@ async function probe(run: () => Promise<unknown>): Promise<Probe> {
   }
 }
 
-async function testServers(servers: CaseServers): Promise<Partial<Record<ToolName, Probe>>> {
+// A tool the servers leave out, or the filter does not name, is left out of the answer.
+async function testServers(
+  servers: CaseServers,
+  tools: ToolName[] = TOOLS,
+  errors: Partial<Record<ToolName, string>> = {},
+): Promise<Results> {
   const { iris, timesketch, velociraptor } = servers;
-  const [i, t, v] = await Promise.all([
-    iris ? probe(() => iris.ping()) : undefined,
-    timesketch ? probe(() => timesketch.login()) : undefined,
-    velociraptor ? probe(() => velociraptor.listClients()) : undefined,
-  ]);
-  return { ...(i && { iris: i }), ...(t && { timesketch: t }), ...(v && { velociraptor: v }) };
+  const run: Record<ToolName, (() => Promise<unknown>) | undefined> = {
+    iris: iris && (() => iris.ping()),
+    timesketch: timesketch && (() => timesketch.login()),
+    velociraptor: velociraptor && (() => velociraptor.listClients()),
+  };
+  const out: Results = {};
+  await Promise.all(
+    tools.map(async (tool) => {
+      const why = errors[tool];
+      const go = run[tool];
+      if (why) out[tool] = { ok: false, error: probeError(new Error(why)) };
+      else if (go) out[tool] = await probe(go);
+    }),
+  );
+  return Object.fromEntries(TOOLS.filter((t) => out[t]).map((t) => [t, out[t]]));
 }
+
+// The editor's typed values as an answer: 400 for a body the create route would also refuse.
+async function testInput(
+  ctx: RouteContext,
+  res: Response,
+  body: unknown,
+  stored?: ServerSet,
+): Promise<Response> {
+  const parsed = parseServerSetInput(body);
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const tools = parseTestTools(body);
+  if (!tools.ok) return res.status(400).json({ error: tools.error });
+  let input: ServerSetInput = parsed.value;
+  if (stored) input = withStoredSecrets(input, stored);
+  else if (hasMaskedSecret(input)) return res.status(400).json({ error: "secret required" });
+  try {
+    checkUrl("iris", input.iris?.url);
+    checkUrl("timesketch", input.timesketch?.url);
+  } catch (err) {
+    return res.status(400).json({ error: (err as Error).message });
+  }
+  const typed = ctx.serverClients.forInput({ ...input, id: stored?.id ?? "", revision: 0 });
+  return res.json(await testServers(typed.servers, tools.value, typed.errors));
+}
+
+// Express parses a request with no JSON body to {}; only a body that names the set holds values.
+const hasTypedValues = (body: unknown): boolean =>
+  !!body && typeof body === "object" && typeof (body as { name?: unknown }).name === "string";
 
 async function caseNames(ctx: RouteContext, ids: string[]): Promise<Array<{ id: string; name: string }>> {
   const metas = await ctx.store.listCases();
@@ -266,6 +315,12 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
     }),
   );
 
+  // Registered before the :setId routes, so "test" is never read as a set id.
+  app.post(
+    "/server-sets/test",
+    withStore(ctx, (_sets, req, res) => testInput(ctx, res, req.body)),
+  );
+
   app.put(
     "/server-sets/:setId",
     withStore(ctx, (sets, req, res) => {
@@ -321,10 +376,17 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
 
   app.post(
     "/server-sets/:setId/test",
-    withStore(ctx, async (_sets, req, res) => {
+    withStore(ctx, async (sets, req, res) => {
+      if (hasTypedValues(req.body)) {
+        const stored = sets.get(req.params.setId);
+        if (!stored) return res.status(404).json({ error: NOT_FOUND });
+        return testInput(ctx, res, req.body, stored);
+      }
+      const tools = parseTestTools(req.body);
+      if (!tools.ok) return res.status(400).json({ error: tools.error });
       const r = ctx.serverClients.forSet(req.params.setId);
       if (!r.ok) return res.status(r.error === NOT_FOUND ? 404 : r.status).json({ error: r.error });
-      return res.json(await testServers(r.servers));
+      return res.json(await testServers(r.servers, tools.value));
     }),
   );
 

@@ -5,7 +5,13 @@ import type { VelociraptorClient } from "../../src/integrations/velociraptor/vel
 // that only need "some IRIS/Timesketch/Velociraptor client" and do not exercise set resolution.
 export function stubServerClients(tools: Partial<CaseServers>): ServerClients {
   const ok = { ok: true as const, servers: { setId: "stub", setName: "Stub", ...tools } };
-  return { forCase: () => ok, forDefault: () => ok, forSet: () => ok, invalidate: () => undefined };
+  return {
+    forCase: () => ok,
+    forDefault: () => ok,
+    forSet: () => ok,
+    forInput: () => ({ servers: ok.servers, errors: {} }),
+    invalidate: () => undefined,
+  };
 }
 
 // Every case resolves to one Velociraptor client — a real one over a fake runner, or a hand-rolled

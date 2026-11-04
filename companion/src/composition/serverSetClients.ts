@@ -6,7 +6,9 @@ import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.j
 import { logSafeError } from "../integrations/serverSets/logSafeError.js";
 import {
   incompleteTools,
+  TOOL_LABEL,
   type CaseServers,
+  type InputServers,
   type IrisSettings,
   type ResolveResult,
   type ServerClients,
@@ -29,12 +31,6 @@ export interface ServerClientBuilders {
   velociraptor: (s: VelociraptorSettings) => VelociraptorClient | undefined;
 }
 
-const TOOL_LABEL: Record<ToolName, string> = {
-  iris: "IRIS",
-  timesketch: "Timesketch",
-  velociraptor: "Velociraptor",
-};
-
 const fail = (error: string): ResolveResult => ({ ok: false, status: 409, error });
 const NO_LINK = "This case has no server set. Choose one in the case header.";
 const DANGLING = "This case's server set was deleted. Choose another in the case header.";
@@ -46,6 +42,7 @@ export const unavailableServerClients: ServerClients = {
   forCase: () => fail("Server sets are not available."),
   forDefault: () => fail("Server sets are not available."),
   forSet: () => fail("Server sets are not available."),
+  forInput: (set) => ({ servers: { setId: set.id, setName: set.name }, errors: {} }),
   invalidate: () => undefined,
 };
 
@@ -113,6 +110,7 @@ export function createServerClients(
         return id ? bySetId(id, NO_DEFAULT) : fail(NO_DEFAULT);
       }),
     forSet: (setId) => guarded(`set:${setId}`, () => bySetId(setId, "Server set not found.")),
+    forInput: (set) => buildInputServers(set, build),
     invalidate: (setId) => {
       if (setId === undefined) cache.clear();
       else cache.delete(setId);
@@ -136,4 +134,31 @@ function buildServers(set: ServerSet, build: ServerClientBuilders): CaseServers 
   const v = set.velociraptor;
   if (v?.apiConfigPath) out.velociraptor = build.velociraptor(v);
   return out;
+}
+
+// Typed editor values: each tool is built on its own, so an incomplete tool or a builder that throws
+// costs that tool only. Never cached: nothing here is a saved set.
+function buildInputServers(set: ServerSet, build: ServerClientBuilders): InputServers {
+  const errors: InputServers["errors"] = {};
+  for (const tool of incompleteTools(set)) errors[tool] = `${TOOL_LABEL[tool]} is incomplete`;
+  const out: CaseServers = { setId: set.id, setName: set.name };
+  const attempt = (tool: ToolName, make: () => void) => {
+    if (errors[tool]) return;
+    try {
+      make();
+    } catch (err) {
+      errors[tool] = err instanceof Error ? err.message : String(err);
+    }
+  };
+  const { iris: i, timesketch: t, velociraptor: v } = set;
+  if (i?.url && i.apiKey) attempt("iris", () => void (out.iris = build.iris(i)));
+  if (t?.url && t.user && t.password)
+    attempt("timesketch", () => void (out.timesketch = build.timesketch(t)));
+  if (v?.apiConfigPath) {
+    attempt("velociraptor", () => {
+      out.velociraptor = build.velociraptor(v);
+      if (!out.velociraptor) throw new Error("Velociraptor API config cannot be read. Check the path.");
+    });
+  }
+  return { servers: out, errors };
 }

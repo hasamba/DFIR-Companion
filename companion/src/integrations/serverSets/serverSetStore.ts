@@ -3,7 +3,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import { open, seal } from "./secretBox.js";
 import { secretsOfSet } from "./setSecrets.js";
-import { MASKED_SECRET, type ServerSet, type ServerSetInput, type VelociraptorSettings } from "./types.js";
+import {
+  hasMaskedSecret,
+  withStoredSecrets,
+  type ServerSet,
+  type ServerSetInput,
+  type VelociraptorSettings,
+} from "./types.js";
 
 interface Links {
   defaultId?: string;
@@ -66,7 +72,7 @@ export class ServerSetStore {
   }
 
   create(input: ServerSetInput): ServerSet {
-    if (input.iris?.apiKey === MASKED_SECRET || input.timesketch?.password === MASKED_SECRET) {
+    if (hasMaskedSecret(input)) {
       throw new Error("secret required");
     }
     const clean = this.validate(input);
@@ -80,22 +86,7 @@ export class ServerSetStore {
     const idx = raw.findIndex((s) => s.id === id);
     if (idx < 0) throw new Error("server set not found");
     const prev = this.openSet(raw[idx]);
-    const merged: ServerSetInput = { ...input };
-    if (input.iris) {
-      merged.iris = {
-        ...input.iris,
-        apiKey: input.iris.apiKey === MASKED_SECRET ? (prev.iris?.apiKey ?? "") : input.iris.apiKey,
-      };
-    }
-    if (input.timesketch) {
-      merged.timesketch = {
-        ...input.timesketch,
-        password:
-          input.timesketch.password === MASKED_SECRET
-            ? (prev.timesketch?.password ?? "")
-            : input.timesketch.password,
-      };
-    }
+    const merged = withStoredSecrets(input, prev);
     const clean = this.validate(merged, id);
     const next: ServerSet = { ...clean, id, revision: prev.revision + 1 };
     const out = [...raw];
@@ -219,7 +210,7 @@ export class ServerSetStore {
   }
 }
 
-function checkUrl(tool: string, url: string | undefined): void {
+export function checkUrl(tool: string, url: string | undefined): void {
   if (!url) return;
   let ok = false;
   try {

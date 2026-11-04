@@ -36,22 +36,28 @@ let sets: ServerSetStore;
 let cases: CaseStore;
 // What each probe was handed: the settings tell the sets apart.
 let probed: string[];
+// The secret each IRIS / Timesketch client was built with, to prove a mask is never sent on.
+let secretsSeen: string[];
 
 const builders: ServerClientBuilders = {
-  iris: (s: IrisSettings) =>
-    ({
+  iris: (s: IrisSettings) => {
+    secretsSeen.push(`iris:${s.apiKey}`);
+    return {
       ping: async () => {
         probed.push(`iris:${s.url}`);
         if (s.url.includes("down")) throw new Error("IRIS request failed: connect ECONNREFUSED");
       },
-    }) as unknown as IrisClient,
-  timesketch: (s: TimesketchSettings) =>
-    ({
+    } as unknown as IrisClient;
+  },
+  timesketch: (s: TimesketchSettings) => {
+    secretsSeen.push(`timesketch:${s.password}`);
+    return {
       login: async () => {
         probed.push(`timesketch:${s.url}`);
         throw new Error(`Timesketch request to https://${s.user}:${s.password}@ts.example.com failed`);
       },
-    }) as unknown as TimesketchClient,
+    } as unknown as TimesketchClient;
+  },
   velociraptor: (s: VelociraptorSettings) =>
     ({
       listClients: async () => {
@@ -90,6 +96,7 @@ beforeEach(() => {
   sets = new ServerSetStore(join(dir, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 7)));
   cases = new CaseStore(join(dir, "cases"));
   probed = [];
+  secretsSeen = [];
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -141,6 +148,7 @@ describe("server set policy", () => {
       ["DELETE", "/server-sets/s1"],
       ["POST", "/server-sets/s1/default"],
       ["POST", "/server-sets/s1/test"],
+      ["POST", "/server-sets/test"],
       ["GET", "/server-sets/s1"],
     ]) {
       expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "global", permission: "admin" });
@@ -187,6 +195,12 @@ describe("member cannot change sets", () => {
       () => member.delete(`/server-sets/${s.id}`).set("X-DFIR-CSRF", memberCsrf),
       () => member.post(`/server-sets/${s.id}/default`).set("X-DFIR-CSRF", memberCsrf),
       () => member.post(`/server-sets/${s.id}/test`).set("X-DFIR-CSRF", memberCsrf),
+      () => member.post("/server-sets/test").set("X-DFIR-CSRF", memberCsrf).send(fullSet("Typed")),
+      () =>
+        member
+          .post(`/server-sets/${s.id}/test`)
+          .set("X-DFIR-CSRF", memberCsrf)
+          .send({ ...fullSet("Lab"), tools: ["iris"] }),
     ];
     for (const t of tries) expect((await t()).status).toBe(403);
     expect(sets.list().map((x) => x.name)).toEqual(["Lab"]);
@@ -448,6 +462,111 @@ describe("POST /server-sets/:setId/test", () => {
     const missing = await request(app).post("/server-sets/nope/test");
     expect(missing.status).toBe(404);
     expect(missing.body.error).toBe("Server set not found.");
+  });
+});
+
+describe("POST /server-sets/test (typed values, nothing saved)", () => {
+  it("tests the typed IRIS values and saves nothing", async () => {
+    const res = await request(singleUserApp())
+      .post("/server-sets/test")
+      .send({ name: "", iris: { url: "https://iris-typed.example.com", apiKey: "typed-key-word" } });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ iris: { ok: true } });
+    expect(probed).toEqual(["iris:https://iris-typed.example.com"]);
+    expect(secretsSeen).toEqual(["iris:typed-key-word"]);
+    expect(sets.list()).toEqual([]);
+    expect(res.text).not.toContain("typed-key-word");
+  });
+
+  it("runs only the tools named in `tools`", async () => {
+    const res = await request(singleUserApp())
+      .post("/server-sets/test")
+      .send({ ...fullSet("Typed"), tools: ["velociraptor"] });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ velociraptor: { ok: true } });
+    expect(probed).toEqual(["velociraptor:/srv/Typed/api.config.yaml"]);
+  });
+
+  it("refuses a masked secret: there is no stored secret to use", async () => {
+    const res = await request(singleUserApp())
+      .post("/server-sets/test")
+      .send({ name: "New", iris: { url: "https://iris.example.com", apiKey: MASKED_SECRET } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("secret required");
+    expect(probed).toEqual([]);
+  });
+
+  it("reports an incomplete tool and still tests the others", async () => {
+    const res = await request(singleUserApp())
+      .post("/server-sets/test")
+      .send({
+        name: "Half",
+        iris: { url: "https://iris.example.com" },
+        velociraptor: { apiConfigPath: "/srv/half/api.yaml" },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      iris: { ok: false, error: "IRIS is incomplete" },
+      velociraptor: { ok: true },
+    });
+  });
+
+  it("answers 400 for a bad tools list or a non-http(s) URL", async () => {
+    const app = singleUserApp();
+    const badTools = await request(app)
+      .post("/server-sets/test")
+      .send({ ...fullSet("T"), tools: "iris" });
+    expect(badTools.status).toBe(400);
+    const badUrl = await request(app)
+      .post("/server-sets/test")
+      .send({ name: "T", iris: { url: "file:///etc/passwd", apiKey: "word-key" } });
+    expect(badUrl.status).toBe(400);
+    expect(badUrl.body.error).toBe("iris url must be http(s)");
+    expect(probed).toEqual([]);
+  });
+
+  it("never returns the key or the password", async () => {
+    const res = await request(singleUserApp()).post("/server-sets/test").send(fullSet("Typed"));
+    expect(res.status).toBe(200);
+    expect(res.body.timesketch.ok).toBe(false);
+    expect(res.text).not.toContain(IRIS_KEY);
+    expect(res.text).not.toContain(TS_PASSWORD);
+  });
+});
+
+describe("POST /server-sets/:setId/test with typed values", () => {
+  it("a masked key uses the stored key; a new URL is used as typed", async () => {
+    const s = sets.create(fullSet("Lab"));
+    const res = await request(singleUserApp())
+      .post(`/server-sets/${s.id}/test`)
+      .send({
+        name: "Lab",
+        iris: { url: "https://iris-new.example.com", apiKey: MASKED_SECRET },
+        timesketch: { url: "https://ts.example.com", user: "analyst", password: MASKED_SECRET },
+        tools: ["iris", "timesketch"],
+      });
+    expect(res.status).toBe(200);
+    expect(probed).toEqual(["iris:https://iris-new.example.com", "timesketch:https://ts.example.com"]);
+    expect(secretsSeen).toEqual([`iris:${IRIS_KEY}`, `timesketch:${TS_PASSWORD}`]);
+    expect(res.body.iris).toEqual({ ok: true });
+    expect(res.text).not.toContain(IRIS_KEY);
+    expect(res.text).not.toContain(TS_PASSWORD);
+    expect(sets.get(s.id)?.iris?.url).toBe("https://iris.example.com"); // nothing saved
+  });
+
+  it("an emptied secret tests with no secret", async () => {
+    const s = sets.create(fullSet("Lab"));
+    const res = await request(singleUserApp())
+      .post(`/server-sets/${s.id}/test`)
+      .send({ name: "Lab", iris: { url: "https://iris.example.com", apiKey: "" }, tools: ["iris"] });
+    expect(res.body).toEqual({ iris: { ok: false, error: "IRIS is incomplete" } });
+    expect(secretsSeen).toEqual([]);
+  });
+
+  it("404s an unknown set even with a body", async () => {
+    const res = await request(singleUserApp()).post("/server-sets/nope/test").send(fullSet("X"));
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Server set not found.");
   });
 });
 
