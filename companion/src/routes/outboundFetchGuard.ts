@@ -324,17 +324,6 @@ async function validateLan(
 }
 
 /**
- * Parses and checks one URL. Returns the parsed URL when it is allowed; throws
- * OutboundUrlBlockedError when it is not. Call it for the URL the caller supplied AND for every
- * redirect target — a first-hop check alone is exactly the hole that makes redirect-based SSRF work.
- */
-export async function assertOutboundUrlAllowed(raw: string, opts: OutboundFetchOptions = {}): Promise<URL> {
-  // Its own deadline: this resolves a hostname too, so on its own it must not hang either.
-  const signal = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  return (await validateAndResolve(raw, opts, signal)).url;
-}
-
-/**
  * fetch() with every redirect hop re-checked AND its connection pinned to the address that was
  * checked. Redirects are followed by hand (`redirect: "manual"`) because the automatic follow does
  * the one thing this module exists to prevent: connect to an address nothing checked.

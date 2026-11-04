@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  assertOutboundUrlAllowed,
   fetchOutbound,
   pinnedLookup,
   OutboundUrlBlockedError,
+  type OutboundFetchOptions,
 } from "../../src/routes/outboundFetchGuard.js";
 
 // Resolver stub so the unit tests never touch real DNS. A host not listed here resolves to a
@@ -22,37 +22,49 @@ function response(status: number, headers: Record<string, string> = {}): Respons
   return new Response(status === 204 || status >= 300 ? null : "{}", { status, headers });
 }
 
-describe("assertOutboundUrlAllowed", () => {
-  it("accepts an ordinary https URL to a public host", async () => {
-    const url = await assertOutboundUrlAllowed("https://www.cisa.gov/feed.json", {
-      resolveHost: PUBLIC,
-    });
-    expect(url.href).toBe("https://www.cisa.gov/feed.json");
-  });
+// Runs fetchOutbound against a URL the guard must refuse, and proves the refusal happened BEFORE
+// any request: the stubbed fetch is never called. Returns the error for message assertions.
+async function blockedWithoutFetch(raw: string, opts: OutboundFetchOptions = {}): Promise<Error> {
+  let called = false;
+  const fetchImpl = (async () => {
+    called = true;
+    return response(200);
+  }) as unknown as typeof fetch;
+  const err = await fetchOutbound(raw, { resolveHost: PUBLIC, ...opts, fetchImpl }).then(
+    () => new Error("expected the URL to be blocked"),
+    (e: unknown) => e as Error,
+  );
+  expect(called).toBe(false);
+  return err;
+}
 
+describe("outboundFetchGuard module surface", () => {
+  // Every runtime export either IS the pin or sends through it. A validate-only helper that returns
+  // a URL invites validate-then-plain-fetch, which re-resolves unpinned (DNS rebinding) — #2271.
+  it("exports nothing that validates a URL without pinning the connection", async () => {
+    const mod = await import("../../src/routes/outboundFetchGuard.js");
+    expect(Object.keys(mod).sort()).toEqual(["OutboundUrlBlockedError", "fetchOutbound", "pinnedLookup"]);
+  });
+});
+
+describe("fetchOutbound — target checks before any request", () => {
   it("rejects a string that is not an absolute URL", async () => {
-    await expect(assertOutboundUrlAllowed("not a url", { resolveHost: PUBLIC })).rejects.toBeInstanceOf(
-      OutboundUrlBlockedError,
-    );
+    expect(await blockedWithoutFetch("not a url")).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   it("rejects a non-http scheme", async () => {
-    await expect(assertOutboundUrlAllowed("file:///etc/passwd", { resolveHost: PUBLIC })).rejects.toThrow(
-      /https:/,
-    );
+    expect((await blockedWithoutFetch("file:///etc/passwd")).message).toMatch(/https:/);
   });
 
   it("rejects http:// by default", async () => {
-    await expect(
-      assertOutboundUrlAllowed("http://www.cisa.gov/feed.json", { resolveHost: PUBLIC }),
-    ).rejects.toThrow(/https:/);
+    expect((await blockedWithoutFetch("http://www.cisa.gov/feed.json")).message).toMatch(/https:/);
   });
 
   // The reason the issue was filed: cloud instance credentials one POST body away.
   it("rejects the cloud metadata address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://169.254.169.254/latest/meta-data/", { resolveHost: PUBLIC }),
-    ).rejects.toThrow(/link-local/i);
+    expect((await blockedWithoutFetch("https://169.254.169.254/latest/meta-data/")).message).toMatch(
+      /link-local/i,
+    );
   });
 
   it.each([
@@ -66,94 +78,85 @@ describe("assertOutboundUrlAllowed", () => {
     "https://[::1]/x",
     "https://[fd00::1]/x",
   ])("rejects the literal internal target %s", async (raw) => {
-    await expect(assertOutboundUrlAllowed(raw, { resolveHost: PUBLIC })).rejects.toBeInstanceOf(
-      OutboundUrlBlockedError,
-    );
+    expect(await blockedWithoutFetch(raw)).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   // An IPv4-mapped IPv6 literal is the same address wearing a different spelling; iocValue.ts
   // carries the parser for it precisely so a guard cannot be walked around this way.
   it("rejects an IPv4-mapped IPv6 spelling of the metadata address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://[::ffff:169.254.169.254]/", { resolveHost: PUBLIC }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    expect(await blockedWithoutFetch("https://[::ffff:169.254.169.254]/")).toBeInstanceOf(
+      OutboundUrlBlockedError,
+    );
   });
 
   // A literal-only check stops at the URL text. This is the case that needs the resolver.
   it("rejects a public-looking hostname that RESOLVES to an internal address", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://metadata.evil.example/", {
-        resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
-      }),
-    ).rejects.toThrow(/resolve/i);
+    const err = await blockedWithoutFetch("https://metadata.evil.example/", {
+      resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
+    });
+    expect(err.message).toMatch(/resolve/i);
   });
 
   it("rejects when ANY resolved address is internal, not just the first", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://split.example/", {
-        resolveHost: resolver({ "split.example": ["93.184.216.34", "10.1.2.3"] }),
-      }),
-    ).rejects.toThrow(/resolve/i);
+    const err = await blockedWithoutFetch("https://split.example/", {
+      resolveHost: resolver({ "split.example": ["93.184.216.34", "10.1.2.3"] }),
+    });
+    expect(err.message).toMatch(/resolve/i);
   });
 
   // Fails closed, because the ATTACKER decides when the lookup fails: the nameserver for their own
   // domain can answer SERVFAIL here and the metadata address to the lookup fetch makes next. Letting
   // an unresolvable host through skipped the resolved-address check and the pin together.
   it("refuses a host that cannot be resolved", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://nope.example/", {
-        resolveHost: async () => {
-          throw new Error("SERVFAIL");
-        },
-      }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    const err = await blockedWithoutFetch("https://nope.example/", {
+      resolveHost: async () => {
+        throw new Error("SERVFAIL");
+      },
+    });
+    expect(err).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   // Same hole, different shape: a resolver that returns nothing instead of throwing.
   it("refuses a host whose resolution returns no addresses", async () => {
-    await expect(
-      assertOutboundUrlAllowed("https://empty.example/", { resolveHost: async () => [] }),
-    ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+    const err = await blockedWithoutFetch("https://empty.example/", { resolveHost: async () => [] });
+    expect(err).toBeInstanceOf(OutboundUrlBlockedError);
   });
 
   it("names DNS as the cause, so an outage is not read as a policy block", async () => {
-    const err: Error = await assertOutboundUrlAllowed("https://nope.example/", {
+    const err = await blockedWithoutFetch("https://nope.example/", {
       resolveHost: async () => {
         throw new Error("SERVFAIL");
       },
-    }).then(
-      () => new Error("expected the URL to be blocked"),
-      (e: unknown) => e as Error,
-    );
+    });
     expect(err.message).toMatch(/could not be resolved/i);
   });
 
   // The blocked message must not name the address the host resolved to — that IS the internal
   // detail the guard exists to withhold.
   it("does not disclose the resolved internal address in the error", async () => {
-    const err: Error = await assertOutboundUrlAllowed("https://metadata.evil.example/", {
+    const err = await blockedWithoutFetch("https://metadata.evil.example/", {
       resolveHost: resolver({ "metadata.evil.example": ["169.254.169.254"] }),
-    }).then(
-      () => new Error("expected the URL to be blocked"),
-      (e: unknown) => e as Error,
-    );
+    });
     expect(err).toBeInstanceOf(OutboundUrlBlockedError);
     expect(err.message).not.toContain("169.254.169.254");
   });
 
   describe("allowInternal opt-in", () => {
     it("permits http:// to a private host", async () => {
-      const url = await assertOutboundUrlAllowed("http://10.0.0.5/kev.json", {
+      const fetchImpl = vi.fn(async () => response(200));
+      const { url, dispose } = await fetchOutbound("http://10.0.0.5/kev.json", {
         allowInternal: true,
         resolveHost: PUBLIC,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
       });
+      await dispose();
       expect(url.href).toBe("http://10.0.0.5/kev.json");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     it("still rejects a non-http scheme", async () => {
-      await expect(
-        assertOutboundUrlAllowed("file:///etc/passwd", { allowInternal: true, resolveHost: PUBLIC }),
-      ).rejects.toBeInstanceOf(OutboundUrlBlockedError);
+      const err = await blockedWithoutFetch("file:///etc/passwd", { allowInternal: true });
+      expect(err).toBeInstanceOf(OutboundUrlBlockedError);
     });
   });
 });
