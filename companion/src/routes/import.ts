@@ -40,6 +40,7 @@ import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { logImportActivity } from "./importActivity.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
+import { moveFailureNote } from "../analysis/dropScan.js";
 import {
   toolForExtension,
   suggestedToolForExtension,
@@ -162,9 +163,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             dropRelpath: p.relpath,
             cache: runCache,
           });
-          await moveDropFile(dropDir, p.relpath, true).catch(() => {
-            /* best-effort */
-          });
+          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, true), true); // named (#2281)
           // SO-CRATES has only been HANDED the file at this point; the job appends the outcome when
           // its analysis resolves, so do not claim an import that has not happened.
           resolvedEntries.push(
@@ -172,21 +171,19 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               ? {
                   status: "SUBMITTED",
                   relpath: p.relpath,
-                  reason: `handed to ${toolId}; verdicts land when analysis finishes`,
+                  reason: `handed to ${toolId}; verdicts land when analysis finishes${note}`,
                 }
-              : { status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` },
+              : { status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)${note}` },
           );
           ran++;
         } catch (err) {
           failed++;
           recordImportFailure(caseId, "drop-tool", p.relpath, err);
+          const note = await moveFailureNote(moveDropFile(dropDir, p.relpath, false), false);
           resolvedEntries.push({
             status: "FAILED",
             relpath: p.relpath,
-            reason: (err as Error)?.message ?? String(err),
-          });
-          await moveDropFile(dropDir, p.relpath, false).catch(() => {
-            /* best-effort */
+            reason: `${(err as Error)?.message ?? String(err)}${note}`,
           });
         }
         ctx.dropSeen().get(caseId)?.delete(p.relpath); // moved out of the watched area — forget it

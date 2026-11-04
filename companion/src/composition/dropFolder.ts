@@ -46,6 +46,8 @@ import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js"
 import { maxImportFileBytes } from "../routes/importFileHead.js";
 import {
   selectReadyFiles,
+  excludeStuck,
+  stuckMoveNote,
   classifyDropFile,
   shouldIgnoreDropFile,
   isOversize,
@@ -54,6 +56,7 @@ import {
   DROP_FAILED,
   DROP_README,
   type DropFileStat,
+  type StuckDropFile,
 } from "../analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../analysis/dropLog.js";
 import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
@@ -67,6 +70,7 @@ import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
+import { createDropStuckTracker, joinReasons } from "./dropStuck.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
@@ -155,6 +159,8 @@ export interface DropFolder {
   readonly scanning: PerCaseSet;
   /** Files already logged PENDING, so a waiting raw file gets one line, not one per poll. */
   readonly pendingLogged: PerCaseMap<Set<string>>;
+  /** Handled files whose move out of drop/ failed, held back from re-import while unchanged (#2281). */
+  readonly stuck: PerCaseMap<Map<string, StuckDropFile>>;
   ensureDropFolders(caseId: string): Promise<void>;
   moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
   scanCaseDrops(caseId: string): Promise<void>;
@@ -192,6 +198,8 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new
   // PENDING line every poll — only once when first seen pending, cleared once it resolves.
   const pendingLogged = new CaseKeyedMap<Set<string>>(() => store.casesRoot);
+  const stuckFiles = createDropStuckTracker(() => store.casesRoot);
+  const stuck = stuckFiles.stuck;
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -261,8 +269,15 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   }
 
   // A move is one admitted write (#1855): refused for a deleted or replaced case, never a new folder.
+  // A failed move leaves a handled file in drop/, where the next stable poll would import it again;
+  // both callers (the sweep and run-pending) get it remembered as stuck here (#2281).
   function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
-    return store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok));
+    return store
+      .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok))
+      .catch(async (e: unknown) => {
+        await stuckFiles.record(dropDir, relpath, ok);
+        throw e;
+      });
   }
 
   async function moveDropFileAdmitted(dropDir: string, relpath: string, ok: boolean): Promise<void> {
@@ -582,8 +597,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const dropDir = dropDirOf(store, caseId);
       await ensureDropFolders(caseId);
       const listing = await listDropFiles(dropDir);
-      const { ready, nextSeen } = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
+      const settled = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
+      const nextSeen = settled.nextSeen;
       seen.set(caseId, nextSeen);
+      const { ready, nextStuck } = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
+      stuck.set(caseId, nextStuck);
+      await stuckFiles.retry(dropDir, nextStuck, moveDropFile);
       if (ready.length === 0) return;
 
       // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the
@@ -628,17 +647,28 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
                 pendingRawInputs.push(res.pending);
                 return;
               }
+              // A failed move is named to the analyst, merged into the file's one warning or failure
+              // entry (buildSweepLogEntries reads only the first warning per file) (#2281).
+              const moveNote = await moveDropFile(dropDir, file.relpath, res.ok).then(
+                () => undefined,
+                (e) => {
+                  logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`);
+                  return stuckMoveNote(res.ok, (e as Error).message);
+                },
+              );
               // A submitted file still counts as "imported" for the dashboard's drop banner (it was
               // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
-              if (res.ok && res.warning) warned.push({ relpath: file.relpath, reason: res.warning });
+              const warning = res.ok ? joinReasons(res.warning, moveNote) : "";
+              if (warning) warned.push({ relpath: file.relpath, reason: warning });
               if (res.ok && res.submitted) {
                 imported.push(file.relpath);
-                submitted.push({ relpath: file.relpath, reason: res.submitted });
+                submitted.push({ relpath: file.relpath, reason: joinReasons(res.submitted, moveNote) });
               } else if (res.ok) imported.push(file.relpath);
-              else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
-              await moveDropFile(dropDir, file.relpath, res.ok).catch((e) =>
-                logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`),
-              );
+              else
+                failed.push({
+                  relpath: file.relpath,
+                  reason: joinReasons(res.reason ?? "import failed", moveNote),
+                });
               nextSeen.delete(file.relpath); // moved out of the watched area — forget it
               pendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
             } finally {
@@ -745,6 +775,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     seen,
     scanning,
     pendingLogged,
+    stuck,
     ensureDropFolders,
     moveDropFile,
     scanCaseDrops,

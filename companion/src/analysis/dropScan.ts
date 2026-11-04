@@ -177,3 +177,49 @@ export function selectReadyFiles(
   }
   return { ready, nextSeen };
 }
+
+/** A file whose move to _processed/ or _failed/ failed, so it is still in drop/ (#2281). `ok`
+ *  records which of the two it was bound for, so a later sweep can finish the move. */
+export interface StuckDropFile {
+  size: number;
+  mtimeMs: number;
+  ok: boolean;
+}
+
+export interface StuckResult {
+  /** `ready` minus every stuck file that is still present with the size and mtime it had. */
+  ready: DropFileStat[];
+  /** The stuck entries still in force: present and unchanged. */
+  nextStuck: Map<string, StuckDropFile>;
+}
+
+// THE MOVE IS THE DEDUP, and a failed move breaks it: the file stays in the watched area and the
+// settle check would import it again two polls later. A stuck file that is unchanged was already
+// handled and is held back; one that changed (new bytes are new evidence) or vanished loses its
+// entry and is treated like any other file.
+export function excludeStuck(
+  ready: readonly DropFileStat[],
+  listing: readonly DropFileStat[],
+  prevStuck: ReadonlyMap<string, StuckDropFile>,
+): StuckResult {
+  const nextStuck = new Map<string, StuckDropFile>();
+  for (const f of listing) {
+    const s = prevStuck.get(f.relpath);
+    if (s && s.size === f.size && s.mtimeMs === f.mtimeMs) nextStuck.set(f.relpath, s);
+  }
+  return { ready: ready.filter((f) => !nextStuck.has(f.relpath)), nextStuck };
+}
+
+/** The analyst-facing caveat for a file that was handled but could not be moved out of drop/. */
+export function stuckMoveNote(ok: boolean, message: string): string {
+  const [dest, again] = ok ? [DROP_PROCESSED, "re-imported"] : [DROP_FAILED, "processed again"];
+  return `could not be moved to ${dest}/ (${message}) — left in drop/; it will not be ${again} unless it changes`;
+}
+
+/** Await a drop-file move: "" when it moved, else "; <stuckMoveNote>" to append to a drop-log reason. */
+export function moveFailureNote(move: Promise<void>, ok: boolean): Promise<string> {
+  return move.then(
+    () => "",
+    (e: unknown) => `; ${stuckMoveNote(ok, e instanceof Error ? e.message : String(e))}`,
+  );
+}

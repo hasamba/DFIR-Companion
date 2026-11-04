@@ -71,6 +71,10 @@ describe("moveDropFile refuses a relpath that escapes the drop folder (#919)", (
     // directories outside drop/. The would-be dest's parent must not exist.
     const wouldBeDest = join(dropDir, "_processed", relpath);
     await expect(access(dirname(wouldBeDest))).rejects.toThrow();
+    // #2281: a failed move records the file as stuck — but never a refused traversal relpath, whose
+    // stat would reach outside drop/ (the outside file exists, so only the guard prevents it).
+    expect(drops.stuck.get("c1")?.has(relpath) ?? false).toBe(false);
+    expect([...(drops.stuck.get("c1")?.keys() ?? [])]).toEqual([]);
   });
 
   it("refuses on the failure path too — a tool that rejects the file must not move it either", async () => {

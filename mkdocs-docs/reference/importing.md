@@ -2558,6 +2558,13 @@ Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it �
 
 Processed files move to `drop/_processed/`; failures move to `drop/_failed/` and are reported in the dashboard **📥 Drop** banner and any configured notification channel.
 
+If that move fails (for example, antivirus or a sync client still holds the file open, or
+`_processed/` is read-only), the file stays in `drop/` and is not imported again. Its
+`drop-log.txt` line says it could not be moved, and why. The watcher tries the move again on each
+poll and finishes it once the block is gone. If you change the file while it waits, the watcher
+treats it as new evidence and imports it again. This memory does not survive a server restart: after
+a restart, a file still left in `drop/` is imported one more time.
+
 A subfolder named `asset=<HOST>` at the top of `drop/` (for example `drop/asset=DESKTOP-01/`)
 declares the host every file under it came from — the drop-folder form of the Import button's
 *Which host did this file come from?* prompt (above). It applies to Windows log exports with no
