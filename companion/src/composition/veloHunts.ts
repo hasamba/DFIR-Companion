@@ -403,6 +403,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // The reads are done and the writes have not started: this collect is now waiting its turn.
       // Published BEFORE the await, because the wait is the part the analyst cannot otherwise see —
       // on a busy case it is minutes of a card that says nothing at all (#770).
+      if (!(await current())) return; // the set changed while the evidence was stored
       job = { ...job, collectPhase: "queued", collectRows: totalRows };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
