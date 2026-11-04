@@ -80,6 +80,9 @@ export async function copyHandleBounded(
   try {
     await pipeline(src, bounded, out);
   } catch (err) {
+    // pipeline destroys `out` but its fd closes asynchronously; on Windows an unlink of a still-open
+    // file fails (EPERM), which would leave the partial copy behind. Wait for the close first.
+    if (!out.closed) await new Promise<void>((resolve) => out.once("close", () => resolve()));
     if (created) await unlink(dest).catch(() => undefined);
     throw err;
   }

@@ -170,6 +170,7 @@ describe.skipIf(process.platform === "win32")("Docker entrypoint reads the same 
     const out = execFileSync("sh", ["-c", `${entrypointReader()}env_file_get "$1"`, "sh", KEY], {
       env: { PATH: process.env.PATH ?? "", env_file: envFile },
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
     });
     expect(out).toBe(v);
   });
