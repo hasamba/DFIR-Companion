@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Built-in HTTPS** — serves HTTPS itself (on by default in team mode) from a private local CA with silent renewal and a certificate download link; no reverse proxy needed (closes #2285)
+- **Built-in HTTPS** — serves HTTPS itself (on by default in team mode) from a private local CA with silent renewal and a certificate download link; no reverse proxy needed; existing team-mode deployments behind a plain-HTTP proxy set `DFIR_HTTPS=off` (closes #2285)
 - **Per-case server sets** — each case remembers its IRIS, Timesketch and Velociraptor servers
 
 ### Changed

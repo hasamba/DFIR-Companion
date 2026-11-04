@@ -64,8 +64,9 @@
   </main>
   <script nonce="__CSP_NONCE__">
     (function () {
-      // Built-in HTTPS (#2285): offer the local CA only when the server has one to give.
-      fetch("/tls/ca.crt", { method: "HEAD" }).then(function (r) {
+      // Built-in HTTPS (#2285): offer the local CA only when the server has one to give. GET, not
+      // HEAD: only GET is public before sign-in (auth/policy.ts), and the certificate is ~1 KB.
+      fetch("/tls/ca.crt").then(function (r) {
         if (r.ok) document.getElementById("tlsCa").hidden = false;
       }).catch(function () {});
       var params = new URLSearchParams(location.search);

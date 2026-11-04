@@ -14,7 +14,9 @@
 # header of src/routes/seedDemo.ts), so treat everything on this deployment as throwaway: a stranger
 # can create and reseed cases here. Keep real case data somewhere else.
 #
-# A deployment holding real cases wants DFIR_AUTH_MODE=team and DFIR_AUTH_BOOTSTRAP_TOKEN instead.
+# A deployment holding real cases wants DFIR_AUTH_MODE=team and DFIR_AUTH_BOOTSTRAP_TOKEN instead —
+# plus DFIR_HTTPS=off: Railway terminates HTTPS itself and talks plain HTTP to the container, and
+# team mode otherwise turns the companion's built-in HTTPS on (#2285).
 
 [build]
 dockerfilePath = "Dockerfile"

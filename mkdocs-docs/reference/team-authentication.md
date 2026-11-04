@@ -242,7 +242,8 @@ Share the **CA** fingerprint with the team over a channel you already trust (cha
 **What teammates do.** Either:
 
 - **Click through the browser warning.** It works, and the browser remembers the exception. They
-  see the warning again only when the server certificate renews (about every two years). Check
+  see the warning again only when the server certificate is re-issued — about every two years, or
+  sooner if the server's name or IP addresses change. Check
   that the fingerprint in the warning's certificate details matches the server certificate's.
 - **Install the certificate once** — no warnings ever, across renewals. Download it from the
   **Download the server certificate** link on the sign-in page or in Settings → Authentication, or

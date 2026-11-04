@@ -952,7 +952,9 @@ case-scoped service identities. Authentication and identity-provider settings ar
 security controls: configure them in `.env` or a secret store, then restart. See the
 [Team Accounts and Case Roles guide](mkdocs-docs/reference/team-authentication.md) for the
 complete variable list, HTTPS setup, first-admin bootstrap, role matrix, extension token, and
-single-writer process model.
+single-writer process model. Team mode serves **HTTPS by itself** (`DFIR_HTTPS=auto`) from a
+private local certificate authority — no reverse proxy needed; behind a proxy that speaks plain
+HTTP to the companion, set `DFIR_HTTPS=off`.
 
 ### AI — extraction (required to enable analysis)
 

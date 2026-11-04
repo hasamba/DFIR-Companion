@@ -42,6 +42,10 @@ services:
       # Team-mode accounts, sessions, case roles and the auth audit (DFIR_AUTH_MODE=team). Pinned to
       # the ./auth mount below: left unset, the store lands in an unmounted folder under /data, and
       # every container recreate (`docker compose up -d` after an edit) deletes every account.
+      # Team mode also turns on the built-in HTTPS (DFIR_HTTPS=auto, #2285); its certificates live in
+      # ./data/tls. Set DFIR_HTTPS_HOSTNAMES to the name/IP teammates type, and publish the port
+      # beyond 127.0.0.1 for a remote server. Behind a host proxy that speaks plain HTTP to this
+      # container, set DFIR_HTTPS: "off".
       DFIR_AUTH_DATA_DIR: "/data/auth"
       # --- AI analysis (optional). Leave DFIR_VISION_PROVIDER unset for capture/import-only. ---
       # DFIR_VISION_* is the SCREENSHOT (vision) model; DFIR_AI_SYNTH_* does all text work.
