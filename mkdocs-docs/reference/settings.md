@@ -218,18 +218,17 @@ servers. You do not enter keys again when you move between cases.
 - **The case list.** Open the case list in the header. Under each case name, the list shows the
   case ID and the name of its set, for example **CASE-A · Client A**. A case with no set shows
   **no server set**.
-- **Change….** The server-rack button next to the case name attaches a different set to the
-  case. Point at it to see the open case's set: **Server set: *set name* — click to change**. If
-  the case has no usable set, the button has a red ring and says **No usable server set — click
-  to choose one**. If the case
-  has work on its old servers, the Companion warns first. The warning lists the live monitors
+- **Change a case's set.** Open the case, then open **Settings → Integrations → Server sets**. The
+  top line names the open case's set: **The open case uses server set: *set name***. If the case
+  has no usable set, the line is red and says why. Click **Change…** next to it to attach a
+  different set. If the case has work on its old servers, the Companion warns first. The warning lists the live monitors
   that will stop, the IRIS case link that will be forgotten and the Velociraptor hunts that will
   be forgotten. Click **Change server set** to go on, or **Cancel** to change nothing.
 - **What is kept.** Nothing on the old servers is deleted. The Companion only stops talking to
   them. Events, IOCs and findings in the case stay. The next IRIS push makes a new IRIS case on
   the new server. The case's activity log records the change.
 - **Who can change what.** In team mode, only an administrator edits, adds or deletes sets. Other
-  users see the list without the buttons. Only an administrator of the case can use **Change…**.
+  users see the list without the buttons. Only an administrator of the case sees **Change…**.
 - **Keys stay on this machine.** The Companion stores the keys and passwords of every set
   encrypted on this machine. They never go into case exports, archives, reports, support bundles
   or logs.

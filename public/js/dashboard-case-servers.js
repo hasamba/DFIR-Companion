@@ -1,4 +1,4 @@
-// The open case's server set: the icon-only "Change…" button beside the case picker (its tooltip and
+// The open case's server set: the line and Change… button in Settings → Server sets (its tooltip and
 // accessible name carry the set name; the case list shows each case's set under its name), its two
 // dialogs, and the gating of the IRIS / Timesketch / Velociraptor controls by the tools that set uses.
 //
@@ -94,9 +94,19 @@
     return !!(auth.caseRoles && auth.caseRoles[caseId] === "administrator");
   }
 
-  // The toolbar has no room for a "Server set: <name>" label, so the button says it. setAttribute
-  // writes the name as an attribute value, never as markup.
+  // The open case's set, in Settings → Server sets: one line of text plus the Change… button.
+  // textContent and setAttribute write the name as data, never as markup.
   function paintChange(tip, error) {
+    const row = byId("caseServersRow");
+    if (row) row.hidden = false;
+    const line = byId("caseServersCurrent");
+    if (line) {
+      line.textContent = tip
+        .replace(/ — click to (change|choose one)$/, "")
+        .replace(/^Server set: /, "The open case uses server set: ")
+        .replace(/^No usable server set: /, "The open case has no usable server set: ");
+      line.classList.toggle("case-servers-error", !!error);
+    }
     const change = byId("caseServersChangeBtn");
     if (!change) return;
     change.setAttribute("data-tip", tip);
@@ -116,6 +126,8 @@
     const change = byId("caseServersChangeBtn");
     if (!id) {
       if (change) change.hidden = true;
+      const row = byId("caseServersRow");
+      if (row) row.hidden = true;
       applyCaseTools();
       return;
     }

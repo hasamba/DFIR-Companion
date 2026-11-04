@@ -91,7 +91,8 @@ function serverSetMarkup(doc: FakeDocument): void {
 }
 
 function caseServerMarkup(doc: FakeDocument): void {
-  doc.add("span", "caseServersPickMsg", "caseServersConfirmMsg");
+  doc.add("span", "caseServersPickMsg", "caseServersConfirmMsg", "caseServersCurrent");
+  doc.add("div", "caseServersRow");
   doc.add("button", "caseServersChangeBtn", "caseServersPickApply", "caseServersPickCancel");
   doc.add("button", "caseServersConfirmBtn", "caseServersConfirmCancel");
   doc.add("div", "caseServersPickOverlay", "caseServersConfirmOverlay", "caseServersConfirmList");
@@ -256,6 +257,47 @@ describe("case header", () => {
   // The toolbar has no room for a "Server set: <name>" label. The set name moved to the case list
   // (dashboard-case-picker.js) and to the icon-only Change… button's tooltip and accessible name.
   const tipFor = (name: string) => `Server set: ${name} \u2014 click to change`;
+
+  it("lives in Settings → Server sets, not in the toolbar", () => {
+    // Most analysts pick the set once, on the New Case form; a toolbar control cost space for an
+    // action rarely used, and as a bare icon nobody could find it.
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const toolbar = html.slice(html.indexOf('id="toolbarMain"'), html.indexOf("</header>"));
+    expect(toolbar).not.toContain("caseServersChangeBtn");
+    const panel = html.slice(html.indexOf('id="serverSetsPanel"'), html.indexOf('id="serverSetsList"'));
+    expect(panel).toContain('id="caseServersCurrent"');
+    expect(panel).toMatch(/<button id="caseServersChangeBtn"[^>]*>Change\u2026<\/button>/);
+  });
+
+  it("the picker and the warning open above Settings, which launches them", () => {
+    // Settings (#settingsOverlay) is a .comment-overlay at z-index 50 and comes later in the page,
+    // so a dialog on the same layer opened behind it.
+    const css = readFileSync(new URL("../../../public/css/dashboard-toolbar.css", import.meta.url), "utf8");
+    for (const id of ["caseServersPickOverlay", "caseServersConfirmOverlay"]) {
+      const rule = css.match(new RegExp(`#${id}[^{]*\\{[^}]*z-index:\\s*(\\d+)`));
+      expect(Number(rule?.[1]), id).toBeGreaterThan(50);
+    }
+  });
+
+  it("the Settings line names the open case's set, and says why when it is unusable", async () => {
+    const ok = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },
+    });
+    await ok.api.refreshCaseServers("C1");
+    expect(ok.el("caseServersRow").hidden).toBe(false);
+    expect(ok.el("caseServersCurrent").textContent).toBe("The open case uses server set: Alpha");
+    const bad = loadCaseServers({
+      "GET /cases/C1/server-set": { status: 409, body: { error: "This case's server set was deleted." } },
+    });
+    await bad.api.refreshCaseServers("C1");
+    const line = bad.el("caseServersCurrent");
+    expect(line.textContent).toBe(
+      "The open case has no usable server set: This case's server set was deleted.",
+    );
+    expect(line.classList.contains("case-servers-error")).toBe(true);
+    await bad.api.refreshCaseServers("");
+    expect(bad.el("caseServersRow").hidden).toBe(true);
+  });
 
   it("Change… names the open case's set and updates on case switch", async () => {
     const { api, el } = loadCaseServers({
