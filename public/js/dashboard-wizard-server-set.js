@@ -57,6 +57,26 @@
     return json;
   }
 
+  // The set's tools with `patch` merged over them. A masked secret stays masked: the server keeps it.
+  function mergedBody(current, patch) {
+    const body = { name: current.name };
+    for (const tool of TOOLS) {
+      if (current[tool] || patch[tool]) body[tool] = { ...(current[tool] || {}), ...(patch[tool] || {}) };
+    }
+    return body;
+  }
+
+  // The set exists by now, so a failure here is a partial save: the message says exactly that.
+  async function makeDefault(id, name) {
+    try {
+      await send("POST", `/server-sets/${encodeURIComponent(id)}/default`);
+    } catch (e) {
+      const err = new Error(`Created set '${name}' but could not make it the default: ${e.message || ""}`);
+      err.partial = true;
+      throw err;
+    }
+  }
+
   /** Merges `patch` into the default set (or creates "Testing"). Returns the set's name. */
   async function saveToDefaultSet(patch) {
     if (typeof fetchServerSets !== "function") throw new Error("server sets are not available");
@@ -65,15 +85,18 @@
     if (!list.editable) throw new Error("only an administrator can change server sets");
     const current = list.sets.find((s) => s.id === list.defaultId);
     if (!current) {
-      const made = await send("POST", "/server-sets", { name: FIRST_SET, ...patch });
-      await send("POST", `/server-sets/${encodeURIComponent(made.id)}/default`);
-      return made.name || FIRST_SET;
+      // A retry after a failed make-default finds the "Testing" set the first try made: reuse it.
+      const lower = FIRST_SET.toLowerCase();
+      const earlier = list.sets.find((s) => String(s.name || "").toLowerCase() === lower);
+      const made = earlier
+        ? await send("PUT", `/server-sets/${encodeURIComponent(earlier.id)}`, mergedBody(earlier, patch))
+        : await send("POST", "/server-sets", { name: FIRST_SET, ...patch });
+      const id = earlier ? earlier.id : made.id;
+      const name = made.name || (earlier && earlier.name) || FIRST_SET;
+      await makeDefault(id, name);
+      return name;
     }
-    const body = { name: current.name };
-    for (const tool of TOOLS) {
-      if (current[tool] || patch[tool]) body[tool] = { ...(current[tool] || {}), ...(patch[tool] || {}) };
-    }
-    const saved = await send("PUT", `/server-sets/${encodeURIComponent(current.id)}`, body);
+    const saved = await send("PUT", `/server-sets/${encodeURIComponent(current.id)}`, mergedBody(current, patch));
     return saved.name || current.name;
   }
 
@@ -122,11 +145,39 @@
       resultEl.textContent = saved + tested; // text only: names and errors come from outside
     } catch (e) {
       resultEl.style.color = "#ff9f9f";
-      resultEl.textContent = "Could not save: " + (e.message || "");
+      resultEl.textContent = e.partial ? e.message : "Could not save: " + (e.message || "");
     }
     if (btn) btn.disabled = false;
     if (typeof wizRefreshStatus === "function") await wizRefreshStatus();
   }
 
+  /**
+   * Wires a `serverSet` step when it renders: Save goes to the default set, the step line names
+   * that set, and a member (who cannot change sets) sees why Save is disabled.
+   */
+  async function wizBindServerSetStep(step, resultEl, btn) {
+    btn.onclick = () => wizSaveServerSetStep(step, resultEl, btn);
+    const note = document.getElementById("wizStepSaveNote");
+    if (typeof fetchServerSets !== "function") return;
+    let list;
+    try {
+      list = await fetchServerSets();
+    } catch {
+      return; // the line keeps its generic text; Save reports the real error
+    }
+    // The analyst may have moved to another step while the list loaded.
+    if (document.getElementById("wizStepSaveBtn") !== btn) return;
+    if (!list.editable) {
+      btn.disabled = true;
+      if (note) note.textContent = "Only an administrator can change server sets.";
+      return;
+    }
+    const current = list.sets.find((s) => s.id === list.defaultId);
+    if (note && current) {
+      note.textContent = `Saved to the default server set (${current.name}). Edit sets in Settings → Server sets.`;
+    }
+  }
+
   window.wizSaveServerSetStep = wizSaveServerSetStep;
+  window.wizBindServerSetStep = wizBindServerSetStep;
 })();

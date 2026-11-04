@@ -207,7 +207,7 @@
         : "") +
       wizRenderFields(step.fields) +
       '<div class="wiz-actions"><button class="wiz-btn" id="wizStepSaveBtn">Save &amp; test</button>' +
-      '<span data-safe-style="font-size:11px;color:var(--text-muted)">' +
+      '<span id="wizStepSaveNote" data-safe-style="font-size:11px;color:var(--text-muted)">' +
       (step.serverSet
         ? "Saved to the default server set. Edit sets in Settings → Server sets."
         : "Saved to your local .env (gitignored).") +
@@ -325,6 +325,23 @@
     await wizRefreshStatus();
   }
 
+  // The IRIS / Timesketch / Velociraptor steps save into the default server set (the server reads
+  // their .env keys only once, as a first-run seed): js/dashboard-wizard-server-set.js. With that
+  // module missing, the step says so and saves nothing. It never falls back to .env.
+  function wizBindStepSave(step, res, btn) {
+    if (!btn) return;
+    if (step.serverSet && typeof wizBindServerSetStep === "function") {
+      wizBindServerSetStep(step, res, btn);
+    } else if (step.serverSet) {
+      btn.onclick = () => {
+        res.style.color = "#ff9f9f";
+        res.textContent = "Server-set save is unavailable. Reload the page.";
+      };
+    } else {
+      btn.onclick = () => wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
+    }
+  }
+
   // Render the dynamic pane for a step + wire its buttons.
   function wizShowStep(stepId) {
     wizCurrent = stepId;
@@ -358,15 +375,7 @@
       wizEl("wizPresidioTestBtn").onclick = wizTestPresidio;
       wizEl(wizFieldId("DFIR_PRESIDIO_URL")).oninput = wizPresidioLocalWarning;
     } else {
-      const btn = wizEl("wizStepSaveBtn"),
-        res = wizEl("wizStepResult");
-      // The IRIS / Timesketch / Velociraptor steps save into the default server set (the server
-      // reads their .env keys only once, as a first-run seed): js/dashboard-wizard-server-set.js.
-      if (btn)
-        btn.onclick = () =>
-          step.serverSet && typeof wizSaveServerSetStep === "function"
-            ? wizSaveServerSetStep(step, res, btn)
-            : wizSaveAndTestGeneric(step.fields, step.reload, step.test, res, btn);
+      wizBindStepSave(step, wizEl("wizStepResult"), wizEl("wizStepSaveBtn"));
     }
     // Path fields render their own Browse… / Download-latest buttons (wizRenderFields), and this
     // pane is rebuilt on every visit — so they are re-bound here rather than once at load.
@@ -769,4 +778,5 @@
   window.wizRefreshStatus = wizRefreshStatus;
   window.fetchLogLevel = fetchLogLevel;
   window.initSetupWizard = initSetupWizard;
+  window.wizBindStepSave = wizBindStepSave;
 })();
