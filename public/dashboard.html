@@ -1030,7 +1030,8 @@
       </div>
       <div class="sfield-row">
         <div class="sfield"><label for="sseVeloOrg">GUI org</label><input id="sseVeloOrg" placeholder="root" /></div>
-        <div class="sfield"><label for="sseVeloGuiUrl">GUI URL</label><input id="sseVeloGuiUrl" placeholder="https://velo.example.org:8889" /></div>
+        <div class="sfield"><label for="sseVeloGuiUrl">GUI URL</label><input id="sseVeloGuiUrl" placeholder="https://velo.example.org:8889" aria-describedby="sseVeloGuiUrlHint" />
+          <span id="sseVeloGuiUrlHint" class="sfield-hint" data-safe-style="display:block; margin-top:4px">The address you open the Velociraptor GUI at, with its path if it has one (for example https://host/velociraptor). You can paste the browser address.</span></div>
       </div>
       <div class="server-set-test-row" data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0 8px;">
         <button id="sseTestVelo" type="button">Test Velociraptor</button>

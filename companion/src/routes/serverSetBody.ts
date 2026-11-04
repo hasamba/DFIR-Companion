@@ -9,6 +9,7 @@ import {
   type ToolName,
   type VelociraptorSettings,
 } from "../integrations/serverSets/types.js";
+import { normalizeVeloGuiUrl } from "../integrations/serverSets/veloGuiUrl.js";
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -73,13 +74,17 @@ function timesketch(body: Record<string, unknown>): TimesketchSettings | undefin
   return anyText(out) ? out : undefined;
 }
 
+function guiUrl(raw: string | undefined): string | undefined {
+  return raw === undefined ? undefined : normalizeVeloGuiUrl(raw);
+}
+
 function velociraptor(body: Record<string, unknown>): VelociraptorSettings | undefined {
   const s = section(body, "velociraptor");
   if (!s) return undefined;
   const out = compact<VelociraptorSettings>({
     apiConfigPath: str(s, "velociraptor", "apiConfigPath") ?? "",
     org: str(s, "velociraptor", "org"),
-    guiUrl: str(s, "velociraptor", "guiUrl"),
+    guiUrl: guiUrl(str(s, "velociraptor", "guiUrl")),
   });
   return anyText(out) ? out : undefined;
 }

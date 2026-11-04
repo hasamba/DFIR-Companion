@@ -272,6 +272,14 @@ describe("case header", () => {
     expect(changeTip(btn)).toEqual({ tip: tipFor("Beta"), aria: tipFor("Beta") });
   });
 
+  it("the editor explains the Velociraptor GUI URL", () => {
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain(
+      "The address you open the Velociraptor GUI at, with its path if it has one (for example " +
+        "https://host/velociraptor). You can paste the browser address.",
+    );
+  });
+
   it("the toolbar shows no server set label", () => {
     const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).not.toContain('id="caseServersLabel"');

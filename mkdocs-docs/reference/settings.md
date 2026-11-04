@@ -203,6 +203,10 @@ servers. You do not enter keys again when you move between cases.
   (Velociraptor: the API config path). A key or password that still shows `••••••` tests with
   the stored value. An empty one tests with no secret. **Test connection** at the bottom tests
   every tool you filled in.
+- **Velociraptor GUI URL.** Give the address you open the Velociraptor GUI at. If the GUI has a
+  path, include it, for example `https://host/velociraptor`. You can paste the address from the
+  browser bar: the Companion removes `/app/index.html` and everything after it. Hunt links then
+  open under that path.
 - **Skip TLS verify.** Tick it on a set's IRIS or Timesketch fields to accept that server's
   certificate without a check. In a set, the tick alone is enough, also for a server on another
   machine: you do not need `DFIR_TLS_ALLOW_INSECURE_EXTERNAL`. Use it in a lab only. Anyone on the

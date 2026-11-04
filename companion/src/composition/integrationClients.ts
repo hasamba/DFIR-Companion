@@ -20,6 +20,7 @@ import type {
   TimesketchSettings,
   VelociraptorSettings,
 } from "../integrations/serverSets/types.js";
+import { normalizeVeloGuiUrl } from "../integrations/serverSets/veloGuiUrl.js";
 
 /**
  * Outbound integration clients, built from environment variables (#384, moved from server.ts).
@@ -115,7 +116,7 @@ export function velociraptorEnvFrom(s: VelociraptorSettings, base: NodeJS.Proces
     ...base,
     DFIR_VELOCIRAPTOR_API_CONFIG: s.apiConfigPath,
     DFIR_VELOCIRAPTOR_ORG: s.org ?? "",
-    DFIR_VELOCIRAPTOR_GUI_URL: s.guiUrl ?? "",
+    DFIR_VELOCIRAPTOR_GUI_URL: normalizeVeloGuiUrl(s.guiUrl ?? ""), // also a set saved before the cut
   };
 }
 

@@ -114,7 +114,8 @@ export class IrisClient {
       // Same cause unwrapping and certificate hint as Timesketch; built from a server set only.
       throw new IrisApiError(`IRIS request failed: ${serverSetFetchError(err, "IRIS")}`, 0, "http");
     }
-    if (res.status === 401) throw new IrisApiError("IRIS auth failed (check DFIR_IRIS_KEY)", 401, "auth");
+    if (res.status === 401)
+      throw new IrisApiError("IRIS auth failed (check the IRIS API key in this server set)", 401, "auth");
     if (res.status === 403)
       throw new IrisApiError("IRIS permission denied for this API key", 403, "permission");
     if (res.status === 404) throw new IrisApiError(`IRIS endpoint not found: ${path}`, 404, "notfound");
