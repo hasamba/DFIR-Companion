@@ -816,12 +816,17 @@ port to `127.0.0.1` on your host — so the dashboard is never exposed on your n
    docker compose up -d --build      # → http://127.0.0.1:4773/dashboard
    ```
 
-   Or pull the prebuilt image from GHCR instead of building:
+   Or pull the prebuilt image from GHCR instead of building. This needs only the compose file,
+   not the whole repo:
 
    ```
-   docker compose pull && docker compose up -d
-   # image: ghcr.io/hasamba/dfir-companion:latest
+   mkdir dfir-companion && cd dfir-companion
+   curl -fsSLO https://raw.githubusercontent.com/hasamba/DFIR-Companion/master/docker-compose.yml
+   docker compose pull && docker compose up -d --no-build
+   # image: ghcr.io/hasamba/dfir-companion:<current release>
    ```
+
+   `--no-build` stops Compose from falling back to a source build, which fails without the repo.
 
 2. **Load the add-on** (capture). The container writes the pre-built, unpacked extension to
    `./addon` on first start. In Chrome/Comet open `chrome://extensions`, enable **Developer
