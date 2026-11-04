@@ -57,9 +57,18 @@
         <button type="submit">Create administrator</button>
       </form>
     </section>
+    <p id="tlsCa" data-safe-style="margin:14px 0 0;font-size:12px" hidden>
+      Browser warning about this site? <a href="/tls/ca.crt" download>Download the server certificate</a>
+      and install it once — compare its SHA-256 fingerprint with the one your administrator shares.
+    </p>
   </main>
   <script nonce="__CSP_NONCE__">
     (function () {
+      // Built-in HTTPS (#2285): offer the local CA only when the server has one to give. GET, not
+      // HEAD: only GET is public before sign-in (auth/policy.ts), and the certificate is ~1 KB.
+      fetch("/tls/ca.crt").then(function (r) {
+        if (r.ok) document.getElementById("tlsCa").hidden = false;
+      }).catch(function () {});
       var params = new URLSearchParams(location.search);
       // Resolve the value the way the browser will and require the same origin (#2107). A bare
       // prefix check misses `/\host` and `/<TAB>/host`, which browsers normalise to another site.

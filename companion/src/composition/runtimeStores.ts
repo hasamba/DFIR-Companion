@@ -133,12 +133,14 @@ export interface RuntimeStoresParams {
   port: number;
   /** Override for the GLOBAL session-log directory; per-case logs always live in the case dir. */
   logDir?: string;
+  /** "https" when the built-in HTTPS listener is on (#2285) — shapes the guessed links only. */
+  scheme?: "http" | "https";
 }
 
-export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeStoresParams) {
+export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "http" }: RuntimeStoresParams) {
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
-  const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
+  const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port, process.env, scheme);
   // The war-room bot's shared secrets are read per request from process.env and are neither
   // writable nor reloadable from the dashboard, so startup is the one place a short value can be
   // refused before it guards a public route (#944).
@@ -311,7 +313,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     log: (m) => logLine(m),
   });
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
-  const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
+  const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `${scheme}://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
   const huntOutcomeStore = new HuntOutcomeStore(store); // #157 hunting feedback loop ledger
   const huntRunSnapshotStore = new HuntRunSnapshotStore(store); // #80 run-to-run hunt diffing

@@ -53,8 +53,10 @@ address. The lockout applies to the token, not the client, so it can also delay 
 locked out of your own first setup, someone else is trying the endpoint.
 
 Put the Companion behind HTTPS. Team-mode cookies are `Secure` by default and therefore are not
-sent over plain HTTP. `DFIR_AUTH_COOKIE_SECURE=false` exists for an HTTP-only loopback lab, not a
-network-facing deployment.
+sent over plain HTTP. The Companion now does this itself: with `DFIR_HTTPS=auto` (the default) it
+serves HTTPS whenever team mode is on — see [Running over HTTPS](#running-over-https).
+`DFIR_AUTH_COOKIE_SECURE=false` exists for an HTTP-only loopback lab, not a network-facing
+deployment.
 
 Restart the server, open `/login`, and create the first local administrator. The bootstrap token
 must match, whatever address the server is bound to and wherever the browser runs: the server
@@ -214,11 +216,75 @@ Authentication data defaults to a dedicated sibling directory keyed to the cases
 deployment may move it with `DFIR_AUTH_DATA_DIR`. Treat that directory and the cases root as one
 backup set.
 
+## Running over HTTPS
+
+Team mode turns on the built-in HTTPS listener by default, on the same port as before
+(`DFIR_PORT`, 4773). No reverse proxy, no extra software: this works the same in `npm run dev`, the
+portable Windows EXE, the Linux AppImage and Docker.
+
+**Certificates.** On its very first start — with HTTPS on or off — the Companion creates a private
+certificate authority (valid 10 years) in a `tls` folder beside the cases folder (`./data/tls` in
+Docker), and uses it to issue the server's certificate. That certificate covers `localhost`, the
+machine's name and its IP addresses. It renews itself from the same authority 30 days before it
+expires, and whenever the machine's names or addresses change, without a restart. Add any other
+name or address teammates type with `DFIR_HTTPS_HOSTNAMES` — in Docker this is required, because a
+container cannot see the host's name or IP.
+
+The startup log prints two fingerprints:
+
+```text
+[https] HTTPS is on because team mode is on (DFIR_HTTPS=auto). certificate SHA-256 A6:AF:… · expires 2029-02-06
+[https] teammates trust this server via the local CA — CA SHA-256 D1:DD:… · expires 2036-11-01; download /tls/ca.crt
+```
+
+Share the **CA** fingerprint with the team over a channel you already trust (chat, ticket, phone).
+
+**What teammates do.** Either:
+
+- **Click through the browser warning.** It works, and the browser remembers the exception. They
+  see the warning again only when the server certificate is re-issued — about every two years, or
+  sooner if the server's name or IP addresses change. Check
+  that the fingerprint in the warning's certificate details matches the server certificate's.
+- **Install the certificate once** — no warnings ever, across renewals. Download it from the
+  **Download the server certificate** link on the sign-in page or in Settings → Authentication, or
+  from `https://<server>:<port>/tls/ca.crt`. Compare its SHA-256 fingerprint with the CA fingerprint
+  you were given, then install it as a trusted root: on Windows double-click → *Install
+  Certificate* → *Local Machine* → *Trusted Root Certification Authorities*; on macOS add it to the
+  System keychain and set *Always Trust*; on Linux copy it to `/usr/local/share/ca-certificates/`
+  and run `sudo update-ca-certificates`. Firefox keeps its own list: *Settings → Privacy & Security
+  → Certificates → View Certificates → Authorities → Import*.
+
+**The browser extension needs the certificate installed.** Its background uploads cannot show a
+warning page, so a clicked-through exception is not enough. After installing, set the extension's
+companion URL to `https://<server>:<port>` and approve the permission prompt.
+
+**Your own certificate.** To use a certificate from your organization instead, set
+`DFIR_HTTPS_CERT` (PEM; may include the chain) and `DFIR_HTTPS_KEY` (unencrypted PEM key). The
+Companion never renews it: it warns in the log and in Settings 30 days before expiry, and on every
+start once expired. It reloads the files within a day when you replace them, or at the next restart.
+The download link is hidden in this mode, because the local CA does not vouch for your certificate.
+
+**An optional plain-HTTP port.** `DFIR_HTTPS_PLAIN_HTTP=redirect` opens a second port
+(`DFIR_HTTPS_PLAIN_HTTP_PORT`, default 4774) that sends anyone who types `http://` to the `https://`
+address. It redirects page loads only; a sign-in or upload sent there is refused, never forwarded.
+`serve` answers with the full app over plain HTTP, for scripts on the server itself. It binds
+`127.0.0.1` unless you set `DFIR_HTTPS_PLAIN_HTTP_HOST`, and then logs a warning.
+
+**Behind a reverse proxy?** If a proxy already terminates HTTPS and talks plain HTTP to the
+Companion, set `DFIR_HTTPS=off` — otherwise the proxy reaches a TLS port it does not expect.
+
+**If the certificate authority is damaged.** The Companion never replaces `tls/ca.pem` on its own,
+because teammates trust it. If it is unreadable or expired, HTTPS refuses to start and says so.
+Move the file aside and restart to create a new one; everyone who installed the old certificate
+must install the new one.
+
 ## Deployment checklist
 
-- Terminate HTTPS at the Companion or its reverse proxy.
+- Leave the built-in HTTPS on (the team-mode default), or terminate HTTPS at a reverse proxy and
+  set `DFIR_HTTPS=off`.
 - Set `DFIR_PUBLIC_URL` to the exact externally visible origin.
-- Add the proxy hostname to `DFIR_ALLOWED_HOSTS`.
+- Add the server's or proxy's hostname to `DFIR_ALLOWED_HOSTS` (and, with the built-in HTTPS, to
+  `DFIR_HTTPS_HOSTNAMES`).
 - Keep secure cookies enabled.
 - Store OIDC and bootstrap secrets in the deployment's secret store.
 - Bootstrap and test the emergency local administrator before relying on OIDC.

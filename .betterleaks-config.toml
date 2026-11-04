@@ -32,7 +32,8 @@ regexes = [
   # `victim.local` is the fake victim-side IOC domain in companion/tests/analysis/anonymize.test.ts (#2056).
   '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval|other|victim)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
-  '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
+  # `entry.internal` is os.networkInterfaces()'s loopback flag (companion/src/http/tlsMaterial.ts, #2285).
+  '''(?i)\b(?:docker|m|s|hash|misp|api|entry)\.internal\b''',
   # `metadata.google.internal` is Google Cloud's PUBLIC, documented address for the instance
   # metadata service — the same well-known name as 169.254.169.254, and detection DATA for the
   # cloud-credential-access rules (#908 item 7), not a hostname belonging to anyone's estate.

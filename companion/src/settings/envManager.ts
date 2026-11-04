@@ -34,6 +34,15 @@ const DENIED_ENV_KEYS = new Set([
   "DFIR_AUTH_OIDC_REDIRECT_URI",
   "DFIR_AUTH_OIDC_SCOPES",
   "DFIR_ALLOW_UNAUTHENTICATED_REMOTE",
+  // Built-in HTTPS (#2285): which protocol the server speaks and with which certificate. A writable
+  // one would let the dashboard downgrade itself to plain HTTP or swap the certificate.
+  "DFIR_HTTPS",
+  "DFIR_HTTPS_CERT",
+  "DFIR_HTTPS_KEY",
+  "DFIR_HTTPS_HOSTNAMES",
+  "DFIR_HTTPS_PLAIN_HTTP",
+  "DFIR_HTTPS_PLAIN_HTTP_PORT",
+  "DFIR_HTTPS_PLAIN_HTTP_HOST",
 ]);
 
 /**

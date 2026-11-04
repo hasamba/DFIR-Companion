@@ -226,6 +226,12 @@ describe("team-auth configuration and policy", () => {
   // of the world for every user — but an unlisted top-level path falls through to the global-admin
   // default, which would leave the Geographic Map blank for every reader, investigator and
   // reviewer while working perfectly for whoever added the route.
+  it("serves the built-in HTTPS CA certificate publicly and its status only to signed-in users (#2285)", () => {
+    expect(resolveRequestPolicy("GET", "/tls/ca.crt")).toEqual({ kind: "public" });
+    expect(resolveRequestPolicy("GET", "/tls/info")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/tls/ca.crt")).not.toEqual({ kind: "public" });
+  });
+
   it("treats a basemap tile as an authenticated asset, and only for GET", () => {
     expect(resolveRequestPolicy("GET", "/geo-tiles/3/4/5.png")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("POST", "/geo-tiles/3/4/5.png")).toEqual({

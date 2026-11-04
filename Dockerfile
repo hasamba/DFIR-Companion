@@ -94,5 +94,5 @@ EXPOSE 4773
 # PORT->DFIR_PORT remap is an export inside the entrypoint's own process — healthcheck processes
 # start from the container's configured environment and never see it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "const p=process.env.PORT||process.env.DFIR_PORT||4773;fetch('http://127.0.0.1:'+p+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>require('https').get({host:'127.0.0.1',port:p,path:'/health',rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1)))"
 ENTRYPOINT ["dfir-entrypoint"]

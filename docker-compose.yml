@@ -42,6 +42,10 @@ services:
       # Team-mode accounts, sessions, case roles and the auth audit (DFIR_AUTH_MODE=team). Pinned to
       # the ./auth mount below: left unset, the store lands in an unmounted folder under /data, and
       # every container recreate (`docker compose up -d` after an edit) deletes every account.
+      # Team mode also turns on the built-in HTTPS (DFIR_HTTPS=auto, #2285); its certificates live in
+      # ./data/tls. Set DFIR_HTTPS_HOSTNAMES to the name/IP teammates type, and publish the port
+      # beyond 127.0.0.1 for a remote server. Behind a host proxy that speaks plain HTTP to this
+      # container, set DFIR_HTTPS: "off".
       DFIR_AUTH_DATA_DIR: "/data/auth"
       # --- AI analysis (optional). Leave DFIR_VISION_PROVIDER unset for capture/import-only. ---
       # DFIR_VISION_* is the SCREENSHOT (vision) model; DFIR_AI_SYNTH_* does all text work.
@@ -96,7 +100,9 @@ services:
       # compose healthcheck OVERRIDES the image's baked /health probe). It reads the same port
       # variables as the image probe (PORT, then DFIR_PORT, then 4773), so changing DFIR_PORT
       # does not leave it probing a dead port and reporting a healthy server as unhealthy.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # With built-in HTTPS on (DFIR_HTTPS, #2285) the plain-HTTP probe fails at the socket, so it
+      # retries over HTTPS — loopback only, so skipping certificate verification proves nothing away.
+      test: ["CMD", "node", "-e", "const p=process.env.PORT||process.env.DFIR_PORT||4773;fetch('http://127.0.0.1:'+p+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>require('https').get({host:'127.0.0.1',port:p,path:'/health',rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1)))"]
       interval: 30s
       timeout: 5s
       retries: 5

@@ -270,6 +270,8 @@
         loadedEnvValues[key] = el.value;
       }
       renderPresidioLocalWarning();
+      // Built-in HTTPS line + certificate link (#2285) — js/dashboard-tls-info.js.
+      void window.renderTlsInfo?.();
       await Promise.all([
         ...AI_MODEL_PICKERS.map((picker) => refreshAiModels(picker)),
         refreshAiKeyMigration(),

@@ -357,6 +357,8 @@
   <script src="/js/dashboard-view-presets.js"></script>
   <!-- The .env settings form. initEnvSettings() wires the Presidio test controls. -->
   <script src="/js/dashboard-env-settings.js"></script>
+  <!-- Settings → Built-in HTTPS info line and certificate link (#2285). -->
+  <script src="/js/dashboard-tls-info.js"></script>
   <!-- Settings → Decision model: the OpenRouter decision-model picker (#2224). -->
   <script src="/js/dashboard-decision-model-picker.js"></script>
   <!-- Memory Next Steps (#101). No initializer. -->
@@ -1622,6 +1624,23 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AUTH_OIDC_REDIRECT_URI">OIDC redirect URI<span class="sfield-hint">DFIR_AUTH_OIDC_REDIRECT_URI — callback the provider returns to. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_REDIRECT_URI" placeholder="(not set)" readonly /></div>
           <div class="sfield"><label for="env-DFIR_AUTH_OIDC_SCOPES">OIDC scopes<span class="sfield-hint">DFIR_AUTH_OIDC_SCOPES — scopes requested at sign-in. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_OIDC_SCOPES" placeholder="openid profile email" readonly /></div>
+        </div>
+        <div class="settings-group-head">Built-in HTTPS</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Serve the dashboard over HTTPS with no reverse proxy. <span id="tls-info-line">Certificate details appear here once the server reports them.</span> <a id="tls-ca-download" href="/tls/ca.crt" download hidden>Download the server certificate</a></p>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_HTTPS">HTTPS<span class="sfield-hint">DFIR_HTTPS — auto (on in team mode) | on | off. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS" placeholder="auto" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_HTTPS_HOSTNAMES">Extra certificate names<span class="sfield-hint">DFIR_HTTPS_HOSTNAMES — comma-separated names/IPs teammates type. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_HOSTNAMES" placeholder="(none)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_HTTPS_CERT">Own certificate file<span class="sfield-hint">DFIR_HTTPS_CERT — PEM certificate (may include the chain); unset = generated local CA. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_CERT" placeholder="(generated)" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_HTTPS_KEY">Own key file<span class="sfield-hint">DFIR_HTTPS_KEY — unencrypted PEM private key for that certificate. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_KEY" placeholder="(generated)" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_HTTPS_PLAIN_HTTP">Plain-HTTP port<span class="sfield-hint">DFIR_HTTPS_PLAIN_HTTP — off | redirect | serve — an optional second, unencrypted port. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_PLAIN_HTTP" placeholder="off" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_HTTPS_PLAIN_HTTP_PORT">Plain-HTTP port number<span class="sfield-hint">DFIR_HTTPS_PLAIN_HTTP_PORT — the second port. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_PLAIN_HTTP_PORT" placeholder="4774" readonly /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_HTTPS_PLAIN_HTTP_HOST">Plain-HTTP bind address<span class="sfield-hint">DFIR_HTTPS_PLAIN_HTTP_HOST — where serve listens; default 127.0.0.1. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HTTPS_PLAIN_HTTP_HOST" placeholder="127.0.0.1" readonly /></div>
         </div>
         <div class="settings-group-head">Logging</div>
         <div class="sfield-row">

@@ -111,6 +111,15 @@ from the dashboard. Set them in `.env` or the deployment's secret store and rest
 - `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
 - `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup; required in team mode while no identity exists, on any bind address. At least 32 characters, or the server refuses to start. Wrong guesses are rate-limited and audited.
 - `DFIR_AUTH_DATA_DIR` — optional identity/session database location
+- `DFIR_HTTPS` — built-in HTTPS: `auto` (default; on in team mode), `on` or `off`. See
+  [Running over HTTPS](team-authentication.md#running-over-https). The **Built-in HTTPS** group
+  shows the certificate fingerprints and expiry and links the local CA download.
+- `DFIR_HTTPS_CERT` / `DFIR_HTTPS_KEY` — your own PEM certificate (chain allowed) and unencrypted
+  key; unset uses the generated local CA
+- `DFIR_HTTPS_HOSTNAMES` — extra names/IPs the generated certificate covers (comma-separated)
+- `DFIR_HTTPS_PLAIN_HTTP` — optional second plain-HTTP port: `off` (default), `redirect` or `serve`;
+  `DFIR_HTTPS_PLAIN_HTTP_PORT` (default 4774) and `DFIR_HTTPS_PLAIN_HTTP_HOST` (where `serve`
+  binds; default 127.0.0.1)
 - `DFIR_ALLOW_UNAUTHENTICATED_REMOTE` — lets single-user mode bind a non-loopback address;
   `container-loopback-proxy` (Docker port published to host loopback only) or `public-demo` (really
   exposed on purpose) only. See

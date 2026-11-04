@@ -16,8 +16,16 @@ import { createImportMemoryGuard } from "./analysis/importMemoryGuard.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import type { ForensicEvent } from "./analysis/stateTypes.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
-import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "./http/originGuard.js";
+import {
+  isHostAllowed,
+  parseAllowedOrigins,
+  parseAllowedHosts,
+  parseAllowedHostSuffixes,
+} from "./http/originGuard.js";
 import { listenProxySafe } from "./http/keepAlive.js";
+import { listenHttps } from "./http/httpsListener.js";
+import { prepareHttps, startHttpsSideTasks } from "./http/httpsStartup.js";
+import { registerTlsRoutes } from "./routes/tlsRoutes.js";
 import {
   describeUnauthenticatedExposure,
   isLoopbackBinding,
@@ -445,7 +453,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Every store, client and shared runtime object this run needs. See composition/runtimeStores.ts
   // — including why each global store gets its own subdirectory beside cases/ rather than a loose
   // file next to it (Windows forbids creating files directly in a drive root).
-  const rt = createRuntimeStores({ casesRoot, host, port, logDir });
+  // Built-in HTTPS (#2285): decided — and the local CA made — before anything listens or builds a link.
+  const httpsSetup = prepareHttps({
+    env: process.env,
+    casesRoot,
+    teamMode: resolveTeamAuthConfig(process.env).enabled,
+    port,
+    log: logLine,
+    warn: warnLine,
+  });
+  const scheme = httpsSetup.config.enabled ? "https" : "http";
+  const rt = createRuntimeStores({ casesRoot, host, port, logDir, scheme });
   const {
     demoMode,
     store,
@@ -561,15 +579,18 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     });
   }
 
+  registerTlsRoutes(app, httpsSetup);
+
   // Bind host. Defaults to 127.0.0.1 (localhost-only — the OPSEC invariant for native runs).
   // Inside a container set DFIR_HOST=0.0.0.0 so the published port is reachable; the compose
   // file maps it to 127.0.0.1 on the HOST, so the localhost-only posture is preserved end-to-end.
   // listenProxySafe outlives a reverse proxy's idle socket, so a proxied POST is never sent into a
   // socket the server is closing (#2038).
-  const server = listenProxySafe(app, port, host, () => {
+  // With built-in HTTPS on (#2285) the same app is served by an https.Server instead.
+  const onListening = () => {
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     const boundTo = isLoopbackBinding(host) ? "" : ` (bound to ${host})`;
-    logLine(`DFIR companion on http://${shownHost}:${port}${boundTo} (dashboard at /dashboard)`);
+    logLine(`DFIR companion on ${scheme}://${shownHost}:${port}${boundTo} (dashboard at /dashboard)`);
     // An accepted unauthenticated-remote opt-out is an assertion the server cannot verify (#2161).
     const exposure = describeUnauthenticatedExposure(host, resolveTeamAuthConfig(process.env));
     if (exposure) warnLine(exposure);
@@ -606,8 +627,28 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
         })
         .catch((e) => warnLine(`[preflight] error: ${(e as Error).message}`));
     }
+  };
+  const httpsServer = httpsSetup.material
+    ? listenHttps(app, port, host, httpsSetup.material, onListening)
+    : undefined;
+  const server = httpsServer ?? listenProxySafe(app, port, host, onListening);
+  const guardConfig = {
+    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
+    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
+    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
+  };
+  const stopHttpsSideTasks = startHttpsSideTasks(httpsSetup, {
+    server: httpsServer,
+    app,
+    host,
+    port,
+    env: process.env,
+    isHostAllowed: (h) => isHostAllowed(h, guardConfig),
+    log: logLine,
+    warn: warnLine,
   });
   server.once("close", () => {
+    stopHttpsSideTasks();
     teamAuth?.store.close();
     writerGuard?.release();
   });
@@ -631,7 +672,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     if (err.code === "EADDRINUSE") {
       console.error(
         `\n[DFIR] Port ${port} is already in use — a DFIR companion is probably already running.\n` +
-          `       Use the existing one (http://127.0.0.1:${port}/dashboard), or stop it first:\n` +
+          `       Use the existing one (${scheme}://127.0.0.1:${port}/dashboard), or stop it first:\n` +
           `       PowerShell:   Get-NetTCPConnection -LocalPort ${port} -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n` +
           `       Linux/macOS:  kill $(lsof -ti tcp:${port})    (or, Linux: fuser -k ${port}/tcp)\n`,
       );
@@ -650,9 +691,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       return rt.jobManager.list(caseId);
     },
     secret: loadOrCreateInstanceSecret(store.casesRoot),
-    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
-    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
-    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
+    ...guardConfig,
   });
 
   // A stop signal drains instead of dying mid-write — and in a container, where Node is PID 1 and
