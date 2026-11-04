@@ -177,7 +177,7 @@ export class TimesketchClient {
     );
     if (!this.csrf) {
       throw new TimesketchApiError(
-        "Timesketch login: no CSRF token on the login page (check DFIR_TIMESKETCH_URL and that local auth is enabled)",
+        "Timesketch login: no CSRF token on the login page (check the Timesketch URL in this server set and that local auth is enabled)",
         page.status,
         "auth",
       );
@@ -195,7 +195,7 @@ export class TimesketchClient {
     const check = await this.send("GET", `${this.apiRoot}/sketches/?per_page=1`);
     if (check.status === 401 || check.status === 403) {
       throw new TimesketchApiError(
-        "Timesketch auth failed (check DFIR_TIMESKETCH_USER / DFIR_TIMESKETCH_PASSWORD)",
+        "Timesketch auth failed (check the Timesketch username and password in this server set)",
         check.status,
         "auth",
       );

@@ -256,7 +256,6 @@ describe("case header", () => {
   // The toolbar has no room for a "Server set: <name>" label. The set name moved to the case list
   // (dashboard-case-picker.js) and to the icon-only Change… button's tooltip and accessible name.
   const tipFor = (name: string) => `Server set: ${name} \u2014 click to change`;
-  const NO_SET_TIP = "No usable server set \u2014 click to choose one";
 
   it("Change… names the open case's set and updates on case switch", async () => {
     const { api, el } = loadCaseServers({
@@ -308,7 +307,8 @@ describe("case header", () => {
     });
     await api.refreshCaseServers("C1");
     const btn = el("caseServersChangeBtn");
-    expect(changeTip(btn)).toEqual({ tip: NO_SET_TIP, aria: NO_SET_TIP });
+    const tip = `No usable server set: ${message} \u2014 click to choose one`;
+    expect(changeTip(btn)).toEqual({ tip, aria: tip });
     expect(btn.classList.contains("case-servers-error")).toBe(true);
     expect(pushValues(doc)).toEqual([""]);
     expect(api.veloEnabled).toBe(false);

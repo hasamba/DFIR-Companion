@@ -137,7 +137,7 @@
       paintChange(`Server set: ${body.name || ""} \u2014 click to change`, false);
     } else {
       current = { caseId: id, setId: "", tools: [] };
-      paintChange("No usable server set \u2014 click to choose one", true);
+      paintChange(`No usable server set: ${body.error || `HTTP ${res.status}`} \u2014 click to choose one`, true);
     }
     applyCaseTools();
   }
