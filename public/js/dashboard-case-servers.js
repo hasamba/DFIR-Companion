@@ -236,7 +236,10 @@
     byId("caseServersConfirmCancel").textContent = "Cancel";
     setMsg("caseServersConfirmMsg", "");
     byId("caseServersConfirmOverlay").classList.add("open");
-    byId("caseServersConfirmCancel").focus(); // the safe choice has focus
+    // The safe choice has focus. Deferred one microtask: a11y/modal-autowire.js reacts to "open" in
+    // a MutationObserver microtask queued by the line above, and its focus trap focuses the first
+    // button. This runs after it, and the trap still remembers the control that opened the dialog.
+    Promise.resolve().then(() => byId("caseServersConfirmCancel").focus());
   }
 
   function cancelConfirm() {

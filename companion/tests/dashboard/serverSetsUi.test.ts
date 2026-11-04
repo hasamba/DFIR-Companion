@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 import {
@@ -388,6 +389,33 @@ describe("Change… flow", () => {
     expect(h.el("caseServersConfirmOverlay").classList.contains("open")).toBe(false);
     expect(posts(h)).toHaveLength(1);
     expect(posts(h)[0].body?.confirm).toBeUndefined();
+  });
+
+  // a11y/modal-autowire.js watches the overlay's class: on "open" its MutationObserver runs in a
+  // microtask and the focus trap focuses the dialog's FIRST focusable control. Emulated here at the
+  // same moment, with the first button taken from the real markup, so the test sees the real race.
+  it("focus ends on Cancel after the modal observer's focus trap has run", async () => {
+    const h = changeHarness(() => ({ status: 409, body: WORK }));
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const dialog = html.slice(html.indexOf('id="caseServersConfirmOverlay"'));
+    const firstButton = /<button id="([\w-]+)"/.exec(dialog)?.[1] ?? "";
+    const overlay = h.el("caseServersConfirmOverlay");
+    const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(overlay), "classList")!.get!;
+    Object.defineProperty(overlay, "classList", {
+      get() {
+        const real = getter.call(overlay);
+        return {
+          ...real,
+          add: (...names: string[]) => {
+            real.add(...names);
+            if (names.includes("open")) queueMicrotask(() => h.el(firstButton).focus());
+          },
+        };
+      },
+    });
+    await pickBeta(h);
+    expect(overlay.classList.contains("open")).toBe(true);
+    expect(h.doc.activeElement?.id).toBe("caseServersConfirmCancel");
   });
 
   it("Escape on the confirm dialog cancels and sends nothing", async () => {
