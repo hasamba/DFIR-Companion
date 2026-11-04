@@ -68,8 +68,9 @@ function processIsAlive(pid: number): boolean {
 // liveness probe in the NEXT container answers for itself (#2278). A record that names our own PID
 // but is not one we hold cannot be probed. From our own host (same container restarted, or PID
 // reuse after a reboot) no other live process can have our PID, so it is stale. From another host
-// — a recreated container, a second container on a shared volume, or a record older than the host
-// field — only the lease can tell: a live owner keeps the file fresh.
+// — a recreated container, or a second container on a shared volume — only the lease can tell: a
+// live owner keeps the file fresh. A record older than the host field was never refreshed, so its
+// age proves nothing; a live older-version server would look expired. Refuse it and name the file.
 type Liveness = { live: false } | { live: true; reason: string };
 
 function judgeRecord(path: string, text: string, record: GuardRecord): Liveness {
@@ -78,14 +79,19 @@ function judgeRecord(path: string, text: string, record: GuardRecord): Liveness 
   if (record.pid !== process.pid)
     return processIsAlive(record.pid) ? { live: true, reason: owned } : { live: false };
   if (record.host === hostname()) return { live: false };
+  if (record.host === undefined) {
+    return {
+      live: true,
+      reason: `an older DFIR Companion recorded process ${record.pid}; if no other server uses this cases folder, delete ${path} and restart`,
+    };
+  }
   const touchedAt = mtimeMsIfPresent(path);
   if (touchedAt === null) return { live: false };
   const remainingMs = LEASE_MS - (Date.now() - touchedAt);
   if (remainingMs <= 0) return { live: false };
-  const from = record.host ? `host ${record.host}` : "another host";
   return {
     live: true,
-    reason: `a server on ${from} holds it; if that server has stopped, retry in ${Math.ceil(remainingMs / 1000)} seconds`,
+    reason: `a server on host ${record.host} holds it; if that server has stopped, retry in ${Math.ceil(remainingMs / 1000)} seconds`,
   };
 }
 

@@ -58,16 +58,14 @@ describe("writer guard — a stale record that names our own PID (#2278)", () =>
     guard.release();
   });
 
-  it("judges a legacy record without a host by its lease", () => {
-    const fresh = guardPath();
-    writeRecord(fresh, { pid: process.pid });
-    expect(() => acquireWriterGuard(fresh)).toThrow(/one DFIR Companion writer/i);
+  it("refuses a pre-#2278 record with our PID however old it is, and names the file", () => {
+    // Older versions never refreshed the guard, so a live older server running for an hour has an
+    // "old" file too. Its age proves nothing; only the operator can say no other server runs.
+    const path = guardPath();
+    const text = writeRecord(path, { pid: process.pid }, 5 * 60_000);
 
-    const old = guardPath();
-    writeRecord(old, { pid: process.pid }, 5 * 60_000);
-    const guard = acquireWriterGuard(old);
-    expect(JSON.parse(readFileSync(old, "utf8"))).toMatchObject({ pid: process.pid });
-    guard.release();
+    expect(() => acquireWriterGuard(path)).toThrow(/older DFIR Companion.*delete .*writer\.lock/);
+    expect(readFileSync(path, "utf8")).toBe(text);
   });
 
   it("still refuses a different live PID and leaves its record alone", () => {

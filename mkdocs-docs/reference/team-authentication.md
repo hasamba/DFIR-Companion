@@ -206,7 +206,9 @@ exclusive process guard and refuses a second live process. Run one server proces
 reverse proxy, not the Companion process. A stale guard left by a crashed process is detected and
 replaced on the next startup. In Docker, a restarted container replaces it at once. A container
 that was recreated after a crash (for example, on an image upgrade) waits up to one minute, because
-a live server refreshes its guard and the new container must see that no server does.
+a live server refreshes its guard and the new container must see that no server does. A guard
+left by a crash of an earlier version cannot show that its server stopped. Startup then names the
+file to delete; delete it only when no other server uses the cases folder.
 
 Authentication data defaults to a dedicated sibling directory keyed to the cases-root path. A
 deployment may move it with `DFIR_AUTH_DATA_DIR`. Treat that directory and the cases root as one
