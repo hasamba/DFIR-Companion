@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   describeFetchError,
   isCertFailureCode,
-  serverSetTrustHint,
+  serverSetFetchError,
   tlsCauseCode,
   tlsTrustHint,
 } from "../../src/integrations/tlsTrustHint.js";
@@ -76,15 +76,18 @@ describe("tlsTrustHint", () => {
   });
 });
 
-describe("serverSetTrustHint", () => {
-  it("points at the tool's CA bundle in its server set, not an env var", () => {
-    const hint = serverSetTrustHint(fetchFailure("DEPTH_ZERO_SELF_SIGNED_CERT"), "Timesketch");
-    expect(hint).toContain("Set the CA bundle for Timesketch in this server set (Settings → Server sets)");
-    expect(hint).not.toContain("DFIR_");
+describe("serverSetFetchError", () => {
+  it("points at the tool's CA bundle in its server set, not an env var, and keeps the code", () => {
+    const msg = serverSetFetchError(fetchFailure("DEPTH_ZERO_SELF_SIGNED_CERT"), "Timesketch");
+    expect(msg).toContain("Set the CA bundle for Timesketch in this server set (Settings → Server sets)");
+    expect(msg).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(msg).not.toContain("DFIR_");
   });
 
-  it("stays silent on every non-certificate failure", () => {
-    expect(serverSetTrustHint(fetchFailure("ECONNREFUSED"), "IRIS")).toBe("");
+  it("keeps the full cause chain for every non-certificate failure", () => {
+    expect(serverSetFetchError(fetchFailure("ECONNREFUSED", "connect ECONNREFUSED"), "IRIS")).toBe(
+      "fetch failed -> connect ECONNREFUSED (ECONNREFUSED)",
+    );
   });
 });
 

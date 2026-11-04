@@ -10,7 +10,7 @@
 
 import type { FetchFn } from "../../enrichment/provider.js";
 import { readBoundedJson, RESPONSE_SIZE_LIMITS, rethrowIfTooLarge } from "../../providers/boundedResponse.js";
-import { describeFetchError, serverSetTrustHint } from "../tlsTrustHint.js";
+import { serverSetFetchError } from "../tlsTrustHint.js";
 
 export interface IrisClientOptions {
   baseUrl: string; // e.g. https://iris.example.org
@@ -112,8 +112,7 @@ export class IrisClient {
       });
     } catch (err) {
       // Same cause unwrapping and certificate hint as Timesketch; built from a server set only.
-      const why = `${describeFetchError(err)}${serverSetTrustHint(err, "IRIS")}`;
-      throw new IrisApiError(`IRIS request failed: ${why}`, 0, "http");
+      throw new IrisApiError(`IRIS request failed: ${serverSetFetchError(err, "IRIS")}`, 0, "http");
     }
     if (res.status === 401) throw new IrisApiError("IRIS auth failed (check DFIR_IRIS_KEY)", 401, "auth");
     if (res.status === 403)

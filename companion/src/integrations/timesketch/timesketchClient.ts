@@ -16,7 +16,7 @@ import {
   RESPONSE_SIZE_LIMITS,
   rethrowIfTooLarge,
 } from "../../providers/boundedResponse.js";
-import { describeFetchError, serverSetTrustHint } from "../tlsTrustHint.js";
+import { describeFetchError, serverSetFetchError } from "../tlsTrustHint.js";
 
 export interface TimesketchClientOptions {
   baseUrl: string; // e.g. https://timesketch.example.org
@@ -137,12 +137,10 @@ export class TimesketchClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
-      // The cause chain reaches the message twice on purpose: describeFetchError quotes Node's own
-      // words (which end in an unhelpful --use-system-ca suggestion), and serverSetTrustHint names
-      // the set's CA bundle Node cannot know about — and only when the failure really is a
-      // rejected certificate. This client is built from a server set only.
+      // serverSetFetchError keeps the cause chain, but a rejected certificate gets the set's CA
+      // bundle instead of Node's --use-system-ca advice. This client is built from a server set only.
       throw new TimesketchApiError(
-        `Timesketch request failed: ${describeFetchError(err)}${serverSetTrustHint(err, "Timesketch")}`,
+        `Timesketch request failed: ${serverSetFetchError(err, "Timesketch")}`,
         0,
         "network",
       );

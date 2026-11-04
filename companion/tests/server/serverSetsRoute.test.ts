@@ -598,4 +598,32 @@ describe("probeError", () => {
       "IRIS error on /api/ping",
     );
   });
+
+  it("keeps the server-set certificate hint inside the 200-character cut", async () => {
+    const { probeError } = await import("../../src/routes/serverSetBody.js");
+    const { IrisClient } = await import("../../src/integrations/iris/irisClient.js");
+    const { TimesketchClient } = await import("../../src/integrations/timesketch/timesketchClient.js");
+    const cause = Object.assign(
+      new Error(
+        "self-signed certificate; if the root CA is installed locally, try running Node.js with --use-system-ca",
+      ),
+      { code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    );
+    const fetchFn = async (): Promise<Response> => {
+      throw new TypeError("fetch failed", { cause });
+    };
+    const iris = new IrisClient({ baseUrl: "https://iris.example.org", apiKey: "word-key", fetchFn });
+    const ts = new TimesketchClient({
+      baseUrl: "https://ts.example.org",
+      username: "u",
+      password: "p",
+      fetchFn,
+    });
+    const irisMsg = probeError(await iris.ping().catch((e: unknown) => e));
+    const tsMsg = probeError(await ts.login().catch((e: unknown) => e));
+    expect(irisMsg).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(irisMsg).toContain("Set the CA bundle for IRIS in this server set (Settings → Server sets)");
+    expect(tsMsg).toContain("Set the CA bundle for Timesketch in this server set (Settings → Server sets)");
+    expect(irisMsg).not.toContain("--use-system-ca");
+  });
 });

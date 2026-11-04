@@ -56,18 +56,6 @@ export function tlsTrustHint(err: unknown, name: string): string {
   );
 }
 
-/**
- * The same hint for a client built from a server set: the CA bundle and "Skip TLS verify" live in
- * the set's editor, not in `.env`. `tool` is the label the editor shows ("IRIS", "Timesketch").
- */
-export function serverSetTrustHint(err: unknown, tool: string): string {
-  if (!isCertFailureCode(tlsCauseCode(err))) return "";
-  return (
-    ` — the certificate is not trusted. Set the CA bundle for ${tool} in this server set` +
-    ` (Settings → Server sets) to keep verification ON, or tick "Skip TLS verify" there (lab only).`
-  );
-}
-
 // Node's fetch() throws a generic `TypeError: fetch failed` for every low-level network
 // failure (connection refused, DNS lookup failure, TLS error, timeout) — the actual reason
 // lives in `.cause` (an errno-style error with a `.code` like ECONNREFUSED/ENOTFOUND/
@@ -83,4 +71,18 @@ export function describeFetchError(err: unknown): string {
     cause = (cause as { cause?: unknown }).cause;
   }
   return parts.join(" -> ");
+}
+
+/**
+ * A server-set client's network failure, short enough for the editor's 200-character test line.
+ * A rejected certificate drops Node's own words (its --use-system-ca advice is not a fix we own)
+ * and keeps only the code plus the fix in the set. Any other failure keeps the full cause chain.
+ */
+export function serverSetFetchError(err: unknown, tool: string): string {
+  const code = tlsCauseCode(err);
+  if (!isCertFailureCode(code)) return describeFetchError(err);
+  return (
+    `the certificate is not trusted (${code}). Set the CA bundle for ${tool} in this server set` +
+    ` (Settings → Server sets), or tick "Skip TLS verify" (lab only).`
+  );
 }
