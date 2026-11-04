@@ -27,7 +27,8 @@
  */
 import { basename, dirname, extname, join, relative } from "node:path";
 import { decodeImportedText } from "../ingest/decodeText.js";
-import { readdir, stat, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, stat, lstat, mkdir, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { copyHandleBounded } from "../storage/handleCopy.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { openNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 import { isSafeDropRelpath } from "../storage/dropRelpath.js";
@@ -281,15 +282,18 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // somewhere else — but it must still refuse to FILE a link away as if it were evidence, and
       // the EXDEV fallback below reads content and does follow. A path-based lstat here could be
       // swapped before either call, so the guard is a descriptor: opened with O_NOFOLLOW, fstat'd,
-      // and — on the fallback path — the very descriptor the copy reads from.
+      // and — on the fallback path — the very descriptor the copy reads from. Its size is taken
+      // HERE, before the rename, so the fallback copy is bounded by what the file was when the
+      // move began (#2270).
       const guard = await openNoFollow(src);
       try {
-        await rename(src, dest);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
-        // Cross-filesystem: copy the bytes of the descriptor already verified, never of the path.
-        await writeFile(dest, await guard.readFile());
-        await rm(src, { force: true });
+        const { size } = await guard.stat();
+        try {
+          await rename(src, dest);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+          await copyAcrossFilesystems(guard, src, dest, size);
+        }
       } finally {
         await guard.close();
       }
@@ -299,6 +303,27 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       }
       throw e;
     }
+  }
+
+  // Cross-filesystem move: stream the bytes of the descriptor already verified, never of the path,
+  // with constant memory. The bound is the fstat size from the start of the move — deliberately NOT
+  // DFIR_DROP_MAX_BYTES, because oversize files (failed into _failed/) and tool-handled raw inputs
+  // (size-independent) must still move. A file that grew meanwhile is refused and left in place.
+  async function copyAcrossFilesystems(
+    guard: FileHandle,
+    src: string,
+    dest: string,
+    size: number,
+  ): Promise<void> {
+    try {
+      await copyHandleBounded(guard, dest, size);
+    } catch (e) {
+      if (e instanceof FileTooLargeError) {
+        throw new Error("file changed size while being moved across filesystems — left in place (security)");
+      }
+      throw e;
+    }
+    await rm(src, { force: true });
   }
 
   // The ONE whole-file read for every branch of processDropFile. The cap travels with the
