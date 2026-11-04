@@ -3,6 +3,7 @@ import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import type { VeloUploadsOutcome } from "./veloUploadFields.js";
+import type { DropFingerprint, ProcessedVersion } from "../analysis/dropScan.js";
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
@@ -238,7 +239,8 @@ export interface RouteContext {
     caseId: string,
     opts?: { reanalyzeStale?: boolean },
   ): Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
-  moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void>;
+  moveDropFile(dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion): Promise<void>;
+  fingerprintDropFile(dropDir: string, relpath: string): Promise<DropFingerprint | null>;
   // Threat-intel ENRICHMENT engine (routes/threatIntel.ts). The engine + its background reachability
   // poller stay in createApp (the poller re-arms enrichInBackground and drains enrichPending on
   // provider recovery, and resynthesize/import seams fire autoEnrichIfEnabled), so the moved enrich

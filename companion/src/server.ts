@@ -345,6 +345,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     applyNsrlToCase: appliers.applyNsrlToCase,
     applyDeobfuscationToCase: appliers.applyDeobfuscationToCase,
     moveDropFile: drops.moveDropFile,
+    fingerprintDropFile: drops.fingerprintDropFile,
     // Threat-intel enrichment engine (routes/threatIntel.ts). The engine + its reachability poller
     // live in composition/enrichment.ts; the moved routes reach them through these members. nsrlDb is
     // a live accessor because Settings → NSRL can swap the handle at runtime.

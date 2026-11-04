@@ -13,9 +13,11 @@
  */
 import { basename, dirname, join } from "node:path";
 import { lstat } from "node:fs/promises";
-import { isSafeDropRelpath } from "../storage/dropRelpath.js";
+import { isSafeDropRelpath, resolveInsideDropDir } from "../storage/dropRelpath.js";
 import { CaseKeyedMap, type PerCaseMap } from "../storage/caseKeyedState.js";
-import type { StuckDropFile } from "../analysis/dropScan.js";
+import type { DropFingerprint, ProcessedVersion, StuckDropFile } from "../analysis/dropScan.js";
+
+export type { DropFingerprint, ProcessedVersion };
 import { logLine } from "../logging/serverLogger.js";
 
 export interface DropStuckTracker {
@@ -24,20 +26,21 @@ export interface DropStuckTracker {
   /**
    * Remember a file whose move failed, if it is still a regular file inside drop/ — and, when the
    * caller knows which version it imported (`processed`), only if the file is still that version.
+   * `processed: null` means the caller looked and could not tell: never remember it then (#2283).
    */
-  record(dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint): Promise<void>;
+  record(dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion): Promise<void>;
+  /**
+   * The version a caller is about to process, for `record` (#2283): size + mtime of a regular file
+   * whose parent is inside drop/ on disk, else null — a traversal relpath, a symlinked parent or a
+   * symlink at the file itself, a missing file, a stat error.
+   */
+  fingerprint(dropDir: string, relpath: string): Promise<DropFingerprint | null>;
   /** Retry the move (only the move — never the import) of each held file; quiet when it fails again. */
   retry(
     dropDir: string,
     held: ReadonlyMap<string, StuckDropFile>,
-    move: (dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint) => Promise<void>,
+    move: (dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion) => Promise<void>,
   ): Promise<void>;
-}
-
-/** The size + mtime of the version of a drop file that was actually imported. */
-export interface DropFingerprint {
-  size: number;
-  mtimeMs: number;
 }
 
 export function createDropStuckTracker(casesRoot: () => string): DropStuckTracker {
@@ -47,8 +50,10 @@ export function createDropStuckTracker(casesRoot: () => string): DropStuckTracke
     dropDir: string,
     relpath: string,
     ok: boolean,
-    processed?: DropFingerprint,
+    processed?: ProcessedVersion,
   ): Promise<void> {
+    // Unverified version: holding it back could archive records nobody processed (#2283).
+    if (processed === null) return;
     // Only a relpath inside drop/: a refused traversal relpath (#919) must not even be stat'd.
     if (!isSafeDropRelpath(relpath)) return;
     const st = await lstat(join(dropDir, relpath)).catch(() => null);
@@ -66,7 +71,7 @@ export function createDropStuckTracker(casesRoot: () => string): DropStuckTracke
   async function retry(
     dropDir: string,
     held: ReadonlyMap<string, StuckDropFile>,
-    move: (dropDir: string, relpath: string, ok: boolean, processed?: DropFingerprint) => Promise<void>,
+    move: (dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion) => Promise<void>,
   ): Promise<void> {
     for (const [relpath, s] of held) {
       // A moved file leaves the listing, so excludeStuck drops its entry on the next sweep.
@@ -77,7 +82,17 @@ export function createDropStuckTracker(casesRoot: () => string): DropStuckTracke
     }
   }
 
-  return { stuck, record, retry };
+  async function fingerprint(dropDir: string, relpath: string): Promise<DropFingerprint | null> {
+    try {
+      // realpath containment of the parent (#919), then lstat so a link at the file is not a file.
+      const st = await lstat(await resolveInsideDropDir(dropDir, relpath));
+      return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return { stuck, record, retry, fingerprint };
 }
 
 /** Join the reasons a sweep has for one file into its single drop-log / drop-status entry. */
