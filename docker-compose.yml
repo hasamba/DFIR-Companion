@@ -2,8 +2,9 @@
 #
 # Localhost-only by design: the container binds 0.0.0.0 internally (DFIR_HOST) and the port is
 # published to 127.0.0.1 on the HOST, so it is never exposed on your machine's network interfaces.
-# Forensic evidence + case state persist in ./cases on the host. The pre-built browser add-on is
-# written to ./addon so you can load it unpacked into Chrome/Comet.
+# Forensic evidence + case state persist in ./cases on the host, and the server sets (IRIS /
+# Timesketch / Velociraptor connections, keys encrypted) in ./server-sets. The pre-built browser
+# add-on is written to ./addon so you can load it unpacked into Chrome/Comet.
 #
 # No Ollama / LiteLLM here. For AI, point DFIR_AI_* at any OpenAI-compatible endpoint (a model you
 # host, a remote provider, or an Ollama/LiteLLM you run separately).
@@ -60,8 +61,8 @@ services:
     # image's `node` user. Either way the server never parses evidence as root.
     # Hardening (#2155): no-new-privileges stops a SUID binary from regaining root after the drop.
     # Every capability is dropped except the five the ROOT entrypoint needs before it drops
-    # privileges: CHOWN + FOWNER + DAC_OVERRIDE to hand ./cases and ./addon (which may be owned by
-    # your host user) to the run user, SETUID + SETGID for setpriv to switch to it. Once setpriv
+    # privileges: CHOWN + FOWNER + DAC_OVERRIDE to hand ./cases, ./server-sets and ./addon (which may
+    # be owned by your host user) to the run user, SETUID + SETGID for setpriv to switch to it. Once setpriv
     # runs, the server's effective capability set is empty. `cap_drop: [ALL]` without these
     # cap_add entries stops the container from starting.
     security_opt:

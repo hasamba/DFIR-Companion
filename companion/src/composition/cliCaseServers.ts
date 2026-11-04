@@ -25,8 +25,8 @@ export function cliCaseTool(
   opts: { env?: NodeJS.ProcessEnv; builders?: Partial<ServerClientBuilders> } = {},
 ): CliToolResult {
   const dir = serverSetStoreDir(casesRoot);
-  // Read-only: a script never creates the store or the instance secret (a wrong cases root would
-  // otherwise get a fresh, empty store).
+  // A script never creates the store or a missing instance secret (a wrong cases root would otherwise
+  // get a fresh, empty store). A corrupt secret file is replaced, as at server startup.
   if (!existsSync(dir) || !existsSync(instanceSecretPath(casesRoot))) {
     return { ok: false, error: `No server sets found beside ${casesRoot}. Start the Companion once first.` };
   }

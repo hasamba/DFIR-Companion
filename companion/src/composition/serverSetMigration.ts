@@ -5,7 +5,7 @@ import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { ServerSetInput } from "../integrations/serverSets/types.js";
-import { logLine } from "../logging/serverLogger.js";
+import { logLine, warnLine } from "../logging/serverLogger.js";
 
 const SEED_NAME = "Testing";
 const ARCHIVED_DIRNAME = "_archived";
@@ -119,7 +119,7 @@ export function seedServerSets(
 ): { seeded: boolean; linked: number } {
   if (opts.markerPath && existsSync(opts.markerPath)) {
     if (store.list().length === 0) {
-      (opts.log ?? logLine)(
+      (opts.log ?? warnLine)(
         `[server-sets] Server set store is empty but this install was already migrated; cases have no server set until you create one in Settings → Server sets. Check that ${opts.storeDir ?? "the server-sets folder"} is persisted.`,
       );
     }

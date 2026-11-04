@@ -55,7 +55,7 @@ import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
 import { numEnv } from "./env.js";
 import { redactAiStatusEvent } from "./aiStatusRedact.js";
 import { createAiStatusHandler } from "./aiStatusHandler.js";
-import { getServerLogger, logLine } from "../logging/serverLogger.js";
+import { getServerLogger, warnLine } from "../logging/serverLogger.js";
 import { dirname, join } from "node:path";
 
 export interface AppWiringDeps {
@@ -78,7 +78,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
   runServerSetSeed(rt.serverSetStore, process.env, {
     caseIds: listCaseIdsSync(rt.store.casesRoot),
     storeDir: serverSetStoreDir(rt.store.casesRoot),
-    log: logLine,
+    log: warnLine, // both lines it can write are warnings: an unreadable store, a store gone empty
     inventoryDir: join(dirname(rt.store.casesRoot), "velociraptor"),
     markerPath: serverSetMigrationMarker(rt.store.casesRoot),
   });

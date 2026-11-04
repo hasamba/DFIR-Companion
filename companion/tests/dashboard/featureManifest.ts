@@ -1105,7 +1105,14 @@ export const FEATURES: Feature[] = [
     // WIZ_ORDER, WIZARD_BY_ID, wizCurrent and wizStatus had stayed in the page.
     file: "dashboard-setup-wizard.js",
     initializer: "initSetupWizard",
-    publish: ["initSetupWizard", "openSetupWizard", "closeSetupWizard", "wizRefreshStatus", "fetchLogLevel"],
+    publish: [
+      "initSetupWizard",
+      "openSetupWizard",
+      "closeSetupWizard",
+      "wizRefreshStatus",
+      "fetchLogLevel",
+      "wizBindStepSave",
+    ],
     private: [],
   },
   {
