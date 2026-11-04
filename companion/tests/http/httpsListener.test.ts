@@ -124,6 +124,34 @@ describe("built-in HTTPS listener (#2285)", () => {
     expect(prepared.status().server?.fingerprint256).toBe(after);
   });
 
+  it("retries a renewal whose certificate swap failed", () => {
+    let clock = new Date("2026-11-04T10:00:00Z");
+    const prepared = prepareHttps({
+      env: { DFIR_HTTPS: "on" },
+      casesRoot: join(root, "cases"),
+      teamMode: false,
+      port: 0,
+      now: () => clock,
+      ...quiet,
+    });
+    const original = prepared.status().server!.fingerprint256;
+    let calls = 0;
+    const server = {
+      setSecureContext: () => {
+        calls++;
+        if (calls === 1) throw new Error("swap failed");
+      },
+    };
+    const renewal = prepared.startRenewal(server);
+    clock = new Date(clock.getTime() + 800 * DAY);
+    renewal.check(); // re-issues to disk, swap throws: still serving the original
+    expect(prepared.status().server!.fingerprint256).toBe(original);
+    renewal.check(); // nothing new to issue, but the unserved certificate on disk is swapped in now
+    renewal.stop();
+    expect(calls).toBe(2);
+    expect(prepared.status().server!.fingerprint256).not.toBe(original);
+  });
+
   it("creates the CA even with HTTPS off, and offers it for download", () => {
     const prepared = prepareHttps({
       env: {},

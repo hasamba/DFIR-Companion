@@ -155,8 +155,10 @@ export function prepareHttps(deps: HttpsDeps): PreparedHttps {
   // after they changed on disk (`seenStamp` is the files' last-seen modification times).
   const renewOnce = (seenStamp: string, currentStamp: string): ServerMaterial | undefined => {
     if (source === "generated" && ca) {
-      const renewed = ensureServerCert(dir, ca, certNamesFor(config.extraNames), now());
-      return renewed.reissued ? renewed : undefined;
+      // Compared with what is SERVED, not "was it re-issued just now": a replacement written to disk
+      // by a pass whose swap then failed must still be picked up by the next pass.
+      const onDisk = ensureServerCert(dir, ca, certNamesFor(config.extraNames), now());
+      return onDisk.summary.fingerprint256 !== active?.summary.fingerprint256 ? onDisk : undefined;
     }
     return source === "user" && currentStamp !== seenStamp
       ? loadUserCertificate(config.certFile!, config.keyFile!)
@@ -190,7 +192,6 @@ export function prepareHttps(deps: HttpsDeps): PreparedHttps {
         try {
           const currentStamp = fileStamp();
           const next = renewOnce(stamp, currentStamp);
-          stamp = currentStamp;
           if (next) {
             createSecureContext({ key: next.keyPem, cert: next.certPem }); // validate before swapping
             server.setSecureContext({ key: next.keyPem, cert: next.certPem, minVersion: "TLSv1.2" });
@@ -199,6 +200,7 @@ export function prepareHttps(deps: HttpsDeps): PreparedHttps {
               `[https] now serving a renewed certificate — ${describeCert("certificate", next.summary)}`,
             );
           }
+          stamp = currentStamp; // only once the swap succeeded, so a failed one is retried next pass
           warnings = expiryWarnings(source, active?.summary, caSummary, now());
           for (const w of warnings) deps.warn(`[https] ${w}`);
         } catch (err) {

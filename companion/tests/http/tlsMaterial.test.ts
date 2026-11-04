@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { X509Certificate, generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   ensureServerCert,
   loadOrCreateCa,
   loadUserCertificate,
+  writePrivateFile,
 } from "../../src/http/tlsMaterial.js";
 
 const DAY = 86_400_000;
@@ -44,6 +45,15 @@ describe("local CA (#2285)", () => {
     writeFileSync(path, damaged);
     expect(() => loadOrCreateCa(dir, NOW)).toThrow(/never replaced automatically/);
     expect(readFileSync(path, "utf8")).toBe(damaged); // the failed load wrote nothing
+  });
+});
+
+describe("CA publication", () => {
+  it("never overwrites a CA another process published first", () => {
+    const winner = loadOrCreateCa(dir, NOW, "first").ca;
+    expect(writePrivateFile(join(dir, "ca.pem"), "loser", { replace: false })).toBe(false);
+    expect(loadOrCreateCa(dir, NOW, "second").ca.cert.fingerprint256).toBe(winner.cert.fingerprint256);
+    expect(readdirSync(dir).filter((f) => f.includes(".tmp."))).toEqual([]);
   });
 });
 

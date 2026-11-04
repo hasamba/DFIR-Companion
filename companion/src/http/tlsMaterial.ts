@@ -23,6 +23,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -84,22 +85,45 @@ export function summarize(cert: X509Certificate): CertSummary {
   };
 }
 
-/** Write a key-bearing file owner-only from creation, durably, replacing any previous one. */
-export function writePrivateFile(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
-  const fd = openSync(tmp, "wx", 0o600);
+function writeNewPrivateFile(path: string, content: string): void {
+  const fd = openSync(path, "wx", 0o600);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * Write a key-bearing file owner-only from creation, durably. `replace: false` publishes it only if
+ * `path` does not exist yet (a hard link fails on an existing name), returning false when another
+ * process got there first — the CA's never-replace rule holds even for two first starts at once.
+ */
+export function writePrivateFile(path: string, content: string, { replace = true } = {}): boolean {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
+  writeNewPrivateFile(tmp, content);
   try {
-    renameSync(tmp, path);
+    if (replace) renameSync(tmp, path);
+    else linkSync(tmp, path);
+    return true;
   } catch (err) {
-    rmSync(tmp, { force: true });
+    const code = (err as NodeJS.ErrnoException).code;
+    if (!replace && code === "EEXIST") return false;
+    if (!replace && (code === "EPERM" || code === "ENOTSUP" || code === "ENOSYS")) {
+      // A filesystem without hard links: an exclusive create is still no-replace.
+      try {
+        writeNewPrivateFile(path, content);
+        return true;
+      } catch (inner) {
+        if ((inner as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw inner;
+      }
+    }
     throw err;
+  } finally {
+    rmSync(tmp, { force: true });
   }
 }
 
@@ -170,7 +194,10 @@ export function loadOrCreateCa(
     notAfter: new Date(now.getTime() + CA_VALIDITY_DAYS * DAY_MS),
     isCa: true,
   });
-  writePrivateFile(path, keyPemOf(key) + certPem);
+  if (!writePrivateFile(path, keyPemOf(key) + certPem, { replace: false })) {
+    // Another process created the CA between our check and our write: theirs is the one on disk.
+    return loadOrCreateCa(dir, now, host);
+  }
   return { ca: { path, certPem, key, cert: new X509Certificate(certPem) }, created: true };
 }
 
