@@ -1,4 +1,10 @@
-import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type Dispatcher,
+  type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
+} from "undici";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import { isGloballyRoutable } from "./publicAddress.js";
 import {
@@ -87,13 +93,25 @@ export interface OutboundFetchOptions {
   signal?: AbortSignal;
   /** Injected by tests so they never touch real DNS. Defaults to a DNS A/AAAA lookup. */
   resolveHost?: (host: string) => Promise<PinnedAddress[]>;
-  /** Injected by tests. Defaults to undici's own fetch — see defaultFetch. */
-  fetchImpl?: typeof fetch;
+  /** Injected by tests. Defaults to undici's own fetch — see defaultFetch and GuardedFetch. */
+  fetchImpl?: GuardedFetch;
   /** Injected by tests to observe what the connection was pinned to. Defaults to an undici Agent. */
   agentFactory?: (pins: PinnedAddress[], tls?: OutboundTlsOptions) => Dispatcher;
 }
 
+/**
+ * The fetch fetchOutbound calls (#2268). Production passes undici's own fetch, which must come from
+ * the same package as the pinned Agent (see defaultFetch), so `init` is undici's RequestInit — the
+ * one that declares `dispatcher`. Test doubles may answer with a global Response, so the result is
+ * EITHER class: read status/headers/body only, never instanceof-check it.
+ */
+export type GuardedFetch = (
+  input: string | URL,
+  init: UndiciRequestInit,
+) => Promise<UndiciResponse | Response>;
+
 export interface OutboundFetchResult {
+  /** Typed as the global Response, but may be undici's class at runtime — see asResultResponse. */
   response: Response;
   /** The URL the bytes actually came from — the last hop, not necessarily the one asked for. */
   url: URL;
@@ -133,6 +151,26 @@ function nextHopRequest(prev: HopRequest, status: number): HopRequest {
   const headers = new Headers(prev.headers);
   for (const name of BODY_HEADERS) headers.delete(name);
   return { method: "GET", headers, body: undefined };
+}
+
+/**
+ * Request-in boundary (#2268): one hop's request as undici's RequestInit. HopRequest is built from
+ * the caller's global-typed `request`; the global and undici Headers/BodyInit declarations differ
+ * only at the type level (their Blob/ReadableStream lib types), and at runtime they are the same
+ * objects handed to the same fetch. This is the one place that difference is asserted away.
+ */
+function toUndiciHopInit(req: HopRequest, signal: AbortSignal): UndiciRequestInit {
+  const sameObjects = req as unknown as Pick<UndiciRequestInit, "method" | "headers" | "body">;
+  return { ...sameObjects, redirect: "manual", signal };
+}
+
+/**
+ * Response-out boundary (#2268): the public result keeps the global Response type so every caller's
+ * status/headers/body reads compile unchanged. With the default fetch it is undici's class, NOT the
+ * global one (pinned by tests/server/outboundFetchRealStack.test.ts), so never instanceof-check it.
+ */
+function asResultResponse(response: UndiciResponse | Response): Response {
+  return response as Response;
 }
 
 function assertCrossOriginHopCarriesNothing(req: HopRequest, from: URL, to: URL): void {
@@ -190,7 +228,7 @@ export function pinnedLookup(
 // the SAME package. Node's global fetch runs its own bundled undici (v6 in Node 22), and that older
 // copy rejects a newer Agent with "invalid onRequestStart method" — which broke every guarded
 // download until tests/server/outboundFetchRealStack.test.ts pinned the pairing.
-const defaultFetch = undiciFetch as unknown as typeof fetch;
+const defaultFetch: GuardedFetch = undiciFetch;
 
 function defaultAgent(pins: PinnedAddress[], tls?: OutboundTlsOptions): Dispatcher {
   return new Agent({
@@ -354,7 +392,7 @@ export async function fetchOutbound(
     let hopRequest = firstHopRequest(opts.request);
     for (let hop = 0; ; hop += 1) {
       // This hop's method/headers/body (see nextHopRequest); redirect mode and signal are the guard's.
-      const init: RequestInit & { dispatcher?: Dispatcher } = { ...hopRequest, redirect: "manual", signal };
+      const init = toUndiciHopInit(hopRequest, signal);
       if (target.pins) {
         const agent = makeAgent(target.pins, opts.tls);
         agents.push(agent);
@@ -366,7 +404,9 @@ export async function fetchOutbound(
         throw new OutboundUrlBlockedError("the connection could not be pinned to a checked address");
       }
       const response = await doFetch(target.url, init);
-      if (!REDIRECT_STATUS.has(response.status)) return { response, url: target.url, dispose };
+      if (!REDIRECT_STATUS.has(response.status)) {
+        return { response: asResultResponse(response), url: target.url, dispose };
+      }
 
       const location = response.headers.get("location");
       // Tear the hop down rather than leaving its body to be drained or to sit on the connection.
