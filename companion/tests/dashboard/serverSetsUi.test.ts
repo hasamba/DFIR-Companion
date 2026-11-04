@@ -91,7 +91,8 @@ function serverSetMarkup(doc: FakeDocument): void {
 }
 
 function caseServerMarkup(doc: FakeDocument): void {
-  doc.add("span", "caseServersPickMsg", "caseServersConfirmMsg");
+  doc.add("span", "caseServersPickMsg", "caseServersConfirmMsg", "caseServersCurrent");
+  doc.add("div", "caseServersRow");
   doc.add("button", "caseServersChangeBtn", "caseServersPickApply", "caseServersPickCancel");
   doc.add("button", "caseServersConfirmBtn", "caseServersConfirmCancel");
   doc.add("div", "caseServersPickOverlay", "caseServersConfirmOverlay", "caseServersConfirmList");
@@ -257,16 +258,35 @@ describe("case header", () => {
   // (dashboard-case-picker.js) and to the icon-only Change… button's tooltip and accessible name.
   const tipFor = (name: string) => `Server set: ${name} \u2014 click to change`;
 
-  it("the button carries a visible label, so an analyst can find it without hovering", () => {
-    // An icon-only button looked like every other toolbar icon; the analyst could not find it.
+  it("lives in Settings → Server sets, not in the toolbar", () => {
+    // Most analysts pick the set once, on the New Case form; a toolbar control cost space for an
+    // action rarely used, and as a bare icon nobody could find it.
     const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    const tag = html.match(/<button id="caseServersChangeBtn"[^>]*>([^<]*)<\/button>/);
-    expect(tag?.[1]).toBe("Server set\u2026");
-    const css = readFileSync(new URL("../../../public/css/dashboard-toolbar.css", import.meta.url), "utf8");
-    // No rule of its own hides the label, and the tight-toolbar collapse (.icons-only) keeps it.
-    expect(css).not.toMatch(/#caseServersChangeBtn\s*\{[^}]*font-size:\s*0/);
-    const tight = css.match(/\.toolbar-main\.icons-only #caseServersChangeBtn\s*\{([^}]*)\}/);
-    expect(tight?.[1]).toMatch(/font-size:\s*12px/);
+    const toolbar = html.slice(html.indexOf('id="toolbarMain"'), html.indexOf("</header>"));
+    expect(toolbar).not.toContain("caseServersChangeBtn");
+    const panel = html.slice(html.indexOf('id="serverSetsPanel"'), html.indexOf('id="serverSetsList"'));
+    expect(panel).toContain('id="caseServersCurrent"');
+    expect(panel).toMatch(/<button id="caseServersChangeBtn"[^>]*>Change\u2026<\/button>/);
+  });
+
+  it("the Settings line names the open case's set, and says why when it is unusable", async () => {
+    const ok = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["iris"] } },
+    });
+    await ok.api.refreshCaseServers("C1");
+    expect(ok.el("caseServersRow").hidden).toBe(false);
+    expect(ok.el("caseServersCurrent").textContent).toBe("The open case uses server set: Alpha");
+    const bad = loadCaseServers({
+      "GET /cases/C1/server-set": { status: 409, body: { error: "This case's server set was deleted." } },
+    });
+    await bad.api.refreshCaseServers("C1");
+    const line = bad.el("caseServersCurrent");
+    expect(line.textContent).toBe(
+      "The open case has no usable server set: This case's server set was deleted.",
+    );
+    expect(line.classList.contains("case-servers-error")).toBe(true);
+    await bad.api.refreshCaseServers("");
+    expect(bad.el("caseServersRow").hidden).toBe(true);
   });
 
   it("Change… names the open case's set and updates on case switch", async () => {

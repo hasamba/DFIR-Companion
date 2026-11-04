@@ -514,7 +514,6 @@
     <datalist id="caseList"></datalist>
     <!-- The open case's server set (js/dashboard-case-servers.js): an icon-only button whose tooltip
          and accessible name carry the set name. The case list shows each case's set under its name. -->
-    <button id="caseServersChangeBtn" type="button" aria-label="Change this case's server set" data-tip="Attach a different server set (IRIS, Timesketch, Velociraptor) to this case" hidden>Server set…</button>
     <label data-safe-style="display:inline-flex;align-items:center;gap:2px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Include archived cases in the case picker above (prefixed '[Archived]')">
       <input type="checkbox" id="showArchivedToggle" data-safe-style="margin:0;cursor:pointer" />
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
@@ -2237,6 +2236,10 @@
         <div class="settings-group-head" data-essential>Server sets (DFIR-IRIS, Timesketch, Velociraptor)</div>
         <div id="serverSetsPanel" data-essential>
           <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">A server set holds the DFIR-IRIS, Timesketch and Velociraptor connection that a case uses. Each case remembers its own set. New cases use the <strong>default</strong> set. Changes apply at once, with no restart. Keys are stored encrypted on this machine and are never exported.</p>
+          <div id="caseServersRow" class="case-servers-row" hidden>
+            <span id="caseServersCurrent" role="status"></span>
+            <button id="caseServersChangeBtn" type="button" aria-label="Change this case's server set" hidden>Change…</button>
+          </div>
           <div id="serverSetsList" role="list"></div>
           <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button id="serverSetAddBtn" type="button">+ Add server set</button>
