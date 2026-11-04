@@ -1068,6 +1068,13 @@ export const FEATURES: Feature[] = [
     private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES", "LOCAL_PRESIDIO_HOSTS"],
   },
   {
+    // Settings → Built-in HTTPS line + local-CA download link (#2285). Called by the settings form
+    // each time it loads; holds no state of its own.
+    file: "dashboard-tls-info.js",
+    publish: ["renderTlsInfo"],
+    private: [],
+  },
+  {
     // Settings → Decision model picker (#2224). requestVersion is private: a reachable copy would let
     // another module make a stale model list paint over the provider the analyst just switched to.
     file: "dashboard-decision-model-picker.js",
