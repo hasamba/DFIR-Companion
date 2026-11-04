@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import type { Server as HttpsServer } from "node:https";
 import { WebSocketServer } from "ws";
 import type { CaseStore } from "../storage/caseStore.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken } from "../analysis/casePassword.js";
@@ -115,7 +116,11 @@ function sendJobsSnapshot(sock: SocketLike, caseId: string, jobsFor: WsUpgradeDe
     });
 }
 
-export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDeps): WebSocketServer {
+export function attachLiveSocket(
+  server: Server | HttpsServer,
+  hub: LiveHub,
+  deps: WsUpgradeDeps,
+): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   let lastDisconnectAt = 0;
 

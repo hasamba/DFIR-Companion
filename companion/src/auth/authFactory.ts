@@ -23,7 +23,13 @@ function authDataDir(casesRoot: string, env: NodeJS.ProcessEnv): string {
   return join(dirname(resolve(casesRoot)), `.dfir-auth-${key}`);
 }
 
-function callbackUri(oidc: OidcConfig, host: string, port: number, env: NodeJS.ProcessEnv): string {
+function callbackUri(
+  oidc: OidcConfig,
+  host: string,
+  port: number,
+  env: NodeJS.ProcessEnv,
+  scheme: "http" | "https",
+): string {
   const configured =
     oidc.redirectUri ??
     (env.DFIR_PUBLIC_URL?.trim()
@@ -32,7 +38,7 @@ function callbackUri(oidc: OidcConfig, host: string, port: number, env: NodeJS.P
   if (!configured && !isLoopbackBinding(host)) {
     throw new Error("OIDC on a non-loopback binding requires DFIR_PUBLIC_URL or DFIR_AUTH_OIDC_REDIRECT_URI");
   }
-  const value = configured ?? `http://${host}:${port}/auth/oidc/callback`;
+  const value = configured ?? `${scheme}://${host}:${port}/auth/oidc/callback`;
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -51,6 +57,7 @@ export function createTeamAuthRuntime(
   host: string,
   port: number,
   env: NodeJS.ProcessEnv = process.env,
+  scheme: "http" | "https" = "http",
 ): TeamAuthRuntime {
   const config = resolveTeamAuthConfig(env);
   assertRemoteBindingSafe(host, config, env);
@@ -73,7 +80,7 @@ export function createTeamAuthRuntime(
     const oidcClient = config.oidc
       ? new OidcClient({
           ...config.oidc,
-          redirectUri: callbackUri(config.oidc, host, port, env),
+          redirectUri: callbackUri(config.oidc, host, port, env, scheme),
         })
       : undefined;
     return {

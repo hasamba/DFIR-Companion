@@ -719,6 +719,7 @@
     "ROUTE GET /js/dashboard-custom-importers.js",
     "ROUTE GET /js/dashboard-view-presets.js",
     "ROUTE GET /js/dashboard-env-settings.js",
+    "ROUTE GET /js/dashboard-tls-info.js",
     "ROUTE GET /js/dashboard-decision-model-picker.js",
     "ROUTE GET /js/dashboard-memory-next-steps.js",
     "ROUTE GET /js/dashboard-delete-case.js",

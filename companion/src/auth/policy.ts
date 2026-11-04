@@ -19,6 +19,8 @@ const PUBLIC_GET = new Set([
   "/apple-touch-icon.png",
   "/dfir-companion-logo.jpg",
   "/js/safe-dom.js",
+  // The built-in HTTPS local CA certificate (#2285): public by nature, and the login page links it.
+  "/tls/ca.crt",
 ]);
 const AUTHENTICATED_SHELLS = new Set(["/", "/dashboard", "/mobile"]);
 // "/geo-tiles" is the proxied basemap under the Geographic Map (routes/geoTiles.ts). It carries no
@@ -38,6 +40,8 @@ const AUTHENTICATED_GLOBAL_READ_PREFIXES = [
   // Public reference data, the same for every user; unlisted, it would fall to the global-admin default
   // and leave the matrix empty for every non-admin.
   "/attack",
+  // What the built-in HTTPS listener serves — fingerprints and expiry, no secrets (#2285).
+  "/tls/info",
 ];
 const GLOBAL_ADMIN_PREFIXES = [
   "/settings",

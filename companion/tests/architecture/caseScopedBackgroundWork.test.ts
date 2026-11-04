@@ -71,6 +71,7 @@ const INTERVALS: Record<string, { count: number; kind: "global" | "per-case"; wh
       "backup: runInCaseScope with the listed generation; demo reseed: CaseStore.withSeedSlot",
   },
   "http/rateLimiter.ts": { count: 11, kind: "global", why: "in-memory limiter sweeps" },
+  "http/httpsStartup.ts": { count: 1, kind: "global", why: "daily HTTPS certificate renewal check (#2285)" },
   "integrations/mcp/mcpDelivery.ts": {
     count: 2,
     kind: "global",

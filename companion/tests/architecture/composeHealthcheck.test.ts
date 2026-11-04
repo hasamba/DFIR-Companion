@@ -73,6 +73,35 @@ describe("compose healthcheck (#2160)", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  it("falls back to HTTPS when the port speaks only TLS (#2285)", async () => {
+    for (const script of [composeProbeScript(), dockerfileProbeScript()]) {
+      const seen: Record<string, unknown>[] = [];
+      const code = await new Promise<number>((resolve) => {
+        runInNewContext(script, {
+          fetch: () => Promise.reject(new Error("socket hang up")),
+          require: (mod: string) => {
+            expect(mod).toBe("https");
+            return {
+              get: (opts: Record<string, unknown>, cb: (r: { statusCode: number }) => void) => {
+                seen.push(opts);
+                cb({ statusCode: 200 });
+                return { on: () => undefined };
+              },
+            };
+          },
+          process: { env: { DFIR_PORT: "5123" }, exit: resolve },
+        });
+      });
+      expect(code).toBe(0);
+      expect(seen[0]).toMatchObject({
+        host: "127.0.0.1",
+        port: "5123",
+        path: "/health",
+        rejectUnauthorized: false,
+      });
+    }
+  });
+
   it("exits 1 when /health is not ok", async () => {
     const r = await runProbe(composeProbeScript(), {}, false);
     expect(r.exitCode).toBe(1);

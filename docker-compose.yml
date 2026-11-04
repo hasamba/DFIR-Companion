@@ -96,7 +96,9 @@ services:
       # compose healthcheck OVERRIDES the image's baked /health probe). It reads the same port
       # variables as the image probe (PORT, then DFIR_PORT, then 4773), so changing DFIR_PORT
       # does not leave it probing a dead port and reporting a healthy server as unhealthy.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||process.env.DFIR_PORT||4773)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # With built-in HTTPS on (DFIR_HTTPS, #2285) the plain-HTTP probe fails at the socket, so it
+      # retries over HTTPS — loopback only, so skipping certificate verification proves nothing away.
+      test: ["CMD", "node", "-e", "const p=process.env.PORT||process.env.DFIR_PORT||4773;fetch('http://127.0.0.1:'+p+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>require('https').get({host:'127.0.0.1',port:p,path:'/health',rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1)))"]
       interval: 30s
       timeout: 5s
       retries: 5
