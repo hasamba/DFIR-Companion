@@ -102,6 +102,49 @@ export interface OutboundFetchResult {
 }
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+// WHAT a followed redirect re-sends (#2269) is the guard's job as much as WHERE it goes. Fetch-spec
+// rules: 303 (for anything but GET/HEAD) and POST on 301/302 become a bodiless GET with the body
+// headers dropped; 307/308 and other 301/302 resend as-is. Each hop is built from the previous one,
+// never from the caller's original request. A hop to ANOTHER ORIGIN is refused while the request
+// still carries any caller header or a body: an API key is often a custom header, and a body can
+// hold a credential too, so stripping a fixed list (Authorization, Cookie) would not be enough.
+// A one-shot ReadableStream body cannot be resent on 307/308; no caller sends one.
+type HopRequest = Readonly<{ method?: string; headers: Headers; body?: BodyInit | null }>;
+
+const BODY_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-language",
+  "content-location",
+];
+
+function firstHopRequest(request: OutboundFetchOptions["request"]): HopRequest {
+  return { method: request?.method, headers: new Headers(request?.headers), body: request?.body };
+}
+
+function nextHopRequest(prev: HopRequest, status: number): HopRequest {
+  const method = (prev.method ?? "GET").toUpperCase();
+  const toGet =
+    (status === 303 && method !== "GET" && method !== "HEAD") ||
+    ((status === 301 || status === 302) && method === "POST");
+  if (!toGet) return { ...prev, headers: new Headers(prev.headers) };
+  const headers = new Headers(prev.headers);
+  for (const name of BODY_HEADERS) headers.delete(name);
+  return { method: "GET", headers, body: undefined };
+}
+
+function assertCrossOriginHopCarriesNothing(req: HopRequest, from: URL, to: URL): void {
+  if (from.origin === to.origin) return;
+  const hasHeaders = [...req.headers.keys()].length > 0;
+  const hasBody = req.body !== undefined && req.body !== null;
+  if (!hasHeaders && !hasBody) return;
+  throw new OutboundUrlBlockedError(
+    `the redirect from ${from.origin} to another origin (${to.origin}) is not followed while the request carries headers or a body`,
+  );
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 
@@ -319,9 +362,10 @@ export async function fetchOutbound(
 
   try {
     let target = await validateAndResolve(raw, opts, signal);
+    let hopRequest = firstHopRequest(opts.request);
     for (let hop = 0; ; hop += 1) {
-      // The caller's method/body ride along; redirect mode and signal are always the guard's.
-      const init: RequestInit & { dispatcher?: Dispatcher } = { ...opts.request, redirect: "manual", signal };
+      // This hop's method/headers/body (see nextHopRequest); redirect mode and signal are the guard's.
+      const init: RequestInit & { dispatcher?: Dispatcher } = { ...hopRequest, redirect: "manual", signal };
       if (target.pins) {
         const agent = makeAgent(target.pins, opts.tls);
         agents.push(agent);
@@ -350,13 +394,16 @@ export async function fetchOutbound(
       if (hop >= maxRedirects) {
         throw new OutboundUrlBlockedError(`more than ${maxRedirects} redirects`);
       }
-      let next: string;
+      let next: URL;
       try {
-        next = new URL(location, target.url).toString();
+        next = new URL(location, target.url);
       } catch {
         throw new OutboundUrlBlockedError("the redirect Location is not a valid URL");
       }
-      target = await validateAndResolve(next, opts, signal);
+      const nextRequest = nextHopRequest(hopRequest, response.status);
+      assertCrossOriginHopCarriesNothing(nextRequest, target.url, next);
+      target = await validateAndResolve(next.toString(), opts, signal);
+      hopRequest = nextRequest;
     }
   } catch (err) {
     // Nothing will read a body now, so the sockets opened on the way here are ours to close.
