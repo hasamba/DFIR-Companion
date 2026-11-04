@@ -279,8 +279,10 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
   app.delete(
     "/server-sets/:setId",
     withStore(ctx, async (sets, req, res) => {
-      const set = sets.get(req.params.setId);
-      if (!set) return res.status(404).json({ error: NOT_FOUND });
+      // No decrypt: a set whose secret no longer opens must still be deletable.
+      const id = req.params.setId;
+      if (!sets.has(id)) return res.status(404).json({ error: NOT_FOUND });
+      const set = { id, name: sets.nameOf(id) ?? "" };
       const result = sets.remove(set.id);
       if (!result.ok) {
         if (result.usedBy.length === 0) return res.status(409).json({ error: IS_DEFAULT });
@@ -298,8 +300,9 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
   app.post(
     "/server-sets/:setId/default",
     withStore(ctx, (sets, req, res) => {
-      const set = sets.get(req.params.setId);
-      if (!set) return res.status(404).json({ error: NOT_FOUND });
+      const id = req.params.setId;
+      if (!sets.has(id)) return res.status(404).json({ error: NOT_FOUND });
+      const set = { id, name: sets.nameOf(id) ?? "" };
       sets.setDefault(set.id);
       ctx.serverClients.invalidate(); // default-set clients (the case-less routes) refresh
       audit(ctx, req, "server-set-default", set);

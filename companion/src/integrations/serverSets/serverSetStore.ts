@@ -54,6 +54,12 @@ export class ServerSetStore {
     return this.readRaw().flatMap((s) => (s.velociraptor ? [{ ...s.velociraptor }] : []));
   }
 
+  // A set's name, read without opening any secret (delete and make-default must work on a set
+  // that no longer decrypts).
+  nameOf(id: string): string | undefined {
+    return this.readRaw().find((s) => s.id === id)?.name;
+  }
+
   get(id: string): ServerSet | undefined {
     const raw = this.readRaw().find((s) => s.id === id);
     return raw ? this.openSet(raw) : undefined;

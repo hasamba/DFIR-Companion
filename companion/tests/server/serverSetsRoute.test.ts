@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -294,6 +294,23 @@ describe("POST / PUT / DELETE / default", () => {
     expect(sets.defaultId()).toBe(s.id);
     expect(clients.invalidated).toContain(undefined);
     expect((await request(app).post("/server-sets/nope/default")).status).toBe(404);
+  });
+
+  it("DELETE and POST default work on a set whose secret cannot be decrypted", async () => {
+    const def = sets.create({ name: "Default" });
+    sets.setDefault(def.id);
+    const broken = sets.create(fullSet("Broken"));
+    const other = sets.create(fullSet("Other"));
+    // Corrupt both sealed IRIS keys on disk: the sets still exist, but no secret opens.
+    const path = join(dir, "server-sets", "sets.json");
+    const raw = JSON.parse(await readFile(path, "utf8")) as Array<{ iris?: { apiKey: string } }>;
+    for (const s of raw) if (s.iris) s.iris.apiKey = "v1:AAAA:AAAA:AAAA";
+    writeFileSync(path, JSON.stringify(raw));
+    const app = singleUserApp();
+    expect((await request(app).post(`/server-sets/${other.id}/default`)).status).toBe(204);
+    expect(sets.defaultId()).toBe(other.id);
+    expect((await request(app).delete(`/server-sets/${broken.id}`)).status).toBe(204);
+    expect(sets.has(broken.id)).toBe(false);
   });
 
   it("reports usedBy as a count", async () => {
