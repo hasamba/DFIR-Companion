@@ -13,57 +13,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-11-05
+
 ### Added
 
-- **Built-in HTTPS** — serves HTTPS itself (on by default in team mode) from a private local CA with silent renewal and a certificate download link; no reverse proxy needed; existing team-mode deployments behind a plain-HTTP proxy set `DFIR_HTTPS=off` (closes #2285)
-- **Per-case server sets** — each case remembers its IRIS, Timesketch and Velociraptor servers
+- **Built-in HTTPS** — on by default in team mode, from a private local CA with silent renewal; behind a plain-HTTP proxy set `DFIR_HTTPS=off` (closes #2285)
+- **Per-case server sets** — each case remembers its IRIS, Timesketch and Velociraptor servers (#2274)
 
 ### Changed
 
-- **Decision model picker** — pick any OpenRouter decision model (priced, filtered list) for the missed-evidence review and containment check; "Jev" is now labelled "Decision model", default `typesafe/jev-1.14`, and a rejected question stops the run and names the model (closes #2224)
+- **Decision model picker** — any OpenRouter decision model for the missed-evidence review and containment check; "Jev" is now "Decision model" (closes #2224)
 
 ### Fixed
 
-- **Writer lock across hosts** — a team-mode lock left by another container or machine is now judged by its heartbeat, so a live server's lock is never stolen and a dead one is recovered after a minute (closes #2287)
-- **Settings values with # or quotes** — saved as written and read the same at restart and on Test / reconnect; re-save any secret that contains # (closes #2280)
-- **"Run <tool>" no longer archives records added during the run** — a raw drop file that changed while its tool ran, then could not be moved, stays eligible to be processed again instead of being held back and archived unread (closes #2283)
-- **Drop folder no longer re-imports a stuck file** — a file whose move out of `drop/` fails is held back and reported instead of being imported again every two polls (closes #2281)
-- **Drop-folder move across disks is memory-bounded** — the cross-filesystem move streams the file instead of reading it whole (closes #2270)
-- **Outbound redirects follow HTTP rules** — 303 and POST-301/302 become GET without the body, and a redirect to another server is refused while the request still carries headers or a body (closes #2269)
-- **Outbound URL guard cleanup** — removed the unpinned validate-only helper (closes #2271) and the fetch type casts that hid undici's Response type (closes #2268)
-- **Team-mode Docker restart loop after a crash** — a writer lock left by an unclean exit (OOM, `docker kill`) no longer blocks the next container, and a second live container is still refused (closes #2278)
-- **Settings and saved views survive a container recreate** — `docker-compose.yml` now mounts `./data`, so the Settings file, dashboard views, report templates, tagger rules, notifications and logs persist
-- **Team accounts survive a container recreate** — `docker-compose.yml` now keeps team-mode accounts in `./auth`; before, `docker compose up -d` after an edit deleted every account
-- **Guarded downloads** — "Download latest release" for Velociraptor, Sigma rule downloads, KEV import from a URL, webhooks and audit export no longer fail with `fetch failed — invalid onRequestStart method`
-- **Sigma re-grade apply guard** — one re-grade per case at a time (a second one is refused), and the import memory guard now sizes and can refuse a re-grade without changing either timeline (closes #2227)
-- **Undo error reporting** — when an Undo or Redo step fails and its rollback also fails, the original error is shown and the rollback failure is logged; both halves of the rollback always run (closes #2228)
-- **Decision-model review spend** — a review that stops on an error still records the cost of the requests that already ran, and a cost-ledger failure no longer fails a finished review (closes #2235)
-- **Missed evidence review model per row** — a row graded by a different decision model than the panel header now names it, and the promote confirmation no longer credits every row to one model (closes #2236)
-- **Sigma "Filtered by status" pill** — the fourth rule state now has its own colour instead of the grey fallback (closes #2233)
-- **Decision-model spend bound** — the per-model spend tally is documented as bounded by the rows reviewed, with a headline test (closes #2242)
-- **Headline-model tests** — tie-break tests no longer depend on reply timing (closes #2243)
-- **Sigma rules search listeners** — reopening the Sigma tab or running a rule action no longer adds another copy of the search and state filters (closes #2232)
-- **Import memory estimate** — an uncapped caller with no known size is no longer cut down to the event cap (closes #2234)
-- **Decision-model review headline model** — the panel header and the cost ledger name the model that billed the most tokens, not whichever request answered last (closes #2240)
-- **Failed screenshot analysis recovery** — a failed screenshot batch is retried (up to 3 times, with backoff) instead of being skipped for good, and rate-limit or timeout errors get a short retry (closes #2248)
-- **Screenshots stranded by a restart** — screenshots still waiting for analysis when the companion stopped are analyzed after it starts again (closes #2249)
-- **AI catch-up safety** — the catch-up run after turning AI back on stops when AI is paused, never moves the analysis point backwards, and always ends with a final status (closes #2250)
-- **Unreadable screenshot** — one missing or unreadable image is skipped instead of failing its whole batch (closes #2251)
-- **Corrupted capture log** — a damaged line in a case's capture log now gives a clear "needs repair" message naming the line, and the extension keeps new screenshots queued (closes #2252)
-- **Capture sequence speed** — screenshot numbering no longer re-reads the whole capture log for every screenshot (closes #2253)
-- **Extension login errors** — a screenshot refused for a bad token or case role is kept in the queue, and queued screenshots for another case are no longer deleted (closes #2254)
-- **Extension capture throttle** — capture triggers are rate-limited, and browser limits or sites without access no longer hide the real status badge (closes #2255)
-- **Extension queue write failure** — a screenshot that cannot be saved to the offline queue is reported instead of lost silently (closes #2256)
-- **Extension popup** — the non-working dedup threshold field is gone, the timer interval minimum is 30 s (browser limit), and the shortcut no longer shows REC with no case (closes #2257)
-- **Extension push feedback** — a push to a case with AI off says "saved as evidence — not analyzed", the source page URL is recorded in the import log, a rate-limited push is retried once, and a push that may already be saved is never re-sent automatically (closes #2258)
-- **Update rules without a case** — Settings → Tools → Update rules works with no case open; under team login it needs a global admin (closes #2259)
-- **Expired session on mobile and presentation pages** — both pages go to the login page, and the mobile offline copy never stores the login page (closes #2260)
-- **Manual fixes** — presentation severity filter and auto-advance, the preflight control route, and how screenshots are batched for analysis (closes #2261)
-- **Small hygiene fixes** — capture count and safe-write guarantees documented, and a slow test given more time (closes #2262)
-- **Kept screenshot backoff** — screenshots kept after a refusal are re-sent with a growing wait instead of on every upload (closes #2263)
-- **Per-case Update rules permission** — under team login the per-case Update rules route also needs a global admin (closes #2264)
-- **Held screenshot status** — the AI status shows screenshots waiting for a retry, every recovery failure counts toward the retry limit, and a batch cut off by a restart is recovered (closes #2265)
-- **Archive during backup restore** — archiving a case waits for a running backup restore instead of failing or mixing two database versions (closes #2247)
+- **Writer lock across hosts** — a lock left by another container or machine is judged by its heartbeat (closes #2287)
+- **Settings values with # or quotes** — read the same at restart and on Test / reconnect; re-save secrets that contain # (closes #2280)
+- **"Run <tool>" keeps records added during the run** — a drop file that changed while its tool ran stays eligible (closes #2283)
+- **Stuck drop file** — a file that cannot be moved out of `drop/` is held back, not re-imported (closes #2281)
+- **Cross-disk drop move** — streams the file instead of reading it whole (closes #2270)
+- **Outbound redirects** — follow HTTP rules; a cross-server redirect that carries headers or a body is refused (closes #2269)
+- **Outbound URL guard cleanup** — unpinned helper and fetch type casts removed (closes #2271, closes #2268)
+- **Team-mode Docker restart loop** — a lock left by an unclean exit no longer blocks the next container (closes #2278)
+- **Docker `./data` mount** — Settings, views, templates, tagger rules, notifications and logs survive a container recreate (#2277)
+- **Docker `./auth` mount** — team accounts survive a container recreate (#2276)
+- **Guarded downloads** — Velociraptor, Sigma, KEV, webhooks and audit export no longer fail with `invalid onRequestStart method` (#2267)
+- **Sigma re-grade guard** — one re-grade per case at a time, sized by the import memory guard (closes #2227)
+- **Undo error reporting** — a failed rollback no longer hides the original error (closes #2228)
+- **Decision-model review spend** — a stopped review still records its cost (closes #2235)
+- **Missed-evidence model per row** — each row names the model that graded it (closes #2236)
+- **Sigma "Filtered by status" pill** — has its own colour (closes #2233)
+- **Decision-model spend bound** — documented and tested (closes #2242)
+- **Headline-model tests** — no longer depend on reply timing (closes #2243)
+- **Sigma search listeners** — reopening the tab no longer adds copies (closes #2232)
+- **Import memory estimate** — an uncapped caller is not cut to the event cap (closes #2234)
+- **Decision-model headline** — names the model that billed the most tokens (closes #2240)
+- **Failed screenshot analysis** — retried up to 3 times with backoff (closes #2248)
+- **Screenshots stranded by a restart** — analyzed after the next start (closes #2249)
+- **AI catch-up safety** — stops on pause and never moves the analysis point backwards (closes #2250)
+- **Unreadable screenshot** — skipped instead of failing its batch (closes #2251)
+- **Corrupted capture log** — a clear "needs repair" message; the extension keeps screenshots queued (closes #2252)
+- **Capture sequence speed** — numbering no longer re-reads the capture log (closes #2253)
+- **Extension login errors** — refused screenshots stay queued; other cases' queues are kept (closes #2254)
+- **Extension capture throttle** — triggers are rate-limited; the status badge stays accurate (closes #2255)
+- **Extension queue write failure** — reported instead of lost (closes #2256)
+- **Extension popup** — dead dedup field removed, 30 s timer minimum, no REC without a case (closes #2257)
+- **Extension push feedback** — AI-off pushes say "not analyzed"; an uncertain push is never re-sent (closes #2258)
+- **Update rules without a case** — works with no case open; team login needs a global admin (closes #2259)
+- **Expired session on mobile and presentation pages** — both go to the login page (closes #2260)
+- **Manual fixes** — presentation filter, preflight route and screenshot batching documented (closes #2261)
+- **Small hygiene fixes** — documentation and a slow test's time limit (closes #2262)
+- **Kept screenshot backoff** — re-sent with a growing wait (closes #2263)
+- **Per-case Update rules permission** — needs a global admin under team login (closes #2264)
+- **Held screenshot status** — the AI status shows screenshots waiting for a retry (closes #2265)
+- **Archive during backup restore** — waits for the restore to finish (closes #2247)
 
 ## [0.44.0] - 2026-10-22
 
@@ -1590,7 +1592,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.41.0...v0.42.0

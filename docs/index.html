@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.44.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.45.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.44.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.45.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -954,6 +954,18 @@
           <h3>Custody at Receipt</h3>
           <p>Every file is hashed with SHA-256 and SHA-1 into chain of custody before any parser touches it, rejected files included. You can show a file was handed over and match it against your own copy, even when the import failed.</p>
           <span class="tag">v0.44.0 — hashed before it is read</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon green">🔐</div>
+          <h3>HTTPS Built In</h3>
+          <p>Team mode now serves HTTPS on its own port, with no reverse proxy. The companion creates a private certificate authority on the first start, renews its certificate before it expires, and offers the CA for download on the login page, so every analyst connects encrypted.</p>
+          <span class="tag">v0.45.0 — encrypted from the first start</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">🗂️</div>
+          <h3>Server Sets per Case</h3>
+          <p>Keep IRIS, Timesketch and Velociraptor connections as named sets, with keys encrypted at rest. Each case remembers its set, so a lab case and a customer case talk to different servers without anyone editing settings between them.</p>
+          <span class="tag">v0.45.0 — the right servers for each case</span>
         </div>
       </div>
     </div>

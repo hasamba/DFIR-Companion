@@ -495,6 +495,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
+- **Built-in HTTPS** — team mode serves HTTPS itself from a private local CA (downloadable from the login page) and renews its certificate silently; `DFIR_HTTPS_HOSTNAMES` names the server, `DFIR_HTTPS=off` behind your own HTTPS proxy
+- **Per-case server sets** — IRIS, Timesketch and Velociraptor connections are named sets with encrypted keys; each case remembers its set (**Settings → Server sets**)
 - **Linux AppImage** — single-file executable for any glibc distro, no Node required
 - **Update notice** — opt-in (default off) check for a newer GitHub release; dashboard banner, never auto-downloads
 - **Customizable prompts** — override prompts via env var or file; edits apply without restart
