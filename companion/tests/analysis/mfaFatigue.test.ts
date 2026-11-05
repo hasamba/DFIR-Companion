@@ -7,7 +7,8 @@ import {
   MFA_FATIGUE_WINDOW_MINUTES,
   isFatiguePrompt,
   mfaFatigueEpisodes,
-  newFatigueEpisodes,
+  episodesInSpan,
+  fatigueEventId,
   fatigueRows,
 } from "../../src/analysis/mfaFatigue.js";
 import type { StoredAuthObservation } from "../../src/analysis/authObservationStore.js";
@@ -28,6 +29,7 @@ function obs(over: Partial<StoredAuthObservation> & { at: number }): StoredAuthO
     hostOrTenant: TENANT_A,
     outcome: "interrupted",
     mfaDetail: "denied",
+    mfaConfirmed: true,
     resultCode: "500121",
     locator: `record:${seq}`,
     importer: "m365",
@@ -38,7 +40,15 @@ function obs(over: Partial<StoredAuthObservation> & { at: number }): StoredAuthO
 }
 const prompt = (at: number, over: Partial<StoredAuthObservation> = {}) => obs({ at, ...over });
 const success = (at: number, over: Partial<StoredAuthObservation> = {}) =>
-  obs({ at, outcome: "success", mfaDetail: "approved", resultCode: "0", sourceIp: "198.51.100.7", ...over });
+  obs({
+    at,
+    outcome: "success",
+    mfaDetail: "approved",
+    mfaConfirmed: undefined,
+    resultCode: "0",
+    sourceIp: "198.51.100.7",
+    ...over,
+  });
 
 describe("isFatiguePrompt", () => {
   it("counts a denied or timed-out interruption, never 'required' or an unconfirmed failure", () => {
@@ -108,25 +118,32 @@ describe("mfaFatigueEpisodes", () => {
   });
 });
 
-describe("newFatigueEpisodes — the first-crossing gate (idempotence)", () => {
-  it("prompts in one import and the success in a later one: the later import emits", () => {
-    const prior = [prompt(0), prompt(1), prompt(2)];
-    const now = [success(3, { importBatch: "m2" })];
-    expect(newFatigueEpisodes([...prior], "m1")).toHaveLength(0);
-    const eps = newFatigueEpisodes([...prior, ...now], "m2");
-    expect(eps).toHaveLength(1);
-    expect(eps[0].batches).toEqual(["m1", "m2"]);
+describe("episodesInSpan — only episodes whose whole window was read", () => {
+  it("keeps an episode whose success lies inside the import's span, drops one whose window was cut off", () => {
+    const rows = [prompt(0), prompt(1), prompt(2), success(3)];
+    const iso = (m: number) => new Date(BASE + m * MIN).toISOString();
+    expect(episodesInSpan(rows, { earliest: iso(0), latest: iso(3) })).toHaveLength(1);
+    // the success is before this import's earliest observation: its window may predate the read
+    expect(episodesInSpan(rows, { earliest: iso(4), latest: iso(10) })).toHaveLength(0);
   });
+});
 
-  it("an import that adds nothing new (re-import: stored rows keep their first batch) emits nothing", () => {
-    const stored = [prompt(0), prompt(1), prompt(2), success(3)];
-    expect(newFatigueEpisodes(stored, "m1")).toHaveLength(1);
-    expect(newFatigueEpisodes(stored, "m9")).toHaveLength(0);
+describe("fatigueEventId — the stable forensic-timeline id", () => {
+  it("is the same for the same episode, whatever import emits it, and absent for other rows", () => {
+    const eps = mfaFatigueEpisodes([prompt(0), prompt(1), prompt(2), success(3)]);
+    const row = fatigueRows(eps, { truncatedHistory: false })[0];
+    const id = fatigueEventId(row);
+    expect(id).toBe(`mfa-fatigue-${eps[0].identity}`);
+    expect(fatigueEventId({ aggKey: "entra-signin|x" })).toBeUndefined();
+    expect(fatigueEventId({})).toBeUndefined();
   });
+});
 
-  it("an overlapping import that adds a 4th prompt to an already-reported episode emits nothing", () => {
-    const stored = [prompt(0), prompt(1), prompt(2), success(3)];
-    expect(newFatigueEpisodes([...stored, prompt(2.5, { importBatch: "m2" })], "m2")).toHaveLength(0);
+describe("legacy observations (stored before #2306)", () => {
+  it("a 'denied' row without the confirmed-detail mark never counts", () => {
+    const legacy = (at: number) => prompt(at, { mfaConfirmed: undefined });
+    expect(isFatiguePrompt(legacy(0))).toBe(false);
+    expect(mfaFatigueEpisodes([legacy(0), legacy(1), legacy(2), success(3)])).toHaveLength(0);
   });
 });
 

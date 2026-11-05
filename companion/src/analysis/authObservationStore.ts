@@ -49,6 +49,9 @@ export interface StoredAuthObservation {
   // Sign-in detail (#2301), set by importers that read it (m365Import.ts via signInObservation.ts).
   resultCode?: string;
   mfaDetail?: MfaDetail;
+  // Set (#2306) only when the record's own MFA detail text said denied or timed out. Rows stored
+  // before it carry no mark — their "denied" may be a bare 500121 — and never count as a prompt.
+  mfaConfirmed?: boolean;
   authMethod?: string;
   sessionId?: string;
   correlationId?: string;

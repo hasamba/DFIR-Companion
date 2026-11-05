@@ -12,6 +12,7 @@ import { AuthObservationStore } from "../../src/analysis/authObservationStore.js
 import { CloudRecordStore } from "../../src/analysis/cloudRecordStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { parseM365Audit } from "../../src/analysis/m365Import.js";
 
 const TENANT_A = "00000000-0000-4000-8000-00000000000a";
 const TENANT_B = "00000000-0000-4000-8000-00000000000b";
@@ -23,9 +24,10 @@ async function harness(opts: { ledger?: boolean; superStore?: boolean } = {}) {
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const superTimelineStore = new SuperTimelineStore(cases);
+  const authObservationStore = new AuthObservationStore(cases, 168);
   const pipeline = new AnalysisPipeline({
     stateStore: new StateStore(cases),
-    authObservationStore: new AuthObservationStore(cases, 168),
+    authObservationStore,
     ...(opts.ledger ? { cloudRecordStore: new CloudRecordStore(cases) } : {}),
     ...(opts.superStore ? { superTimelineStore } : {}),
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
@@ -35,7 +37,7 @@ async function harness(opts: { ledger?: boolean; superStore?: boolean } = {}) {
     await writeFile(p, body);
     return p;
   };
-  return { pipeline, superTimelineStore, write };
+  return { pipeline, superTimelineStore, authObservationStore, write };
 }
 
 let seq = 0;
@@ -163,6 +165,44 @@ describe("MFA fatigue — whole-file M365 import (#2306)", () => {
     expect(fatigue((await pipeline.importM365("c1", text, opts("m1"))).forensicTimeline)).toHaveLength(1);
     expect(fatigue((await pipeline.importM365("c1", text, opts("m2"))).forensicTimeline)).toHaveLength(1);
   });
+
+  // An import whose observations were appended but whose forensic state was never saved (a crash,
+  // a failed save): the observations sit in the store under the failed import's batch.
+  it("recovers after an import failed between the observation append and the save: the retry emits once", async () => {
+    const { pipeline, authObservationStore } = await harness();
+    const text = JSON.stringify([denied(0), denied(1), timedOut(2), success(3)]);
+    const { signInObservations } = parseM365Audit(text);
+    await authObservationStore.append(
+      "c1",
+      signInObservations.map((o) => ({ ...o, importBatch: "m0" })),
+    );
+    expect(fatigue((await pipeline.importM365("c1", text, opts("m1"))).forensicTimeline)).toHaveLength(1);
+    expect(fatigue((await pipeline.importM365("c1", text, opts("m2"))).forensicTimeline)).toHaveLength(1);
+  });
+
+  it("a row a Critical floor filtered out appears once when the file is imported again with a lower floor", async () => {
+    const { pipeline } = await harness({ ledger: true });
+    const text = JSON.stringify([denied(0), denied(1), denied(2), success(3)]);
+    const s1 = await pipeline.importM365("c1", text, { ...opts("m1"), minSeverity: "Critical" as const });
+    expect(fatigue(s1.forensicTimeline)).toHaveLength(0);
+    expect(fatigue((await pipeline.importM365("c1", text, opts("m2"))).forensicTimeline)).toHaveLength(1);
+    expect(fatigue((await pipeline.importM365("c1", text, opts("m3"))).forensicTimeline)).toHaveLength(1);
+  });
+
+  // Upgrade: before #2306 the extractor stored a bare 500121 as mfaDetail "denied", with no
+  // confirmed-detail mark, and the store keeps that row when the same record is imported again.
+  it("legacy observations of bare 500121 records never count after the upgrade", async () => {
+    const { pipeline, authObservationStore } = await harness();
+    const prompts = [bare500121(0), bare500121(1), bare500121(2)];
+    const legacy = parseM365Audit(JSON.stringify(prompts)).signInObservations.map((o) => {
+      const { mfaConfirmed: _drop, ...rest } = o as typeof o & { mfaConfirmed?: boolean };
+      return { ...rest, mfaDetail: "denied" as const, outcome: "interrupted" as const, importBatch: "old" };
+    });
+    expect(legacy.every((o) => o.resultCode === "500121")).toBe(true);
+    await authObservationStore.append("c1", legacy);
+    const s = await pipeline.importM365("c1", JSON.stringify([...prompts, success(3)]), opts("m1"));
+    expect(fatigue(s.forensicTimeline)).toHaveLength(0);
+  });
 });
 
 describe("MFA fatigue — streamed M365 import (#2306)", () => {
@@ -185,6 +225,27 @@ describe("MFA fatigue — streamed M365 import (#2306)", () => {
     const a = await pipeline.importCloudFile("c1", "m365", path, { ...opts("s1"), batchRecords: 1 });
     expect(fatigue(a.state.forensicTimeline)).toHaveLength(1);
     const b = await pipeline.importCloudFile("c1", "m365", path, { ...opts("s2"), batchRecords: 1 });
+    expect(fatigue(b.state.forensicTimeline)).toHaveLength(1);
+  });
+
+  it("streamed: a retry after a failed import, and a lower floor after a Critical one, each emit once", async () => {
+    const { pipeline, authObservationStore, write } = await harness({ ledger: true, superStore: true });
+    const rows = [denied(0), denied(1), timedOut(2), success(3)];
+    const { signInObservations } = parseM365Audit(JSON.stringify(rows));
+    await authObservationStore.append(
+      "c1",
+      signInObservations.map((o) => ({ ...o, importBatch: "s0" })),
+    );
+    const path = await write("r.jsonl", rows.map((r) => JSON.stringify(r)).join("\n"));
+    const floored = await pipeline.importCloudFile("c1", "m365", path, {
+      ...opts("s1"),
+      batchRecords: 1,
+      minSeverity: "Critical" as const,
+    });
+    expect(fatigue(floored.state.forensicTimeline)).toHaveLength(0);
+    const a = await pipeline.importCloudFile("c1", "m365", path, { ...opts("s2"), batchRecords: 1 });
+    expect(fatigue(a.state.forensicTimeline)).toHaveLength(1);
+    const b = await pipeline.importCloudFile("c1", "m365", path, { ...opts("s3"), batchRecords: 1 });
     expect(fatigue(b.state.forensicTimeline)).toHaveLength(1);
   });
 });

@@ -90,6 +90,8 @@ export function signInObservation(i: SignInObservationInput): Omit<StoredAuthObs
   const optional: Partial<StoredAuthObservation> = {
     resultCode: resultCode(i.rec) || undefined,
     mfaDetail: mfa,
+    // denied / timed out are only ever read from detail text (a bare 500121 is "unconfirmed").
+    mfaConfirmed: mfa === "denied" || mfa === "timed out" ? true : undefined,
     authMethod: authMethodOf(i.rec) || undefined,
     sessionId: text(i.rec, "sessionId") || undefined,
     correlationId: text(i.rec, "correlationId") || undefined,

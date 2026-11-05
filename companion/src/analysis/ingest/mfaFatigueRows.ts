@@ -21,17 +21,13 @@ import {
 import {
   fatigueRows,
   isFatiguePrompt,
-  newFatigueEpisodes,
+  episodesInSpan,
   MFA_FATIGUE_PATTERNS_MAX,
   MFA_FATIGUE_WINDOW_MINUTES,
+  type FatigueSpan,
 } from "../mfaFatigue.js";
 
 const PAGE = 5_000;
-
-export interface FatigueSpan {
-  earliest: string; // ISO — this import's earliest sign-in observation
-  latest: string; // ISO — its latest
-}
 
 export interface FatigueResult {
   events: SiemEvent[];
@@ -81,7 +77,8 @@ async function readSpan(
 }
 
 /**
- * The fatigue rows this import makes new. `own` is this import's own observations — the span when
+ * The fatigue rows for every episode whose success lies in this import's span (re-emitted rows
+ * upsert by their stable id — fatigueEventId). `own` is this import's own observations — the span when
  * `span` is omitted (whole-file path), and the whole input when the case has no observation store.
  */
 export async function mfaFatigueRows(
@@ -95,7 +92,7 @@ export async function mfaFatigueRows(
   const stored = await readSpan(ctx, caseId, span);
   const observations = stored?.observations ?? own.map((o) => ({ ...o, importBatch: idPrefix }));
   const truncated = stored?.truncated ?? false;
-  const episodes = newFatigueEpisodes(observations, idPrefix);
+  const episodes = episodesInSpan(observations, span);
   if (!episodes.length) return { events: [], truncated };
   const rows = fatigueRows(episodes, { truncatedHistory: truncated });
   return { events: aggregateEvents(rows, { maxEvents: MFA_FATIGUE_PATTERNS_MAX + 1 }).events, truncated };

@@ -32,6 +32,7 @@ import type { CloudCoverageDraft } from "../cloudCoverage.js";
 import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
 import { undatedRowsNote } from "../m365ExportAdapters.js";
 import { mfaFatigueRows } from "./mfaFatigueRows.js";
+import { fatigueEventId } from "../mfaFatigue.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
  * outside InvestigationState, so it travels beside it rather than inside the delta. */
@@ -140,7 +141,8 @@ export async function importM365(
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
+      // A fatigue row keeps its stable id, so a re-emitted episode upserts its one row (#2306).
+      id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : ["Microsoft 365"],
     })),
     threadsOpened: [],

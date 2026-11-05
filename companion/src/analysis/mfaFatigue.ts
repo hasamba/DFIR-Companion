@@ -18,10 +18,11 @@
 //   - "possible" MFA fatigue — a pattern, never a verdict. The success's source IP is shown, never
 //     claimed to be the attacker's.
 //
-// Idempotence: an episode is identified by tenant + account + the success's second. An import emits
-// an episode only when it is new — it qualifies over the combined observations but NOT over the
-// observations stored by earlier imports (newFatigueEpisodes). The store keeps the FIRST import's
-// batch on a re-appended observation, so a re-import or an overlapping export never emits twice.
+// Idempotence: an episode's forensic-timeline row has a STABLE id (fatigueEventId: tenant + account
+// + the success's second), so re-emitting it — a re-import, an overlapping export, a retry after an
+// import that failed before its save, a lower severity floor after a higher one filtered it — upserts
+// the one row by id at merge time instead of adding a second. Nothing is inferred from which import
+// stored which observation.
 
 import { createHash } from "node:crypto";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
@@ -53,9 +54,30 @@ export interface FatigueEpisode {
   batches: string[]; // every import batch that contributed
 }
 
-/** A denied or timed-out MFA prompt — confirmed by the record's own MFA detail. */
-export function isFatiguePrompt(o: Pick<Obs, "outcome" | "mfaDetail">): boolean {
-  return o.outcome === "interrupted" && (o.mfaDetail === "denied" || o.mfaDetail === "timed out");
+/** A denied or timed-out MFA prompt — confirmed by the record's own MFA detail (never a legacy row). */
+export function isFatiguePrompt(o: Pick<Obs, "outcome" | "mfaDetail" | "mfaConfirmed">): boolean {
+  return (
+    o.outcome === "interrupted" &&
+    o.mfaConfirmed === true &&
+    (o.mfaDetail === "denied" || o.mfaDetail === "timed out")
+  );
+}
+
+/** One import's evidence-time span: its earliest and latest sign-in observation. */
+export interface FatigueSpan {
+  earliest: string;
+  latest: string;
+}
+
+const ID_PREFIX = "mfa-fatigue-";
+const AGG_PREFIX = `mfa-fatigue|${IMPORTER}|`;
+
+/** The stable forensic-timeline id of a fatigue row (from its aggKey), or undefined for any other row. */
+export function fatigueEventId(e: { aggKey?: string }): string | undefined {
+  const k = e.aggKey;
+  if (!k?.startsWith(AGG_PREFIX)) return undefined;
+  const identity = k.slice(AGG_PREFIX.length);
+  return /^[0-9a-f]{16}$/.test(identity) ? `${ID_PREFIX}${identity}` : undefined;
 }
 
 const norm = (account: string): string => account.trim().toLowerCase();
@@ -132,16 +154,14 @@ export function mfaFatigueEpisodes(observations: readonly Obs[]): FatigueEpisode
 }
 
 /**
- * The episodes this import makes new: they qualify over every observation, involve this import's
- * batch, and did not already qualify over the observations earlier imports stored.
+ * The episodes whose success lies inside this import's span, from observations read over
+ * [earliest − window, latest + window] — so each episode's whole window was read, and its count is
+ * never a truncated one that would overwrite a fuller row.
  */
-export function newFatigueEpisodes(observations: readonly Obs[], currentBatch: string): FatigueEpisode[] {
-  const prior = new Set(
-    mfaFatigueEpisodes(observations.filter((o) => o.importBatch !== currentBatch)).map((e) => e.identity),
-  );
-  return mfaFatigueEpisodes(observations).filter(
-    (e) => e.batches.includes(currentBatch) && !prior.has(e.identity),
-  );
+export function episodesInSpan(observations: readonly Obs[], span: FatigueSpan): FatigueEpisode[] {
+  const lo = Date.parse(span.earliest);
+  const hi = Date.parse(span.latest) + MFA_FATIGUE_WINDOW_MINUTES * 60_000;
+  return mfaFatigueEpisodes(observations).filter((e) => ms(e.success) >= lo && ms(e.success) <= hi);
 }
 
 function fatigueRow(e: FatigueEpisode, truncatedHistory: boolean): MappedEvent {
@@ -164,7 +184,7 @@ function fatigueRow(e: FatigueEpisode, truncatedHistory: boolean): MappedEvent {
     description,
     severity: "High",
     mitre: ["T1621", "T1078.004"],
-    aggKey: boundedAggKey(`mfa-fatigue|${IMPORTER}|${e.identity}`),
+    aggKey: boundedAggKey(`${AGG_PREFIX}${e.identity}`),
     sources: ["Microsoft 365"],
     canonical: createCanonicalEvent({
       event: { category: "authentication", type: "mfa-fatigue-pattern", outcome: "pattern" },

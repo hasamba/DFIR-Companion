@@ -56,6 +56,7 @@ import {
 } from "./cloudStreamProviders.js";
 import { streamSprayRows } from "./cloudStreamSpray.js";
 import { mfaFatigueRows } from "./mfaFatigueRows.js";
+import { fatigueEventId } from "../mfaFatigue.js";
 
 type Row = Record<string, unknown>;
 
@@ -256,7 +257,7 @@ async function finish(
     mitreTechniques: [],
     forensicEvents: events.map((e, i) => ({
       ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
+      id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
       sources: e.sources?.length ? e.sources : [provider.source],
     })),
     threadsOpened: [],
