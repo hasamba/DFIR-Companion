@@ -6,6 +6,8 @@
 
 import { getCI, isObject, str } from "./siemFieldPick.js";
 import { isLogAnalyticsAudit, isLogAnalyticsSignIn } from "./cloudExportDetect.js";
+import { adaptGraphAuditRecord, isGraphAuditLogRecord } from "./graphAuditRecord.js";
+import { adaptAzureDiagnosticEntra, isAzureDiagnosticEntra } from "./azureDiagnosticRecord.js";
 
 type Row = Record<string, unknown>;
 
@@ -159,6 +161,8 @@ export function adaptM365ExportRow(rec: Row, order: DateOrder | null = null): Ro
     if (isLogAnalyticsSignIn(rec)) return adaptLogAnalytics(rec, true);
     if (isLogAnalyticsAudit(rec)) return adaptLogAnalytics(rec, false);
   }
+  if (isGraphAuditLogRecord(rec)) return adaptGraphAuditRecord(rec);
+  if (isAzureDiagnosticEntra(rec)) return adaptAzureDiagnosticEntra(rec);
   return isMailboxAuditRow(rec) ? adaptMailboxAudit(rec, order) : rec;
 }
 

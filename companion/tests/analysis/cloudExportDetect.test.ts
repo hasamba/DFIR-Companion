@@ -66,12 +66,13 @@ describe("cloud export detection — negative collisions keep their kind (#2302)
     expect(detectImportKind("activity.json", j({ value: [rest] }))).toBe("cloud");
   });
 
-  it.each(["azure-diagnostic/signinlogs/PT1H.json", "azure-diagnostic/keyvault/PT1H.json"])(
-    "%s (diagnostic settings) stays cloud",
-    (p) => {
-      expect(detectImportKind("PT1H.json", fixture(p))).toBe("cloud");
-    },
-  );
+  it("a Key Vault PT1H.json (diagnostic settings) stays cloud", () => {
+    expect(detectImportKind("PT1H.json", fixture("azure-diagnostic/keyvault/PT1H.json"))).toBe("cloud");
+  });
+
+  it("an Entra SignInLogs PT1H.json is m365: the Graph sign-in under `properties` is read (#2304)", () => {
+    expect(detectImportKind("PT1H.json", fixture("azure-diagnostic/signinlogs/PT1H.json"))).toBe("m365");
+  });
 
   it("Log Analytics AzureActivity JSON stays cloud", () => {
     expect(detectImportKind("AzureActivity.json", fixture("log-analytics/AzureActivity.json"))).toBe("cloud");

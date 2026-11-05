@@ -11,6 +11,7 @@ import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAzureFlowLogUpload } from "./azureFlowLogImport.js";
 import { isGcpFlowLogEntry } from "./gcpFlowLogImport.js";
 import { isLogAnalyticsEntra } from "./cloudExportDetect.js";
+import { isAzureDiagnosticEntra } from "./azureDiagnosticRecord.js";
 
 type Row = Record<string, unknown>;
 
@@ -41,6 +42,8 @@ export function detectCloudJson(root: unknown, sample: Row): CloudJsonKind | nul
   if (isAzureStorageLog(sample)) return "azurestoragelog";
   // A Log Analytics sign-in/audit row also carries OperationName + ResourceId (#2302).
   if (isLogAnalyticsEntra(sample)) return "m365";
+  // So does an Entra record exported by diagnostic settings (PT1H.json), with the Graph record under `properties` (#2304).
+  if (isAzureDiagnosticEntra(sample)) return "m365";
   if (isAzure(sample)) return "cloud";
   return null;
 }

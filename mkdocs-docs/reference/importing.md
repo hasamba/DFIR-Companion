@@ -2552,7 +2552,8 @@ The command names follow each tool's own documentation; check `Get-Help <command
 
 - **Microsoft-Extractor-Suite (Invictus-IR) 4.1.0** — `Get-UAL` writes `UAL-Combined.csv` (or
   `.json` / `.jsonl` with `-Output`); drop that file. `Get-UALGraph` writes
-  `<date>-<search>-UnifiedAuditLog.json`. The Entra sign-in cmdlet writes `SignInLogs*.json`, and
+  `<date>-<search>-UnifiedAuditLog.json` (Graph audit records); each grades exactly as the same
+  record from `Get-UAL` does — the same tag rules, severity and ATT&CK techniques. The Entra sign-in cmdlet writes `SignInLogs*.json`, and
   `Get-ActivityLogs` writes `ActivityLog.json`. `Get-MailboxRules`, `Get-TransportRules`, the OAuth
   permissions cmdlet, `Get-MailboxAuditLog` and `Get-MFA` write CSV snapshots — see the table for
   what happens to each.
@@ -2568,7 +2569,12 @@ The command names follow each tool's own documentation; check `Get-Help <command
   JSON and CSV exports of these tables are both read. In a CSV, the JSON columns (`Status`,
   `InitiatedBy`, `TargetResources`) are read too, so a sign-in grades as its Graph equivalent does.
 - **Azure diagnostic settings → storage account** — download the `PT1H.json` blobs from the
-  `insights-logs-<category>` container (one per hour per resource) and drop them.
+  `insights-logs-<category>` container (one per hour per resource) and drop them. An Entra
+  category (`SignInLogs`, `NonInteractiveUserSignInLogs`, `ServicePrincipalSignInLogs`,
+  `ManagedIdentitySignInLogs`, `AuditLogs`) is read as the Entra sign-in or audit record it carries,
+  so it grades like the same record exported from Graph. An Activity Log category reads like the
+  REST Activity Log, with the caller taken from the record's sign-in claims (the user name, or the
+  application id).
 - **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`,
   then **decompress**: `gzip -d -r ./cloudtrail`. Drop the `.json` files. The companion cannot read
   `.json.gz` today. Prefer the S3 objects to the console's Event history CSV: the CSV has no
@@ -2588,7 +2594,7 @@ severe first.
 | Microsoft-Extractor-Suite | 4.1.0 | UAL-Combined.json | `m365` | `m365` | works | — |
 | Microsoft-Extractor-Suite | 4.1.0 | UAL-Combined.jsonl | `m365` | `m365` | works | — |
 | Microsoft-Extractor-Suite | 4.1.0 | UAL `-AuditDataOnly` JSON | `m365` | `m365` | works | — |
-| Microsoft-Extractor-Suite | 4.1.0 | `<date>-<search>-UnifiedAuditLog.json` (Get-UALGraph) | `m365` | `m365` | works | Graph `auditLogRecord`; the nested `auditData` is merged. |
+| Microsoft-Extractor-Suite | 4.1.0 | `<date>-<search>-UnifiedAuditLog.json` (Get-UALGraph) | `m365` | `m365` | works | Graph `auditLogRecord`; the nested `auditData` is merged, and the Graph fields fill any envelope field it omits — graded like the legacy UAL record (#2304). |
 | Microsoft-Extractor-Suite | 4.1.0 | `SignInLogs*.json` (Graph signIn) | `m365` | `m365` | works | — |
 | Microsoft-Extractor-Suite | 4.1.0 | ActivityLog.json | `cloud` | `cloud` | works | Azure Activity Log. |
 | Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
@@ -2611,7 +2617,7 @@ severe first.
 | Log Analytics export | — | `AzureActivity` (CSV) | `cloud` | `cloud` | works | Claimed by `OperationNameValue` + `Caller` + `CorrelationId`; rows map as the JSON export does. |
 | Log Analytics export | — | `OfficeActivity` (JSON) | `m365` | `m365` | works | — |
 | Log Analytics export | — | `OfficeActivity` (CSV) | `m365` | `m365` | works | Claimed by `Operation` + `RecordType` + `OfficeWorkload`. |
-| Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `cloud` | m365, after unwrapping `properties` (#2304) | **unsupported** | Mapped as one generic Azure operation; the sign-in under `properties` is not read, and m365 maps nothing from it. |
+| Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `m365` | `m365` | works | Claimed by an Entra (`microsoft.aadiam`) `resourceId` + Entra category + `properties`; the Graph sign-in under `properties` is unwrapped and grades like the Graph record (#2304). |
 | Azure diagnostic settings | — | `PT1H.json`, Azure resource log (Key Vault `AuditEvent`) | `cloud` | `cloud` | works | Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed. |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json` (decompressed) | `aws` | `aws` | works | — |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `unknown` | `aws` | **unsupported** | Refused as binary: nothing in the import path decompresses gzip. Decompress first. |
