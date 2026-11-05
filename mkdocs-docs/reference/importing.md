@@ -2576,6 +2576,46 @@ The command names follow each tool's own documentation; check `Get-Help <command
 - **GCP Cloud Audit Logs** — `gcloud logging read 'logName:"cloudaudit.googleapis.com"' --format=json > audit.json`,
   or copy the objects a Cloud Storage log sink wrote (`gcloud storage cp -r gs://<bucket>/cloudaudit.googleapis.com ./`).
 
+**Configuration snapshots are observed state, not actions.** The Microsoft-Extractor-Suite inbox
+rules, transport rules, OAuth permissions and MFA CSVs are a picture of the tenant taken when the
+tool ran. They say what a rule, grant or account held *at that moment*. They do not say when it was
+set up, by whom, or what it held before. So the companion never turns a snapshot row into an action
+such as "New-InboxRule". Each row becomes an **observation**, and its text says so:
+*"state observed at collection; history unknown"*. To learn when a rule was created and by whom,
+look for the matching action (for example `New-InboxRule`) in the Unified Audit Log.
+
+- **Time of an observation** — the collection time. MES puts it in the file name
+  (`20261101-100000-MailboxRules.csv`), from the collecting computer's clock, with no time zone; the
+  companion reads it as UTC. Keep the file name when you copy the export. If the name has no time,
+  the import time is used, which is later than the real collection; the event detail says which
+  time was used. `WhenChanged` and creation times are kept in the event detail only.
+- **Re-import and newer snapshots** — the companion remembers, per case, what each rule, grant or
+  account looked like in every snapshot. Importing the same snapshot again adds nothing. A newer
+  snapshot in which a rule is different adds **one** "state differs from the snapshot collected …"
+  event with a short list of what changed (graded at least Low). An *older* snapshot imported after a
+  newer one never reports a change. The import note counts new, changed, unchanged and older rows.
+  A rule that is missing from a newer snapshot is not reported as removed.
+- **What is graded above Info** (Info rows stay searchable in the super-timeline):
+
+    | Observed state | Grade |
+    |---|---|
+    | Inbox rule forwards or redirects to an address outside the tenant | High |
+    | Inbox rule deletes mail, or moves it to RSS Feeds, RSS Subscriptions, Conversation History, Archive, Deleted Items or Junk Email | Medium |
+    | Inbox rule forwards inside the tenant | Low |
+    | Transport rule redirects or copies mail outside the tenant | High |
+    | Transport rule redirects or copies mail, and the export cannot say if the address is outside | Medium |
+    | Transport rule deletes the message | Medium |
+    | OAuth **application** permission `Mail.ReadWrite`, `Mail.Send`, `MailboxSettings.ReadWrite`, `full_access_as_app`, `Files.ReadWrite.All`, `Directory.ReadWrite.All`, `RoleManagement.ReadWrite.Directory` or `AppRoleAssignment.ReadWrite.All` | High |
+    | The same scopes as a **delegated** permission | Medium |
+    | Account with no MFA method registered | Low |
+
+    "Outside the tenant" means a domain that is not one of the tenant's domains *as the file shows
+    them*: the mailbox domains in an inbox-rules file, or the `CreatedBy` domains in a
+    transport-rules file. No MFA method registered is only Low because the snapshot cannot show
+    whether Conditional Access or security defaults still require MFA at sign-in. The tagger rules
+    are the `snap_*` rules in `tags.yaml`; the importer grades the same way, so the grades hold
+    with the tagger off.
+
 **Size limits today.** The Import button reads a file of up to 200 MB in the browser and sends it
 (server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file is read from a server path, refused above
 256 MB (`DFIR_MAX_IMPORT_FILE_MB`), and every import holds the whole file in memory. Split a larger
@@ -2591,11 +2631,11 @@ severe first.
 | Microsoft-Extractor-Suite | 4.1.0 | `<date>-<search>-UnifiedAuditLog.json` (Get-UALGraph) | `m365` | `m365` | works | Graph `auditLogRecord`; the nested `auditData` is merged. |
 | Microsoft-Extractor-Suite | 4.1.0 | `SignInLogs*.json` (Graph signIn) | `m365` | `m365` | works | — |
 | Microsoft-Extractor-Suite | 4.1.0 | ActivityLog.json | `cloud` | `cloud` | works | Azure Activity Log. |
-| Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
-| Microsoft-Extractor-Suite | 4.1.0 | TransportRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
-| Microsoft-Extractor-Suite | 4.1.0 | OAuth permissions CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `cloudsnapshot` | `cloudsnapshot` | works | Observed state at collection, not actions (#2305): `RuleIdentity` + the mailbox + the rule name + an action column claim it. |
+| Microsoft-Extractor-Suite | 4.1.0 | TransportRules.csv | `cloudsnapshot` | `cloudsnapshot` | works | Observed state (#2305): `Name` + `State` + `WhenChanged` + `Description` + `Mode`/`CreatedBy`/`Priority`. `WhenChanged` is detail only. |
+| Microsoft-Extractor-Suite | 4.1.0 | OAuth permissions CSV | `cloudsnapshot` | `cloudsnapshot` | works | Observed state (#2305): `PermissionType` + `AppId` + `Permission` + `ConsentType`; one observation per app, scope and principal. |
 | Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `m365` | `m365` | works | Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. The day/month order of `LastAccessed` is decided per file from a date with a part above 12 (never from AM/PM), read as naive UTC; with no such date the rows have no time, and the import note counts them. |
-| Microsoft-Extractor-Suite | 4.1.0 | MFA CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| Microsoft-Extractor-Suite | 4.1.0 | MFA CSV | `cloudsnapshot` | `cloudsnapshot` | works | Observed state (#2305): `MFAstatus` + the user + the method columns. Graded Low: Conditional Access enforcement is unknown. |
 | DFIR-O365RC | 2.0.x | `UnifiedAuditLog_<tenant>_YYYY-MM-DD_HH-00-00.json` | `m365` | `m365` | works | — |
 | DFIR-O365RC | 2.0.x | same, with the concatenated-arrays bug (`][`) | `m365` | `m365` | works | Every record of both arrays is read, and the join is disclosed in the import note. |
 | DFIR-O365RC | 2.0.x | `AADSigninLog_*` | `m365` | `m365` | works | — |

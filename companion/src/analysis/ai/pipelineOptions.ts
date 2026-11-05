@@ -47,6 +47,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { BulkImportSink } from "../ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { CloudStateStore } from "../cloudStateStore.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 import type { SynthMetaStore } from "../synthMeta.js";
 
@@ -94,6 +95,9 @@ export interface PipelineOptions {
   // spray whose attempts split across two uploads can still cross the threshold. Server-only
   // (absent in scripts/*) → the cross-upload pass is simply off, same as superTimelineStore.
   authObservationStore?: AuthObservationStore;
+  // Configuration-snapshot observations (#2305): what each MES snapshot already showed, so a re-import
+  // or an older snapshot adds nothing. Absent (scripts/tests) → every snapshot row reads as new.
+  cloudStateStore?: CloudStateStore;
   // The batched Velociraptor driver's stores (#1439): a large export is imported one batch at a
   // time through the indexed appends instead of the whole-state merge. Server-only (absent in
   // scripts/* and most tests) → every import takes the whole-file path, exactly as before.

@@ -57,6 +57,7 @@ import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
+import { CloudStateStore } from "../analysis/cloudStateStore.js";
 import { sigmaGrader } from "./sigmaRules.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
 import type { KevStore } from "../analysis/kevStore.js";
@@ -400,6 +401,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
       Number(process.env.DFIR_SPRAY_OBSERVATION_RETENTION_HOURS) || undefined,
       params.operationalMetrics,
     ), // #1104 cross-upload password-spray detection
+    cloudStateStore: new CloudStateStore(params.store), // #2305 configuration-snapshot observations
     ocrRunner: params.ocrRunner,
     presidio: params.presidio,
     presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),

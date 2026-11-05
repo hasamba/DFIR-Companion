@@ -4,6 +4,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { CloudStateStore } from "../cloudStateStore.js";
 import type { BulkImportSink } from "./velociraptorBulk.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 
@@ -52,6 +53,9 @@ export interface ImportContext {
     // then skip the cross-upload pass entirely — exactly today's within-upload-only behavior, no
     // regression for a caller that doesn't wire it.
     authObservationStore?: AuthObservationStore;
+    // Configuration-snapshot observations (#2305). Optional for the same reason: without it every
+    // snapshot row reads as new and the import note says so.
+    cloudStateStore?: CloudStateStore;
     // The batched Velociraptor driver's stores (#1439). Optional for the same reason: minimal/test
     // wirings have none, and importVelociraptor then takes the whole-file path for every size.
     bulkImportSink?: BulkImportSink;
@@ -98,6 +102,7 @@ export function buildImportOpts(source: {
   readonly onState?: (state: InvestigationState) => void;
   readonly superTimelineStore?: SuperTimelineStore;
   readonly authObservationStore?: AuthObservationStore;
+  readonly cloudStateStore?: CloudStateStore;
   readonly bulkImportSink?: BulkImportSink;
   readonly sigmaGrader?: SigmaImportGrader;
 }): ImportContext["opts"] {
@@ -113,6 +118,9 @@ export function buildImportOpts(source: {
     },
     get authObservationStore() {
       return source.authObservationStore;
+    },
+    get cloudStateStore() {
+      return source.cloudStateStore;
     },
     get bulkImportSink() {
       return source.bulkImportSink;
