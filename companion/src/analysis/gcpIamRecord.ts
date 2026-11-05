@@ -234,6 +234,19 @@ export function policyDeltas(pp: Row): { deltas: Delta[]; copiesDiffer: boolean 
   return { deltas: [...seen.values()], copiesDiffer: differ };
 }
 
+// A user / group / domain member whose domain differs from the calling principal's own (#2306). Only
+// said when the caller is a person's address — a service-account caller has no organisation domain
+// in the record, and the record never names the organisation's domains, so this is a comparison
+// with the caller, never a claim that the member is outside the organisation.
+function outsideCallerDomain(member: string, kind: MemberKind, caller: string): boolean {
+  if (kind !== "user" && kind !== "group" && kind !== "domain") return false;
+  const callerDomain = /@([^@\s]+)$/.exec(caller.trim())?.[1]?.toLowerCase();
+  if (!callerDomain || /\.gserviceaccount\.com$/.test(callerDomain)) return false;
+  const value = member.trim().replace(/^[a-z]+:/i, "");
+  const memberDomain = (kind === "domain" ? value : (/@([^@\s]+)$/.exec(value)?.[1] ?? "")).toLowerCase();
+  return !!memberDomain && memberDomain !== callerDomain;
+}
+
 const isSetIamPolicy = (method: string): boolean => /setiam(policy|permissions)$/i.test(method);
 
 function bindingReading(
@@ -266,7 +279,12 @@ function bindingReading(
     : custom
       ? `${verb} custom role ${show(d.role, 120)}; its permissions are not in this record`
       : `${verb} ${show(d.role, 80)} (role as recorded; not classified here)`;
-  const memberWords = `${show(d.member, 120)}${memberKind === "public" ? " (public member)" : ""}`;
+  const external = outsideCallerDomain(
+    d.member,
+    memberKind,
+    field(pp, "authenticationInfo", "principalEmail"),
+  );
+  const memberWords = `${show(d.member, 120)}${memberKind === "public" ? " (public member)" : external ? " (outside the caller's domain)" : ""}`;
   const head =
     direction === "authority-over-service-account"
       ? `authority over ${resourceWords(resource, resourceKind)} granted to ${memberWords}`

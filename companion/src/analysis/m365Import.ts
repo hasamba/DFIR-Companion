@@ -356,6 +356,9 @@ function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOu
   return { outcome: credential ? "credential-failure" : "other-failure", code };
 }
 
+// Long enough to keep a distinctive token past a browser prefix (TeamFiltration's Teams/1.3 build).
+const USER_AGENT_SHOWN_MAX = 160;
+
 function mapSignIn(
   rec: Row,
   sink: Map<string, SiemIoc>,
@@ -384,6 +387,14 @@ function mapSignIn(
   // request at all. There is no ATT&CK technique for "authenticated over a legacy protocol", so the
   // honest mapping is the T1078.004 already present. See #931 item 3.
   const isRopc = /bav2ropc/i.test(pickStr(rec, ["userAgent", "UserAgent"]));
+  // The client's own user agent, bounded (#2306) — client-supplied, so evidence of the tool claimed,
+  // never of the tool used. Rendered so the tagger's user-agent rules can read it, and part of the
+  // aggregation key, so two clients never merge under one shown user agent.
+  // Brackets are swapped for parentheses: a user agent must never forge a "[risk: …]"-style marker.
+  const userAgent = oneLine(pickStr(rec, ["userAgent", "UserAgent"]))
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .slice(0, USER_AGENT_SHOWN_MAX);
 
   let severity: Severity;
   const mitre = ["T1078.004"];
@@ -408,6 +419,7 @@ function mapSignIn(
     description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
   if (risk && risk !== "none") description += ` [risk: ${risk}]`;
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
+  if (userAgent) description += ` [ua: ${userAgent}]`;
   description = boundedTextTo(description, 600); // an identity downstream — see mapUal
 
   return {
@@ -419,7 +431,7 @@ function mapSignIn(
     // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
     // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
     aggKey: boundedAggKey(
-      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`.toLowerCase(),
+      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}|${userAgent}`.toLowerCase(),
     ),
     sources: ["Entra ID"],
     // Minimal canonical envelope (931.3, #1086, #1100 item 1): just enough structure for a

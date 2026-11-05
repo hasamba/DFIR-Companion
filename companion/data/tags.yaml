@@ -1061,6 +1061,561 @@ ts_gcp_bucket_world_added:
   tags: ['gcs-bucket-world-add']
   view: 'GCS bucket IAM'
 
+# ── Gap rules (#2306): cloud techniques the AWS / GCP readers render but no rule tagged ──
+# Every call below is already graded by its importer (AWS_ACTIONS, loggingChange.ts, GCP_ROLES); what
+# was missing is the discriminator. awsExposure.ts renders a snapshot share ("shares snapshot …") and a
+# public bucket ACL / policy ("makes bucket … public"); gcpIamRecord.ts marks a member whose domain
+# differs from the caller's ("(outside the caller's domain)") — so a removal, an account-scoped policy
+# or a same-domain grant never matches.
+cloud_aws_event_selectors_changed:
+  description: CloudTrail event selectors replaced (PutEventSelectors) — what the trail records changed
+  any:
+    - { field: description, regex: '^AWS PutEventSelectors \(', flags: 'i' }
+  tags: ['cloudtrail', 'logging_change', 'defense_evasion']
+  mitre: ['T1562.008']
+  view: 'AWS CloudTrail'
+
+cloud_aws_snapshot_shared:
+  description: EBS snapshot shared with another account or publicly (ModifySnapshotAttribute add)
+  all:
+    - { field: description, regex: '^AWS ModifySnapshotAttribute \(', flags: 'i' }
+    - { field: description, regex: ' shares snapshot \S+ (?:publicly|with account )', flags: 'i' }
+  tags: ['exposure', 'snapshot_shared']
+  mitre: ['T1537']
+  severity: High
+  view: 'AWS data exposure'
+
+cloud_aws_bucket_public:
+  description: S3 bucket ACL or policy requested that makes the bucket public (AllUsers / AuthenticatedUsers / Principal "*")
+  all:
+    - { field: description, regex: '^AWS PutBucket(?:Acl|Policy) \(', flags: 'i' }
+    - { field: description, regex: ' makes bucket \S+ public \(', flags: 'i' }
+  tags: ['exposure', 'public_bucket']
+  mitre: ['T1530']
+  severity: High
+  view: 'AWS data exposure'
+
+cloud_gcp_owner_granted:
+  description: GCP IAM policy binding added for roles/owner
+  all:
+    - { field: description, regex: '^GCP [^ ]*SetIamPolicy \(', flags: 'i' }
+    - { field: description, regex: ' added a binding for roles/owner\b', flags: 'i' }
+  tags: ['gcp_iam', 'owner_granted', 'persistence']
+  mitre: ['T1098.003']
+  severity: High
+  view: 'GCP IAM'
+
+cloud_gcp_external_member_added:
+  description: GCP IAM policy binding added for a public member or a member outside the caller's domain
+  all:
+    - { field: description, regex: '^GCP [^ ]*SetIamPolicy \(', flags: 'i' }
+    - { field: description, regex: '\((?:public member|outside the caller.s domain)\)', flags: 'i' }
+    - { field: description, regex: ' added a binding for ', flags: 'i' }
+  tags: ['gcp_iam', 'external_member', 'persistence']
+  mitre: ['T1098.003']
+  severity: Medium
+  view: 'GCP IAM'
+
+# ─────────────────────────── Microsoft-Analyzer-Suite lists (#2306) ───────────────────────────
+# Ported from Microsoft-Analyzer-Suite by Martin Willing (evild3ad),
+# https://github.com/evild3ad/Microsoft-Analyzer-Suite — Blacklists/Operation-Blacklist.csv,
+# MoveToFolder-Blacklist.csv, ApplicationPermission-Blacklist.csv, DelegatedPermission-Blacklist.csv
+# and UserAgent-Blacklist.csv. Used under the MIT licence its script headers state ("Copyright (c)
+# Martin Willing. Licensed under the MIT license."), as confirmed by the project owner.
+# Entries an existing rule already covers are left out (ts_m365_inbox_rule, ts_m365_transport_rule,
+# ts_m365_mailbox_permission, ts_m365_set_mailbox, ts_m365_oauth_consent, ts_entra_app_registration,
+# ts_entra_service_principal_created, ts_m365_app_role_assignment, snap_inbox_rule_hides_mail,
+# snap_oauth_high_risk_*, ts_entra_legacy_auth for BAV2ROPC). The suite's "Red" is not copied as a
+# blanket grade: an operation is graded only where the importer leaves something clearly wrong at Info
+# or Low; the rest are tags. Two scope typos in the source ("Notes.Read.Al", "Sites.FullControl.Al")
+# are spelled as the real scopes. The country, ASN and application lists are not ported.
+
+# ── Suspicious operations ──
+mas_operation_audit_config_changed:
+  description: Exchange admin audit-log configuration changed (anti-forensics)
+  any:
+    - { field: description, regex: '^M365 [^:]+: Set-AdminAuditLogConfig\b', flags: 'i' }
+  tags: ['analyzer_suite', 'audit_policy', 'anti_forensics']
+  mitre: ['T1562.008']
+  severity: High
+  view: 'Analyzer-Suite operations'
+
+mas_operation_mail_flow_change:
+  description: Mail flow changed — inbound connector created, transport rule enabled / disabled, junk-mail configuration set
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:New-InboundConnector|Enable-TransportRule|Disable-TransportRule|Set-MailboxJunkEmailConfiguration)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'exchange', 'mail_flow']
+  severity: Medium
+  view: 'Analyzer-Suite operations'
+
+mas_operation_inbox_rule_toggled:
+  description: Inbox rule enabled or disabled
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Enable|Disable)-InboxRule\b', flags: 'i' }
+  tags: ['analyzer_suite', 'exchange', 'inbox_rule']
+  view: 'Analyzer-Suite operations'
+
+mas_operation_mailbox_delegation:
+  description: Mailbox SendAs / folder permission set, or mailbox permission removed
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:Add-RecipientPermission|Set-MailboxFolderPermission|Remove-MailboxPermission)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'exchange', 'mailbox_permission']
+  view: 'Analyzer-Suite operations'
+
+mas_operation_app_owner_added:
+  description: Owner added to an application or service principal (OAuth persistence)
+  any:
+    - { field: description, regex: '^(?:M365 [^:]+|Entra audit): Add owner to (?:application|service principal)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'oauth', 'app_owner', 'persistence']
+  mitre: ['T1098']
+  severity: Medium
+  view: 'Analyzer-Suite operations'
+
+mas_operation_app_changed:
+  description: Application or service principal updated, delegated permission grant added
+  any:
+    - { field: description, regex: '^(?:M365 [^:]+|Entra audit): (?:Update application|Update service principal|Add delegated permissions? grant|Add OAuth2PermissionGrant)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'oauth', 'app_change']
+  view: 'Analyzer-Suite operations'
+
+mas_operation_search_query:
+  description: Search query run in Exchange Online or SharePoint (collection)
+  any:
+    - { field: description, regex: '^M365 [^:]+: SearchQueryInitiated(?:Exchange|SharePoint)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'search_query', 'collection']
+  view: 'Analyzer-Suite operations'
+
+mas_operation_sync_download:
+  description: Full file download through the OneDrive sync client (offline copy / exfiltration)
+  any:
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): FileSyncDownloadedFull\b', flags: 'i' }
+  tags: ['analyzer_suite', 'file_download', 'exfil']
+  view: 'Analyzer-Suite operations'
+
+mas_operation_security_detection:
+  description: Microsoft security detection — Defender for Office 365, Teams impersonation / call risk, outbound-spam restriction
+  any:
+    - { field: description, regex: '^M365 [^:]+: (?:AtpDetection|ThreatIntelligenceAtpFile|TeamsImpersonationDetected|SecurityRiskInCallDetected|HygieneTenantEvents)\b', flags: 'i' }
+  tags: ['analyzer_suite', 'defender_detection']
+  severity: Medium
+  view: 'Analyzer-Suite operations'
+
+# ── Inbox rules moving mail to a folder used to hide it (localized names) ──
+# snap_inbox_rule_hides_mail covers the English names on snapshot rows; this adds the action rows
+# (New/Set/Update-InboxRule) for every listed name and the snapshot rows for the localized ones.
+mas_inbox_rule_hiding_folder:
+  description: Inbox rule moves mail to a folder commonly used to hide it (Archive, RSS, Junk, Conversation History — localized)
+  all:
+    - { field: description, regex: '^(?:M365 Exchange: (?:New|Set|Update)-?InboxRules?\b|M365 snapshot: inbox rule on )', flags: 'i' }
+  any:
+    - field: description
+      contains:
+        - 'moves to "Archiv"'
+        - 'moves to "Archive"'
+        - 'moves to "Archiveren"'
+        - 'moves to "Archivio"'
+        - 'moves to "Archivo"'
+        - 'moves to "Arkiv"'
+        - 'moves to "Arkiver"'
+        - 'moves to "Arquivo"'
+        - 'moves to "Conversation History"'
+        - 'moves to "Correo no deseado"'
+        - 'moves to "Courrier indésirable"'
+        - 'moves to "Cronologia delle conversazioni"'
+        - 'moves to "E-mail de Lixo"'
+        - 'moves to "Gesprekgeschiedenis"'
+        - 'moves to "Historial de conversaciones"'
+        - 'moves to "Histórico de Conversações"'
+        - 'moves to "Historique des conversations"'
+        - 'moves to "Junk Email"'
+        - 'moves to "Junk-E-Mail"'
+        - 'moves to "Konversationshistorik"'
+        - 'moves to "Ongewenste e-mail"'
+        - 'moves to "Posta indesiderata"'
+        - 'moves to "RSS Feeds"'
+        - 'moves to "RSS Subscriptions"'
+        - 'moves to "RSS-Abonnements"'
+        - 'moves to "RSS-feeder"'
+        - 'moves to "RSS-Feeds"'
+        - 'moves to "RSS-syötteet"'
+        - 'moves to "RSS-подписки"'
+        - 'moves to "Samtalehistorik"'
+        - 'moves to "Samtalelogg"'
+        - 'moves to "Skräppost"'
+        - 'moves to "Søppelpost"'
+        - 'moves to "Sottoscrizioni RSS"'
+        - 'moves to "Uønsket mail"'
+        - 'moves to "Verlauf der Unterhaltung"'
+  none:
+    # the English names on a snapshot row are snap_inbox_rule_hides_mail's
+    - { field: description, regex: '^M365 snapshot: inbox rule on [^\n]*moves to "(?:RSS Feeds|RSS Subscriptions|Conversation History|Archive|Junk Email)"', flags: 'i' }
+  tags: ['analyzer_suite', 'exchange', 'inbox_rule', 'hides_mail']
+  mitre: ['T1564.008']
+  severity: Medium
+  view: 'Analyzer-Suite operations'
+
+# ── Risky OAuth permissions (the suite's High entries) ──
+# Action rows: entraAppChange.ts renders "grants application|delegated permission <scope> on …".
+# Snapshot rows: only the scopes snap_oauth_high_risk_* (HIGH_RISK_SCOPES) does not already cover.
+mas_oauth_risky_application_permission:
+  description: OAuth APPLICATION permission on the Analyzer-Suite high-risk list granted or observed
+  all:
+    - { field: description, regex: '^(?:Entra audit: [^\n]* grants application permission |Entra snapshot: OAuth grant )', flags: 'i' }
+  any:
+    - field: description
+      contains:
+        - 'application permission AdministrativeUnit.ReadWrite.All on '
+        - 'application permission ADSynchronization.ReadWrite.All on '
+        - 'application permission Application.ReadWrite.All on '
+        - 'application permission AppRoleAssignment.ReadWrite.All on '
+        - 'application permission Calendars.Read on '
+        - 'application permission Calendars.ReadWrite on '
+        - 'application permission CallRecords.Read.All on '
+        - 'application permission Contacts.Read on '
+        - 'application permission ChannelMessage.Read.All on '
+        - 'application permission Channel.ReadBasic.All on '
+        - 'application permission Chat.ReadWrite.All on '
+        - 'application permission Contacts.ReadWrite on '
+        - 'application permission Directory.ReadWrite.All on '
+        - 'application permission Domain.ReadWrite.All on '
+        - 'application permission EduRoster.ReadWrite.All on '
+        - 'application permission EntitlementManagement.ReadWrite.All on '
+        - 'application permission Files.Read.All on '
+        - 'application permission Files.ReadWrite.All on '
+        - 'application permission Group.ReadWrite.All on '
+        - 'application permission Mail.Read on '
+        - 'application permission Mail.ReadBasic on '
+        - 'application permission Mail.ReadBasic.All on '
+        - 'application permission Mail.ReadWrite on '
+        - 'application permission Mail.Send on '
+        - 'application permission MailboxItem.ImportExport.All on '
+        - 'application permission MailboxSettings.Read on '
+        - 'application permission MailboxSettings.ReadWrite on '
+        - 'application permission Member.Read.Hidden on '
+        - 'application permission Notes.Read.All on '
+        - 'application permission Notes.ReadWrite.All on '
+        - 'application permission Organization.ReadWrite.All on '
+        - 'application permission People.Read.All on '
+        - 'application permission Policy.Read.All on '
+        - 'application permission Policy.Read.ConditionalAccess on '
+        - 'application permission Policy.Read.Identity.Protection on '
+        - 'application permission Policy.Read.Permission.Grant on '
+        - 'application permission Policy.ReadWrite.AccessReview on '
+        - 'application permission Policy.ReadWrite.ApplicationConfiguration on '
+        - 'application permission Policy.ReadWrite.AuthenticationFlows on '
+        - 'application permission Policy.ReadWrite.AuthenticationMethod on '
+        - 'application permission Policy.ReadWrite.Authorization on '
+        - 'application permission Policy.ReadWrite.ConditionalAccess on '
+        - 'application permission Policy.ReadWrite.ConsentRequest on '
+        - 'application permission Policy.ReadWrite.CrossTenantAccess on '
+        - 'application permission Policy.ReadWrite.ExternalIdentities on '
+        - 'application permission Policy.ReadWrite.FeatureRollout on '
+        - 'application permission Policy.ReadWrite.PermissionGrant on '
+        - 'application permission PrivilegedAccess.Read.AzureAD on '
+        - 'application permission PrivilegedAccess.Read.AzureADGroup on '
+        - 'application permission PrivilegedAccess.Read.AzureResources on '
+        - 'application permission PrivilegedAccess.ReadWrite.AzureAD on '
+        - 'application permission PrivilegedAccess.ReadWrite.AzureADGroup on '
+        - 'application permission PrivilegedAccess.ReadWrite.AzureResources on '
+        - 'application permission PrivilegedAssignmentSchedule.Read.AzureADGroup on '
+        - 'application permission PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup on '
+        - 'application permission PrivilegedEligibilitySchedule.Read.AzureADGroup on '
+        - 'application permission PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup on '
+        - 'application permission RoleAssignmentSchedule.ReadWrite.Directory on '
+        - 'application permission RoleEligibilitySchedule.ReadWrite.Directory on '
+        - 'application permission RoleManagement.ReadWrite.Directory on '
+        - 'application permission RoleManagementPolicy.ReadWrite.AzureADGroup on '
+        - 'application permission RoleManagementPolicy.ReadWrite.Directory on '
+        - 'application permission Sites.FullControl.All on '
+        - 'application permission Sites.Manage.All on '
+        - 'application permission Sites.Read.All on '
+        - 'application permission Sites.ReadWrite.All on '
+        - 'application permission Sites.Selected on '
+        - 'application permission UserAuthenticationMethod.ReadWrite.All on '
+        - 'application permission User.DeleteRestore.All on '
+        - 'application permission User.ReadWrite.All on '
+        - 'application permission "AdministrativeUnit.ReadWrite.All"'
+        - 'application permission "ADSynchronization.ReadWrite.All"'
+        - 'application permission "Application.ReadWrite.All"'
+        - 'application permission "Calendars.Read"'
+        - 'application permission "Calendars.ReadWrite"'
+        - 'application permission "CallRecords.Read.All"'
+        - 'application permission "Contacts.Read"'
+        - 'application permission "ChannelMessage.Read.All"'
+        - 'application permission "Channel.ReadBasic.All"'
+        - 'application permission "Chat.ReadWrite.All"'
+        - 'application permission "Contacts.ReadWrite"'
+        - 'application permission "Domain.ReadWrite.All"'
+        - 'application permission "EduRoster.ReadWrite.All"'
+        - 'application permission "EntitlementManagement.ReadWrite.All"'
+        - 'application permission "Files.Read.All"'
+        - 'application permission "Group.ReadWrite.All"'
+        - 'application permission "Mail.Read"'
+        - 'application permission "Mail.ReadBasic"'
+        - 'application permission "Mail.ReadBasic.All"'
+        - 'application permission "MailboxItem.ImportExport.All"'
+        - 'application permission "MailboxSettings.Read"'
+        - 'application permission "Member.Read.Hidden"'
+        - 'application permission "Notes.Read.All"'
+        - 'application permission "Notes.ReadWrite.All"'
+        - 'application permission "Organization.ReadWrite.All"'
+        - 'application permission "People.Read.All"'
+        - 'application permission "Policy.Read.All"'
+        - 'application permission "Policy.Read.ConditionalAccess"'
+        - 'application permission "Policy.Read.Identity.Protection"'
+        - 'application permission "Policy.Read.Permission.Grant"'
+        - 'application permission "Policy.ReadWrite.AccessReview"'
+        - 'application permission "Policy.ReadWrite.ApplicationConfiguration"'
+        - 'application permission "Policy.ReadWrite.AuthenticationFlows"'
+        - 'application permission "Policy.ReadWrite.AuthenticationMethod"'
+        - 'application permission "Policy.ReadWrite.Authorization"'
+        - 'application permission "Policy.ReadWrite.ConditionalAccess"'
+        - 'application permission "Policy.ReadWrite.ConsentRequest"'
+        - 'application permission "Policy.ReadWrite.CrossTenantAccess"'
+        - 'application permission "Policy.ReadWrite.ExternalIdentities"'
+        - 'application permission "Policy.ReadWrite.FeatureRollout"'
+        - 'application permission "Policy.ReadWrite.PermissionGrant"'
+        - 'application permission "PrivilegedAccess.Read.AzureAD"'
+        - 'application permission "PrivilegedAccess.Read.AzureADGroup"'
+        - 'application permission "PrivilegedAccess.Read.AzureResources"'
+        - 'application permission "PrivilegedAccess.ReadWrite.AzureAD"'
+        - 'application permission "PrivilegedAccess.ReadWrite.AzureADGroup"'
+        - 'application permission "PrivilegedAccess.ReadWrite.AzureResources"'
+        - 'application permission "PrivilegedAssignmentSchedule.Read.AzureADGroup"'
+        - 'application permission "PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup"'
+        - 'application permission "PrivilegedEligibilitySchedule.Read.AzureADGroup"'
+        - 'application permission "PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup"'
+        - 'application permission "RoleAssignmentSchedule.ReadWrite.Directory"'
+        - 'application permission "RoleEligibilitySchedule.ReadWrite.Directory"'
+        - 'application permission "RoleManagementPolicy.ReadWrite.AzureADGroup"'
+        - 'application permission "RoleManagementPolicy.ReadWrite.Directory"'
+        - 'application permission "Sites.FullControl.All"'
+        - 'application permission "Sites.Manage.All"'
+        - 'application permission "Sites.Read.All"'
+        - 'application permission "Sites.ReadWrite.All"'
+        - 'application permission "Sites.Selected"'
+        - 'application permission "UserAuthenticationMethod.ReadWrite.All"'
+        - 'application permission "User.DeleteRestore.All"'
+        - 'application permission "User.ReadWrite.All"'
+  tags: ['analyzer_suite', 'oauth', 'high_risk_scope']
+  mitre: ['T1528']
+  severity: High
+  view: 'Analyzer-Suite OAuth permissions'
+
+mas_oauth_risky_delegated_permission:
+  description: OAuth DELEGATED permission on the Analyzer-Suite high-risk list granted or observed (bounded by the consenting user)
+  all:
+    - { field: description, regex: '^(?:Entra audit: [^\n]* grants delegated permission |Entra snapshot: OAuth grant )', flags: 'i' }
+  any:
+    - field: description
+      contains:
+        - 'delegated permission AdministrativeUnit.ReadWrite.All on '
+        - 'delegated permission ADSynchronization.ReadWrite.All on '
+        - 'delegated permission AllSites.FullControl on '
+        - 'delegated permission AllSites.Manage on '
+        - 'delegated permission AllSites.Read on '
+        - 'delegated permission AllSites.Write on '
+        - 'delegated permission Application.ReadWrite.All on '
+        - 'delegated permission AppRoleAssignment.ReadWrite.All on '
+        - 'delegated permission ChannelMessage.Read.All on '
+        - 'delegated permission ChannelMessage.Send on '
+        - 'delegated permission Chat.ReadWrite on '
+        - 'delegated permission Chat.ReadWrite.All on '
+        - 'delegated permission Contacts.Read.Shared on '
+        - 'delegated permission Contacts.ReadWrite on '
+        - 'delegated permission Contacts.ReadWrite.Shared on '
+        - 'delegated permission Directory.AccessAsUser.All on '
+        - 'delegated permission Directory.ReadWrite.All on '
+        - 'delegated permission Domain.ReadWrite.All on '
+        - 'delegated permission EduRoster.ReadWrite on '
+        - 'delegated permission EntitlementManagement.ReadWrite.All on '
+        - 'delegated permission EWS.AccessAsUser.All on '
+        - 'delegated permission Files.Read on '
+        - 'delegated permission Files.Read.All on '
+        - 'delegated permission Files.Read.Selected on '
+        - 'delegated permission Files.ReadWrite on '
+        - 'delegated permission Files.ReadWrite.All on '
+        - 'delegated permission Files.ReadWrite.AppFolder on '
+        - 'delegated permission Files.ReadWrite.Selected on '
+        - 'delegated permission Group.ReadWrite.All on '
+        - 'delegated permission IMAP.AccessAsUser.All on '
+        - 'delegated permission Mail.Read on '
+        - 'delegated permission Mail.Read.Shared on '
+        - 'delegated permission Mail.ReadWrite on '
+        - 'delegated permission Mail.ReadWrite.Shared on '
+        - 'delegated permission Mail.Send on '
+        - 'delegated permission Mail.Send.Shared on '
+        - 'delegated permission MailboxItem.ImportExport on '
+        - 'delegated permission MailboxSettings.Read on '
+        - 'delegated permission MailboxSettings.ReadWrite on '
+        - 'delegated permission Member.Read.Hidden on '
+        - 'delegated permission MyFiles.Read on '
+        - 'delegated permission MyFiles.Write on '
+        - 'delegated permission Notes.Create on '
+        - 'delegated permission Notes.Read on '
+        - 'delegated permission Notes.Read.All on '
+        - 'delegated permission Notes.ReadWrite on '
+        - 'delegated permission Notes.ReadWrite.All on '
+        - 'delegated permission Notes.ReadWrite.CreatedByApp on '
+        - 'delegated permission Organization.ReadWrite.All on '
+        - 'delegated permission People.Read.All on '
+        - 'delegated permission Policy.Read.All on '
+        - 'delegated permission Policy.Read.ConditionalAccess on '
+        - 'delegated permission Policy.Read.IdentityProtection on '
+        - 'delegated permission Policy.Read.PermissionGrant on '
+        - 'delegated permission Policy.ReadWrite.AccessReview on '
+        - 'delegated permission Policy.ReadWrite.ApplicationConfiguration on '
+        - 'delegated permission Policy.ReadWrite.AuthenticationFlows on '
+        - 'delegated permission Policy.ReadWrite.AuthenticationMethod on '
+        - 'delegated permission Policy.ReadWrite.Authorization on '
+        - 'delegated permission Policy.ReadWrite.ConditionalAccess on '
+        - 'delegated permission Policy.ReadWrite.ConsentRequest on '
+        - 'delegated permission Policy.ReadWrite.CrossTenantAccess on '
+        - 'delegated permission Policy.ReadWrite.DeviceConfiguration on '
+        - 'delegated permission Policy.ReadWrite.ExternalIdentities on '
+        - 'delegated permission Policy.ReadWrite.FeatureRollout on '
+        - 'delegated permission Policy.ReadWrite.FedTokenValidation on '
+        - 'delegated permission Policy.ReadWrite.IdentityProtection on '
+        - 'delegated permission Policy.ReadWrite.MobilityManagement on '
+        - 'delegated permission Policy.ReadWrite.PermissionGrant on '
+        - 'delegated permission Policy.ReadWrite.SecurityDefaults on '
+        - 'delegated permission Policy.ReadWrite.TrustFramework on '
+        - 'delegated permission POP.AccessAsUser.All on '
+        - 'delegated permission PrivilegedAccess.ReadWrite.AzureAD on '
+        - 'delegated permission PrivilegedAccess.ReadWrite.AzureADGroup on '
+        - 'delegated permission PrivilegedAccess.ReadWrite.AzureResources on '
+        - 'delegated permission PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup on '
+        - 'delegated permission RoleAssignmentSchedule.ReadWrite.Directory on '
+        - 'delegated permission RoleEligibilitySchedule.ReadWrite.Directory on '
+        - 'delegated permission RoleManagement.ReadWrite.Directory on '
+        - 'delegated permission RoleManagementPolicy.ReadWrite.AzureADGroup on '
+        - 'delegated permission RoleManagementPolicy.ReadWrite.Directory on '
+        - 'delegated permission Sites.FullControl.All on '
+        - 'delegated permission Sites.Manage.All on '
+        - 'delegated permission Sites.Read.All on '
+        - 'delegated permission Sites.ReadWrite.All on '
+        - 'delegated permission Sites.Selected on '
+        - 'delegated permission SMTP.Send on '
+        - 'delegated permission UserAuthenticationMethod.ReadWrite.All on '
+        - 'delegated permission user_impersonation on '
+        - 'delegated permission User.DeleteRestore.All on '
+        - 'delegated permission User.Export.All on '
+        - 'delegated permission User.ReadWrite.All on '
+        - 'delegated permission "AdministrativeUnit.ReadWrite.All"'
+        - 'delegated permission "ADSynchronization.ReadWrite.All"'
+        - 'delegated permission "AllSites.FullControl"'
+        - 'delegated permission "AllSites.Manage"'
+        - 'delegated permission "AllSites.Read"'
+        - 'delegated permission "AllSites.Write"'
+        - 'delegated permission "Application.ReadWrite.All"'
+        - 'delegated permission "ChannelMessage.Read.All"'
+        - 'delegated permission "ChannelMessage.Send"'
+        - 'delegated permission "Chat.ReadWrite"'
+        - 'delegated permission "Chat.ReadWrite.All"'
+        - 'delegated permission "Contacts.Read.Shared"'
+        - 'delegated permission "Contacts.ReadWrite"'
+        - 'delegated permission "Contacts.ReadWrite.Shared"'
+        - 'delegated permission "Directory.AccessAsUser.All"'
+        - 'delegated permission "Domain.ReadWrite.All"'
+        - 'delegated permission "EduRoster.ReadWrite"'
+        - 'delegated permission "EntitlementManagement.ReadWrite.All"'
+        - 'delegated permission "EWS.AccessAsUser.All"'
+        - 'delegated permission "Files.Read"'
+        - 'delegated permission "Files.Read.All"'
+        - 'delegated permission "Files.Read.Selected"'
+        - 'delegated permission "Files.ReadWrite"'
+        - 'delegated permission "Files.ReadWrite.AppFolder"'
+        - 'delegated permission "Files.ReadWrite.Selected"'
+        - 'delegated permission "Group.ReadWrite.All"'
+        - 'delegated permission "IMAP.AccessAsUser.All"'
+        - 'delegated permission "Mail.Read"'
+        - 'delegated permission "Mail.Read.Shared"'
+        - 'delegated permission "Mail.ReadWrite.Shared"'
+        - 'delegated permission "Mail.Send.Shared"'
+        - 'delegated permission "MailboxItem.ImportExport"'
+        - 'delegated permission "MailboxSettings.Read"'
+        - 'delegated permission "Member.Read.Hidden"'
+        - 'delegated permission "MyFiles.Read"'
+        - 'delegated permission "MyFiles.Write"'
+        - 'delegated permission "Notes.Create"'
+        - 'delegated permission "Notes.Read"'
+        - 'delegated permission "Notes.Read.All"'
+        - 'delegated permission "Notes.ReadWrite"'
+        - 'delegated permission "Notes.ReadWrite.All"'
+        - 'delegated permission "Notes.ReadWrite.CreatedByApp"'
+        - 'delegated permission "Organization.ReadWrite.All"'
+        - 'delegated permission "People.Read.All"'
+        - 'delegated permission "Policy.Read.All"'
+        - 'delegated permission "Policy.Read.ConditionalAccess"'
+        - 'delegated permission "Policy.Read.IdentityProtection"'
+        - 'delegated permission "Policy.Read.PermissionGrant"'
+        - 'delegated permission "Policy.ReadWrite.AccessReview"'
+        - 'delegated permission "Policy.ReadWrite.ApplicationConfiguration"'
+        - 'delegated permission "Policy.ReadWrite.AuthenticationFlows"'
+        - 'delegated permission "Policy.ReadWrite.AuthenticationMethod"'
+        - 'delegated permission "Policy.ReadWrite.Authorization"'
+        - 'delegated permission "Policy.ReadWrite.ConditionalAccess"'
+        - 'delegated permission "Policy.ReadWrite.ConsentRequest"'
+        - 'delegated permission "Policy.ReadWrite.CrossTenantAccess"'
+        - 'delegated permission "Policy.ReadWrite.DeviceConfiguration"'
+        - 'delegated permission "Policy.ReadWrite.ExternalIdentities"'
+        - 'delegated permission "Policy.ReadWrite.FeatureRollout"'
+        - 'delegated permission "Policy.ReadWrite.FedTokenValidation"'
+        - 'delegated permission "Policy.ReadWrite.IdentityProtection"'
+        - 'delegated permission "Policy.ReadWrite.MobilityManagement"'
+        - 'delegated permission "Policy.ReadWrite.PermissionGrant"'
+        - 'delegated permission "Policy.ReadWrite.SecurityDefaults"'
+        - 'delegated permission "Policy.ReadWrite.TrustFramework"'
+        - 'delegated permission "POP.AccessAsUser.All"'
+        - 'delegated permission "PrivilegedAccess.ReadWrite.AzureAD"'
+        - 'delegated permission "PrivilegedAccess.ReadWrite.AzureADGroup"'
+        - 'delegated permission "PrivilegedAccess.ReadWrite.AzureResources"'
+        - 'delegated permission "PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup"'
+        - 'delegated permission "RoleAssignmentSchedule.ReadWrite.Directory"'
+        - 'delegated permission "RoleEligibilitySchedule.ReadWrite.Directory"'
+        - 'delegated permission "RoleManagementPolicy.ReadWrite.AzureADGroup"'
+        - 'delegated permission "RoleManagementPolicy.ReadWrite.Directory"'
+        - 'delegated permission "Sites.FullControl.All"'
+        - 'delegated permission "Sites.Manage.All"'
+        - 'delegated permission "Sites.Read.All"'
+        - 'delegated permission "Sites.ReadWrite.All"'
+        - 'delegated permission "Sites.Selected"'
+        - 'delegated permission "SMTP.Send"'
+        - 'delegated permission "UserAuthenticationMethod.ReadWrite.All"'
+        - 'delegated permission "user_impersonation"'
+        - 'delegated permission "User.DeleteRestore.All"'
+        - 'delegated permission "User.Export.All"'
+        - 'delegated permission "User.ReadWrite.All"'
+  tags: ['analyzer_suite', 'oauth', 'high_risk_scope']
+  mitre: ['T1528']
+  severity: Medium
+  view: 'Analyzer-Suite OAuth permissions'
+
+# ── Sign-in user agents (m365Import.ts renders "[ua: …]" on Entra sign-in rows) ──
+# A user agent is client-supplied: it shows the client CLAIMED, never proves the tool used.
+mas_user_agent_aitm_or_spray:
+  description: Sign-in from an HTTP library the suite associates with AiTM phishing kits or password spraying
+  any:
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:agentaxios|axios/|fasthttp|Go-http-client/|go-resty/|GuzzleHttp/|node-fetch/|okhttp/|Python-urllib/|\bundici\b|\bnode\b)', flags: 'i' }
+  tags: ['analyzer_suite', 'suspicious_user_agent', 'aitm_or_spray']
+  severity: Medium
+  view: 'Analyzer-Suite user agents'
+
+mas_user_agent_offensive_tool:
+  description: Sign-in from a client the suite associates with an offensive tool (AADInternals, AzureHound, BloodHound, SharpHound, TeamFiltration, curl) or traitorware (eM Client)
+  any:
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AADInternals|azurehound|bloodhound/|sharphound/|curl/|eMClient/|Teams/1\.3\.00\.30866 Chrome/80\.0\.3987\.165 Electron/8\.5\.1)', flags: 'i' }
+  tags: ['analyzer_suite', 'suspicious_user_agent', 'offensive_tool']
+  severity: Medium
+  view: 'Analyzer-Suite user agents'
+
+mas_user_agent_unusual:
+  description: Sign-in from a scripting / admin client the suite marks for review (PowerShell, Azure CLI, Python, Postman, device registration)
+  any:
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AZURECLI/|AzurePowershell/|DeviceRegistrationClient|Dsreg/|Microsoft\.OData\.Client/|PostmanRuntime/|PowerShell/5\.1|PowerShell/7|python-requests|python/)', flags: 'i' }
+  tags: ['analyzer_suite', 'unusual_user_agent']
+  view: 'Analyzer-Suite user agents'
+
 # ─────────────────────────── Windows registry persistence / blinding (not already graded) ───────────────────────────
 # The built-in grader (tradecraftRules.ts) covers these when they arrive as a command line or a 4104
 # script block. These rules cover the OTHER shape: the registry WRITE itself (Sysmon 12/13/14, Security

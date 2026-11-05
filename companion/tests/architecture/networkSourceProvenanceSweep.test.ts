@@ -65,6 +65,7 @@ const SITES: Record<string, number> = {
   "exchangeAuditImport.ts": 1,
   "mailboxChain.ts": 1,
   "passwordSprayFanout.ts": 1,
+  "mfaFatigue.ts": 1, // #2306 — the success sign-in's IP from the Entra sign-in store, same basis as passwordSprayFanout
   // #993/#1156's own Zeek/Squid pair
   "webChainRows.ts": 1,
   "combinedLogImport.ts": 1,

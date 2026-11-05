@@ -19,7 +19,8 @@ type Row = Record<string, unknown>;
 // MFA registration required (50079), an external security challenge not yet satisfied (50158).
 const MFA_REQUIRED_CODES = new Set([50074, 50076, 50079, 50158]);
 // 500121: the strong-authentication request failed — the step detail says whether it was denied
-// or never answered.
+// or never answered. Without that detail the code alone is "unconfirmed" (#2306): it never counts
+// as a rejected prompt.
 const MFA_FAILED_CODE = 500121;
 
 const text = (rec: Row, path: string): string =>
@@ -39,6 +40,7 @@ export function mfaDetailOf(rec: Row): MfaDetail | undefined {
   const detailText = [
     text(rec, "status.additionalDetails"),
     text(rec, "status.failureReason"),
+    text(rec, "mfaDetail.authDetail"), // Graph beta / Log Analytics MfaDetail column
     ...stepDetails(rec).map((d) => text(d, "authenticationStepResultDetail")),
   ].join(" | ");
   if (/did not respond|timed? ?out|timeout/i.test(detailText)) return "timed out";
@@ -50,7 +52,7 @@ export function mfaDetailOf(rec: Row): MfaDetail | undefined {
   )
     return "approved";
   const code = Number(resultCode(rec));
-  if (code === MFA_FAILED_CODE) return "denied";
+  if (code === MFA_FAILED_CODE) return "unconfirmed";
   if (MFA_REQUIRED_CODES.has(code) || /mfa required|strong auth/i.test(detailText)) return "required";
   if (code === 0 && /multiFactor/i.test(text(rec, "authenticationRequirement"))) return "approved";
   return undefined;
@@ -66,7 +68,8 @@ function authMethodOf(rec: Row): string {
 }
 
 function outcomeOf(spray: SprayOutcome | null, mfa: MfaDetail | undefined): AuthObservationOutcome {
-  if (mfa === "required" || mfa === "denied" || mfa === "timed out") return "interrupted";
+  if (mfa === "required" || mfa === "denied" || mfa === "timed out" || mfa === "unconfirmed")
+    return "interrupted";
   return spray ?? "other";
 }
 
@@ -87,6 +90,8 @@ export function signInObservation(i: SignInObservationInput): Omit<StoredAuthObs
   const optional: Partial<StoredAuthObservation> = {
     resultCode: resultCode(i.rec) || undefined,
     mfaDetail: mfa,
+    // denied / timed out are only ever read from detail text (a bare 500121 is "unconfirmed").
+    mfaConfirmed: mfa === "denied" || mfa === "timed out" ? true : undefined,
     authMethod: authMethodOf(i.rec) || undefined,
     sessionId: text(i.rec, "sessionId") || undefined,
     correlationId: text(i.rec, "correlationId") || undefined,

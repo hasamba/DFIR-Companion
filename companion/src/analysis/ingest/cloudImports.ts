@@ -31,6 +31,8 @@ import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
 import { undatedRowsNote } from "../m365ExportAdapters.js";
+import { mfaFatigueRows } from "./mfaFatigueRows.js";
+import { fatigueEventId } from "../mfaFatigue.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
  * outside InvestigationState, so it travels beside it rather than inside the delta. */
@@ -97,12 +99,22 @@ export async function importM365(
     },
     parsedRaw.signInObservations,
   );
+  // MFA fatigue (#2306): read back from the store the spray pass just appended to — this import's
+  // sign-ins (Info successes included) joined with earlier imports', never the super-timeline.
+  const { events: fatigueRows } = await mfaFatigueRows(
+    ctx,
+    caseId,
+    opts.idPrefix,
+    parsedRaw.signInObservations,
+  );
+  const derived = [...crossRows, ...fatigueRows];
   const parsed = {
     ...parsedRaw,
-    events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
+    events: applySeverityFloor([...parsedRaw.events, ...derived], opts.minSeverity),
   };
-  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length + crossRows.length, parsed.events.length);
+  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length + derived.length, parsed.events.length);
   if (crossRows.length > 0) opts.debug?.fallback("cross_upload_spray", crossRows.length);
+  if (fatigueRows.length > 0) opts.debug?.fallback("mfa_fatigue", fatigueRows.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(
@@ -129,14 +141,15 @@ export async function importM365(
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
+      // A fatigue row keeps its stable id, so a re-emitted episode upserts its one row (#2306).
+      id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`,
       sources: e.sources?.length ? e.sources : ["Microsoft 365"],
     })),
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
       `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-      describeFloor(parsedRaw.events.length + crossRows.length, parsed.events.length) +
+      describeFloor(parsedRaw.events.length + derived.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +

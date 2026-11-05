@@ -6,7 +6,8 @@
 //            lets a later consent record name its API, and the mailbox-audit date order;
 //   pass 2 — per batch: dedup → map → tagger pre-grade → output budget → write (cloudStreamBatch.ts);
 //   end    — the bounded forensic delta (Critical/High individual, budgeted Medium, aggregates,
-//            the whole-export summaries over the summary window, spray from the sign-in store) is
+//            the whole-export summaries over the summary window, spray and MFA fatigue from the
+//            sign-in store) is
 //            merged once and then crosses the ordinary settle seam: dual-write → tag → demote.
 //
 // WHERE THE ROWS GO (ARCHITECTURE.md → "The forensic / super-timeline boundary"). Graded rows reach
@@ -54,6 +55,8 @@ import {
   type StreamProvider,
 } from "./cloudStreamProviders.js";
 import { streamSprayRows } from "./cloudStreamSpray.js";
+import { mfaFatigueRows } from "./mfaFatigueRows.js";
+import { fatigueEventId } from "../mfaFatigue.js";
 
 type Row = Record<string, unknown>;
 
@@ -197,10 +200,18 @@ async function finish(
     provider.kind === "m365" && acc.observations.appended
       ? await streamSprayRows(ctx, caseId, opts.idPrefix, acc.observations.earliest)
       : { events: [], truncated: false };
+  // MFA fatigue (#2306) across every batch of this import and earlier imports, from the same store.
+  const fatigue =
+    provider.kind === "m365" && acc.observations.appended
+      ? await mfaFatigueRows(ctx, caseId, opts.idPrefix, [], {
+          earliest: acc.observations.earliest,
+          latest: acc.observations.latest,
+        })
+      : { events: [], truncated: false };
   const events = [
     ...individual,
     ...aggregates,
-    ...applySeverityFloor([...summaries, ...spray.events], opts.minSeverity),
+    ...applySeverityFloor([...summaries, ...spray.events, ...fatigue.events], opts.minSeverity),
   ];
   const disclosure = buildCloudStreamDisclosure({
     kind: provider.kind,
@@ -246,7 +257,7 @@ async function finish(
     mitreTechniques: [],
     forensicEvents: events.map((e, i) => ({
       ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
+      id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
       sources: e.sources?.length ? e.sources : [provider.source],
     })),
     threadsOpened: [],

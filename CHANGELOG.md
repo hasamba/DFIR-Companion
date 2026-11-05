@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MFA fatigue detection and cloud rule gaps** — repeated denied or timed-out MFA prompts followed by a success raise one High finding; new AWS/GCP exposure rules and Microsoft-Analyzer-Suite (MIT) operation, folder, OAuth and user-agent rules (closes #2306)
 - **Million-row cloud imports** — large and gzip cloud exports stream from disk with bounded, disclosed output and no lost High/Critical events (closes #2303)
 - **Mailbox rules, OAuth grants and MFA state as observed state** — MES InboxRules, TransportRules, OAuth permission and MFA CSVs import as "state observed at collection", never as invented actions; external forwarding, hiding rules and high-risk OAuth scopes grade above Info; re-imports add nothing and a changed object adds one change observation (closes #2305)
 - **Cloud record dedup and source records** — re-importing the same cloud export (or an overlapping one) adds no duplicate events and says how many were skipped; conflicting records under one id are kept and flagged; aggregated events can be paged back to their source records; undo releases the records for re-import (closes #2301)
