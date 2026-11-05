@@ -16,6 +16,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
 import { renderAwsDescription } from "./awsDescription.js";
 import { decodeEntraAppChanges, type Resolver } from "./entraAppChange.js";
+export type { Resolver };
 import { isGuid, outcomeWord, readEntraAuditRecord, type EntraAuditRecord } from "./entraAuditRecord.js";
 import { KNOWN_APIS } from "./entraCapabilities.js";
 import {
@@ -55,8 +56,20 @@ const WORKLOAD_CREDENTIAL_FAILURES: Record<number, string> = {
  * about one object id leave it unresolved — a fact this importer cannot pick between.
  */
 export function learnApiResolver(records: readonly Row[]): Resolver {
-  const map = new Map<string, string>();
-  const conflicts = new Set<string>();
+  const learner = createApiResolverLearner();
+  learner.add(records);
+  return learner.finish();
+}
+
+/**
+ * learnApiResolver, one batch at a time (#2303): the streaming import's preliminary pass feeds
+ * every batch of the file, then `finish()` gives the resolver the whole-file read would. Facts are
+ * kept raw until the end, because whether a tenant-less record may learn depends on the WHOLE file.
+ */
+export function createApiResolverLearner(): { add(records: readonly Row[]): void; finish(): Resolver } {
+  // Deduplicated as they arrive (a million sign-ins name the same few APIs): key → app ids seen.
+  const facts = new Map<string, Set<string>>();
+  let anyTenant = false;
   // A record without a tenant id may only learn from, and resolve against, other tenant-less
   // records when the WHOLE file is tenant-less — a single export from one tenant by construction
   // (Graph directoryAudits carries no tenant field). The moment one record names a tenant, a
@@ -67,36 +80,51 @@ export function learnApiResolver(records: readonly Row[]): Resolver {
     str(getCI(rec, "tenantId")).trim() ||
     str(getCI(rec, "OrganizationId")).trim() ||
     str(getCI(rec, "TargetContextId")).trim();
-  const anyTenant = records.some((rec) => tenantOf(rec) !== "");
-  const usable = (tenant: string): boolean => tenant !== "" || !anyTenant;
-  const learn = (tenant: string, objectId: string, appId: string) => {
-    if (!usable(tenant)) return;
-    const k = `${tenant.toLowerCase()}|${objectId.toLowerCase()}`;
-    const prev = map.get(k);
-    if (prev && prev !== appId) conflicts.add(k);
-    else map.set(k, appId);
+  const add = (records: readonly Row[]): void => {
+    for (const rec of records) {
+      if (!anyTenant && tenantOf(rec) !== "") anyTenant = true;
+      for (const f of recordFacts(rec)) {
+        const k = `${f.tenant.toLowerCase()}|${f.objectId.toLowerCase()}`;
+        facts.set(k, (facts.get(k) ?? new Set()).add(f.appId));
+      }
+    }
   };
-  for (const rec of records) {
-    const spId = str(getCI(rec, "resourceServicePrincipalId")).trim().toLowerCase();
-    const appId = str(getCI(rec, "resourceId")).trim().toLowerCase();
-    const tenant = str(getCI(rec, "resourceTenantId")).trim() || str(getCI(rec, "homeTenantId")).trim();
-    if (isGuid(spId) && isGuid(appId) && KNOWN_APIS[appId]) learn(tenant, spId, appId);
-    const audit = readEntraAuditRecord(rec);
-    if (!audit || !/^add app role assignment to service principal$/i.test(audit.operation)) continue;
-    const prop = audit.props.find((p) => /^targetid\.serviceprincipalnames$/i.test(p.name));
-    if (!prop || !Array.isArray(prop.newValue)) continue;
-    const target = prop.targetIndex >= 0 ? audit.targets[prop.targetIndex] : audit.targets[0];
-    if (!target?.id) continue;
-    const known = prop.newValue
-      .map((n) => String(n).trim().toLowerCase())
-      .filter((n) => isGuid(n) && KNOWN_APIS[n]);
-    if (known.length === 1) learn(audit.tenant, target.id, known[0]);
-  }
-  return (objectId, tenant) => {
-    if (!usable(tenant)) return "";
-    const k = `${tenant.toLowerCase()}|${objectId.trim().toLowerCase()}`;
-    return conflicts.has(k) ? "" : (map.get(k) ?? "");
+  const finish = (): Resolver => {
+    const usable = (tenant: string): boolean => tenant !== "" || !anyTenant;
+    const map = new Map<string, string>();
+    const conflicts = new Set<string>();
+    for (const [k, appIds] of facts) {
+      if (!usable(k.slice(0, k.indexOf("|")))) continue;
+      if (appIds.size > 1) conflicts.add(k);
+      else map.set(k, [...appIds][0]);
+    }
+    return (objectId, tenant) => {
+      if (!usable(tenant)) return "";
+      const k = `${tenant.toLowerCase()}|${objectId.trim().toLowerCase()}`;
+      return conflicts.has(k) ? "" : (map.get(k) ?? "");
+    };
   };
+  return { add, finish };
+}
+
+/** The object-id → app-id facts one record states by construction (see learnApiResolver). */
+function recordFacts(rec: Row): Array<{ tenant: string; objectId: string; appId: string }> {
+  const out: Array<{ tenant: string; objectId: string; appId: string }> = [];
+  const spId = str(getCI(rec, "resourceServicePrincipalId")).trim().toLowerCase();
+  const appId = str(getCI(rec, "resourceId")).trim().toLowerCase();
+  const tenant = str(getCI(rec, "resourceTenantId")).trim() || str(getCI(rec, "homeTenantId")).trim();
+  if (isGuid(spId) && isGuid(appId) && KNOWN_APIS[appId]) out.push({ tenant, objectId: spId, appId });
+  const audit = readEntraAuditRecord(rec);
+  if (!audit || !/^add app role assignment to service principal$/i.test(audit.operation)) return out;
+  const prop = audit.props.find((p) => /^targetid\.serviceprincipalnames$/i.test(p.name));
+  if (!prop || !Array.isArray(prop.newValue)) return out;
+  const target = prop.targetIndex >= 0 ? audit.targets[prop.targetIndex] : audit.targets[0];
+  if (!target?.id) return out;
+  const known = prop.newValue
+    .map((n) => String(n).trim().toLowerCase())
+    .filter((n) => isGuid(n) && KNOWN_APIS[n]);
+  if (known.length === 1) out.push({ tenant: audit.tenant, objectId: target.id, appId: known[0] });
+  return out;
 }
 
 function head(r: EntraAuditRecord): { who: string; ip: string; head: string } {

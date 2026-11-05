@@ -2575,10 +2575,11 @@ The command names follow each tool's own documentation; check `Get-Help <command
   so it grades like the same record exported from Graph. An Activity Log category reads like the
   REST Activity Log, with the caller taken from the record's sign-in claims (the user name, or the
   application id).
-- **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`,
-  then **decompress**: `gzip -d -r ./cloudtrail`. Drop the `.json` files. The companion cannot read
-  `.json.gz` today. Prefer the S3 objects to the console's Event history CSV: the CSV has no
-  identity type, ARN or request parameters, so less can be concluded from each row.
+- **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`.
+  The `.json.gz` objects are read as downloaded: the Import button asks for the file's path, and the
+  server decompresses it while it reads (see *Large cloud exports* below). The drop folder still
+  needs the decompressed `.json`. Prefer the S3 objects to the console's Event history CSV: the CSV
+  has no identity type, ARN or request parameters, so less can be concluded from each row.
 - **GCP Cloud Audit Logs** — `gcloud logging read 'logName:"cloudaudit.googleapis.com"' --format=json > audit.json`,
   or copy the objects a Cloud Storage log sink wrote (`gcloud storage cp -r gs://<bucket>/cloudaudit.googleapis.com ./`).
 
@@ -2625,11 +2626,65 @@ look for the matching action (for example `New-InboxRule`) in the Unified Audit 
     are the `snap_*` rules in `tags.yaml`; the importer grades the same way, so the grades hold
     with the tagger off.
 
-**Size limits today.** The Import button reads a file of up to 200 MB in the browser and sends it
-(server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file is read from a server path, refused above
-256 MB (`DFIR_MAX_IMPORT_FILE_MB`), and every import holds the whole file in memory. Split a larger
-export before import. One import keeps at most 2,000 aggregated events (`DFIR_MAX_EVENTS`), most
+**Size limits.** The Import button reads a file of up to 200 MB in the browser and sends it
+(server limit 256 MB, `DFIR_MAX_BODY_MB`); a larger file, or a `.gz` file, is read from its path on
+the server. A cloud export (M365 / Entra, CloudTrail, GCP / Azure Activity) of 32 MB or more, or any
+`.gz` one, is **streamed** — see *Large cloud exports* below — and has no size limit. Any other file
+is held in memory whole and refused above 256 MB (`DFIR_MAX_IMPORT_FILE_MB`). A smaller cloud export
+takes the whole-file path, which keeps at most 2,000 aggregated events (`DFIR_MAX_EVENTS`), most
 severe first.
+
+### Large cloud exports
+
+A 1M-row UAL export or a 1 GB CloudTrail set imports in one go. The companion reads the file from
+disk in batches of 5,000 records and never holds it whole, so memory does not grow with the file.
+
+**What you get.**
+
+- **Critical and High rows: always kept, one event each.** Nothing graded High is ever folded into
+  a count.
+- **Medium rows: kept one by one, up to a budget** — 25 per rule and actor (for example 25
+  `Set-Mailbox` by one admin), and 10,000 per import. Past the first budget, that actor's rows for
+  that rule become one counted event. Past the second, the rest are counted per rule and source
+  address — a password spray against a million accounts becomes one counted event per attacking
+  address, not a million events.
+- **Low rows: counted** in the forensic timeline, and kept one by one in the super-timeline.
+- **Info rows: kept one by one in the super-timeline**, up to 50,000 per import and never more than
+  the room the case's super-timeline has left (`DFIR_SUPERTIMELINE_MAX`, 100,000 rows by default), so
+  one import never pushes out the rows earlier imports put there. Rows past that room are counted.
+- **Whole-export summaries** (credential lineages, compute lifecycles, privilege paths, mailbox
+  chains, service-account joins) are built over the first 25,000 records of a larger file.
+
+**What "counted" means.** A counted event stands for many rows: it carries how many, the first and
+last time, and the list of the records it stands for (open the event to page through them). When a
+case gathers more than 5,000 distinct counted events from one import, further rows are counted more
+coarsely — by rule alone — and the event says so. The original file is kept as evidence, unchanged,
+so every row can still be found.
+
+**Before anything is counted**, each row is deduplicated against the records the case already holds
+(a record repeated later in the same file counts once), graded by the import-time Sigma rules and
+the tagger's severity rules, and only then budgeted — so a row a tagger rule raises to High is kept
+on its own, never folded away. Password-spray and sign-in sequences are found across the whole file
+through the sign-in store, not from memory.
+
+**What it tells you.** The import note in the case timeline, the *last import* banner and the
+**Cloud Coverage** panel all list what happened to the file: how many rows were kept on their own,
+how many were counted and why (which budget), how many went to the super-timeline, duplicates
+skipped, unrecognised records, records too large to read (over 16 MB each), repairs made to read the
+file (a byte-order mark, joined documents, unreadable text skipped), and whether the summaries saw
+the whole file.
+
+**Tested size and memory.** On the synthetic benchmark (8 cores, Node 22, the server started with
+`--max-old-space-size=1024`), one 1M-row UAL export imports in 8–9 minutes as JSON lines and 10–11
+minutes as CSV, with the server's memory peaking under 2 GB. A 30-object, 1.2M-record CloudTrail set
+(`.json.gz`) needs `--max-old-space-size=2048`: the limit is the size of the case it builds, not the
+file — at 1 GB the server's own heap guard refuses the last objects once the case holds ~21,000
+events. Below 32 MB, or for a file sent in the browser, the whole-file path still applies: an 80 MB
+CSV sent through the Import button needs more memory than the streamed import itself.
+
+**gzip.** A `.gz` file is decompressed while it is read. A file that decompresses to more than 100
+times its compressed size (past the first 64 MB), or to more than 20 GB, is refused as a possible
+decompression bomb.
 
 | Tool | Version | Output file | Detected today | Should go to | Status | Notes |
 |---|---|---|---|---|---|---|
@@ -2663,7 +2718,7 @@ severe first.
 | Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `m365` | `m365` | works | Claimed by an Entra (`microsoft.aadiam`) `resourceId` + Entra category + `properties`; the Graph sign-in under `properties` is unwrapped and grades like the Graph record (#2304). |
 | Azure diagnostic settings | — | `PT1H.json`, Azure resource log (Key Vault `AuditEvent`) | `cloud` | `cloud` | works | Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed. |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json` (decompressed) | `aws` | `aws` | works | — |
-| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `unknown` | `aws` | **unsupported** | Refused as binary: nothing in the import path decompresses gzip. Decompress first. |
+| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `aws` | `aws` | works | Read by server path and decompressed while it streams (#2303); the dashboard asks for the path of a `.gz` file. |
 | AWS CloudTrail | — | Console Event history CSV | `aws` | `aws` | works | Claimed by `Event name` + `Event source` + `Event time`. The CSV has no identity type, ARN or request parameters, so rows read from a `CloudTrail event` column when present, else from the columns alone. |
 | GCP Cloud Audit Logs | — | `gcloud logging read --format=json` (array) | `cloud` | `cloud` | works | — |
 | GCP Cloud Audit Logs | — | GCS sink JSON lines | `cloud` | `cloud` | works | — |

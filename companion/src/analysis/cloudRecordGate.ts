@@ -28,6 +28,11 @@ export interface CloudRecordParseOptions {
   repairs?: JsonRepairs; // what the tolerant reader repaired while pre-reading them (#2302)
   recordGate?: RecordGate; // the case ledger's verdict per record
   provenance?: AggregateProvenance; // aggregate → source-record membership sink
+  // Streaming import (#2303): the records are one batch of a larger file. `recordIndexBase` is the
+  // batch's offset, so `record:<index>` locators still point into the upload; `rowsOnly` returns
+  // the mapped rows unaggregated (the streaming importer budgets them) and skips the summaries.
+  recordIndexBase?: number;
+  rowsOnly?: boolean;
 }
 
 // Appended to a conflicting row's description: the conflict must be visible on the row itself.

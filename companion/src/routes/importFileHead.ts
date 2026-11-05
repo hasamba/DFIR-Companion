@@ -3,6 +3,7 @@ import { decodeImportedText } from "../ingest/decodeText.js";
 import { closeTruncatedJsonArray } from "../analysis/extractJson.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes } from "../analysis/ingest/importFileCap.js";
+import { gunzipBufferHead, isGzipMagic } from "../analysis/cloudStreamReader.js";
 
 /**
  * The first look POST /cases/:id/import-file takes at a server-local file, and the one bound on
@@ -38,6 +39,26 @@ export async function sniffImportFileHead(fh: FileHandle): Promise<string> {
   const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
   const sample = decodeImportedText(buf.subarray(0, bytesRead));
   return closeTruncatedJsonArray(sample) ?? sample;
+}
+
+/** Compressed bytes read to find the decompressed head of a gzip upload (#2303). */
+const GZIP_HEAD_READ_BYTES = 1 << 20;
+
+/**
+ * sniffImportFileHead, gzip-aware (#2303): a `.json.gz` CloudTrail object is sniffed from its
+ * DECOMPRESSED head, so it detects as what it holds; `gzip` tells the route it must stream.
+ */
+export async function sniffImportFileHeadDetail(fh: FileHandle): Promise<{ sample: string; gzip: boolean }> {
+  const magic = Buffer.alloc(2);
+  const { bytesRead } = await fh.read(magic, 0, 2, 0);
+  if (!isGzipMagic(magic.subarray(0, bytesRead)))
+    return { sample: await sniffImportFileHead(fh), gzip: false };
+  const buf = Buffer.alloc(GZIP_HEAD_READ_BYTES);
+  const read = await fh.read(buf, 0, buf.length, 0);
+  const sample = decodeImportedText(
+    await gunzipBufferHead(buf.subarray(0, read.bytesRead), IMPORT_FILE_HEAD_BYTES),
+  );
+  return { sample: closeTruncatedJsonArray(sample) ?? sample, gzip: true };
 }
 
 /**
@@ -76,6 +97,6 @@ export function importFileTooLarge(
   return (
     `file is too large to import as ${kind} (${Math.ceil(size / MB)} MB > ${Math.round(maxBytes / MB)} MB) — ` +
     "raise DFIR_MAX_IMPORT_FILE_MB and restart the companion, or split the file; " +
-    "only Plaso super-timelines stream and are exempt"
+    "only Plaso super-timelines and cloud audit exports (M365, CloudTrail, GCP/Azure) stream and are exempt"
   );
 }

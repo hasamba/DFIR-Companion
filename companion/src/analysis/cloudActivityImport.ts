@@ -74,6 +74,10 @@ export interface CloudActivityParseResult {
   coverage: CloudCoverageDraft[];
   /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
   repairs?: JsonRepairs;
+  /** The mapped rows, unaggregated — only with `rowsOnly` (#2303). */
+  mapped?: MappedEvent[];
+  /** For each `mapped` row, the index (in this batch) of the record it came from. */
+  rowRecords?: number[];
 }
 
 type Rule = [RegExp, Severity, string[]];
@@ -485,23 +489,30 @@ function parseActivityRecords(
     sawAzure = false;
 
   // Over the whole upload: coverage describes the export itself, duplicates included (#2301).
+  const indexBase = opts.recordIndexBase ?? 0;
+  const rowRecords: number[] = [];
+  const noteRows = (recordIndex: number) => {
+    while (rowRecords.length < mapped.length) rowRecords.push(recordIndex);
+  };
   all.forEach((rec, recordIndex) => {
     const duplicate = isDuplicateRecord(gate, recordIndex);
     if (isGcp(rec)) {
       gcpRecords.push(rec);
       if (duplicate) return;
-      const rows = gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${recordIndex}`));
+      const rows = gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${indexBase + recordIndex}`));
       if (rows.length) sawGcp = true;
       // No methodName: the record is never mapped (#1736).
       else opts.debug?.skipped("missing_required_field");
       mapped.push(...rows);
+      noteRows(recordIndex);
     } else if (isAzure(rec)) {
       azureRecords.push(rec);
       if (duplicate) return;
-      const m = mapAzure(rec, iocSink, recordIndex, opts.debug);
+      const m = mapAzure(rec, iocSink, indexBase + recordIndex, opts.debug);
       if (m) {
         sawAzure = true;
         mapped.push(...gateRows(gate, recordIndex, [m]));
+        noteRows(recordIndex);
       } else opts.debug?.skipped("missing_required_field");
     } else opts.debug?.skipped("unrecognized_record");
   });
@@ -512,6 +523,11 @@ function parseActivityRecords(
     ...gcpCoverage(gcpRecords).map((d) => ({ ...d, uploadId })),
     ...azureCoverage(azureRecords).map((d) => ({ ...d, uploadId })),
   ];
+  if (opts.rowsOnly) {
+    const format = sawGcp && sawAzure ? "mixed" : sawGcp ? "gcp" : sawAzure ? "azure" : "empty";
+    const iocs = [...iocSink.values()].slice(0, maxIocs);
+    return { events: [], iocs, total, kept: 0, dropped: 0, groups: 0, format, coverage, mapped, rowRecords };
+  }
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty", coverage };
   }

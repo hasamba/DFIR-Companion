@@ -161,7 +161,11 @@
         const ro = c.readOnly ? ` (read-only ${esc(c.readOnly.true)} / mutating ${esc(c.readOnly.false)} / unknown ${esc(c.readOnly.unknown)})` : "";
         return `<span class="cc-cat">${esc(c.name)} ${esc(c.count)}${ro}</span>`;
       }).join(", ");
-      return `<tr><td>${esc(CC_PROVIDER_LABEL[it.provider] || it.provider)}</td><td>${scope}</td><td>${esc(it.recordCount)}</td><td data-safe-style="color:var(--text-muted);font-size:11px">${range}</td><td>${cats}</td></tr>`;
+      // A streamed upload's own account of itself (#2303): what was aggregated, capped or skipped.
+      const disclosure = (it.importDisclosure || []).length
+        ? `<div class="cc-import-disclosure" data-safe-style="margin-top:4px;font-size:11px;color:var(--text-muted)">${it.importDisclosure.map(d => `<div>${esc(d)}</div>`).join("")}</div>`
+        : "";
+      return `<tr><td>${esc(CC_PROVIDER_LABEL[it.provider] || it.provider)}</td><td>${scope}</td><td>${esc(it.recordCount)}</td><td data-safe-style="color:var(--text-muted);font-size:11px">${range}</td><td>${cats}${disclosure}</td></tr>`;
     }).join("");
     const caveatsHtml = caveats.length
       ? `<div class="cc-caveats" data-safe-style="margin-top:8px;font-size:11px;color:var(--text-muted)">${caveats.map(c => `<div>${esc(c)}</div>`).join("")}</div>`

@@ -14,6 +14,7 @@ import { type SynthThinkingInput } from "./synthThinking.js";
 import { type GapHypothesesResult } from "./gapHypothesis.js";
 import { type KnownUnknownItem } from "./knownUnknowns.js";
 import * as ingest from "./ingest/index.js";
+import { describeCloudStreamDisclosure, type CloudStreamDisclosure } from "./cloudStreamDisclosure.js";
 // The options bag and the retry policy moved out with the families that read them (#418).
 import type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { buildAiCallOpts } from "./ai/aiCallOpts.js";
@@ -529,6 +530,20 @@ export class AnalysisPipeline {
 
   importPlasoFile(...args: ImporterArgs<typeof ingest.importPlasoFile>): Promise<InvestigationState> {
     return ingest.importPlasoFile(this.importCtx, ...args);
+  }
+
+  // A large or gzip cloud export, streamed from disk (#2303); its coverage carries the disclosure.
+  async importCloudFile(
+    ...args: ImporterArgs<typeof ingest.importCloudFile>
+  ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
+    const { state, coverage, disclosure } = await ingest.importCloudFile(this.importCtx, ...args);
+    const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
+    await persistCloudCoverage(
+      this.opts.cloudCoverageStore,
+      args[0],
+      coverage.map((c) => ({ ...c, importDisclosure })),
+    );
+    return { state, disclosure };
   }
 
   importSentinelLinux(...args: ImporterArgs<typeof ingest.importSentinelLinux>): Promise<InvestigationState> {

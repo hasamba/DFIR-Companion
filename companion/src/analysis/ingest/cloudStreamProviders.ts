@@ -1,0 +1,229 @@
+// The three cloud importers as the streaming import sees them (#2303): how to prepare a batch of
+// raw records, identify each one for dedup, map the batch with the importer's own parse function
+// (`rowsOnly`, so nothing is aggregated or capped there), read each record's rule / actor / address
+// for the output budget, and build the whole-export summaries over the bounded summary window.
+//
+// Each importer's mapping, severity, Sigma grading and coverage code is the one the whole-file path
+// runs — nothing is re-implemented here, only adapted to batches. The two whole-file lookups the
+// M365 importer needs (the object-id → app-id resolver that lets a consent record name its API, and
+// the mailbox-audit date order) are learned by a preliminary pass over the whole file first.
+
+import type { MappedEvent, SiemEvent, SiemIoc } from "../siemImport.js";
+import { getCI, getPath, str } from "../siemFieldPick.js";
+import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import type { CloudRecordIdentity } from "../cloudRecordIdentity.js";
+import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
+import type { RecordGate } from "../cloudRecordGate.js";
+import type { SigmaGradingSnapshot } from "../sigmaImportGrade.js";
+import type { ImportDebugRecorder } from "../importDebug.js";
+import type { RowFacts } from "../cloudOutputBudget.js";
+import type { StoredAuthObservation } from "../authObservationStore.js";
+import { m365RecordIdentities, normalizeRecord, parseM365Audit } from "../m365Import.js";
+import {
+  adaptM365ExportRow,
+  createMailboxDateOrderLearner,
+  type UndatedRows,
+} from "../m365ExportAdapters.js";
+import { createApiResolverLearner, type Resolver } from "../entraAuditImport.js";
+import { parseCloudTrail } from "../awsImport.js";
+import { cloudTrailConsoleRow } from "../cloudRecords.js";
+import { parseCloudActivity } from "../cloudActivityImport.js";
+
+type Row = Record<string, unknown>;
+
+export type StreamKind = "m365" | "aws" | "cloud"; // the import kinds (importIngest.ts dispatch)
+
+export interface BatchMapping {
+  mapped: MappedEvent[];
+  rowRecords: number[];
+  iocs: SiemIoc[];
+  coverage: CloudCoverageDraft[];
+  format: string;
+  sigmaRows: number;
+  signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
+}
+
+export interface BatchContext {
+  gate?: RecordGate;
+  base: number;
+  sigma?: SigmaGradingSnapshot;
+  debug?: ImportDebugRecorder;
+}
+
+/** What the preliminary pass learned over the whole file (M365 only; the others need none). */
+export interface Preliminary {
+  resolver?: Resolver;
+  dateOrder?: ReturnType<ReturnType<typeof createMailboxDateOrderLearner>["finish"]>;
+}
+
+export interface StreamProvider {
+  kind: StreamKind;
+  /** The note's and the events' source name. */
+  source: string;
+  /** CSV row adapter for the reader (the CloudTrail console CSV). */
+  csvAdapt?: (row: Row) => Row;
+  /** A preliminary pass, when the importer has whole-file lookups. */
+  preliminary?: () => { add(raw: Row[]): void; finish(): Preliminary };
+  prepare(raw: Row[], pre: Preliminary): Row[];
+  identities(records: Row[]): CloudRecordIdentity[];
+  map(records: Row[], ctx: BatchContext, pre: Preliminary): BatchMapping;
+  facts(rec: Row): RowFacts;
+  /** The whole-export summary rows over the summary window (fresh records, duplicates blanked). */
+  summaries(window: Row[], pre: Preliminary): SiemEvent[];
+  undated?(pre: Preliminary): UndatedRows | undefined;
+}
+
+const pick = (rec: Row, keys: string[]): string => {
+  for (const k of keys) {
+    const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
+    const s = str(Array.isArray(v) ? v[0] : v).trim();
+    if (s) return s;
+  }
+  return "";
+};
+const firstIp = (raw: string): string =>
+  /(\d{1,3}(?:\.\d{1,3}){3})/.exec(raw)?.[1] ?? raw.replace(/^\[|\]:\d+$/g, "");
+
+const asMapping = (r: {
+  mapped?: MappedEvent[];
+  rowRecords?: number[];
+  iocs: SiemIoc[];
+  coverage: CloudCoverageDraft[];
+  format: string;
+  sigmaRowsMatched?: number;
+}): Omit<BatchMapping, "signInObservations"> => ({
+  mapped: r.mapped ?? [],
+  rowRecords: r.rowRecords ?? [],
+  iocs: r.iocs,
+  coverage: r.coverage,
+  format: r.format,
+  sigmaRows: r.sigmaRowsMatched ?? 0,
+});
+
+const m365: StreamProvider = {
+  kind: "m365",
+  source: "Microsoft 365",
+  preliminary() {
+    const resolver = createApiResolverLearner();
+    const order = createMailboxDateOrderLearner();
+    return {
+      add(raw) {
+        order.add(raw);
+        resolver.add(raw.map((r) => normalizeRecord(adaptM365ExportRow(r, null))));
+      },
+      finish: () => ({ resolver: resolver.finish(), dateOrder: order.finish() }),
+    };
+  },
+  prepare: (raw, pre) => raw.map((r) => normalizeRecord(adaptM365ExportRow(r, pre.dateOrder?.order ?? null))),
+  identities: (records) => m365RecordIdentities(records),
+  map(records, ctx, pre) {
+    const r = parseM365Audit("", {
+      prepared: { normalized: records, undated: { rows: 0, mixedOrders: false } },
+      recordGate: ctx.gate,
+      recordIndexBase: ctx.base,
+      resolver: pre.resolver,
+      sigma: ctx.sigma,
+      debug: ctx.debug,
+      rowsOnly: true,
+    });
+    return { ...asMapping(r), signInObservations: r.signInObservations };
+  },
+  facts: (rec) => ({
+    rule:
+      pick(rec, ["Operation", "Operations", "activityDisplayName"]) ||
+      (getCI(rec, "userPrincipalName") ? "sign-in" : "record"),
+    actor: pick(rec, [
+      "UserId",
+      "UserKey",
+      "UserIds",
+      "userPrincipalName",
+      "initiatedBy.user.userPrincipalName",
+    ]),
+    ip: firstIp(pick(rec, ["ClientIP", "ClientIPAddress", "ActorIpAddress", "ipAddress"])),
+  }),
+  summaries(window, pre) {
+    const r = parseM365Audit("", {
+      prepared: { normalized: window, undated: { rows: 0, mixedOrders: false } },
+      resolver: pre.resolver,
+      spraySummary: false, // the streaming import reads spray from the sign-in store instead
+    });
+    return r.events.slice(r.kept);
+  },
+  undated: (pre) => pre.dateOrder?.undated,
+};
+
+const aws: StreamProvider = {
+  kind: "aws",
+  source: "AWS CloudTrail",
+  csvAdapt: cloudTrailConsoleRow,
+  prepare: (raw) => raw,
+  identities: (records) => records.map((rec) => cloudRecordIdentity("cloudtrail", rec)),
+  map(records, ctx) {
+    const r = parseCloudTrail("", {
+      records,
+      recordGate: ctx.gate,
+      recordIndexBase: ctx.base,
+      sigma: ctx.sigma,
+      debug: ctx.debug,
+      rowsOnly: true,
+    });
+    return { ...asMapping(r), signInObservations: [] };
+  },
+  facts: (rec) => ({
+    rule: `${pick(rec, ["eventSource"])}:${pick(rec, ["eventName"])}`,
+    actor: pick(rec, [
+      "userIdentity.arn",
+      "userIdentity.principalId",
+      "userIdentity.userName",
+      "userIdentity.accessKeyId",
+    ]),
+    ip: pick(rec, ["sourceIPAddress"]),
+  }),
+  summaries(window) {
+    const r = parseCloudTrail("", { records: window });
+    return r.events.slice(r.kept);
+  },
+};
+
+const cloudActivity: StreamProvider = {
+  kind: "cloud",
+  source: "Cloud Audit",
+  prepare: (raw) => raw,
+  identities: (records) => records.map((rec) => cloudRecordIdentity(cloudActivityRecordProvider(rec), rec)),
+  map(records, ctx) {
+    const r = parseCloudActivity("", {
+      records,
+      recordGate: ctx.gate,
+      recordIndexBase: ctx.base,
+      debug: ctx.debug,
+      rowsOnly: true,
+    });
+    return { ...asMapping(r), signInObservations: [] };
+  },
+  facts: (rec) => ({
+    rule: pick(rec, ["protoPayload.methodName", "operationName.value", "operationName"]),
+    actor: pick(rec, ["protoPayload.authenticationInfo.principalEmail", "caller", "identity.claims.name"]),
+    ip: pick(rec, [
+      "protoPayload.requestMetadata.callerIp",
+      "callerIpAddress",
+      "httpRequest.clientIpAddress",
+    ]),
+  }),
+  summaries(window) {
+    const r = parseCloudActivity("", { records: window });
+    return r.events.slice(r.kept);
+  },
+};
+
+const PROVIDERS: Record<StreamKind, StreamProvider> = { m365, aws, cloud: cloudActivity };
+
+/** The import kinds that stream (the route dispatches only these). */
+export const STREAM_KINDS: readonly StreamKind[] = ["m365", "aws", "cloud"];
+
+export function isStreamKind(kind: string): kind is StreamKind {
+  return (STREAM_KINDS as readonly string[]).includes(kind);
+}
+
+export function streamProvider(kind: StreamKind): StreamProvider {
+  return PROVIDERS[kind];
+}

@@ -130,6 +130,13 @@
   },
   "flatAnalysisFiles": {
     "abortable.ts": "shared",
+    "cloudCoverageMerge.ts": "analysis/ingest",
+    "cloudOutputBudget.ts": "analysis/ingest",
+    "cloudStreamDisclosure.ts": "analysis/ingest",
+    "cloudStreamLimits.ts": "analysis/ingest",
+    "cloudStreamPreGrade.ts": "analysis/ingest",
+    "cloudStreamReader.ts": "analysis/ingest",
+    "jsonRecordStream.ts": "analysis/ingest",
     "pendingWork.ts": "shared",
     "absorbedCitations.ts": "analysis/timeline",
     "accountUsageImport.ts": "analysis/ingest",

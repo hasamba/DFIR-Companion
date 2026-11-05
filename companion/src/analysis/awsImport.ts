@@ -82,6 +82,10 @@ export interface AwsParseResult {
   coverage: CloudCoverageDraft[];
   /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
   repairs?: JsonRepairs;
+  /** The mapped rows, unaggregated — only with `rowsOnly` (#2303). */
+  mapped?: MappedEvent[];
+  /** For each `mapped` row, the index (in this batch) of the record it came from. */
+  rowRecords?: number[];
 }
 
 interface ActionDef {
@@ -620,11 +624,11 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   const coverage: CloudCoverageDraft[] = awsCloudTrailCoverage(records).map((d) => ({ ...d, uploadId }));
 
   const iocSink = new Map<string, SiemIoc>();
-  const candidates: Array<ReplicaCandidate & { sigma: SigmaRuleRef[] }> = [];
+  const candidates: Array<ReplicaCandidate & { sigma: SigmaRuleRef[]; recordIndex: number }> = [];
   const onIncomplete = (n: number) => opts.debug?.observed("sigma_incomplete", n);
   for (const [recordIndex, rec] of records.entries()) {
     if (isDuplicateRecord(gate, recordIndex)) continue; // already in the case (#2301)
-    const m = mapRecord(rec, iocSink, recordIndex);
+    const m = mapRecord(rec, iocSink, (opts.recordIndexBase ?? 0) + recordIndex);
     // Sigma reads the RAW record (#2202): the rules are written against CloudTrail's own fields.
     if (m) {
       const [event] = gateRows(gate, recordIndex, [m.event]);
@@ -632,6 +636,7 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
         ...m,
         event,
         sigma: sigmaMatchesFor(opts.sigma, "aws-cloudtrail", rec, onIncomplete),
+        recordIndex,
       });
     }
     // No eventName or eventSource: the record is never mapped (#1736).
@@ -646,12 +651,19 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     // A merged cross-account pair stands for every replica record it carries (#2301).
     event: g.members.length > 1 ? withReplicaRecords(g.event, g.members) : g.event,
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
+    recordIndex: g.members[0].recordIndex,
   }));
   const mapped = merged.map((g) => (snapshot ? applySigmaMatches(g.event, g.sigma, snapshot) : g.event));
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)
     opts.debug?.omitted("merged_replica", candidates.length - mapped.length);
+  if (opts.rowsOnly) {
+    const iocs = [...iocSink.values()].slice(0, maxIocs);
+    const base = { events: [], iocs, total, kept: 0, dropped: 0, groups: 0, summaries: 0, coverage };
+    const rowRecords = merged.map((g) => g.recordIndex);
+    return { ...base, format: "cloudtrail", sigmaRowsMatched: sigmaRows, mapped, rowRecords };
+  }
   if (mapped.length === 0) {
     return {
       events: [],
