@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { wholeCaseLoads, type WholeCaseLoadOptions } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
+import { isStringTooLongError } from "../storage/boundedRead.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { requestIocCandidates } from "./iocCandidatesRequest.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -165,16 +166,6 @@ function queryIndex(query: EntityQuery): QueryIndex {
   return "ordinal";
 }
 
-// A legacy JSON case can be below SQLite's practical capacity but still above V8's maximum string
-// size. The original file remains untouched, so this error names recovery rather than presenting a
-// half-migrated database as authoritative.
-function isTooLargeToDecode(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException).code;
-  if (code === "ERR_STRING_TOO_LONG") return true;
-  const message = (err as Error)?.message ?? "";
-  return /Invalid string length/i.test(message) || /string longer than/i.test(message);
-}
-
 type WorkerRow = { rowId: number; version: number; entity: ForensicEvent };
 const toForensicRow = (row: WorkerRow): ForensicRow => ({
   rowId: row.rowId,
@@ -263,7 +254,8 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         return true;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-        if (isTooLargeToDecode(err)) throw this.legacyTooLargeError(caseId);
+        // A legacy JSON case above V8's max string size: name recovery, never a half-migrated database.
+        if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
         throw err;
       }
     }
@@ -275,7 +267,7 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         jsonPath: this.legacyPath(caseId),
       });
     } catch (err) {
-      if (isTooLargeToDecode(err)) throw this.legacyTooLargeError(caseId);
+      if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
       throw err;
     }
   }

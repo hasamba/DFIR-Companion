@@ -1,0 +1,4 @@
+"Event ID","Event time","User name","Event name","Resource type","Resource name","AWS access key","AWS region","Error code","Source IP address","Event source","Read-only","Resources"
+"00000000-0000-4000-8000-000000001601","2026-11-01T10:01:00Z","user1","CreateAccessKey","","","AKIAEXAMPLE000000001","us-east-1","","203.0.113.50","iam.amazonaws.com","false","[]"
+"00000000-0000-4000-8000-000000001602","2026-11-01T10:02:00Z","user1","StopLogging","","","AKIAEXAMPLE000000001","us-east-1","","203.0.113.50","cloudtrail.amazonaws.com","false","[]"
+"00000000-0000-4000-8000-000000001603","2026-11-01T10:03:00Z","user1","DescribeInstances","","","AKIAEXAMPLE000000001","us-east-1","","203.0.113.50","ec2.amazonaws.com","false","[]"

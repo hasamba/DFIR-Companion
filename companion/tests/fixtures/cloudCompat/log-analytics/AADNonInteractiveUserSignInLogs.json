@@ -1,0 +1,32 @@
+[
+  {
+    "TenantId": "00000000-0000-4000-8000-000000001300",
+    "SourceSystem": "Azure AD",
+    "TimeGenerated": "2026-11-01T11:03:05Z",
+    "ResourceId": "/tenants/00000000-0000-4000-8000-000000000001/providers/Microsoft.aadiam",
+    "OperationName": "Sign-in activity",
+    "OperationVersion": "1.0",
+    "Category": "NonInteractiveUserSignInLogs",
+    "ResultType": "50126",
+    "ResultSignature": "None",
+    "ResultDescription": "Invalid username or password.",
+    "DurationMs": "0",
+    "CorrelationId": "00000000-0000-4000-8000-000000000503",
+    "Identity": "Example User 3",
+    "Level": "4",
+    "Location": "XX",
+    "AppDisplayName": "Example App",
+    "AppId": "00000000-0000-4000-8000-000000000400",
+    "ClientAppUsed": "Browser",
+    "CreatedDateTime": "2026-11-01T11:03:00Z",
+    "IPAddress": "203.0.113.10",
+    "IsInteractive": "false",
+    "RiskLevelDuringSignIn": "none",
+    "RiskState": "none",
+    "Status": "{\"errorCode\": 50126, \"failureReason\": \"Invalid username or password.\"}",
+    "UserDisplayName": "Example User 3",
+    "UserPrincipalName": "user1@example.com",
+    "UserId": "00000000-0000-4000-8000-000000000303",
+    "Type": "AADNonInteractiveUserSignInLogs"
+  }
+]

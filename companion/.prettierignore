@@ -12,6 +12,10 @@ data/
 # against; a reformat is a silent change to the fixture.
 examples/
 
+# Cloud tool compatibility fixtures (#2300). Each file is laid out the way the tool writes it, and
+# one is deliberately not valid JSON (DFIR-O365RC's concatenated arrays, `][`).
+tests/fixtures/cloudCompat/
+
 # 9 MB of encoded Sigma rules, shipped as-is.
 encoded_rules.yml
 

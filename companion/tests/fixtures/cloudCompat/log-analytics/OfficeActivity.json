@@ -1,0 +1,22 @@
+[
+  {
+    "TenantId": "00000000-0000-4000-8000-000000001300",
+    "SourceSystem": "OfficeActivityManager",
+    "RecordType": "ExchangeAdmin",
+    "TimeGenerated": "2026-11-01T10:01:00Z",
+    "Operation": "New-InboxRule",
+    "OrganizationId": "00000000-0000-4000-8000-000000000001",
+    "UserType": "Regular",
+    "UserKey": "1003BFFD00000001",
+    "OfficeWorkload": "Exchange",
+    "ResultStatus": "True",
+    "OfficeObjectId": "user1@example.com\\rule1",
+    "UserId": "user1@example.com",
+    "ClientIP": "203.0.113.10",
+    "Parameters": "[{\"Name\": \"Name\", \"Value\": \"rule1\"}, {\"Name\": \"ForwardTo\", \"Value\": \"drop@example.com\"}]",
+    "OfficeId": "00000000-0000-4000-8000-000000000101",
+    "OfficeTenantId": "00000000-0000-4000-8000-000000000001",
+    "SourceRecordId": "00000000-0000-4000-8000-000000000101",
+    "Type": "OfficeActivity"
+  }
+]

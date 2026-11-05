@@ -1,0 +1,3 @@
+"UserPrincipalName","MFAstatus","email","fido2","app","password","phone","softwareoath","tempaccess","hellobusiness"
+"user1@example.com","Disabled","False","False","False","True","False","False","False","False"
+"user2@example.com","Enabled","False","False","True","True","True","False","False","False"

@@ -42,3 +42,14 @@ export async function readHandleBounded(handle: FileHandle, maxBytes: number): P
   if (offset > size) throw new FileTooLargeError(offset, maxBytes);
   return buffer.subarray(0, offset);
 }
+
+/**
+ * True when `err` is V8's "string too long" failure. Node <= 20 words it "Invalid string length";
+ * Node 22 words it "Cannot create a string longer than 0x1fffffe8 characters"; either may carry
+ * code ERR_STRING_TOO_LONG. Match all so callers do not drift on the Node version (#2316).
+ */
+export function isStringTooLongError(err: unknown): boolean {
+  if ((err as NodeJS.ErrnoException | null)?.code === "ERR_STRING_TOO_LONG") return true;
+  const message = (err as Error | null)?.message ?? "";
+  return /Invalid string length/i.test(message) || /string longer than/i.test(message);
+}

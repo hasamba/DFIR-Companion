@@ -1,0 +1,30 @@
+[
+  {
+    "TenantId": "00000000-0000-4000-8000-000000001300",
+    "SourceSystem": "Azure",
+    "CallerIpAddress": "203.0.113.30",
+    "CategoryValue": "Administrative",
+    "CorrelationId": "00000000-0000-4000-8000-000000000801",
+    "Authorization": "{\"action\": \"Microsoft.Compute/virtualMachines/runCommand/action\", \"scope\": \"/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1\"}",
+    "Level": "Informational",
+    "OperationNameValue": "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMAND/ACTION",
+    "Properties": "{}",
+    "Caller": "admin@example.com",
+    "EventDataId": "00000000-0000-4000-8000-000000000901",
+    "EventSubmissionTimestamp": "2026-11-01T12:01:30Z",
+    "OperationId": "00000000-0000-4000-8000-000000001001",
+    "ResourceGroup": "RG1",
+    "ResourceProviderValue": "MICROSOFT.COMPUTE",
+    "ActivityStatusValue": "Success",
+    "ActivitySubstatusValue": "",
+    "TimeGenerated": "2026-11-01T12:01:00Z",
+    "SubscriptionId": "00000000-0000-4000-8000-000000000700",
+    "OperationName": "Run Command on Virtual Machine",
+    "ActivityStatus": "Succeeded",
+    "Category": "Administrative",
+    "ResourceId": "/SUBSCRIPTIONS/00000000-0000-4000-8000-000000000700/RESOURCEGROUPS/RG1/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM1",
+    "ResourceProvider": "Microsoft.Compute",
+    "Resource": "VM1",
+    "Type": "AzureActivity"
+  }
+]

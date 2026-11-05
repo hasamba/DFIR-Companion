@@ -1,0 +1,74 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000201",
+    "createdDateTime": "2026-11-01T11:01:00Z",
+    "userDisplayName": "Example User 1",
+    "userPrincipalName": "user1@example.com",
+    "userId": "00000000-0000-4000-8000-000000000301",
+    "appId": "00000000-0000-4000-8000-000000000400",
+    "appDisplayName": "Example App",
+    "ipAddress": "203.0.113.10",
+    "clientAppUsed": "Browser",
+    "correlationId": "00000000-0000-4000-8000-000000000501",
+    "conditionalAccessStatus": "notApplied",
+    "isInteractive": true,
+    "riskDetail": "none",
+    "riskLevelAggregated": "none",
+    "riskLevelDuringSignIn": "none",
+    "riskState": "none",
+    "resourceDisplayName": "Office 365 Exchange Online",
+    "resourceId": "00000000-0000-4000-8000-000000000600",
+    "status": {
+      "errorCode": 50126,
+      "failureReason": "Invalid username or password.",
+      "additionalDetails": null
+    },
+    "deviceDetail": {
+      "deviceId": "",
+      "displayName": "",
+      "operatingSystem": "Windows10",
+      "browser": "Edge"
+    },
+    "location": {
+      "city": "Example City",
+      "state": "",
+      "countryOrRegion": "XX"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000202",
+    "createdDateTime": "2026-11-01T11:02:00Z",
+    "userDisplayName": "Example User 2",
+    "userPrincipalName": "user2@example.com",
+    "userId": "00000000-0000-4000-8000-000000000302",
+    "appId": "00000000-0000-4000-8000-000000000400",
+    "appDisplayName": "Example App",
+    "ipAddress": "198.51.100.20",
+    "clientAppUsed": "Browser",
+    "correlationId": "00000000-0000-4000-8000-000000000502",
+    "conditionalAccessStatus": "notApplied",
+    "isInteractive": true,
+    "riskDetail": "none",
+    "riskLevelAggregated": "none",
+    "riskLevelDuringSignIn": "none",
+    "riskState": "none",
+    "resourceDisplayName": "Office 365 Exchange Online",
+    "resourceId": "00000000-0000-4000-8000-000000000600",
+    "status": {
+      "errorCode": 0,
+      "failureReason": "",
+      "additionalDetails": null
+    },
+    "deviceDetail": {
+      "deviceId": "",
+      "displayName": "",
+      "operatingSystem": "Windows10",
+      "browser": "Edge"
+    },
+    "location": {
+      "city": "Example City",
+      "state": "",
+      "countryOrRegion": "XX"
+    }
+  }
+]
