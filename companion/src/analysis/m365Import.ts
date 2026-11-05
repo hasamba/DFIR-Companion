@@ -19,7 +19,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { readCloudRecords } from "./cloudRecords.js";
-import { adaptM365ExportRow } from "./m365ExportAdapters.js";
+import { adaptM365ExportRows, type UndatedRows } from "./m365ExportAdapters.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
@@ -94,6 +94,8 @@ export interface M365ParseResult {
   sigmaRowsMatched?: number;
   /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
   repairs?: JsonRepairs;
+  /** Mailbox audit rows left without a time: the file's date order is unknown (#2302). */
+  undatedRows?: UndatedRows;
 }
 
 interface OpDef {
@@ -451,7 +453,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // Object-id → app-id facts other records of this export state (entraAuditImport.ts): the only
   // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
   // Log Analytics and MES mailbox-audit columns are renamed into the shapes the mappers read (#2302).
-  const normalized = records.map((r) => normalizeRecord(adaptM365ExportRow(r)));
+  const adapted = adaptM365ExportRows(records);
+  const normalized = adapted.rows.map(normalizeRecord);
   const resolve = learnApiResolver(normalized);
   // Coverage (#1063): normalized, since Workload/Operation/RecordType/OrganizationId can sit
   // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
@@ -584,5 +587,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     sprayCandidates,
     sigmaRowsMatched: sigmaRows,
     repairs,
+    ...(adapted.undated.rows ? { undatedRows: adapted.undated } : {}),
   };
 }

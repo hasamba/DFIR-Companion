@@ -164,8 +164,8 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 2, shows: "HardDelete by user1@example.com" },
-    note: "Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. `LastAccessed` is read as US `M/D/YYYY h:mm:ss AM/PM`, naive UTC; a day-first date with no AM/PM is left without a time.",
+    parsed: { records: 3, shows: "HardDelete by user1@example.com" },
+    note: "Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. The day/month order of `LastAccessed` is decided per file from a date with a part above 12 (never from AM/PM), read as naive UTC; with no such date the rows have no time, and the import note counts them.",
   },
   {
     ...MES,

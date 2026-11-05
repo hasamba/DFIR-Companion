@@ -6,7 +6,7 @@
 // A valid document, or genuine NDJSON, is read exactly as extractRecords reads it. The repair scan
 // is the concatenated-JSON scanner extractRecords already falls back to — one scanner, not two.
 
-import { extractRecords, isObject, getCI } from "./siemImport.js";
+import { extractRecords, isObject } from "./siemImport.js";
 import { scanConcatenatedJson } from "./concatenatedJson.js";
 
 type Row = Record<string, unknown>;
@@ -46,22 +46,29 @@ function firstLineIsJson(body: string): boolean {
   }
 }
 
-function unwrap(el: unknown): Row | null {
-  if (!isObject(el)) return null;
-  const src = getCI(el, "_source");
-  return isObject(src) ? src : el;
-}
-
-// The same flattening extractRecords applies to a concatenated stream: an array's elements, or the value.
+// Each recovered document is unwrapped by extractRecords itself, so a `{ Records: [...] }` or
+// `{ value: [...] }` wrapper (and every other container it knows) yields its records exactly as it
+// would in a clean file. Re-serializing costs a second parse, paid only on this repair path.
 function recordsOf(value: unknown): Row[] {
-  const items = Array.isArray(value) ? value : [value];
-  return items.map(unwrap).filter((r): r is Row => r !== null && Object.keys(r).length > 0);
+  return extractRecords(JSON.stringify(value)).records;
 }
 
 function nonEmptyLines(body: string): number {
   let n = 0;
   for (const line of body.split(/\r\n|\r|\n/)) if (line.trim()) n++;
   return n;
+}
+
+// One JSON value per line. A line that does not parse is skipped by extractRecords — count it. When
+// the lines are whole wrapped documents (single-line CloudTrail objects, `{"Records":[...]}`, run
+// together or followed by a stray line), unwrap each one as a clean file would be: judged on the
+// first line, so plain JSON lines are not re-serialized.
+function readJsonLines(body: string, lines: Row[], bomStripped: number): TolerantRecords {
+  const garbageSkipped = Math.max(0, nonEmptyLines(body) - lines.length);
+  const wrapped = lines.length > 0 && extractRecords(JSON.stringify(lines[0])).format !== "single";
+  const records = wrapped ? lines.flatMap(recordsOf) : lines;
+  const documentsJoined = wrapped ? Math.max(0, lines.length - 1) : 0;
+  return { records, format: "ndjson", repairs: { bomStripped, documentsJoined, garbageSkipped } };
 }
 
 /** Read JSON, JSON lines or concatenated JSON records, repairing and counting what was wrong. */
@@ -71,11 +78,8 @@ export function readTolerantJsonRecords(text: string): TolerantRecords {
   if (base.format !== "ndjson" && base.format !== "concatenated-json") {
     return { ...base, repairs: noRepairs(bomStripped) };
   }
-  if (base.format === "ndjson" && firstLineIsJson(body)) {
-    // Genuine JSON lines: a line that does not parse is skipped by extractRecords — count it.
-    const garbageSkipped = Math.max(0, nonEmptyLines(body) - base.records.length);
-    return { ...base, repairs: { bomStripped, documentsJoined: 0, garbageSkipped } };
-  }
+  if (base.format === "ndjson" && firstLineIsJson(body))
+    return readJsonLines(body, base.records, bomStripped);
   // Not one document and not JSON lines: scan it whole. A pretty-printed array with a broken tail
   // would otherwise lose every record but the few lines that happen to parse on their own.
   const { values, skipped } = scanConcatenatedJson(body.trim());
@@ -94,7 +98,9 @@ export function describeJsonRepairs(repairs: JsonRepairs | undefined): string {
   const parts = [
     repairs.bomStripped ? "a UTF-8 byte-order mark removed" : "",
     repairs.documentsJoined ? `${repairs.documentsJoined} join(s) between concatenated JSON documents` : "",
-    repairs.garbageSkipped ? `${repairs.garbageSkipped} unreadable stretch(es) of text skipped` : "",
+    repairs.garbageSkipped
+      ? `${repairs.garbageSkipped} unreadable stretch(es) of text skipped — any records in them were not imported`
+      : "",
   ].filter(Boolean);
   return parts.length ? `file repaired on read: ${parts.join(", ")}` : "";
 }

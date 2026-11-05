@@ -2594,7 +2594,7 @@ severe first.
 | Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | Microsoft-Extractor-Suite | 4.1.0 | TransportRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | Microsoft-Extractor-Suite | 4.1.0 | OAuth permissions CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
-| Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `m365` | `m365` | works | Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. `LastAccessed` is read as US `M/D/YYYY h:mm:ss AM/PM`, naive UTC; a day-first date with no AM/PM is left without a time. |
+| Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `m365` | `m365` | works | Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. The day/month order of `LastAccessed` is decided per file from a date with a part above 12 (never from AM/PM), read as naive UTC; with no such date the rows have no time, and the import note counts them. |
 | Microsoft-Extractor-Suite | 4.1.0 | MFA CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | DFIR-O365RC | 2.0.x | `UnifiedAuditLog_<tenant>_YYYY-MM-DD_HH-00-00.json` | `m365` | `m365` | works | — |
 | DFIR-O365RC | 2.0.x | same, with the concatenated-arrays bug (`][`) | `m365` | `m365` | works | Every record of both arrays is read, and the join is disclosed in the import note. |

@@ -5,7 +5,7 @@ import { cloudExportCsvKind } from "../../src/analysis/cloudExportDetect.js";
 import { readTolerantJsonRecords, jsonRepairNote } from "../../src/analysis/tolerantJson.js";
 import { scanConcatenatedJson, parseConcatenatedJson } from "../../src/analysis/concatenatedJson.js";
 import { cloudTrailConsoleRow, readCloudRecords } from "../../src/analysis/cloudRecords.js";
-import { adaptM365ExportRow, exportCsvTime } from "../../src/analysis/m365ExportAdapters.js";
+import { adaptM365ExportRow, exportCsvTime, fileDateOrder } from "../../src/analysis/m365ExportAdapters.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { parseCloudActivity } from "../../src/analysis/cloudActivityImport.js";
@@ -166,7 +166,7 @@ describe("tolerant JSON reader (#2302)", () => {
 
   it("the note names each repair, and says nothing when none was needed", () => {
     expect(jsonRepairNote({ bomStripped: 1, documentsJoined: 1, garbageSkipped: 2 })).toBe(
-      "; file repaired on read: a UTF-8 byte-order mark removed, 1 join(s) between concatenated JSON documents, 2 unreadable stretch(es) of text skipped",
+      "; file repaired on read: a UTF-8 byte-order mark removed, 1 join(s) between concatenated JSON documents, 2 unreadable stretch(es) of text skipped — any records in them were not imported",
     );
     expect(jsonRepairNote({ bomStripped: 0, documentsJoined: 0, garbageSkipped: 0 })).toBe("");
     expect(jsonRepairNote(undefined)).toBe("");
@@ -196,15 +196,32 @@ describe("tolerant JSON reader (#2302)", () => {
 });
 
 describe("normalizing adapters (#2302)", () => {
-  it("exportCsvTime reads en-US AM/PM and unambiguous dates, and refuses a possible month/day swap", () => {
-    expect(exportCsvTime("11/1/2026 10:05:00 AM")).toBe("2026-11-01T10:05:00Z");
-    expect(exportCsvTime("11/1/2026 12:30:00 AM")).toBe("2026-11-01T00:30:00Z");
-    expect(exportCsvTime("11/1/2026 1:05:00 PM")).toBe("2026-11-01T13:05:00Z");
+  it("exportCsvTime reads a value with a part above 12 in its only order, never inferring it from AM/PM", () => {
+    expect(exportCsvTime("25/11/2026 1:05:00 PM")).toBe("2026-11-25T13:05:00Z");
+    expect(exportCsvTime("11/25/2026 1:05:00 PM")).toBe("2026-11-25T13:05:00Z");
     expect(exportCsvTime("25/11/2026 13:05:00")).toBe("2026-11-25T13:05:00Z");
     expect(exportCsvTime("11/25/2026 13:05")).toBe("2026-11-25T13:05:00Z");
-    expect(exportCsvTime("1/2/2026 13:05:00")).toBe("");
-    expect(exportCsvTime("2/30/2026 1:00:00 AM")).toBe("");
-    expect(exportCsvTime("not a time")).toBe("");
+    // Ambiguous: unread without the file's order, read in it when given.
+    expect(exportCsvTime("11/1/2026 10:05:00 AM")).toBe("");
+    expect(exportCsvTime("11/1/2026 10:05:00 AM", "month-first")).toBe("2026-11-01T10:05:00Z");
+    expect(exportCsvTime("11/1/2026 1:05:00 PM", "day-first")).toBe("2026-01-11T13:05:00Z");
+    expect(exportCsvTime("11/1/2026 12:30:00 AM", "month-first")).toBe("2026-11-01T00:30:00Z");
+    expect(exportCsvTime("2/30/2026 1:00:00 AM", "month-first")).toBe("");
+    expect(exportCsvTime("1/2/2026 13:00:00 PM", "month-first")).toBe("");
+    expect(exportCsvTime("not a time", "month-first")).toBe("");
+  });
+
+  it("fileDateOrder takes the order from the values that fix it, and flags a file holding both", () => {
+    expect(fileDateOrder(["1/2/2026 1:00 PM", "13/2/2026 1:00 PM"])).toEqual({
+      order: "day-first",
+      mixed: false,
+    });
+    expect(fileDateOrder(["1/2/2026 1:00 PM", "2/13/2026 1:00 PM"])).toEqual({
+      order: "month-first",
+      mixed: false,
+    });
+    expect(fileDateOrder(["1/2/2026 1:00 PM"])).toEqual({ order: null, mixed: false });
+    expect(fileDateOrder(["13/2/2026 1:00", "2/13/2026 1:00"])).toEqual({ order: null, mixed: true });
   });
 
   it("a Log Analytics sign-in takes its outcome from ResultType when Status is absent", () => {
@@ -215,13 +232,16 @@ describe("normalizing adapters (#2302)", () => {
   });
 
   it("a mailbox audit row on a delegate logon names the delegate, not the owner", () => {
-    const row = adaptM365ExportRow({
-      Operation: "SendAs",
-      MailboxOwnerUPN: "user1@example.com",
-      LogonType: "Delegate",
-      LogonUserDisplayName: "Example User 2",
-      LastAccessed: "11/1/2026 10:05:00 AM",
-    });
+    const row = adaptM365ExportRow(
+      {
+        Operation: "SendAs",
+        MailboxOwnerUPN: "user1@example.com",
+        LogonType: "Delegate",
+        LogonUserDisplayName: "Example User 2",
+        LastAccessed: "11/1/2026 10:05:00 AM",
+      },
+      "month-first",
+    );
     expect(row.UserId).toBe("Example User 2");
     expect(row.CreationTime).toBe("2026-11-01T10:05:00Z");
   });

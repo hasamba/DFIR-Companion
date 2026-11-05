@@ -21,6 +21,7 @@ import { sigmaImportNote } from "../sigmaImportGrade.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
+import { undatedRowsNote } from "../m365ExportAdapters.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
  * outside InvestigationState, so it travels beside it rather than inside the delta. */
@@ -85,7 +86,9 @@ export async function importM365(
         opts,
         "Microsoft 365",
         parsed.total,
-        [retentionNote, describeJsonRepairs(parsed.repairs)].filter(Boolean).join("; ") || undefined,
+        [retentionNote, describeJsonRepairs(parsed.repairs), undatedRowsNote(parsed.undatedRows).slice(2)]
+          .filter(Boolean)
+          .join("; ") || undefined,
       ),
       coverage: parsed.coverage,
     };
@@ -108,7 +111,8 @@ export async function importM365(
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
       (retentionNote ? `; ${retentionNote}` : "") +
-      jsonRepairNote(parsed.repairs),
+      jsonRepairNote(parsed.repairs) +
+      undatedRowsNote(parsed.undatedRows),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
