@@ -2626,6 +2626,41 @@ look for the matching action (for example `New-InboxRule`) in the Unified Audit 
     are the `snap_*` rules in `tags.yaml`; the importer grades the same way, so the grades hold
     with the tagger off.
 
+**Cloud detection rules (tagger).** Besides the rules above, `tags.yaml` ships rules for cloud
+techniques that had no rule of their own:
+
+- **AWS** — `PutEventSelectors` (what a CloudTrail trail records was replaced) is tagged with
+  T1562.008; `ModifySnapshotAttribute` that **shares** a snapshot with another account or publicly
+  grades **High** (T1537); a `PutBucketAcl` / `PutBucketPolicy` that **makes a bucket public**
+  (an AllUsers / AuthenticatedUsers grant, a `public-read`-style canned ACL, or an Allow statement for
+  `Principal "*"` with no condition) grades **High** (T1530). The AWS row now says what the request
+  asked for — `shares snapshot snap-… with account …`, `makes bucket b1 public (canned ACL
+  public-read)` — so a removal, an account-scoped policy or a conditional `"*"` never matches. It is
+  the *requested* posture: S3 Block Public Access can still override it, and that is not in the
+  record.
+- **GCP** — a `SetIamPolicy` binding added for `roles/owner` grades **High**; one added for a public
+  member, or for a member whose domain differs from the caller's own (marked `(outside the caller's
+  domain)` on the row), grades **Medium** (T1098.003). The record never names the organisation's
+  domains, so this compares with the caller only, and says nothing when the caller is a service
+  account.
+- **Microsoft-Analyzer-Suite lists** — the suspicious-operation, move-to-folder, risky OAuth
+  permission and user-agent lists of
+  [Microsoft-Analyzer-Suite](https://github.com/evild3ad/Microsoft-Analyzer-Suite) by Martin Willing
+  (MIT licence) are the `mas_*` rules. `Set-AdminAuditLogConfig` grades **High** (T1562.008); a new
+  inbound connector, a transport rule enabled or disabled, a junk-mail configuration change, an owner
+  added to an application or service principal, and Microsoft security detections (Defender for
+  Office 365, Teams impersonation, outbound-spam restriction) grade **Medium**; an inbox rule that
+  moves mail to a folder used to hide it, in any of the listed languages (`Archiv`, `RSS-Feeds`,
+  `Posta indesiderata`, …), grades **Medium** (T1564.008); a grant of one of the suite's high-risk
+  OAuth scopes grades **High** as an application permission and **Medium** as a delegated one
+  (T1528). Search queries, sync-client full downloads, inbox-rule enable/disable and mailbox
+  delegation changes are tagged only. Entra sign-in rows now show the client's user agent (`[ua: …]`),
+  and a sign-in from an HTTP library the suite links to AiTM kits or password spraying (`axios`,
+  `Go-http-client`, `okhttp`, `node-fetch`, …) or from an offensive tool (AADInternals, AzureHound,
+  TeamFiltration, …) grades **Medium**; PowerShell, Azure CLI, Python and Postman clients are tagged
+  for review only. A user agent is what the client *claimed*, not proof of the tool used. The
+  suite's country, ASN and application lists are not included.
+
 **Size limits.** The Import button reads a file of up to 200 MB in the browser and sends it
 (server limit 256 MB, `DFIR_MAX_BODY_MB`); a larger file, or a `.gz` file, is read from its path on
 the server. A cloud export (M365 / Entra, CloudTrail, GCP / Azure Activity) of 32 MB or more, or any

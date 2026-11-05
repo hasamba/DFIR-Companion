@@ -31,6 +31,7 @@ import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
+import { awsExposurePosture } from "./awsExposure.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -277,6 +278,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   if (issuance?.severity) severity = worst(severity, issuance.severity);
   for (const t of issuance?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
 
+  // A snapshot share / public bucket ACL or policy, as the request states it (#2306).
+  const exposure = awsExposurePosture(name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
   const identity = principal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
   const region = str(getCI(rec, "awsRegion"));
@@ -365,7 +368,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     return renderAwsDescription({
       head,
       identity: who2.words,
-      posture: issuance?.posture ?? "",
+      posture: issuance?.posture ?? exposure,
       outcome: issuance?.outcome ?? "",
       object: issuance?.detail ?? "",
       optional: [],
