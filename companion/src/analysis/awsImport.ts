@@ -32,7 +32,6 @@ import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import {
-  extractRecords,
   aggregateEvents,
   cleanIp,
   addIoc,
@@ -50,6 +49,8 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { readCloudRecords, cloudTrailConsoleRow } from "./cloudRecords.js";
+import type { JsonRepairs } from "./tolerantJson.js";
 
 type Row = Record<string, unknown>;
 
@@ -78,6 +79,8 @@ export interface AwsParseResult {
   sigmaRowsMatched?: number;
   /** Per-upload coverage drafts (#1063) — never part of the timeline; consumed once by the caller and stored outside InvestigationState. */
   coverage: CloudCoverageDraft[];
+  /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
+  repairs?: JsonRepairs;
 }
 
 interface ActionDef {
@@ -555,9 +558,14 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   };
 }
 
+// JSON (tolerant) or the console "Event history" CSV, its rows rebuilt as CloudTrail records (#2302).
 export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsParseResult {
+  const { records, repairs } = readCloudRecords(text, cloudTrailConsoleRow);
+  return { ...parseTrailRecords(records, text, opts), repairs };
+}
+
+function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions): AwsParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
     return {

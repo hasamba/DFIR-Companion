@@ -2559,16 +2559,20 @@ The command names follow each tool's own documentation; check `Get-Help <command
 - **DFIR-O365RC (ANSSI) 2.0.x** — `Get-O365Full` writes one `UnifiedAuditLog_<tenant>_<date>_<hour>.json`
   per hour; drop each file (the drop folder takes a whole folder). `Get-AADLogs` writes
   `AADSigninLog_*` and `AADAuditLog_*`; `Get-AzRMActivityLogs` writes `AzRM_*`. A file with two
-  arrays run together (`][`, written by an interrupted or repeated run) is read whole.
+  arrays run together (`][`, written by an interrupted or repeated run) is read whole. The import
+  note says what was repaired to read a file: a byte-order mark removed, documents joined, or
+  unreadable text skipped.
 - **Log Analytics / Microsoft Sentinel** — run the table query (`SigninLogs`,
   `AADNonInteractiveUserSignInLogs`, `AuditLogs`, `AzureActivity`, `OfficeActivity`) and export the
   result, or `az monitor log-analytics query --workspace <id> --analytics-query "<table> | where TimeGenerated > ago(30d)" -o json > <table>.json`.
-  Prefer JSON over CSV where the table says so.
+  JSON and CSV exports of these tables are both read. In a CSV, the JSON columns (`Status`,
+  `InitiatedBy`, `TargetResources`) are read too, so a sign-in grades as its Graph equivalent does.
 - **Azure diagnostic settings → storage account** — download the `PT1H.json` blobs from the
   `insights-logs-<category>` container (one per hour per resource) and drop them.
 - **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`,
   then **decompress**: `gzip -d -r ./cloudtrail`. Drop the `.json` files. The companion cannot read
-  `.json.gz` today. Prefer the S3 objects to the console's Event history CSV.
+  `.json.gz` today. Prefer the S3 objects to the console's Event history CSV: the CSV has no
+  identity type, ARN or request parameters, so less can be concluded from each row.
 - **GCP Cloud Audit Logs** — `gcloud logging read 'logName:"cloudaudit.googleapis.com"' --format=json > audit.json`,
   or copy the objects a Cloud Storage log sink wrote (`gcloud storage cp -r gs://<bucket>/cloudaudit.googleapis.com ./`).
 
@@ -2590,28 +2594,28 @@ severe first.
 | Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | Microsoft-Extractor-Suite | 4.1.0 | TransportRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | Microsoft-Extractor-Suite | 4.1.0 | OAuth permissions CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
-| Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `csv` | `m365` | **misrouted** | CSV has `Operation` (singular) and no `RecordType`. Forced through m365 it maps the rows but with no time: `LastAccessed` is not read. |
+| Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `m365` | `m365` | works | Claimed by `Operation` + `LogonType` + `MailboxOwnerUPN` + `LastAccessed`. `LastAccessed` is read as US `M/D/YYYY h:mm:ss AM/PM`, naive UTC; a day-first date with no AM/PM is left without a time. |
 | Microsoft-Extractor-Suite | 4.1.0 | MFA CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
 | DFIR-O365RC | 2.0.x | `UnifiedAuditLog_<tenant>_YYYY-MM-DD_HH-00-00.json` | `m365` | `m365` | works | — |
-| DFIR-O365RC | 2.0.x | same, with the concatenated-arrays bug (`][`) | `m365` | `m365` | works | Every record of both arrays is read (concatenated-JSON fallback). |
+| DFIR-O365RC | 2.0.x | same, with the concatenated-arrays bug (`][`) | `m365` | `m365` | works | Every record of both arrays is read, and the join is disclosed in the import note. |
 | DFIR-O365RC | 2.0.x | `AADSigninLog_*` | `m365` | `m365` | works | — |
 | DFIR-O365RC | 2.0.x | `AADAuditLog_*` | `m365` | `m365` | works | — |
 | DFIR-O365RC | 2.0.x | `AzRM_*` | `cloud` | `cloud` | works | Azure Activity Log. |
-| Log Analytics export | — | `SigninLogs` (JSON) | `cloud` | `m365` | **misrouted** | `OperationName` + `ResourceId`/`CorrelationId` → claimed as Azure Activity before the M365 check. Forced through m365, the `Status` string column is not read, so a wrong password grades Low, not Medium. |
-| Log Analytics export | — | `SigninLogs` (CSV) | `csv` | `m365` | **misrouted** | No CSV signature matches. Same `Status` limit as the JSON row. |
-| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (JSON) | `cloud` | `m365` | **misrouted** | As `SigninLogs` (JSON). |
-| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (CSV) | `csv` | `m365` | **misrouted** | As `SigninLogs` (CSV). |
-| Log Analytics export | — | `AuditLogs` (JSON) | `cloud` | `m365` | **misrouted** | Claimed as Azure Activity (graded Low). Forced through m365, "Add member to role" grades High. |
-| Log Analytics export | — | `AuditLogs` (CSV) | `csv` | `m365` | **misrouted** | No CSV signature matches. |
+| Log Analytics export | — | `SigninLogs` (JSON) | `m365` | `m365` | works | `ResultType` + `UserPrincipalName` + `AppDisplayName` claim it ahead of Azure Activity. The `Status` string (or `ResultType`) is read, so a wrong password grades Medium as in Graph. |
+| Log Analytics export | — | `SigninLogs` (CSV) | `m365` | `m365` | works | Same columns and mapping as the JSON row. |
+| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (JSON) | `m365` | `m365` | works | As `SigninLogs` (JSON). |
+| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (CSV) | `m365` | `m365` | works | As `SigninLogs` (CSV). |
+| Log Analytics export | — | `AuditLogs` (JSON) | `m365` | `m365` | works | `ActivityDisplayName` + `InitiatedBy`/`TargetResources` claim it ahead of Azure Activity; the JSON-string columns are read. |
+| Log Analytics export | — | `AuditLogs` (CSV) | `m365` | `m365` | works | Same columns and mapping as the JSON row. |
 | Log Analytics export | — | `AzureActivity` (JSON) | `cloud` | `cloud` | works | — |
-| Log Analytics export | — | `AzureActivity` (CSV) | `csv` | `cloud` | **unsupported** | The Azure Activity importer reads JSON only. |
+| Log Analytics export | — | `AzureActivity` (CSV) | `cloud` | `cloud` | works | Claimed by `OperationNameValue` + `Caller` + `CorrelationId`; rows map as the JSON export does. |
 | Log Analytics export | — | `OfficeActivity` (JSON) | `m365` | `m365` | works | — |
-| Log Analytics export | — | `OfficeActivity` (CSV) | `csv` | `m365` | **misrouted** | CSV has `Operation` (singular); the M365 CSV signature wants `AuditData` or `Operations` + `RecordType`. |
+| Log Analytics export | — | `OfficeActivity` (CSV) | `m365` | `m365` | works | Claimed by `Operation` + `RecordType` + `OfficeWorkload`. |
 | Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `cloud` | m365, after unwrapping `properties` (#2304) | **unsupported** | Mapped as one generic Azure operation; the sign-in under `properties` is not read, and m365 maps nothing from it. |
 | Azure diagnostic settings | — | `PT1H.json`, Azure resource log (Key Vault `AuditEvent`) | `cloud` | `cloud` | works | Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed. |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json` (decompressed) | `aws` | `aws` | works | — |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `unknown` | `aws` | **unsupported** | Refused as binary: nothing in the import path decompresses gzip. Decompress first. |
-| AWS CloudTrail | — | Console Event history CSV | `csv` | `aws` | **unsupported** | The CloudTrail importer reads JSON only; the CSV goes to the generic AI CSV path. |
+| AWS CloudTrail | — | Console Event history CSV | `aws` | `aws` | works | Claimed by `Event name` + `Event source` + `Event time`. The CSV has no identity type, ARN or request parameters, so rows read from a `CloudTrail event` column when present, else from the columns alone. |
 | GCP Cloud Audit Logs | — | `gcloud logging read --format=json` (array) | `cloud` | `cloud` | works | — |
 | GCP Cloud Audit Logs | — | GCS sink JSON lines | `cloud` | `cloud` | works | — |
 

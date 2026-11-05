@@ -10,10 +10,11 @@ import { getCI, str } from "./siemImport.js";
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAzureFlowLogUpload } from "./azureFlowLogImport.js";
 import { isGcpFlowLogEntry } from "./gcpFlowLogImport.js";
+import { isLogAnalyticsEntra } from "./cloudExportDetect.js";
 
 type Row = Record<string, unknown>;
 
-export type CloudJsonKind = "azureflowlog" | "gcpflowlog" | "aws" | "cloud" | "azurestoragelog";
+export type CloudJsonKind = "azureflowlog" | "gcpflowlog" | "aws" | "cloud" | "azurestoragelog" | "m365";
 
 export function isAws(s: Row): boolean {
   return !!getCI(s, "eventName") && !!getCI(s, "eventSource");
@@ -38,6 +39,8 @@ export function detectCloudJson(root: unknown, sample: Row): CloudJsonKind | nul
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
   if (isAzureStorageLog(sample)) return "azurestoragelog";
+  // A Log Analytics sign-in/audit row also carries OperationName + ResourceId (#2302).
+  if (isLogAnalyticsEntra(sample)) return "m365";
   if (isAzure(sample)) return "cloud";
   return null;
 }
