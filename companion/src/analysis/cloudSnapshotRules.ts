@@ -74,14 +74,33 @@ function addressActions(
       classes.add("unclassed");
     }
     if (!addrs.length) continue;
-    const shown = addrs.slice(0, 3).map((a) => {
-      const c = classify(a, tenantDomains);
-      classes.add(c);
-      return c === "unclassed" ? a : `${a} (${c === "outside" ? OUTSIDE : INSIDE})`;
-    });
-    words.push(`${verb} ${shown.join(", ")}${addrs.length > 3 ? ` (+${addrs.length - 3} more)` : ""}`);
+    // Every recipient is classified, not only the ones shown: an external address in fourth place
+    // still grades the rule, and outside addresses are listed first so the summary names them.
+    const classed = addrs.map((a) => ({ a, c: classify(a, tenantDomains) }));
+    for (const { c } of classed) classes.add(c);
+    const ordered = [
+      ...classed.filter((x) => x.c === "outside"),
+      ...classed.filter((x) => x.c !== "outside"),
+    ];
+    words.push(`${verb} ${recipientList(ordered)}`);
   }
   return { words, classes };
+}
+
+const SHOWN = 3;
+const label = ({ a, c }: { a: string; c: AddressClass }): string =>
+  c === "unclassed" ? a : `${a} (${c === "outside" ? OUTSIDE : INSIDE})`;
+
+/** Up to SHOWN recipients, then a count that still names any omitted outside address. */
+function recipientList(ordered: ReadonlyArray<{ a: string; c: AddressClass }>): string {
+  const shown = ordered.slice(0, SHOWN).map(label).join(", ");
+  const rest = ordered.slice(SHOWN);
+  if (!rest.length) return shown;
+  const outside = rest.filter((x) => x.c === "outside");
+  const extra = outside.length
+    ? `, of which ${outside.length} ${outside.slice(0, SHOWN).map(label).join(", ")}${outside.length > SHOWN ? ", …" : ""}`
+    : "";
+  return `${shown} (+${rest.length} more${extra})`;
 }
 
 /** The last segment of a folder path: `user@x:\RSS Feeds` → `RSS Feeds`. */

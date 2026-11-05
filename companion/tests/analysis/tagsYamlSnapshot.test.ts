@@ -101,6 +101,20 @@ describe("inbox rules (#2305)", () => {
     expect(g.severity).toBe("Info");
     expect(g.ruleIds.filter((id) => id.startsWith("snap_"))).toEqual([]);
   });
+  it("an external recipient in fourth place still grades High and is named in the summary", () => {
+    const g = inbox({
+      ForwardTo: "a@example.com; b@example.com; c@eu.example.com; attacker@example.net",
+    });
+    expect(g.severity).toBe("High");
+    expect(g.description).toContain("attacker@example.net (outside the tenant");
+    expect(g.ruleIds).toContain("snap_inbox_rule_external_forward");
+  });
+  it("more than three external recipients: the omitted ones are counted as outside", () => {
+    const g = inbox({
+      ForwardTo: "w@example.net; x@example.net; y@example.net; z@example.net; a@example.com",
+    });
+    expect(g.description).toMatch(/\(\+2 more, of which 1 z@example\.net \(outside/);
+  });
   it("the inbox-rule ACTION rules never fire on observed state", () => {
     const g = inbox({ ForwardTo: "x@example.net" });
     expect(g.ruleIds).not.toContain("ts_m365_inbox_rule");
@@ -126,6 +140,15 @@ describe("transport rules — MES columns, actions read from Description (#2305)
       CreatedBy: "admin@example.com",
       Description:
         "If the message:\r\n\tIs sent to 'Inside the organization'\r\nTake the following actions:\r\n\tRedirect the message to 'x@example.net'",
+    });
+    expect(g.severity).toBe("High");
+    expect(g.ruleIds).toContain("snap_transport_rule_external_redirect");
+  });
+  it("an external redirect recipient in fourth place still grades High", () => {
+    const g = transport({
+      CreatedBy: "admin@example.com",
+      Description:
+        "Take the following actions: Redirect the message to 'a@example.com', 'b@example.com', 'c@example.com' and 'attacker@example.net'",
     });
     expect(g.severity).toBe("High");
     expect(g.ruleIds).toContain("snap_transport_rule_external_redirect");

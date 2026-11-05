@@ -2595,6 +2595,9 @@ look for the matching action (for example `New-InboxRule`) in the Unified Audit 
   event with a short list of what changed (graded at least Low). An *older* snapshot imported after a
   newer one never reports a change. The import note counts new, changed, unchanged and older rows.
   A rule that is missing from a newer snapshot is not reported as removed.
+  **Undo** of a snapshot import also makes the companion forget what that import observed, so
+  importing the file again shows its rows again, and later snapshots are compared only with the
+  snapshots still in the case. **Redo** remembers them again.
 - **What is graded above Info** (Info rows stay searchable in the super-timeline):
 
     | Observed state | Grade |

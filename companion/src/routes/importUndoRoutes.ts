@@ -48,6 +48,7 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
         runStateExclusive: ctx.runStateExclusive,
         superTimeline: options.superTimelineStore,
         rehomeSuper: superRehomer(options.superTimelineStore),
+        snapshotState: options.cloudStateStore, // #2305: Undo forgets / Redo remembers snapshot observations
       };
       const { summary, next, superChanged } = await runUndoStep(deps, caseId, step);
       if (!summary) return res.status(400).json({ error: nothing });
