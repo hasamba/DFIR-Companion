@@ -1,0 +1,42 @@
+[
+  {
+    "RecordType": "ExchangeAdmin",
+    "CreationDate": "11/1/2026 10:01:00 AM",
+    "UserIds": "user1@example.com",
+    "Operations": "New-InboxRule",
+    "AuditData": "{\"CreationTime\":\"2026-11-01T10:01:00\",\"Id\":\"00000000-0000-4000-8000-000000000101\",\"Operation\":\"New-InboxRule\",\"OrganizationId\":\"00000000-0000-4000-8000-000000000001\",\"RecordType\":1,\"ResultStatus\":\"Succeeded\",\"UserKey\":\"1003BFFD00000001\",\"UserType\":0,\"Version\":1,\"Workload\":\"Exchange\",\"ClientIP\":\"203.0.113.10\",\"UserId\":\"user1@example.com\",\"Parameters\":[{\"Name\":\"Name\",\"Value\":\"rule1\"},{\"Name\":\"ForwardTo\",\"Value\":\"drop@example.com\"}]}",
+    "ResultIndex": 1,
+    "ResultCount": 4,
+    "Identity": "00000000-0000-4000-8000-000000000101"
+  },
+  {
+    "RecordType": "ExchangeItemAggregated",
+    "CreationDate": "11/1/2026 10:02:00 AM",
+    "UserIds": "user1@example.com",
+    "Operations": "MailItemsAccessed",
+    "AuditData": "{\"CreationTime\":\"2026-11-01T10:02:00\",\"Id\":\"00000000-0000-4000-8000-000000000102\",\"Operation\":\"MailItemsAccessed\",\"OrganizationId\":\"00000000-0000-4000-8000-000000000001\",\"RecordType\":50,\"ResultStatus\":\"Succeeded\",\"UserKey\":\"1003BFFD00000002\",\"UserType\":0,\"Version\":1,\"Workload\":\"Exchange\",\"ClientIP\":\"203.0.113.10\",\"UserId\":\"user1@example.com\"}",
+    "ResultIndex": 2,
+    "ResultCount": 4,
+    "Identity": "00000000-0000-4000-8000-000000000102"
+  },
+  {
+    "RecordType": "AzureActiveDirectoryStsLogon",
+    "CreationDate": "11/1/2026 10:03:00 AM",
+    "UserIds": "user2@example.com",
+    "Operations": "UserLoggedIn",
+    "AuditData": "{\"CreationTime\":\"2026-11-01T10:03:00\",\"Id\":\"00000000-0000-4000-8000-000000000103\",\"Operation\":\"UserLoggedIn\",\"OrganizationId\":\"00000000-0000-4000-8000-000000000001\",\"RecordType\":15,\"ResultStatus\":\"Succeeded\",\"UserKey\":\"1003BFFD00000003\",\"UserType\":0,\"Version\":1,\"Workload\":\"AzureActiveDirectory\",\"ClientIP\":\"198.51.100.20\",\"UserId\":\"user2@example.com\"}",
+    "ResultIndex": 3,
+    "ResultCount": 4,
+    "Identity": "00000000-0000-4000-8000-000000000103"
+  },
+  {
+    "RecordType": "SharePointFileOperation",
+    "CreationDate": "11/1/2026 10:04:00 AM",
+    "UserIds": "user2@example.com",
+    "Operations": "FileDownloaded",
+    "AuditData": "{\"CreationTime\":\"2026-11-01T10:04:00\",\"Id\":\"00000000-0000-4000-8000-000000000104\",\"Operation\":\"FileDownloaded\",\"OrganizationId\":\"00000000-0000-4000-8000-000000000001\",\"RecordType\":6,\"ResultStatus\":\"Succeeded\",\"UserKey\":\"1003BFFD00000004\",\"UserType\":0,\"Version\":1,\"Workload\":\"SharePoint\",\"ClientIP\":\"198.51.100.20\",\"UserId\":\"user2@example.com\",\"ObjectId\":\"https://example.com/sites/s1/doc1.docx\"}",
+    "ResultIndex": 4,
+    "ResultCount": 4,
+    "Identity": "00000000-0000-4000-8000-000000000104"
+  }
+]

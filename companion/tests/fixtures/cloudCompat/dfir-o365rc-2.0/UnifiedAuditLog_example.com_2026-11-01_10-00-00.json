@@ -1,0 +1,40 @@
+[
+  {
+    "CreationTime": "2026-11-01T10:01:00",
+    "Id": "00000000-0000-4000-8000-000000000101",
+    "Operation": "New-InboxRule",
+    "OrganizationId": "00000000-0000-4000-8000-000000000001",
+    "RecordType": 1,
+    "ResultStatus": "Succeeded",
+    "UserKey": "1003BFFD00000001",
+    "UserType": 0,
+    "Version": 1,
+    "Workload": "Exchange",
+    "ClientIP": "203.0.113.10",
+    "UserId": "user1@example.com",
+    "Parameters": [
+      {
+        "Name": "Name",
+        "Value": "rule1"
+      },
+      {
+        "Name": "ForwardTo",
+        "Value": "drop@example.com"
+      }
+    ]
+  },
+  {
+    "CreationTime": "2026-11-01T10:02:00",
+    "Id": "00000000-0000-4000-8000-000000000102",
+    "Operation": "MailItemsAccessed",
+    "OrganizationId": "00000000-0000-4000-8000-000000000001",
+    "RecordType": 50,
+    "ResultStatus": "Succeeded",
+    "UserKey": "1003BFFD00000002",
+    "UserType": 0,
+    "Version": 1,
+    "Workload": "Exchange",
+    "ClientIP": "203.0.113.10",
+    "UserId": "user1@example.com"
+  }
+]

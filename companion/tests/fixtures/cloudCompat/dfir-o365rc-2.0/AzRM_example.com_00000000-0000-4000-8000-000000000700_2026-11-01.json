@@ -1,0 +1,120 @@
+[
+  {
+    "authorization": {
+      "action": "Microsoft.Compute/virtualMachines/runCommand/action",
+      "scope": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1"
+    },
+    "caller": "admin@example.com",
+    "channels": "Operation",
+    "claims": {
+      "ipaddr": "203.0.113.30"
+    },
+    "correlationId": "00000000-0000-4000-8000-000000000801",
+    "description": "",
+    "eventDataId": "00000000-0000-4000-8000-000000000901",
+    "eventName": {
+      "value": "EndRequest",
+      "localizedValue": "End request"
+    },
+    "category": {
+      "value": "Administrative",
+      "localizedValue": "Administrative"
+    },
+    "eventTimestamp": "2026-11-01T12:01:00.0000000Z",
+    "id": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1/events/1",
+    "level": "Informational",
+    "operationId": "00000000-0000-4000-8000-000000001001",
+    "operationName": {
+      "value": "Microsoft.Compute/virtualMachines/runCommand/action",
+      "localizedValue": "Microsoft.Compute/virtualMachines/runCommand/action"
+    },
+    "resourceGroupName": "rg1",
+    "resourceProviderName": {
+      "value": "Microsoft.Compute",
+      "localizedValue": "Microsoft.Compute"
+    },
+    "resourceType": {
+      "value": "Microsoft.Compute/virtualMachines",
+      "localizedValue": "Microsoft.Compute/virtualMachines"
+    },
+    "resourceId": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1",
+    "status": {
+      "value": "Succeeded",
+      "localizedValue": "Succeeded"
+    },
+    "subStatus": {
+      "value": "",
+      "localizedValue": ""
+    },
+    "submissionTimestamp": "2026-11-01T12:01:30.0000000Z",
+    "subscriptionId": "00000000-0000-4000-8000-000000000700",
+    "tenantId": "00000000-0000-4000-8000-000000000001",
+    "properties": {
+      "statusCode": "OK"
+    },
+    "httpRequest": {
+      "clientRequestId": "",
+      "clientIpAddress": "203.0.113.30",
+      "method": "POST"
+    }
+  },
+  {
+    "authorization": {
+      "action": "Microsoft.Authorization/roleAssignments/write",
+      "scope": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1"
+    },
+    "caller": "admin@example.com",
+    "channels": "Operation",
+    "claims": {
+      "ipaddr": "203.0.113.30"
+    },
+    "correlationId": "00000000-0000-4000-8000-000000000802",
+    "description": "",
+    "eventDataId": "00000000-0000-4000-8000-000000000902",
+    "eventName": {
+      "value": "EndRequest",
+      "localizedValue": "End request"
+    },
+    "category": {
+      "value": "Administrative",
+      "localizedValue": "Administrative"
+    },
+    "eventTimestamp": "2026-11-01T12:02:00.0000000Z",
+    "id": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1/events/2",
+    "level": "Informational",
+    "operationId": "00000000-0000-4000-8000-000000001002",
+    "operationName": {
+      "value": "Microsoft.Authorization/roleAssignments/write",
+      "localizedValue": "Microsoft.Authorization/roleAssignments/write"
+    },
+    "resourceGroupName": "rg1",
+    "resourceProviderName": {
+      "value": "Microsoft.Compute",
+      "localizedValue": "Microsoft.Compute"
+    },
+    "resourceType": {
+      "value": "Microsoft.Compute/virtualMachines",
+      "localizedValue": "Microsoft.Compute/virtualMachines"
+    },
+    "resourceId": "/subscriptions/00000000-0000-4000-8000-000000000700/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm1",
+    "status": {
+      "value": "Succeeded",
+      "localizedValue": "Succeeded"
+    },
+    "subStatus": {
+      "value": "",
+      "localizedValue": ""
+    },
+    "submissionTimestamp": "2026-11-01T12:02:30.0000000Z",
+    "subscriptionId": "00000000-0000-4000-8000-000000000700",
+    "tenantId": "00000000-0000-4000-8000-000000000001",
+    "properties": {
+      "statusCode": "OK"
+    },
+    "httpRequest": {
+      "clientRequestId": "",
+      "clientIpAddress": "203.0.113.30",
+      "method": "POST"
+    }
+  }
+]

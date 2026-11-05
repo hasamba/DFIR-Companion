@@ -1,0 +1,32 @@
+[
+  {
+    "TenantId": "00000000-0000-4000-8000-000000001300",
+    "SourceSystem": "Azure AD",
+    "TimeGenerated": "2026-11-01T13:00:05Z",
+    "ResourceId": "/tenants/00000000-0000-4000-8000-000000000001/providers/Microsoft.aadiam",
+    "OperationName": "Add member to role",
+    "OperationVersion": "1.0",
+    "Category": "RoleManagement",
+    "ResultType": "",
+    "ResultSignature": "None",
+    "ResultDescription": "",
+    "DurationMs": "0",
+    "CorrelationId": "00000000-0000-4000-8000-000000001202",
+    "Resource": "Microsoft.aadiam",
+    "ResourceGroup": "Microsoft.aadiam",
+    "Identity": "",
+    "Level": "4",
+    "AdditionalDetails": "[]",
+    "Id": "Directory_00000000-0000-4000-8000-000000001201",
+    "InitiatedBy": "{\"user\": {\"id\": \"00000000-0000-4000-8000-000000000399\", \"displayName\": null, \"userPrincipalName\": \"admin@example.com\", \"ipAddress\": \"203.0.113.30\"}, \"app\": null}",
+    "LoggedByService": "Core Directory",
+    "Result": "success",
+    "ResultReason": "",
+    "TargetResources": "[{\"id\": \"00000000-0000-4000-8000-000000000301\", \"displayName\": null, \"type\": \"User\", \"userPrincipalName\": \"user1@example.com\", \"modifiedProperties\": [{\"displayName\": \"Role.DisplayName\", \"oldValue\": null, \"newValue\": \"\\\"Global Administrator\\\"\"}]}]",
+    "AADTenantId": "00000000-0000-4000-8000-000000000001",
+    "ActivityDisplayName": "Add member to role",
+    "ActivityDateTime": "2026-11-01T13:00:00Z",
+    "AADOperationType": "Assign",
+    "Type": "AuditLogs"
+  }
+]
