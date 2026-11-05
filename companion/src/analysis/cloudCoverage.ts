@@ -29,6 +29,8 @@ const SCOPE_VALUE_MAX = 200;
 const CATEGORY_NAME_MAX = 120;
 const CATEGORIES_PER_SCOPE_MAX = 64;
 const RECORD_TYPE_IDS_MAX = 64;
+const IMPORT_DISCLOSURE_MAX = 24;
+const IMPORT_DISCLOSURE_TEXT_MAX = 400;
 
 export const cloudCoverageCategorySchema = z.object({
   name: z.string().max(CATEGORY_NAME_MAX),
@@ -57,6 +59,12 @@ export const cloudCoverageRecordSchema = z.object({
   last: z.string(),
   categories: z.array(cloudCoverageCategorySchema).max(CATEGORIES_PER_SCOPE_MAX),
   importedAt: z.string().min(1),
+  /**
+   * A streamed upload's own account of itself (#2303): every cap reached, row skipped or aggregated,
+   * parse error and repair, as sentences (cloudStreamDisclosure.ts). Shown in the Cloud Coverage
+   * panel; not part of the AI's coverage block, which states coverage, not import mechanics.
+   */
+  importDisclosure: z.array(z.string().max(IMPORT_DISCLOSURE_TEXT_MAX)).max(IMPORT_DISCLOSURE_MAX).optional(),
 });
 export type CloudCoverageRecord = z.infer<typeof cloudCoverageRecordSchema>;
 const fileSchema = z.array(cloudCoverageRecordSchema);
@@ -236,6 +244,7 @@ export interface CloudCoverageItem {
   first: string;
   last: string;
   categories: CloudCoverageCategory[];
+  importDisclosure?: string[];
 }
 
 export interface CloudCoverageSummary {
@@ -274,6 +283,7 @@ export function summarizeCloudCoverage(
     first: r.first,
     last: r.last,
     categories: r.categories,
+    ...(r.importDisclosure?.length ? { importDisclosure: r.importDisclosure } : {}),
   }));
   const byProvider = new Map<CloudCoverageProvider, CloudCoverageRecord[]>();
   for (const r of records)

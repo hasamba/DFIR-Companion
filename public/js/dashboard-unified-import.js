@@ -129,9 +129,14 @@
           }
           try {
             let r;
-            if (f.size > LARGE_FILE_MB * 1024 * 1024) {
+            // A gzip export (a CloudTrail `.json.gz` as downloaded, #2303) is read by the server, which
+            // decompresses it while it streams — the browser would read its bytes as text.
+            const gz = /\.gz$/i.test(f.name);
+            if (f.size > LARGE_FILE_MB * 1024 * 1024 || gz) {
               const filePath = prompt(
-                `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n` +
+                (gz
+                  ? `"${f.name}" is gzip-compressed — the server reads and decompresses it directly.\n\n`
+                  : `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n`) +
                   `Enter the full path to this file on your machine so the server reads it directly\n` +
                   `(e.g. C:\\Users\\you\\Downloads\\${f.name}):`,
                 f.name,

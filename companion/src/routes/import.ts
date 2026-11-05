@@ -36,7 +36,7 @@ import { buildImportBase, importJobParameters } from "./importBase.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import { settleForensicImport } from "./importSettle.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
-import { importPlasoFileLogged } from "./importPlasoStream.js";
+import { cloudStream } from "./importCloudStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
@@ -65,7 +65,7 @@ import { registerImportReceiptCustody } from "./importReceipt.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
-import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
+import { sniffImportFileHeadDetail, readImportFileBounded } from "./importFileHead.js";
 
 /**
  * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence drop-folder routes.
@@ -303,7 +303,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           seq,
           importedAt,
           minSeverity,
-          streaming: false,
+          streaming: cloudStream.streams(kind, text.length, false), // a large cloud export streams (#2303)
           req,
         }),
       });
@@ -344,7 +344,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         await tracking.start();
         section = await beginImportSection(importLock, caseId, options.stateStore, text.length);
         baseline = section.baseline;
-        return dispatchImport(kind, caseId, text, base);
+        return cloudStream.runStored(ctx, { kind, caseId, storedName, text, base }, dispatchImport);
       };
 
       run()
@@ -382,6 +382,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   superTimelineEvicted,
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,
+                  ...cloudStream.importMeta(caseId),
                   path: aiDependent ? "ai" : "deterministic",
                   fpPropagation,
                   truncation,
@@ -500,9 +501,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     // Detect the import kind from a bounded HEAD sample — never read the whole file just to sniff
     // it. A Plaso super-timeline can exceed V8's ~512 MB max string length (readFile(utf8) throws
     // "Invalid string length"), so a sample-based sniff is the only way to even classify it.
-    let sample: string;
+    let sample: string, gzip: boolean; // a gzip upload is sniffed from its decompressed head (#2303)
     try {
-      sample = await sniffImportFileHead(src.handle);
+      ({ sample, gzip } = await sniffImportFileHeadDetail(src.handle));
     } catch (err) {
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
     }
@@ -510,17 +511,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const originalName = basename(filePath);
     const debug = createImportDebugRecorder(); // this attempt's, detection first (#1736)
-    const kind = ctx.resolveImportKind()(originalName, sample, debug);
+    const kind = ctx.resolveImportKind()(originalName.replace(/\.gz$/i, ""), sample, debug);
     // best-effort unknown hint: a truncated head gives no capa hint; then no provider / AI budget.
     const unknown = () => unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE);
     const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
     if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
-    // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines); every other kind is
-    // read into one string. A non-Plaso file over DFIR_MAX_IMPORT_FILE_MB is refused by the read
-    // itself, on the read's own descriptor so a swap after the sniff can't get past it — the
-    // string-length catch below only fires at ~512 MB, and a heap OOM on a small host arrives first (#921).
-    const streaming = kind === "plaso";
+    // Plaso and large/gzip cloud exports stream (#2303); else one string, capped by DFIR_MAX_IMPORT_FILE_MB (#921).
+    const streaming = cloudStream.readsFromDisk(kind, (await src.handle.stat()).size, gzip);
+    if (gzip && !streaming) return res.status(415).json({ error: cloudStream.GZIP_ONLY_CLOUD });
     let text = "";
     if (!streaming) {
       try {
@@ -612,7 +611,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         section = await beginImportSection(importLock, caseId, options.stateStore, saved.bytes);
         baseline = section.baseline;
         return streaming
-          ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)
+          ? cloudStream.runStoredFile(ctx, { kind, caseId, storedName, base })
           : dispatchImport(kind, caseId, text, base);
       };
 
@@ -649,6 +648,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   superTimelineEvicted,
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,
+                  ...cloudStream.importMeta(caseId),
                   path: aiDependent ? "ai" : "deterministic",
                   fpPropagation,
                   truncation,

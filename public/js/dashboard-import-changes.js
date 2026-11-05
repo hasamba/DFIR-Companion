@@ -477,6 +477,10 @@
       const dropped = tr.distinctTemplates - tr.keptTemplates;
       yieldWarn += `<div class="sm-line" data-safe-style="color:var(--badge-warning-text);font-weight:600">⚠️ ${esc(label)}: ${dropped.toLocaleString()} of ${tr.distinctTemplates.toLocaleString()} distinct log patterns weren't triaged (cap ${tr.keptTemplates.toLocaleString()}) — a one-off attack line can hide in the dropped rare patterns; raise DFIR_LOG_MAX_TEMPLATES or split the file and re-import.</div>`;
     }
+    // A streamed cloud import (#2303) says what it aggregated, capped or skipped — never only in the log.
+    if (Array.isArray(m.streamDisclosure) && m.streamDisclosure.length) {
+      yieldWarn += `<details class="sm-line"><summary>how this large cloud export was imported</summary>${m.streamDisclosure.map((d) => `<div class="sm-item">${esc(d)}</div>`).join("")}</details>`;
+    }
     // Proactive FP-pattern propagation (#15b): new events reproduce a known false-positive pattern —
     // offer a one-click bulk-mark (SUGGESTED, never auto-applied). data-evids drives the batch call.
     let fpProp = "";

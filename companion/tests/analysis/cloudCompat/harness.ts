@@ -11,6 +11,16 @@ import { parseCloudTrail } from "../../../src/analysis/awsImport.js";
 import { createImportIngest, type ImportIngestDeps } from "../../../src/composition/importIngest.js";
 import { ImportLock } from "../../../src/analysis/importLock.js";
 import { fixtureText, uploadName, type CompatRow } from "./matrix.js";
+import { readFileSync } from "node:fs";
+import { mkdtemp, open, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { sniffImportFileHeadDetail } from "../../../src/routes/importFileHead.js";
+import { openCloudRecordStream } from "../../../src/analysis/cloudStreamReader.js";
+import { cloudTrailConsoleRow } from "../../../src/analysis/cloudRecords.js";
+
+const FIXTURES = new URL("../../fixtures/cloudCompat/", import.meta.url);
 
 /** The pipeline method dispatchImport calls for each deterministic kind in the matrix. */
 const DISPATCH_METHOD: Record<string, string> = {
@@ -58,7 +68,34 @@ function recordingIngest(): { ingest: ReturnType<typeof createImportIngest>; cal
   return { ingest: createImportIngest(deps), calls };
 }
 
+/**
+ * A gzip row as the server receives it since #2303: the file by path, sniffed from its decompressed
+ * head (the import-file route's sniff), then read by the streaming reader the cloud importers use.
+ */
+async function checkGzipRow(row: CompatRow): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "dfir-compat-gz-"));
+  const path = join(dir, uploadName(row));
+  await writeFile(path, gzipSync(readFileSync(new URL(row.fixture, FIXTURES))));
+  const fh = await open(path, "r");
+  const { sample, gzip } = await sniffImportFileHeadDetail(fh).finally(() => fh.close());
+  expect(gzip, `${row.fixture}: gzip sniffed`).toBe(true);
+  const { ingest } = recordingIngest();
+  const kind = ingest.resolveImportKind(uploadName(row).replace(/\.gz$/i, ""), sample);
+  expect(kind, `${row.fixture}: resolved kind`).toBe(row.detectedToday);
+  if (row.status !== "works") return;
+  const stream = await openCloudRecordStream(path, { adapt: cloudTrailConsoleRow });
+  const records: Array<Record<string, unknown>> = [];
+  for await (const r of stream.records) records.push(r);
+  const parsed = parseCloudTrail("", { records });
+  expect(parsed.total, `${row.fixture}: records read`).toBe(row.parsed.records);
+  expect(
+    parsed.events.some((e) => e.description.includes(row.parsed.shows)),
+    `${row.fixture}: shows`,
+  ).toBe(true);
+}
+
 export async function checkRow(row: CompatRow): Promise<void> {
+  if (row.gzip) return checkGzipRow(row);
   const name = uploadName(row);
   const text = fixtureText(row);
   const { ingest, calls } = recordingIngest();

@@ -188,6 +188,43 @@ export function adaptM365ExportRows(records: readonly Row[]): { rows: Row[]; und
   return { rows, undated: { rows: undatedCount, mixedOrders: mixed } };
 }
 
+/**
+ * adaptM365ExportRows' whole-file date-order decision, one batch at a time (#2303): the streaming
+ * import's preliminary pass feeds every batch, and `finish()` gives the order the whole-file read
+ * would pick, with the same undated-row count.
+ */
+export function createMailboxDateOrderLearner(): {
+  add(records: readonly Row[]): void;
+  finish(): { order: DateOrder | null; undated: UndatedRows };
+} {
+  let dayFirst = false;
+  let monthFirst = false;
+  let ambiguous = 0;
+  return {
+    add(records) {
+      for (const r of records) {
+        if (!isMailboxAuditRow(r)) continue;
+        const t = readLocal(str(getCI(r, "LastAccessed")));
+        const own = t ? ownOrder(t) : null;
+        if (own === "day-first") dayFirst = true;
+        else if (own === "month-first") monthFirst = true;
+        else if (t) ambiguous++;
+      }
+    },
+    finish() {
+      const mixed = dayFirst && monthFirst;
+      const order: DateOrder | null = mixed
+        ? null
+        : dayFirst
+          ? "day-first"
+          : monthFirst
+            ? "month-first"
+            : null;
+      return { order, undated: { rows: order === null ? ambiguous : 0, mixedOrders: mixed } };
+    },
+  };
+}
+
 /** The import-note clause for undated mailbox rows; "" when every row could be dated. */
 export function undatedRowsNote(u: UndatedRows | undefined): string {
   if (!u || u.rows === 0) return "";

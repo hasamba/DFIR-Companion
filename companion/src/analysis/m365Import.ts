@@ -42,6 +42,7 @@ import {
   learnApiResolver,
   mapEntraAuditRows,
   mapSpSignIn,
+  type Resolver,
 } from "./entraAuditImport.js";
 import {
   aggregateEvents,
@@ -86,6 +87,17 @@ export interface M365ImportOptions {
   recordGate?: RecordGate;
   /** Aggregate → source-record membership sink (#2301). */
   provenance?: AggregateProvenance;
+  /**
+   * Streaming import (#2303): the records are one batch of a larger file. `recordIndexBase` is the
+   * batch's offset in the file, so every `record:<index>` locator still points into the upload;
+   * `resolver` is the object-id → app-id lookup learned over the WHOLE file by the preliminary pass;
+   * `rowsOnly` returns the mapped rows unaggregated (the streaming importer budgets them itself) and
+   * skips the whole-export summaries; `spraySummary: false` leaves the within-upload spray row out.
+   */
+  recordIndexBase?: number;
+  resolver?: Resolver;
+  rowsOnly?: boolean;
+  spraySummary?: boolean;
 }
 
 export interface M365ParseResult {
@@ -109,6 +121,10 @@ export interface M365ParseResult {
   repairs?: JsonRepairs;
   /** Mailbox audit rows left without a time: the file's date order is unknown (#2302). */
   undatedRows?: UndatedRows;
+  /** The mapped rows, unaggregated — only with `rowsOnly` (#2303). */
+  mapped?: MappedEvent[];
+  /** For each `mapped` row, the index (in this batch) of the record it came from. */
+  rowRecords?: number[];
 }
 
 interface OpDef {
@@ -207,7 +223,7 @@ function extractIp(s: string): string {
 }
 
 // Merge a record's parsed `AuditData` JSON (UAL) over the outer row; pass others through.
-function normalizeRecord(rec: Row): Row {
+export function normalizeRecord(rec: Row): Row {
   const ad = getCI(rec, "AuditData");
   if (typeof ad === "string" && ad.trim().startsWith("{")) {
     try {
@@ -485,7 +501,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
 
   // Object-id → app-id facts other records of this export state (entraAuditImport.ts): the only
   // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
-  const resolve = learnApiResolver(normalized);
+  const resolve = opts.resolver ?? learnApiResolver(normalized);
   // Coverage (#1063): normalized, since Workload/Operation/RecordType/OrganizationId can sit
   // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
   const uploadId = sourceArtifactHash(text);
@@ -507,29 +523,33 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     if (refs.length) sigmaRows++;
     return refs;
   };
+  const indexBase = opts.recordIndexBase ?? 0;
+  const rowRecords: number[] = [];
   normalized.forEach((rec, index) => {
     // A record the case already holds maps to nothing (#2301); its locator index is kept.
     if (isDuplicateRecord(gate, index)) return;
     const before = mapped.length;
-    mapRecordInto(rec, index);
+    mapRecordInto(rec, index, indexBase + index);
     mapped.splice(before, mapped.length - before, ...gateRows(gate, index, mapped.slice(before)));
+    while (rowRecords.length < mapped.length) rowRecords.push(index);
   });
-  function mapRecordInto(rec: Row, index: number): void {
+  // `index` reads the batch's record gate; `at` is the record's place in the whole upload.
+  function mapRecordInto(rec: Row, index: number, at: number): void {
     const kind = classify(rec);
     if (kind === "ual" && isEntraUalRecord(rec)) {
       // An Entra directory change exported through the UAL: the same decoder as the Graph shape.
-      mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
+      mapped.push(...mapEntraAuditRows(rec, iocSink, at, resolve, opSeverity));
       opts.debug?.fallback("entra_ual_decoder");
       sawUal = true;
     } else if (kind === "ual") {
       // An Exchange record the decoder narrates (rules, forwarding, permissions, access, items)
       // replaces the plain row; any other Exchange operation keeps it.
-      const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, index) : null;
+      const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, at) : null;
       if (exchange) opts.debug?.fallback("exchange_decoder");
       mapped.push(exchange ?? mapUal(rec, iocSink, opts.debug));
       sawUal = true;
     } else if (kind === "signin") {
-      const row = mapSignIn(rec, iocSink, index, opts.debug);
+      const row = mapSignIn(rec, iocSink, at, opts.debug);
       mapped.push(snapshot ? applySigmaMatches(row, sigmaFor("azure-signinlogs", rec), snapshot) : row);
       sawSignin = true;
       if (isEntraSignIn(rec)) {
@@ -558,7 +578,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
               sourceIp: s.ip,
               tenant: hostOrTenant,
               observed: s.observed,
-              locator: `record:${index}`,
+              locator: `record:${at}`,
               recordId,
               sprayOutcome,
             }),
@@ -571,15 +591,15 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
             sourceIp: s.ip,
             hostOrTenant,
             outcome: sprayOutcome,
-            locator: `record:${index}`,
+            locator: `record:${at}`,
           });
         }
       }
     } else if (kind === "spsignin") {
-      mapped.push(mapSpSignIn(rec, iocSink, index));
+      mapped.push(mapSpSignIn(rec, iocSink, at));
       sawSignin = true;
     } else if (kind === "audit") {
-      const rows = mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity);
+      const rows = mapEntraAuditRows(rec, iocSink, at, resolve, opSeverity);
       mapped.push(
         ...(snapshot ? applySigmaToRecordRows(rows, sigmaFor("azure-auditlogs", rec), snapshot) : rows),
       );
@@ -591,6 +611,24 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   }
 
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
+  if (opts.rowsOnly)
+    return {
+      events: [],
+      iocs: [...iocSink.values()].slice(0, maxIocs),
+      total,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      format: m365Format(sawUal, sawSignin, sawAudit),
+      coverage,
+      sprayCandidates,
+      signInObservations,
+      sigmaRowsMatched: sigmaRows,
+      repairs,
+      mapped,
+      rowRecords,
+      ...(undated.rows ? { undatedRows: undated } : {}),
+    };
   const capped = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -614,7 +652,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
           ...(sawUal ? derived(mailboxChains(fresh), MAILBOX_CHAINS_MAX + 1) : []),
         ]
       : []),
-    ...(sprayCandidates.length
+    ...(sprayCandidates.length && opts.spraySummary !== false
       ? derived(
           sprayPatternRows(sprayCandidates, {
             source: "Microsoft 365",
@@ -629,11 +667,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const groups = capped.groups;
 
   const represented = capped.events.reduce((n, e) => n + (e.count ?? 1), 0);
-  const kinds: string[] = [];
-  if (sawUal) kinds.push("m365-ual");
-  if (sawSignin) kinds.push("entra-signin");
-  if (sawAudit) kinds.push("entra-audit");
-  const format = kinds.length > 1 ? "mixed" : (kinds[0] ?? "empty");
+  const format = m365Format(sawUal, sawSignin, sawAudit);
 
   return {
     events,
@@ -650,4 +684,12 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     repairs,
     ...(undated.rows ? { undatedRows: undated } : {}),
   };
+}
+
+/** "m365-ual" | "entra-signin" | "entra-audit" | "mixed" | "empty", from the kinds a parse saw. */
+export function m365Format(ual: boolean, signin: boolean, audit: boolean): string {
+  const kinds = [ual ? "m365-ual" : "", signin ? "entra-signin" : "", audit ? "entra-audit" : ""].filter(
+    Boolean,
+  );
+  return kinds.length > 1 ? "mixed" : (kinds[0] ?? "empty");
 }

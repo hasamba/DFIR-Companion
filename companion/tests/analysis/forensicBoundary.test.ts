@@ -579,3 +579,84 @@ describe("the Sigma dry-run reads both timelines but feeds no AI and writes noth
       );
   });
 });
+
+describe("a streamed cloud import writes the super-timeline and never reads it (#2303)", () => {
+  // The streaming cloud import appends Info/Low rows straight to the super-timeline (the sandbox
+  // precedent), after the tagger's severity rules had their chance to raise them. The rows must stay
+  // where the model cannot see them: the import only appends and reads the row count for its room;
+  // it never queries, scans or promotes, and its super rows never enter the forensic delta.
+  const MODULES = [
+    "../../src/analysis/ingest/cloudStreamImport.ts",
+    "../../src/analysis/ingest/cloudStreamBatch.ts",
+    "../../src/analysis/ingest/cloudStreamProviders.ts",
+    "../../src/analysis/ingest/cloudStreamSpray.ts",
+    "../../src/analysis/cloudOutputBudget.ts",
+    "../../src/analysis/cloudStreamPreGrade.ts",
+  ];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("touches the super-timeline store only to append and to read its row count", () => {
+    for (const rel of MODULES) {
+      const calls = [...read(rel).matchAll(/superTimelineStore[?!]?\.(\w+)\(|\bstore\.(\w+)\(/g)].map(
+        (m) => m[1] ?? m[2],
+      );
+      for (const c of calls.filter(Boolean))
+        expect(
+          [
+            "appendReporting",
+            "meta",
+            "classify",
+            "commit",
+            "recordMembers",
+            "append",
+            "queryWindow",
+            "retentionHours",
+          ],
+          `${rel} calls ${c}`,
+        ).toContain(c);
+      expect(read(rel), rel).not.toMatch(/eventBatches|\.query\(|promoteSuperTimeline|scanSuper/);
+    }
+  });
+
+  it("imports nothing AI-related", () => {
+    for (const rel of MODULES)
+      for (const [, spec] of read(rel).matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+  });
+
+  it("its super-timeline rows never enter the forensic timeline", async () => {
+    const { CloudRecordStore } = await import("../../src/analysis/cloudRecordStore.js");
+    const { writeFile } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "dfir-fb-stream-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const superTimelineStore = new SuperTimelineStore(cases);
+    const pipeline = new AnalysisPipeline({
+      stateStore: new StateStore(cases),
+      superTimelineStore,
+      cloudRecordStore: new CloudRecordStore(cases),
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const rows = Array.from({ length: 6 }, (_, i) => ({
+      Id: `id-${i}`,
+      CreationTime: "2026-10-01T10:00:00",
+      Operation: "UserLoggedIn",
+      Workload: "AzureActiveDirectory",
+      RecordType: 15,
+      UserId: `u${i}@example.com`,
+      ClientIP: "192.0.2.4",
+    }));
+    const path = join(root, "ual.json");
+    await writeFile(path, JSON.stringify(rows));
+    const { state, disclosure } = await pipeline.importCloudFile("c1", "m365", path, {
+      label: "ual.json",
+      idPrefix: "fb",
+      importedAt: "2026-10-02T00:00:00Z",
+    });
+    expect(disclosure.superWritten).toBe(6);
+    const superIds = (await superTimelineStore.query("c1", { limit: 50 })).events.map((e) => e.id);
+    expect(superIds.length).toBe(6);
+    const forensicIds = new Set(state.forensicTimeline.map((e) => e.id));
+    for (const id of superIds) expect(forensicIds.has(id)).toBe(false);
+  });
+});

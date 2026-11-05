@@ -89,6 +89,9 @@ export const importMetaSchema = z.object({
     .nullable()
     .optional()
     .catch(undefined),
+  // A streamed cloud import's own account of itself (#2303): what it aggregated, capped, skipped or
+  // repaired, as sentences (cloudStreamDisclosure.ts). Optional/lenient; absent for other imports.
+  streamDisclosure: z.array(z.string()).optional().catch(undefined),
   // Proactive FP-pattern propagation (investigation-guidance #15b): new events from THIS import that
   // reproduce a known false-positive pattern, surfaced as a one-click "review & bulk-mark" banner
   // suggestion (never auto-applied). Optional/lenient; absent on older files and imports with no match.
@@ -145,6 +148,7 @@ export interface ImportRecord {
   path?: "deterministic" | "ai"; // which extraction path ran (#10)
   fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
   truncation?: ImportMeta["truncation"]; // cap-hit template truncation (#10 trigger b)
+  streamDisclosure?: string[]; // a streamed cloud import's disclosure (#2303)
 }
 
 /**
@@ -225,6 +229,7 @@ export class ImportMetaStore {
       path: rec.path ?? "",
       fpPropagation: rec.fpPropagation ?? [],
       truncation: rec.truncation ?? null,
+      ...(rec.streamDisclosure?.length ? { streamDisclosure: rec.streamDisclosure } : {}),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;

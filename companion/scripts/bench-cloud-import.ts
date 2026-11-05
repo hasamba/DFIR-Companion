@@ -62,6 +62,7 @@ const CASE_ID = "bench";
 
 interface ServerResult {
   forensicEvents: number;
+  superRows: number;
   hmEvents: number;
   hmCountSum: number;
   hmLineageEvents: number;
@@ -164,8 +165,10 @@ async function server(): Promise<void> {
     const hm = state.forensicTimeline.filter((e) => e.severity === "High" || e.severity === "Medium");
     const isLineage = (e: (typeof hm)[number]) => e.description.startsWith("AWS credential lineage");
     const usage = process.resourceUsage();
+    const superRows = (await rt.superTimelineStore.meta(CASE_ID)).rows;
     const result: ServerResult = {
       forensicEvents: state.forensicTimeline.length,
+      superRows,
       hmEvents: hm.filter((e) => !isLineage(e)).length,
       hmCountSum: hm.filter((e) => !isLineage(e)).reduce((n, e) => n + (e.count ?? 1), 0),
       hmLineageEvents: hm.filter(isLineage).length,
@@ -230,13 +233,26 @@ function post(
   });
 }
 
-/** The files one run imports. A CloudTrail set is decompressed first: the companion cannot read gzip. */
+/**
+ * The files one run imports. Since #2303 a CloudTrail set is offered as downloaded (`.json.gz`, read
+ * by the companion); `cloudtrail-realistic@gunzip` reproduces the #2300 baseline's decompress-first.
+ */
 async function runFiles(dir: string, run: string, work: string): Promise<{ files: string[]; note: string }> {
   if (run === "idle") return { files: [], note: "server start, no import: the floor every run sits on" };
+  if (run === "cloudtrail-realistic") {
+    const src = join(dir, run);
+    const gz = readdirSync(src)
+      .filter((f) => f.endsWith(".json.gz"))
+      .sort();
+    return {
+      files: gz.map((f) => join(src, f)),
+      note: `${gz.length} objects imported as downloaded (.json.gz)`,
+    };
+  }
   const split = /^(.+)@(\d+)$/.exec(run);
   if (split) return splitFile(join(dir, split[1]), Number(split[2]), work);
-  if (run !== "cloudtrail-realistic") return { files: [join(dir, run)], note: "" };
-  const src = join(dir, run);
+  if (run !== "cloudtrail-realistic@gunzip") return { files: [join(dir, run)], note: "" };
+  const src = join(dir, "cloudtrail-realistic");
   const out = join(work, "gunzipped");
   mkdirSync(out, { recursive: true });
   const gz = readdirSync(src)
@@ -350,7 +366,8 @@ async function oneRun(
   const port = Number(await next("READY"));
   try {
     for (const file of files) {
-      const large = statSync(file).size > LARGE_FILE_BYTES;
+      // The dashboard sends a file over 200 MB — and, since #2303, any gzip file — by server path.
+      const large = statSync(file).size > LARGE_FILE_BYTES || file.endsWith(".gz");
       const res = large
         ? await post(port, `/cases/${CASE_ID}/import-file`, JSON.stringify({ path: file }))
         : await post(port, `/cases/${CASE_ID}/import`, JSON.stringify({ filename: basename(file) }), file);
@@ -414,12 +431,12 @@ async function parent(): Promise<void> {
   >;
   const results: Array<Record<string, unknown>> = [];
   for (const run of runs) {
-    const { files: _files, ...reference } = manifest[run.replace(/\.(csv|jsonl)(@\d+)?$/, "")] ?? {};
+    const { files: _files, ...reference } = manifest[run.replace(/\.(csv|jsonl)(@\d+)?$|@gunzip$/, "")] ?? {};
     const row = { ...(await oneRun(dir, run, heapMb, timeoutMin)), reference };
     results.push(row);
     console.log(JSON.stringify(row));
   }
-  writeFileSync(join(dir, `results-${Date.now()}.json`), JSON.stringify(results, null, 2));
+  writeFileSync(join(arg("out") ?? dir, `results-${Date.now()}.json`), JSON.stringify(results, null, 2));
 }
 
 (process.argv.includes("--server") ? server() : parent()).catch((err) => {

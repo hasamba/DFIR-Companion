@@ -9,7 +9,8 @@ import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
 import { hasParseProgress, isAiDependent } from "./importKinds.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
-import { importPlasoFileLogged } from "./importPlasoStream.js";
+import { runDiskImport } from "./importCloudStream.js";
+import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
@@ -119,8 +120,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         );
         try {
           let text: string | undefined;
-          if (parameters.streaming && parameters.kind === "plaso") {
-            await importPlasoFileLogged(ctx, job.caseId, artifactPath, parameters.storedName, base);
+          // Plaso and a streamed cloud export (#2303) re-read the stored file from disk, as the first run did.
+          if (parameters.streaming && (parameters.kind === "plaso" || isStreamKind(parameters.kind))) {
+            await runDiskImport(ctx, parameters.kind, job.caseId, artifactPath, parameters.storedName, base);
           } else {
             text = decodeImportedText(await readFile(artifactPath)); // BOM-aware, as the first run read it
             await ctx.dispatchImport(parameters.kind, job.caseId, text, base);
