@@ -257,4 +257,24 @@ describe("closeTruncatedJsonArray", () => {
       expect(JSON.parse(out!), label).toEqual(rows(complete, extra));
     }
   });
+
+  it("closes a truncated single-wrapper object to its last whole array element (#2317)", () => {
+    const recs = rows(5, { cmd: "x { y }" });
+    const whole = JSON.stringify({ Records: recs });
+    const cut = whole.indexOf('"id":3') + '"id":3,"nested":{"a":1}'.length;
+    const out = closeTruncatedJsonArray(whole.slice(0, cut));
+    expect(out).not.toBeNull();
+    expect(JSON.parse(out!)).toEqual({ Records: rows(3, { cmd: "x { y }" }) });
+    // A cut inside the first element, or a whole object, yields nothing.
+    expect(closeTruncatedJsonArray(whole.slice(0, whole.indexOf('"nested"') + 12))).toBeNull();
+    expect(closeTruncatedJsonArray(whole)).toBeNull();
+  });
+
+  it("still repairs a top-level array as before and ignores other object shapes (#2317)", () => {
+    const whole = JSON.stringify(rows(4));
+    const out = closeTruncatedJsonArray(whole.slice(0, whole.indexOf('"id":3') + 5));
+    expect(JSON.parse(out!)).toEqual(rows(3));
+    const other = JSON.stringify({ meta: { a: 1 }, Records: rows(5) });
+    expect(closeTruncatedJsonArray(other.slice(0, other.length - 30))).toBeNull();
+  });
 });

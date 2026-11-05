@@ -32,7 +32,6 @@ import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import {
-  extractRecords,
   aggregateEvents,
   cleanIp,
   addIoc,
@@ -51,6 +50,8 @@ import {
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
 import { gateRecords, gateRows, isDuplicateRecord, type CloudRecordParseOptions } from "./cloudRecordGate.js";
+import { readCloudRecords, cloudTrailConsoleRow } from "./cloudRecords.js";
+import type { JsonRepairs } from "./tolerantJson.js";
 
 type Row = Record<string, unknown>;
 
@@ -79,6 +80,8 @@ export interface AwsParseResult {
   sigmaRowsMatched?: number;
   /** Per-upload coverage drafts (#1063) — never part of the timeline; consumed once by the caller and stored outside InvestigationState. */
   coverage: CloudCoverageDraft[];
+  /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
+  repairs?: JsonRepairs;
 }
 
 interface ActionDef {
@@ -579,9 +582,22 @@ function withReplicaRecords(event: MappedEvent, members: ReadonlyArray<{ event: 
   };
 }
 
+// JSON (tolerant) or the console "Event history" CSV, its rows rebuilt as CloudTrail records (#2302).
 export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsParseResult {
+  // Pre-read by the ingest layer (#2301) or read here; either way the same reader (#2302).
+  const { records, repairs } = opts.records
+    ? { records: opts.records, repairs: opts.repairs }
+    : readCloudTrailRecords(text);
+  return { ...parseTrailRecords(records, text, opts), repairs };
+}
+
+/** The upload's CloudTrail records: JSON (tolerant) or the console CSV rebuilt as records. */
+export function readCloudTrailRecords(text: string): ReturnType<typeof readCloudRecords> {
+  return readCloudRecords(text, cloudTrailConsoleRow);
+}
+
+function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions): AwsParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const records = opts.records ?? extractRecords(text).records;
   const total = records.length;
   const gate = opts.recordGate;
   if (total === 0) {

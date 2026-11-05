@@ -15,6 +15,7 @@ import type { MappedEvent } from "./siemImport.js";
 import type { CloudRecordIdentity } from "./cloudRecordIdentity.js";
 import type { RecordVerdict } from "./cloudRecordStore.js";
 import type { AggregateProvenance } from "./eventAggregate.js";
+import type { JsonRepairs } from "./tolerantJson.js";
 
 export interface RecordGate {
   identities: readonly CloudRecordIdentity[]; // by record index
@@ -24,6 +25,7 @@ export interface RecordGate {
 /** What a gated cloud parser accepts from the ingest layer (cloudRecordIngest.ts). */
 export interface CloudRecordParseOptions {
   records?: Array<Record<string, unknown>>; // pre-extracted, so the upload is read once
+  repairs?: JsonRepairs; // what the tolerant reader repaired while pre-reading them (#2302)
   recordGate?: RecordGate; // the case ledger's verdict per record
   provenance?: AggregateProvenance; // aggregate → source-record membership sink
 }

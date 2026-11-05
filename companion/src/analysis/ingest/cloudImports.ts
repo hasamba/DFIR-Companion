@@ -1,7 +1,3 @@
-import { parseCloudTrail, type AwsImportOptions } from "../awsImport.js";
-import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudActivityImport.js";
-import { extractRecords } from "../siemImport.js";
-import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
 import {
   cloudRecordNote,
   planCloudRecords,
@@ -33,6 +29,8 @@ import { recordParsedImport } from "./parsedDebug.js";
 import { sigmaImportNote } from "../sigmaImportGrade.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
+import { undatedRowsNote } from "../m365ExportAdapters.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
  * outside InvestigationState, so it travels beside it rather than inside the delta. */
@@ -70,15 +68,17 @@ export async function importM365(
   // One Sigma snapshot for this whole import, taken before parsing (#2204).
   const sigma = ctx.opts.sigmaGrader?.snapshot();
   // Dedup against the case's record ledger BEFORE aggregation (#2301).
-  const records = extractM365Records(text);
-  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () => m365RecordIdentities(records));
+  const prepared = extractM365Records(text);
+  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
+    m365RecordIdentities(prepared.normalized),
+  );
   recordCloudRecordDebug(plan, opts.debug);
   const dedupNote = cloudRecordNote(plan);
   const parsedRaw = parseM365Audit(text, {
     ...opts.m365,
     debug: opts.debug,
     sigma,
-    records,
+    prepared,
     recordGate: plan.gate,
     provenance: plan.provenance,
   });
@@ -111,7 +111,14 @@ export async function importM365(
         opts,
         "Microsoft 365",
         parsed.total,
-        [dedupNote, retentionNote].filter(Boolean).join("; ") || undefined,
+        [
+          dedupNote,
+          retentionNote,
+          describeJsonRepairs(parsed.repairs),
+          undatedRowsNote(parsed.undatedRows).slice(2),
+        ]
+          .filter(Boolean)
+          .join("; ") || undefined,
       ),
       coverage: parsed.coverage,
     };
@@ -134,7 +141,9 @@ export async function importM365(
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
       (dedupNote ? `, ${dedupNote}` : "") +
-      (retentionNote ? `; ${retentionNote}` : ""),
+      (retentionNote ? `; ${retentionNote}` : "") +
+      jsonRepairNote(parsed.repairs) +
+      undatedRowsNote(parsed.undatedRows),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -535,154 +544,6 @@ export async function importLeapp(
     opts.onProgress?.(1, 1);
     return state;
   });
-}
-
-// Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
-// severity derived from the action (IAM persistence, logging/detection tampering, S3
-// exposure, secrets access) + denied/root/console-failure bumps; the caller IP → IOC.
-export async function importAws(
-  ctx: ImportContext,
-  caseId: string,
-  text: string,
-  opts: {
-    label: string;
-    idPrefix: string; // unique per import (e.g. "a3") so ids never collide
-    importedAt: string;
-    aws?: AwsImportOptions;
-    minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
-    debug?: ImportDebugRecorder;
-    onProgress?: (done: number, total: number) => void;
-  },
-): Promise<ImportWithCoverage> {
-  // One Sigma snapshot for this whole import, taken before parsing (#2204).
-  const sigma = ctx.opts.sigmaGrader?.snapshot();
-  const { records } = extractRecords(text);
-  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
-    records.map((rec) => cloudRecordIdentity("cloudtrail", rec)),
-  );
-  recordCloudRecordDebug(plan, opts.debug);
-  const dedupNote = cloudRecordNote(plan);
-  const parsedRaw = parseCloudTrail(text, {
-    ...opts.aws,
-    debug: opts.debug,
-    sigma,
-    records,
-    recordGate: plan.gate,
-    provenance: plan.provenance,
-  });
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return {
-      state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total, dedupNote || undefined),
-      coverage: parsed.coverage,
-    };
-
-  const raw = {
-    findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-    mitreTechniques: [],
-    forensicEvents: parsed.events.map((e, i) => ({
-      ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
-      sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
-    })),
-    threadsOpened: [],
-    threadsClosed: [],
-    timelineNote:
-      `AWS CloudTrail import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
-      describeFloor(parsedRaw.events.length, parsed.events.length) +
-      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)` +
-      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
-      (dedupNote ? `, ${dedupNote}` : ""),
-    summary: "",
-  };
-  const delta = deltaSchema.parse(raw);
-
-  const state = await ctx.withStateLock(caseId, async () => {
-    const s = await mergeAndSaveDelta(ctx, caseId, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    opts.onProgress?.(1, 1);
-    return s;
-  });
-  await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
-  return { state, coverage: parsed.coverage };
-}
-
-// Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
-// is routed (GCP / Azure) and mapped, severity derived from the action (+ denied bump); the
-// caller IP → IOC and the principal email is surfaced for the asset graph.
-export async function importCloudActivity(
-  ctx: ImportContext,
-  caseId: string,
-  text: string,
-  opts: {
-    label: string;
-    idPrefix: string; // unique per import (e.g. "g3") so ids never collide
-    importedAt: string;
-    cloud?: CloudActivityImportOptions;
-    minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
-    debug?: ImportDebugRecorder;
-    onProgress?: (done: number, total: number) => void;
-  },
-): Promise<ImportWithCoverage> {
-  const { records } = extractRecords(text);
-  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
-    records.map((rec) => cloudRecordIdentity(cloudActivityRecordProvider(rec), rec)),
-  );
-  recordCloudRecordDebug(plan, opts.debug);
-  const dedupNote = cloudRecordNote(plan);
-  const parsedRaw = parseCloudActivity(text, {
-    ...opts.cloud,
-    debug: opts.debug,
-    records,
-    recordGate: plan.gate,
-    provenance: plan.provenance,
-  });
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return {
-      state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total, dedupNote || undefined),
-      coverage: parsed.coverage,
-    };
-
-  const raw = {
-    findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-    mitreTechniques: [],
-    forensicEvents: parsed.events.map((e, i) => ({
-      ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
-      sources: e.sources?.length ? e.sources : ["Cloud Audit"],
-    })),
-    threadsOpened: [],
-    threadsClosed: [],
-    timelineNote:
-      `Cloud activity import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
-      describeFloor(parsedRaw.events.length, parsed.events.length) +
-      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)` +
-      (dedupNote ? `, ${dedupNote}` : ""),
-    summary: "",
-  };
-  const delta = deltaSchema.parse(raw);
-
-  const state = await ctx.withStateLock(caseId, async () => {
-    const s = await mergeAndSaveDelta(ctx, caseId, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    opts.onProgress?.(1, 1);
-    return s;
-  });
-  await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
-  return { state, coverage: parsed.coverage };
 }
 
 // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit

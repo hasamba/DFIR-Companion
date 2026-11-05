@@ -18,7 +18,9 @@
 // the description so the asset↔IoC graph picks up the account.
 
 import type { Severity } from "./stateTypes.js";
-import { parseCsv } from "./csvImport.js";
+import { readCloudRecords } from "./cloudRecords.js";
+import { adaptM365ExportRows, type UndatedRows } from "./m365ExportAdapters.js";
+import type { JsonRepairs } from "./tolerantJson.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
@@ -42,7 +44,6 @@ import {
   mapSpSignIn,
 } from "./entraAuditImport.js";
 import {
-  extractRecords,
   aggregateEvents,
   cleanIp,
   addIoc,
@@ -79,8 +80,8 @@ export interface M365ImportOptions {
    * their fields differ from what the azure/signinlogs and azure/auditlogs rules are written for.
    */
   sigma?: SigmaGradingSnapshot;
-  /** Pre-extracted, normalized records (#2301, `extractM365Records`), so the ingest layer reads once. */
-  records?: Row[];
+  /** The upload already read by `extractM365Records` (#2301), so the ingest layer reads it once. */
+  prepared?: M365Records;
   /** The case ledger's verdict per record (#2301): duplicates are skipped before aggregation. */
   recordGate?: RecordGate;
   /** Aggregate → source-record membership sink (#2301). */
@@ -104,6 +105,10 @@ export interface M365ParseResult {
   signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
   /** Rows a Sigma rule matched (#2204), for the import note; 0 without a snapshot. */
   sigmaRowsMatched?: number;
+  /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
+  repairs?: JsonRepairs;
+  /** Mailbox audit rows left without a time: the file's date order is unknown (#2302). */
+  undatedRows?: UndatedRows;
 }
 
 interface OpDef {
@@ -429,31 +434,22 @@ function mapSignIn(
 // Graph's directoryAudit.result is one of success | failure | timeout | unknownFutureValue, and a
 // non-Graph export may spell success as succeeded/OK. Each Graph value is its own outcome — a
 // timeout is not a failure — and only an absent or unrecognised value is "unknown".
-// ───────────────────────────── record extraction ─────────────────────────────
-
-function extractM365(text: string): Row[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  if (trimmed[0] === "[" || trimmed[0] === "{") {
-    return extractRecords(trimmed).records;
-  }
-  // CSV (Search-UnifiedAuditLog | Export-Csv): build row objects from the header.
-  const { headers, rows } = parseCsv(trimmed);
-  if (!headers.length) return [];
-  return rows.map((cols) => {
-    const r: Row = {};
-    headers.forEach((h, i) => {
-      r[h.trim()] = cols[i] ?? "";
-    });
-    return r;
-  });
-}
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-/** The upload's records, extracted and normalized — the ones parseM365Audit maps, in its order. */
-export function extractM365Records(text: string): Row[] {
-  return extractM365(text).map(normalizeRecord);
+/** The upload read once (#2301): the normalized records parseM365Audit maps, in its order. */
+export interface M365Records {
+  normalized: Row[];
+  repairs?: JsonRepairs;
+  undated: UndatedRows;
+}
+
+export function extractM365Records(text: string): M365Records {
+  // JSON (tolerant: BOM, `][`, trailing garbage) or CSV (Search-UnifiedAuditLog | Export-Csv) — #2302.
+  const { records, repairs } = readCloudRecords(text);
+  // Log Analytics and MES mailbox-audit columns are renamed into the shapes the mappers read (#2302).
+  const adapted = adaptM365ExportRows(records);
+  return { normalized: adapted.rows.map(normalizeRecord), repairs, undated: adapted.undated };
 }
 
 /** Each record's cloud identity (#2301), by the kind classify() reads it as. */
@@ -463,7 +459,7 @@ export function m365RecordIdentities(records: readonly Row[]): CloudRecordIdenti
 
 export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365ParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const normalized = opts.records ?? extractM365Records(text);
+  const { normalized, repairs, undated } = opts.prepared ?? extractM365Records(text);
   const total = normalized.length;
   if (total === 0) {
     return {
@@ -477,6 +473,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       coverage: [],
       sprayCandidates: [],
       signInObservations: [],
+      repairs,
     };
   }
 
@@ -650,5 +647,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     sprayCandidates,
     signInObservations,
     sigmaRowsMatched: sigmaRows,
+    repairs,
+    ...(undated.rows ? { undatedRows: undated } : {}),
   };
 }

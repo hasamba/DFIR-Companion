@@ -5,7 +5,12 @@
 // route accepts it (the timeline note then says "N duplicate record(s) skipped") instead of
 // refusing it as unparseable.
 
-import { parseCloudTrail, type AwsImportOptions, type AwsParseResult } from "../awsImport.js";
+import {
+  parseCloudTrail,
+  readCloudTrailRecords,
+  type AwsImportOptions,
+  type AwsParseResult,
+} from "../awsImport.js";
 import {
   parseCloudActivity,
   type CloudActivityImportOptions,
@@ -18,7 +23,7 @@ import {
   type M365ImportOptions,
   type M365ParseResult,
 } from "../m365Import.js";
-import { extractRecords } from "../siemImport.js";
+import { readCloudRecords } from "../cloudRecords.js";
 import {
   cloudActivityRecordProvider,
   cloudRecordIdentity,
@@ -52,9 +57,9 @@ export async function previewM365(
   text: string,
   opts?: M365ImportOptions,
 ): Promise<Previewed<M365ParseResult>> {
-  const records = extractM365Records(text);
-  const { gate, duplicates } = await gateFor(store, caseId, () => m365RecordIdentities(records));
-  return withDuplicates(parseM365Audit(text, { ...opts, records, recordGate: gate }), duplicates);
+  const prepared = extractM365Records(text);
+  const { gate, duplicates } = await gateFor(store, caseId, () => m365RecordIdentities(prepared.normalized));
+  return withDuplicates(parseM365Audit(text, { ...opts, prepared, recordGate: gate }), duplicates);
 }
 
 export async function previewCloudTrail(
@@ -63,10 +68,10 @@ export async function previewCloudTrail(
   text: string,
   opts?: AwsImportOptions,
 ): Promise<Previewed<AwsParseResult>> {
-  const { records } = extractRecords(text);
+  const { records, repairs } = readCloudTrailRecords(text);
   const identify = () => records.map((rec: Row) => cloudRecordIdentity("cloudtrail", rec));
   const { gate, duplicates } = await gateFor(store, caseId, identify);
-  return withDuplicates(parseCloudTrail(text, { ...opts, records, recordGate: gate }), duplicates);
+  return withDuplicates(parseCloudTrail(text, { ...opts, records, repairs, recordGate: gate }), duplicates);
 }
 
 export async function previewCloudActivity(
@@ -75,11 +80,14 @@ export async function previewCloudActivity(
   text: string,
   opts?: CloudActivityImportOptions,
 ): Promise<Previewed<CloudActivityParseResult>> {
-  const { records } = extractRecords(text);
+  const { records, repairs } = readCloudRecords(text);
   const identify = () =>
     records.map((rec: Row) => cloudRecordIdentity(cloudActivityRecordProvider(rec), rec));
   const { gate, duplicates } = await gateFor(store, caseId, identify);
-  return withDuplicates(parseCloudActivity(text, { ...opts, records, recordGate: gate }), duplicates);
+  return withDuplicates(
+    parseCloudActivity(text, { ...opts, records, repairs, recordGate: gate }),
+    duplicates,
+  );
 }
 
 /** One import name for the routes, so routes/import.ts (at its size ledger) adds a single line. */

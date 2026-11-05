@@ -224,6 +224,9 @@ export function parseJsonLoose(raw: string): unknown {
   }
 }
 
+/** An object whose first key opens an array: `{"Records":[` (#2317). */
+const WRAPPER_HEAD = /^\{\s*"(?:[^"\\]|\\.)*"\s*:\s*\[/;
+
 /**
  * Complete a JSON ARRAY that was cut off mid-way — a head sample, not a file (#953).
  *
@@ -241,7 +244,9 @@ export function parseJsonLoose(raw: string): unknown {
  *   • depth-aware — only a `}` that returns to array depth ends a top-level element, so a cut
  *     inside the FIRST record yields null rather than a partial object that a generic signature
  *     would claim as some other kind;
- *   • array-only — a partial single object is never a safe sample, so `{`-rooted text is null.
+ *   • array-only — a partial single object is never a safe sample, so `{`-rooted text is null,
+ *     EXCEPT an object whose first key opens an array (`{"Records":[`, a CloudTrail S3 object —
+ *     #2317): that is closed back to its last whole element and `]}`. Any other `{` root stays null.
  *
  * Returns the completed array text (complete elements only), or null when the text already
  * parses, is not array-rooted, or holds no complete element. Callers keep the raw sample on null,
@@ -249,7 +254,12 @@ export function parseJsonLoose(raw: string): unknown {
  */
 export function closeTruncatedJsonArray(text: string): string | null {
   const t = text.trimStart();
-  if (t[0] !== "[") return null;
+  // Array-rooted, or an object whose FIRST key holds an array ({"Records":[ ... — a CloudTrail S3
+  // object, #2317). `base` is the depth of the array's elements; `tail` closes what we opened.
+  const wrapped = t[0] === "{" ? WRAPPER_HEAD.exec(t) : null;
+  if (t[0] !== "[" && !wrapped) return null;
+  const base = wrapped ? 2 : 1;
+  const tail = wrapped ? "]}" : "]";
   try {
     JSON.parse(t);
     return null; // whole: nothing to complete
@@ -272,9 +282,9 @@ export function closeTruncatedJsonArray(text: string): string | null {
     else if (c === "{" || c === "[") depth++;
     else if (c === "}" || c === "]") {
       depth--;
-      if (depth === 1) lastComplete = i + 1; // back at array depth: one element is whole
+      if (depth === base) lastComplete = i + 1; // back at array depth: one element is whole
     }
   }
-  if (lastComplete <= 1) return null; // no complete element before the cut
-  return `${t.slice(0, lastComplete)}]`;
+  if (lastComplete <= (wrapped ? wrapped[0].length : 1)) return null; // no complete element before the cut
+  return `${t.slice(0, lastComplete)}${tail}`;
 }
