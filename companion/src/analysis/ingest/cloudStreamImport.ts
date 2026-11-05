@@ -38,7 +38,7 @@ import {
   SUMMARY_RECORDS_MAX,
   SUPER_ROWS_PER_IMPORT_MAX,
 } from "../cloudStreamLimits.js";
-import { mergeAndSaveDelta, noteEmptyImport } from "./importState.js";
+import { commitDelta, noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import {
   memberProvenance,
@@ -72,6 +72,7 @@ export interface CloudStreamImportOptions {
   /** Test seams; production uses the named constants. */
   batchRecords?: number;
   summaryRecords?: number;
+  iocsMax?: number;
 }
 
 export interface CloudStreamImportResult {
@@ -142,7 +143,7 @@ export async function importCloudFile(
 ): Promise<CloudStreamImportResult> {
   const provider = streamProvider(kind);
   const size = opts.batchRecords ?? CLOUD_STREAM_BATCH_RECORDS;
-  const acc = newAccumulator(opts.summaryRecords ?? SUMMARY_RECORDS_MAX);
+  const acc = newAccumulator(opts.summaryRecords ?? SUMMARY_RECORDS_MAX, opts.iocsMax);
   const ledgerBatch = `${opts.idPrefix}.${randomUUID().slice(0, 8)}`;
   try {
     const pre = await preliminaryPass(path, provider, size, opts.signal);
@@ -217,6 +218,8 @@ async function finish(
     output,
     superWritten: acc.superWritten,
     superEvicted: acc.superEvicted,
+    iocsDropped: acc.iocsDropped,
+    iocsMax: acc.iocsMax,
     summaryWindow: {
       max: acc.windowMax,
       records: acc.window.length,
@@ -255,14 +258,13 @@ async function finish(
       undated,
     summary: "",
   });
-  const state = await ctx.withStateLock(caseId, async () => {
-    const s = await mergeAndSaveDelta(ctx, caseId, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    opts.onProgress?.(1, 1);
-    return s;
+  // commitDelta checks the signal INSIDE the lock: a cancel that lands while the import waits for
+  // the case (behind another write) merges nothing, and the caller's cleanup deactivates the ledger.
+  const state = await commitDelta(ctx, caseId, delta, {
+    label: opts.label,
+    importedAt: opts.importedAt,
+    onProgress: opts.onProgress,
+    signal: opts.signal,
   });
   return { state, coverage, disclosure };
 }

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
+import { pollFor } from "../helpers/poll.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { CloudRecordStore } from "../../src/analysis/cloudRecordStore.js";
 import { AuthObservationStore } from "../../src/analysis/authObservationStore.js";
@@ -16,7 +18,7 @@ import { compileRuleset } from "../../src/analysis/taggerRules.js";
 // batches, bounded output with disclosure, Info to the super-timeline, gzip, and a failed import
 // leaving no record "seen".
 
-async function setup() {
+async function setup(withLock = false) {
   const root = await mkdtemp(join(tmpdir(), "dfir-cloudstreamimp-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -29,6 +31,7 @@ async function setup() {
     cloudRecordStore,
     cloudCoverageStore,
     authObservationStore: new AuthObservationStore(cases, 168),
+    ...(withLock ? { stateLock: new StateLock() } : {}),
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const write = async (name: string, body: string | Buffer) => {
@@ -254,5 +257,52 @@ describe("streaming cloud import (#2303)", () => {
     const { disclosure } = await pipeline.importCloudFile("c1", "m365", path, opts("x2"));
     expect(disclosure.duplicates).toBe(0);
     expect(disclosure.individual.high).toBe(5);
+  });
+
+  it("discloses IOCs over the per-import cap instead of dropping them silently (review)", async () => {
+    const { pipeline, cloudCoverageStore, write } = await setup();
+    const rows = Array.from({ length: 7 }, (_, i) =>
+      ual(i + 1, "New-InboxRule", `a${i}@example.com`, `192.0.2.${i + 1}`),
+    );
+    const { state, disclosure } = await pipeline.importCloudFile(
+      "c1",
+      "m365",
+      await write("ioc.json", JSON.stringify(rows)),
+      opts("ic", { iocsMax: 3 }),
+    );
+    expect(disclosure.iocsDropped).toBeGreaterThanOrEqual(4);
+    expect(state.timeline.at(-1)!.description).toMatch(/IOC\(s\) over the per-import cap of 3 not kept/);
+    const coverage = await cloudCoverageStore.load("c1");
+    expect(coverage[0].importDisclosure?.join(" ")).toMatch(/over the per-import cap of 3/);
+  });
+
+  it("a cancel while waiting for the final state lock merges nothing and leaves no record seen (review)", async () => {
+    const { pipeline, cloudRecordStore, write } = await setup(true);
+    const path = await write("lk.json", JSON.stringify([ual(1, "New-InboxRule"), ual(2, "New-InboxRule")]));
+    const ctx = (
+      pipeline as unknown as { importCtx: { withStateLock<T>(c: string, f: () => Promise<T>): Promise<T> } }
+    ).importCtx;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const holder = ctx.withStateLock("c1", () => held);
+    const ctrl = new AbortController();
+    const run = pipeline.importCloudFile("c1", "m365", path, { ...opts("lk"), signal: ctrl.signal });
+    // Wait until the batches are committed (the import is now queued behind the held lock).
+    const { cloudRecordIdentity } = await import("../../src/analysis/cloudRecordIdentity.js");
+    const { normalizeRecord } = await import("../../src/analysis/m365Import.js");
+    const id = cloudRecordIdentity("ual", normalizeRecord(ual(1, "New-InboxRule")));
+    await pollFor("the batches committed to the ledger", async () =>
+      (await cloudRecordStore.classify("c1", [id])).duplicates ? true : null,
+    );
+    ctrl.abort();
+    release();
+    await holder;
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    const state = await (pipeline as unknown as { opts: { stateStore: StateStore } }).opts.stateStore.load(
+      "c1",
+    );
+    expect(state.forensicTimeline).toHaveLength(0);
+    const again = await pipeline.importCloudFile("c1", "m365", path, opts("lk2"));
+    expect(again.disclosure.duplicates).toBe(0);
   });
 });

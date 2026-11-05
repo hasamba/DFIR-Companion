@@ -29,6 +29,9 @@ type Row = Record<string, unknown>;
 export interface StreamAccumulator {
   coverage: CloudCoverageDraft[];
   iocs: Map<string, SiemIoc>;
+  iocsMax: number;
+  /** Distinct IOCs past `iocsMax`, counted for the disclosure (never kept). */
+  iocsDropped: number;
   formats: Set<string>;
   sigmaRows: number;
   duplicates: number;
@@ -45,10 +48,12 @@ export interface StreamAccumulator {
   superSeq: number;
 }
 
-export function newAccumulator(windowMax: number): StreamAccumulator {
+export function newAccumulator(windowMax: number, iocsMax = STREAM_IOCS_MAX): StreamAccumulator {
   return {
     coverage: [],
     iocs: new Map(),
+    iocsMax,
+    iocsDropped: 0,
     formats: new Set(),
     sigmaRows: 0,
     duplicates: 0,
@@ -166,7 +171,10 @@ function noteMapping(m: ReturnType<StreamProvider["map"]>, acc: StreamAccumulato
   acc.sigmaRows += m.sigmaRows;
   for (const ioc of m.iocs) {
     const k = `${ioc.type}|${ioc.value}`;
-    if (!acc.iocs.has(k) && acc.iocs.size < STREAM_IOCS_MAX) acc.iocs.set(k, ioc);
+    if (acc.iocs.has(k)) continue;
+    // Over the cap, a distinct IOC is counted (a later batch may repeat it: counted once per batch).
+    if (acc.iocs.size < acc.iocsMax) acc.iocs.set(k, ioc);
+    else acc.iocsDropped++;
   }
 }
 

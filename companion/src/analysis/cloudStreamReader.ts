@@ -122,8 +122,9 @@ function byteStream(
   gzip: boolean,
   counters: { read: { bytes: number }; decoded: { bytes: number } },
   limits: GzipLimits,
+  chunkBytes = 1 << 20,
 ): Readable {
-  const file = createReadStream(path, { highWaterMark: 1 << 20 });
+  const file = createReadStream(path, { highWaterMark: chunkBytes });
   const counted = file.pipe(
     gzip ? countingStream(counters.read) : countingStream(counters.read, counters.decoded),
   );
@@ -180,21 +181,41 @@ async function* textChunks(
   }
 }
 
-/** Lines of the decoded text, `\r\n` or `\n` terminated. */
-async function* linesOf(chunks: AsyncIterable<string>): AsyncGenerator<string> {
+const stripCr = (line: string): string => (line.endsWith("\r") ? line.slice(0, -1) : line);
+
+/**
+ * Lines of the decoded text, `\r\n` or `\n` terminated. A line longer than `maxChars` is never
+ * assembled: the moment its pending text passes the bound it is dropped, the rest of it up to the
+ * next newline is skipped, and `onOversize` counts it — the CSV twin of the JSON scanner's bound.
+ */
+async function* linesOf(
+  chunks: AsyncIterable<string>,
+  maxChars: number,
+  onOversize: () => void,
+): AsyncGenerator<string> {
   let rest = "";
+  let skipping = false;
   for await (const chunk of chunks) {
-    const text = rest + chunk;
     let start = 0;
     for (;;) {
-      const nl = text.indexOf("\n", start);
-      if (nl < 0) break;
-      yield text.charCodeAt(nl - 1) === 13 ? text.slice(start, nl - 1) : text.slice(start, nl);
+      const nl = chunk.indexOf("\n", start);
+      if (nl < 0) {
+        if (!skipping && rest.length + chunk.length - start > maxChars) {
+          skipping = true;
+          rest = "";
+          onOversize();
+        } else if (!skipping) rest += chunk.slice(start);
+        break;
+      }
+      const line = skipping ? null : rest + chunk.slice(start, nl);
+      if (line !== null && line.length > maxChars) onOversize();
+      else if (line !== null) yield stripCr(line);
+      skipping = false;
+      rest = "";
       start = nl + 1;
     }
-    rest = text.slice(start);
   }
-  if (rest) yield rest.endsWith("\r") ? rest.slice(0, -1) : rest;
+  if (rest && !skipping) yield stripCr(rest);
 }
 
 /** The first chunk(s) up to the first non-whitespace character, and that character. */
@@ -236,11 +257,15 @@ async function* jsonRecords(chunks: AsyncIterable<string>, stats: CloudStreamSta
   stats.oversizeSkipped += counts.oversizeSkipped;
 }
 
-async function* csvRecords(chunks: AsyncIterable<string>, adapt: (row: Row) => Row): AsyncGenerator<Row> {
+async function* csvRecords(
+  chunks: AsyncIterable<string>,
+  adapt: (row: Row) => Row,
+  maxChars: number,
+  stats: CloudStreamStats,
+): AsyncGenerator<Row> {
   let headers: string[] | null = null;
-  for await (const cols of parseCsvRecordsFromLines(linesOf(chunks), {
-    maxRecordChars: CSV_RECORD_MAX_CHARS,
-  })) {
+  const lines = linesOf(chunks, maxChars, () => stats.oversizeSkipped++);
+  for await (const cols of parseCsvRecordsFromLines(lines, { maxRecordChars: maxChars })) {
     if (!headers) {
       headers = cols.map((h) => h.trim());
       continue;
@@ -262,7 +287,13 @@ export interface CloudRecordStream {
  */
 export async function openCloudRecordStream(
   path: string,
-  opts: { adapt?: (row: Row) => Row; gzipLimits?: GzipLimits } = {},
+  opts: {
+    adapt?: (row: Row) => Row;
+    gzipLimits?: GzipLimits;
+    /** Test seams: the per-record CSV bound and the file read size. */
+    csvRecordMaxChars?: number;
+    chunkBytes?: number;
+  } = {},
 ): Promise<CloudRecordStream> {
   const gzip = await fileIsGzip(path);
   const counters = { read: { bytes: 0 }, decoded: { bytes: 0 } };
@@ -277,7 +308,7 @@ export async function openCloudRecordStream(
     oversizeSkipped: 0,
     textHash: "",
   };
-  const bytes = byteStream(path, gzip, counters, opts.gzipLimits ?? DEFAULT_GZIP_LIMITS);
+  const bytes = byteStream(path, gzip, counters, opts.gzipLimits ?? DEFAULT_GZIP_LIMITS, opts.chunkBytes);
   const text = textChunks(bytes, () => (stats.repairs.bomStripped = 1), hash);
   async function* all(): AsyncGenerator<Row> {
     try {
@@ -287,7 +318,10 @@ export async function openCloudRecordStream(
       const chunks = replay(buffered, it, done);
       const isJson = first === "[" || first === "{";
       if (!isJson) stats.format = "csv";
-      const rows = isJson ? jsonRecords(chunks, stats) : csvRecords(chunks, opts.adapt ?? ((r) => r));
+      const csvMax = opts.csvRecordMaxChars ?? CSV_RECORD_MAX_CHARS;
+      const rows = isJson
+        ? jsonRecords(chunks, stats)
+        : csvRecords(chunks, opts.adapt ?? ((r) => r), csvMax, stats);
       for await (const row of rows) {
         stats.records++;
         yield row;

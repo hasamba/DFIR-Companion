@@ -124,6 +124,19 @@ describe("openCloudRecordStream (#2303)", () => {
     await expect(readAll(path, { gzipLimits: limits })).rejects.toThrow(/decompression bomb/);
   });
 
+  it("skips and counts a CSV line over the per-record bound without assembling it (review)", async () => {
+    const huge = "x".repeat(5_000);
+    const csv = `a,b\n1,2\n3,${huge}\n4,5\n`;
+    const path = await file("big.csv", csv);
+    // Fed in small chunks, so the line's size is exceeded while it is still being read.
+    const { rows, stats } = await readAll(path, { csvRecordMaxChars: 1_000, chunkBytes: 64 });
+    expect(rows).toEqual([
+      { a: "1", b: "2" },
+      { a: "4", b: "5" },
+    ]);
+    expect(stats.oversizeSkipped).toBe(1);
+  });
+
   it("an empty file yields nothing", async () => {
     const { rows, stats } = await readAll(await file("e.json", "  \n "));
     expect(rows).toEqual([]);

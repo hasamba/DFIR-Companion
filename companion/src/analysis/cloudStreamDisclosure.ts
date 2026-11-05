@@ -29,6 +29,8 @@ export const cloudStreamDisclosureSchema = z.object({
   superWritten: z.number().int().nonnegative(),
   superBudgetExceeded: z.number().int().nonnegative(),
   superEvicted: z.number().int().nonnegative(),
+  iocsDropped: z.number().int().nonnegative(),
+  iocsMax: z.number().int().nonnegative(),
   summaryWindow: z.object({ max: z.number(), records: z.number(), truncated: z.boolean() }),
   sprayHistoryTruncated: z.boolean(),
   budgets: z.object({
@@ -57,6 +59,8 @@ export interface DisclosureInputs {
   output: OutputDisclosure;
   superWritten: number;
   superEvicted: number;
+  iocsDropped: number;
+  iocsMax: number;
   summaryWindow: { max: number; records: number; truncated: boolean };
   sprayHistoryTruncated: boolean;
 }
@@ -86,6 +90,8 @@ export function buildCloudStreamDisclosure(i: DisclosureInputs): CloudStreamDisc
     superWritten: i.superWritten,
     superBudgetExceeded: o.superBudgetExceeded,
     superEvicted: i.superEvicted,
+    iocsDropped: i.iocsDropped,
+    iocsMax: i.iocsMax,
     summaryWindow: { ...i.summaryWindow },
     sprayHistoryTruncated: i.sprayHistoryTruncated,
     budgets: { ...o.budgets },
@@ -122,6 +128,9 @@ export function describeCloudStreamDisclosure(d: CloudStreamDisclosure): string[
       ? `${n(d.superBudgetExceeded)} Low/Info row(s) not written individually — the super-timeline room for this import (${n(d.budgets.superRows)} rows) was used; they are in the aggregated rows and the stored evidence file`
       : "",
     d.superEvicted ? `the super-timeline cap evicted ${n(d.superEvicted)} older row(s)` : "",
+    d.iocsDropped
+      ? `${n(d.iocsDropped)} IOC(s) over the per-import cap of ${n(d.iocsMax)} not kept — the rows that name them are still imported`
+      : "",
     d.duplicates ? `${n(d.duplicates)} duplicate record(s) skipped` : "",
     d.conflicts ? `${n(d.conflicts)} conflicting record(s) kept and flagged` : "",
     d.unmapped ? `${n(d.unmapped)} record(s) not recognised and not mapped` : "",
