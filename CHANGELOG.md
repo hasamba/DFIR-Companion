@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Writer lock across hosts** — a team-mode lock left by another container or machine is now judged by its heartbeat, so a live server's lock is never stolen and a dead one is recovered after a minute (closes #2287)
 - **Settings values with # or quotes** — saved as written and read the same at restart and on Test / reconnect; re-save any secret that contains # (closes #2280)
 - **"Run <tool>" no longer archives records added during the run** — a raw drop file that changed while its tool ran, then could not be moved, stays eligible to be processed again instead of being held back and archived unread (closes #2283)
 - **Drop folder no longer re-imports a stuck file** — a file whose move out of `drop/` fails is held back and reported instead of being imported again every two polls (closes #2281)
