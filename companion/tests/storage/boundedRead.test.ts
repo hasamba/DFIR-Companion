@@ -3,7 +3,7 @@ import { mkdtemp, open, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileTooLargeError, readHandleBounded } from "../../src/storage/boundedRead.js";
+import { FileTooLargeError, isStringTooLongError, readHandleBounded } from "../../src/storage/boundedRead.js";
 
 // #921 review. A `stat(path)` followed by `readFile(path)` checks one inode and reads whatever
 // occupies the path afterwards, so a swap between the two defeats a size cap. The check and the
@@ -68,4 +68,23 @@ describe("readHandleBounded", () => {
       await fh.close();
     }
   });
+});
+
+// #2316 — Node 22 words V8's string-limit failure differently from Node <= 20; the import route's
+// 413 hint only matched the old wording.
+describe("isStringTooLongError", () => {
+  it.each([
+    ["Node <= 20", new Error("Invalid string length")],
+    ["Node 22", new Error("Cannot create a string longer than 0x1fffffe8 characters")],
+    ["error code", Object.assign(new Error("x"), { code: "ERR_STRING_TOO_LONG" })],
+  ])("matches the %s shape", (_name, err) => {
+    expect(isStringTooLongError(err)).toBe(true);
+  });
+
+  it.each([[new Error("EACCES: permission denied")], [undefined], [null], ["Invalid string length"]])(
+    "does not match unrelated failures (%#)",
+    (err) => {
+      expect(isStringTooLongError(err)).toBe(false);
+    },
+  );
 });
