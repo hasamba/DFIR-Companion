@@ -114,6 +114,7 @@ const OUTSIDE_GATE_GLOBAL_PREFIXES = [
   "/mcp/",
   "/notifications",
   "/server-sets", // the global server set store beside the cases root, no case folder
+  "/cloud-accounts", // the global cloud account vault beside the cases root, no case folder (#2307)
   "/diagnostics/",
   "/system/",
   "/log-level",

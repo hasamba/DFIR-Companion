@@ -74,8 +74,9 @@ COPY docker-entrypoint.sh /usr/local/bin/dfir-entrypoint
 # with setpriv before exec'ing the server (see docker-entrypoint.sh). /app stays root-owned
 # on purpose: a compromised server must not be able to rewrite its own code.
 RUN chmod +x /usr/local/bin/dfir-entrypoint \
-  && mkdir -p /data/cases /data/server-sets /data/ocr-cache /out \
-  && chown -R node:node /data /out
+  && mkdir -p /data/cases /data/server-sets /data/cloud-accounts /data/ocr-cache /out /run/dfir-vault \
+  && chown -R node:node /data /out /run/dfir-vault \
+  && chmod 700 /run/dfir-vault
 # Strip SUID/SGID bits from the base image (su, mount, passwd, …). Nothing at runtime needs them,
 # and a compromised server must not be able to exec one to regain root (#2155). The entrypoint's
 # setpriv --no-new-privs closes the same path; this removes the binaries' privilege outright.
@@ -87,6 +88,9 @@ ENV DFIR_OCR_CACHE=/data/ocr-cache
 # working directory — root-owned /app/companion here — so the node-run server could not
 # save it. Put it on the node-writable data tree instead (persisted if /data is mounted).
 ENV DFIR_ENV_FILE=/data/companion.env
+# The cloud account vault key (#2307) lives on its own mount, OUTSIDE /data: a backup of the data
+# tree then holds the sealed cloud credentials but never the key that opens them.
+ENV DFIR_CLOUD_VAULT_KEY_FILE=/run/dfir-vault/cloud-vault.key
 
 EXPOSE 4773
 # Bake liveness into the image so plain `docker run` / Portainer / Watchtower users get health

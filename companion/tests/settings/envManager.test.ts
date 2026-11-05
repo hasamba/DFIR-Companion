@@ -98,10 +98,13 @@ describe("validateEnvUpdates", () => {
       DFIR_PORT: "80",
       DFIR_DEMO_MODE: "true",
       DFIR_LOG_DIR: "/tmp",
+      DFIR_CLOUD_VAULT_KEY_FILE: "/data/cloud-vault.key",
     });
     expect(rejected).toEqual(
       expect.arrayContaining([
         "DFIR_CASES_ROOT",
+        // The cloud vault key stays out of the data folder; the dashboard may never move it (#2307).
+        "DFIR_CLOUD_VAULT_KEY_FILE",
         "DFIR_ENV_FILE",
         "DFIR_ANONYMIZE",
         "DFIR_ALLOWED_ORIGINS",
@@ -115,7 +118,7 @@ describe("validateEnvUpdates", () => {
         "DFIR_LOG_DIR",
       ]),
     );
-    expect(rejected).toHaveLength(10);
+    expect(rejected).toHaveLength(11);
   });
 
   it("rejects unknown keys not on any writable prefix", () => {

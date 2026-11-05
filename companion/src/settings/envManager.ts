@@ -43,6 +43,9 @@ const DENIED_ENV_KEYS = new Set([
   "DFIR_HTTPS_PLAIN_HTTP",
   "DFIR_HTTPS_PLAIN_HTTP_PORT",
   "DFIR_HTTPS_PLAIN_HTTP_HOST",
+  // The cloud vault key file (#2307): a writable path would let the dashboard move the key into the
+  // data folder it is kept out of, or point it at a key it chose. Deployment-only.
+  "DFIR_CLOUD_VAULT_KEY_FILE",
 ]);
 
 /**

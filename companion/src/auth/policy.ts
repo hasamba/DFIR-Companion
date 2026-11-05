@@ -58,6 +58,8 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/velociraptor",
   "/importers",
   "/server-sets",
+  // Cloud accounts (#2307): every method, GET included — the list names credentials. #2308 rescopes.
+  "/cloud-accounts",
 ];
 const CASE_ADMIN_SEGMENTS = [
   "/password",

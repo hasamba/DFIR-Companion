@@ -51,6 +51,9 @@ import { KevStore } from "../analysis/kevStore.js";
 import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
+import { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
+import { cloudAccountStoreDir } from "../integrations/cloudAccounts/storePath.js";
+import { VaultKeyFile, defaultVaultKeyPath } from "../integrations/cloudAccounts/vaultKeyFile.js";
 import { registerCollectorEndpoints } from "./collectorEndpoints.js";
 import { deriveServerSetKey } from "../integrations/serverSets/secretBox.js";
 import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
@@ -281,6 +284,12 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     deriveServerSetKey(loadOrCreateInstanceSecret(casesRoot)),
   );
   registerCollectorEndpoints(serverSetStore);
+  // Cloud accounts (#2307): sealed with a key FILE outside the data folder, read lazily — nothing
+  // is created here; the key is made on first use.
+  const cloudAccountVault = new CloudAccountVault(
+    cloudAccountStoreDir(casesRoot),
+    new VaultKeyFile(defaultVaultKeyPath(process.env), logLine),
+  );
   const appVersion = getAppVersion();
   const updateRepo = (() => {
     const envRepo = process.env.DFIR_UPDATE_REPO;
@@ -509,6 +518,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     kevStore,
     updateCheckStore,
     serverSetStore,
+    cloudAccountVault,
     appVersion,
     updateRepo,
     notificationStore,

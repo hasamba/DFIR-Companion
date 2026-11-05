@@ -157,7 +157,7 @@ if [ "$(id -u)" = "0" ]; then
   handoff_entry_untrusted() { handoff_dir_untrusted "$1"; }
   # The GLOBAL store subdirectories the server creates beside the cases root (runtimeStores.ts);
   # team-auth lives at DFIR_AUTH_DATA_DIR or a sibling .dfir-auth-<hash>.
-  KNOWN_STORES="bundles dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates server-sets tagger templates tools updates velociraptor whitelist"
+  KNOWN_STORES="bundles cloud-accounts dashboard-views diagnostics importers incident-types kev logs notifications nsrl report-templates server-sets tagger templates tools updates velociraptor whitelist"
 
   # Writable-path overrides may be saved through Settings into the dotenv file that the server
   # loads only AFTER the privilege drop, so they are absent from THIS process's environment. Read
@@ -300,6 +300,21 @@ if [ "$(id -u)" = "0" ]; then
   if is_from_env_file DFIR_OCR_CACHE; then handoff_dir_untrusted "${DFIR_OCR_CACHE:-/data/ocr-cache}"; else handoff_dir "${DFIR_OCR_CACHE:-/data/ocr-cache}"; fi
   if [ -n "${DFIR_OCR_DEBUG_DIR:-}" ]; then
     if is_from_env_file DFIR_OCR_DEBUG_DIR; then handoff_dir_untrusted "$DFIR_OCR_DEBUG_DIR"; else handoff_dir "$DFIR_OCR_DEBUG_DIR"; fi
+  fi
+
+  # The cloud vault key mount (#2307). /run is a system directory deny_chown refuses, so this ONE
+  # literal, image-defined path is handed over by name: its entry and, when present, the key file —
+  # never a recursive walk, never a path from the dashboard-writable dotenv file. A fresh
+  # Docker-created mount is root-owned; without this the server could not make the key on first use.
+  # Once the operator remounts it read-only, the chown fails harmlessly (the key is already owned).
+  vault_dir=/run/dfir-vault
+  if [ -d "$vault_dir" ] && [ ! -L "$vault_dir" ]; then
+    chown -h "$run_uid:$run_gid" "$vault_dir" 2>/dev/null || true
+    chmod 700 "$vault_dir" 2>/dev/null || true
+    if [ -f "$vault_dir/cloud-vault.key" ] && [ ! -L "$vault_dir/cloud-vault.key" ]; then
+      chown -h "$run_uid:$run_gid" "$vault_dir/cloud-vault.key" 2>/dev/null || true
+      chmod 600 "$vault_dir/cloud-vault.key" 2>/dev/null || true  # the server refuses a wider key
+    fi
   fi
 
   # The Settings/setup .env dir must be writable so POST /settings/env's atomic write succeeds.

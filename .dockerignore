@@ -6,6 +6,9 @@
 **/.env
 cases/
 addon/
+# The cloud vault key and the sealed cloud accounts (#2307): never in an image layer.
+cloud-vault-key/
+cloud-accounts/
 .git
 .gitignore
 .gitattributes

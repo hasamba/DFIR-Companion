@@ -61,6 +61,8 @@ dist-choco/
 # Docker Compose runtime folders beside docker-compose.yml: encrypted server-set keys, team-mode
 # password hashes and session digests, and the Settings file with API keys.
 /server-sets/
+/cloud-accounts/
+/cloud-vault-key/
 /auth/
 /data/
 

@@ -383,6 +383,8 @@
        run from initCaseConnect(), the case-load path they belong to, not from the inline script. -->
   <script src="/js/dashboard-server-sets.js"></script>
   <script src="/js/dashboard-case-servers.js"></script>
+  <!-- Settings → Cloud accounts (#2307). initCloudAccounts() runs from initCaseConnect(). -->
+  <script src="/js/dashboard-cloud-accounts.js"></script>
   <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
   <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
@@ -2271,6 +2273,70 @@
             <span id="timesketchReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
             <span data-server-set-default class="server-set-default-label"></span>
           </div>
+        </div>
+        <div class="settings-group-head">Cloud accounts (AWS, Microsoft, GCP)</div>
+        <div id="cloudAccountsPanel">
+          <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">A cloud account holds the credential that cloud collection uses for one AWS account, Microsoft tenant or GCP project. Prefer short-lived credentials: an AWS role, GCP impersonation, a Microsoft app certificate. Credentials are encrypted with a <strong>vault key file that is not in the data folder</strong>. Back the key file up on its own and keep it out of data backups. If the key file is lost, add the accounts again; case evidence is not affected.</p>
+          <p id="cloudVaultKeyLine" role="status" data-safe-style="font-size:12px;margin:2px 0 6px"></p>
+          <div id="cloudAccountsList" role="list"></div>
+          <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <button id="cloudAccountAddBtn" type="button">+ Add cloud account</button>
+            <button id="cloudVaultResetBtn" type="button" data-tip="Deletes every cloud account and its stored credential. The key file and all case evidence stay.">Reset vault</button>
+            <span id="cloudAccountsMsg" role="status" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+          </div>
+          <form id="cloudAccountForm" hidden data-safe-style="margin-top:8px; padding:8px; border:1px solid var(--border-color, #444); border-radius:6px;">
+            <div class="sfield-row">
+              <div class="sfield"><label for="caName">Name</label><input id="caName" maxlength="80" required /></div>
+              <div class="sfield"><label for="caProvider">Provider</label><select id="caProvider"><option value="aws">AWS account</option><option value="microsoft">Microsoft tenant</option><option value="gcp">GCP project</option></select></div>
+            </div>
+            <p id="caStoredSecrets" role="status" data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 6px"></p>
+            <div data-cloud-provider="aws">
+              <div class="sfield-row">
+                <div class="sfield"><label for="caAwsAuthMode">Sign-in<span class="sfield-hint">Assume a role (preferred, sessions of at most 1 hour) or use an access key alone</span></label><select id="caAwsAuthMode"><option value="assume-role">Assume role</option><option value="access-key">Access key only</option></select></div>
+                <div class="sfield"><label for="caAwsRegion">Region<span class="sfield-hint">Optional, for example eu-west-1</span></label><input id="caAwsRegion" /></div>
+              </div>
+              <div class="sfield-row">
+                <div class="sfield"><label for="caAwsRoleArn">Role ARN<span class="sfield-hint">Assume role only</span></label><input id="caAwsRoleArn" placeholder="arn:aws:iam::123456789012:role/name" /></div>
+                <div class="sfield"><label for="caAwsExternalId">External ID<span class="sfield-hint">Assume role only, optional</span></label><input id="caAwsExternalId" type="password" autocomplete="new-password" /></div>
+              </div>
+              <div class="sfield-row">
+                <div class="sfield"><label for="caAwsBase">Base credential<span class="sfield-hint">What calls AssumeRole: a stored access key, or the machine's own profile or instance role</span></label><select id="caAwsBase"><option value="access-key">Stored access key</option><option value="ambient">Ambient profile or instance role</option></select></div>
+                <div class="sfield"><label for="caAwsSession">Session seconds<span class="sfield-hint">900–3600, default 3600</span></label><input id="caAwsSession" inputmode="numeric" placeholder="3600" /></div>
+              </div>
+              <div class="sfield-row3">
+                <div class="sfield"><label for="caAwsKeyId">Access key ID</label><input id="caAwsKeyId" type="password" autocomplete="new-password" /></div>
+                <div class="sfield"><label for="caAwsSecret">Secret access key</label><input id="caAwsSecret" type="password" autocomplete="new-password" /></div>
+                <div class="sfield"><label for="caAwsSessionToken">Session token<span class="sfield-hint">Access key only, optional</span></label><input id="caAwsSessionToken" type="password" autocomplete="new-password" /></div>
+              </div>
+            </div>
+            <div data-cloud-provider="microsoft" hidden>
+              <div class="sfield-row3">
+                <div class="sfield"><label for="caMsTenant">Tenant ID<span class="sfield-hint">GUID or domain</span></label><input id="caMsTenant" /></div>
+                <div class="sfield"><label for="caMsClient">Application (client) ID</label><input id="caMsClient" /></div>
+                <div class="sfield"><label for="caMsFormat">Certificate<span class="sfield-hint">App-only sign-in with a certificate</span></label><select id="caMsFormat"><option value="pem">PEM (certificate and private key)</option><option value="pfx">PFX file and password</option></select></div>
+              </div>
+              <div class="sfield"><label for="caMsPem">Certificate PEM<span class="sfield-hint">Paste the certificate and its unencrypted private key</span></label><textarea id="caMsPem" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+              <div class="sfield-row">
+                <div class="sfield"><label for="caMsPfx">PFX file</label><input id="caMsPfx" type="file" accept=".pfx,.p12" /></div>
+                <div class="sfield"><label for="caMsPfxPassword">PFX password</label><input id="caMsPfxPassword" type="password" autocomplete="new-password" /></div>
+              </div>
+            </div>
+            <div data-cloud-provider="gcp" hidden>
+              <div class="sfield-row">
+                <div class="sfield"><label for="caGcpProject">Project ID</label><input id="caGcpProject" /></div>
+                <div class="sfield"><label for="caGcpAuthMode">Sign-in</label><select id="caGcpAuthMode"><option value="impersonation">Impersonate a service account (preferred)</option><option value="service-account-key">Service-account key</option></select></div>
+              </div>
+              <div class="sfield-row">
+                <div class="sfield"><label for="caGcpTarget">Service account to impersonate<span class="sfield-hint">Impersonation only</span></label><input id="caGcpTarget" placeholder="name@project.iam.gserviceaccount.com" /></div>
+                <div class="sfield"><label for="caGcpBase">Base credential<span class="sfield-hint">Impersonation only: a stored key, or the machine's own credentials</span></label><select id="caGcpBase"><option value="ambient">Ambient credentials</option><option value="service-account-key">Stored service-account key</option></select></div>
+              </div>
+              <div class="sfield"><label for="caGcpKeyJson">Service-account key JSON</label><textarea id="caGcpKeyJson" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+            </div>
+            <div data-safe-style="display:flex; gap:8px; margin-top:6px;">
+              <button id="caSave" type="submit">Save</button>
+              <button id="caCancel" type="button">Cancel</button>
+            </div>
+          </form>
         </div>
         <div class="settings-group-head" data-essential>Notion</div>
         <div class="sfield-row" data-essential>
