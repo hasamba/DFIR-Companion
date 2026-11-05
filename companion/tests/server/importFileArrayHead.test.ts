@@ -111,4 +111,42 @@ describe("POST /cases/:id/import-file — a JSON-array export larger than the he
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/could not detect/);
   });
+
+  it("detects a CloudTrail {Records:[...]} object over the sample size as aws (#2317)", async () => {
+    const { app, root } = await makeApp();
+    const record = (i: number) => ({
+      eventVersion: "1.08",
+      userIdentity: {
+        type: "IAMUser",
+        principalId: "AIDAEXAMPLE",
+        arn: "arn:aws:iam::123456789012:user/alice",
+        accountId: "123456789012",
+        userName: "alice",
+      },
+      eventTime: "2026-01-01T00:00:00Z",
+      eventSource: "iam.amazonaws.com",
+      eventName: "ListUsers",
+      awsRegion: "us-east-1",
+      sourceIPAddress: "203.0.113.7",
+      userAgent: "aws-cli/2.0 example.com",
+      requestParameters: null,
+      responseElements: null,
+      requestID: `req-${i}`,
+      eventID: `evt-${i}`,
+      readOnly: true,
+      eventType: "AwsApiCall",
+      recipientAccountId: "123456789012",
+    });
+    const one = JSON.stringify(record(0));
+    const n = Math.ceil((2 * IMPORT_FILE_HEAD_BYTES) / (one.length + 1)) + 1;
+    const body = JSON.stringify({ Records: Array.from({ length: n }, (_, i) => record(i)) });
+    expect(body.length).toBeGreaterThan(IMPORT_FILE_HEAD_BYTES);
+    const path = join(root, "cloudtrail-object.json");
+    await writeFile(path, body, "utf8");
+
+    const res = await request(app).post("/cases/c1/import-file").send({ path });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(res.body).toMatchObject({ kind: "aws" });
+  });
 });
