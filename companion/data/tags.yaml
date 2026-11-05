@@ -685,6 +685,104 @@ ts_m365_set_mailbox:
   tags: ['exchange', 'mailbox_config']
   view: 'M365 Exchange'
 
+# ── Configuration snapshots: OBSERVED STATE, not actions (#2305) ──
+# A Microsoft-Extractor-Suite snapshot (InboxRules / TransportRules / OAuth permissions / MFA CSV)
+# says what the tenant held when it was collected — never when it began or who set it. Its rows read
+# "M365 snapshot: …" / "Entra snapshot: …", which the action rules above never match, and these rules
+# never match an action. The importer grades the same way, so the grade holds with the tagger off.
+snap_inbox_rule_external_forward:
+  description: Observed inbox rule forwards or redirects mail outside the tenant's domains
+  all:
+    - { field: description, regex: '^M365 snapshot: inbox rule on ', flags: 'i' }
+    - { field: description, regex: '(?:forwards(?: as attachment)? to|redirects to) [^;]*\(outside the tenant', flags: 'i' }
+  tags: ['observed_state', 'exchange', 'mailbox_forwarding']
+  mitre: ['T1114.003']
+  severity: High
+  view: 'Observed state (snapshots)'
+
+snap_inbox_rule_hides_mail:
+  description: Observed inbox rule deletes mail or moves it to a folder used to hide it (RSS Feeds, Archive, …)
+  all:
+    - { field: description, regex: '^M365 snapshot: inbox rule on ', flags: 'i' }
+  any:
+    - { field: description, regex: '(?:^|[ ,;—])(?:soft-)?deletes the message', flags: 'i' }
+    - { field: description, regex: 'moves to "(?:RSS Feeds|RSS Subscriptions|Conversation History|Archive|Deleted Items|Junk Email)"', flags: 'i' }
+  tags: ['observed_state', 'exchange', 'inbox_rule', 'hides_mail']
+  mitre: ['T1564.008']
+  severity: Medium
+  view: 'Observed state (snapshots)'
+
+snap_transport_rule_redirect:
+  description: Observed transport rule redirects or copies mail (High when the address is outside the tenant)
+  all:
+    - { field: description, regex: '^M365 snapshot: transport rule ', flags: 'i' }
+    - { field: description, regex: '(?:redirects to|blind-copies to|copies to|adds as recipient) ', flags: 'i' }
+  tags: ['observed_state', 'exchange', 'transport_rule', 'mail_redirect']
+  mitre: ['T1114.003']
+  severity: Medium
+  view: 'Observed state (snapshots)'
+
+snap_transport_rule_external_redirect:
+  description: Observed transport rule redirects or copies mail outside the tenant's domains
+  all:
+    - { field: description, regex: '^M365 snapshot: transport rule ', flags: 'i' }
+    - { field: description, regex: '(?:redirects to|blind-copies to|copies to|adds as recipient) [^;]*\(outside the tenant', flags: 'i' }
+  tags: ['observed_state', 'exchange', 'transport_rule', 'mail_redirect']
+  mitre: ['T1114.003']
+  severity: High
+  view: 'Observed state (snapshots)'
+
+snap_transport_rule_deletes:
+  description: Observed transport rule deletes messages without notifying anyone
+  all:
+    - { field: description, regex: '^M365 snapshot: transport rule ', flags: 'i' }
+    - { field: description, regex: '(?:^|[ ,;—])deletes the message', flags: 'i' }
+  tags: ['observed_state', 'exchange', 'transport_rule', 'hides_mail']
+  mitre: ['T1564.008']
+  severity: Medium
+  view: 'Observed state (snapshots)'
+
+# The high-risk scope list is HIGH_RISK_SCOPES in analysis/cloudSnapshotGrants.ts — keep them equal.
+# The scope is matched in quotes, so Mail.ReadWrite.Shared is not Mail.ReadWrite.
+snap_oauth_high_risk_application:
+  description: Observed OAuth APPLICATION permission with a high-risk scope (acts on every mailbox / file without a user)
+  all:
+    - { field: description, regex: '^Entra snapshot: OAuth grant ', flags: 'i' }
+    - { field: description, regex: 'application permission "(?:Mail\.ReadWrite|Mail\.Send|MailboxSettings\.ReadWrite|full_access_as_app|Files\.ReadWrite\.All|Directory\.ReadWrite\.All|RoleManagement\.ReadWrite\.Directory|AppRoleAssignment\.ReadWrite\.All)"', flags: 'i' }
+  tags: ['observed_state', 'oauth', 'high_risk_scope']
+  mitre: ['T1528']
+  severity: High
+  view: 'Observed state (snapshots)'
+
+snap_oauth_high_risk_delegated:
+  description: Observed OAuth DELEGATED permission with a high-risk scope (bounded by the consenting user)
+  all:
+    - { field: description, regex: '^Entra snapshot: OAuth grant ', flags: 'i' }
+    - { field: description, regex: 'delegated permission "(?:Mail\.ReadWrite|Mail\.Send|MailboxSettings\.ReadWrite|full_access_as_app|Files\.ReadWrite\.All|Directory\.ReadWrite\.All|RoleManagement\.ReadWrite\.Directory|AppRoleAssignment\.ReadWrite\.All)"', flags: 'i' }
+  tags: ['observed_state', 'oauth', 'high_risk_scope']
+  mitre: ['T1528']
+  severity: Medium
+  view: 'Observed state (snapshots)'
+
+# Low on purpose: the snapshot cannot say whether Conditional Access or security defaults enforce MFA,
+# and a tenant with many such users must not flood the forensic timeline.
+snap_mfa_none_registered:
+  description: Observed account with no MFA method registered (enforcement by Conditional Access unknown)
+  all:
+    - { field: description, regex: '^Entra snapshot: MFA methods for ', flags: 'i' }
+    - { field: description, regex: ' — (?:state differs [^—]*now: )?no MFA method registered', flags: 'i' }
+  tags: ['observed_state', 'mfa', 'no_mfa']
+  severity: Low
+  view: 'Observed state (snapshots)'
+
+snap_state_changed:
+  description: A snapshot object's state differs from an earlier collection of the same object
+  any:
+    - { field: description, regex: '^(?:M365|Entra) snapshot: [^—]+ — state differs from the snapshot collected ', flags: 'i' }
+  tags: ['observed_state', 'state_changed']
+  severity: Low
+  view: 'Observed state (snapshots)'
+
 # ── User identity & account changes ──
 ts_m365_user_added:
   description: New user / guest created (Timesketch user_created guest_user)

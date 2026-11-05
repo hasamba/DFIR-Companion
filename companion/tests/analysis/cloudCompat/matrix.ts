@@ -56,7 +56,6 @@ const LA = { tool: "Log Analytics export", version: "—" };
 const DIAG = { tool: "Azure diagnostic settings", version: "—" };
 const AWS = { tool: "AWS CloudTrail", version: "—" };
 const GCP = { tool: "GCP Cloud Audit Logs", version: "—" };
-const SNAPSHOT = "none yet — configuration snapshot (#2305)";
 
 export const COMPAT_ROWS: readonly CompatRow[] = [
   // ── Microsoft-Extractor-Suite 4.1.0 ──
@@ -134,28 +133,31 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     ...MES,
     output: "InboxRules.csv",
     fixture: "mes-4.1.0/InboxRules.csv",
-    detectedToday: "csv",
-    expected: SNAPSHOT,
-    status: "unsupported",
-    note: "Goes to the generic AI CSV path.",
+    detectedToday: "cloudsnapshot",
+    expected: "cloudsnapshot",
+    status: "works",
+    parsed: { records: 2, shows: "inbox rule on user1@example.com — forwards to drop@example.com" },
+    note: "Observed state at collection, not actions (#2305): `RuleIdentity` + the mailbox + the rule name + an action column claim it.",
   },
   {
     ...MES,
     output: "TransportRules.csv",
     fixture: "mes-4.1.0/TransportRules.csv",
-    detectedToday: "csv",
-    expected: SNAPSHOT,
-    status: "unsupported",
-    note: "Goes to the generic AI CSV path.",
+    detectedToday: "cloudsnapshot",
+    expected: "cloudsnapshot",
+    status: "works",
+    parsed: { records: 1, shows: "transport rule — sets SCL -1 (the message skips spam filtering)" },
+    note: "Observed state (#2305): `Name` + `State` + `WhenChanged` + `Description` + `Mode`/`CreatedBy`/`Priority`. `WhenChanged` is detail only.",
   },
   {
     ...MES,
     output: "OAuth permissions CSV",
     fixture: "mes-4.1.0/OAuthPermissions.csv",
-    detectedToday: "csv",
-    expected: SNAPSHOT,
-    status: "unsupported",
-    note: "Goes to the generic AI CSV path.",
+    detectedToday: "cloudsnapshot",
+    expected: "cloudsnapshot",
+    status: "works",
+    parsed: { records: 1, shows: 'OAuth grant — delegated permission "Mail.Read"' },
+    note: "Observed state (#2305): `PermissionType` + `AppId` + `Permission` + `ConsentType`; one observation per app, scope and principal.",
   },
   {
     ...MES,
@@ -171,10 +173,11 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     ...MES,
     output: "MFA CSV",
     fixture: "mes-4.1.0/MFA-AuthenticationMethods.csv",
-    detectedToday: "csv",
-    expected: SNAPSHOT,
-    status: "unsupported",
-    note: "Goes to the generic AI CSV path.",
+    detectedToday: "cloudsnapshot",
+    expected: "cloudsnapshot",
+    status: "works",
+    parsed: { records: 2, shows: "MFA methods for user1@example.com — no MFA method registered" },
+    note: "Observed state (#2305): `MFAstatus` + the user + the method columns. Graded Low: Conditional Access enforcement is unknown.",
   },
   // ── DFIR-O365RC 2.0.x ──
   {

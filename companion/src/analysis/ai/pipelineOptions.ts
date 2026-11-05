@@ -47,6 +47,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { BulkImportSink } from "../ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { CloudStateStore } from "../cloudStateStore.js";
 import type { CloudRecordStore } from "../cloudRecordStore.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 import type { SynthMetaStore } from "../synthMeta.js";
@@ -95,6 +96,9 @@ export interface PipelineOptions {
   // spray whose attempts split across two uploads can still cross the threshold. Server-only
   // (absent in scripts/*) → the cross-upload pass is simply off, same as superTimelineStore.
   authObservationStore?: AuthObservationStore;
+  // Configuration-snapshot observations (#2305): what each MES snapshot already showed, so a re-import
+  // or an older snapshot adds nothing. Absent (scripts/tests) → every snapshot row reads as new.
+  cloudStateStore?: CloudStateStore;
   // Cloud-record dedup ledger + provenance relation (#2301): the M365, AWS and GCP / Azure Activity
   // importers skip records the case already holds and keep aggregate → record membership. Absent ->
   // no dedup, exactly the pre-#2301 behavior.

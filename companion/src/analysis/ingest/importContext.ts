@@ -4,6 +4,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { CloudStateStore } from "../cloudStateStore.js";
 import type { CloudRecordStore } from "../cloudRecordStore.js";
 import type { BulkImportSink } from "./velociraptorBulk.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
@@ -53,6 +54,9 @@ export interface ImportContext {
     // then skip the cross-upload pass entirely — exactly today's within-upload-only behavior, no
     // regression for a caller that doesn't wire it.
     authObservationStore?: AuthObservationStore;
+    // Configuration-snapshot observations (#2305). Optional for the same reason: without it every
+    // snapshot row reads as new and the import note says so.
+    cloudStateStore?: CloudStateStore;
     // Cloud-record dedup + provenance (#2301). Optional for the same reason: without it the cloud
     // importers neither dedup nor keep record provenance — the pre-#2301 behavior.
     cloudRecordStore?: CloudRecordStore;
@@ -102,6 +106,7 @@ export function buildImportOpts(source: {
   readonly onState?: (state: InvestigationState) => void;
   readonly superTimelineStore?: SuperTimelineStore;
   readonly authObservationStore?: AuthObservationStore;
+  readonly cloudStateStore?: CloudStateStore;
   readonly cloudRecordStore?: CloudRecordStore;
   readonly bulkImportSink?: BulkImportSink;
   readonly sigmaGrader?: SigmaImportGrader;
@@ -118,6 +123,9 @@ export function buildImportOpts(source: {
     },
     get authObservationStore() {
       return source.authObservationStore;
+    },
+    get cloudStateStore() {
+      return source.cloudStateStore;
     },
     get cloudRecordStore() {
       return source.cloudRecordStore;
