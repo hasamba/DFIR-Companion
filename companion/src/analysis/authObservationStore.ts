@@ -29,15 +29,29 @@ import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { sprayObservationKey, type SprayOutcome } from "./passwordSprayFanout.js";
 import type { OperationalMetricsStore } from "./operationalMetrics.js";
 
+// What one stored sign-in established (#2301): the spray pair (failed / success), an MFA
+// interruption (required, denied or timed out — kept for MFA-fatigue detection, #2306), or any
+// other outcome. Only failed/success rows ever feed the password-spray detector.
+export type AuthObservationOutcome = SprayOutcome | "interrupted" | "other";
+export type MfaDetail = "required" | "denied" | "timed out" | "approved";
+
 export interface StoredAuthObservation {
   timestamp: string; // ISO
   account: string;
-  sourceIp: string;
+  sourceIp: string; // "" when the record named none (never counted as a spray attempt)
   hostOrTenant: string;
-  outcome: SprayOutcome;
+  outcome: AuthObservationOutcome;
   locator: string; // this observation's own raw-record locator, from its own upload
   importer: string; // "ecar" | "m365"
   importBatch: string; // the importing call's own opts.idPrefix
+  // Sign-in detail (#2301), set by importers that read it (m365Import.ts via signInObservation.ts).
+  resultCode?: string;
+  mfaDetail?: MfaDetail;
+  authMethod?: string;
+  sessionId?: string;
+  correlationId?: string;
+  app?: string;
+  recordId?: string; // the record's cloud identity key (cloudRecordIdentity.ts)
 }
 
 export interface AuthObservationWindow {
@@ -45,6 +59,26 @@ export interface AuthObservationWindow {
   truncated: boolean; // true iff more rows existed in the window than AUTH_OBSERVATION_QUERY_MAX
 }
 
+/** One page of a tenant / account / time-window query, oldest first. */
+export interface AuthObservationPage {
+  observations: StoredAuthObservation[];
+  next: AuthObservationCursor | null; // null on the last page
+}
+export interface AuthObservationCursor {
+  ms: number;
+  rowId: number;
+}
+export interface AuthObservationQuery {
+  since?: string; // ISO, inclusive
+  until?: string; // ISO, inclusive
+  tenant?: string;
+  account?: string; // compared trimmed + lowercased
+  after?: AuthObservationCursor;
+  limit?: number; // per page; the worker bounds it
+}
+
+// Measured in EVIDENCE time (#2301): rows older than the newest stored observation minus this span
+// are pruned. Never the wall clock — an export of last year's activity is evidence, not stale.
 export const DEFAULT_AUTH_OBSERVATION_RETENTION_HOURS = 168; // 7 days
 // Bounds one query's memory. Matches SuperTimelineStore's own retention-cap order of magnitude
 // (DEFAULT_SUPER_MAX = 100_000) rather than a narrower figure, since a real tenant can produce
@@ -63,8 +97,11 @@ const PRUNE_THROTTLE_MS = 60 * 60 * 1000;
 // never carries a raw account name. Deliberately excludes importBatch: two uploads describing the
 // same real auth attempt (overlapping export windows, a re-uploaded file) must collapse to one
 // stored observation, or an overlapping re-export would inflate the distinct-account count.
+// A row that carries its cloud record id (#2301) is identified by that id instead: two MFA prompts
+// in the same second are two records, and the spray key alone would fold them into one.
 function observationId(o: StoredAuthObservation): string {
-  return createHash("sha256").update(sprayObservationKey(o)).digest("hex").slice(0, 16);
+  const key = o.recordId ? `record|${o.recordId}` : sprayObservationKey(o);
+  return createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
 export class AuthObservationStore {
@@ -93,15 +130,15 @@ export class AuthObservationStore {
     // concurrent append() for the same case (an import burst) from racing a duplicate prune while
     // the first is still in flight. On failure, roll the timestamp back to its previous value —
     // a transient worker error must not cost this case a full extra hour of accumulating expired
-    // rows before the next attempt.
+    // rows before the next attempt. The throttle is wall-clock (it paces work); the retention cut
+    // is evidence time (#2301): older than the newest stored observation minus the span.
     this.lastPrunedAtMs.set(caseId, now);
-    const beforeMs = now - this.retentionHoursValue * 3_600_000;
     try {
       await caseSqliteWorker.request<number>({
-        op: "pruneEntitiesBefore",
+        op: "pruneEntitiesBeforeNewest",
         dbPath,
         kind: KIND,
-        beforeMs,
+        spanMs: this.retentionHoursValue * 3_600_000,
       });
     } catch (err) {
       if (this.lastPrunedAtMs.get(caseId) === now) this.lastPrunedAtMs.set(caseId, last);
@@ -149,7 +186,12 @@ export class AuthObservationStore {
    * AUTH_OBSERVATION_QUERY_MAX — `truncated: true` when more rows existed in the window than the
    * cap, so a caller can disclose the bound rather than silently searching a partial history.
    */
-  async queryWindow(caseId: string, sinceIso: string): Promise<AuthObservationWindow> {
+  async queryWindow(
+    caseId: string,
+    sinceIso: string,
+    // Only failed/success rows with a source IP (#2301), filtered before the cap.
+    opts: { sprayOnly?: boolean } = {},
+  ): Promise<AuthObservationWindow> {
     const startedAt = performance.now();
     const dbPath = this.databasePath(caseId);
     const sinceMs = Date.parse(sinceIso);
@@ -161,6 +203,7 @@ export class AuthObservationStore {
       dbPath,
       sinceMs: Number.isFinite(sinceMs) ? sinceMs : 0,
       limit: AUTH_OBSERVATION_QUERY_MAX,
+      sprayOnly: opts.sprayOnly === true,
     });
     void this.operationalMetrics?.record({
       type: "query",
@@ -170,5 +213,29 @@ export class AuthObservationStore {
       rows: result.entities.length,
     });
     return { observations: result.entities, truncated: result.truncated };
+  }
+
+  /**
+   * One page of stored observations, oldest first, filtered by evidence-time window and optionally
+   * by tenant and account (#2301). Keyset-paged on (timestamp, row): walking `next` until it is null
+   * returns every matching row, however many — no fixed cap can hide part of a sequence.
+   */
+  async queryPage(caseId: string, query: AuthObservationQuery = {}): Promise<AuthObservationPage> {
+    const ms = (iso: string | undefined, fallback: number): number => {
+      const t = iso ? Date.parse(iso) : NaN;
+      return Number.isFinite(t) ? t : fallback;
+    };
+    return caseSqliteWorker.request<AuthObservationPage>({
+      op: "authObservationsPage",
+      dbPath: this.databasePath(caseId),
+      query: {
+        sinceMs: ms(query.since, 0),
+        untilMs: ms(query.until, 8.64e15),
+        tenant: query.tenant,
+        account: query.account,
+        after: query.after,
+        limit: query.limit,
+      },
+    });
   }
 }

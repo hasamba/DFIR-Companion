@@ -85,7 +85,10 @@ export interface SiemImportOptions {
 }
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
-export interface SiemEvent extends Pick<ForensicEvent, "origin" | "assetRecord" | "partlyReadArtifact"> {
+export interface SiemEvent extends Pick<
+  ForensicEvent,
+  "origin" | "assetRecord" | "partlyReadArtifact" | "sourceRecords"
+> {
   id: string;
   timestamp: string;
   description: string;
@@ -521,6 +524,13 @@ export interface MappedEvent extends Pick<ForensicEvent, "origin" | "assetRecord
   artifactName?: string;
   // Identity of the single log record behind this row (see SiemEvent.sourceRecordId); stripped again by the aggregator whenever rows collapse into a group.
   sourceRecordId?: string;
+  // The cloud record(s) this row was mapped from (#2301, cloudRecordGate.ts): identity keys (two for a
+  // merged cross-account CloudTrail pair), and whether one conflicts with an imported payload or has
+  // no provider id. Folded by the aggregator into the group's sourceRecords — never shown on the row.
+  recordRefs?: string[];
+  recordHashes?: string[]; // the payload hash of each recordRefs entry, same order
+  recordConflict?: boolean;
+  recordHashIdentified?: boolean;
   // Full, untruncated event message/detail (beyond the truncated `description`) when available.
   message?: string;
   // See SiemEvent.yearInferred. Set per PARSED LINE, so one export may carry both dated (RFC 5424)

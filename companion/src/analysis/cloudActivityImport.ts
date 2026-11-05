@@ -28,6 +28,7 @@ import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.j
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
+import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   aggregateEvents,
@@ -46,12 +47,13 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { gateRecords, gateRows, isDuplicateRecord, type CloudRecordParseOptions } from "./cloudRecordGate.js";
 import { readCloudRecords } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 
 type Row = Record<string, unknown>;
 
-export interface CloudActivityImportOptions {
+export interface CloudActivityImportOptions extends CloudRecordParseOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
@@ -446,25 +448,34 @@ function isAzure(rec: Row): boolean {
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 // JSON (tolerant) or a Log Analytics AzureActivity CSV, whose rows carry the same columns as its
-// JSON export and map the same way (#2302).
+// JSON export and map the same way (#2302). A diagnostic-settings (PT1H.json) Activity record names
+// its caller in `identity.claims`; it is filled in as REST's `caller` first (#2304).
 export function parseCloudActivity(
   text: string,
   opts: CloudActivityImportOptions = {},
 ): CloudActivityParseResult {
-  const { records, repairs } = readCloudRecords(text);
-  return { ...parseActivityRecords(records, text, opts), repairs };
+  // Pre-read by the ingest layer (#2301) or read here; either way the same reader (#2302).
+  // The diagnostic-settings adapter (#2304) is index-preserving, so #2301's record gate stays aligned.
+  const { records, repairs } = opts.records
+    ? { records: opts.records, repairs: opts.repairs }
+    : readCloudRecords(text);
+  return { ...parseActivityRecords(records.map(adaptAzureDiagnosticActivity), text, opts), repairs };
 }
 
 function parseActivityRecords(
-  records: Row[],
+  all: Row[],
   text: string,
   opts: CloudActivityImportOptions,
 ): CloudActivityParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const total = records.length;
+  const total = all.length;
   if (total === 0) {
     return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", coverage: [] };
   }
+  const gate = opts.recordGate;
+  // Every NEW record (#2301): a duplicate is blanked in place, so it maps to nothing, joins no
+  // summary, and every `record:<index>` locator still points into the original upload.
+  const records = gateRecords(gate, all);
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
@@ -473,20 +484,24 @@ function parseActivityRecords(
   let sawGcp = false,
     sawAzure = false;
 
-  records.forEach((rec, recordIndex) => {
+  // Over the whole upload: coverage describes the export itself, duplicates included (#2301).
+  all.forEach((rec, recordIndex) => {
+    const duplicate = isDuplicateRecord(gate, recordIndex);
     if (isGcp(rec)) {
       gcpRecords.push(rec);
-      const rows = mapGcp(rec, iocSink, `record:${recordIndex}`);
+      if (duplicate) return;
+      const rows = gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${recordIndex}`));
       if (rows.length) sawGcp = true;
       // No methodName: the record is never mapped (#1736).
       else opts.debug?.skipped("missing_required_field");
       mapped.push(...rows);
     } else if (isAzure(rec)) {
       azureRecords.push(rec);
+      if (duplicate) return;
       const m = mapAzure(rec, iocSink, recordIndex, opts.debug);
       if (m) {
         sawAzure = true;
-        mapped.push(m);
+        mapped.push(...gateRows(gate, recordIndex, [m]));
       } else opts.debug?.skipped("missing_required_field");
     } else opts.debug?.skipped("unrecognized_record");
   });
@@ -505,6 +520,7 @@ function parseActivityRecords(
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    provenance: opts.provenance,
   });
   // The per-service-account join (#1065): built over every GCP record of this export, appended
   // AFTER the source-row cap under its own bound — `maxEvents` bounds source rows, a summary

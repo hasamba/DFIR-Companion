@@ -120,7 +120,7 @@ function normalizeAccount(account: string): string {
 // uploads describing the same real auth attempt must collapse to one observation, or an
 // overlapping re-export would inflate the distinct-account count.
 export function sprayObservationKey(
-  c: Pick<SprayCandidate, "sourceIp" | "hostOrTenant" | "account" | "timestamp" | "outcome">,
+  c: Pick<SprayCandidate, "sourceIp" | "hostOrTenant" | "account" | "timestamp"> & { outcome: string },
 ): string {
   const secondFloor = c.timestamp.slice(0, 19); // ISO up to whole seconds
   return `${c.sourceIp}|${c.hostOrTenant}|${normalizeAccount(c.account)}|${secondFloor}|${c.outcome}`;

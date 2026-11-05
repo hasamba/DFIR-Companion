@@ -5,6 +5,7 @@ import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
 import type { CloudStateStore } from "../cloudStateStore.js";
+import type { CloudRecordStore } from "../cloudRecordStore.js";
 import type { BulkImportSink } from "./velociraptorBulk.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 
@@ -56,6 +57,9 @@ export interface ImportContext {
     // Configuration-snapshot observations (#2305). Optional for the same reason: without it every
     // snapshot row reads as new and the import note says so.
     cloudStateStore?: CloudStateStore;
+    // Cloud-record dedup + provenance (#2301). Optional for the same reason: without it the cloud
+    // importers neither dedup nor keep record provenance — the pre-#2301 behavior.
+    cloudRecordStore?: CloudRecordStore;
     // The batched Velociraptor driver's stores (#1439). Optional for the same reason: minimal/test
     // wirings have none, and importVelociraptor then takes the whole-file path for every size.
     bulkImportSink?: BulkImportSink;
@@ -103,6 +107,7 @@ export function buildImportOpts(source: {
   readonly superTimelineStore?: SuperTimelineStore;
   readonly authObservationStore?: AuthObservationStore;
   readonly cloudStateStore?: CloudStateStore;
+  readonly cloudRecordStore?: CloudRecordStore;
   readonly bulkImportSink?: BulkImportSink;
   readonly sigmaGrader?: SigmaImportGrader;
 }): ImportContext["opts"] {
@@ -121,6 +126,9 @@ export function buildImportOpts(source: {
     },
     get cloudStateStore() {
       return source.cloudStateStore;
+    },
+    get cloudRecordStore() {
+      return source.cloudRecordStore;
     },
     get bulkImportSink() {
       return source.bulkImportSink;

@@ -96,7 +96,7 @@ import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
-import { CloudStateStore } from "../analysis/cloudStateStore.js";
+import { CloudRecordStore } from "../analysis/cloudRecordStore.js";
 import { configureSigmaRules } from "./sigmaRules.js";
 import { StarredReportStore } from "../analysis/starredReportStore.js";
 import { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
@@ -403,7 +403,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     Number(process.env.DFIR_SPRAY_OBSERVATION_RETENTION_HOURS) || undefined,
     operationalMetrics,
   ); // #1104 cross-upload password-spray detection
-  const cloudStateStore = new CloudStateStore(store); // #2305 snapshot observations (undo claims batches)
+  const cloudRecordStore = new CloudRecordStore(store); // #2301 cloud-record dedup + provenance relation
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
@@ -551,7 +551,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     clockSkewStore,
     superTimelineStore,
     authObservationStore,
-    cloudStateStore,
+    cloudRecordStore,
     starredReportStore,
     forensicGateControlStore,
     custodyStore,

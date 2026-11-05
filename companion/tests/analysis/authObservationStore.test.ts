@@ -108,7 +108,7 @@ describe("AuthObservationStore", () => {
     const real = caseSqliteWorker.request.bind(caseSqliteWorker);
     const spy = vi.spyOn(caseSqliteWorker, "request").mockImplementationOnce((req: unknown) => {
       const r = req as { op: string };
-      if (r.op === "pruneEntitiesBefore") return Promise.reject(new Error("simulated worker failure"));
+      if (r.op === "pruneEntitiesBeforeNewest") return Promise.reject(new Error("simulated worker failure"));
       return real(req as never);
     });
     try {
@@ -124,7 +124,9 @@ describe("AuthObservationStore", () => {
       await store.append("c1", [obs({ timestamp: "2026-06-01T00:00:00Z", account: "bob" })]);
       const afterRetry = await store.queryWindow("c1", "2026-01-01T00:00:00Z");
       expect(afterRetry.observations.map((o) => o.account)).toEqual(["bob"]);
-      const pruneCalls = spy.mock.calls.filter((c) => (c[0] as { op: string }).op === "pruneEntitiesBefore");
+      const pruneCalls = spy.mock.calls.filter(
+        (c) => (c[0] as { op: string }).op === "pruneEntitiesBeforeNewest",
+      );
       expect(pruneCalls.length).toBeGreaterThanOrEqual(2); // the failed attempt, then the retry
     } finally {
       spy.mockRestore();
@@ -143,4 +145,98 @@ describe("AuthObservationStore", () => {
     const r = await store.queryWindow("c1", "2026-01-01T00:00:00Z");
     expect(r.observations).toHaveLength(1);
   });
+
+  // #2301: retention is measured in evidence time, never against the wall clock.
+  it("keeps an old export's observations on arrival — retention is evidence time, not wall clock", async () => {
+    await store.append("c1", [obs({ timestamp: "2020-03-01T00:00:00Z", account: "old" })]);
+    const fresh = new AuthObservationStore(cases, 168); // a new instance: its prune is due at once
+    await fresh.append("c1", [obs({ timestamp: "2020-03-02T00:00:00Z", account: "old2" })]);
+    const r = await fresh.queryWindow("c1", "2019-01-01T00:00:00Z");
+    expect(r.observations.map((o) => o.account).sort()).toEqual(["old", "old2"]);
+  });
+
+  it("prunes rows older than the newest stored observation minus the retention span", async () => {
+    await store.append("c1", [obs({ timestamp: "2020-03-01T00:00:00Z", account: "early" })]);
+    const later = new AuthObservationStore(cases, 168);
+    await later.append("c1", [obs({ timestamp: "2020-03-20T00:00:00Z", account: "late" })]);
+    // The prune ran before the late row was written, so a third due prune is what evicts "early".
+    await new AuthObservationStore(cases, 168).append("c1", [
+      obs({ timestamp: "2020-03-19T00:00:00Z", account: "late2" }),
+    ]);
+    const r = await later.queryWindow("c1", "2019-01-01T00:00:00Z");
+    expect(r.observations.map((o) => o.account).sort()).toEqual(["late", "late2"]);
+  });
+
+  it("stores the sign-in detail fields and keys a record-identified row by its record id", async () => {
+    const detail = {
+      resultCode: "500121",
+      mfaDetail: "denied" as const,
+      authMethod: "Mobile app notification",
+      sessionId: "sess-1",
+      correlationId: "corr-1",
+      app: "Office 365",
+      outcome: "interrupted" as const,
+    };
+    const added = await store.append("c1", [
+      obs({ timestamp: "2026-06-01T00:00:00Z", recordId: "entra-signin|t|s-1", ...detail }),
+      obs({ timestamp: "2026-06-01T00:00:00Z", recordId: "entra-signin|t|s-2", ...detail }),
+    ]);
+    expect(added).toBe(2); // same second, same account: two records, two rows
+    const page = await store.queryPage("c1", {});
+    expect(page.observations[0]).toMatchObject(detail);
+    expect(
+      await store.append("c1", [obs({ timestamp: "2026-06-01T00:00:00Z", recordId: "entra-signin|t|s-1" })]),
+    ).toBe(0);
+  });
+
+  it("queryPage filters by tenant, account and window", async () => {
+    await store.append("c1", [
+      obs({ timestamp: "2026-06-01T00:00:00Z", account: "Alice", hostOrTenant: "t-a" }),
+      obs({ timestamp: "2026-06-01T01:00:00Z", account: "bob", hostOrTenant: "t-a" }),
+      obs({ timestamp: "2026-06-01T02:00:00Z", account: "alice", hostOrTenant: "t-b" }),
+      obs({ timestamp: "2026-06-03T00:00:00Z", account: "alice", hostOrTenant: "t-a" }),
+    ]);
+    const r = await store.queryPage("c1", {
+      tenant: "t-a",
+      account: "ALICE",
+      since: "2026-06-01T00:00:00Z",
+      until: "2026-06-02T00:00:00Z",
+    });
+    expect(r.observations.map((o) => o.timestamp)).toEqual(["2026-06-01T00:00:00Z"]);
+    expect(r.next).toBeNull();
+  });
+
+  it("returns every row across pages above the old 100k query cap", async () => {
+    await store.append("c1", [
+      obs({ timestamp: "2026-06-01T00:00:00Z", account: "seed", hostOrTenant: "t-x" }),
+    ]);
+    const N = AUTH_OBSERVATION_QUERY_MAX + 5_000;
+    const { loadDatabaseSync } = await import("../../src/analysis/sqliteRuntime.js");
+    const DatabaseSync = loadDatabaseSync();
+    const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+    const base = Date.parse("2026-06-01T00:00:00Z");
+    try {
+      db.exec(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<${N}) ` +
+          "INSERT INTO entities (kind, entity_id, ordinal, version, timestamp_ms, payload) " +
+          `SELECT 'authObservation', 'x' || i, 10+i, 1, ${base} + (i / 3) * 1000, ` +
+          "json_object('timestamp','t','account','u' || (i % 50),'sourceIp','','hostOrTenant','t-a'," +
+          "'outcome','interrupted','locator','record:' || i,'importer','m365','importBatch','b') FROM n",
+      );
+    } finally {
+      db.close();
+    }
+    let total = 0;
+    let after: { ms: number; rowId: number } | undefined;
+    const seen = new Set<string>();
+    for (;;) {
+      const page = await store.queryPage("c1", { tenant: "t-a", after, limit: 5_000 });
+      total += page.observations.length;
+      for (const o of page.observations) seen.add(o.locator);
+      if (!page.next) break;
+      after = page.next;
+    }
+    expect(total).toBe(N);
+    expect(seen.size).toBe(N);
+  }, 30_000);
 });

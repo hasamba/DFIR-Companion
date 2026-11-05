@@ -49,12 +49,13 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { gateRecords, gateRows, isDuplicateRecord, type CloudRecordParseOptions } from "./cloudRecordGate.js";
 import { readCloudRecords, cloudTrailConsoleRow } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 
 type Row = Record<string, unknown>;
 
-export interface AwsImportOptions {
+export interface AwsImportOptions extends CloudRecordParseOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
@@ -558,15 +559,47 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   };
 }
 
+// The record identities and flags of every replica a merged cross-account row carries.
+function withReplicaRecords(event: MappedEvent, members: ReadonlyArray<{ event: MappedEvent }>): MappedEvent {
+  // One entry per distinct (identity, payload) pair, so each kept payload stays traceable (#2301).
+  const pairs = new Map<string, [string, string | undefined]>();
+  for (const c of members)
+    (c.event.recordRefs ?? []).forEach((ref, i) => {
+      const hash = c.event.recordHashes?.[i];
+      pairs.set(`${ref}\n${hash ?? ""}`, [ref, hash]);
+    });
+  if (!pairs.size) return event;
+  const refs = [...pairs.values()].map(([ref]) => ref);
+  const hashes = [...pairs.values()].map(([, hash]) => hash ?? "");
+  const conflict = members.some((c) => c.event.recordConflict);
+  const hashed = members.some((c) => c.event.recordHashIdentified);
+  return {
+    ...event,
+    recordRefs: refs,
+    recordHashes: hashes,
+    ...(conflict ? { recordConflict: true } : {}),
+    ...(hashed ? { recordHashIdentified: true } : {}),
+  };
+}
+
 // JSON (tolerant) or the console "Event history" CSV, its rows rebuilt as CloudTrail records (#2302).
 export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsParseResult {
-  const { records, repairs } = readCloudRecords(text, cloudTrailConsoleRow);
+  // Pre-read by the ingest layer (#2301) or read here; either way the same reader (#2302).
+  const { records, repairs } = opts.records
+    ? { records: opts.records, repairs: opts.repairs }
+    : readCloudTrailRecords(text);
   return { ...parseTrailRecords(records, text, opts), repairs };
+}
+
+/** The upload's CloudTrail records: JSON (tolerant) or the console CSV rebuilt as records. */
+export function readCloudTrailRecords(text: string): ReturnType<typeof readCloudRecords> {
+  return readCloudRecords(text, cloudTrailConsoleRow);
 }
 
 function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions): AwsParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const total = records.length;
+  const gate = opts.recordGate;
   if (total === 0) {
     return {
       events: [],
@@ -590,9 +623,17 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   const candidates: Array<ReplicaCandidate & { sigma: SigmaRuleRef[] }> = [];
   const onIncomplete = (n: number) => opts.debug?.observed("sigma_incomplete", n);
   for (const [recordIndex, rec] of records.entries()) {
+    if (isDuplicateRecord(gate, recordIndex)) continue; // already in the case (#2301)
     const m = mapRecord(rec, iocSink, recordIndex);
     // Sigma reads the RAW record (#2202): the rules are written against CloudTrail's own fields.
-    if (m) candidates.push({ ...m, sigma: sigmaMatchesFor(opts.sigma, "aws-cloudtrail", rec, onIncomplete) });
+    if (m) {
+      const [event] = gateRows(gate, recordIndex, [m.event]);
+      candidates.push({
+        ...m,
+        event,
+        sigma: sigmaMatchesFor(opts.sigma, "aws-cloudtrail", rec, onIncomplete),
+      });
+    }
     // No eventName or eventSource: the record is never mapped (#1736).
     else opts.debug?.skipped("missing_required_field");
   }
@@ -602,7 +643,8 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   // merge's re-rendered description cannot overwrite the rule title.
   const snapshot = opts.sigma;
   const merged = mergeReplicaGroups(candidates).map((g) => ({
-    event: g.event,
+    // A merged cross-account pair stands for every replica record it carries (#2301).
+    event: g.members.length > 1 ? withReplicaRecords(g.event, g.members) : g.event,
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
   }));
   const mapped = merged.map((g) => (snapshot ? applySigmaMatches(g.event, g.sigma, snapshot) : g.event));
@@ -628,19 +670,21 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    provenance: opts.provenance,
   });
+  const fresh = gateRecords(gate, records); // summaries read new records only (#2301)
   // The credential lineages (#979): built over every record of this upload, appended AFTER the
   // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
   // one, and `kept` / `dropped` / `groups` count source rows alone.
   const summaries = [
-    ...aggregateEvents(awsLineages(records), {
+    ...aggregateEvents(awsLineages(fresh), {
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: AWS_LINEAGE_MAX + 1,
     }).events,
     // The compute lifecycles (#931 item 8), keyed with this upload's identity so an identical
     // re-import folds and two uploads about one instance stay two rows.
-    ...aggregateEvents(awsComputeLifecycles(records, uploadId), {
+    ...aggregateEvents(awsComputeLifecycles(fresh, uploadId), {
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: AWS_COMPUTE_MAX + 1,

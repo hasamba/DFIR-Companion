@@ -389,7 +389,7 @@ function dispatchTags(message) {
     case "tagsRemoveByPrefix": return tagsRemoveByPrefix(message.dbPath, message.tagsPath, message.prefix);
     case "tagsBackup": return tagsBackup(message.dbPath);
     case "tagsRestore": return tagsRestore(message.dbPath, message.tagsPath);
-    default: throw new Error("unknown SQLite worker operation: " + message.op);
+    default: return dispatchCloud(message); // caseSqliteWorkerCloud.ts (#2301)
   }
 }
 `;
