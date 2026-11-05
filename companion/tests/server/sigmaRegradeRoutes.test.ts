@@ -77,6 +77,9 @@ let superStore: SuperTimelineStore;
 let meta: SynthMetaStore;
 let synthesize: { mock: { calls: unknown[] } };
 
+/** The undo store each app was built with, so importTrail can wait for its checkpoint (#2290). */
+const undoStores = new WeakMap<ReturnType<typeof createApp>, ImportUndoStore>();
+
 function build(extra: Record<string, unknown> = {}) {
   const stateLock = new StateLock();
   const pipeline = new AnalysisPipeline({
@@ -86,7 +89,7 @@ function build(extra: Record<string, unknown> = {}) {
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   synthesize = vi.spyOn(pipeline, "synthesize");
-  return createApp(cases, {
+  const app = createApp(cases, {
     pipeline,
     stateStore,
     stateLock,
@@ -97,18 +100,37 @@ function build(extra: Record<string, unknown> = {}) {
     synthMetaStore: meta,
     ...extra,
   });
+  if (extra.importUndoStore instanceof ImportUndoStore) undoStores.set(app, extra.importUndoStore);
+  return app;
 }
 
 const target = (rows: ForensicEvent[]) => rows.find((e) => /BatchUpdateFindings/.test(e.description));
 
+/**
+ * Import the CloudTrail file and wait until the import's background work is done.
+ *
+ * WITH AN UNDO STORE, IMPORT META IS NOT THE END. The import records its meta FIRST and pushes its
+ * undo checkpoint AFTER, and building that checkpoint reads forensic rows. A test that injects a
+ * one-shot failure into that read as soon as the meta appears can hand the failure to the late
+ * checkpoint, whose errors are swallowed, instead of to the route under test (#2290). So with an
+ * undo store the wait also requires the stack to grow by one.
+ *
+ * That holds for this fixture: every caller imports into a fresh case, and the import adds evidence,
+ * so it always pushes exactly one checkpoint. One poll covers both conditions, so the wait keeps a
+ * single POLL_TIMEOUT_MS budget inside the test's default timeout.
+ */
 async function importTrail(app: ReturnType<typeof createApp>): Promise<void> {
+  const undo = undoStores.get(app);
+  const depth = async () => (undo ? (await undo.load("c1")).undo.length : 0);
+  const before = await depth();
   const res = await request(app)
     .post("/cases/c1/import-aws")
     .send({ filename: "cloudtrail.json", text: TEXT });
   expect(res.status).toBe(202);
-  await pollFor("the CloudTrail import to settle", async () => {
+  await pollFor("the CloudTrail import to settle (and push its undo checkpoint)", async () => {
     const m = await new ImportMetaStore(cases).load("c1");
-    return m.lastImportKind === "aws" ? m : undefined;
+    if (m.lastImportKind !== "aws") return undefined;
+    return !undo || (await depth()) > before ? m : undefined;
   });
 }
 

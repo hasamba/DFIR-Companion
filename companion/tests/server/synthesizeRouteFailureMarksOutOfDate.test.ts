@@ -4,7 +4,7 @@
 // later clean job (an enrichment, an import) turned the pill back to "up to date" over conclusions
 // the model never refreshed. A genuine failure now marks. A held run (analyst-decision gate) and an
 // analyst cancel are not failures and mark nothing.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,12 +34,16 @@ let jobManager: JobManager;
 let synthMetaStore: SynthMetaStore;
 let analysisRunStore: AnalysisRunStore;
 let behaviour: Behaviour;
+let stateStore: StateStore;
+/** Set by the stub when its signal was already aborted on entry: proof a test hit that window. */
+let enteredAborted: boolean;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-synth-route-fail-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: CASE_ID, name: "n", investigator: "i", aiProvider: null });
-  const stateStore = new StateStore(cases);
+  stateStore = new StateStore(cases);
+  enteredAborted = false;
   const assetOverridesStore = new AssetOverridesStore(cases);
   const hostDuplicateDismissalStore = new HostDuplicateDismissalStore(cases);
   jobManager = new JobManager({ perCaseConcurrency: 1 });
@@ -58,12 +62,22 @@ beforeEach(async () => {
   // The run itself is stubbed: this file is about what the ROUTE does when it rejects.
   pipeline.synthesize = (async (_caseId: string, opts: { signal?: AbortSignal } = {}) => {
     if (behaviour.kind === "reject") throw behaviour.err;
+    const cancelled = () => {
+      const err = new Error("synthesis cancelled");
+      err.name = "AbortError";
+      return err;
+    };
     await new Promise<void>((_resolve, reject) => {
-      opts.signal?.addEventListener("abort", () => {
-        const err = new Error("synthesis cancelled");
-        err.name = "AbortError";
-        reject(err);
-      });
+      // A cancel can land BEFORE the run starts: the job is "running" from admission, and the route
+      // still reads the case state before it calls synthesize. An aborted signal never fires "abort"
+      // again, so a listener alone would wait forever (#2290). The real synthesis checks first too
+      // (throwIfSuperseded at the top of synthesis.ts).
+      if (opts.signal?.aborted) {
+        enteredAborted = true;
+        reject(cancelled());
+        return;
+      }
+      opts.signal?.addEventListener("abort", () => reject(cancelled()));
     });
     return {};
   }) as unknown as AnalysisPipeline["synthesize"];
@@ -127,6 +141,36 @@ describe("a failed POST /cases/:id/synthesize (#1976)", () => {
     await jobManager.cancel(job.id);
     expect((await pending).status).toBe(499);
     expect(await marker()).toBeNull();
+  });
+
+  it("does not mark when the cancel lands before the run starts (#2290)", async () => {
+    behaviour = { kind: "wait" };
+    // Hold the route at its last read before synthesize, so the cancel lands in exactly the window a
+    // busy CI runner hit by chance.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const load = stateStore.load.bind(stateStore);
+    vi.spyOn(stateStore, "load").mockImplementation(async (...args) => {
+      await gate;
+      return load(...args);
+    });
+    try {
+      const pending = request(app)
+        .post(`/cases/${CASE_ID}/synthesize`)
+        .send({})
+        .then((r) => r);
+      const job = await pollFor("a running synthesis job", async () =>
+        jobManager.list(CASE_ID).find((j) => j.kind === "synthesis" && j.status === "running"),
+      );
+      await jobManager.cancel(job.id);
+      release();
+      expect((await pending).status).toBe(499);
+      expect(enteredAborted).toBe(true);
+      expect(await marker()).toBeNull();
+    } finally {
+      release();
+      vi.restoreAllMocks();
+    }
   });
 });
 
