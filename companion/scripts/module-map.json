@@ -790,6 +790,8 @@
     "cloudExportDetect.ts": "analysis/ingest",
     "cloudRecords.ts": "analysis/ingest",
     "m365ExportAdapters.ts": "analysis/ingest",
+    "graphAuditRecord.ts": "analysis/ingest",
+    "azureDiagnosticRecord.ts": "analysis/ingest",
     "tolerantJson.ts": "analysis/ingest",
     "sigmaCondition.ts": "analysis/hunt",
     "sigmaRule.ts": "analysis/hunt",

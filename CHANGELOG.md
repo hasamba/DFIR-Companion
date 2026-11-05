@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Graph audit records and Azure diagnostic exports** — Graph audit records grade exactly like classic UAL records, and Azure diagnostic-settings Entra sign-in/audit exports import as Entra events instead of one generic Azure row (closes #2304)
 - **Cloud export recognition** — Log Analytics sign-in, audit, Office and Azure Activity exports (JSON and CSV), MES mailbox audit CSV and the CloudTrail console CSV now reach the right importer and grade correctly; repaired files say what was repaired (closes #2302)
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 

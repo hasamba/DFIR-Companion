@@ -28,6 +28,7 @@ import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.j
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
+import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   aggregateEvents,
@@ -447,16 +448,18 @@ function isAzure(rec: Row): boolean {
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 // JSON (tolerant) or a Log Analytics AzureActivity CSV, whose rows carry the same columns as its
-// JSON export and map the same way (#2302).
+// JSON export and map the same way (#2302). A diagnostic-settings (PT1H.json) Activity record names
+// its caller in `identity.claims`; it is filled in as REST's `caller` first (#2304).
 export function parseCloudActivity(
   text: string,
   opts: CloudActivityImportOptions = {},
 ): CloudActivityParseResult {
   // Pre-read by the ingest layer (#2301) or read here; either way the same reader (#2302).
+  // The diagnostic-settings adapter (#2304) is index-preserving, so #2301's record gate stays aligned.
   const { records, repairs } = opts.records
     ? { records: opts.records, repairs: opts.repairs }
     : readCloudRecords(text);
-  return { ...parseActivityRecords(records, text, opts), repairs };
+  return { ...parseActivityRecords(records.map(adaptAzureDiagnosticActivity), text, opts), repairs };
 }
 
 function parseActivityRecords(
