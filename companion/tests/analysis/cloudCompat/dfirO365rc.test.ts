@@ -16,5 +16,7 @@ describe("cloud compat — DFIR-O365RC 2.0.x (#2300)", () => {
     const parsed = parseM365Audit(text);
     expect(parsed.total).toBe(4);
     expect(parsed.events).toHaveLength(4);
+    // The seam is a repair, counted so the import note can disclose it (#2302).
+    expect(parsed.repairs).toEqual({ bomStripped: 0, documentsJoined: 1, garbageSkipped: 0 });
   });
 });

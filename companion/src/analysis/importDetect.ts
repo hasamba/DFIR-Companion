@@ -5,6 +5,7 @@
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { detectCloudJson } from "./cloudJsonDetect.js";
+import { cloudExportCsvKind } from "./cloudExportDetect.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
@@ -528,6 +529,8 @@ function detectCsv(text: string, filename: string): ImportKind {
   if (spotlightStoreCsvSig(h)) return "macspotlightusage";
   if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
+  const cloudCsv = cloudExportCsvKind(h); // Log Analytics / MES / CloudTrail console CSVs (#2302)
+  if (cloudCsv) return cloudCsv;
   if (cybertriageCsvSig(h)) return "cybertriage";
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";

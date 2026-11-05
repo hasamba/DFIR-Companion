@@ -20,6 +20,8 @@ import { recordParsedImport } from "./parsedDebug.js";
 import { sigmaImportNote } from "../sigmaImportGrade.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
+import { undatedRowsNote } from "../m365ExportAdapters.js";
 
 /** What the four cloud/identity importers return beside the state (#1063) — coverage lives
  * outside InvestigationState, so it travels beside it rather than inside the delta. */
@@ -84,7 +86,9 @@ export async function importM365(
         opts,
         "Microsoft 365",
         parsed.total,
-        retentionNote || undefined,
+        [retentionNote, describeJsonRepairs(parsed.repairs), undatedRowsNote(parsed.undatedRows).slice(2)]
+          .filter(Boolean)
+          .join("; ") || undefined,
       ),
       coverage: parsed.coverage,
     };
@@ -106,7 +110,9 @@ export async function importM365(
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
-      (retentionNote ? `; ${retentionNote}` : ""),
+      (retentionNote ? `; ${retentionNote}` : "") +
+      jsonRepairNote(parsed.repairs) +
+      undatedRowsNote(parsed.undatedRows),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -532,7 +538,14 @@ export async function importAws(
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total),
+      state: await noteEmptyImport(
+        ctx,
+        caseId,
+        opts,
+        "AWS CloudTrail",
+        parsed.total,
+        describeJsonRepairs(parsed.repairs) || undefined,
+      ),
       coverage: parsed.coverage,
     };
 
@@ -552,7 +565,8 @@ export async function importAws(
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
-      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched),
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
+      jsonRepairNote(parsed.repairs),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -591,7 +605,14 @@ export async function importCloudActivity(
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total),
+      state: await noteEmptyImport(
+        ctx,
+        caseId,
+        opts,
+        "Cloud activity",
+        parsed.total,
+        describeJsonRepairs(parsed.repairs) || undefined,
+      ),
       coverage: parsed.coverage,
     };
 
@@ -610,7 +631,8 @@ export async function importCloudActivity(
       `Cloud activity import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      jsonRepairNote(parsed.repairs),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

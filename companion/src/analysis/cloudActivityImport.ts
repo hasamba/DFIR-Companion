@@ -30,7 +30,6 @@ import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
-  extractRecords,
   aggregateEvents,
   cleanIp,
   addIoc,
@@ -47,6 +46,8 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { readCloudRecords } from "./cloudRecords.js";
+import type { JsonRepairs } from "./tolerantJson.js";
 
 type Row = Record<string, unknown>;
 
@@ -69,6 +70,8 @@ export interface CloudActivityParseResult {
   format: string; // "gcp" | "azure" | "mixed" | "empty"
   /** Per-upload coverage drafts (#1063) for whichever of GCP/Azure this upload carried. */
   coverage: CloudCoverageDraft[];
+  /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
+  repairs?: JsonRepairs;
 }
 
 type Rule = [RegExp, Severity, string[]];
@@ -442,12 +445,22 @@ function isAzure(rec: Row): boolean {
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
+// JSON (tolerant) or a Log Analytics AzureActivity CSV, whose rows carry the same columns as its
+// JSON export and map the same way (#2302).
 export function parseCloudActivity(
   text: string,
   opts: CloudActivityImportOptions = {},
 ): CloudActivityParseResult {
+  const { records, repairs } = readCloudRecords(text);
+  return { ...parseActivityRecords(records, text, opts), repairs };
+}
+
+function parseActivityRecords(
+  records: Row[],
+  text: string,
+  opts: CloudActivityImportOptions,
+): CloudActivityParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
     return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", coverage: [] };

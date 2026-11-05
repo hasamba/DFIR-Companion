@@ -6,7 +6,7 @@
 // "ok" — a balanced value parsed; "fail" — a value opened at `start` but never closed before
 // `limit` (`end` = -1), or closed at `end` and failed JSON.parse; "none" — no value opens.
 type ScanResult =
-  | { kind: "ok"; value: unknown; end: number }
+  | { kind: "ok"; value: unknown; start: number; end: number }
   | { kind: "fail"; start: number; end: number }
   | { kind: "none" };
 
@@ -32,7 +32,7 @@ function scanValue(text: string, from: number, limit: number): ScanResult {
       depth++;
     } else if ((ch === "}" || ch === "]") && depth > 0 && --depth === 0) {
       try {
-        return { kind: "ok", value: JSON.parse(text.slice(start, i + 1)), end: i + 1 };
+        return { kind: "ok", value: JSON.parse(text.slice(start, i + 1)), start, end: i + 1 };
       } catch {
         return { kind: "fail", start, end: i + 1 };
       }
@@ -77,29 +77,51 @@ function scanned(r: ScanResult, from: number, limit: number): number {
 // scanned only up to the next column-0 opener, so a file of many unterminated openers stays linear
 // instead of rescanning to EOF from every one of them.
 export function parseConcatenatedJson(text: string): unknown[] {
+  return scanConcatenatedJson(text).values;
+}
+
+/** True when text[from, to) holds anything but whitespace and the commas a stream may use as separators. */
+function hasContent(text: string, from: number, to: number): boolean {
+  for (let i = from; i < to; i++) {
+    const ch = text[i];
+    if (ch !== "," && ch.trim() !== "") return true;
+  }
+  return false;
+}
+
+/**
+ * parseConcatenatedJson, also counting the stretches of text it could not read (#2302): a chunk
+ * that failed, or non-separator text before, between or after the values (trailing garbage). The
+ * cloud importers disclose that count; the values are exactly what parseConcatenatedJson returns.
+ */
+export function scanConcatenatedJson(text: string): { values: unknown[]; skipped: number } {
   const out: unknown[] = [];
   const budget = RECOVERY_BUDGET * text.length;
   let pos = 0;
   let spent = 0;
+  let skipped = 0;
   while (pos < text.length) {
     const bounded = spent > budget ? nextColumnZeroOpener(text, pos + 1) : -1;
     const limit = bounded === -1 ? text.length : bounded;
     const r = scanValue(text, pos, limit);
     spent += scanned(r, pos, limit);
     if (r.kind === "none") {
+      if (hasContent(text, pos, limit)) skipped++;
       if (limit >= text.length) break;
       pos = limit;
       continue;
     }
+    if (hasContent(text, pos, r.start)) skipped++;
     if (r.kind === "ok") {
       out.push(r.value);
       pos = r.end;
       continue;
     }
+    skipped++;
     const next = nextColumnZeroOpener(text, r.start + 1);
     if (r.end !== -1 && (next === -1 || next >= r.end)) pos = r.end;
     else if (next !== -1) pos = next;
     else break;
   }
-  return out;
+  return { values: out, skipped };
 }
