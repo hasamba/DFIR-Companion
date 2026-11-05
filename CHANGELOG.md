@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Too-large import hint on Node 22** — an import too big to read shows the size hint again instead of "cannot read file" (closes #2316)
+- **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
 
 ### Changed
 
