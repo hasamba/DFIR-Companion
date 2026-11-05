@@ -103,7 +103,10 @@ export function createCaseAppliers({
     try {
       const at = new Date().toISOString();
       const built = await checkpointFor(caseId, beforeState, label, at, afterState);
-      const checkpoint = superRows ? { ...built, superRows } : built;
+      const withRows = superRows ? { ...built, superRows } : built;
+      // The cloud-record ledger batches this import committed (#2301): Undo forgets them.
+      const cloudBatches = (await options.cloudRecordStore?.claimPending(caseId, label)) ?? [];
+      const checkpoint = cloudBatches.length ? { ...withRows, cloudBatches } : withRows;
       // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
       // import firing requests seconds apart while the previous one's async work is still in
       // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge

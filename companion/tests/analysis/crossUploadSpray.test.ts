@@ -26,12 +26,15 @@ function ndjson(...recs: object[]): string {
 const BASE_MS = Date.parse("2026-06-01T00:00:00Z");
 const MIN = 60_000;
 
+const dbDirs = new Map<string, string>();
+
 async function makePipeline(caseId = "c1") {
   const root = await mkdtemp(join(tmpdir(), "dfir-crossspray-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId, name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(cases);
   const authObservationStore = new AuthObservationStore(cases, 168);
+  dbDirs.set(caseId, cases.stateDir(caseId));
   const pipeline = new AnalysisPipeline({
     stateStore,
     authObservationStore,
@@ -83,6 +86,40 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(cross).toHaveLength(1);
     expect(cross[0].description).toMatch(/across 2 uploads/);
   });
+
+  // #2301: the store also keeps MFA interruptions. The spray query filters outcomes BEFORE its 100k
+  // cap, so a flood of newer interruptions can never push the credential failures out of the window.
+  it("still detects the spray when more than 100k newer MFA interruptions sit in the store (#2301)", async () => {
+    const { pipeline } = await makePipeline("c1m");
+    const first = ["alice", "bob", "carol", "dave"].map((a, i) => loginRec(a, BASE_MS, i * 20 * MIN));
+    await pipeline.importEcar("c1m", ndjson(...first), {
+      label: "batch1.ecar.json",
+      idPrefix: "m1",
+      importedAt: "2026-06-01T01:05:00Z",
+    });
+    const { loadDatabaseSync } = await import("../../src/analysis/sqliteRuntime.js");
+    const DatabaseSync = loadDatabaseSync();
+    const db = new DatabaseSync(join(dbDirs.get("c1m")!, "investigation.sqlite"));
+    try {
+      // Newer than every failure, inside the 24h window the second batch queries.
+      db.exec(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<100005) " +
+          "INSERT INTO entities (kind, entity_id, ordinal, version, timestamp_ms, payload) " +
+          `SELECT 'authObservation', 'mfa' || i, 1000000+i, 1, ${BASE_MS + 70 * MIN} + i, ` +
+          "json_object('timestamp','t','account','victim','sourceIp','10.44.30.10','hostOrTenant','WEB-BO-01'," +
+          "'outcome','interrupted','locator','record:' || i,'importer','m365','importBatch','x') FROM n",
+      );
+    } finally {
+      db.close();
+    }
+    const second = ["erin", "frank"].map((a, i) => loginRec(a, BASE_MS, (4 + i) * 20 * MIN));
+    const s2 = await pipeline.importEcar("c1m", ndjson(...second), {
+      label: "batch2.ecar.json",
+      idPrefix: "m2",
+      importedAt: "2026-06-01T01:45:00Z",
+    });
+    expect(sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"))).toHaveLength(1);
+  }, 30_000);
 
   it("a backdated upload (importedAt far after the events it carries) still finds the prior batch's observations (#1237)", async () => {
     const { pipeline } = await makePipeline("c1b");

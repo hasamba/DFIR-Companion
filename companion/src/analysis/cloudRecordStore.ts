@@ -21,6 +21,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import type { CloudRecordIdentity } from "./cloudRecordIdentity.js";
+import { CloudRecordBatches } from "./cloudRecordBatches.js";
 
 export type RecordVerdict = "new" | "duplicate" | "conflict";
 
@@ -33,6 +34,7 @@ export interface RecordVerdicts {
 export interface SourceRecordMember {
   group: string; // the aggregated event's sourceRecords.group
   ref: string; // the member record's identity key
+  payloadHash?: string; // which payload under that key (two differ on a conflict)
   locator?: string; // where the record sits in its upload, e.g. "record:12"
 }
 
@@ -50,6 +52,7 @@ const CHUNK_SIZE = 5_000;
 interface LedgerRow {
   id: string;
   payloadHash: string;
+  importBatch?: string;
 }
 
 function chunks<T>(items: readonly T[]): T[][] {
@@ -83,7 +86,26 @@ export function verdictsFor(
 }
 
 export class CloudRecordStore {
-  constructor(private readonly cases: CaseStore) {}
+  private readonly batches: CloudRecordBatches;
+
+  constructor(private readonly cases: CaseStore) {
+    this.batches = new CloudRecordBatches(cases);
+  }
+
+  /** Notes the batch an import committed, for its undo checkpoint to claim (cloudRecordBatches.ts). */
+  notePending(caseId: string, batch: string, storedName: string): Promise<void> {
+    return this.batches.notePending(caseId, batch, storedName);
+  }
+
+  /** The batches the import an undo checkpoint label names committed; they leave the pending list. */
+  claimPending(caseId: string, checkpointLabel: string): Promise<string[]> {
+    return this.batches.claimPending(caseId, checkpointLabel);
+  }
+
+  /** Undo forgets a checkpoint's batches (false); Redo remembers them again (true). */
+  setBatchesActive(caseId: string, batches: string[], active: boolean): Promise<void> {
+    return this.batches.setActive(caseId, batches, active);
+  }
 
   private databasePath(caseId: string): string {
     return join(this.cases.stateDir(caseId), INVESTIGATION_DB_FILENAME);
@@ -92,6 +114,8 @@ export class CloudRecordStore {
   private async knownHashes(caseId: string, keys: readonly string[]): Promise<Map<string, Set<string>>> {
     const known = new Map<string, Set<string>>();
     const dbPath = this.databasePath(caseId);
+    // A batch an Undo forgot holds no records the case still has (#2301).
+    const inactive = await this.batches.inactive(caseId);
     for (const ids of chunks([...new Set(keys)])) {
       const rows = await caseSqliteWorker.request<Array<{ entity: LedgerRow }>>({
         op: "entityRows",
@@ -100,7 +124,8 @@ export class CloudRecordStore {
         ids,
       });
       for (const { entity } of rows)
-        known.set(entity.id, new Set([...(known.get(entity.id) ?? []), entity.payloadHash]));
+        if (!entity.importBatch || !inactive.has(entity.importBatch))
+          known.set(entity.id, new Set([...(known.get(entity.id) ?? []), entity.payloadHash]));
     }
     return known;
   }
@@ -164,6 +189,7 @@ export class CloudRecordStore {
       const entities = batch.map((m) => ({
         asset: m.group,
         ref: m.ref,
+        ...(m.payloadHash ? { payloadHash: m.payloadHash } : {}),
         ...(m.locator ? { locator: m.locator } : {}),
       }));
       added += await caseSqliteWorker.request<number>({

@@ -148,7 +148,7 @@ export async function importM365(
     opts.onProgress?.(1, 1);
     return s;
   });
-  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
+  await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 
@@ -609,7 +609,7 @@ export async function importAws(
     opts.onProgress?.(1, 1);
     return s;
   });
-  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
+  await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 
@@ -681,7 +681,7 @@ export async function importCloudActivity(
     opts.onProgress?.(1, 1);
     return s;
   });
-  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
+  await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 

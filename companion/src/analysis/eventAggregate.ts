@@ -121,7 +121,7 @@ function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
 // Nothing grows per row here: memory stays bounded by the group count, as the accumulator promises.
 export interface AggregateProvenance {
   groupOf(key: string): string; // the persistent key of one aggregated group
-  onMember(group: string, ref: string, locator?: string): void;
+  onMember(group: string, ref: string, locator?: string, payloadHash?: string): void;
 }
 
 export interface AggregateOptions {
@@ -147,8 +147,14 @@ function noteMember(e: SiemEvent, key: string, m: MappedEvent, provenance?: Aggr
     ...(m.recordHashIdentified || prev.hashIdentified ? { hashIdentified: true } : {}),
   };
   const locator = m.canonical?.evidence.rawRecords[0]?.locator;
-  for (const ref of refs)
-    provenance.onMember(e.sourceRecords.group, ref, refs.length === 1 ? locator : undefined);
+  refs.forEach((ref, i) =>
+    provenance.onMember(
+      e.sourceRecords!.group,
+      ref,
+      refs.length === 1 ? locator : undefined,
+      m.recordHashes?.[i],
+    ),
+  );
 }
 
 export function createEventAggregator(opts: AggregateOptions = {}): EventAggregator {

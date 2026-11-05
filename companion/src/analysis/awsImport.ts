@@ -558,13 +558,22 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
 
 // The record identities and flags of every replica a merged cross-account row carries.
 function withReplicaRecords(event: MappedEvent, members: ReadonlyArray<{ event: MappedEvent }>): MappedEvent {
-  const refs = [...new Set(members.flatMap((c) => c.event.recordRefs ?? []))];
-  if (!refs.length) return event;
+  // One entry per distinct (identity, payload) pair, so each kept payload stays traceable (#2301).
+  const pairs = new Map<string, [string, string | undefined]>();
+  for (const c of members)
+    (c.event.recordRefs ?? []).forEach((ref, i) => {
+      const hash = c.event.recordHashes?.[i];
+      pairs.set(`${ref}\n${hash ?? ""}`, [ref, hash]);
+    });
+  if (!pairs.size) return event;
+  const refs = [...pairs.values()].map(([ref]) => ref);
+  const hashes = [...pairs.values()].map(([, hash]) => hash ?? "");
   const conflict = members.some((c) => c.event.recordConflict);
   const hashed = members.some((c) => c.event.recordHashIdentified);
   return {
     ...event,
     recordRefs: refs,
+    recordHashes: hashes,
     ...(conflict ? { recordConflict: true } : {}),
     ...(hashed ? { recordHashIdentified: true } : {}),
   };

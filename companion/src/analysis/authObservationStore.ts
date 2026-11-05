@@ -186,7 +186,12 @@ export class AuthObservationStore {
    * AUTH_OBSERVATION_QUERY_MAX — `truncated: true` when more rows existed in the window than the
    * cap, so a caller can disclose the bound rather than silently searching a partial history.
    */
-  async queryWindow(caseId: string, sinceIso: string): Promise<AuthObservationWindow> {
+  async queryWindow(
+    caseId: string,
+    sinceIso: string,
+    // Only failed/success rows with a source IP (#2301), filtered before the cap.
+    opts: { sprayOnly?: boolean } = {},
+  ): Promise<AuthObservationWindow> {
     const startedAt = performance.now();
     const dbPath = this.databasePath(caseId);
     const sinceMs = Date.parse(sinceIso);
@@ -198,6 +203,7 @@ export class AuthObservationStore {
       dbPath,
       sinceMs: Number.isFinite(sinceMs) ? sinceMs : 0,
       limit: AUTH_OBSERVATION_QUERY_MAX,
+      sprayOnly: opts.sprayOnly === true,
     });
     void this.operationalMetrics?.record({
       type: "query",

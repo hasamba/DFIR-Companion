@@ -528,6 +528,7 @@ export interface MappedEvent extends Pick<ForensicEvent, "origin" | "assetRecord
   // merged cross-account CloudTrail pair), and whether one conflicts with an imported payload or has
   // no provider id. Folded by the aggregator into the group's sourceRecords — never shown on the row.
   recordRefs?: string[];
+  recordHashes?: string[]; // the payload hash of each recordRefs entry, same order
   recordConflict?: boolean;
   recordHashIdentified?: boolean;
   // Full, untruncated event message/detail (beyond the truncated `description`) when available.

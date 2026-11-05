@@ -329,7 +329,7 @@ export async function crossUploadSprayRows(
   // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead
   // of writing then reading the same rows back (no round trip, and no risk of the query cap
   // dropping the candidates this very call is about to write).
-  const { observations: stored, truncated } = await store.queryWindow(caseId, sinceIso);
+  const { observations: stored, truncated } = await store.queryWindow(caseId, sinceIso, { sprayOnly: true });
   // Only failed/success rows with a source IP are spray attempts (#2301): an MFA interruption or
   // any other outcome the store keeps for fatigue detection must never inflate a spray count.
   const sprayRows = stored.filter((o) => (o.outcome === "failed" || o.outcome === "success") && o.sourceIp);

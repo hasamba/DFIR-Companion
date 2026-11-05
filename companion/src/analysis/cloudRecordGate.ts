@@ -48,6 +48,7 @@ export function gateRows(gate: RecordGate | undefined, index: number, rows: Mapp
   return rows.map((row) => ({
     ...row,
     recordRefs: [identity.key],
+    recordHashes: [identity.payloadHash],
     ...(identity.hashIdentified ? { recordHashIdentified: true } : {}),
     ...(conflict
       ? {

@@ -224,3 +224,105 @@ describe("sign-in observations through the M365 import (#2301)", () => {
     expect((await authObservationStore.queryPage("c1", {})).observations).toHaveLength(4);
   });
 });
+
+describe("Azure Activity dedup (#2301)", () => {
+  const azure = (eventDataId: string) => ({
+    eventDataId,
+    time: "2026-06-01T10:00:00Z",
+    operationName: "Microsoft.Authorization/roleAssignments/write",
+    caller: "admin@example.com",
+    callerIpAddress: "198.51.100.8",
+    correlationId: `corr-${eventDataId}`,
+    resourceId: "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg/providers/x",
+    status: "Succeeded",
+  });
+
+  it("the same Activity export twice adds nothing", async () => {
+    const { pipeline } = await makePipeline();
+    const file = JSON.stringify([azure("ed-1"), azure("ed-2")]);
+    const s1 = await pipeline.importCloudActivity("c1", file, opts("z1"));
+    expect(s1.forensicTimeline.length).toBeGreaterThan(0);
+    const s2 = await pipeline.importCloudActivity("c1", file, opts("z2"));
+    expect(s2.forensicTimeline.length).toBe(s1.forensicTimeline.length);
+    expect(lastNote(s2)).toContain("2 duplicate record(s) skipped");
+  });
+});
+
+describe("undo keeps the ledger in step (#2301)", () => {
+  it("import → undo → re-import adds the records again; redo makes them duplicates again", async () => {
+    const { pipeline, cloudRecordStore } = await makePipeline();
+    const file = JSON.stringify([ualRule("u-1"), ualRule("u-2", "other@example.com")]);
+    await pipeline.importM365("c1", file, opts("m1"));
+    // What the import's undo checkpoint push does (caseAppliers.ts), then what Undo does.
+    const batches = await cloudRecordStore.claimPending("c1", "m365 (m1.json)");
+    expect(batches).toEqual(["m1"]);
+    await cloudRecordStore.setBatchesActive("c1", batches, false);
+    const s2 = await pipeline.importM365("c1", file, opts("m2"));
+    expect(lastNote(s2)).not.toContain("duplicate");
+    // The re-import maps both records again (the merge may fold them into the rows still there).
+    expect(lastNote(s2)).toMatch(/: 2 event\(s\) from 2 record\(s\)/);
+    // Redo of the first import: its batch is remembered again (and the re-import's batch is live too).
+    await cloudRecordStore.setBatchesActive("c1", batches, true);
+    const s3 = await pipeline.importM365("c1", file, opts("m3"));
+    expect(lastNote(s3)).toContain("2 duplicate record(s) skipped");
+  });
+
+  it("a checkpoint label only claims the batches of its own stored file", async () => {
+    const { pipeline, cloudRecordStore } = await makePipeline();
+    await pipeline.importM365("c1", JSON.stringify([ualRule("u-1")]), opts("m1"));
+    expect(await cloudRecordStore.claimPending("c1", "thor (0002_thor.json)")).toEqual([]);
+    expect(await cloudRecordStore.claimPending("c1", "m365 (m1.json)")).toEqual(["m1"]);
+    expect(await cloudRecordStore.claimPending("c1", "m365 (m1.json)")).toEqual([]);
+  });
+});
+
+describe("only the payload variant that reached the case is marked seen (#2301)", () => {
+  const login = (op: string, workload: string) => ({
+    Id: "same-id",
+    OrganizationId: "tenant-a",
+    CreationTime: "2026-06-01T10:00:00",
+    Operation: op,
+    Workload: workload,
+    RecordType: 15,
+    UserId: "victim@example.com",
+    ClientIP: "203.0.113.7",
+    ObjectId: "https://files.example.com/a.docx",
+  });
+  const medium = login("UserLoginFailed", "AzureActiveDirectory");
+  const high = login("Add member to role.", "AzureActiveDirectory");
+  const info = login("FileAccessed", "OneDrive");
+
+  it("two payloads under one id, maxEvents=1: the dropped payload is not a duplicate later", async () => {
+    const { pipeline } = await makePipeline();
+    await pipeline.importM365("c1", JSON.stringify([medium, high]), {
+      ...opts("m1"),
+      m365: { maxEvents: 1 },
+    });
+    const s2 = await pipeline.importM365("c1", JSON.stringify([medium]), opts("m2"));
+    expect(lastNote(s2)).not.toContain("duplicate");
+    expect(lastNote(s2)).toContain("1 conflicting record(s) kept and flagged");
+  });
+
+  it("two payloads under one id, one below the severity floor: the floored payload is not a duplicate later", async () => {
+    const { pipeline } = await makePipeline();
+    await pipeline.importM365("c1", JSON.stringify([medium, info]), { ...opts("m1"), minSeverity: "Medium" });
+    const s2 = await pipeline.importM365("c1", JSON.stringify([info]), opts("m2"));
+    expect(lastNote(s2)).not.toContain("duplicate");
+    const s3 = await pipeline.importM365("c1", JSON.stringify([medium]), opts("m3"));
+    expect(lastNote(s3)).toContain("1 duplicate record(s) skipped");
+  });
+});
+
+describe("the dedicated routes' preview counts after dedup (#2301)", () => {
+  it("previews zero new events and the duplicate count for a re-upload", async () => {
+    const { cloudPreview } = await import("../../src/analysis/ingest/cloudRecordPreview.js");
+    const { pipeline, cloudRecordStore } = await makePipeline();
+    const file = JSON.stringify([ualRule("u-1"), ualRule("u-2", "other@example.com")]);
+    const before = await cloudPreview.m365(cloudRecordStore, "c1", file);
+    expect(before.duplicates).toBe(0);
+    expect(before.kept).toBeGreaterThan(0);
+    await pipeline.importM365("c1", file, opts("m1"));
+    const after = await cloudPreview.m365(cloudRecordStore, "c1", file);
+    expect(after).toMatchObject({ kept: 0, duplicates: 2, format: "duplicates-only" });
+  });
+});

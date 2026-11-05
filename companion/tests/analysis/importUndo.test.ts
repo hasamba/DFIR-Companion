@@ -749,3 +749,71 @@ describe("host-rename carry follows Undo and Redo (#2221)", () => {
     expect(state.hostRenames).toEqual([rename]);
   });
 });
+
+// #2301: a cloud import's checkpoint names the ledger batches it committed. Undo forgets them, so a
+// re-import after Undo adds the records again; Redo remembers them, so the case stays deduplicated.
+describe("cloud-record batches on a checkpoint (#2301)", () => {
+  const S0 = mkState("s0", 1, 0);
+  const S1 = { ...S0, forensicTimeline: [...S0.forensicTimeline, ...mkState("s1", 1, 0).forensicTimeline] };
+  const withBatches = () => ({
+    ...deltaCheckpoint("m365 (0001_m365.json)", "t1", S0, S1),
+    cloudBatches: ["m1"],
+  });
+
+  it("undo forgets the batches, its mirror carries them, and redo remembers them", () => {
+    const u = applyUndo(pushCheckpoint(emptyUndoStack(), withBatches()), S1)!;
+    expect(u.cloudBatches).toEqual({ batches: ["m1"], active: false });
+    expect(u.stack.redo[0].cloudBatches).toEqual(["m1"]);
+    const r = applyRedo(u.stack, u.restore)!;
+    expect(r.cloudBatches).toEqual({ batches: ["m1"], active: true });
+    expect(r.stack.undo[0].cloudBatches).toEqual(["m1"]);
+  });
+
+  it("the batches survive the file format", () => {
+    const stack = normalizeStack(
+      JSON.parse(encodeStack(pushCheckpoint(emptyUndoStack(), withBatches())).toString("utf8")),
+    );
+    expect(stack.undo[0].cloudBatches).toEqual(["m1"]);
+  });
+
+  it("runUndoStep flips the ledger batches with the state, and puts them back when the step fails", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-importundo-cloud-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const undoStore = new ImportUndoStore(cases);
+    let state: InvestigationState = { ...S1, caseId: "c1" };
+    const flips: Array<[string[], boolean]> = [];
+    const deps = {
+      undoStore,
+      stateStore: {
+        load: async () => state,
+        save: async (s: InvestigationState) => {
+          state = s;
+        },
+      },
+      importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
+      runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
+      cloudRecords: {
+        setBatchesActive: async (_c: string, batches: string[], active: boolean) => {
+          flips.push([batches, active]);
+        },
+      },
+    };
+    await undoStore.save("c1", pushCheckpoint(emptyUndoStack(), withBatches()));
+    await runUndoStep(deps, "c1", applyUndo);
+    await runUndoStep(deps, "c1", applyRedo);
+    expect(flips).toEqual([
+      [["m1"], false],
+      [["m1"], true],
+    ]);
+    const saveStack = undoStore.save.bind(undoStore);
+    undoStore.save = async () => {
+      throw new Error("disk full");
+    };
+    await expect(runUndoStep(deps, "c1", applyUndo)).rejects.toThrow("disk full");
+    undoStore.save = saveStack;
+    expect(flips.slice(2)).toEqual([
+      [["m1"], false],
+      [["m1"], true],
+    ]);
+  });
+});

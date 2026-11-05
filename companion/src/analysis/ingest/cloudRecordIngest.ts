@@ -41,7 +41,8 @@ export async function planCloudRecords(
   const members: SourceRecordMember[] = [];
   const provenance: AggregateProvenance = {
     groupOf: (key) => `${idPrefix}:${createHash("sha256").update(key).digest("hex").slice(0, 24)}`,
-    onMember: (group, ref, locator) => members.push({ group, ref, ...(locator ? { locator } : {}) }),
+    onMember: (group, ref, locator, payloadHash) =>
+      members.push({ group, ref, ...(payloadHash ? { payloadHash } : {}), ...(locator ? { locator } : {}) }),
   };
   return { gate: { identities, verdicts: verdicts.verdicts }, provenance, identities, verdicts, members };
 }
@@ -77,7 +78,7 @@ export async function settleCloudRecords(
   ctx: ImportContext,
   caseId: string,
   plan: CloudRecordPlan,
-  idPrefix: string,
+  importOpts: { idPrefix: string; label: string }, // the import's batch and stored file name
   events: readonly SiemEvent[],
   debug?: ImportDebugRecorder,
 ): Promise<void> {
@@ -87,13 +88,19 @@ export async function settleCloudRecords(
   // the event cap dropped is not in the case, and marking it seen would make it unrecoverable.
   const kept = new Set(events.flatMap((e) => (e.sourceRecords ? [e.sourceRecords.group] : [])));
   const members = plan.members.filter((m) => kept.has(m.group));
-  const keptRefs = new Set(members.map((m) => m.ref));
-  const verdicts = plan.verdicts.verdicts.map((v, i) =>
-    keptRefs.has(plan.identities[i]?.key ?? "") ? v : ("duplicate" as const),
-  );
+  // Exact payload variants, not just keys: two payloads under one id (a conflict) can be split by
+  // the cap or the floor, and only the one that reached the case may be marked seen.
+  const variant = (key: string, hash: string | undefined): string => `${key}\n${hash ?? ""}`;
+  const keptVariants = new Set(members.map((m) => variant(m.ref, m.payloadHash)));
+  const verdicts = plan.verdicts.verdicts.map((v, i) => {
+    const id = plan.identities[i];
+    return id && keptVariants.has(variant(id.key, id.payloadHash)) ? v : ("duplicate" as const);
+  });
   try {
-    await store.commit(caseId, plan.identities, verdicts, idPrefix);
+    const written = await store.commit(caseId, plan.identities, verdicts, importOpts.idPrefix);
     await store.recordMembers(caseId, members);
+    // The import's undo checkpoint claims this batch, so Undo forgets it (cloudRecordBatches.ts).
+    if (written) await store.notePending(caseId, importOpts.idPrefix, importOpts.label);
   } catch {
     debug?.observed("record_ledger_write_failed");
   }
