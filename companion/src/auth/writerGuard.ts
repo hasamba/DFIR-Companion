@@ -64,34 +64,37 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-// In a container the server is always PID 1, so a guard left by an unclean exit names PID 1 and the
-// liveness probe in the NEXT container answers for itself (#2278). A record that names our own PID
-// but is not one we hold cannot be probed. From our own host (same container restarted, or PID
-// reuse after a reboot) no other live process can have our PID, so it is stale. From another host
-// — a recreated container, or a second container on a shared volume — only the lease can tell: a
-// live owner keeps the file fresh. A record older than the host field was never refreshed, so its
-// age proves nothing; a live older-version server would look expired. Refuse it and name the file.
+// A record from another host — a recreated container, or a second container or machine on a shared
+// volume — names a PID in THAT host's process table, so a local liveness probe asks the wrong
+// machine (#2287). Only the lease can tell: a live owner keeps the file fresh. In a container the
+// server is always PID 1, so a guard left by an unclean exit names PID 1 and the probe in the NEXT
+// container answers for itself (#2278). A record from our own host that names our own PID but is
+// not one we hold is stale: no other live process can have our PID. A record older than the host
+// field was never refreshed, so its age proves nothing; a live older-version server would look
+// expired. If it names our PID, refuse it and name the file.
 type Liveness = { live: false } | { live: true; reason: string };
 
 function judgeRecord(path: string, text: string, record: GuardRecord): Liveness {
   const owned = `process ${record.pid} already owns it`;
   if (heldGuards.has(text)) return { live: true, reason: owned };
+  if (record.host !== undefined && record.host !== hostname()) return judgeLease(path, record.host);
   if (record.pid !== process.pid)
     return processIsAlive(record.pid) ? { live: true, reason: owned } : { live: false };
   if (record.host === hostname()) return { live: false };
-  if (record.host === undefined) {
-    return {
-      live: true,
-      reason: `an older DFIR Companion recorded process ${record.pid}; if no other server uses this cases folder, delete ${path} and restart`,
-    };
-  }
+  return {
+    live: true,
+    reason: `an older DFIR Companion recorded process ${record.pid}; if no other server uses this cases folder, delete ${path} and restart`,
+  };
+}
+
+function judgeLease(path: string, host: string): Liveness {
   const touchedAt = mtimeMsIfPresent(path);
   if (touchedAt === null) return { live: false };
   const remainingMs = LEASE_MS - (Date.now() - touchedAt);
   if (remainingMs <= 0) return { live: false };
   return {
     live: true,
-    reason: `a server on host ${record.host} holds it; if that server has stopped, retry in ${Math.ceil(remainingMs / 1000)} seconds`,
+    reason: `a server on host ${host} holds it; if that server has stopped, retry in ${Math.ceil(remainingMs / 1000)} seconds`,
   };
 }
 
