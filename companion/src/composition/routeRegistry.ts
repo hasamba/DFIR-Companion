@@ -23,6 +23,7 @@ import { registerSupportBundleRoutes } from "../routes/supportBundleRoutes.js";
 import { registerGeoTileRoutes } from "../routes/geoTiles.js";
 import { registerAiModelRoutes } from "../routes/aiModels.js";
 import { registerServerSetRoutes } from "../routes/serverSets.js";
+import { registerCloudAccountRoutes } from "../routes/cloudAccounts.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
 import { registerPushNotifyRoutes } from "../routes/pushNotify.js";
 import { registerAuditExportRoutes } from "../routes/auditExport.js";
@@ -125,6 +126,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerGeoTileRoutes(app, ctx);
   registerAiModelRoutes(app, ctx);
   registerServerSetRoutes(app, ctx); // Settings → Server sets, and GET /cases/:id/server-set
+  registerCloudAccountRoutes(app, ctx); // Settings → Cloud accounts (#2307)
   registerCaptureRoutes(app, ctx);
   registerPushNotifyRoutes(app, ctx);
   registerAuditExportRoutes(app, ctx);

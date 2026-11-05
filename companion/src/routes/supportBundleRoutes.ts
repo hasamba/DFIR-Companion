@@ -50,7 +50,10 @@ export function registerSupportBundleRoutes(app: Express, ctx: RouteContext): vo
           canSee,
           extraSecrets: () => {
             try {
-              return options.serverSetStore?.secretValues() ?? [];
+              return [
+                ...(options.serverSetStore?.secretValues() ?? []),
+                ...(options.cloudAccountVault?.secretValues() ?? []),
+              ];
             } catch {
               return [];
             }

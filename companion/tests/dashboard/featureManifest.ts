@@ -1178,6 +1178,13 @@ export const FEATURES: Feature[] = [
     private: ["lastList", "editing", "editorOpts"],
   },
   {
+    // Settings → Cloud accounts (#2307): the vault-backed account list and its form.
+    // No `initializer`: initCaseConnect() runs initCloudAccounts(), not the inline script.
+    file: "dashboard-cloud-accounts.js",
+    publish: ["initCloudAccounts", "loadCloudAccounts"],
+    private: ["editing"],
+  },
+  {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.

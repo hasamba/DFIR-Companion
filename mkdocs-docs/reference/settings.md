@@ -192,6 +192,7 @@ Customer exposure check configuration:
 ## Integrations
 
 - [Server sets](#server-sets) — the DFIR-IRIS, Timesketch and Velociraptor connections
+- [Cloud accounts](#cloud-accounts) — the AWS accounts, Microsoft tenants and GCP projects for cloud collection
 - Notion (API token)
 - ClickUp (API token)
 
@@ -262,6 +263,73 @@ The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VE
 and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the
 upgrade, to make the **Default** set. After that, edit the sets here. The setup wizard's
 DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not into `.env`.
+
+### Cloud accounts
+
+A cloud account holds the credential that cloud collection uses for one AWS account, one Microsoft
+tenant or one GCP project. Find the list at Settings → Integrations → **Cloud accounts**. The
+list shows in **All** settings mode. In team mode, only an administrator sees and edits it.
+
+- **Add an account.** Click **+ Add cloud account**, give a name and pick the provider. Prefer a
+  short-lived credential:
+    - **AWS:** **Assume role** with the role ARN and, if the role needs one, the external ID. Also
+      give the base credential that calls AssumeRole: a stored access key, or **Ambient** when the
+      machine has its own AWS profile or instance role. A session lasts at most 1 hour. **Access
+      key only** is also allowed.
+    - **GCP:** **Impersonate a service account** with the account to impersonate, and the base
+      credential (a stored service-account key, or **Ambient**). A **Service-account key** JSON on
+      its own is also allowed.
+    - **Microsoft:** an app registration that signs in with a certificate, app-only. Paste the
+      certificate and its private key as PEM, or pick a PFX file and give its password. The
+      Companion checks the PFX password when you save. It never writes the private key to disk
+      unencrypted.
+- **Edit and rotate.** **Edit** shows which secrets are stored, never their values. Leave a secret
+  empty to keep it. Type a new value to replace it.
+- **Delete.** **Delete** removes the account and overwrites its stored credential.
+- **Secrets stay on the server.** Credentials never go into a response, a log line, a job, an error
+  message, a case file, an export or a support bundle.
+
+#### The vault key file
+
+The Companion encrypts every cloud credential with a key file that is **not** in the data folder.
+A stolen backup of the data folder holds the encrypted accounts, but not the key that opens them.
+
+| Install | Key file |
+|---|---|
+| Windows EXE | `%APPDATA%\DFIR-Companion\cloud-vault.key` |
+| AppImage and Linux | `$XDG_CONFIG_HOME/dfir-companion/cloud-vault.key` (`~/.config/…` when the variable is not set) |
+| Docker | `/run/dfir-vault/cloud-vault.key`, on its own mount `./cloud-vault-key` |
+
+Set `DFIR_CLOUD_VAULT_KEY_FILE` in `.env` (or the container environment) to use another path. It
+has no field in Settings. The key file holds 32 random bytes. The Companion makes it the first
+time you add a cloud account, readable by its owner only (mode 0600 on Linux, an owner-only ACL on
+Windows). It then tells you where the key is and to keep it out of data backups. The top of the
+Cloud accounts list always shows the key path.
+
+**Docker provisioning.** The supplied `docker-compose.yml` mounts the accounts at
+`./cloud-accounts:/data/cloud-accounts` and the key at `./cloud-vault-key:/run/dfir-vault`.
+
+1. Start the container: `docker compose up -d`. The entrypoint hands the empty `./cloud-vault-key`
+   folder to the server's user.
+2. Add your first cloud account in Settings. The Companion makes `./cloud-vault-key/cloud-vault.key`.
+3. Make the key mount read-only: change the line to `./cloud-vault-key:/run/dfir-vault:ro`, then
+   run `docker compose up -d` again. The server can then read the key but never change it.
+
+If you run the image yourself, mount both folders the same way. Without the key mount, the key is
+made inside the container and is lost when the container is recreated.
+
+**Backup and recovery.**
+
+- Back up the key file **separately** from the data folder (`./data`, `./cloud-accounts` and
+  `./cases`). Keep the two backups in different places. Whoever holds both can read every cloud
+  credential.
+- **Key file missing.** Each account shows **Locked — key file not found at *path***. Nothing is
+  deleted. Put the key file back at that path and the accounts open again, with no restart.
+- **Key file lost for good.** Click **Reset vault** and confirm. This deletes every cloud account and
+  keeps the key file and all case evidence. Then add the accounts again. The next account you add
+  makes a new key file if none is there.
+- **Evidence is not affected.** The key protects only the cloud credentials. Cases, evidence,
+  timelines and reports never depend on it.
 
 ---
 

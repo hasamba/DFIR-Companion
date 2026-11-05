@@ -232,6 +232,19 @@ describe("team-auth configuration and policy", () => {
     expect(resolveRequestPolicy("POST", "/tls/ca.crt")).not.toEqual({ kind: "public" });
   });
 
+  // Cloud accounts (#2307) name credentials, so even the list is global admin. #2308 rescopes them.
+  it("keeps every cloud account route global admin, GET included", () => {
+    for (const [m, p] of [
+      ["GET", "/cloud-accounts"],
+      ["POST", "/cloud-accounts"],
+      ["POST", "/cloud-accounts/reset"],
+      ["PUT", "/cloud-accounts/a1"],
+      ["DELETE", "/cloud-accounts/a1"],
+    ]) {
+      expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "global", permission: "admin" });
+    }
+  });
+
   it("treats a basemap tile as an authenticated asset, and only for GET", () => {
     expect(resolveRequestPolicy("GET", "/geo-tiles/3/4/5.png")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("POST", "/geo-tiles/3/4/5.png")).toEqual({

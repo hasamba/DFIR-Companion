@@ -93,6 +93,12 @@ services:
       - ./cases:/data/cases     # forensic evidence + case state (persists across restarts)
       - ./server-sets:/data/server-sets  # server sets: IRIS/Timesketch/Velociraptor connections, keys encrypted (persists across restarts)
       - ./auth:/data/auth       # team-mode accounts, sessions, roles, auth audit (persists across restarts)
+      - ./cloud-accounts:/data/cloud-accounts  # cloud accounts (AWS/Microsoft/GCP), credentials encrypted with the vault key below
+      # The cloud vault KEY, deliberately outside ./data so a data backup cannot decrypt the accounts.
+      # The key file is made the first time an analyst adds a cloud account; after that, append
+      # `:ro` to this line (./cloud-vault-key:/run/dfir-vault:ro) and recreate the container.
+      # Back ./cloud-vault-key up on its own, never together with ./data or ./cloud-accounts.
+      - ./cloud-vault-key:/run/dfir-vault
       - ./addon:/out            # pre-built browser add-on → Chrome/Comet "Load unpacked" ./addon/dist
     healthcheck:
       # Probe /health, not /dashboard: /health is auth- and host-check-exempt, so the probe stays

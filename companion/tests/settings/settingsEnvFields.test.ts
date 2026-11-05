@@ -147,6 +147,12 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
  * them. The other DFIR_VELOCIRAPTOR_* keys (binary, limits, VQL overrides) are global and keep
  * their inputs.
  */
+/**
+ * Deployment-only settings with no dashboard input at all, by the issue's design. The cloud vault
+ * key path (#2307) is one: it is also in DENIED_ENV_KEYS, so the dashboard can never move it.
+ */
+const DEPLOYMENT_ONLY_KEYS = new Set(["DFIR_CLOUD_VAULT_KEY_FILE"]);
+
 const SERVER_SET_SEED_KEYS = new Set([
   "DFIR_IRIS_URL",
   "DFIR_IRIS_KEY",
@@ -202,7 +208,9 @@ describe("Settings modal \u21c4 .env.example", () => {
       ...[...wizard.matchAll(/F\(\s*"(DFIR_[A-Z0-9_]+)"/g)].map((m) => m[1]),
     ]);
 
-    const missing = [...documented].filter((k) => !reachable.has(k) && !SERVER_SET_SEED_KEYS.has(k)).sort();
+    const missing = [...documented]
+      .filter((k) => !reachable.has(k) && !SERVER_SET_SEED_KEYS.has(k) && !DEPLOYMENT_ONLY_KEYS.has(k))
+      .sort();
     expect(missing, `documented in .env.example but nowhere in the UI: ${missing.join(", ")}`).toEqual([]);
   });
 
