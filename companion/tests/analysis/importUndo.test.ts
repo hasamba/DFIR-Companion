@@ -889,11 +889,11 @@ describe("cloud-record batches on a checkpoint (#2301)", () => {
     it("undo: crash after forgetting, before the state save — events kept, ledger forgets (re-import duplicates)", async () => {
       const t = await setup("undo");
       t.failState();
-      t.deps.cloudRecords.setBatchesActive = (async (_c: string, _b: string[], active: boolean) => {
+      t.deps.cloudRecords.setBatchesActive = async (_c: string, _b: string[], active: boolean) => {
         t.order.push(active ? "remember" : "forget");
         if (active) throw new Error("crash"); // the rollback dies with the process
         t.ledger.active = false;
-      }) as typeof t.deps.cloudRecords.setBatchesActive;
+      };
       await expect(runUndoStep(t.deps, "c1", applyUndo)).rejects.toThrow("crash");
       expect(t.holdsEvents()).toBe(true);
       expect(t.ledger.active).toBe(false);
