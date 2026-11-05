@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
+
 ### Changed
 
 - **Default server set name** — a new install names its first server set "Default" instead of "Testing"; an existing set keeps its name
