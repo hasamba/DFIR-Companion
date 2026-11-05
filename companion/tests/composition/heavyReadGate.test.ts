@@ -30,6 +30,7 @@ import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
 import { HostDuplicateDismissalStore } from "../../src/analysis/hostDuplicateDismissals.js";
 import { trackedWork } from "../../src/analysis/pendingWork.js";
 import { wholeCaseLoads } from "../../src/analysis/wholeCaseLoadLimit.js";
+import { JoinedSignal } from "../../src/analysis/abortable.js";
 
 // #1915 (reopened): a burst of whole-case reads must not build an unbounded backlog of main-thread
 // work. The heavy whole-case GETs are admitted a few at a time; a bounded queue holds the rest; a full
@@ -567,6 +568,13 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     await stateStore.save(emptyState("c1")); // a fresh revision: the next panel read loads afresh
     const gate = admit.mock.contexts[0] as HeavyReadGate;
     const reads = vi.spyOn(stateStore as unknown as { loadState: () => Promise<unknown> }, "loadState");
+    // Admission is not subscription (#2295). `gate.active` rises when a request is admitted, but the
+    // request then still awaits its revision lookup (real stat calls) before it joins the shared load.
+    // Dropping its partner in that gap leaves the partner's load with no other caller, so it is
+    // cancelled and the partner's slot frees: correct, and not what this test is about. So each drop
+    // waits for the other request to have JOINED (a pass-through count of JoinedSignal.join).
+    const joins = vi.spyOn(JoinedSignal.prototype, "join");
+    const joined = (since: number) => until(() => joins.mock.calls.length > since);
     const port = await listen(app);
     const busy = [deferred(), deferred()];
     const holders = busy.map((b) => wholeCaseLoads.run(() => b.promise));
@@ -574,15 +582,19 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       const starter = get(port, "/cases/c1/kerberoast-chain");
       starter.reply.catch(() => undefined);
       await until(() => wholeCaseLoads.waiting === 1);
+      const beforeJoiner = joins.mock.calls.length;
       const joiner = get(port, "/cases/c1/campaign-scope");
       joiner.reply.catch(() => undefined);
       await until(() => gate.active === 2);
+      await joined(beforeJoiner);
       expect(wholeCaseLoads.waiting).toBe(1); // one shared load for both
       joiner.drop();
       await until(() => gate.active === 1); // the joiner's slot is free at once
       expect(wholeCaseLoads.waiting).toBe(1); // and the load the starter waits for runs on
+      const beforeStayer = joins.mock.calls.length;
       const stayer = get(port, "/cases/c1/campaign-scope");
       await until(() => gate.active === 2);
+      await joined(beforeStayer); // the stayer shares the starter's load before the starter leaves
       starter.drop();
       await new Promise((r) => setTimeout(r, 50));
       expect(gate.active).toBe(2); // the starter's slot holds: its load is still queued for the stayer

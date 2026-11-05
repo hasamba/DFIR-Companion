@@ -50,8 +50,9 @@ for (const { story, slug, hint } of INTEGRATIONS) {
 test("US-135: the local IRIS export builds a payload without contacting IRIS", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
-  // Distinct from POST /push/iris: this produces the payload locally so an analyst can review or
-  // hand-carry it, which must work whether or not IRIS is reachable.
+  // Distinct from POST /push/iris: this answers locally with the IRIS case name a push would use (the
+  // saved override or the computed default), the prefill for the push modal. It reads no IRIS and needs
+  // none in the case's server set, so it works on this unconfigured harness (#2294).
   const res = await page.request.get(`/cases/${demoCase}/iris-export`);
   expect(res.status(), await res.text()).toBe(200);
   const body = (await res.json()) as { defaultCaseName?: string };

@@ -290,10 +290,9 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   // lets the dashboard prefill the "Push to DFIR-IRIS" case-name field.
   app.get("/cases/:id/iris-export", async (req: Request, res: Response) => {
     const caseId = req.params.id;
-    const resolved = ctx.serverClients.forCase(caseId);
-    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
-    if (!resolved.servers.iris || !options.irisExportStore)
-      return res.status(501).json({ error: "DFIR-IRIS not configured" });
+    // Local only: the saved override and the case's own name. No IRIS call and no server set needed,
+    // so it answers whether or not the case's set has an IRIS (US-135, #2294).
+    if (!options.irisExportStore) return res.status(501).json({ error: "DFIR-IRIS not configured" });
     try {
       const saved = await options.irisExportStore.load(caseId);
       const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
