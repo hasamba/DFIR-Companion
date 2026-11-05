@@ -7,6 +7,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { CloudStateStore } from "../../src/analysis/cloudStateStore.js";
+import { CloudRecordStore } from "../../src/analysis/cloudRecordStore.js";
 import { createImportIngest, type ImportIngestDeps } from "../../src/composition/importIngest.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import type { InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -15,7 +16,6 @@ import {
   applyRedo,
   applyUndo,
   deltaCheckpoint,
-  emptyUndoStack,
   encodeStack,
   normalizeStack,
   pushCheckpoint,
@@ -45,6 +45,7 @@ const rules = (forward: string): string =>
 let ingest: ReturnType<typeof createImportIngest>;
 let stateStore: StateStore;
 let snapshots: CloudStateStore;
+let records: CloudRecordStore;
 let undoStore: ImportUndoStore;
 let root = "";
 let seq = 0;
@@ -61,6 +62,7 @@ function wire(): void {
   const caseStore = new CaseStore(root);
   stateStore = new StateStore(caseStore);
   snapshots = new CloudStateStore(caseStore);
+  records = new CloudRecordStore(caseStore);
   undoStore = new ImportUndoStore(caseStore);
   const pipeline = new AnalysisPipeline({
     provider: new MockProvider("mock", "{}"),
@@ -101,11 +103,11 @@ async function importAs(
     importedAt,
   })) as InvestigationState;
   // What caseAppliers.pushImportCheckpoint does after the route's import: the checkpoint claims the
-  // snapshot batches the import wrote.
+  // batches the import wrote — #2301's cloud-record batches, which the snapshot rows share.
   const checkpointLabel = `${kind} (${label})`;
-  const snapshotBatches = await snapshots.claimBatches("c1", checkpointLabel);
+  const cloudBatches = await records.claimBatches("c1", checkpointLabel);
   const built = deltaCheckpoint(checkpointLabel, importedAt, before, after);
-  const checkpoint = snapshotBatches.length ? { ...built, snapshotBatches } : built;
+  const checkpoint = cloudBatches.length ? { ...built, cloudBatches } : built;
   await undoStore.mutate("c1", (stack) => ({ stack: pushCheckpoint(stack, checkpoint), result: undefined }));
   return after;
 }
@@ -115,7 +117,7 @@ const undoDeps = () => ({
   stateStore,
   importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
   runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
-  snapshotState: snapshots,
+  cloudRecords: records,
 });
 
 const snapshotRows = async () =>
@@ -209,62 +211,11 @@ describe("snapshot import — observations, idempotence, order (#2305)", () => {
     expect(await snapshotRows()).toHaveLength(2);
   });
 
-  it("the checkpoint's snapshot batches survive the undo-stack file format", async () => {
+  it("the checkpoint claims the snapshot batch, and it survives the undo-stack file format", async () => {
     await importAs("20261101-100000-MailboxRules.csv", rules("x@example.net"));
     const stack = await undoStore.load("c1");
-    expect(stack.undo.at(-1)?.snapshotBatches).toEqual(["0001_20261101-100000-MailboxRules.csv"]);
+    expect(stack.undo.at(-1)?.cloudBatches).toEqual(["1"]);
     const again = normalizeStack(JSON.parse(encodeStack(stack).toString("utf8")));
-    expect(again.undo.at(-1)?.snapshotBatches).toEqual(stack.undo.at(-1)?.snapshotBatches);
-  });
-});
-
-// Evidence-first ordering (as #2301's ledger): Undo forgets the batch BEFORE the state drops the
-// events, Redo remembers it only AFTER the state has them back, and a failed step puts it back.
-describe("snapshot batches in an undo step — evidence-first (#2305)", () => {
-  const S0 = { caseId: "c1", forensicTimeline: [], iocs: [], findings: [] } as unknown as InvestigationState;
-  const S1 = {
-    ...S0,
-    forensicTimeline: [{ id: "e1", timestamp: "2026-11-01T00:00:00Z", description: "d", severity: "High" }],
-  } as unknown as InvestigationState;
-
-  it("orders the writes and rolls the flip back when the stack write fails", async () => {
-    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-snapshot-undo-")));
-    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-    const store = new ImportUndoStore(cases);
-    let state = S1;
-    const order: string[] = [];
-    const deps = {
-      undoStore: store,
-      stateStore: {
-        load: async () => state,
-        save: async (s: InvestigationState) => {
-          order.push("state");
-          state = s;
-        },
-      },
-      importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
-      runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
-      snapshotState: {
-        setBatchesActive: async (_c: string, b: string[], active: boolean) => {
-          order.push(`${active ? "remember" : "forget"}:${b.join(",")}`);
-        },
-      },
-    };
-    const cp = {
-      ...deltaCheckpoint("cloudsnapshot (0001_x.csv)", "t", S0, S1),
-      snapshotBatches: ["0001_x.csv"],
-    };
-    await store.save("c1", pushCheckpoint(emptyUndoStack(), cp));
-    await runUndoStep(deps, "c1", applyUndo);
-    await runUndoStep(deps, "c1", applyRedo);
-    expect(order).toEqual(["forget:0001_x.csv", "state", "state", "remember:0001_x.csv"]);
-    order.length = 0;
-    const save = store.save.bind(store);
-    store.save = async () => {
-      throw new Error("disk full");
-    };
-    await expect(runUndoStep(deps, "c1", applyUndo)).rejects.toThrow("disk full");
-    store.save = save;
-    expect(order).toEqual(["forget:0001_x.csv", "state", "state", "remember:0001_x.csv"]);
+    expect(again.undo.at(-1)?.cloudBatches).toEqual(stack.undo.at(-1)?.cloudBatches);
   });
 });

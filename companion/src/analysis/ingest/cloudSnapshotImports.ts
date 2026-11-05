@@ -65,7 +65,7 @@ export async function importCloudSnapshot(
     ? await mergeEvents(ctx, caseId, opts, kept, `${SHAPE_LABEL[shape]} import: ${note}`)
     : await noteEmptyImport(ctx, caseId, opts, SHAPE_LABEL[shape], parsed.total, note);
   // After the merge, so a failed merge leaves the store as it was and a retry re-announces.
-  if (store && toStore.length) await store.append(caseId, toStore, opts.label);
+  if (store && toStore.length) await store.append(caseId, toStore, opts.idPrefix, opts.label);
   return state;
 }
 
