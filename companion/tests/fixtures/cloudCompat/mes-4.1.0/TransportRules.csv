@@ -1,0 +1,2 @@
+"Name","State","Mode","Priority","FromScope","SentToScope","BlindCopyTo","RedirectMessageTo","DeleteMessage","SetSCL","ManuallyModified","WhenChanged","Description","Identity"
+"Bypass filtering","Enabled","Enforce","0","NotInOrganization","","","","","-1","False","11/1/2026 9:00:00 AM","If the message is received from outside the organization set the spam confidence level (SCL) to '-1'","Bypass filtering"

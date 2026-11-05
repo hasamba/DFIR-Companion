@@ -1,0 +1,38 @@
+[
+  {
+    "id": "Directory_00000000-0000-4000-8000-000000001201",
+    "category": "RoleManagement",
+    "correlationId": "00000000-0000-4000-8000-000000001202",
+    "result": "success",
+    "resultReason": "",
+    "activityDisplayName": "Add member to role",
+    "activityDateTime": "2026-11-01T13:00:00Z",
+    "loggedByService": "Core Directory",
+    "operationType": "Assign",
+    "initiatedBy": {
+      "user": {
+        "id": "00000000-0000-4000-8000-000000000399",
+        "displayName": null,
+        "userPrincipalName": "admin@example.com",
+        "ipAddress": "203.0.113.30"
+      },
+      "app": null
+    },
+    "targetResources": [
+      {
+        "id": "00000000-0000-4000-8000-000000000301",
+        "displayName": null,
+        "type": "User",
+        "userPrincipalName": "user1@example.com",
+        "modifiedProperties": [
+          {
+            "displayName": "Role.DisplayName",
+            "oldValue": null,
+            "newValue": "\"Global Administrator\""
+          }
+        ]
+      }
+    ],
+    "additionalDetails": []
+  }
+]

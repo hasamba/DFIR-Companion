@@ -51,7 +51,7 @@ kept apart from what a collector or the machine itself wrote.
 | **Network** | Suricata eve.json, Zeek JSON (combined or per-stream conn/dns/http/ssl/x509/files), Zeek classic TSV logs (the default `#separator`/`#fields` writer, e.g. `conn.log`), Security Onion events |
 | **Firewall / IDS / web logs** | Cisco ASA syslog (Built/Teardown/Deny), Snort/Suricata `alert_fast` IDS alerts, Apache/Nginx/Squid combined access logs, plain syslog (RFC 5424 / RFC 3164, Linux/Unix hosts) |
 | **Memory forensics** | Volatility 3 JSON + default text output, Rekall JSON, MemProcFS timeline CSV, MemProcFS findevil, Intact (trimmed VolWeb) `memory_payload.json` + `yarascan_results.jsonl` |
-| **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log (including Sentinel `OfficeActivity` exports, dated from `TimeGenerated` when `CreationTime` is absent), Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log; **cloud flow logs** — AWS VPC Flow Logs (default v2 text), Azure virtual network flow logs (`flowLogVersion` 4 JSON), GCP VPC Flow Logs (Cloud Logging export) — see [Cloud flow logs](#cloud-flow-logs-aws-vpc-azure-vnet-gcp-vpc) |
+| **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log (including Sentinel `OfficeActivity` exports, dated from `TimeGenerated` when `CreationTime` is absent), Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log — which file each cloud tool writes, and where it goes, is in [Cloud tools](#cloud-tools); **cloud flow logs** — AWS VPC Flow Logs (default v2 text), Azure virtual network flow logs (`flowLogVersion` 4 JSON), GCP VPC Flow Logs (Cloud Logging export) — see [Cloud flow logs](#cloud-flow-logs-aws-vpc-azure-vnet-gcp-vpc) |
 | **Identity provider** | Okta System Log, Google Workspace admin/login audit — severity comes from the event type, not the vendor's own operational grade, so IdP account-takeover tradecraft (MFA/2SV disabled, admin role granted, API token minted, OAuth grant consented, session impersonated, Workspace mail monitor added) grades above Info |
 | **Microsoft Defender XDR** | Microsoft 365 Defender / Defender XDR advanced-hunting exports (JSON or NDJSON; `DeviceEvents`, `IdentityDirectoryEvents` and `CloudAppEvents` rows may be mixed in one file, Log Analytics `_string`/`_long` column suffixes accepted) — rows default Low; directory replication requested from a device other than the destination (DCSync), LDAP reads of the AD FS DKM container, Domain Admins membership enumeration and delegated permission grants are graded up |
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
@@ -2524,6 +2524,96 @@ prepared`. Download started → High; prepared → Medium; requested only → Me
 shown to be prepared or downloaded`); failed or canceled with no download → Low. A Drive folder
 named "Takeout" or an uploaded archive is never a stage. 256 rows per export (the rest counted);
 the row's identity is (tenant, job id), so a re-import folds.
+
+## Cloud tools
+
+This section answers one question: *"I ran tool X, version Y. Which file do I drop into the
+companion, and what happens to it?"*
+
+!!! warning "Built from synthetic samples"
+    Every row below is backed by an automated test, but the test files are **synthetic**. They are
+    built from each tool's documented output format, with `example.com` names and fake ids, and
+    they have **not been checked against real tool output**. A real export with extra or renamed
+    columns can route differently. If yours does, the import result names the format it picked —
+    report it.
+
+**What the status means**
+
+- **works** — the file goes to an importer that reads its rows.
+- **misrouted** — the file goes somewhere else (another importer, or the generic AI CSV reader),
+  although an importer that reads it exists. Until that is fixed, expect the wrong grading, or an
+  AI call for a file that should not need one.
+- **unsupported** — nothing reads this file's meaning today. It is refused, or it reaches the
+  generic AI CSV reader, or it lands as a generic row with its detail unread.
+
+**What to run, and what to drop in**
+
+The command names follow each tool's own documentation; check `Get-Help <command>` for your version.
+
+- **Microsoft-Extractor-Suite (Invictus-IR) 4.1.0** — `Get-UAL` writes `UAL-Combined.csv` (or
+  `.json` / `.jsonl` with `-Output`); drop that file. `Get-UALGraph` writes
+  `<date>-<search>-UnifiedAuditLog.json`. The Entra sign-in cmdlet writes `SignInLogs*.json`, and
+  `Get-ActivityLogs` writes `ActivityLog.json`. `Get-MailboxRules`, `Get-TransportRules`, the OAuth
+  permissions cmdlet, `Get-MailboxAuditLog` and `Get-MFA` write CSV snapshots — see the table for
+  what happens to each.
+- **DFIR-O365RC (ANSSI) 2.0.x** — `Get-O365Full` writes one `UnifiedAuditLog_<tenant>_<date>_<hour>.json`
+  per hour; drop each file (the drop folder takes a whole folder). `Get-AADLogs` writes
+  `AADSigninLog_*` and `AADAuditLog_*`; `Get-AzRMActivityLogs` writes `AzRM_*`. A file with two
+  arrays run together (`][`, written by an interrupted or repeated run) is read whole.
+- **Log Analytics / Microsoft Sentinel** — run the table query (`SigninLogs`,
+  `AADNonInteractiveUserSignInLogs`, `AuditLogs`, `AzureActivity`, `OfficeActivity`) and export the
+  result, or `az monitor log-analytics query --workspace <id> --analytics-query "<table> | where TimeGenerated > ago(30d)" -o json > <table>.json`.
+  Prefer JSON over CSV where the table says so.
+- **Azure diagnostic settings → storage account** — download the `PT1H.json` blobs from the
+  `insights-logs-<category>` container (one per hour per resource) and drop them.
+- **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`,
+  then **decompress**: `gzip -d -r ./cloudtrail`. Drop the `.json` files. The companion cannot read
+  `.json.gz` today. Prefer the S3 objects to the console's Event history CSV.
+- **GCP Cloud Audit Logs** — `gcloud logging read 'logName:"cloudaudit.googleapis.com"' --format=json > audit.json`,
+  or copy the objects a Cloud Storage log sink wrote (`gcloud storage cp -r gs://<bucket>/cloudaudit.googleapis.com ./`).
+
+**Size limits today.** The Import button reads a file of up to 200 MB in the browser and sends it
+(server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file is read from a server path, refused above
+256 MB (`DFIR_MAX_IMPORT_FILE_MB`), and every import holds the whole file in memory. Split a larger
+export before import. One import keeps at most 2,000 aggregated events (`DFIR_MAX_EVENTS`), most
+severe first.
+
+| Tool | Version | Output file | Detected today | Should go to | Status | Notes |
+|---|---|---|---|---|---|---|
+| Microsoft-Extractor-Suite | 4.1.0 | UAL-Combined.csv | `m365` | `m365` | works | `AuditData` column claims it. |
+| Microsoft-Extractor-Suite | 4.1.0 | UAL-Combined.json | `m365` | `m365` | works | — |
+| Microsoft-Extractor-Suite | 4.1.0 | UAL-Combined.jsonl | `m365` | `m365` | works | — |
+| Microsoft-Extractor-Suite | 4.1.0 | UAL `-AuditDataOnly` JSON | `m365` | `m365` | works | — |
+| Microsoft-Extractor-Suite | 4.1.0 | `<date>-<search>-UnifiedAuditLog.json` (Get-UALGraph) | `m365` | `m365` | works | Graph `auditLogRecord`; the nested `auditData` is merged. |
+| Microsoft-Extractor-Suite | 4.1.0 | `SignInLogs*.json` (Graph signIn) | `m365` | `m365` | works | — |
+| Microsoft-Extractor-Suite | 4.1.0 | ActivityLog.json | `cloud` | `cloud` | works | Azure Activity Log. |
+| Microsoft-Extractor-Suite | 4.1.0 | InboxRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| Microsoft-Extractor-Suite | 4.1.0 | TransportRules.csv | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| Microsoft-Extractor-Suite | 4.1.0 | OAuth permissions CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| Microsoft-Extractor-Suite | 4.1.0 | `mailboxAuditLog-<UPN>.csv` | `csv` | `m365` | **misrouted** | CSV has `Operation` (singular) and no `RecordType`. Forced through m365 it maps the rows but with no time: `LastAccessed` is not read. |
+| Microsoft-Extractor-Suite | 4.1.0 | MFA CSV | `csv` | none yet — configuration snapshot (#2305) | **unsupported** | Goes to the generic AI CSV path. |
+| DFIR-O365RC | 2.0.x | `UnifiedAuditLog_<tenant>_YYYY-MM-DD_HH-00-00.json` | `m365` | `m365` | works | — |
+| DFIR-O365RC | 2.0.x | same, with the concatenated-arrays bug (`][`) | `m365` | `m365` | works | Every record of both arrays is read (concatenated-JSON fallback). |
+| DFIR-O365RC | 2.0.x | `AADSigninLog_*` | `m365` | `m365` | works | — |
+| DFIR-O365RC | 2.0.x | `AADAuditLog_*` | `m365` | `m365` | works | — |
+| DFIR-O365RC | 2.0.x | `AzRM_*` | `cloud` | `cloud` | works | Azure Activity Log. |
+| Log Analytics export | — | `SigninLogs` (JSON) | `cloud` | `m365` | **misrouted** | `OperationName` + `ResourceId`/`CorrelationId` → claimed as Azure Activity before the M365 check. Forced through m365, the `Status` string column is not read, so a wrong password grades Low, not Medium. |
+| Log Analytics export | — | `SigninLogs` (CSV) | `csv` | `m365` | **misrouted** | No CSV signature matches. Same `Status` limit as the JSON row. |
+| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (JSON) | `cloud` | `m365` | **misrouted** | As `SigninLogs` (JSON). |
+| Log Analytics export | — | `AADNonInteractiveUserSignInLogs` (CSV) | `csv` | `m365` | **misrouted** | As `SigninLogs` (CSV). |
+| Log Analytics export | — | `AuditLogs` (JSON) | `cloud` | `m365` | **misrouted** | Claimed as Azure Activity (graded Low). Forced through m365, "Add member to role" grades High. |
+| Log Analytics export | — | `AuditLogs` (CSV) | `csv` | `m365` | **misrouted** | No CSV signature matches. |
+| Log Analytics export | — | `AzureActivity` (JSON) | `cloud` | `cloud` | works | — |
+| Log Analytics export | — | `AzureActivity` (CSV) | `csv` | `cloud` | **unsupported** | The Azure Activity importer reads JSON only. |
+| Log Analytics export | — | `OfficeActivity` (JSON) | `m365` | `m365` | works | — |
+| Log Analytics export | — | `OfficeActivity` (CSV) | `csv` | `m365` | **misrouted** | CSV has `Operation` (singular); the M365 CSV signature wants `AuditData` or `Operations` + `RecordType`. |
+| Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `cloud` | m365, after unwrapping `properties` (#2304) | **unsupported** | Mapped as one generic Azure operation; the sign-in under `properties` is not read, and m365 maps nothing from it. |
+| Azure diagnostic settings | — | `PT1H.json`, Azure resource log (Key Vault `AuditEvent`) | `cloud` | `cloud` | works | Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed. |
+| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json` (decompressed) | `aws` | `aws` | works | — |
+| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `unknown` | `aws` | **unsupported** | Refused as binary: nothing in the import path decompresses gzip. Decompress first. |
+| AWS CloudTrail | — | Console Event history CSV | `csv` | `aws` | **unsupported** | The CloudTrail importer reads JSON only; the CSV goes to the generic AI CSV path. |
+| GCP Cloud Audit Logs | — | `gcloud logging read --format=json` (array) | `cloud` | `cloud` | works | — |
+| GCP Cloud Audit Logs | — | GCS sink JSON lines | `cloud` | `cloud` | works | — |
 
 ## What the log says about an import
 

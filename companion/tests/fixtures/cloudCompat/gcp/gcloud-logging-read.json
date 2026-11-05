@@ -1,0 +1,56 @@
+[
+  {
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "admin@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "203.0.113.60",
+        "callerSuppliedUserAgent": "google-cloud-sdk"
+      },
+      "serviceName": "iam.googleapis.com",
+      "methodName": "google.iam.admin.v1.CreateServiceAccountKey",
+      "resourceName": "projects/example-project/serviceAccounts/sa1@example-project.iam.gserviceaccount.com"
+    },
+    "insertId": "example0001",
+    "resource": {
+      "type": "service_account",
+      "labels": {
+        "project_id": "example-project"
+      }
+    },
+    "timestamp": "2026-11-01T15:01:00.000000Z",
+    "severity": "NOTICE",
+    "logName": "projects/example-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "2026-11-01T15:01:01.000000Z"
+  },
+  {
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "status": {},
+      "authenticationInfo": {
+        "principalEmail": "admin@example.com"
+      },
+      "requestMetadata": {
+        "callerIp": "203.0.113.60",
+        "callerSuppliedUserAgent": "google-cloud-sdk"
+      },
+      "serviceName": "cloudresourcemanager.googleapis.com",
+      "methodName": "SetIamPolicy",
+      "resourceName": "projects/example-project/serviceAccounts/sa1@example-project.iam.gserviceaccount.com"
+    },
+    "insertId": "example0002",
+    "resource": {
+      "type": "service_account",
+      "labels": {
+        "project_id": "example-project"
+      }
+    },
+    "timestamp": "2026-11-01T15:02:00.000000Z",
+    "severity": "NOTICE",
+    "logName": "projects/example-project/logs/cloudaudit.googleapis.com%2Factivity",
+    "receiveTimestamp": "2026-11-01T15:02:01.000000Z"
+  }
+]

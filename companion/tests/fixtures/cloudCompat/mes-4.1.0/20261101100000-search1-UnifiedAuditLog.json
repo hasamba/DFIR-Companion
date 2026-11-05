@@ -1,0 +1,125 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000101",
+    "createdDateTime": "2026-11-01T10:01:00Z",
+    "auditLogRecordType": "ExchangeAdmin",
+    "operation": "New-InboxRule",
+    "organizationId": "00000000-0000-4000-8000-000000000001",
+    "userType": "regular",
+    "userId": "user1@example.com",
+    "service": "Exchange",
+    "objectId": "",
+    "userPrincipalName": "user1@example.com",
+    "clientIp": "203.0.113.10",
+    "administrativeUnits": [],
+    "auditData": {
+      "CreationTime": "2026-11-01T10:01:00",
+      "Id": "00000000-0000-4000-8000-000000000101",
+      "Operation": "New-InboxRule",
+      "OrganizationId": "00000000-0000-4000-8000-000000000001",
+      "RecordType": 1,
+      "ResultStatus": "Succeeded",
+      "UserKey": "1003BFFD00000001",
+      "UserType": 0,
+      "Version": 1,
+      "Workload": "Exchange",
+      "ClientIP": "203.0.113.10",
+      "UserId": "user1@example.com",
+      "Parameters": [
+        {
+          "Name": "Name",
+          "Value": "rule1"
+        },
+        {
+          "Name": "ForwardTo",
+          "Value": "drop@example.com"
+        }
+      ]
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000102",
+    "createdDateTime": "2026-11-01T10:02:00Z",
+    "auditLogRecordType": "ExchangeItemAggregated",
+    "operation": "MailItemsAccessed",
+    "organizationId": "00000000-0000-4000-8000-000000000001",
+    "userType": "regular",
+    "userId": "user1@example.com",
+    "service": "Exchange",
+    "objectId": "",
+    "userPrincipalName": "user1@example.com",
+    "clientIp": "203.0.113.10",
+    "administrativeUnits": [],
+    "auditData": {
+      "CreationTime": "2026-11-01T10:02:00",
+      "Id": "00000000-0000-4000-8000-000000000102",
+      "Operation": "MailItemsAccessed",
+      "OrganizationId": "00000000-0000-4000-8000-000000000001",
+      "RecordType": 50,
+      "ResultStatus": "Succeeded",
+      "UserKey": "1003BFFD00000002",
+      "UserType": 0,
+      "Version": 1,
+      "Workload": "Exchange",
+      "ClientIP": "203.0.113.10",
+      "UserId": "user1@example.com"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000103",
+    "createdDateTime": "2026-11-01T10:03:00Z",
+    "auditLogRecordType": "AzureActiveDirectoryStsLogon",
+    "operation": "UserLoggedIn",
+    "organizationId": "00000000-0000-4000-8000-000000000001",
+    "userType": "regular",
+    "userId": "user2@example.com",
+    "service": "AzureActiveDirectory",
+    "objectId": "",
+    "userPrincipalName": "user2@example.com",
+    "clientIp": "198.51.100.20",
+    "administrativeUnits": [],
+    "auditData": {
+      "CreationTime": "2026-11-01T10:03:00",
+      "Id": "00000000-0000-4000-8000-000000000103",
+      "Operation": "UserLoggedIn",
+      "OrganizationId": "00000000-0000-4000-8000-000000000001",
+      "RecordType": 15,
+      "ResultStatus": "Succeeded",
+      "UserKey": "1003BFFD00000003",
+      "UserType": 0,
+      "Version": 1,
+      "Workload": "AzureActiveDirectory",
+      "ClientIP": "198.51.100.20",
+      "UserId": "user2@example.com"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000104",
+    "createdDateTime": "2026-11-01T10:04:00Z",
+    "auditLogRecordType": "SharePointFileOperation",
+    "operation": "FileDownloaded",
+    "organizationId": "00000000-0000-4000-8000-000000000001",
+    "userType": "regular",
+    "userId": "user2@example.com",
+    "service": "SharePoint",
+    "objectId": "https://example.com/sites/s1/doc1.docx",
+    "userPrincipalName": "user2@example.com",
+    "clientIp": "198.51.100.20",
+    "administrativeUnits": [],
+    "auditData": {
+      "CreationTime": "2026-11-01T10:04:00",
+      "Id": "00000000-0000-4000-8000-000000000104",
+      "Operation": "FileDownloaded",
+      "OrganizationId": "00000000-0000-4000-8000-000000000001",
+      "RecordType": 6,
+      "ResultStatus": "Succeeded",
+      "UserKey": "1003BFFD00000004",
+      "UserType": 0,
+      "Version": 1,
+      "Workload": "SharePoint",
+      "ClientIP": "198.51.100.20",
+      "UserId": "user2@example.com",
+      "ObjectId": "https://example.com/sites/s1/doc1.docx"
+    }
+  }
+]
