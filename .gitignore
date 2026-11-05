@@ -37,6 +37,7 @@ companion/updates/
 
 # Secrets / local config
 **/.env
+**/.env.bak*
 
 # Node
 node_modules
