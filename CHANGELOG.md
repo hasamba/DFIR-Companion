@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Million-row cloud imports** — large and gzip cloud exports stream from disk with bounded, disclosed output and no lost High/Critical events (closes #2303)
 - **Cloud record dedup and source records** — re-importing the same cloud export (or an overlapping one) adds no duplicate events and says how many were skipped; conflicting records under one id are kept and flagged; aggregated events can be paged back to their source records; undo releases the records for re-import (closes #2301)
 - **Graph audit records and Azure diagnostic exports** — Graph audit records grade exactly like classic UAL records, and Azure diagnostic-settings Entra sign-in/audit exports import as Entra events instead of one generic Azure row (closes #2304)
 - **Cloud export recognition** — Log Analytics sign-in, audit, Office and Azure Activity exports (JSON and CSV), MES mailbox audit CSV and the CloudTrail console CSV now reach the right importer and grade correctly; repaired files say what was repaired (closes #2302)
