@@ -36,6 +36,7 @@ import {
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { privateBundleDir } from "../helpers/bundleDir.js";
+import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 const cfg = (apiConfigPath: string): VelociraptorApiConfig => ({
   apiConfigPath,
@@ -460,17 +461,35 @@ describe("startup fleet inventory retries", () => {
       throw new Error("server down");
     }));
 
-  it("a retry uses the set's current Velociraptor, not the client from the first attempt", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const s = sets.create({ name: "A", velociraptor: velo("/old/api.yaml") });
-    const old = failing("/old/api.yaml");
-    start();
-    await vi.waitFor(() => expect(old).toHaveBeenCalledTimes(1));
-    sets.update(s.id, { name: "A", velociraptor: velo("/new/api.yaml") });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await vi.waitFor(() => expect(runnerFor("/new/api.yaml")).toHaveBeenCalled());
-    expect(old).toHaveBeenCalledTimes(1);
-  });
+  /** Wait, in real time, until the startup refresh has logged `text` (#2289). */
+  const loggedLine = (text: string) =>
+    vi.waitFor(() => expect(logs.lines.some((l) => l.includes(text))).toBe(true), {
+      timeout: POLL_TIMEOUT_MS,
+    });
+
+  // Two waits on POLL_TIMEOUT_MS, plus room for the test's own work.
+  it(
+    "a retry uses the set's current Velociraptor, not the client from the first attempt",
+    { timeout: POLL_TIMEOUT_MS * 3 },
+    async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const s = sets.create({ name: "A", velociraptor: velo("/old/api.yaml") });
+      const old = failing("/old/api.yaml");
+      start();
+      // The retry log is written right before the retry's setTimeout, so once it is there the
+      // timer exists and the clock advance below is guaranteed to fire it.
+      await loggedLine("server set 'A' startup inventory refresh failed (server down) — retrying in 30s");
+      expect(old).toHaveBeenCalledTimes(1);
+      sets.update(s.id, { name: "A", velociraptor: velo("/new/api.yaml") });
+      await vi.advanceTimersByTimeAsync(30_000);
+      // Wait for the END of the chain, not the runner call at its start. The inventory file is
+      // written after the runner answers; returning earlier let afterEach's rmSync race that write
+      // and fail the test with ENOTEMPTY on a busy CI runner (#2289).
+      await loggedLine("server set 'A' inventory: 1 enrolled client(s)");
+      expect(runnerFor("/new/api.yaml")).toHaveBeenCalled();
+      expect(old).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("retries stop once the set is deleted or loses its Velociraptor", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
