@@ -10,6 +10,7 @@ import { IrisExportStore } from "../../src/integrations/iris/irisExportStore.js"
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { stubServerClients } from "../helpers/serverClientsStub.js";
 import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
+import type { ServerClients } from "../../src/integrations/serverSets/types.js";
 
 // A recording mock IRIS client covering every method pushCaseToIris calls, plus a `cases`
 // array the tests inspect directly to assert no duplicate/unrelated case was created.
@@ -78,7 +79,10 @@ function mockIrisPush(over: Partial<Record<string, unknown>> = {}) {
   return { client: base as unknown as IrisClient, cases };
 }
 
-async function makeApp(irisClient: IrisClient) {
+async function makeApp(
+  irisClient: IrisClient | undefined,
+  opts: { serverClients?: ServerClients; noExportStore?: boolean } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-iris-push-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -96,8 +100,8 @@ async function makeApp(irisClient: IrisClient) {
     pipeline,
     stateStore,
     reportWriter,
-    serverClients: stubServerClients({ iris: irisClient }),
-    irisExportStore,
+    serverClients: opts.serverClients ?? stubServerClients(irisClient ? { iris: irisClient } : {}),
+    ...(opts.noExportStore ? {} : { irisExportStore }),
   });
   await request(app)
     .post("/cases")
@@ -173,5 +177,54 @@ describe("GET /cases/:id/iris-export", () => {
     const res = await request(app).get("/cases/c1/iris-export");
     expect(res.status).toBe(200);
     expect(res.body.caseName).toBe("acme-breach-2026");
+  });
+});
+
+// #2294: the export only names the IRIS case a push would use. It reads local files, never IRIS, so
+// it must answer whether or not the case's server set has an IRIS (US-135). #2274 made it 501 there.
+describe("GET /cases/:id/iris-export without an IRIS in the case's server set (#2294)", () => {
+  it("still reports the computed default name", async () => {
+    const app = await makeApp(undefined);
+    const res = await request(app).get("/cases/c1/iris-export");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ caseName: "", defaultCaseName: "c1 — Ransomware FS01" });
+  });
+
+  it("still reports a saved override after the IRIS leaves the set", async () => {
+    const { client } = mockIrisPush();
+    let servers = stubServerClients({ iris: client });
+    const switchable: ServerClients = {
+      forCase: (...args) => servers.forCase(...args),
+      forDefault: (...args) => servers.forDefault(...args),
+      forSet: (...args) => servers.forSet(...args),
+      forInput: (...args) => servers.forInput(...args),
+      invalidate: (...args) => servers.invalidate(...args),
+    };
+    const app = await makeApp(undefined, { serverClients: switchable });
+    expect(
+      (await request(app).post("/cases/c1/push/iris").send({ caseName: "acme-breach-2026" })).status,
+    ).toBe(200);
+    servers = stubServerClients({}); // the analyst removes IRIS from the case's server set
+    const res = await request(app).get("/cases/c1/iris-export");
+    expect(res.status).toBe(200);
+    expect(res.body.caseName).toBe("acme-breach-2026");
+  });
+
+  it("answers even when the case's server set cannot be resolved", async () => {
+    const unresolved: ServerClients = {
+      ...stubServerClients({}),
+      forCase: () => ({ ok: false, status: 409, error: "case has no server set" }) as never,
+    };
+    const app = await makeApp(undefined, { serverClients: unresolved });
+    const res = await request(app).get("/cases/c1/iris-export");
+    expect(res.status).toBe(200);
+    expect(res.body.defaultCaseName).toBe("c1 — Ransomware FS01");
+  });
+
+  it("is 501 only when the export store itself is not wired", async () => {
+    const { client } = mockIrisPush();
+    const app = await makeApp(client, { noExportStore: true });
+    const res = await request(app).get("/cases/c1/iris-export");
+    expect(res.status).toBe(501);
   });
 });
