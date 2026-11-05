@@ -157,6 +157,26 @@ async function tickAndRearm(ms: number, pollers = 1): Promise<void> {
   await tickUntil(ms, () => vi.getTimerCount() >= pollers, `all ${pollers} poller(s) to re-arm`);
 }
 
+/**
+ * Yield real turns, consuming NO fake time, until at least `pollers` timers are pending.
+ *
+ * USE THIS AFTER createApp WHEN THE FIRST ARM COMES FROM A RESUME. createApp resumes persisted
+ * monitors and hunts asynchronously: it reads them from disk, and only then arms a timer each. A
+ * bare `settle()` is a fixed budget, and on a busy CI runner the read outlasts it (#2289). The
+ * first `tickAndRearm()` then advances a clock with nothing on it, the late timers satisfy its
+ * "re-armed" wait, and the test sees zero polls: `expected +0 to be 1`.
+ */
+async function untilArmed(pollers: number, what: string): Promise<void> {
+  const deadline = Date.now() + REARM_TIMEOUT_MS;
+  for (;;) {
+    await settle(2);
+    if (vi.getTimerCount() >= pollers) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out after ${REARM_TIMEOUT_MS}ms waiting for: ${what} to arm on resume`);
+    }
+  }
+}
+
 /** A Velociraptor runner that answers everything emptily and records what it was asked. */
 function countingRunner(overrides: { huntState?: string } = {}): { runner: VqlRunner; vql: string[] } {
   const vql: string[] = [];
@@ -338,10 +358,10 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
     },
   );
 
-  // rearmBudget(1): the closing tickAndRearm below.
+  // rearmBudget(2): the untilArmed wait, then the closing tickAndRearm below.
   it(
     "RESUMED: a restart re-arms persisted active monitors and leaves stopped ones alone",
-    { timeout: rearmBudget(1) },
+    { timeout: rearmBudget(2) },
     async () => {
       const { store } = await freshRoot("dfir-timer-monresume-");
       const monitors = new VeloMonitorStore(store);
@@ -365,7 +385,9 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
         serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloMonitorStore: monitors,
       });
-      await settle();
+      // Both records are read together and walked without an await, so once the live monitor's
+      // timer exists the stopped one has already been passed over.
+      await untilArmed(1, "the live monitor");
 
       // One armed poll, not two: a stopped monitor whose timer is armed anyway would wake up, re-read
       // itself, and bail — costing a file read every 30s forever while looking perfectly healthy.
@@ -381,10 +403,10 @@ describe("Velociraptor live monitors — timer lifecycle", () => {
 });
 
 describe("Velociraptor hunt status polls — timer lifecycle", () => {
-  // rearmBudget(2): two tickAndRearm calls, so the test must survive two full waits.
+  // rearmBudget(3): the untilArmed wait plus two tickAndRearm calls.
   it(
     "RESUMED + RE-ARMED: a restart re-polls running and unreachable hunts, and only those",
-    { timeout: rearmBudget(2) },
+    { timeout: rearmBudget(3) },
     async () => {
       const { store } = await freshRoot("dfir-timer-hunt-");
       const hunts = new VeloHuntStore(store);
@@ -397,24 +419,29 @@ describe("Velociraptor hunt status polls — timer lifecycle", () => {
         serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloHuntStore: hunts,
       });
-      await settle();
+      await untilArmed(2, "the running and unreachable hunts");
+      expect(vi.getTimerCount()).toBe(2); // the imported hunt armed nothing
 
       // Two pollers, so wait for two re-arms: stopping at the first would walk away from the other.
       await tickAndRearm(30_000, 2); // DFIR_VELO_HUNT_POLL_S default
       expect(statusPolls(vql, "H.RUNNING1")).toBe(1);
       expect(statusPolls(vql, "H.UNREACH1")).toBe(1);
       expect(statusPolls(vql, "H.IMPORTED")).toBe(0);
+      expect(vi.getTimerCount()).toBe(2);
 
       // Still RUNNING → reschedule. The next tick must find a timer waiting.
       await tickAndRearm(30_000, 2);
       expect(statusPolls(vql, "H.RUNNING1")).toBe(2);
+      expect(statusPolls(vql, "H.UNREACH1")).toBe(2);
+      expect(statusPolls(vql, "H.IMPORTED")).toBe(0);
+      expect(vi.getTimerCount()).toBe(2);
     },
   );
 
-  // rearmBudget(1): one tickUntil wait below.
+  // rearmBudget(2): the untilArmed wait plus one tickUntil wait below.
   it(
     "CANCELLED: a hunt Velociraptor reports STOPPED hands off to the collect and stops polling",
-    { timeout: rearmBudget(1) },
+    { timeout: rearmBudget(2) },
     async () => {
       const { store } = await freshRoot("dfir-timer-huntstop-");
       const hunts = new VeloHuntStore(store);
@@ -425,7 +452,7 @@ describe("Velociraptor hunt status polls — timer lifecycle", () => {
         serverClients: veloServerClients(new VelociraptorClient(veloCfg, runner)),
         veloHuntStore: hunts,
       });
-      await settle();
+      await untilArmed(1, "the running hunt");
 
       // tickUntil, not tickAndRearm: this poller is supposed to STOP, so a pending timer is the
       // wrong thing to wait for. The poll itself is still the guarantee the assertion needs.
