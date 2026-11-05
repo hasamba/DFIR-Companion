@@ -1,17 +1,19 @@
 // Setup wizard → the default server set. The IRIS, Timesketch and Velociraptor steps
 // (js/dashboard-wizard-steps.js, `serverSet: true`) save their connection fields here instead of in
-// .env. The server reads those .env keys only once, to seed the "Testing" set, so a wizard that kept
+// .env. The server reads those .env keys only once, to seed the "Default" set, so a wizard that kept
 // writing them there said "saved" for values nothing would ever read.
 //
 // A field with `set: "<tool>.<field>"` goes into the default set; every other field of the step (the
 // global TLS opt-in, the Velociraptor binary) still goes to .env. A secret left blank is not sent:
-// the set keeps the stored value. With no default set, the wizard creates "Testing" and makes it the
+// the set keeps the stored value. With no default set, the wizard creates "Default" and makes it the
 // default. Holds no state.
 (function () {
   "use strict";
 
   const TOOLS = ["iris", "timesketch", "velociraptor"];
-  const FIRST_SET = "Testing";
+  const FIRST_SET = "Default";
+  // 0.45.0 named the first set "Testing"; a retry still reuses one left from then.
+  const LEGACY_FIRST_SET = "Testing";
 
   function typed(field) {
     const id = typeof wizFieldId === "function" ? wizFieldId(field.key) : "wizf-" + field.key;
@@ -77,7 +79,7 @@
     }
   }
 
-  /** Merges `patch` into the default set (or creates "Testing"). Returns the set's name. */
+  /** Merges `patch` into the default set (or creates "Default"). Returns the set's name. */
   async function saveToDefaultSet(patch) {
     if (typeof fetchServerSets !== "function") throw new Error("server sets are not available");
     const list = await fetchServerSets();
@@ -85,9 +87,9 @@
     if (!list.editable) throw new Error("only an administrator can change server sets");
     const current = list.sets.find((s) => s.id === list.defaultId);
     if (!current) {
-      // A retry after a failed make-default finds the "Testing" set the first try made: reuse it.
-      const lower = FIRST_SET.toLowerCase();
-      const earlier = list.sets.find((s) => String(s.name || "").toLowerCase() === lower);
+      // A retry after a failed make-default finds the set the first try made: reuse it.
+      const names = [FIRST_SET.toLowerCase(), LEGACY_FIRST_SET.toLowerCase()];
+      const earlier = list.sets.find((s) => names.includes(String(s.name || "").toLowerCase()));
       const made = earlier
         ? await send("PUT", `/server-sets/${encodeURIComponent(earlier.id)}`, mergedBody(earlier, patch))
         : await send("POST", "/server-sets", { name: FIRST_SET, ...patch });

@@ -26,11 +26,11 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("seedServerSets", () => {
-  it("first run creates Testing as default and links every case", () => {
+  it("first run creates Default as default and links every case", () => {
     expect(seedServerSets(store, env, ["a", "b"])).toEqual({ seeded: true, linked: 2 });
     const sets = store.list();
     expect(sets).toHaveLength(1);
-    expect(sets[0].name).toBe("Testing");
+    expect(sets[0].name).toBe("Default");
     expect(sets[0].iris?.url).toBe("https://iris.example.com");
     expect(sets[0].iris?.apiKey).toBe("iris-key-sentinel-alpha");
     expect(sets[0].iris?.insecure).toBe(true);
@@ -52,7 +52,7 @@ describe("seedServerSets", () => {
     expect(store.caseSetId("c")).toBe(store.defaultId());
   });
 
-  it("empty env still creates an empty Testing set", () => {
+  it("empty env still creates an empty Default set", () => {
     expect(seedServerSets(store, {}, ["a"])).toEqual({ seeded: true, linked: 1 });
     const [s] = store.list();
     expect(s.iris).toBeUndefined();
@@ -137,12 +137,20 @@ describe("migration marker (runs once per install)", () => {
     expect(lines[0]).not.toContain("iris-key-sentinel-alpha");
   });
 
-  it("a partial run (Testing created, no default) makes Testing the default and never adds a second", () => {
-    const testing = store.create({ name: "Testing" });
+  it("a partial run (Default created, no default) makes Default the default and never adds a second", () => {
+    const seeded = store.create({ name: "Default" });
     expect(seedServerSets(store, env, ["a"], opts())).toEqual({ seeded: false, linked: 1 });
-    expect(store.list().filter((s) => s.name === "Testing")).toHaveLength(1);
-    expect(store.defaultId()).toBe(testing.id);
-    expect(store.caseSetId("a")).toBe(testing.id);
+    expect(store.list().filter((s) => s.name === "Default")).toHaveLength(1);
+    expect(store.defaultId()).toBe(seeded.id);
+    expect(store.caseSetId("a")).toBe(seeded.id);
     expect(existsSync(marker())).toBe(true);
+  });
+
+  it("a partial run from 0.45.0 (legacy Testing, no default) adopts Testing instead of adding Default", () => {
+    const legacy = store.create({ name: "Testing" });
+    expect(seedServerSets(store, env, ["a"], opts())).toEqual({ seeded: false, linked: 1 });
+    expect(store.list().map((s) => s.name)).toEqual(["Testing"]);
+    expect(store.defaultId()).toBe(legacy.id);
+    expect(store.caseSetId("a")).toBe(legacy.id);
   });
 });
