@@ -8,7 +8,7 @@
  *   npx tsx scripts/cloud-scale-gen.ts --out=<dir>
  *   npx tsx scripts/bench-cloud-import.ts --dir=<dir> [--heap-mb=4096] [--timeout-min=30]
  *       [--runs=ual-realistic-100k.csv,ual-realistic-100k.jsonl,...,cloudtrail-realistic]
- *       [--max-import-mb=<n>]
+ *       [--max-import-mb=<n>] [--out=<results dir>]
  *
  * WHAT "THE REAL IMPORT PATH" MEANS HERE. The child process builds the app exactly as startServer
  * does (createRuntimeStores → buildAiRuntime → buildAppOptions → createApp) over a throwaway cases
@@ -56,6 +56,28 @@ const DEFAULT_RUNS = [
   "ual-adversarial-1m.jsonl",
   "cloudtrail-realistic",
 ];
+/**
+ * The ceilings #2303 states for ONE cloud export file streamed from disk (any size, measured at 1M
+ * rows): run with --heap-mb=BENCH_HEAP_MB, the server's peak RSS stays under CEILING_PEAK_RSS_MIB
+ * and the wall time under CEILING_WALL_S_PER_1M_ROWS per million rows. Measured (#2303 PR): 1M-row
+ * UAL JSONL 460–505 s / 1.6–1.8 GiB, CSV 614–666 s / 1.5–1.7 GiB. The live heap after a forced GC
+ * stays flat (~107 MiB from 100k to 600k records); RSS is mostly V8 not collecting until it must.
+ * A many-object set (CloudTrail) is bounded by the case's own size instead, so it is reported, not
+ * judged, here. Each result row carries `underCeiling`.
+ */
+const BENCH_HEAP_MB = 1024;
+const CEILING_PEAK_RSS_MIB = 2048;
+const CEILING_WALL_S_PER_1M_ROWS = 900;
+
+function underCeiling(row: Record<string, unknown>, files: number, rows: number): string {
+  if (files !== 1 || !rows) return "n/a (not a single file)";
+  if (row.heapMb !== BENCH_HEAP_MB)
+    return `n/a (heap ${String(row.heapMb)} MB, ceilings are for ${BENCH_HEAP_MB})`;
+  const rssOk = Number(row.peakRssMiB) <= CEILING_PEAK_RSS_MIB;
+  const wallOk = Number(row.wallS) <= (CEILING_WALL_S_PER_1M_ROWS * rows) / 1e6;
+  return rssOk && wallOk && row.exit === "0" ? "yes" : "NO";
+}
+
 /** public/js/dashboard-unified-import.js LARGE_FILE_MB: above it the dashboard asks for a server path. */
 const LARGE_FILE_BYTES = 200 * 1024 * 1024;
 const CASE_ID = "bench";
@@ -432,7 +454,10 @@ async function parent(): Promise<void> {
   const results: Array<Record<string, unknown>> = [];
   for (const run of runs) {
     const { files: _files, ...reference } = manifest[run.replace(/\.(csv|jsonl)(@\d+)?$|@gunzip$/, "")] ?? {};
-    const row = { ...(await oneRun(dir, run, heapMb, timeoutMin)), reference };
+    const result = await oneRun(dir, run, heapMb, timeoutMin);
+    const files = Array.isArray(result.imports) ? result.imports.length : 0;
+    const rows = Number((reference as { rows?: number }).rows ?? 0);
+    const row = { ...result, reference, underCeiling: underCeiling(result, files, rows) };
     results.push(row);
     console.log(JSON.stringify(row));
   }

@@ -2631,6 +2631,14 @@ skipped, unrecognised records, records too large to read (over 16 MB each), repa
 file (a byte-order mark, joined documents, unreadable text skipped), and whether the summaries saw
 the whole file.
 
+**Tested size and memory.** On the synthetic benchmark (8 cores, Node 22, the server started with
+`--max-old-space-size=1024`), one 1M-row UAL export imports in 8–9 minutes as JSON lines and 10–11
+minutes as CSV, with the server's memory peaking under 2 GB. A 30-object, 1.2M-record CloudTrail set
+(`.json.gz`) needs `--max-old-space-size=2048`: the limit is the size of the case it builds, not the
+file — at 1 GB the server's own heap guard refuses the last objects once the case holds ~21,000
+events. Below 32 MB, or for a file sent in the browser, the whole-file path still applies: an 80 MB
+CSV sent through the Import button needs more memory than the streamed import itself.
+
 **gzip.** A `.gz` file is decompressed while it is read. A file that decompresses to more than 100
 times its compressed size (past the first 64 MB), or to more than 20 GB, is refused as a possible
 decompression bomb.
