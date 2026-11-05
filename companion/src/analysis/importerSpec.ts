@@ -73,6 +73,7 @@ export const IMPORT_KINDS = [
   "macfsevent",
   "macspotlightusage",
   "macloginitem",
+  "cloudsnapshot",
   "unknown",
 ] as const;
 

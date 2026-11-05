@@ -45,7 +45,7 @@ export function isLogAnalyticsEntra(s: Row): boolean {
 
 // ───────────────────────────── CSV header signatures ─────────────────────────────
 
-type CloudCsvKind = "m365" | "cloud" | "aws";
+type CloudCsvKind = "m365" | "cloud" | "aws" | "cloudsnapshot";
 
 const all = (h: Set<string>, ...keys: string[]): boolean => keys.every((k) => h.has(k));
 const any = (h: Set<string>, ...keys: string[]): boolean => keys.some((k) => h.has(k));
@@ -63,9 +63,33 @@ function m365ExportCsv(h: Set<string>): boolean {
   );
 }
 
+/** A Microsoft-Extractor-Suite configuration snapshot (#2305): state at collection, not an action log. */
+export type SnapshotShape = "inboxRules" | "transportRules" | "oauthGrants" | "mfaState";
+
+/**
+ * The snapshot a CSV holds, from its lowercased header set; null when none. Each shape needs a
+ * distinctive column plus two or more companions, and accepts both spellings MES has written: the
+ * Exchange `Get-InboxRule` path (`UserName`/`MailboxOwnerId`, `RuleName`/`Name`, `RuleIdentity`), the
+ * Graph path (`UserPrincipalName`, `RuleName`, `RuleId`), the older and newer OAuth report columns, and
+ * the MFA report's `user`/`UserPrincipalName`.
+ */
+export function snapshotCsvShape(h: Set<string>): SnapshotShape | null {
+  const ruleId = any(h, "ruleidentity", "ruleid");
+  const ruleOwner = any(h, "username", "mailboxownerid", "userprincipalname");
+  const ruleAction = any(h, "forwardto", "redirectto", "movetofolder", "deletemessage", "delete");
+  if (ruleId && ruleOwner && any(h, "rulename", "name") && ruleAction) return "inboxRules";
+  if (all(h, "name", "state", "whenchanged", "description") && any(h, "mode", "createdby", "priority"))
+    return "transportRules";
+  if (all(h, "permissiontype", "appid", "permission", "consenttype")) return "oauthGrants";
+  if (h.has("mfastatus") && any(h, "user", "userprincipalname") && all(h, "fido2", "softwareoath"))
+    return "mfaState";
+  return null;
+}
+
 /** The importer a cloud export CSV belongs to, from its lowercased header set; null when none. */
 export function cloudExportCsvKind(h: Set<string>): CloudCsvKind | null {
   if (m365ExportCsv(h)) return "m365";
+  if (snapshotCsvShape(h)) return "cloudsnapshot";
   // Log Analytics AzureActivity
   if (all(h, "operationnamevalue", "caller", "correlationid")) return "cloud";
   // AWS CloudTrail console "Event history" download

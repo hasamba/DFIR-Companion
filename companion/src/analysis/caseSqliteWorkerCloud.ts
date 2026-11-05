@@ -111,7 +111,12 @@ function appendKindRows(db, kind, entities) {
 
 // #2301: ledger rows AND their batch's ownership row in ONE transaction, so a ledger row can never
 // exist without the batch an undo checkpoint claims by the import's stored file name (host column).
-function cloudLedgerAppend(dbPath, entities, batch, label) {
+// #2305: the configuration-snapshot observations (cloudStateStore.ts) share the batch rows, so one
+// Undo forgets both; only these two kinds may be written this way.
+const CLOUD_LEDGER_KINDS = ["cloudRecord", "cloudStateObservation"];
+function cloudLedgerAppend(dbPath, entities, batch, label, kind) {
+  const rowKind = kind === undefined ? "cloudRecord" : kind;
+  if (!CLOUD_LEDGER_KINDS.includes(rowKind)) throw new Error("cloudLedgerAppend does not write " + rowKind);
   const db = openDatabase(dbPath);
   try {
     return withTransaction(db, () => {
@@ -119,7 +124,7 @@ function cloudLedgerAppend(dbPath, entities, batch, label) {
         "SELECT 1 FROM entities WHERE kind='cloudRecordBatch' AND entity_id=? LIMIT 1"
       ).get(batch);
       if (!known) appendKindRows(db, "cloudRecordBatch", [{ id: batch, asset: label, inactive: false }]);
-      appendKindRows(db, "cloudRecord", entities || []);
+      appendKindRows(db, rowKind, entities || []);
       return (entities || []).length;
     });
   } finally {
@@ -167,7 +172,7 @@ function cloudBatchesSetInactive(dbPath, batches, inactive) {
 
 function dispatchCloud(message) {
   switch (message.op) {
-    case "cloudLedgerAppend": return cloudLedgerAppend(message.dbPath, message.entities, message.batch, message.label);
+    case "cloudLedgerAppend": return cloudLedgerAppend(message.dbPath, message.entities, message.batch, message.label, message.kind);
     case "cloudBatchesForLabels": return cloudBatchesForLabels(message.dbPath, message.labels);
     case "cloudInactiveBatches": return cloudInactiveBatches(message.dbPath);
     case "cloudBatchesSetInactive": return cloudBatchesSetInactive(message.dbPath, message.batches, message.inactive);

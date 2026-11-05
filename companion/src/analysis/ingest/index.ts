@@ -7,6 +7,7 @@
 export * from "./cloudImports.js";
 export * from "./cloudAuditImports.js";
 export * from "./cloudFlowImports.js";
+export * from "./cloudSnapshotImports.js";
 export * from "./ecarImports.js";
 export * from "./endpointImports.js";
 export * from "./hayabusaIngest.js";

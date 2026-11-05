@@ -396,6 +396,10 @@ export class AnalysisPipeline {
     return state;
   }
 
+  importCloudSnapshot(...args: ImporterArgs<typeof ingest.importCloudSnapshot>): Promise<InvestigationState> {
+    return ingest.importCloudSnapshot(this.importCtx, ...args);
+  }
+
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
   }
