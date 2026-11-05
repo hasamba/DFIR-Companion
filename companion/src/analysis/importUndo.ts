@@ -43,12 +43,16 @@ export interface ImportCheckpoint {
   delta?: StateDelta;
   counts?: CheckpointCounts;
   superRows?: SuperRowsUndo;
+  // The cloud-record ledger batches the import wrote (#2301, cloudRecordStore.ts): Undo marks them
+  // forgotten, so a re-import after Undo adds the records again; Redo marks them remembered again.
+  cloudBatches?: string[];
 }
 
-/** The mirror entry of `top`: the same super rows, the pair swapped (none when `top` has none). */
+/** The mirror entry of `top`: the same super rows (pair swapped) and the same cloud batches. */
 function mirrorOf(top: ImportCheckpoint, entry: ImportCheckpoint): ImportCheckpoint {
   const s = top.superRows;
-  return s ? { ...entry, superRows: { restore: s.reapply, reapply: s.restore } } : entry;
+  const withRows = s ? { ...entry, superRows: { restore: s.reapply, reapply: s.restore } } : entry;
+  return top.cloudBatches?.length ? { ...withRows, cloudBatches: top.cloudBatches } : withRows;
 }
 
 const countsOf = (s: InvestigationState): CheckpointCounts => ({
@@ -166,6 +170,8 @@ export interface UndoStepResult {
   stack: ImportUndoStack;
   restore: InvestigationState;
   superRows?: SuperRowsUndo;
+  // The cloud-record batches this step forgets (undo, `active: false`) or remembers again (redo).
+  cloudBatches?: { batches: string[]; active: boolean };
 }
 
 // Undo the latest import: pop the top pre-import checkpoint to RESTORE, and push the CURRENT
@@ -192,6 +198,7 @@ export function applyUndo(
     stack: { undo: stack.undo.slice(0, -1), redo: capBySize(redo, maxBytes) },
     restore,
     ...(top.superRows ? { superRows: top.superRows } : {}),
+    ...(top.cloudBatches?.length ? { cloudBatches: { batches: top.cloudBatches, active: false } } : {}),
   };
 }
 
@@ -216,6 +223,7 @@ export function applyRedo(
     stack: { undo: capBySize(undo, maxBytes), redo: stack.redo.slice(0, -1) },
     restore,
     ...(top.superRows ? { superRows: top.superRows } : {}),
+    ...(top.cloudBatches?.length ? { cloudBatches: { batches: top.cloudBatches, active: true } } : {}),
   };
 }
 
@@ -314,6 +322,10 @@ function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
     // Malformed super rows are dropped on their own: the checkpoint still restores the state.
     const superRows = normalizeSuperRows(o.superRows);
     if (superRows) checkpoint = { ...checkpoint, superRows };
+    const cloudBatches = Array.isArray(o.cloudBatches)
+      ? o.cloudBatches.filter((b) => typeof b === "string")
+      : [];
+    if (cloudBatches.length) checkpoint = { ...checkpoint, cloudBatches };
     const n: unknown = idx[i];
     // A coerced label/at no longer matches the stored entry, so its size is re-measured instead.
     if (
@@ -424,6 +436,8 @@ export interface UndoStepDeps {
    * full scan). Absent: the super-timeline keeps the host names it had.
    */
   rehomeSuper?: (caseId: string, ledger: RenameLedger) => Promise<number>;
+  /** The cloud-record ledger (#2301), typed by the one method a step uses. Absent: ledger untouched. */
+  cloudRecords?: { setBatchesActive(caseId: string, batches: string[], active: boolean): Promise<void> };
 }
 
 // One undo or redo step, for the routes. The restored state is saved verbatim — findings, IOCs,
@@ -447,8 +461,13 @@ export async function runUndoStep(
   const { undoStore, stateStore, superTimeline } = deps;
   let next: InvestigationState | null = null;
   let superWritten: SuperRowsUndo | undefined;
+  let batchesFlipped: { batches: string[]; active: boolean } | undefined;
   let stateBefore: InvestigationState | null = null;
   let renamedSuper = false;
+  const flipBatches = async (flip: { batches: string[]; active: boolean }): Promise<void> => {
+    batchesFlipped = flip; // set first: a partial write is rolled back as well
+    await deps.cloudRecords!.setBatchesActive(caseId, flip.batches, flip.active);
+  };
   const summary = await deps.importLock.runExclusive(caseId, async () => {
     const stepped = await deps.runStateExclusive(caseId, async () => {
       const state = await stateStore.load(caseId);
@@ -462,12 +481,20 @@ export async function runUndoStep(
             caseId,
             updatedAt: new Date().toISOString(),
           };
+          // Evidence-first ordering for the cloud-record ledger (#2301): Undo forgets the import's
+          // batches BEFORE the state drops its events, Redo remembers them only AFTER the state has
+          // them back. A crash between any two writes then leaves the ledger forgetting records the
+          // case still holds — a re-import duplicates them (recoverable) — and never remembering
+          // records the case lost, which would make a re-import skip them (evidence loss).
+          const cloud = deps.cloudRecords && result.cloudBatches;
+          if (cloud && !cloud.active) await flipBatches(cloud);
           await stateStore.save(saved);
           next = saved;
           if (superTimeline && result.superRows?.restore.length) {
             superWritten = result.superRows; // set first: a partial write is rolled back as well
             await superTimeline.rehome(caseId, result.superRows.restore);
           }
+          if (cloud && cloud.active) await flipBatches(cloud);
           return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
         });
       } catch (err) {
@@ -482,6 +509,14 @@ export async function runUndoStep(
           superWritten = undefined;
           await rollBackHalf(caseId, "its super-timeline rows could not be put back", () =>
             superTimeline.rehome(caseId, rows),
+          );
+        }
+        const cloud = deps.cloudRecords;
+        if (cloud && batchesFlipped) {
+          const { batches, active } = batchesFlipped;
+          batchesFlipped = undefined;
+          await rollBackHalf(caseId, "its cloud-record ledger could not be put back", () =>
+            cloud.setBatchesActive(caseId, batches, !active),
           );
         }
         throw err;

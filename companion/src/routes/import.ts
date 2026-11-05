@@ -10,12 +10,13 @@ import { parseVelociraptorJson, type VelociraptorImportOptions } from "../analys
 import { parseNetworkLogs, countLines, type NetworkImportOptions } from "../analysis/networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
-import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
+import type { M365ImportOptions } from "../analysis/m365Import.js";
 import { isStringTooLongError } from "../storage/boundedRead.js";
 import { registerLeappImportRoute } from "./importLeapp.js";
 import { registerMacLoginItemImportRoute } from "./importMacLoginItem.js";
-import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js";
-import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
+import type { AwsImportOptions } from "../analysis/awsImport.js";
+import type { CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
+import { cloudPreview } from "../analysis/ingest/cloudRecordPreview.js"; // post-dedup previews (#2301)
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../analysis/sandboxImport.js";
 import {
@@ -1674,9 +1675,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Import Microsoft 365 Unified Audit Log + Entra ID sign-in / directory audit data
-  // (cloud/identity IR). Evidence-first; mapping is DETERMINISTIC (no AI extraction): each
-  // record is classified and mapped, severity derived from the operation / Entra risk verdict.
+  // Import M365 UAL + Entra sign-in / directory audit data. Evidence-first and DETERMINISTIC (no AI):
+  // each record is classified and mapped, severity from the operation / Entra risk verdict.
   // POST /cases/:id/import-leapp lives in routes/importLeapp.ts (#932 item 12); registered here so
   // its stack position is unchanged (route-inventory.json is order-sensitive).
   registerLeappImportRoute(app, ctx, settleDeps);
@@ -1713,13 +1713,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const m365Opts: M365ImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
-      const preview = parseM365Audit(text, m365Opts);
+      const preview = await cloudPreview.m365(options.cloudRecordStore, caseId, text, m365Opts);
       if (preview.total === 0 || preview.format === "empty")
         return res.status(400).json({
           error:
             "no parseable M365/Entra records found (expected a Unified Audit Log export — CSV or JSON — or Entra sign-in/audit JSON)",
         });
-      if (preview.kept === 0)
+      if (preview.kept === 0 && !preview.duplicates)
         return res.status(400).json({
           error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
         });
@@ -1739,6 +1739,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         groups: preview.groups,
         format: preview.format,
         iocs: preview.iocs.length,
+        duplicates: preview.duplicates, // records the case already holds (#2301)
       });
 
       options.onAiStatus?.(caseId, {
@@ -1778,9 +1779,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Import AWS CloudTrail logs (cloud IR). Evidence-first; mapping is DETERMINISTIC (no AI
-  // extraction): each API-call record is mapped, severity derived from the action + denied/
-  // root/console-failure bumps; the caller sourceIPAddress becomes an IOC.
+  // Import AWS CloudTrail logs. Evidence-first and DETERMINISTIC (no AI): each API call is mapped, severity
+  // from the action + denied/root/console-failure bumps; the caller sourceIPAddress becomes an IOC.
   app.post("/cases/:id/import-aws", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const pipeline = options.pipeline;
@@ -1812,7 +1812,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const awsOpts: AwsImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
-      const preview = parseCloudTrail(text, awsOpts);
+      const preview = await cloudPreview.cloudTrail(options.cloudRecordStore, caseId, text, awsOpts);
       if (preview.format === "empty" && preview.kept === 0)
         return res.status(400).json({
           error:
@@ -1834,6 +1834,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         groups: preview.groups,
         format: preview.format,
         iocs: preview.iocs.length,
+        duplicates: preview.duplicates, // records the case already holds (#2301)
       });
 
       options.onAiStatus?.(caseId, {
@@ -1873,9 +1874,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Import GCP Cloud Audit Logs + Azure Activity Log (cloud IR). Evidence-first; mapping is
-  // DETERMINISTIC (no AI extraction): each record is routed (GCP/Azure) and mapped, severity
-  // derived from the action + denied bump; the caller IP becomes an IOC.
+  // Import GCP Cloud Audit Logs + Azure Activity Log. Evidence-first and DETERMINISTIC (no AI): each
+  // record is routed (GCP/Azure) and mapped, severity from the action + denied bump; caller IP → IOC.
   app.post("/cases/:id/import-cloud-activity", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const pipeline = options.pipeline;
@@ -1907,7 +1907,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const cloudOpts: CloudActivityImportOptions | undefined = minSeverity ? { minSeverity } : undefined;
 
     try {
-      const preview = parseCloudActivity(text, cloudOpts);
+      const preview = await cloudPreview.cloudActivity(options.cloudRecordStore, caseId, text, cloudOpts);
       if (preview.format === "empty" && preview.kept === 0)
         return res.status(400).json({
           error:
@@ -1929,6 +1929,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         groups: preview.groups,
         format: preview.format,
         iocs: preview.iocs.length,
+        duplicates: preview.duplicates, // records the case already holds (#2301)
       });
 
       options.onAiStatus?.(caseId, {

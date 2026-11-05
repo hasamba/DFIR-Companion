@@ -289,6 +289,7 @@
     "ROUTE POST /cases/:id/dwell-windows",
     "ROUTE PUT /cases/:id/dwell-windows/:windowId",
     "ROUTE DELETE /cases/:id/dwell-windows/:windowId",
+    "ROUTE GET /cases/:id/source-records/:group",
     "ROUTE GET /attack/matrix",
     "ROUTE GET /cases/:id/sessions",
     "ROUTE POST /cases/:id/sessions/:sid/summary",

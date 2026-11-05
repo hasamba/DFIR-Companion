@@ -35,6 +35,7 @@ import { registerEnrichmentTestRoutes } from "../routes/enrichmentTest.js";
 import { registerAnonymizationRoutes } from "../routes/anonymization.js";
 import { registerTimelineRoutes } from "../routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "../routes/analysisGraph.js";
+import { registerSourceRecordRoutes } from "../routes/sourceRecords.js";
 import { registerAttackMatrixRoutes } from "../routes/attackMatrix.js";
 import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation.js";
 import { registerFindingsRoutes } from "../routes/findings.js";
@@ -163,6 +164,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerAnonymizationRoutes(app, ctx);
   registerTimelineRoutes(app, ctx);
   registerAnalysisGraphRoutes(app, ctx);
+  registerSourceRecordRoutes(app, ctx); // #2301: an aggregated cloud event's source records
   registerAttackMatrixRoutes(app); // the ATT&CK catalogue for the Matrix view (#1764)
   registerSessionSegmentationRoutes(app, ctx);
   registerEntityAnnotationRoutes(app, ctx); // the comment + tag lists moved out of findings.ts (#1715)

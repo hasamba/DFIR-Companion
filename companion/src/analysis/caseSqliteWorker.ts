@@ -10,6 +10,7 @@ import { FACTS_WORKER_SOURCE } from "./caseSqliteWorkerFacts.js";
 import { IOC_WORKER_SOURCE } from "./caseSqliteWorkerIoc.js";
 import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
 import { SEARCH_WORKER_SOURCE } from "./caseSqliteWorkerSearch.js";
+import { CLOUD_WORKER_SOURCE } from "./caseSqliteWorkerCloud.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -496,18 +497,21 @@ function appendEntities(dbPath, kind, entities) {
 // callers, and reordering its ordinal-ascending cursor for one new caller is disproportionate risk
 // for a single-pass review. Newest-first (DESC) so a capped window keeps the observations nearest
 // in time to the CURRENT import, not the oldest ones in the window.
-function queryAuthObservationsWindow(dbPath, sinceMs, limit) {
+function queryAuthObservationsWindow(dbPath, sinceMs, limit, sprayOnly) {
   if (!existsSync(dbPath)) return { entities: [], truncated: false };
   const db = openDatabase(dbPath);
   try {
     const boundedLimit = Math.max(0, Math.min(200000, Math.floor(limit)));
+    // #2301: the spray reader's predicate runs BEFORE the cap, so newer MFA rows never crowd out failures.
+    const spray = sprayOnly ? " AND json_extract(payload, '$.outcome') IN ('failed','success') " +
+      "AND coalesce(json_extract(payload, '$.sourceIp'), '')<>''" : "";
     const countRow = db.prepare(
-      "SELECT count(*) AS n FROM entities WHERE kind='authObservation' AND timestamp_ms>=?"
+      "SELECT count(*) AS n FROM entities WHERE kind='authObservation' AND timestamp_ms>=?" + spray
     ).get(sinceMs);
     const total = Number(countRow ? countRow.n : 0);
     const rows = db.prepare(
-      "SELECT payload FROM entities WHERE kind='authObservation' AND timestamp_ms>=? " +
-      "ORDER BY timestamp_ms DESC, row_id DESC LIMIT ?"
+      "SELECT payload FROM entities WHERE kind='authObservation' AND timestamp_ms>=?" + spray +
+      " ORDER BY timestamp_ms DESC, row_id DESC LIMIT ?"
     ).all(sinceMs, boundedLimit);
     return {
       entities: rows.map((row) => JSON.parse(row.payload)),
@@ -611,6 +615,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   IOC_WORKER_SOURCE +
   TAGS_WORKER_SOURCE +
   SEARCH_WORKER_SOURCE +
+  CLOUD_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -726,7 +731,7 @@ async function dispatch(message) {
     case "hasEntityIds": return hasEntityIds(message.dbPath, message.kind, message.ids);
     case "entityCounts": return entityCounts(message.dbPath, message.kinds);
     case "appendEntities": return appendEntities(message.dbPath, message.kind, message.entities);
-    case "queryAuthObservationsWindow": return queryAuthObservationsWindow(message.dbPath, message.sinceMs, message.limit);
+    case "queryAuthObservationsWindow": return queryAuthObservationsWindow(message.dbPath, message.sinceMs, message.limit, message.sprayOnly === true);
     case "pruneEntitiesBefore": return pruneEntitiesBefore(message.dbPath, message.kind, message.beforeMs);
     case "entityRowIdMark": return entityRowIdMark(message.dbPath);
     case "rollbackImportBatch": return rollbackImportBatch(message.dbPath, message.kinds, message.afterRowId, message.importBatchId);
