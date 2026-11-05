@@ -816,4 +816,101 @@ describe("cloud-record batches on a checkpoint (#2301)", () => {
       [["m1"], true],
     ]);
   });
+
+  // Evidence-first ordering (#2301): a crash between two writes may leave the ledger FORGETTING
+  // records the case still holds (a re-import duplicates them), never REMEMBERING records the case
+  // lost (a re-import would skip them). Each boundary is simulated by a throw whose rollback also
+  // fails, so nothing puts the first write back — what a process crash would leave.
+  describe("a crash between the undo writes never makes a re-import skip (#2301)", () => {
+    let lines: { level: string; message: string }[];
+    let previousLogger: Logger;
+    beforeEach(() => {
+      lines = [];
+      previousLogger = getServerLogger();
+      setServerLogger(captureLogger(lines));
+    });
+    afterEach(() => setServerLogger(previousLogger));
+
+    async function setup(entry: "undo" | "redo") {
+      const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-importundo-crash-")));
+      await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      const undoStore = new ImportUndoStore(cases);
+      const order: string[] = [];
+      const ledger = { active: entry === "undo" }; // before Undo the batch is live; before Redo, forgotten
+      let state: InvestigationState = { ...(entry === "undo" ? S1 : S0), caseId: "c1" };
+      let failState = false;
+      let failLedger = false;
+      const deps = {
+        undoStore,
+        stateStore: {
+          load: async () => state,
+          save: async (s: InvestigationState) => {
+            order.push("state");
+            if (failState) throw new Error("crash");
+            state = s;
+          },
+        },
+        importLock: { runExclusive: <T>(_c: string, fn: () => Promise<T>) => fn() },
+        runStateExclusive: <T>(_c: string, fn: () => Promise<T>) => fn(),
+        cloudRecords: {
+          setBatchesActive: async (_c: string, _b: string[], active: boolean) => {
+            order.push(active ? "remember" : "forget");
+            if (failLedger) throw new Error("crash");
+            ledger.active = active;
+          },
+        },
+      };
+      let stack = pushCheckpoint(emptyUndoStack(), withBatches());
+      if (entry === "redo") stack = applyUndo(stack, S1)!.stack;
+      await undoStore.save("c1", stack);
+      const holdsEvents = () => state.forensicTimeline.length === S1.forensicTimeline.length;
+      return {
+        deps,
+        order,
+        ledger,
+        holdsEvents,
+        failState: () => (failState = true),
+        failLedger: () => (failLedger = true),
+      };
+    }
+
+    it("undo forgets the batches before the state drops the events", async () => {
+      const t = await setup("undo");
+      await runUndoStep(t.deps, "c1", applyUndo);
+      expect(t.order).toEqual(["forget", "state"]);
+    });
+
+    it("redo remembers the batches only after the state has the events back", async () => {
+      const t = await setup("redo");
+      await runUndoStep(t.deps, "c1", applyRedo);
+      expect(t.order).toEqual(["state", "remember"]);
+    });
+
+    it("undo: crash after forgetting, before the state save — events kept, ledger forgets (re-import duplicates)", async () => {
+      const t = await setup("undo");
+      t.failState();
+      t.deps.cloudRecords.setBatchesActive = (async (_c: string, _b: string[], active: boolean) => {
+        t.order.push(active ? "remember" : "forget");
+        if (active) throw new Error("crash"); // the rollback dies with the process
+        t.ledger.active = false;
+      }) as typeof t.deps.cloudRecords.setBatchesActive;
+      await expect(runUndoStep(t.deps, "c1", applyUndo)).rejects.toThrow("crash");
+      expect(t.holdsEvents()).toBe(true);
+      expect(t.ledger.active).toBe(false);
+    });
+
+    it("redo: crash after the state save, before remembering — events back, ledger still forgets", async () => {
+      const t = await setup("redo");
+      t.failLedger();
+      const save = t.deps.stateStore.save;
+      let saves = 0;
+      t.deps.stateStore.save = async (s: InvestigationState) => {
+        if (++saves > 1) throw new Error("crash"); // the state rollback dies with the process
+        return save(s);
+      };
+      await expect(runUndoStep(t.deps, "c1", applyRedo)).rejects.toThrow("crash");
+      expect(t.holdsEvents()).toBe(true);
+      expect(t.ledger.active).toBe(false);
+    });
+  });
 });

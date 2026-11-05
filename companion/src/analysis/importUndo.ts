@@ -464,6 +464,10 @@ export async function runUndoStep(
   let batchesFlipped: { batches: string[]; active: boolean } | undefined;
   let stateBefore: InvestigationState | null = null;
   let renamedSuper = false;
+  const flipBatches = async (flip: { batches: string[]; active: boolean }): Promise<void> => {
+    batchesFlipped = flip; // set first: a partial write is rolled back as well
+    await deps.cloudRecords!.setBatchesActive(caseId, flip.batches, flip.active);
+  };
   const summary = await deps.importLock.runExclusive(caseId, async () => {
     const stepped = await deps.runStateExclusive(caseId, async () => {
       const state = await stateStore.load(caseId);
@@ -477,20 +481,20 @@ export async function runUndoStep(
             caseId,
             updatedAt: new Date().toISOString(),
           };
+          // Evidence-first ordering for the cloud-record ledger (#2301): Undo forgets the import's
+          // batches BEFORE the state drops its events, Redo remembers them only AFTER the state has
+          // them back. A crash between any two writes then leaves the ledger forgetting records the
+          // case still holds — a re-import duplicates them (recoverable) — and never remembering
+          // records the case lost, which would make a re-import skip them (evidence loss).
+          const cloud = deps.cloudRecords && result.cloudBatches;
+          if (cloud && !cloud.active) await flipBatches(cloud);
           await stateStore.save(saved);
           next = saved;
           if (superTimeline && result.superRows?.restore.length) {
             superWritten = result.superRows; // set first: a partial write is rolled back as well
             await superTimeline.rehome(caseId, result.superRows.restore);
           }
-          if (deps.cloudRecords && result.cloudBatches) {
-            batchesFlipped = result.cloudBatches; // set first: a partial write is rolled back as well
-            await deps.cloudRecords.setBatchesActive(
-              caseId,
-              result.cloudBatches.batches,
-              result.cloudBatches.active,
-            );
-          }
+          if (cloud && cloud.active) await flipBatches(cloud);
           return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
         });
       } catch (err) {

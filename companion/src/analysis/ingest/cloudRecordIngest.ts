@@ -97,10 +97,10 @@ export async function settleCloudRecords(
     return id && keptVariants.has(variant(id.key, id.payloadHash)) ? v : ("duplicate" as const);
   });
   try {
-    const written = await store.commit(caseId, plan.identities, verdicts, importOpts.idPrefix);
+    // The batch's ownership is written with its ledger rows (cloudRecordStore.commit), so Undo can
+    // claim every committed row even if the membership write below fails.
+    await store.commit(caseId, plan.identities, verdicts, importOpts.idPrefix, importOpts.label);
     await store.recordMembers(caseId, members);
-    // The import's undo checkpoint claims this batch, so Undo forgets it (cloudRecordBatches.ts).
-    if (written) await store.notePending(caseId, importOpts.idPrefix, importOpts.label);
   } catch {
     debug?.observed("record_ledger_write_failed");
   }

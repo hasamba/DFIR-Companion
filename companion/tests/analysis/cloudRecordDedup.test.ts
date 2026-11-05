@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { AuthObservationStore } from "../../src/analysis/authObservationStore.js
 import { CloudRecordStore } from "../../src/analysis/cloudRecordStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { RECORD_CONFLICT_NOTE } from "../../src/analysis/cloudRecordGate.js";
+import { cloudRecordIdentity } from "../../src/analysis/cloudRecordIdentity.js";
 import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 
 // #2301 acceptance: the same file twice adds no event and says "N duplicates skipped"; a different
@@ -254,7 +255,7 @@ describe("undo keeps the ledger in step (#2301)", () => {
     const file = JSON.stringify([ualRule("u-1"), ualRule("u-2", "other@example.com")]);
     await pipeline.importM365("c1", file, opts("m1"));
     // What the import's undo checkpoint push does (caseAppliers.ts), then what Undo does.
-    const batches = await cloudRecordStore.claimPending("c1", "m365 (m1.json)");
+    const batches = await cloudRecordStore.claimBatches("c1", "m365 (m1.json)");
     expect(batches).toEqual(["m1"]);
     await cloudRecordStore.setBatchesActive("c1", batches, false);
     const s2 = await pipeline.importM365("c1", file, opts("m2"));
@@ -270,9 +271,9 @@ describe("undo keeps the ledger in step (#2301)", () => {
   it("a checkpoint label only claims the batches of its own stored file", async () => {
     const { pipeline, cloudRecordStore } = await makePipeline();
     await pipeline.importM365("c1", JSON.stringify([ualRule("u-1")]), opts("m1"));
-    expect(await cloudRecordStore.claimPending("c1", "thor (0002_thor.json)")).toEqual([]);
-    expect(await cloudRecordStore.claimPending("c1", "m365 (m1.json)")).toEqual(["m1"]);
-    expect(await cloudRecordStore.claimPending("c1", "m365 (m1.json)")).toEqual([]);
+    expect(await cloudRecordStore.claimBatches("c1", "thor (0002_thor.json)")).toEqual([]);
+    expect(await cloudRecordStore.claimBatches("c1", "m365 (m1.json)")).toEqual(["m1"]);
+    expect(await cloudRecordStore.claimBatches("c1", "m1.json")).toEqual(["m1"]);
   });
 });
 
@@ -325,4 +326,59 @@ describe("the dedicated routes' preview counts after dedup (#2301)", () => {
     const after = await cloudPreview.m365(cloudRecordStore, "c1", file);
     expect(after).toMatchObject({ kept: 0, duplicates: 2, format: "duplicates-only" });
   });
+});
+
+// #2301 (Codex re-review): a ledger row is written together with its batch's ownership row, so a
+// failure after it — the membership write, or a later commit chunk — never leaves it unclaimable.
+describe("ledger rows stay claimable by Undo whatever fails after them (#2301)", () => {
+  it("a failed membership write still leaves the batch undoable; re-import after undo restores the events", async () => {
+    const { pipeline, cloudRecordStore } = await makePipeline();
+    const spy = vi.spyOn(cloudRecordStore, "recordMembers").mockRejectedValue(new Error("disk full"));
+    const file = JSON.stringify([ualRule("u-1"), ualRule("u-2", "other@example.com")]);
+    try {
+      await pipeline.importM365("c1", file, opts("m1"));
+    } finally {
+      spy.mockRestore();
+    }
+    const batches = await cloudRecordStore.claimBatches("c1", "m365 (m1.json)");
+    expect(batches).toEqual(["m1"]);
+    await cloudRecordStore.setBatchesActive("c1", batches, false);
+    const s2 = await pipeline.importM365("c1", file, opts("m2"));
+    expect(lastNote(s2)).toMatch(/: 2 event\(s\) from 2 record\(s\)/);
+    expect(lastNote(s2)).not.toContain("duplicate");
+  });
+
+  it("a failure in commit chunk 2 leaves chunk 1's records undoable", async () => {
+    const { cloudRecordStore } = await makePipeline();
+    const { caseSqliteWorker } = await import("../../src/analysis/caseSqliteWorker.js");
+    const ids = Array.from({ length: 6_000 }, (_, i) =>
+      cloudRecordIdentity("ual", { Id: `r-${i}`, OrganizationId: "t" }),
+    );
+    const real = caseSqliteWorker.request.bind(caseSqliteWorker);
+    let appends = 0;
+    const spy = vi.spyOn(caseSqliteWorker, "request").mockImplementation((req: unknown) => {
+      if ((req as { op: string }).op === "cloudLedgerAppend" && ++appends === 2)
+        return Promise.reject(new Error("disk full"));
+      return real(req as never);
+    });
+    try {
+      await expect(
+        cloudRecordStore.commit(
+          "c1",
+          ids,
+          ids.map(() => "new" as const),
+          "m1",
+          "m1.json",
+        ),
+      ).rejects.toThrow("disk full");
+    } finally {
+      spy.mockRestore();
+    }
+    const firstChunk = ids.slice(0, 5_000);
+    expect((await cloudRecordStore.classify("c1", firstChunk)).duplicates).toBe(5_000);
+    const batches = await cloudRecordStore.claimBatches("c1", "m365 (m1.json)");
+    expect(batches).toEqual(["m1"]);
+    await cloudRecordStore.setBatchesActive("c1", batches, false);
+    expect((await cloudRecordStore.classify("c1", firstChunk)).duplicates).toBe(0);
+  }, 30_000);
 });

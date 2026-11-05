@@ -98,8 +98,79 @@ function pruneEntitiesBeforeNewest(dbPath, kind, spanMs) {
   }
 }
 
+// Rows of one kind inside the caller's transaction — appendEntities' body without its own transaction.
+function appendKindRows(db, kind, entities) {
+  const writer = createEntityWriter(db);
+  let ordinal = Number(db.prepare("SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind=?").get(kind).n) + 1;
+  for (const entity of entities) writer.insert(entityProjection(kind, entity, ordinal++), entity);
+  db.prepare(
+    "INSERT INTO entity_counts(kind, count) VALUES(?, ?) " +
+    "ON CONFLICT(kind) DO UPDATE SET count=entity_counts.count+excluded.count"
+  ).run(kind, entities.length);
+}
+
+// #2301: ledger rows AND their batch's ownership row in ONE transaction, so a ledger row can never
+// exist without the batch an undo checkpoint claims by the import's stored file name (host column).
+function cloudLedgerAppend(dbPath, entities, batch, label) {
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const known = db.prepare(
+        "SELECT 1 FROM entities WHERE kind='cloudRecordBatch' AND entity_id=? LIMIT 1"
+      ).get(batch);
+      if (!known) appendKindRows(db, "cloudRecordBatch", [{ id: batch, asset: label, inactive: false }]);
+      appendKindRows(db, "cloudRecord", entities || []);
+      return (entities || []).length;
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function cloudBatchesForLabels(dbPath, labels) {
+  if (!existsSync(dbPath) || !Array.isArray(labels) || !labels.length) return [];
+  const db = openDatabase(dbPath);
+  try {
+    return db.prepare(
+      "SELECT entity_id FROM entities INDEXED BY entities_host_idx WHERE kind='cloudRecordBatch' " +
+      "AND host IN (SELECT value FROM json_each(?)) ORDER BY row_id"
+    ).all(JSON.stringify(labels)).map((row) => row.entity_id);
+  } finally {
+    db.close();
+  }
+}
+
+function cloudInactiveBatches(dbPath) {
+  if (!existsSync(dbPath)) return [];
+  const db = openDatabase(dbPath);
+  try {
+    return db.prepare(
+      "SELECT entity_id FROM entities WHERE kind='cloudRecordBatch' AND json_extract(payload, '$.inactive')=1"
+    ).all().map((row) => row.entity_id);
+  } finally {
+    db.close();
+  }
+}
+
+function cloudBatchesSetInactive(dbPath, batches, inactive) {
+  if (!existsSync(dbPath) || !Array.isArray(batches) || !batches.length) return 0;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => Number(db.prepare(
+      "UPDATE entities SET payload=json_set(payload, '$.inactive', json(?)) WHERE kind='cloudRecordBatch' " +
+      "AND entity_id IN (SELECT value FROM json_each(?))"
+    ).run(inactive ? "true" : "false", JSON.stringify(batches)).changes || 0));
+  } finally {
+    db.close();
+  }
+}
+
 function dispatchCloud(message) {
   switch (message.op) {
+    case "cloudLedgerAppend": return cloudLedgerAppend(message.dbPath, message.entities, message.batch, message.label);
+    case "cloudBatchesForLabels": return cloudBatchesForLabels(message.dbPath, message.labels);
+    case "cloudInactiveBatches": return cloudInactiveBatches(message.dbPath);
+    case "cloudBatchesSetInactive": return cloudBatchesSetInactive(message.dbPath, message.batches, message.inactive);
     case "cloudMembersPage": return cloudMembersPage(message.dbPath, message.group, message.afterRowId, message.limit);
     case "authObservationsPage": return authObservationsPage(message.dbPath, message.query);
     case "pruneEntitiesBeforeNewest": return pruneEntitiesBeforeNewest(message.dbPath, message.kind, message.spanMs);

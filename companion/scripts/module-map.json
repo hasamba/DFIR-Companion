@@ -179,7 +179,6 @@
     "cloudRecordIdentity.ts": "analysis/ingest",
     "cloudRecordGate.ts": "analysis/ingest",
     "cloudRecordStore.ts": "analysis/ingest",
-    "cloudRecordBatches.ts": "analysis/ingest",
     "signInObservation.ts": "analysis/ingest",
     "awsConfigLogging.ts": "analysis/ingest",
     "awsDescription.ts": "analysis/detect",

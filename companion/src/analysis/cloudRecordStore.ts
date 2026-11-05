@@ -21,7 +21,6 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import type { CloudRecordIdentity } from "./cloudRecordIdentity.js";
-import { CloudRecordBatches } from "./cloudRecordBatches.js";
 
 export type RecordVerdict = "new" | "duplicate" | "conflict";
 
@@ -85,26 +84,35 @@ export function verdictsFor(
   return { verdicts, duplicates, conflicts };
 }
 
+// The stored file name inside an undo checkpoint label ("m365 (0003_m365.json)" → "0003_m365.json").
+function storedNameOf(checkpointLabel: string): string {
+  return /\(([^()]+)\)$/.exec(checkpointLabel)?.[1] ?? checkpointLabel;
+}
+
 export class CloudRecordStore {
-  private readonly batches: CloudRecordBatches;
+  constructor(private readonly cases: CaseStore) {}
 
-  constructor(private readonly cases: CaseStore) {
-    this.batches = new CloudRecordBatches(cases);
-  }
-
-  /** Notes the batch an import committed, for its undo checkpoint to claim (cloudRecordBatches.ts). */
-  notePending(caseId: string, batch: string, storedName: string): Promise<void> {
-    return this.batches.notePending(caseId, batch, storedName);
-  }
-
-  /** The batches the import an undo checkpoint label names committed; they leave the pending list. */
-  claimPending(caseId: string, checkpointLabel: string): Promise<string[]> {
-    return this.batches.claimPending(caseId, checkpointLabel);
+  /**
+   * The ledger batches the import an undo checkpoint label names committed. Read from the batch
+   * rows each ledger commit writes in the SAME transaction as its ledger rows (#2301), so every
+   * committed row is claimable whatever failed after it.
+   */
+  async claimBatches(caseId: string, checkpointLabel: string): Promise<string[]> {
+    return caseSqliteWorker.request<string[]>({
+      op: "cloudBatchesForLabels",
+      dbPath: this.databasePath(caseId),
+      labels: [...new Set([checkpointLabel, storedNameOf(checkpointLabel)])],
+    });
   }
 
   /** Undo forgets a checkpoint's batches (false); Redo remembers them again (true). */
-  setBatchesActive(caseId: string, batches: string[], active: boolean): Promise<void> {
-    return this.batches.setActive(caseId, batches, active);
+  async setBatchesActive(caseId: string, batches: string[], active: boolean): Promise<void> {
+    await caseSqliteWorker.request<number>({
+      op: "cloudBatchesSetInactive",
+      dbPath: this.databasePath(caseId),
+      batches,
+      inactive: !active,
+    });
   }
 
   private databasePath(caseId: string): string {
@@ -115,7 +123,9 @@ export class CloudRecordStore {
     const known = new Map<string, Set<string>>();
     const dbPath = this.databasePath(caseId);
     // A batch an Undo forgot holds no records the case still has (#2301).
-    const inactive = await this.batches.inactive(caseId);
+    const inactive = new Set(
+      await caseSqliteWorker.request<string[]>({ op: "cloudInactiveBatches", dbPath }),
+    );
     for (const ids of chunks([...new Set(keys)])) {
       const rows = await caseSqliteWorker.request<Array<{ entity: LedgerRow }>>({
         op: "entityRows",
@@ -145,12 +155,15 @@ export class CloudRecordStore {
   /**
    * Records every identity the import kept (verdict new or conflict) that the ledger does not hold
    * yet, stamped with the import batch. Call after the import's merge saved. Returns rows written.
+   * Each chunk writes its rows and the batch's ownership row (under `importLabel`, the import's
+   * stored file name) in one transaction, so a later failure never leaves an unclaimable row.
    */
   async commit(
     caseId: string,
     identities: readonly CloudRecordIdentity[],
     verdicts: readonly RecordVerdict[],
     importBatch: string,
+    importLabel: string = importBatch,
   ): Promise<number> {
     const kept = identities.filter((_, i) => verdicts[i] !== "duplicate");
     if (!kept.length) return 0;
@@ -172,10 +185,11 @@ export class CloudRecordStore {
         importBatch,
       }));
       added += await caseSqliteWorker.request<number>({
-        op: "appendEntities",
+        op: "cloudLedgerAppend",
         dbPath,
-        kind: LEDGER_KIND,
         entities,
+        batch: importBatch,
+        label: importLabel,
       });
     }
     return added;

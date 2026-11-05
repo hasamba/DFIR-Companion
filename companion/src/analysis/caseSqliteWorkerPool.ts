@@ -34,6 +34,8 @@ const READ_OPS = new Set([
   "queryAuthObservationsWindow",
   "authObservationsPage", // #2301: caseSqliteWorkerCloud.ts
   "cloudMembersPage", // #2301: an aggregated event's source records
+  "cloudBatchesForLabels", // #2301: the ledger batches an undo checkpoint claims
+  "cloudInactiveBatches", // #2301: the batches an Undo forgot
   "scanSuper",
   "querySuper",
   "getSuper",
