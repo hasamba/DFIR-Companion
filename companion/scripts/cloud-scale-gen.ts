@@ -48,11 +48,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { assertNotSymlink, safeOutputDir } from "./benchOutputGuard.js";
 
 const arg = (name: string): string | undefined =>
   process.argv.find((v) => v.startsWith(`--${name}=`))?.slice(name.length + 3);
 
-const OUT = arg("out") ?? join(tmpdir(), "dfir-cloud-scale");
+// Resolved to its real absolute path and refused inside any cases folder (benchOutputGuard.ts).
+const OUT = safeOutputDir(arg("out") ?? join(tmpdir(), "dfir-cloud-scale"));
 const ONLY = arg("only")?.split(",");
 const CT_OBJECTS = Number(arg("ct-objects") ?? 30);
 const CT_RECORDS = Number(arg("ct-records") ?? 40_000);
@@ -200,6 +202,7 @@ async function writeUal(name: string, rows: number, adversarial: boolean): Promi
   const r = rng(adversarial ? 7 : 11 + rows);
   const csvPath = join(OUT, `${name}.csv`);
   const jsonlPath = join(OUT, `${name}.jsonl`);
+  [csvPath, jsonlPath].forEach(assertNotSymlink);
   const csv = createWriteStream(csvPath);
   const jsonl = createWriteStream(jsonlPath);
   await write(csv, UAL_HEADER.map(csvCell).join(",") + "\r\n");
@@ -315,6 +318,7 @@ function ctRecord(
 
 function writeCloudTrail(): DatasetRef {
   const dir = join(OUT, "cloudtrail-realistic");
+  assertNotSymlink(dir);
   mkdirSync(dir, { recursive: true });
   const r = rng(23);
   const files: string[] = [];
@@ -356,6 +360,7 @@ function writeCloudTrail(): DatasetRef {
     const gz = gzipSync(json);
     const name = `${ACCOUNT}_CloudTrail_us-east-1_20261101T${String(o).padStart(4, "0")}Z_EXAMPLE${String(o).padStart(10, "0")}.json.gz`;
     const path = join(dir, name);
+    assertNotSymlink(path);
     writeFileSync(path, gz);
     files.push(path);
     bytes += Buffer.byteLength(json);
@@ -365,7 +370,6 @@ function writeCloudTrail(): DatasetRef {
 }
 
 async function main(): Promise<void> {
-  if (/[\\/]cases([\\/]|$)/.test(OUT)) throw new Error(`refusing to write under a cases/ folder: ${OUT}`);
   mkdirSync(OUT, { recursive: true });
   const want = (n: string): boolean => !ONLY || ONLY.includes(n);
   const manifestPath = join(OUT, "manifest.json");
@@ -387,6 +391,7 @@ async function main(): Promise<void> {
       `${name}: ${JSON.stringify({ ...manifest[name], files: manifest[name].files.length })} in ${((Date.now() - t0) / 1000).toFixed(1)} s`,
     );
   }
+  assertNotSymlink(manifestPath);
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   console.log(`wrote ${OUT}`);
 }

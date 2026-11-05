@@ -19,7 +19,15 @@ import { gzipSync } from "node:zlib";
 
 export type CompatStatus = "works" | "misrouted" | "unsupported";
 
-export interface CompatRow {
+/** What the importer a "works" row dispatches to maps from the fixture — mandatory for that status. */
+export interface ParserEvidence {
+  /** Records the importer reads from the fixture (its `total`, before any aggregation). */
+  records: number;
+  /** Text one mapped event's description carries: the operation and who did it. */
+  shows: string;
+}
+
+interface CompatRowBase {
   tool: string;
   version: string;
   /** The output file as the tool names it. */
@@ -32,11 +40,15 @@ export interface CompatRow {
   detectedToday: string;
   /** The importer that should read it, or a plain-language note when none exists yet. */
   expected: string;
-  status: CompatStatus;
   /** For misrouted rows: the importer the test forces the fixture through to prove it maps rows. */
   provenWith?: "m365";
   note: string;
 }
+
+/** A "works" row must carry parser evidence; the type and harness.ts both refuse one without it. */
+export type CompatRow =
+  | (CompatRowBase & { status: "works"; parsed: ParserEvidence })
+  | (CompatRowBase & { status: Exclude<CompatStatus, "works">; parsed?: undefined });
 
 const MES = { tool: "Microsoft-Extractor-Suite", version: "4.1.0" };
 const O365RC = { tool: "DFIR-O365RC", version: "2.0.x" };
@@ -55,6 +67,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "New-InboxRule by user1@example.com" },
     note: "`AuditData` column claims it.",
   },
   {
@@ -64,6 +77,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "New-InboxRule by user1@example.com" },
     note: "",
   },
   {
@@ -73,6 +87,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "New-InboxRule by user1@example.com" },
     note: "",
   },
   {
@@ -82,6 +97,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "New-InboxRule by user1@example.com" },
     note: "",
   },
   {
@@ -91,6 +107,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "New-InboxRule by user1@example.com" },
     note: "Graph `auditLogRecord`; the nested `auditData` is merged.",
   },
   {
@@ -100,6 +117,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
     note: "",
   },
   {
@@ -109,6 +127,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 2, shows: "runCommand/action by admin@example.com" },
     note: "Azure Activity Log.",
   },
   {
@@ -165,6 +184,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 2, shows: "New-InboxRule by user1@example.com" },
     note: "",
   },
   {
@@ -174,6 +194,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 4, shows: "FileDownloaded by user2@example.com" },
     note: "Every record of both arrays is read (concatenated-JSON fallback).",
   },
   {
@@ -183,6 +204,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
     note: "",
   },
   {
@@ -192,6 +214,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 1, shows: "Add member to role by admin@example.com" },
     note: "",
   },
   {
@@ -201,6 +224,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 2, shows: "runCommand/action by admin@example.com" },
     note: "Azure Activity Log.",
   },
   // ── Log Analytics exports ──
@@ -271,6 +295,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 1, shows: "Run Command on Virtual Machine by admin@example.com" },
     note: "",
   },
   {
@@ -289,6 +314,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
+    parsed: { records: 1, shows: "New-InboxRule by user1@example.com" },
     note: "",
   },
   {
@@ -318,6 +344,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 1, shows: "SecretGet from 203.0.113.40" },
     note: "Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed.",
   },
   // ── AWS CloudTrail ──
@@ -328,6 +355,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "aws",
     expected: "aws",
     status: "works",
+    parsed: { records: 3, shows: "CreateAccessKey (iam) by user1" },
     note: "",
   },
   {
@@ -357,6 +385,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 2, shows: "CreateServiceAccountKey (iam) by admin@example.com" },
     note: "",
   },
   {
@@ -366,6 +395,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "cloud",
     expected: "cloud",
     status: "works",
+    parsed: { records: 2, shows: "CreateServiceAccountKey (iam) by admin@example.com" },
     note: "",
   },
 ];

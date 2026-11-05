@@ -6,6 +6,8 @@
 import { expect } from "vitest";
 import { detectImportKind } from "../../../src/analysis/importDetect.js";
 import { parseM365Audit } from "../../../src/analysis/m365Import.js";
+import { parseCloudActivity } from "../../../src/analysis/cloudActivityImport.js";
+import { parseCloudTrail } from "../../../src/analysis/awsImport.js";
 import { createImportIngest, type ImportIngestDeps } from "../../../src/composition/importIngest.js";
 import { ImportLock } from "../../../src/analysis/importLock.js";
 import { fixtureText, uploadName, type CompatRow } from "./matrix.js";
@@ -15,6 +17,16 @@ const DISPATCH_METHOD: Record<string, string> = {
   m365: "importM365",
   cloud: "importCloudActivity",
   aws: "importAws",
+};
+
+/** The real parser behind each dispatched kind: what the pipeline method above runs on the text. */
+const PARSERS: Record<
+  string,
+  (text: string) => { total: number; events: Array<{ timestamp?: string; description: string }> }
+> = {
+  m365: (t) => parseM365Audit(t),
+  cloud: (t) => parseCloudActivity(t),
+  aws: (t) => parseCloudTrail(t),
 };
 
 /** An ImportIngest over a pipeline stub that records which importer method it was handed. */
@@ -65,6 +77,20 @@ export async function checkRow(row: CompatRow): Promise<void> {
       importedAt: "2026-11-01T00:00:00Z",
     });
     expect(calls, `${row.fixture}: dispatched importer`).toEqual([method]);
+  }
+
+  // A "works" row claims the importer it reaches maps it: run that importer's real parser on the
+  // fixture. The evidence is mandatory, so a works row nobody proved fails here.
+  if (row.status === "works") {
+    expect(row.parsed, `${row.fixture}: a works row needs parser evidence`).toBeDefined();
+    const parse = PARSERS[kind];
+    expect(parse, `${row.fixture}: no real parser for kind ${kind}`).toBeDefined();
+    const parsed = parse(text);
+    expect(parsed.total, `${row.fixture}: records read`).toBe(row.parsed.records);
+    expect(parsed.events.length, `${row.fixture}: events mapped`).toBeGreaterThan(0);
+    const hit = parsed.events.find((e) => e.description.includes(row.parsed.shows));
+    expect(hit, `${row.fixture}: an event showing "${row.parsed.shows}"`).toBeDefined();
+    expect(hit?.timestamp, `${row.fixture}: that event's time`).toMatch(/^2026-11-01T\d\d:\d\d/);
   }
 
   // A misrouted row claims an existing importer can map it: prove that by forcing it through.
