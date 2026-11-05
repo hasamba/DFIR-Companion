@@ -248,14 +248,18 @@ describe("heavy read gate (#1915)", () => {
   it("the request's abort signal fires when its client disconnects", async () => {
     const app = express();
     const aborted = deferred<boolean>();
+    const reached = deferred();
     app.get("/slow", (_req, res) => {
       const signal = requestAbortSignal(res);
       signal.addEventListener("abort", () => aborted.resolve(clientGone(res)));
+      reached.resolve();
     });
     const port = await listen(app);
     const r = get(port, "/slow");
     r.reply.catch(() => undefined);
-    await new Promise((x) => setTimeout(x, 30));
+    // #2297: drop once the handler runs, not after a fixed delay. Under load a 30 ms drop could land
+    // before the server read the request, so the handler never ran and the wait never ended.
+    await reached.promise;
     r.drop();
     expect(await aborted.promise).toBe(true);
   });
@@ -412,7 +416,11 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
     // lateral paths, the ATT&CK layer, the presentation). A slot freed at socket close let each
     // disconnect start another one while the last stayed queued in the load limiter: a probe left 58
     // loads queued while the gate reported none. The real app and its own gate, nothing stubbed but a
-    // slower load.
+    // load held until the bursts are over.
+    //
+    // #2297: no wall clock and no sampling timer. A 500 ms /health budget and a 1 ms setInterval both
+    // measured the machine, not the gate, and failed under parallel load. The peaks are now read where
+    // the counts rise, and every disconnect happens while the abandoned loads are provably pending.
     const root = await mkdtemp(join(tmpdir(), "dfir-heavy-abandon-"));
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
@@ -420,45 +428,66 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       scope: new ScopeStore(store),
       falsePositives: new FalsePositiveStore(store),
     });
+    const realAdmit = HeavyReadGate.prototype.admit;
     const admit = vi.spyOn(HeavyReadGate.prototype, "admit");
     const app = createApp(store, { stateStore, reportWriter });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     await stateStore.save(emptyState("c1"));
     expect((await request(app).get("/cases/c1/geo-map")).status).toBe(200);
     const gate = admit.mock.contexts[0] as HeavyReadGate; // the app's own gate
+
+    // Each sum below rises only at one call: the gate's at admit (a drain moves a waiter to running,
+    // the sum unchanged), the limiter's at acquire (a release hands its permit on). Read right after
+    // that call, the peak is exact while every admitted handler stays pending on the held load.
+    let peakGate = 0;
+    let peakLoads = 0;
+    admit.mockImplementation(function (this: HeavyReadGate, ...a: Parameters<HeavyReadGate["admit"]>) {
+      realAdmit.apply(this, a);
+      peakGate = Math.max(peakGate, this.active + this.waiting);
+    });
+    const limiter = wholeCaseLoads as unknown as { acquire: (s?: AbortSignal) => Promise<void> };
+    const acquire = limiter.acquire.bind(wholeCaseLoads);
+    vi.spyOn(limiter, "acquire").mockImplementation((signal?: AbortSignal) => {
+      const permit = acquire(signal);
+      peakLoads = Math.max(peakLoads, wholeCaseLoads.active + wholeCaseLoads.waiting);
+      return permit;
+    });
+    // Every load waits until the bursts are over, so the abandoned work is still pending at each drop.
+    const hold = deferred();
     const slow = stateStore as unknown as { loadState: (...a: unknown[]) => Promise<unknown> };
     const loadState = slow.loadState.bind(stateStore);
     vi.spyOn(slow, "loadState").mockImplementation(async (...a: unknown[]) => {
-      await new Promise((r) => setTimeout(r, 100));
+      await hold.promise;
       return loadState(...a);
     });
     const port = await listen(app);
 
-    let peakGate = 0;
-    let peakLoads = 0;
-    const sample = setInterval(() => {
-      peakGate = Math.max(peakGate, gate.active + gate.waiting);
-      peakLoads = Math.max(peakLoads, wholeCaseLoads.active + wholeCaseLoads.waiting);
-    }, 1);
     const idle = (): boolean =>
       gate.active === 0 && gate.waiting === 0 && wholeCaseLoads.active === 0 && wholeCaseLoads.waiting === 0;
+    const sent: ReturnType<typeof get>[] = [];
     try {
       const paths = ["/geo-map", "/geo-map.csv", "/lateral-paths", "/attack-layer.json", "/presentation"];
-      // A fixed number of bursts, each dropped once its requests are in flight (not a poll loop).
-      const inFlight = (): Promise<void> => new Promise((r) => setTimeout(r, 25));
       for (let round = 0; round < 15; round++) {
+        const before = admit.mock.calls.length;
         const burst = [...paths, ...paths].map((p) => get(port, `/cases/c1${p}`));
         for (const r of burst) r.reply.catch(() => undefined);
-        await inFlight();
+        sent.push(...burst);
+        // Drop each burst once every request in it has reached the gate (not after a fixed delay).
+        await until(() => admit.mock.calls.length >= before + burst.length);
+        // The first burst also waits for a load to be held: later bursts then arrive behind live work.
+        if (round === 0) await until(() => wholeCaseLoads.active > 0);
         for (const r of burst) r.drop();
       }
       const health = await get(port, "/health").reply;
-      expect(health.status).toBe(200);
-      expect(health.ms).toBeLessThan(500);
-      await until(idle, 10_000);
+      expect(health.status).toBe(200); // /health is never gated, even with every slot held
     } finally {
-      clearInterval(sample);
+      for (const r of sent) r.drop();
+      hold.resolve();
+      // Drain on every path, so a failed run never leaves loads in the process-wide limiter for the
+      // next test. A drain timeout must not hide the first error; the assertion below reports it.
+      await until(idle, 10_000).catch(() => undefined);
     }
+    expect(idle()).toBe(true); // the abandoned work drained: nothing was left queued behind the gate
     expect(peakGate).toBeLessThanOrEqual(HEAVY_READ_CONCURRENCY + HEAVY_READ_QUEUE_LIMIT);
     // Every load queued or running belongs to a request still holding a slot: at most one per slot.
     expect(peakLoads).toBeGreaterThan(0);
