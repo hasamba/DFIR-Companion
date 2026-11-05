@@ -4,7 +4,10 @@ import { COMPAT_ROWS, DOC_TABLE_HEADER, docRow } from "./matrix.js";
 
 // The manual's "Cloud tools" table is the published face of matrix.ts (#2300): every row the tests
 // assert must appear on the page exactly, and the page must carry no row the tests do not assert.
-const page = readFileSync(new URL("../../../../mkdocs-docs/reference/importing.md", import.meta.url), "utf8");
+const page = readFileSync(
+  new URL("../../../../mkdocs-docs/reference/importing.md", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const section = page.slice(
   page.indexOf("## Cloud tools"),
   page.indexOf("\n## ", page.indexOf("## Cloud tools") + 1),
