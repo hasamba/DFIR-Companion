@@ -1,4 +1,4 @@
-// First-start migration: build the "Testing" server set from the current DFIR_* settings and link
+// First-start migration: build the "Default" server set from the current DFIR_* settings and link
 // every existing case to it. Runs once per install: a marker beside the cases root records that it
 // finished, and later starts neither seed nor link (a case left unlinked stays unlinked).
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
@@ -7,7 +7,9 @@ import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.j
 import type { ServerSetInput } from "../integrations/serverSets/types.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
 
-const SEED_NAME = "Testing";
+const SEED_NAME = "Default";
+// 0.45.0 seeded "Testing". A partial run from then is adopted, never duplicated.
+const LEGACY_SEED_NAME = "Testing";
 const ARCHIVED_DIRNAME = "_archived";
 
 const get = (env: NodeJS.ProcessEnv, k: string): string => (env[k] ?? "").trim();
@@ -48,7 +50,7 @@ function buildInput(env: NodeJS.ProcessEnv, skip: ReadonlySet<string>): ServerSe
 }
 
 // The Velociraptor client inventory is per set (clients-<setId>.json). The one global file that
-// existed before server sets belongs to the server the Testing set was seeded from.
+// existed before server sets belongs to the server the Default set was seeded from.
 function adoptLegacyInventory(inventoryDir: string, setId: string): void {
   const legacy = join(inventoryDir, "clients.json");
   const target = join(inventoryDir, `clients-${setId}.json`);
@@ -70,12 +72,12 @@ export interface SeedOptions {
   log?: (line: string) => void;
 }
 
-// Creates "Testing" from env when the store is empty (a tool the store rejects is dropped with a
-// warning) and makes it the default. A partial earlier run that left "Testing" without a default
-// gets the default; a second "Testing" is never made.
-function seedTesting(store: ServerSetStore, env: NodeJS.ProcessEnv, opts: SeedOptions): boolean {
+// Creates "Default" from env when the store is empty (a tool the store rejects is dropped with a
+// warning) and makes it the default. A partial earlier run that left "Default" (or 0.45.0's
+// "Testing") without a default gets the default; a second seed set is never made.
+function seedDefault(store: ServerSetStore, env: NodeJS.ProcessEnv, opts: SeedOptions): boolean {
   if (store.defaultId() === undefined) {
-    const partial = store.list().find((s) => s.name === SEED_NAME);
+    const partial = store.list().find((s) => s.name === SEED_NAME || s.name === LEGACY_SEED_NAME);
     if (partial) store.setDefault(partial.id);
   }
   if (store.list().length > 0) return false;
@@ -90,7 +92,7 @@ function seedTesting(store: ServerSetStore, env: NodeJS.ProcessEnv, opts: SeedOp
       const tool = /^(iris|timesketch) url must be http/.exec((err as Error).message)?.[1];
       if (!tool || skip.has(tool)) throw err;
       skip.add(tool);
-      logLine(`[server-sets] ${tool} settings were not valid and were left out of the Testing set`);
+      logLine(`[server-sets] ${tool} settings were not valid and were left out of the Default set`);
     }
   }
   return false;
@@ -109,7 +111,7 @@ function linkUnlinked(store: ServerSetStore, caseIds: string[]): number {
   return linked;
 }
 
-// Seeds "Testing" and links every case that has no link to the default set, then writes the
+// Seeds "Default" and links every case that has no link to the default set, then writes the
 // marker. With the marker present it does neither; an empty store then logs one warning.
 export function seedServerSets(
   store: ServerSetStore,
@@ -125,7 +127,7 @@ export function seedServerSets(
     }
     return { seeded: false, linked: 0 };
   }
-  const seeded = seedTesting(store, env, opts);
+  const seeded = seedDefault(store, env, opts);
   const linked = linkUnlinked(store, caseIds);
   if (opts.markerPath) writeFileSync(opts.markerPath, `${new Date().toISOString()}\n`);
   return { seeded, linked };

@@ -128,7 +128,28 @@ describe("the setup wizard saves server connections into the default server set"
     expect(net.calls).toEqual([]);
   });
 
-  it("a retry after a failed make-default reuses the 'Testing' set instead of creating a second", async () => {
+  it("a retry after a failed make-default reuses the 'Default' set instead of creating a second", async () => {
+    const earlier = { id: "n1", name: "Default", revision: 1, usedBy: 0 };
+    const h = harness(
+      {
+        "GET /server-sets": { body: { defaultId: "", sets: [earlier] } },
+        "PUT /server-sets/n1": (call) => ({ body: { ...earlier, ...call.body } }),
+        "POST /server-sets/n1/default": { status: 204 },
+      },
+      { DFIR_IRIS_URL: "https://iris.example.com", DFIR_IRIS_KEY: "iris-key-sentinel-alpha" },
+    );
+    await h.api.wizSaveServerSetStep(h.api.wizardStepById("iris"), h.res, h.btn);
+    await flush();
+    const order = h.net.calls.map((c) => `${c.method} ${c.url}`);
+    expect(order).not.toContain("POST /server-sets");
+    expect(order).toContain("PUT /server-sets/n1");
+    expect(order.indexOf("POST /server-sets/n1/default")).toBeGreaterThan(
+      order.indexOf("PUT /server-sets/n1"),
+    );
+    expect(h.res.textContent).toContain("Saved to the default server set (Default).");
+  });
+
+  it("a 0.45.0 'Testing' set with no default is reused, not joined by a second 'Default'", async () => {
     const earlier = { id: "n1", name: "Testing", revision: 1, usedBy: 0 };
     const h = harness(
       {
@@ -160,7 +181,7 @@ describe("the setup wizard saves server connections into the default server set"
     );
     await h.api.wizSaveServerSetStep(h.api.wizardStepById("iris"), h.res, h.btn);
     await flush();
-    expect(h.res.textContent).toBe("Created set 'Testing' but could not make it the default: disk full");
+    expect(h.res.textContent).toBe("Created set 'Default' but could not make it the default: disk full");
   });
 
   it("names the default set on the step line as soon as the step renders", async () => {
@@ -222,7 +243,7 @@ describe("the setup wizard saves server connections into the default server set"
     expect(h.btn.disabled).toBe(false);
   });
 
-  it("creates a 'Testing' set and makes it the default when there is no default set", async () => {
+  it("creates a 'Default' set and makes it the default when there is no default set", async () => {
     const h = harness(
       {
         "GET /server-sets": { body: { defaultId: "", sets: [] } },
@@ -242,7 +263,7 @@ describe("the setup wizard saves server connections into the default server set"
     expect(order.indexOf("POST /server-sets/n1/default")).toBeGreaterThan(order.indexOf("POST /server-sets"));
     const post = h.net.calls.find((c) => c.method === "POST" && c.url === "/server-sets");
     expect(post?.body).toEqual({
-      name: "Testing",
+      name: "Default",
       timesketch: { url: "https://ts.example.com", user: "analyst", password: "word-like-password" },
     });
     expect(h.envKeys()).toEqual([]);

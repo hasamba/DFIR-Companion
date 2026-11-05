@@ -209,7 +209,8 @@ servers. You do not enter keys again when you move between cases.
   **Using server set: *name*** next to them. When a case is open, the client list, **↻ Refresh
   client list** and the time-scope preview use the case's set. The client list then names that
   set. After the upgrade, your old IRIS, Timesketch and
-  Velociraptor settings become a set named **Testing**, and it is the default.
+  Velociraptor settings become a set named **Default**, and it is the default. (Version 0.45.0
+  named this set **Testing**. An existing set keeps its name; rename it here if you like.)
 - **The editor.** Leave a tool empty when the cases on the set do not use it. The Companion then
   hides that tool's buttons for those cases. A stored key or password shows as `••••••`. It stays
   the same unless you type a new value. **Save** keeps the editor open and shows **Saved.**.
@@ -259,7 +260,7 @@ servers. You do not enter keys again when you move between cases.
 
 The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VELOCIRAPTOR_ORG`
 and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the
-upgrade, to make the **Testing** set. After that, edit the sets here. The setup wizard's
+upgrade, to make the **Default** set. After that, edit the sets here. The setup wizard's
 DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not into `.env`.
 
 ---

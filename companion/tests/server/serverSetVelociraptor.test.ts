@@ -190,7 +190,7 @@ describe("Velociraptor per server set", () => {
     expect(inv.clients[0].clientId).toBe("C.bapiyaml");
   });
 
-  it("migration renames clients.json to the Testing set's file", () => {
+  it("migration renames clients.json to the Default set's file", () => {
     const inventoryDir = join(dir, "velociraptor");
     mkdirSync(inventoryDir);
     const content = JSON.stringify({ updatedAt: "2026-01-01T00:00:00Z", clients: [{ clientId: "C.1" }] });

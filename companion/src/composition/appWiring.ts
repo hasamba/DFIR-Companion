@@ -74,7 +74,7 @@ export interface AppWiringDeps {
 }
 
 export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOptions {
-  // Before the integration clients below: seed the "Testing" server set from the current DFIR_* settings.
+  // Before the integration clients below: seed the "Default" server set from the current DFIR_* settings.
   runServerSetSeed(rt.serverSetStore, process.env, {
     caseIds: listCaseIdsSync(rt.store.casesRoot),
     storeDir: serverSetStoreDir(rt.store.casesRoot),

@@ -140,7 +140,7 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
  * the allowlist test above requires every read-only field to be one the server refuses. These keys
  * are still writable, so read-only rendering would fail that test and lie to the analyst.
  *
- * The reason: per-case server sets. These keys are a FIRST-RUN SEED for the "Testing" server set
+ * The reason: per-case server sets. These keys are a FIRST-RUN SEED for the "Default" server set
  * only (composition/serverSetMigration.ts reads them once). After that, the IRIS, Timesketch and
  * Velociraptor connection of every case lives in Settings → Server sets, and an `env-` input for
  * them would edit a value nothing reads any more. They stay in .env.example because the seed reads
@@ -176,7 +176,7 @@ describe("Settings modal \u21c4 .env.example", () => {
       expect(documented.has(key), `${key} is no longer documented in .env.example`).toBe(true);
       expect(html, `${key} has a Settings input again`).not.toContain(`id="env-${key}"`);
     }
-    expect(example).toContain("first-run seed for the Testing server set only");
+    expect(example).toContain("first-run seed for the Default server set only");
   });
 
   // The reverse of the allowlist contract above: a documented setting the UI never renders is

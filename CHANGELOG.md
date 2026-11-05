@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default server set name** — a new install names its first server set "Default" instead of "Testing"; an existing set keeps its name
+
 ## [0.45.0] - 2026-11-05
 
 ### Added
