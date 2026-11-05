@@ -297,6 +297,7 @@ export function upsertForensicEvents(
         existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.artifactName) existing.artifactName = incoming.artifactName;
       if (incoming.sourceRecordId) existing.sourceRecordId = incoming.sourceRecordId;
+      if (incoming.sourceRecords) existing.sourceRecords = incoming.sourceRecords; // #2301
       if (incoming.message) existing.message = incoming.message;
       if (incoming.veloUrl) existing.veloUrl = incoming.veloUrl;
       // Monotonic (#1651): a stamped re-read marks the row; an unstamped one never clears it.
@@ -340,6 +341,7 @@ export function upsertForensicEvents(
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
         ...(incoming.artifactName ? { artifactName: incoming.artifactName } : {}),
         ...(incoming.sourceRecordId ? { sourceRecordId: incoming.sourceRecordId } : {}),
+        ...(incoming.sourceRecords ? { sourceRecords: incoming.sourceRecords } : {}),
         ...(incoming.message ? { message: incoming.message } : {}),
         ...(incoming.veloUrl ? { veloUrl: incoming.veloUrl } : {}),
         ...(incoming.partlyReadArtifact ? { partlyReadArtifact: incoming.partlyReadArtifact } : {}),

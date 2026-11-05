@@ -114,9 +114,44 @@ function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
   else delete target.sourceRecordId;
 }
 
-export function createEventAggregator(
-  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
-): EventAggregator {
+// Provenance through aggregation (#2301). An importer that knows each row's cloud record identity
+// (MappedEvent.recordRefs) passes this: every kept row is reported to `onMember` under its group's
+// key, so the importer can write the group → record relation to disk (cloudRecordStore.ts), and
+// each group's event carries only a bounded sample of references plus a count (`sourceRecords`).
+// Nothing grows per row here: memory stays bounded by the group count, as the accumulator promises.
+export interface AggregateProvenance {
+  groupOf(key: string): string; // the persistent key of one aggregated group
+  onMember(group: string, ref: string, locator?: string): void;
+}
+
+export interface AggregateOptions {
+  aggregate?: boolean;
+  minSeverity?: Severity;
+  maxEvents?: number;
+  provenance?: AggregateProvenance;
+}
+
+// How many record references one event carries inline; the relation holds the rest.
+export const SOURCE_REFS_MAX = 10;
+
+// Folds one row's record identity into its group's sourceRecords (sticky flags, bounded refs).
+function noteMember(e: SiemEvent, key: string, m: MappedEvent, provenance?: AggregateProvenance): void {
+  const refs = m.recordRefs ?? [];
+  if (!provenance || !refs.length) return;
+  const prev = e.sourceRecords ?? { group: provenance.groupOf(key), count: 0, refs: [] };
+  e.sourceRecords = {
+    ...prev,
+    count: prev.count + refs.length,
+    refs: [...prev.refs, ...refs].slice(0, Math.max(SOURCE_REFS_MAX, prev.refs.length)),
+    ...(m.recordConflict || prev.conflict ? { conflict: true } : {}),
+    ...(m.recordHashIdentified || prev.hashIdentified ? { hashIdentified: true } : {}),
+  };
+  const locator = m.canonical?.evidence.rawRecords[0]?.locator;
+  for (const ref of refs)
+    provenance.onMember(e.sourceRecords.group, ref, refs.length === 1 ? locator : undefined);
+}
+
+export function createEventAggregator(opts: AggregateOptions = {}): EventAggregator {
   const aggregate = opts.aggregate ?? true;
   const maxEvents = opts.maxEvents ?? maxEventsDefault();
   const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
@@ -181,6 +216,7 @@ export function createEventAggregator(
           applyEventIdentity(existing, m);
         }
         // `count` records repeats; retaining one instance's identity avoids unbounded provenance arrays.
+        noteMember(existing, key, m, opts.provenance);
       } else {
         const e: SiemEvent = {
           id: "",
@@ -200,6 +236,7 @@ export function createEventAggregator(
           ...(m.origin ? { origin: m.origin } : {}),
         };
         applyEventIdentity(e, m);
+        noteMember(e, key, m, opts.provenance);
         firstOrdinal.set(e, ordinal);
         byKey.set(key, e);
         order.push(key);
@@ -239,7 +276,7 @@ export function createEventAggregator(
 // group count BEFORE the cap (so callers can report "N over the cap"). Pure.
 export function aggregateEvents(
   mapped: Iterable<MappedEvent>,
-  opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
+  opts: AggregateOptions = {},
 ): { events: SiemEvent[]; groups: number } {
   const agg = createEventAggregator(opts);
   for (const m of mapped) agg.add(m);

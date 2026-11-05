@@ -10,6 +10,7 @@ import { FACTS_WORKER_SOURCE } from "./caseSqliteWorkerFacts.js";
 import { IOC_WORKER_SOURCE } from "./caseSqliteWorkerIoc.js";
 import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
 import { SEARCH_WORKER_SOURCE } from "./caseSqliteWorkerSearch.js";
+import { CLOUD_WORKER_SOURCE } from "./caseSqliteWorkerCloud.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -611,6 +612,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   IOC_WORKER_SOURCE +
   TAGS_WORKER_SOURCE +
   SEARCH_WORKER_SOURCE +
+  CLOUD_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {

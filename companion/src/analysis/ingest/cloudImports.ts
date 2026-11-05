@@ -1,8 +1,21 @@
 import { parseCloudTrail, type AwsImportOptions } from "../awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudActivityImport.js";
+import { extractRecords } from "../siemImport.js";
+import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
+import {
+  cloudRecordNote,
+  planCloudRecords,
+  recordCloudRecordDebug,
+  settleCloudRecords,
+} from "./cloudRecordIngest.js";
 import { parseAzureStorageLog, type AzureStorageLogImportOptions } from "../azureStorageLogImport.js";
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
-import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
+import {
+  extractM365Records,
+  m365RecordIdentities,
+  parseM365Audit,
+  type M365ImportOptions,
+} from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
 import { parseMdeHunting, MDE_HUNTING_SOURCE, type MdeHuntingImportOptions } from "../mdeHuntingImport.js";
 import { parseGoogleWorkspaceReport, type GoogleWorkspaceImportOptions } from "../googleWorkspaceImport.js";
@@ -56,9 +69,22 @@ export async function importM365(
 ): Promise<ImportWithCoverage> {
   // One Sigma snapshot for this whole import, taken before parsing (#2204).
   const sigma = ctx.opts.sigmaGrader?.snapshot();
-  const parsedRaw = parseM365Audit(text, { ...opts.m365, debug: opts.debug, sigma });
+  // Dedup against the case's record ledger BEFORE aggregation (#2301).
+  const records = extractM365Records(text);
+  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () => m365RecordIdentities(records));
+  recordCloudRecordDebug(plan, opts.debug);
+  const dedupNote = cloudRecordNote(plan);
+  const parsedRaw = parseM365Audit(text, {
+    ...opts.m365,
+    debug: opts.debug,
+    sigma,
+    records,
+    recordGate: plan.gate,
+    provenance: plan.provenance,
+  });
 
-  // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
+  // Cross-upload password-spray pass (#1104) — see importEcar's identical comment. The sign-in
+  // observations (#2301) are what the store keeps, MFA interruptions included.
   const { events: crossRows, retentionNote } = await crossUploadSprayRows(
     ctx,
     caseId,
@@ -69,6 +95,7 @@ export async function importM365(
       importer: "m365",
       mappingVersion: "m365-spray-cross-v1",
     },
+    parsedRaw.signInObservations,
   );
   const parsed = {
     ...parsedRaw,
@@ -84,7 +111,7 @@ export async function importM365(
         opts,
         "Microsoft 365",
         parsed.total,
-        retentionNote || undefined,
+        [dedupNote, retentionNote].filter(Boolean).join("; ") || undefined,
       ),
       coverage: parsed.coverage,
     };
@@ -106,6 +133,7 @@ export async function importM365(
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
+      (dedupNote ? `, ${dedupNote}` : "") +
       (retentionNote ? `; ${retentionNote}` : ""),
     summary: "",
   };
@@ -120,6 +148,7 @@ export async function importM365(
     opts.onProgress?.(1, 1);
     return s;
   });
+  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 
@@ -527,12 +556,25 @@ export async function importAws(
 ): Promise<ImportWithCoverage> {
   // One Sigma snapshot for this whole import, taken before parsing (#2204).
   const sigma = ctx.opts.sigmaGrader?.snapshot();
-  const parsedRaw = parseCloudTrail(text, { ...opts.aws, debug: opts.debug, sigma });
+  const { records } = extractRecords(text);
+  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
+    records.map((rec) => cloudRecordIdentity("cloudtrail", rec)),
+  );
+  recordCloudRecordDebug(plan, opts.debug);
+  const dedupNote = cloudRecordNote(plan);
+  const parsedRaw = parseCloudTrail(text, {
+    ...opts.aws,
+    debug: opts.debug,
+    sigma,
+    records,
+    recordGate: plan.gate,
+    provenance: plan.provenance,
+  });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total),
+      state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total, dedupNote || undefined),
       coverage: parsed.coverage,
     };
 
@@ -552,7 +594,8 @@ export async function importAws(
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
-      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched),
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
+      (dedupNote ? `, ${dedupNote}` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -566,6 +609,7 @@ export async function importAws(
     opts.onProgress?.(1, 1);
     return s;
   });
+  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 
@@ -586,12 +630,24 @@ export async function importCloudActivity(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseCloudActivity(text, { ...opts.cloud, debug: opts.debug });
+  const { records } = extractRecords(text);
+  const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
+    records.map((rec) => cloudRecordIdentity(cloudActivityRecordProvider(rec), rec)),
+  );
+  recordCloudRecordDebug(plan, opts.debug);
+  const dedupNote = cloudRecordNote(plan);
+  const parsedRaw = parseCloudActivity(text, {
+    ...opts.cloud,
+    debug: opts.debug,
+    records,
+    recordGate: plan.gate,
+    provenance: plan.provenance,
+  });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total),
+      state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total, dedupNote || undefined),
       coverage: parsed.coverage,
     };
 
@@ -610,7 +666,8 @@ export async function importCloudActivity(
       `Cloud activity import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      (dedupNote ? `, ${dedupNote}` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
@@ -624,6 +681,7 @@ export async function importCloudActivity(
     opts.onProgress?.(1, 1);
     return s;
   });
+  await settleCloudRecords(ctx, caseId, plan, opts.idPrefix, parsed.events, opts.debug);
   return { state, coverage: parsed.coverage };
 }
 

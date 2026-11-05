@@ -199,15 +199,15 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(cross[0].severity).toBe("Medium");
   });
 
-  it("a batch whose events predate the retention window discloses that later uploads cannot correlate with it (#1286, #1299)", async () => {
+  it("a batch whose evidence spans more than the retention window discloses that later uploads cannot correlate with it (#1286, #1299, #2301)", async () => {
     const { pipeline } = await makePipeline("c6");
 
-    // Events dated 30 days before real wall-clock now — well past the store's 168h (7-day)
-    // retention window. `pruneIfDue` keys off Date.now(), not this batch's own anchor, so these
-    // observations will not survive to be cross-matched by a later upload; the analyst must be
-    // told, not left to notice a silent non-match weeks later.
-    const staleBaseMs = Date.now() - 30 * 24 * 3_600_000;
-    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 20 * MIN));
+    // Two logons eight days apart — more than the store's 168h (7-day) retention span. Retention
+    // is measured in EVIDENCE time (#2301): `pruneIfDue` drops rows older than the newest stored
+    // observation minus the span, so this batch's earliest row is pruned by its own latest one and
+    // a later upload cannot be cross-matched with it; the analyst must be told.
+    const staleBaseMs = Date.parse("2025-01-01T00:00:00Z");
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 8 * 24 * 60 * MIN));
     const s1 = await pipeline.importEcar("c6", ndjson(...first), {
       label: "stale-batch.ecar.json",
       idPrefix: "st1",
@@ -230,12 +230,12 @@ describe("cross-upload password-spray detection (#1104)", () => {
   it("the retention disclosure on an EMPTY import is a '; '-joined clause, the same shape as the non-empty note (#1300)", async () => {
     const { pipeline } = await makePipeline("c8");
 
-    // Stale batch (past the 168h retention) whose two Low failed logons are floored out by
+    // A batch spanning more than the 168h retention, whose two Low failed logons are floored out by
     // minSeverity: Medium — zero events, so the importer takes the noteEmptyImport path with the
     // retention disclosure as its `detail`. That path used to parenthesise the detail while the
     // non-empty path joined it with "; ", so the same fact rendered two ways.
-    const staleBaseMs = Date.now() - 30 * 24 * 3_600_000;
-    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 20 * MIN));
+    const staleBaseMs = Date.parse("2025-01-01T00:00:00Z");
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 8 * 24 * 60 * MIN));
     const s1 = await pipeline.importEcar("c8", ndjson(...first), {
       label: "stale-empty.ecar.json",
       idPrefix: "se1",
@@ -248,6 +248,20 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(note).toBeDefined();
     expect(note?.description).toContain("nothing added to the case; cross-upload spray matching");
     expect(note?.description).not.toContain("(cross-upload");
+  });
+
+  it("an old export inside one retention span does NOT carry the disclosure — retention is evidence time (#2301)", async () => {
+    const { pipeline } = await makePipeline("c9");
+    const oldBaseMs = Date.parse("2024-03-01T00:00:00Z"); // years before the wall clock
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, oldBaseMs, i * 20 * MIN));
+    const s1 = await pipeline.importEcar("c9", ndjson(...first), {
+      label: "old-batch.ecar.json",
+      idPrefix: "ol1",
+      importedAt: new Date().toISOString(),
+    });
+    const note = s1.timeline.find((t) => t.description.includes("ECAR import"));
+    expect(note).toBeDefined();
+    expect(note?.description).not.toMatch(/retention window/i);
   });
 
   it("a fresh batch (recent events) does NOT carry the retention-exceeded disclosure", async () => {

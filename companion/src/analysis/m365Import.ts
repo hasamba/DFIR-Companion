@@ -58,6 +58,11 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { cloudRecordIdentity, m365RecordProvider, type CloudRecordIdentity } from "./cloudRecordIdentity.js";
+import { gateRecords, gateRows, isDuplicateRecord, type RecordGate } from "./cloudRecordGate.js";
+import type { AggregateProvenance } from "./eventAggregate.js";
+import { signInObservation } from "./signInObservation.js";
+import type { StoredAuthObservation } from "./authObservationStore.js";
 
 type Row = Record<string, unknown>;
 
@@ -74,6 +79,12 @@ export interface M365ImportOptions {
    * their fields differ from what the azure/signinlogs and azure/auditlogs rules are written for.
    */
   sigma?: SigmaGradingSnapshot;
+  /** Pre-extracted, normalized records (#2301, `extractM365Records`), so the ingest layer reads once. */
+  records?: Row[];
+  /** The case ledger's verdict per record (#2301): duplicates are skipped before aggregation. */
+  recordGate?: RecordGate;
+  /** Aggregate → source-record membership sink (#2301). */
+  provenance?: AggregateProvenance;
 }
 
 export interface M365ParseResult {
@@ -89,6 +100,8 @@ export interface M365ParseResult {
   // Every within-upload spray candidate this parse built (#1104) — importBatch left unset here,
   // since parseM365Audit is pure and has no idPrefix; the ingest layer (importM365) stamps it.
   sprayCandidates: SprayCandidate[];
+  // Every Entra sign-in for the sign-in observation store (#2301), MFA interruptions included.
+  signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
   /** Rows a Sigma rule matched (#2204), for the import note; 0 without a snapshot. */
   sigmaRowsMatched?: number;
 }
@@ -438,10 +451,20 @@ function extractM365(text: string): Row[] {
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
+/** The upload's records, extracted and normalized — the ones parseM365Audit maps, in its order. */
+export function extractM365Records(text: string): Row[] {
+  return extractM365(text).map(normalizeRecord);
+}
+
+/** Each record's cloud identity (#2301), by the kind classify() reads it as. */
+export function m365RecordIdentities(records: readonly Row[]): CloudRecordIdentity[] {
+  return records.map((rec) => cloudRecordIdentity(m365RecordProvider(classify(rec), rec), rec));
+}
+
 export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365ParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  const records = extractM365(text);
-  const total = records.length;
+  const normalized = opts.records ?? extractM365Records(text);
+  const total = normalized.length;
   if (total === 0) {
     return {
       events: [],
@@ -453,6 +476,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       format: "empty",
       coverage: [],
       sprayCandidates: [],
+      signInObservations: [],
     };
   }
 
@@ -464,7 +488,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
 
   // Object-id → app-id facts other records of this export state (entraAuditImport.ts): the only
   // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
-  const normalized = records.map(normalizeRecord);
   const resolve = learnApiResolver(normalized);
   // Coverage (#1063): normalized, since Workload/Operation/RecordType/OrganizationId can sit
   // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
@@ -476,6 +499,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // accounts into a single counted row. A candidate needs a real IP and a real tenant; a record
   // missing either is excluded from counting entirely, never merged into a shared bucket.
   const sprayCandidates: SprayCandidate[] = [];
+  const signInObservations: M365ParseResult["signInObservations"] = [];
+  const gate = opts.recordGate;
   const snapshot = opts.sigma;
   let sigmaRows = 0;
   const sigmaFor = (sourceId: string, rec: Row) => {
@@ -486,6 +511,13 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     return refs;
   };
   normalized.forEach((rec, index) => {
+    // A record the case already holds maps to nothing (#2301); its locator index is kept.
+    if (isDuplicateRecord(gate, index)) return;
+    const before = mapped.length;
+    mapRecordInto(rec, index);
+    mapped.splice(before, mapped.length - before, ...gateRows(gate, index, mapped.slice(before)));
+  });
+  function mapRecordInto(rec: Row, index: number): void {
     const kind = classify(rec);
     if (kind === "ual" && isEntraUalRecord(rec)) {
       // An Entra directory change exported through the UAL: the same decoder as the Graph shape.
@@ -518,6 +550,23 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
         );
         const sprayOutcome =
           outcome === "credential-failure" ? "failed" : outcome === "success" ? "success" : null;
+        // The observation store keeps every sign-in, MFA interruptions included (#2301) — the
+        // exclusion above guards the spray count only, and the store's spray reader filters too.
+        if (s.user && hostOrTenant && s.observed) {
+          const recordId = gate?.identities[index]?.key;
+          signInObservations.push(
+            signInObservation({
+              rec,
+              account: s.user,
+              sourceIp: s.ip,
+              tenant: hostOrTenant,
+              observed: s.observed,
+              locator: `record:${index}`,
+              recordId,
+              sprayOutcome,
+            }),
+          );
+        }
         if (s.user && s.ip && hostOrTenant && s.observed && sprayOutcome) {
           sprayCandidates.push({
             timestamp: normalizeTime(s.observed),
@@ -542,14 +591,18 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       // Not a UAL, sign-in or directory-audit record by its own fields: never mapped (#1736).
       opts.debug?.skipped("unrecognized_record");
     }
-  });
+  }
 
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   const capped = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
+    provenance: opts.provenance,
   });
+  // Summaries read every NEW record (#2301): a duplicate is blanked in place, so a re-upload adds
+  // no second summary and every `record:<index>` locator still points into the original upload.
+  const fresh = gateRecords(gate, normalized);
   // The summaries built over every record of this export — the privilege path per application
   // (#973) and the mailbox chain per mailbox and session (#975) — are appended AFTER the cap,
   // each under its own bound: `maxEvents` bounds SOURCE rows, a summary never evicts one, and
@@ -560,8 +613,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const summaries = [
     ...(sawAudit || sawUal
       ? [
-          ...derived(entraPrivilegePaths(normalized, resolve), PRIVILEGE_PATHS_MAX + 1),
-          ...(sawUal ? derived(mailboxChains(normalized), MAILBOX_CHAINS_MAX + 1) : []),
+          ...derived(entraPrivilegePaths(fresh, resolve), PRIVILEGE_PATHS_MAX + 1),
+          ...(sawUal ? derived(mailboxChains(fresh), MAILBOX_CHAINS_MAX + 1) : []),
         ]
       : []),
     ...(sprayCandidates.length
@@ -595,6 +648,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     format,
     coverage,
     sprayCandidates,
+    signInObservations,
     sigmaRowsMatched: sigmaRows,
   };
 }

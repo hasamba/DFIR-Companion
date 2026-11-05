@@ -222,6 +222,16 @@ export const deltaSchema = z.object({
         // cross-parser correlation uses to fold one EVTX record reported by two parsers into one
         // event (#688). Set by the EVTX-derived importers; absent everywhere else.
         sourceRecordId: z.string().optional(),
+        // Importer-only (#2301): the cloud source records an aggregated event stands for.
+        sourceRecords: z
+          .object({
+            group: z.string(),
+            count: z.number().int().nonnegative(),
+            refs: z.array(z.string()),
+            conflict: z.boolean().optional(),
+            hashIdentified: z.boolean().optional(),
+          })
+          .optional(),
         message: z.string().optional(),
         veloUrl: z.string().optional(),
         // Importer-only (#1651): the partly read artifact this row came from. Stripped from model
@@ -610,8 +620,9 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // extractedFrom is stripped above: provenance is not the model's to claim.
     // `partlyReadArtifact` (#1651) likewise: a model claiming a read was incomplete would trigger
     // collection steps; one clearing it cannot happen, because the merge never clears it on absence.
+    // `sourceRecords` (#2301) is provenance too: a model must never point an event at source records.
     forensicEvents: (delta.forensicEvents ?? []).map(
-      ({ origin, assetRecord, partlyReadArtifact, ...rest }) => rest,
+      ({ origin, assetRecord, partlyReadArtifact, sourceRecords, ...rest }) => rest,
     ),
   };
 }

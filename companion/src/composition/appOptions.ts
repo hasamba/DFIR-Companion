@@ -44,6 +44,7 @@ import type { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import type { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../analysis/authObservationStore.js";
+import type { CloudRecordStore } from "../analysis/cloudRecordStore.js";
 import type { StarredReportStore } from "../analysis/starredReportStore.js";
 import type { TaggerStore } from "../analysis/taggerStore.js";
 import type { SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
@@ -280,6 +281,9 @@ export interface AppOptions {
   // to detect a spray whose attempts split across two uploads. Absent (scripts/tests) -> the
   // cross-upload pass is simply off, same as superTimelineStore.
   authObservationStore?: AuthObservationStore;
+  // Cloud-record dedup ledger + aggregate → source-record relation (#2301). Absent (scripts/tests) ->
+  // cloud imports neither dedup nor record provenance, and the source-records route answers 501.
+  cloudRecordStore?: CloudRecordStore;
   // Saved copy of the TimeSketch-style Starred Events Report (a per-case side file) — POST
   // /starred-report generates it fresh each time (ephemeral); PUT persists the analyst's chosen
   // copy here so it survives a reload; GET reads it back.

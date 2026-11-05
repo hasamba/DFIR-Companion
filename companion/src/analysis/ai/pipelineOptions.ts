@@ -47,6 +47,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { BulkImportSink } from "../ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { CloudRecordStore } from "../cloudRecordStore.js";
 import type { SigmaImportGrader } from "../sigmaImportGrade.js";
 import type { SynthMetaStore } from "../synthMeta.js";
 
@@ -94,6 +95,10 @@ export interface PipelineOptions {
   // spray whose attempts split across two uploads can still cross the threshold. Server-only
   // (absent in scripts/*) → the cross-upload pass is simply off, same as superTimelineStore.
   authObservationStore?: AuthObservationStore;
+  // Cloud-record dedup ledger + provenance relation (#2301): the M365, AWS and GCP / Azure Activity
+  // importers skip records the case already holds and keep aggregate → record membership. Absent ->
+  // no dedup, exactly the pre-#2301 behavior.
+  cloudRecordStore?: CloudRecordStore;
   // The batched Velociraptor driver's stores (#1439): a large export is imported one batch at a
   // time through the indexed appends instead of the whole-state merge. Server-only (absent in
   // scripts/* and most tests) → every import takes the whole-file path, exactly as before.

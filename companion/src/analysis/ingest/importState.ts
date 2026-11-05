@@ -263,13 +263,12 @@ export async function persistPlasoParsed(
 // unchanged.
 export interface CrossUploadSprayResult {
   events: SiemEvent[];
-  // Set when this batch's own earliest event already predates the store's retention window at
-  // upload time (#1286). `AuthObservationStore.pruneIfDue` deletes by WALL-CLOCK age
-  // (`Date.now() - retentionHours`), not by any batch's own anchor, so observations this stale
-  // are pruned within the next throttled prune (≤1h) regardless of when they were written —
-  // they cannot be cross-matched now, and this batch's own append() below cannot survive to be
-  // cross-matched by a LATER upload either. Non-empty only when that condition holds, so a caller
-  // can fold it into the timeline note it already emits; empty string otherwise.
+  // Set when this batch's own evidence spans more than the store's retention (#1286, #2301).
+  // `AuthObservationStore.pruneIfDue` deletes rows older than the NEWEST stored evidence minus the
+  // retention span (evidence time, never the wall clock), so this batch's own earliest
+  // observations are pruned by its own latest ones — a LATER upload cannot be correlated with
+  // them. Non-empty only when that condition holds, so a caller can fold it into the timeline
+  // note it already emits; empty string otherwise.
   retentionNote: string;
 }
 
@@ -279,9 +278,17 @@ export async function crossUploadSprayRows(
   opts: { idPrefix: string; importedAt: string },
   sprayCandidates: SprayCandidate[],
   meta: { source: string; importer: string; mappingVersion: string },
+  // The richer sign-in observations to store in place of the bare spray candidates (#2301) — a
+  // superset that also keeps MFA interruptions. Stored even when no spray candidate exists.
+  observations?: ReadonlyArray<Omit<StoredAuthObservation, "importBatch">>,
 ): Promise<CrossUploadSprayResult> {
   const store = ctx.opts.authObservationStore;
-  if (!store || !sprayCandidates.length) return { events: [], retentionNote: "" };
+  if (!store) return { events: [], retentionNote: "" };
+  const stamped = observations?.map((o) => ({ ...o, importBatch: opts.idPrefix }));
+  if (!sprayCandidates.length) {
+    if (stamped?.length) await store.append(caseId, stamped);
+    return { events: [], retentionNote: "" };
+  }
 
   const withBatch: SprayCandidate[] = sprayCandidates.map((c) => ({ ...c, importBatch: opts.idPrefix }));
 
@@ -313,7 +320,8 @@ export async function crossUploadSprayRows(
   // note must not say it "could not run". What is lost is the other direction — a LATER upload
   // cannot reach this batch once the wall-clock prune removes it.
   const retentionHoursValue = store.retentionHours();
-  const retentionExceeded = anchorMs < Date.now() - retentionHoursValue * 3_600_000;
+  const newestMs = batchTimestampsMs.length ? Math.max(...batchTimestampsMs) : anchorMs;
+  const retentionExceeded = anchorMs < newestMs - retentionHoursValue * 3_600_000;
   const retentionNote = retentionExceeded
     ? `cross-upload spray matching for this batch is limited — its evidence predates the ${retentionHoursValue}h auth-observation retention window, so later uploads cannot be correlated with it`
     : "";
@@ -321,13 +329,16 @@ export async function crossUploadSprayRows(
   // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead
   // of writing then reading the same rows back (no round trip, and no risk of the query cap
   // dropping the candidates this very call is about to write).
-  const { observations, truncated } = await store.queryWindow(caseId, sinceIso);
-  const priorCandidates: SprayCandidate[] = observations.map((o) => ({
+  const { observations: stored, truncated } = await store.queryWindow(caseId, sinceIso);
+  // Only failed/success rows with a source IP are spray attempts (#2301): an MFA interruption or
+  // any other outcome the store keeps for fatigue detection must never inflate a spray count.
+  const sprayRows = stored.filter((o) => (o.outcome === "failed" || o.outcome === "success") && o.sourceIp);
+  const priorCandidates: SprayCandidate[] = sprayRows.map((o) => ({
     timestamp: o.timestamp,
     account: o.account,
     sourceIp: o.sourceIp,
     hostOrTenant: o.hostOrTenant,
-    outcome: o.outcome,
+    outcome: o.outcome as SprayCandidate["outcome"],
     locator: o.locator,
     importBatch: o.importBatch,
   }));
@@ -357,7 +368,7 @@ export async function crossUploadSprayRows(
     importer: meta.importer,
     importBatch: c.importBatch ?? opts.idPrefix,
   }));
-  await store.append(caseId, toStore);
+  await store.append(caseId, stamped ?? toStore);
 
   return { events: crossRows, retentionNote };
 }

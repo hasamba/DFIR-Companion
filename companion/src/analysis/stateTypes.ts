@@ -451,6 +451,19 @@ export interface TimelineEntry {
   sourceScreenshots: string[];
 }
 
+// Where an aggregated cloud event came from (#2301). `group` keys its member records in the case's
+// provenance relation (analysis/cloudRecordStore.ts; GET /cases/:id/source-records/:group pages them);
+// `refs` is a bounded sample of record identities and `count` all of them. `conflict`: a member
+// shared its record id with a DIFFERENT payload already imported. `hashIdentified`: a member had no
+// provider id and is identified by its content hash.
+export interface SourceRecords {
+  group: string;
+  count: number;
+  refs: string[];
+  conflict?: boolean;
+  hashIdentified?: boolean;
+}
+
 // A real-world event reconstructed from the evidence (e.g. a process execution, logon, file write) with the
 // time it actually happened — the chronological attack story. `revisions`: eventRevision.ts (#2141).
 export interface ForensicEvent extends EventRevisionFields {
@@ -492,19 +505,13 @@ export interface ForensicEvent extends EventRevisionFields {
   // only ever holds the LAST import's summary) — just the grouping key a future feature could use
   // to attach human-readable provenance without re-touching every event.
   importBatchId?: string;
-  // WHEN this row was pulled up from the super-timeline by promoteSuperTimeline — the analyst's
-  // choice in the Super-Timeline panel, explain-event, a starred report, the second-look loop or a
-  // remediation boundary. Every one of those puts the row here on purpose, so the forensic gate
-  // never demotes a row carrying this stamp, whatever its severity: without it the next import's
-  // demote pass silently undid the promotion (the row is usually Info and fails the cut, #1432).
-  // The first promotion is the fact worth keeping — a re-promote never overwrites it.
+  // WHEN promoteSuperTimeline pulled this row up (analyst, explain-event, starred report, second
+  // look, remediation boundary) — on purpose, so the forensic gate never demotes a row carrying it
+  // whatever its severity (#1432). The first promotion is kept; a re-promote never overwrites it.
   promotedAt?: string;
-  // TRUE when the YEAR in `timestamp` was GUESSED by the importer rather than read out of the
-  // record. An RFC 3164 syslog / Cisco ASA / Snort line carries no year at all, and the AI log/CSV
-  // imports infer one from context; every other importer reads an explicit year (EVTX, RFC 3339,
-  // a Velociraptor artifact field). Only events marked here may be re-anchored by clampOutlierYears
-  // (#739) — a real minority-year event whose year came out of the record is EVIDENCE, and rewriting
-  // it to match the import's majority year silently destroys it.
+  // TRUE when the YEAR in `timestamp` was GUESSED by the importer (RFC 3164 syslog, Cisco ASA, Snort, the
+  // AI log/CSV imports), not read from the record. Only these may be re-anchored by clampOutlierYears
+  // (#739): a minority year read from the record is EVIDENCE, and rewriting it destroys it.
   yearInferred?: boolean;
   // What `timestamp` said BEFORE clampOutlierYears re-anchored its year. Set only on events the
   // clamp actually rewrote, and never overwritten once set, so the adjustment stays auditable and
@@ -521,22 +528,14 @@ export interface ForensicEvent extends EventRevisionFields {
   // from, and re-home back if the rename is later contradicted. Never set by a model.
   assetRecord?: string;
   sources?: string[]; // distinct tools/imports that reported this event (corroboration)
-  // The specific artifact/source-tool identifier that produced this event, at a finer grain than
-  // `sources` (e.g. "Windows.NTFS.MFT" vs "Windows.Detection.Sigma" — both would otherwise show as
-  // just "Velociraptor"). Set only by importers that know it (currently velociraptorImport.ts);
-  // used by the super-timeline's origin filter (analysis/superTimeline.ts) so a raw artifact
-  // row and the detection built from it can be told apart and filtered independently.
+  // Finer-grained source than `sources` ("Windows.NTFS.MFT" vs "Windows.Detection.Sigma"), set by
+  // importers that know it; the super-timeline origin filter tells a raw row from its detection by it.
   artifactName?: string;
-  // Identity of the ONE underlying log record this event was mapped from, when the importer knew
-  // it: `evtx:<channel>:<EventRecordID>` for a Windows event log. Two DIFFERENT parsers reading the
-  // same EVTX file mint the same value, so correlate.ts can recognise a Hayabusa row and a Chainsaw
-  // row as one observation and merge them instead of doubling the timeline (#688). Never set on an
-  // aggregated event — a collapsed group stands for many records, not one.
+  // Identity of the ONE log record behind this event (`evtx:<channel>:<EventRecordID>`): two parsers of one
+  // EVTX mint the same value, so correlate.ts merges them (#688). Never set on an aggregated event.
   sourceRecordId?: string;
-  // Full, untruncated event message/detail (e.g. the raw EVTX rendered Message or ScriptBlock
-  // text). `description` is a truncated title/summary; `message` carries the complete text so the
-  // super-timeline row can reveal it expandably. Set by importers that have the extra text
-  // (currently velociraptorImport.ts); optional — only set when it adds beyond `description`.
+  sourceRecords?: SourceRecords; // the cloud source records an event stands for (#2301)
+  // Full, untruncated message (EVTX Message, ScriptBlock text) when it adds beyond `description`.
   message?: string;
   // GUI deep-link to the originating Velociraptor hunt/flow (built from gui-url config), shared per flow/hunt.
   veloUrl?: string;
