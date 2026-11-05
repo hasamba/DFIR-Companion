@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Too-large import hint on Node 22** — an import too big to read shows the size hint again instead of "cannot read file" (closes #2316)
+
 ### Changed
 
 - **Default server set name** — a new install names its first server set "Default" instead of "Testing"; an existing set keeps its name

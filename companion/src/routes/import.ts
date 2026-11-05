@@ -11,6 +11,7 @@ import { parseNetworkLogs, countLines, type NetworkImportOptions } from "../anal
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
+import { isStringTooLongError } from "../storage/boundedRead.js";
 import { registerLeappImportRoute } from "./importLeapp.js";
 import { registerMacLoginItemImportRoute } from "./importMacLoginItem.js";
 import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js";
@@ -527,7 +528,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         text = read.text;
       } catch (err) {
         const m = (err as Error).message;
-        if (/Invalid string length/i.test(m)) {
+        if (isStringTooLongError(err)) {
           return res.status(413).json({
             error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file`,
           });
