@@ -77,8 +77,18 @@ function graphEnvelope(rec: Row): Row {
 /** The Graph record as a UAL record: Graph fields kept, the envelope filled, `auditData` over both. */
 export function adaptGraphAuditRecord(rec: Row): Row {
   const auditData = parsedAuditData(rec);
-  const rest = Object.fromEntries(Object.entries(rec).filter(([k]) => k.toLowerCase() !== "auditdata"));
   // An empty auditData value never hides the Graph field that states it.
   const filled = Object.fromEntries(Object.entries(auditData).filter(([, v]) => v !== null && v !== ""));
-  return { ...rest, ...graphEnvelope(rec), ...filled };
+  // A Graph field auditData also carries in any case (Graph `clientIp` vs auditData `clientIP`) is
+  // dropped: a case-insensitive lookup would otherwise find the Graph copy first.
+  const ownKeys = new Set(Object.keys(filled).map((k) => k.toLowerCase()));
+  const rest = Object.fromEntries(
+    Object.entries(rec).filter(([k]) => k.toLowerCase() !== "auditdata" && !ownKeys.has(k.toLowerCase())),
+  );
+  // An envelope key auditData already carries in another case (e.g. `clientIP`) is left out, or the
+  // mapper's exact-case lookup would read the Graph value over the record's own.
+  const envelope = Object.fromEntries(
+    Object.entries(graphEnvelope(rec)).filter(([k]) => getCI(filled, k) === undefined),
+  );
+  return { ...rest, ...envelope, ...filled };
 }

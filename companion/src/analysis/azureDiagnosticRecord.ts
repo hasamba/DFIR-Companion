@@ -64,22 +64,37 @@ function envelopeStatus(rec: Row): Row | undefined {
   };
 }
 
+// The outcome the record states for itself, in either spelling the sign-in mapper reads
+// (`status.errorCode` or a top-level `errorCode`), always beats the envelope's resultType. Only a
+// record with no code at all takes the envelope's; a `status` without a code takes the envelope's
+// fields only where it has none of its own.
+function signInStatus(rec: Row, own: Row): Row | undefined {
+  const status = getCI(own, "status");
+  const ownStatus = isObject(status) ? status : undefined;
+  if (present(getCI(own, "errorCode")) || present(ownStatus && getCI(ownStatus, "errorCode")))
+    return ownStatus;
+  const envelope = envelopeStatus(rec);
+  if (!envelope) return ownStatus;
+  return ownStatus ? { ...envelope, ...ownStatus } : envelope;
+}
+
 function signInFill(rec: Row): Row {
-  const pairs: Array<[string, unknown]> = [
-    ["createdDateTime", getCI(rec, "time")],
-    ["ipAddress", getCI(rec, "callerIpAddress")],
-    ["status", envelopeStatus(rec)],
-    ["correlationId", getCI(rec, "correlationId")],
-  ];
-  return Object.fromEntries(pairs.filter(([, v]) => present(v) || isObject(v)));
+  return {
+    createdDateTime: getCI(rec, "time"),
+    ipAddress: getCI(rec, "callerIpAddress"),
+    correlationId: getCI(rec, "correlationId"),
+  };
 }
 
 function auditFill(rec: Row): Row {
-  const pairs: Array<[string, unknown]> = [
-    ["activityDateTime", getCI(rec, "time")],
-    ["correlationId", getCI(rec, "correlationId")],
-  ];
-  return Object.fromEntries(pairs.filter(([, v]) => present(v)));
+  return { activityDateTime: getCI(rec, "time"), correlationId: getCI(rec, "correlationId") };
+}
+
+/** The envelope fills: each only when present, and never under a key `own` already has in ANY case. */
+function gapsOnly(fill: Row, own: Row): Row {
+  return Object.fromEntries(
+    Object.entries(fill).filter(([k, v]) => present(v) && getCI(own, k) === undefined),
+  );
 }
 
 /** The Graph record under `properties`; the envelope only fills the fields it leaves out. */
@@ -95,10 +110,17 @@ export function adaptAzureDiagnosticEntra(rec: Row): Row {
     present(tenant) &&
     !present(getCI(own, "resourceTenantId")) &&
     !present(getCI(own, "homeTenantId"));
+  const status = signIn ? signInStatus(rec, own) : undefined;
+  // `own` keys spelled differently from Graph's (e.g. `Status`) are dropped where the merged
+  // status replaces them, so the mapper cannot read a stale copy.
+  const rest = status
+    ? Object.fromEntries(Object.entries(own).filter(([k]) => k.toLowerCase() !== "status"))
+    : own;
   return {
-    ...(signIn ? signInFill(rec) : auditFill(rec)),
+    ...gapsOnly(signIn ? signInFill(rec) : auditFill(rec), own),
     ...(needsTenant ? { resourceTenantId: tenant } : {}),
-    ...own,
+    ...rest,
+    ...(status ? { status } : {}),
   };
 }
 

@@ -269,4 +269,17 @@ describe("Graph auditLogRecord grades exactly like the legacy UAL record (#2304)
     expect(o.ruleIds).toContain("ts_m365_set_mailbox");
     expect(o.description).toContain("drop@external.example.net");
   });
+
+  it("an auditData field spelled in another case still beats the Graph field", () => {
+    const a = ACTIONS[0];
+    const { ClientIP: _ip, ...ad } = a.auditData;
+    const rec = {
+      ...graphOuter(a),
+      clientIp: "198.51.100.99",
+      auditData: { ...ad, clientIP: "203.0.113.10" },
+    };
+    const [o] = outcomes([rec]);
+    expect(o.description).toContain("203.0.113.10");
+    expect(o.description).not.toContain("198.51.100.99");
+  });
 });

@@ -156,6 +156,47 @@ describe("PT1H.json — Entra categories grade like the Graph record they carry 
     expect(o.severity).toBe("Medium");
   });
 
+  it("a top-level errorCode in `properties` beats a conflicting envelope resultType (Codex #2304)", () => {
+    const props = graphSignIn({ status: undefined, errorCode: 50126 });
+    const rec = { ...pt1h("SignInLogs", "Sign-in activity", props), resultType: "0", resultDescription: "" };
+    const bare = outcomes(JSON.stringify([props]));
+    const [o] = outcomes(lines(rec));
+    expect(o).toEqual(bare[0]);
+    expect(o.severity).toBe("Medium");
+    expect(o.mitre).toEqual(["T1078.004", "T1110"]);
+    expect(o.description).toContain("[FAILED 50126");
+  });
+
+  it("a partial `status` keeps its own code and only takes a missing reason from the envelope", () => {
+    const props = graphSignIn({ status: { errorCode: 50126 } });
+    const rec = {
+      ...pt1h("SignInLogs", "Sign-in activity", props),
+      resultType: "0",
+      resultDescription: "Other",
+    };
+    const [o] = outcomes(lines(rec));
+    expect(o.severity).toBe("Medium");
+    expect(o.description).toContain("[FAILED 50126");
+  });
+
+  it("a differently-cased property is never overridden by the envelope's spelling", () => {
+    const { createdDateTime: _c, ipAddress: _i, ...base } = graphSignIn();
+    const props = { ...base, CreatedDateTime: "2026-11-01T09:00:00Z", IPAddress: "198.51.100.77" };
+    const rec = { ...pt1h("SignInLogs", "Sign-in activity", props), callerIpAddress: "203.0.113.99" };
+    const [o] = outcomes(lines(rec));
+    expect(o).toEqual(outcomes(JSON.stringify([props]))[0]);
+    expect(o.timestamp).toBe("2026-11-01T09:00:00Z");
+    expect(o.description).toContain("from 198.51.100.77");
+    expect(o.description).not.toContain("203.0.113.99");
+  });
+
+  it("an audit record's differently-cased time is never overridden by the envelope's", () => {
+    const { activityDateTime: _a, ...base } = graphAudit();
+    const props = { ...base, ActivityDateTime: "2026-11-01T08:00:00Z" };
+    const rec = { ...pt1h("AuditLogs", "Consent to application", props), resultType: "" };
+    expect(outcomes(lines(rec))).toEqual(outcomes(JSON.stringify([props])));
+  });
+
   it("the legacy `{ records: [...] }` wrapper reads the same", () => {
     const text = JSON.stringify({ records: [pt1h("SignInLogs", "Sign-in activity", graphSignIn())] });
     expect(detectImportKind("PT1H.json", text)).toBe("m365");
