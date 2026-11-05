@@ -126,6 +126,16 @@ The reason is not tidiness. A real case carries tens of thousands of prefetch, a
 rows. Feeding them to a model exhausts the token budget and drowns the signal that earned the
 forensic cut in the first place.
 
+### Two importers write the super-timeline directly
+
+A sandbox report (`importSandbox`) writes its lab rows straight to the super-timeline, and so does
+a streamed cloud export (#2303, `analysis/ingest/cloudStream*.ts`): its Info and Low rows go to the
+super-timeline batch by batch, within a per-import room, while only graded rows and counted
+aggregates enter the forensic delta. Because those rows never cross the settle seam's tagger, the
+tagger's severity rules are applied to each batch first (`cloudStreamPreGrade.ts`), so a row a rule
+would raise reaches the forensic timeline instead of being counted away. The import only appends
+to the super-timeline and reads its row count; `forensicBoundary.test.ts` enforces both.
+
 ### One pass lowers a grade, and it runs before the tagger
 
 The seam has a second deterministic step, and its position is part of the rule. `firstPartyEgress.ts`

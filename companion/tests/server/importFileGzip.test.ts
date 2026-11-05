@@ -78,6 +78,16 @@ describe("POST /cases/:id/import-file — gzip cloud exports (#2303)", () => {
     expect(meta.linesIn).toBe(2);
     const state = await stateStore.load("c1");
     expect(state.forensicTimeline.some((e) => /StopLogging/.test(e.description))).toBe(true);
+
+    // The next, unstreamed import of the case carries no disclosure of its own — none is lent to it.
+    const small = JSON.stringify({ Records: [record(3, "CreateAccessKey")] });
+    const res2 = await request(app).post("/cases/c1/import").send({ filename: "ct.json", text: small });
+    expect(res2.status, JSON.stringify(res2.body)).toBe(202);
+    const meta2 = await waitFor(async () => {
+      const m = await importMetaStore.load("c1");
+      return m.lastImportFile.endsWith("ct.json") ? m : null;
+    });
+    expect(meta2.streamDisclosure).toBeUndefined();
   });
 
   it("refuses a gzip file of a kind that does not stream, with a sentence", async () => {

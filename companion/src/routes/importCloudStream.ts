@@ -40,18 +40,32 @@ export function readsFromDisk(kind: string, bytes: number, gzip: boolean): boole
   return kind === "plaso" || streamsCloudImport(kind, bytes, gzip);
 }
 
+// Keyed by the import's stored file, never by case alone: a streamed import whose disclosure no
+// route consumes (a resumed job) must not lend it to the next, unrelated import of the case (#1063).
 const disclosures = new Map<string, CloudStreamDisclosure>();
+const keyOf = (caseId: string, storedName: string): string => `${caseId}\n${storedName}`;
 
-/** The last streamed import's disclosure for the case, once; null when the last import did not stream. */
-export function consumeCloudStreamDisclosure(caseId: string): CloudStreamDisclosure | null {
-  const d = disclosures.get(caseId) ?? null;
-  disclosures.delete(caseId);
+function stashDisclosure(caseId: string, storedName: string, d: CloudStreamDisclosure): void {
+  for (const k of disclosures.keys()) if (k.startsWith(`${caseId}\n`)) disclosures.delete(k);
+  disclosures.set(keyOf(caseId, storedName), d);
+}
+
+/** That import's disclosure, once; null when it did not stream. */
+export function consumeCloudStreamDisclosure(
+  caseId: string,
+  storedName: string,
+): CloudStreamDisclosure | null {
+  const d = disclosures.get(keyOf(caseId, storedName)) ?? null;
+  disclosures.delete(keyOf(caseId, storedName));
   return d;
 }
 
 /** The import-meta fields a streamed import supplies: its record count and its disclosure. */
-export function streamedImportMeta(caseId: string): { linesIn?: number; streamDisclosure?: string[] } {
-  const d = consumeCloudStreamDisclosure(caseId);
+export function streamedImportMeta(
+  caseId: string,
+  storedName: string,
+): { linesIn?: number; streamDisclosure?: string[] } {
+  const d = consumeCloudStreamDisclosure(caseId, storedName);
   return d ? { linesIn: d.records, streamDisclosure: describeCloudStreamDisclosure(d) } : {};
 }
 
@@ -97,7 +111,7 @@ async function importCloudFileLogged(
       preGradeRules: await preGradeRules(ctx),
       onSuperRows: settle ? (rows) => settle.autoTagImported(caseId, rows) : undefined,
     });
-    disclosures.set(caseId, disclosure);
+    stashDisclosure(caseId, storedName, disclosure);
     log.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
     emitImportDebug(caseId, base.debug, "succeeded");
     return state;
