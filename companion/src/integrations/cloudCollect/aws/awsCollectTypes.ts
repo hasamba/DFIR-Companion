@@ -15,6 +15,8 @@ export interface AwsCollectClients {
   sts: AwsSender;
   /** One S3 client: the trail bucket may live in any region, the client follows the redirect. */
   s3: AwsSender;
+  /** #2363: EC2 in the account's own region — `DescribeRegions` and nothing else. */
+  ec2: AwsSender;
   /** A CloudTrail client for `region` (LookupEvents and DescribeTrails are regional). */
   cloudtrail(region: string): AwsSender;
 }
@@ -23,9 +25,10 @@ export const S3_TRAIL_SOURCE = "s3-trail";
 export const LOOKUP_SOURCE = "cloudtrail-lookup";
 
 /**
- * The regions the LookupEvents walk asks, after the account's own: the commercial regions AWS
- * enables by default. The minimum policy grants no `ec2:DescribeRegions`, so the list cannot be
- * asked for; an opt-in region that is not enabled answers with an auth error and is skipped.
+ * The FALLBACK region list (#2363), after the account's own region: the commercial regions AWS
+ * enables by default. Used only when `ec2:DescribeRegions` cannot list the regions enabled on the
+ * account (awsRegions.ts), and disclosed whenever it is; also the list of a collection started
+ * before #2363, so its Resume walks the same regions.
  */
 export const DEFAULT_AWS_REGIONS = [
   "us-east-1",

@@ -15,6 +15,7 @@ import type { QueryBudget } from "../integrations/cloudCollect/collectBudget.js"
 import { precheckSource } from "../integrations/cloudCollect/collectCoverage.js";
 import type { CloudCollectProvider, CollectWindow } from "../integrations/cloudCollect/collectTypes.js";
 import { cloudAccountInCase, sendCloudRefusal, withCloudVault } from "./cloudAccountAccess.js";
+import { parseRegionChoice, regionChoiceRefusal } from "./cloudCollectRegions.js";
 import type { RouteContext } from "./context.js";
 
 const MAX_OVERLAP_MINUTES = 1440;
@@ -94,6 +95,11 @@ export function registerCloudCollectPrecheck(
       const provider = ctx.options.cloudCollectProviders?.[found.value.provider];
       if (!provider)
         return res.status(501).json({ error: "Live collection from this provider is not available yet." });
+      // #2363: the region choice is checked as the start will check it (the panel shows the rest).
+      const regionChoice = parseRegionChoice(req.body);
+      if (typeof regionChoice === "string") return res.status(400).json({ error: regionChoice });
+      const regionRefused = regionChoiceRefusal(provider, regionChoice);
+      if (regionRefused) return res.status(400).json({ error: regionRefused });
       const chosen = provider.sources.filter((s) => parsed.sources.includes(s.id));
       if (chosen.length !== parsed.sources.length)
         return res.status(400).json({ error: "Unknown log source." });

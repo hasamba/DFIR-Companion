@@ -14,6 +14,31 @@ const input = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe("runAwsReadCheck", () => {
+  it("#2363: tests ec2:DescribeRegions with one read and says what a failure costs", async () => {
+    const ok = mockAws(AWS_ALL_OK);
+    const out = await runAwsReadCheck(ok.clients, { sources: ["ec2-regions"], secrets: [] });
+    expect(ok.sent).toEqual(["GetCallerIdentityCommand", "DescribeRegionsCommand"]);
+    expect(out.results).toEqual([
+      {
+        id: "ec2-regions",
+        label: "Enabled regions (ec2:DescribeRegions)",
+        status: "succeeded",
+        detail: "2 region(s) enabled on the account",
+      },
+    ]);
+    const denied = mockAws({
+      ...AWS_ALL_OK,
+      DescribeRegionsCommand: awsDenied(
+        "UnauthorizedOperation",
+        "You are not authorized to perform this operation.",
+      ),
+    });
+    const failed = await runAwsReadCheck(denied.clients, { sources: ["ec2-regions"], secrets: [] });
+    expect(failed.results[0].status).toBe("failed");
+    expect(failed.results[0].detail).toMatch(/UnauthorizedOperation/);
+    expect(failed.results[0].detail).toMatch(/default region list and says so/);
+  });
+
   it("reports both sources read when every call succeeds", async () => {
     const { clients, sent } = mockAws(AWS_ALL_OK);
     const out = await runAwsReadCheck(clients, input());

@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-cloudtrail": "^3.1156.0",
+    "@aws-sdk/client-ec2": "^3.1156.0",
     "@aws-sdk/client-s3": "^3.1156.0",
     "@aws-sdk/client-sts": "^3.1156.0",
     "@aws-sdk/credential-providers": "^3.1156.0",

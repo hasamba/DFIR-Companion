@@ -218,6 +218,7 @@ describe("the read check's source", () => {
         "LookupEventsCommand",
         "ListObjectsV2Command",
         "GetObjectCommand",
+        "DescribeRegionsCommand", // #2363: ec2:DescribeRegions, a read
       ]),
     );
   });

@@ -66,6 +66,7 @@
     "ROUTE GET /cases/:id/cloud-collect",
     "ROUTE POST /cases/:id/cloud-collect",
     "ROUTE POST /cases/:id/cloud-collect/precheck",
+    "ROUTE POST /cases/:id/cloud-collect/regions",
     "ROUTE POST /cases/:id/cloud-collect/:collectionId/resume",
     "ROUTE GET /cases/:id/captures/count",
     "ROUTE GET /captures/recent",
