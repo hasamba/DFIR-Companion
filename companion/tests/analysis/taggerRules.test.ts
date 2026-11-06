@@ -147,6 +147,44 @@ describe("matchEvent — any/all/none semantics", () => {
   });
 });
 
+describe("matchEvent — the import-time Sigma head (#2350)", () => {
+  const head = "Sigma (medium, tag only): Some Rule - ";
+  const ruleLine = "Sigma rule: Some Rule [r-1] — level medium, status test";
+  const sigmaRow = (base: string) =>
+    ev({ id: "e", description: `${head}${base}`, message: `m\n${ruleLine}` });
+
+  it("an importer-anchored rule matches the row without the verified Sigma head", () => {
+    const r = one({ all: [{ field: "description", regex: "^AWS Foo \\(" }], tags: ["t"] });
+    expect(matchEvent(sigmaRow("AWS Foo (x)"), r)).toBe(true);
+  });
+
+  it("a rule anchored on the Sigma head still matches the stored row", () => {
+    const r = one({ all: [{ field: "description", regex: "^Sigma \\(medium" }], tags: ["t"] });
+    expect(matchEvent(sigmaRow("AWS Foo (x)"), r)).toBe(true);
+  });
+
+  it("each view is judged whole: a none condition still blocks the view it matches in", () => {
+    const r = one({
+      all: [{ field: "description", regex: "^AWS Foo \\(" }],
+      none: [{ field: "description", contains: "benign" }],
+      tags: ["t"],
+    });
+    expect(matchEvent(sigmaRow("AWS Foo (benign)"), r)).toBe(false);
+    expect(matchEvent(sigmaRow("AWS Foo (bad)"), r)).toBe(true);
+  });
+
+  it("a description starting with 'Sigma:' and no matching 'Sigma rule:' line is not stripped", () => {
+    const r = one({ all: [{ field: "description", regex: "^AWS Foo \\(" }], tags: ["t"] });
+    expect(matchEvent(ev({ id: "e", description: "Sigma: Some Rule - AWS Foo (x)" }), r)).toBe(false);
+    const other = ev({
+      id: "e",
+      description: `${head}AWS Foo (x)`,
+      message: "Sigma rule: Other [r-2] — level high",
+    });
+    expect(matchEvent(other, r)).toBe(false);
+  });
+});
+
 describe("compileRuleset regex safety", () => {
   // Tagger rules run against every imported event's text, which is adversary-controlled. Compiling
   // is not the same as being cheap to run: `^(a|aa)+b$` compiles fine and takes exponential time.

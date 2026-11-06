@@ -30,6 +30,8 @@ import {
 
 const TENANT = "00000000-0000-4000-8000-000000000001";
 const SUB = "11111111-1111-4111-8111-111111111111";
+const SUB_2 = "22222222-2222-4222-8222-222222222222";
+const SUB_3 = "33333333-3333-4333-8333-333333333333";
 const WINDOW = { start: "2026-10-01T10:00:00.000Z", end: "2026-10-01T11:00:00.000Z" };
 const at = (min: number) => new Date(Date.parse(WINDOW.start) + min * 60_000 + 7_000).toISOString();
 let tick = 0;
@@ -87,20 +89,17 @@ async function collect(t: TempCase, tenantOpts: MockTenantOptions, opts: RunOpts
   const usage = join(await mkdtemp(join(tmpdir(), "dfir-m365-quota-")), "query-usage.json");
   const scope = provider.quotaScope?.(account.settings as unknown as Record<string, unknown>) ?? "";
   const budget = opts.budget ? new QueryUsageStore(usage).budget(scope, opts.budget) : undefined;
-  const cp = await runCollection(
-    {
-      fs,
-      session,
-      importer: pipelineImporter(t),
-      sources: provider.sources,
-      now,
-      clock,
-      ...(budget ? { budget } : {}),
-    },
-    t.dir,
-    { resume: false },
-  );
-  return { cp, tenant };
+  const deps = {
+    fs,
+    session,
+    importer: pipelineImporter(t),
+    sources: provider.sources,
+    now,
+    clock,
+    ...(budget ? { budget } : {}),
+  };
+  const cp = await runCollection(deps, t.dir, { resume: false });
+  return { cp, tenant, resume: () => runCollection(deps, t.dir, { resume: true }) };
 }
 
 async function manifest(t: TempCase) {
@@ -233,5 +232,31 @@ describe("Microsoft collection into a case (#2315)", () => {
     for (const p of m.pages) expect(landed, p.file).toContain(`evidence/cloud/cc-test-abc123/${p.file}`);
     expect(rows.some((e) => /Entra sign-in: application svc-test/.test(e.description))).toBe(true);
     expect(state.forensicTimeline.some((e) => /role/i.test(e.description))).toBe(true);
+  });
+  it("skips a subscription it may not read, collects the others, ends partial naming it; Resume retries it (#2340)", async () => {
+    const t = await tempCase();
+    const denied = [SUB_2];
+    const activity = {
+      [SUB]: [activityRecord(1, at(20), SUB)],
+      [SUB_2]: [activityRecord(2, at(21), SUB_2)],
+      [SUB_3]: [activityRecord(3, at(22), SUB_3)],
+    };
+    const { cp, tenant, resume } = await collect(
+      t,
+      { subscriptions: [SUB, SUB_2, SUB_3], activity, deniedSubscriptions: denied },
+      { sources: ["azure-activity"] },
+    );
+    const read = (sub: string) => (r: { url: string }) => r.url.includes(`/subscriptions/${sub}/`);
+    expect(cp.status).toBe("partial");
+    expect(cp.missing.map((m) => m.reason).join(" ")).toContain(`subscription ${SUB_2}`);
+    expect((await manifest(t)).pages.map((p) => p.requestParams.subscriptionId)).toEqual([SUB, SUB_3]);
+    expect(tenant.requests.some(read(SUB_3))).toBe(true);
+
+    denied.splice(0); // the analyst granted the role
+    const before = tenant.requests.filter(read(SUB_2)).length;
+    const again = await resume();
+    expect(tenant.requests.filter(read(SUB_2)).length).toBeGreaterThan(before);
+    expect(again.status).toBe("complete");
+    expect((await manifest(t)).pages.map((p) => p.requestParams.subscriptionId)).toContain(SUB_2);
   });
 });

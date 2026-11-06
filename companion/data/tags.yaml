@@ -878,7 +878,7 @@ ts_m365_intune_policy:
 ts_m365_file_download:
   description: File accessed / downloaded from SharePoint or OneDrive (Timesketch file_access)
   any:
-    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileAccessed|FileSyncedDownloadedFull)\b', flags: 'i' }
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileAccessed|FileSyncDownloadedFull)\b', flags: 'i' }
   tags: ['file_access', 'file_download']
   view: 'M365 file access'
 
@@ -892,7 +892,7 @@ ts_m365_anonymous_sharing:
 ts_m365_mass_download:
   description: Bulk file-download operation (Timesketch mass_download — count when aggregated)
   any:
-    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileSyncedDownloadedFull)\b', flags: 'i' }
+    - { field: description, regex: '^M365 (?:SharePoint|OneDrive): (?:FileDownloaded|FileSyncDownloadedFull)\b', flags: 'i' }
   tags: ['mass_download', 'exfil']
   view: 'M365 file access'
 

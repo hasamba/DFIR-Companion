@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Response } from "express";
 import {
   PARSE_PROGRESS_KINDS,
+  cancellableByParse,
   hasParseProgress,
   rejectIfAiImportOverBudget,
 } from "../../src/routes/importKinds.js";
@@ -36,11 +37,47 @@ describe("importKinds — the streaming-import kind predicate", () => {
   it("keeps import.ts and importRecovery.ts on the shared predicate, with no inline kind literals", async () => {
     for (const file of ["import.ts", "importRecovery.ts"]) {
       const src = await readFile(new URL(`../../src/routes/${file}`, import.meta.url), "utf8");
-      expect(src, `${file} should use hasParseProgress`).toContain("hasParseProgress(");
+      expect(src, `${file} should use cancellableByParse`).toContain("cancellableByParse(");
       expect(src, `${file} re-inlines the streaming-kind literal`).not.toMatch(
         /kind\s*===\s*"(?:evtxxml|syslog)"/,
       );
     }
+  });
+});
+
+// #2337 — a streamed cloud import (>= 32 MB or gzip) reports parse progress and honours the abort
+// signal, so it must be cancellable; a small whole-file cloud import must not become cancellable,
+// and Plaso — which also "streams" from disk — keeps its non-cancellable job.
+describe("cancellableByParse — parse-driven cancellability (#2337)", () => {
+  it("is true for a streamed cloud import of every streamed kind", () => {
+    for (const kind of ["m365", "aws", "cloud"]) expect(cancellableByParse(kind, true), kind).toBe(true);
+  });
+
+  it("is false for the same kinds on the whole-file path", () => {
+    for (const kind of ["m365", "aws", "cloud"]) expect(cancellableByParse(kind, false), kind).toBe(false);
+    expect(cancellableByParse("aws", undefined)).toBe(false);
+  });
+
+  it("does not key on streaming alone: a streaming Plaso import stays non-cancellable", () => {
+    expect(cancellableByParse("plaso", true)).toBe(false);
+    expect(cancellableByParse("velociraptor", true)).toBe(false);
+  });
+
+  it("keeps the parse-progress kinds cancellable either way, and the set itself unchanged", () => {
+    expect(cancellableByParse("evtxxml", false)).toBe(true);
+    expect(cancellableByParse("syslog", undefined)).toBe(true);
+    expect(PARSE_PROGRESS_KINDS.has("aws")).toBe(false);
+  });
+
+  it("accepts the resume handler's raw job parameters", () => {
+    expect(cancellableByParse(undefined, true)).toBe(false);
+    expect(cancellableByParse(42, true)).toBe(false);
+    expect(cancellableByParse("aws", "yes")).toBe(false);
+  });
+
+  it("the resume predicate passes the job's streaming parameter", async () => {
+    const src = await readFile(new URL("../../src/routes/importRecovery.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/cancellableByParse\(job\.parameters\?\.kind, job\.parameters\?\.streaming\)/);
   });
 });
 

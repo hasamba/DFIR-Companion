@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   existsSync,
   fstatSync,
@@ -8,12 +7,11 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
-  writeFileSync,
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { buildCredential, cleanName } from "./accountInput.js";
+import { atomicWriteFileSync } from "../../storage/atomicWriteSync.js";
 import { CloudVaultError } from "./errors.js";
 import {
   secretsOfAccount,
@@ -294,14 +292,7 @@ export class CloudAccountVault {
   }
 
   private write(accounts: StoredCloudAccount[]): void {
-    const tmp = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(tmp, this.text(accounts), { mode: 0o600 });
-    renameSync(tmp, this.file);
-    try {
-      chmodSync(this.file, 0o600);
-    } catch {
-      // chmod is best effort on Windows.
-    }
+    atomicWriteFileSync(this.file, this.text(accounts));
   }
 }
 

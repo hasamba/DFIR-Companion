@@ -208,6 +208,48 @@ describe("AWS collection through the engine (#2313)", () => {
     expect(manifest.pages.filter((p) => p.requestParams.region === "eu-west-1")).toHaveLength(3);
   });
 
+  it("an S3-trail-only window with no trail file completes with 0 records and no missing window (#2352)", async () => {
+    const t = await tempCase();
+    const { cp, manifest } = await collect(
+      t,
+      {
+        trails: [{ Name: "main", S3BucketName: "b" }],
+        buckets: {
+          b: [
+            { key: trailKey(ROOT, "us-east-1", "2026-10-05T01:00:00Z"), body: trailObject([trailRecord(1)]) },
+          ],
+        },
+      },
+      ["s3-trail"],
+    );
+    expect(cp.status).toBe("complete");
+    expect(cp.missing).toEqual([]);
+    expect(manifest.pages).toHaveLength(1);
+    expect(manifest.pages[0]).toMatchObject({ records: 0 });
+    expect(manifest.pages[0].requestParams).toMatchObject({ api: "s3:ListObjectsV2", emptyWindow: "yes" });
+    expect((await t.stateStore.load("c1")).forensicTimeline).toHaveLength(0);
+  });
+
+  it("a refused trail listing still fails the S3 source with the reason (#2352)", async () => {
+    const t = await tempCase();
+    const { cp } = await collect(
+      t,
+      {
+        trails: [{ Name: "main", S3BucketName: "b" }],
+        buckets: {
+          b: [
+            { key: trailKey(ROOT, "us-east-1", "2026-10-01T01:00:00Z"), body: trailObject([trailRecord(1)]) },
+          ],
+        },
+        walkListDenied: ["b"],
+      },
+      ["s3-trail"],
+    );
+    expect(cp.status).toBe("failed");
+    expect(cp.missing).toMatchObject([{ source: "s3-trail" }]);
+    expect(cp.missing[0].reason).toMatch(/Access ?Denied/);
+  });
+
   it("no S3 trail: the S3 source is missing with the fallback reason; LookupEvents still collects", async () => {
     const t = await tempCase();
     const { cp } = await collect(t, { trails: [], buckets: {}, lookup: { "eu-west-1": [[recordJson(1)]] } }, [

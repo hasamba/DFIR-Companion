@@ -18,6 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { deltaSchema } from "../responseSchema.js";
+import type { CanonicalEventEnvelope } from "../canonicalEvent.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../stateTypes.js";
 import type { CompiledRuleset } from "../taggerRules.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -184,6 +185,28 @@ export async function importCloudFile(
   }
 }
 
+/**
+ * The whole-file path's sourceArtifactHash on every canonical row of the delta (#2337), so a Sigma
+ * re-grade can tell a stored file that changed since the import. The reader computes it over the
+ * decoded text exactly as the whole-file importers do; it also replaces the hash of "" that a
+ * summary built from records (no text) carries. Info/Low rows written to the super-timeline per
+ * batch are not stamped: they are written before the last record is read and the hash exists.
+ */
+function withArtifactHash<T extends { canonical?: CanonicalEventEnvelope }>(
+  events: readonly T[],
+  hash: string,
+): T[] {
+  if (!hash) return [...events];
+  return events.map((e) =>
+    e.canonical
+      ? {
+          ...e,
+          canonical: { ...e.canonical, evidence: { ...e.canonical.evidence, sourceArtifactHash: hash } },
+        }
+      : e,
+  );
+}
+
 async function finish(
   ctx: ImportContext,
   caseId: string,
@@ -255,7 +278,7 @@ async function finish(
       value: c.value,
     })),
     mitreTechniques: [],
-    forensicEvents: events.map((e, i) => ({
+    forensicEvents: withArtifactHash(events, stats.textHash).map((e, i) => ({
       ...e,
       id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
       sources: e.sources?.length ? e.sources : [provider.source],

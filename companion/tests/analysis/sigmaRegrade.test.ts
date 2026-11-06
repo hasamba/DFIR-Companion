@@ -18,6 +18,11 @@ import {
   storedFileChanged,
 } from "../../src/analysis/sigmaRegradeSources.js";
 import type { SiemEvent } from "../../src/analysis/siemImport.js";
+import { loadRegradePlan } from "../../src/routes/sigmaRegradePlan.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Re-grade an imported case with the current Sigma rules (#2206): the pure diff. Records are
@@ -182,6 +187,53 @@ describe("planSigmaRegrade (#2206)", () => {
     expect(p.files[0]).toMatchObject({ status: "skipped", reason: "file-changed" });
   });
 
+  it("lowers a not-found AWS Config call a pre-#2351 import graded High back to Low", () => {
+    const text = JSON.stringify({
+      Records: [
+        ct(3, {
+          eventSource: "config.amazonaws.com",
+          eventName: "StopConfigurationRecorder",
+          requestParameters: { configurationRecorderName: "default" },
+          errorCode: "NoSuchConfigurationRecorderException",
+        }),
+      ],
+    });
+    const now = parseCloudTrail(text, { sigma: snapOn }).events[0];
+    // What the import stored before the veto: graded High, no veto note.
+    const old: ForensicEvent = {
+      ...now,
+      id: "a1e9",
+      relatedFindingIds: [],
+      sourceScreenshots: [FILE],
+      severity: "High",
+      description: now.description.replace(/^Sigma \(high, tag only\): /, "Sigma: "),
+      message: (now.message ?? "")
+        .split("\n")
+        .filter((l) => !l.startsWith("Sigma note: "))
+        .join("\n"),
+    };
+    const p = planSigmaRegrade({
+      files: [
+        {
+          file: FILE,
+          importer: "aws-cloudtrail",
+          rows: new Map<string, StoredRow>([[old.id, { forensic: old }]]),
+          reparsed: reparseForRegrade("aws-cloudtrail", text, snapOn),
+        },
+      ],
+      token: snapOn.token,
+      gate: "Medium",
+      ruleMitre,
+    });
+    const r = p.rows.find((x) => x.id === old.id)!;
+    expect(r.kind).toBe("changed");
+    expect(r.before).toBe("High");
+    expect(r.after).toBe("Low");
+    expect(r.leavesForensic).toBe(true);
+    expect(r.forensic!.after.message).toMatch(/^Sigma note: not graded — the request failed/m);
+    expect(p.counts.lowered).toBe(1);
+  });
+
   it("does not pair a row whose text differs from its record", () => {
     const rows = stored(snapOn).map((e) => ({
       ...e,
@@ -198,6 +250,48 @@ describe("storedFileChanged (#2206)", () => {
     const e = stored(snapOn)[0];
     expect(storedFileChanged(e, TEXT)).toBe(false);
     expect(storedFileChanged(e, `${TEXT} `)).toBe(true);
+  });
+});
+
+// #2337 — streamed rows now carry the source-artifact hash, and a streamed import may be a .gz or
+// start with a BOM. The re-grade reads the stored file the way the import did, so neither is
+// reported as a stored file that changed since the import.
+describe("loadRegradePlan — stored file changed (#2337)", () => {
+  async function planFor(body: Buffer) {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-regrade-hash-"));
+    await writeFile(join(dir, FILE), body);
+    const rows = stored(snapOn);
+    expect(rows.some((e) => e.canonical?.evidence.sourceArtifactHash)).toBe(true);
+    return loadRegradePlan(
+      {
+        stateStore: {
+          async *forensicTimelineBatches() {
+            yield rows;
+          },
+        },
+        importsDir: dir,
+        snapshot: snapOff,
+        gate: "Low",
+        ruleMitre,
+      },
+      "c1",
+    );
+  }
+
+  it("reports a stored file whose text differs as changed", async () => {
+    const p = await planFor(Buffer.from(`${TEXT} `));
+    expect(p.files[0]).toMatchObject({ status: "skipped", reason: "file-changed" });
+  });
+
+  it("reads a UTF-8 BOM file as the import decoded it, not as a changed file", async () => {
+    const p = await planFor(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(TEXT)]));
+    expect(p.files[0].status).not.toBe("skipped");
+    expect(p.rows.some((r) => r.kind === "changed")).toBe(true);
+  });
+
+  it("does not call a gzip stored file changed", async () => {
+    const p = await planFor(gzipSync(TEXT));
+    expect(p.files[0]).not.toMatchObject({ reason: "file-changed" });
   });
 });
 

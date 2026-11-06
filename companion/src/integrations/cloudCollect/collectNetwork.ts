@@ -114,6 +114,7 @@ export async function commitPage(
       ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
       ...(page.note ? { note: page.note.slice(0, NOTE_MAX) } : {}),
       ...(page.unverified ? { unverified: true as const } : {}),
+      ...(page.evidenceOnly ? { evidenceOnly: true as const } : {}),
     };
     await appendManifest(fs, paths, line);
     return line;

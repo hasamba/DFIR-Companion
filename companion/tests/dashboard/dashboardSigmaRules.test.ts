@@ -387,6 +387,19 @@ describe("the Sigma rules settings tab", () => {
       expect(buttons(nodes.sigmaRegrade)).toHaveLength(0);
     });
 
+    it("claims a re-grade changes nothing only when the preview counts are zero (#2351)", () => {
+      const { mod, nodes } = load(false);
+      mod.sigmaRenderRegrade({ ...REGRADE, current: true }, "c1", false);
+      expect(texts(nodes.sigmaRegrade).some((t) => t.includes("changes nothing"))).toBe(false);
+      expect(buttons(nodes.sigmaRegrade)).toHaveLength(1);
+      mod.sigmaRenderRegrade(
+        { ...REGRADE, current: true, counts: { ...REGRADE.counts, changed: 0, tokenOnly: 0 } },
+        "c1",
+        false,
+      );
+      expect(texts(nodes.sigmaRegrade).some((t) => t.includes("changes nothing"))).toBe(true);
+    });
+
     it("posts the apply for the case it previewed", async () => {
       const { mod, fetch } = load(false);
       await mod.sigmaRegradeApply("c 1");

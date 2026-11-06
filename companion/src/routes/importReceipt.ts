@@ -101,6 +101,30 @@ async function openServerFile(
   }
 }
 
+/**
+ * One `received` custody entry. Also called by POST /import-upload (#2336), whose raw body this
+ * middleware never sees: it receipts the spooled bytes itself, before the head sniff.
+ */
+export async function recordReceived(
+  custody: CustodyStore,
+  caseId: string,
+  route: string,
+  got: Received,
+): Promise<void> {
+  await custody.record(caseId, {
+    artifactPath: `${RECEIVED_PATH_PREFIX}${route}/${got.name}@${got.sha256.slice(0, 12)}`,
+    sha256: got.sha256,
+    sha1: got.sha1,
+    bytes: got.bytes,
+    collectedBy: "companion",
+    collectedAt: new Date().toISOString(),
+    source: got.name,
+    trigger: route,
+    caseId,
+    event: "received",
+  });
+}
+
 const uniqueBySha = (all: Received[]): Received[] =>
   all.filter((r, i) => all.findIndex((o) => o.sha256 === r.sha256) === i);
 
@@ -125,20 +149,7 @@ export function registerImportReceiptCustody(
       }
       const receipts = uniqueBySha([...fromBody(body), ...(server ? [server.received] : [])]);
       // Sequential, not parallel: each entry chains onto the previous one's hash.
-      for (const got of receipts) {
-        await custody.record(caseId, {
-          artifactPath: `${RECEIVED_PATH_PREFIX}${route}/${got.name}@${got.sha256.slice(0, 12)}`,
-          sha256: got.sha256,
-          sha1: got.sha1,
-          bytes: got.bytes,
-          collectedBy: "companion",
-          collectedAt: new Date().toISOString(),
-          source: got.name,
-          trigger: route,
-          caseId,
-          event: "received",
-        });
-      }
+      for (const got of receipts) await recordReceived(custody, caseId, route, got);
     } catch (err) {
       return res.status(500).json({
         error: `custody receipt could not be recorded, so the import was refused: ${(err as Error).message}`,

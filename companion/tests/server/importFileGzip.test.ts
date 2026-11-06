@@ -10,12 +10,13 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { streamsCloudImport } from "../../src/routes/importCloudStream.js";
 import { CLOUD_STREAM_MIN_BYTES } from "../../src/analysis/cloudStreamLimits.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
 
 // #2303 — Import-from-path reads a CloudTrail object as downloaded (.json.gz): sniffed from its
 // decompressed head, streamed, and its disclosure lands on the "last import" record. A gzip file of
 // a kind that does not stream is refused with a sentence, not read as text.
 
-async function makeApp() {
+async function makeApp(jobManager?: JobManager) {
   const root = await mkdtemp(join(tmpdir(), "dfir-import-gz-"));
   const store = new CaseStore(join(root, "cases"));
   const stateStore = new StateStore(store);
@@ -27,7 +28,7 @@ async function makeApp() {
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, importMetaStore });
+  const app = createApp(store, { pipeline, stateStore, importMetaStore, jobManager });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, root, importMetaStore, stateStore };
 }
@@ -102,6 +103,22 @@ describe("POST /cases/:id/import-file — gzip cloud exports (#2303)", () => {
     const res = await request(app).post("/cases/c1/import-file").send({ path });
     expect(res.status).toBe(415);
     expect(res.body.error).toMatch(/gzip uploads are read only for cloud audit exports/);
+  });
+
+  // #2337 — a streamed cloud import honours the abort signal, so its job shows ✕ Cancel; the same
+  // kind on the whole-file path stays uncancellable.
+  it("registers a streamed cloud import as cancellable, and a small one as not", async () => {
+    const jobManager = new JobManager();
+    const { app: app2, root } = await makeApp(jobManager);
+    const path = join(root, "ct.json.gz");
+    await writeFile(path, gzipSync(JSON.stringify({ Records: [record(1, "StopLogging")] })));
+    expect((await request(app2).post("/cases/c1/import-file").send({ path })).status).toBe(202);
+    const small = JSON.stringify({ Records: [record(2, "CreateAccessKey")] });
+    const res = await request(app2).post("/cases/c1/import").send({ filename: "ct.json", text: small });
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    const jobs = jobManager.list("c1").filter((j) => j.kind === "import");
+    expect(jobs.find((j) => j.label?.includes("ct.json.gz"))?.cancellable).toBe(true);
+    expect(jobs.find((j) => j.label?.endsWith("_ct.json"))?.cancellable).toBe(false);
   });
 
   it("streams a cloud upload when it is gzip or at least the size threshold, and nothing else", () => {

@@ -7,7 +7,7 @@ import { lastCommittedImportBatch } from "../analysis/importResume.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
-import { hasParseProgress, isAiDependent } from "./importKinds.js";
+import { cancellableByParse, isAiDependent } from "./importKinds.js";
 import { parseAssetHost } from "../analysis/assetHost.js";
 import { runDiskImport } from "./importCloudStream.js";
 import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
@@ -272,7 +272,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       }
     },
     {
-      cancellable: (job) => hasParseProgress(job.parameters?.kind),
+      cancellable: (job) => cancellableByParse(job.parameters?.kind, job.parameters?.streaming),
     },
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createCollection, runCollection } from "../../../src/integrations/cloudCollect/collectEngine.js";
 import { collectionPaths, parseManifest } from "../../../src/integrations/cloudCollect/collectManifest.js";
 import type {
@@ -45,6 +45,7 @@ async function collect(
   const source = opts.source ?? GCP_AUDIT_SOURCE;
   const clock = fakeClock(RUN_AT);
   const fs = faultFs();
+  const importer = pipelineImporter(t);
   await createCollection(
     fs,
     session,
@@ -63,12 +64,36 @@ async function collect(
     now,
   );
   const cp = await runCollection(
-    { fs, session, importer: pipelineImporter(t), sources: opts.sources ?? GCP_COLLECT_SOURCES, now, clock },
+    { fs, session, importer, sources: opts.sources ?? GCP_COLLECT_SOURCES, now, clock },
     t.dir,
     { resume: false },
   );
   const manifest = parseManifest(await readFile(collectionPaths(t.dir).manifest, "utf8"));
-  return { cp, manifest, clock };
+  return { cp, manifest, clock, importer };
+}
+
+/** A project with one usable sink holding `names`; listings answer by prefix. */
+function sinkWith(names: readonly string[]) {
+  return mockWire((req) => {
+    const url = new URL(req.url);
+    if (url.pathname.endsWith("/sinks"))
+      return {
+        body: {
+          sinks: [
+            {
+              name: "all-audit",
+              destination: "storage.googleapis.com/audit-bucket-01",
+              createTime: "2026-01-01T00:00:00Z",
+              updateTime: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      };
+    if (url.searchParams.get("alt") === "media") return { body: JSON.stringify(gcpAuditEntry(7)) + "\n" };
+    const prefix = url.searchParams.get("prefix") ?? "";
+    const items = names.filter((n) => n.startsWith(prefix)).map((name) => ({ name }));
+    return { body: { kind: "storage#objects", ...(items.length ? { items } : {}) } };
+  });
 }
 
 const pagesOf = (manifest: ReturnType<typeof parseManifest>) =>
@@ -235,5 +260,40 @@ describe("GCP collection through the engine", () => {
     expect(cp.coverage?.[0].notes.join(" ")).toContain(
       'Log sink not used: sink "narrow": its filter cannot be proven to keep every audit entry.',
     );
+  });
+  it("keeps an empty sink window's listing as evidence only: saved, never imported, even on replay (#2340)", async () => {
+    const t = await tempCase();
+    // The day folder holds an object of ANOTHER hour, so the listing has an `items` array.
+    const { wire } = sinkWith([
+      "cloudaudit.googleapis.com/activity/2026/11/01/06:00:00_06:59:59_S0.json",
+      "cloudaudit.googleapis.com/activity/2026/11/02/06:00:00_06:59:59_S0.json",
+    ]);
+    const window = { start: "2026-11-02T03:00:00.000Z", end: "2026-11-02T04:00:00.000Z" };
+    const session = gcpCollectSession({ wire, settings: SETTINGS, now: () => RUN_AT });
+    const { cp, manifest, importer } = await collect(t, session, { source: GCP_SINK_SOURCE, window });
+    const [page] = pagesOf(manifest);
+    // The listing stays in the manifest with its hash: it is the evidence of an empty window.
+    expect(page).toMatchObject({ records: 0, evidenceOnly: true, requestParams: { objects: "0" } });
+    expect(page.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // Never imported: no unmapped rows, no timeline entry for it — but checkpointed as done.
+    expect(importer.imports).toEqual([]);
+    expect(cp.imported).toEqual([page.file]);
+    const label = `evidence/cloud/cc-test-abc123/${page.file}`;
+    const state = await t.stateStore.load("c1");
+    expect(JSON.stringify(state.timeline)).not.toContain(label);
+    expect((await t.superTimelineStore.meta("c1")).rows).toBe(0);
+
+    // Replay from the manifest alone (the checkpoint forgot the import): the flag still holds.
+    const paths = collectionPaths(t.dir);
+    const saved = JSON.parse(await readFile(paths.checkpoint, "utf8")) as Record<string, unknown>;
+    await writeFile(paths.checkpoint, JSON.stringify({ ...saved, imported: [] }));
+    const again = pipelineImporter(t);
+    const resumed = await runCollection(
+      { fs: faultFs(), session, importer: again, sources: GCP_COLLECT_SOURCES, now },
+      t.dir,
+      { resume: true },
+    );
+    expect(again.imports).toEqual([]);
+    expect(resumed.imported).toEqual([page.file]);
   });
 });

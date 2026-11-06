@@ -108,9 +108,10 @@
             : "";
 
         // Data files → the unified /import endpoint (server auto-detects + routes).
-        // Files over 200 MB would OOM the browser tab if read via FileReader, so for those
-        // we prompt for the full local path and let the server read the file directly instead.
-        const LARGE_FILE_MB = 200;
+        // Files over 32 MB (the server's streaming threshold) go to /import-upload as the raw body
+        // instead of being read in the tab and sent as JSON: an 80 MB CSV read via FileReader ran the
+        // server out of memory at 1 GB heap. Every .gz goes there too; capped by DFIR_MAX_UPLOAD_MB (#2336).
+        const LARGE_FILE_MB = 32;
         const kinds = {};
         let dataFail = 0,
           aiOffSkipped = 0;
@@ -133,24 +134,16 @@
             // decompresses it while it streams — the browser would read its bytes as text.
             const gz = /\.gz$/i.test(f.name);
             if (f.size > LARGE_FILE_MB * 1024 * 1024 || gz) {
-              const filePath = prompt(
-                (gz
-                  ? `"${f.name}" is gzip-compressed — the server reads and decompresses it directly.\n\n`
-                  : `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n`) +
-                  `Enter the full path to this file on your machine so the server reads it directly\n` +
-                  `(e.g. C:\\Users\\you\\Downloads\\${f.name}):`,
-                f.name,
-              );
-              if (!filePath) {
-                dataFail++;
-                refused.push(fileFailure(f.name, "skipped — no local path given"));
-                continue;
-              }
-              // Large file: server reads from disk — bar stays indeterminate until WebSocket N/M updates arrive.
-              r = await fetch(`/cases/${caseId}/import-file`, {
+              // Sent as the raw request body (#2336): the browser streams the File from disk, the
+              // server spools it and imports it the way Import-from-path does. Nothing is read into
+              // a string here, and no path on the server is needed.
+              const q = [["filename", f.name], ["minSeverity", minSeverity], ["webLogFormat", webLogFormat]]
+                .map(([k, v]) => `${k}=${encodeURIComponent(v || "")}`)
+                .join("&");
+              r = await fetch(`/cases/${encodeURIComponent(caseId)}/import-upload?${q}`, {
                 method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ path: filePath, minSeverity, webLogFormat }),
+                headers: { "content-type": "application/octet-stream" },
+                body: f,
               });
             } else if (looksLikeBinaryImportName(f.name)) {
               // A binary plist (macOS login items, #1301): sent as bytes — reading it as text would

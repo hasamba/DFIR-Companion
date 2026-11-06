@@ -1,7 +1,8 @@
 import { stat } from "node:fs/promises";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
-import type { ImportBase, RouteContext } from "./context.js";
+import type { ImportBase } from "./context.js";
+import type { SettleContext } from "./routeSettleDeps.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 
 /**
@@ -14,7 +15,7 @@ import { emitImportDebug } from "./importDebugEmit.js";
  * The same two seams close the attempt's debug recorder (#1736), as dispatchImport does.
  */
 export async function importPlasoFileLogged(
-  ctx: RouteContext,
+  ctx: SettleContext,
   caseId: string,
   storedPath: string,
   storedName: string,

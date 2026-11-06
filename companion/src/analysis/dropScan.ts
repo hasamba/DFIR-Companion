@@ -232,3 +232,23 @@ export function moveFailureNote(move: Promise<void>, ok: boolean): Promise<strin
     (e: unknown) => `; ${stuckMoveNote(ok, e instanceof Error ? e.message : String(e))}`,
   );
 }
+
+/** What the drop folder's README.txt says (written once per case by the drop folder, #416). */
+export const DROP_README_TEXT = [
+  "DFIR Companion — evidence drop folder",
+  "",
+  "Copy artifacts into this folder (subfolders are fine — they're scanned recursively).",
+  "Each file is auto-detected and imported into this case, exactly like the dashboard Import button.",
+  "Images (.png/.jpg/...) are ingested as screenshot evidence.",
+  "",
+  "A subfolder named asset=<HOST> (e.g. asset=DESKTOP-01) declares the host its files came from —",
+  "for Windows log exports with no client name inside (a GUI/notebook download); records under",
+  "an older machine name are then shown as that host's history.",
+  "After processing, files move to _processed/ (success) or _failed/ (error).",
+  "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
+  "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
+  "drop-log.txt in this same folder.",
+  "",
+  "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
+  "",
+].join("\n");

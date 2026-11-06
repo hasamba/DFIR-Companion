@@ -29,6 +29,9 @@ import { EVIDENCE_IMPORT_ROUTES } from "../../../src/routes/importCaseGuard.js";
 const REQUIRED_FIELD: Record<(typeof EVIDENCE_IMPORT_ROUTES)[number], string> = {
   import: "text",
   "import-file": "path",
+  // The raw-body upload (#2336) reads no JSON field; only the 404 test below applies to it, and its
+  // empty-body refusal is pinned in tests/server/importUpload.test.ts.
+  "import-upload": "body",
   "import-csv": "csv",
   "import-log": "text",
   "import-thor": "json",
@@ -90,7 +93,7 @@ test("every import route 400s an empty payload", async ({ page, demoCase }) => {
 
   const wrong: string[] = [];
   const misnamed: string[] = [];
-  for (const { route, required } of ROUTES) {
+  for (const { route, required } of ROUTES.filter((r) => r.route !== "import-upload")) {
     const res = await page.request.post(`/cases/${demoCase}/${route}`, {
       data: { [required]: "   ", filename: "empty.txt" },
     });

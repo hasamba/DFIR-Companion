@@ -55,6 +55,8 @@ export interface FakeAwsOptions {
   listPageSize?: number;
   /** Throw this many SlowDown errors on the first GetObject calls. */
   slowDowns?: number;
+  /** Buckets whose object listing (no delimiter, the trail walk) is refused; folder listing still works. */
+  walkListDenied?: string[];
 }
 
 export interface Sent {
@@ -138,6 +140,8 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
         case "ListObjectsV2": {
           const objects = opts.buckets[String(input.Bucket)];
           if (!objects) throw awsError("NoSuchBucket", 404);
+          if (!input.Delimiter && opts.walkListDenied?.includes(String(input.Bucket)))
+            throw awsError("AccessDenied", 403, "Access Denied");
           return listBucket(objects, input, opts.listPageSize ?? 1000);
         }
         case "GetObject": {

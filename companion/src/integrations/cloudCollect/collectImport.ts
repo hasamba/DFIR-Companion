@@ -1,5 +1,6 @@
-// The import stage of a collection (#2311): every saved page, in sequence order, through the #2303
-// streaming importer, with the case's import section held per page (imports stay serialized).
+// The import stage of a collection (#2311): every saved page (bar an evidence-only one, #2340), in
+// sequence order, through the #2303 streaming importer, with the case's import section held per
+// page (imports stay serialized).
 //
 // REPLAY-SAFE PER PAGE, not merely guarded by a "last imported page" checkpoint. A kill can land
 // anywhere inside a page's import, so each page is made idempotent on its own:
@@ -141,6 +142,12 @@ export async function runImportStage(
   for (const page of [...input.pages].sort((a, b) => a.seq - b.seq)) {
     if (input.imported.has(page.file)) continue;
     abortIfCancelled(input.signal);
+    // Evidence only (#2340): no log data to import, so nothing can have landed — checkpoint it.
+    if (page.evidenceOnly) {
+      await input.onImported(page.file);
+      imported++;
+      continue;
+    }
     const kind = input.streamKindOf(page.source);
     if (!kind) throw new Error(`no importer for collected source "${page.source}"`);
     await importPageReplaySafe(

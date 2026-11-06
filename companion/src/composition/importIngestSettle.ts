@@ -37,7 +37,14 @@ export function importSettleDeps(deps: StreamedSettleDeps): SettleDeps | null {
 
 export async function settleStreamedImport(
   deps: StreamedSettleDeps,
-  args: { caseId: string; kind: string; storedName: string; baseline: ImportBaseline | null },
+  args: {
+    caseId: string;
+    kind: string;
+    storedName: string;
+    baseline: ImportBaseline | null;
+    /** A streamed import's record count and disclosure, for the import-meta record (#2336). */
+    streamMeta?: { linesIn?: number; streamDisclosure?: string[] };
+  },
 ): Promise<{ addedEvents: number; addedIocs: number }> {
   const { options } = deps;
   const settleDeps = importSettleDeps(deps);
@@ -57,6 +64,7 @@ export async function settleStreamedImport(
         superTimelineAddedCount: settled.superTimelineAddedCount,
         superTimelineEvicted: settled.superTimelineEvicted,
         iocsDiff: iDiff,
+        ...args.streamMeta,
       });
       options.onImportMeta?.(args.caseId);
     }

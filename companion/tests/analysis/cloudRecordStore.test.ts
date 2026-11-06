@@ -90,6 +90,27 @@ describe("CloudRecordStore (#2301)", () => {
     expect((await store.pageMembers("c1", "nope")).members).toEqual([]);
   });
 
+  it("a replayed batch never stores a member twice (#2339)", async () => {
+    const members = [
+      { group: "g1", ref: "ual|t|a", payloadHash: "h1", locator: "record:1" },
+      { group: "g1", ref: "ual|t|b", payloadHash: "h2", locator: "record:2" },
+    ];
+    expect(await store.recordMembers("c1", members)).toBe(2);
+    // The crash replay writes the same members again, plus one new one and an in-batch repeat.
+    const extra = { group: "g1", ref: "ual|t|c", payloadHash: "h3" };
+    expect(await store.recordMembers("c1", [...members, extra, extra])).toBe(1);
+    // Same ref under another group, or another payload under the same ref (a conflict), is kept.
+    expect(
+      await store.recordMembers("c1", [
+        { group: "g2", ref: "ual|t|a", payloadHash: "h1" },
+        { group: "g1", ref: "ual|t|a", payloadHash: "h9" },
+      ]),
+    ).toBe(2);
+    const page = await store.pageMembers("c1", "g1");
+    expect(page.total).toBe(4);
+    expect(page.members.map((m) => m.ref)).toEqual(["ual|t|a", "ual|t|b", "ual|t|c", "ual|t|a"]);
+  });
+
   it("pages an aggregated event's 1M source records without loading them all", async () => {
     await store.recordMembers("c1", [{ group: "seed", ref: "seed" }]); // creates the database
     const N = 1_000_000;

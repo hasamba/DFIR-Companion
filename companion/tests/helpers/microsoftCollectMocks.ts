@@ -28,6 +28,8 @@ export interface MockTenantOptions {
   subscriptionPageSize?: number;
   /** Subscriptions whose Activity log answers 403. */
   deniedSubscriptions?: string[];
+  /** Per subscription, the HTTP status its Activity log answers instead (404, 409, 500, …). */
+  subscriptionStatus?: Record<string, number>;
   /** Per subscription, Activity log records (`eventTimestamp`). */
   activity?: Record<string, Row[]>;
   /** Answer the next N requests whose URL matches with 429 and this Retry-After (seconds). */
@@ -156,6 +158,8 @@ export function mockTenant(opts: MockTenantOptions): MockTenant {
     if (!m) return answer(404, { error: { code: "NotFound", message: "no such path" } });
     if (opts.deniedSubscriptions?.includes(m[1]))
       return answer(403, { error: { code: "AuthorizationFailed", message: "no read access" } });
+    const status = opts.subscriptionStatus?.[m[1]];
+    if (status) return answer(status, { error: { code: `Status${status}`, message: "refused" } });
     const { start, end } = timeRange(url.searchParams.get("$filter") ?? "", "eventTimestamp");
     const rows = (opts.activity?.[m[1]] ?? []).filter((r) => inWindow(r.eventTimestamp, start, end, true));
     return answer(200, paged(withoutSkip(url), rows, skipOf(url), size, "nextLink"));

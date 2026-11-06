@@ -3,6 +3,8 @@ import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
+import { cloudTrailSigmaVeto } from "../../src/analysis/sigmaCloudTrailVeto.js";
+import type { SigmaRuleRef } from "../../src/analysis/sigmaRuleSet.js";
 
 // Import-time Sigma grading through the real importers and the bundled SigmaHQ rules (#2202).
 // Records are synthetic and shaped like the exports the importers already accept.
@@ -103,6 +105,100 @@ describe("CloudTrail with import-time Sigma", () => {
         expect(r.events[0].description).toMatch(/^Sigma: AWS IAM S3Browser User or AccessKey Creation/);
       });
     }
+  });
+});
+
+describe("CloudTrail failed calls the importer graded down (#2351)", () => {
+  const config = (eventName: string, extra: Record<string, unknown> = {}) =>
+    ct({ eventSource: "config.amazonaws.com", eventName, ...extra });
+  const recorder = { requestParameters: { configurationRecorderName: "default" } };
+  const channel = { requestParameters: { deliveryChannelName: "default" } };
+  const VETO = /^Sigma note: not graded — the request failed because its target was not found/m;
+  const RULE_LINE = /^Sigma rule: AWS Config Disabling Channel\/Recorder \[/m;
+
+  it("keeps a not-found StopConfigurationRecorder at the importer's Low, still tagged", () => {
+    const rec = config("StopConfigurationRecorder", {
+      ...recorder,
+      errorCode: "NoSuchConfigurationRecorderException",
+      errorMessage: "Cannot find configuration recorder with the specified name 'default'.",
+    });
+    expect(parseCloudTrail(trail([rec])).events[0].severity).toBe("Low");
+    const e = parseCloudTrail(trail([rec]), { sigma }).events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.message).toMatch(RULE_LINE);
+    expect(e.message).toMatch(VETO);
+  });
+
+  it("still raises a denied StopConfigurationRecorder to High", () => {
+    const rec = config("StopConfigurationRecorder", { ...recorder, errorCode: "AccessDenied" });
+    const e = parseCloudTrail(trail([rec]), { sigma }).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.message).toMatch(RULE_LINE);
+    expect(e.message).not.toMatch(VETO);
+  });
+
+  it("keeps a not-found DeleteDeliveryChannel at Low", () => {
+    const rec = config("DeleteDeliveryChannel", {
+      ...channel,
+      errorCode: "NoSuchDeliveryChannelException",
+    });
+    const e = parseCloudTrail(trail([rec]), { sigma }).events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.message).toMatch(VETO);
+  });
+
+  it("leaves a successful StopConfigurationRecorder unchanged at High", () => {
+    const e = parseCloudTrail(trail([config("StopConfigurationRecorder", recorder)]), { sigma }).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.message).toMatch(RULE_LINE);
+    expect(e.message).not.toMatch(VETO);
+  });
+
+  it("keeps a not-found StopLogging at Low when the minimum level is medium", () => {
+    const medium = createSigmaImportGrader(set, { minLevel: () => "medium" }).snapshot();
+    const rec = ct({
+      eventSource: "cloudtrail.amazonaws.com",
+      eventName: "StopLogging",
+      requestParameters: { name: "missing-trail" },
+      errorCode: "TrailNotFoundException",
+    });
+    const e = parseCloudTrail(trail([rec]), { sigma: medium }).events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.message).toMatch(/^Sigma rule: AWS CloudTrail Important Change \[/m);
+    expect(e.message).toMatch(VETO);
+  });
+
+  it("lets a rule that filters on errorCode itself still grade a not-found row", () => {
+    const rec = config("StopConfigurationRecorder", {
+      ...recorder,
+      errorCode: "NoSuchConfigurationRecorderException",
+    });
+    const row = parseCloudTrail(trail([rec])).events[0];
+    const ref = (fields: string[]): SigmaRuleRef => ({
+      id: `r-${fields.join("-")}`,
+      title: "Synthetic failure rule",
+      level: "high",
+      status: "test",
+      path: "rules/cloud/aws/cloudtrail/synthetic.yml",
+      url: "https://example.test/synthetic.yml",
+      release: "r2026-07-01",
+      mitre: [],
+      huntingOnly: false,
+      fields,
+    });
+    const veto = cloudTrailSigmaVeto(row);
+    expect(veto?.note).toMatch(/target was not found/);
+    expect(veto?.mayGrade(ref(["eventname", "errorcode"]))).toBe(true);
+    expect(veto?.mayGrade(ref(["eventname"]))).toBe(false);
+  });
+
+  it("never vetoes a row that is not a not-found logging change", () => {
+    const ok = parseCloudTrail(trail([config("StopConfigurationRecorder", recorder)])).events[0];
+    expect(cloudTrailSigmaVeto(ok)).toBeUndefined();
+    const denied = parseCloudTrail(
+      trail([config("StopConfigurationRecorder", { ...recorder, errorCode: "AccessDenied" })]),
+    ).events[0];
+    expect(cloudTrailSigmaVeto(denied)).toBeUndefined();
   });
 });
 

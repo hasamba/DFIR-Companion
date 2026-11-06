@@ -21,6 +21,7 @@ import {
   type CollectSourceInfo,
 } from "../../src/integrations/cloudCollect/collectTypes.js";
 import type { QueryBudget } from "../../src/integrations/cloudCollect/collectBudget.js";
+import { collectionJobWarning } from "../../src/routes/cloudCollectJob.js";
 import { faultFs, pipelineImporter, tempCase, type TempCase } from "../helpers/cloudCollectFakes.js";
 import { denseSession, denseSource, fakeClock, type DenseRecord } from "../helpers/cloudCollectDense.js";
 
@@ -123,6 +124,11 @@ describe("tenant query budget (#2312)", () => {
     await start(t, s3, { dir: dir2, id: "cc-test-def456" });
     const other = await run(t, s3, source, { budget: store().budget(scope, 3), dir: dir2 });
     expect(s3.calls).toHaveLength(0);
+    // #2339: no page saved, but a budget stop is still "partial" — resumable, not a failure.
+    expect(other.status).toBe("partial");
+    expect(other.stopReason).toMatch(/^partial — budget used/);
+    expect(other.imported).toEqual([]);
+    expect(collectionJobWarning(other)).toBe(other.stopReason); // the job warns; it does not fail
     expect(other.missing[0].reason).toMatch(/budget used/);
 
     // A rolling 24 h later the count has aged out and the collection finishes.
@@ -130,6 +136,7 @@ describe("tenant query budget (#2312)", () => {
     const s4 = denseSession({ records, cap: 10 });
     const done = await run(t, s4, source, { budget: store().budget(scope, 100), resume: true });
     expect(done.status).toBe("complete");
+    expect(collectionJobWarning(done)).toBeUndefined();
   }, 30_000);
 
   it("parses DFIR_CLOUD_M365_QUERY_BUDGET: 1–200, else 50", () => {

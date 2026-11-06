@@ -13,6 +13,8 @@ import { AuthObservationStore } from "../../src/analysis/authObservationStore.js
 import { CloudCoverageStore } from "../../src/analysis/cloudCoverage.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { compileRuleset } from "../../src/analysis/taggerRules.js";
+import { parseCloudTrail } from "../../src/analysis/awsImport.js";
+import { sourceArtifactHash } from "../../src/analysis/canonicalEvent.js";
 
 // #2303 — the streaming cloud import end to end: whole-export enrichment parity, dedup across
 // batches, bounded output with disclosure, Info to the super-timeline, gzip, and a failed import
@@ -238,6 +240,41 @@ describe("streaming cloud import (#2303)", () => {
     expect(disclosure.gzip).toBe(true);
     expect(disclosure.records).toBe(3);
     expect(state.forensicTimeline.some((e) => /StopLogging/.test(e.description))).toBe(true);
+  });
+
+  // #2337 — the streamed rows carry the same source-artifact hash the whole-file path stamps, so a
+  // Sigma re-grade can tell a stored file that changed since the import.
+  it("stamps the whole-file path's source-artifact hash on streamed forensic events", async () => {
+    const { pipeline, write } = await setup();
+    const rec = (i: number, name: string) => ({
+      eventVersion: "1.09",
+      eventID: `00000000-0000-4000-c000-${String(i).padStart(12, "0")}`,
+      eventTime: "2026-10-01T10:00:00Z",
+      eventSource: name === "StopLogging" ? "cloudtrail.amazonaws.com" : "iam.amazonaws.com",
+      eventName: name,
+      awsRegion: "us-east-1",
+      sourceIPAddress: "198.51.100.7",
+      userIdentity: { type: "IAMUser", arn: `arn:aws:iam::123456789012:user/ops${i}`, userName: `ops${i}` },
+    });
+    const text = JSON.stringify({ Records: [rec(1, "StopLogging"), rec(2, "CreateAccessKey")] });
+    const whole = parseCloudTrail(text, {});
+    const wholeHash = whole.events.find((e) => e.canonical)?.canonical?.evidence.sourceArtifactHash;
+    expect(wholeHash).toBe(sourceArtifactHash(text));
+
+    // Each in its own case: the same records in one case would dedup the second import to nothing.
+    const plain = await pipeline.importCloudFile("c1", "aws", await write("ct.json", text), opts("h1"));
+    const other = await setup();
+    const gzPath = await other.write("ct2.json.gz", gzipSync(text));
+    const gz = await other.pipeline.importCloudFile("c1", "aws", gzPath, opts("h2"));
+    expect(gz.disclosure.gzip).toBe(true);
+    for (const [prefix, { state }] of [
+      ["h1", plain],
+      ["h2", gz],
+    ] as const) {
+      const streamed = state.forensicTimeline.filter((e) => e.canonical && e.id.startsWith(prefix));
+      expect(streamed.length, prefix).toBeGreaterThan(0);
+      for (const e of streamed) expect(e.canonical?.evidence.sourceArtifactHash).toBe(wholeHash);
+    }
   });
 
   it("a cancelled import leaves none of its records seen", async () => {

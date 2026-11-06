@@ -44,7 +44,6 @@ export interface SourceRecordPage {
 }
 
 const LEDGER_KIND = "cloudRecord";
-const MEMBER_KIND = "cloudRecordMember";
 // entityRows/appendEntities each build one JSON array per call — chunked like authObservationStore.
 const CHUNK_SIZE = 5_000;
 
@@ -195,7 +194,11 @@ export class CloudRecordStore {
     return added;
   }
 
-  /** Appends group → member rows. The group key is stored in the indexed host column (`asset`). */
+  /**
+   * Appends group → member rows. The group key is stored in the indexed host column (`asset`).
+   * A member the group already holds (same ref and payload hash) is skipped, so a crash replay of a
+   * streamed page never lists it twice (#2339). Returns rows written.
+   */
   async recordMembers(caseId: string, members: readonly SourceRecordMember[]): Promise<number> {
     const dbPath = this.databasePath(caseId);
     let added = 0;
@@ -206,12 +209,7 @@ export class CloudRecordStore {
         ...(m.payloadHash ? { payloadHash: m.payloadHash } : {}),
         ...(m.locator ? { locator: m.locator } : {}),
       }));
-      added += await caseSqliteWorker.request<number>({
-        op: "appendEntities",
-        dbPath,
-        kind: MEMBER_KIND,
-        entities,
-      });
+      added += await caseSqliteWorker.request<number>({ op: "cloudMembersAppend", dbPath, entities });
     }
     return added;
   }

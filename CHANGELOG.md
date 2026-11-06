@@ -34,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tagger rules on Sigma-matched cloud rows** — content tagger rules match again on rows whose description carries the import-time Sigma head; Run tagger repairs existing cases (closes #2350)
+- **Detection rule fixes** — M365 sync-download rules use the real `FileSyncDownloadedFull` operation; a snapshot change that only removes sharing is graded Low (closes #2338)
+- **Sigma and failed AWS calls** — a logging/Config call that failed because its target was not found keeps the importer's Low grade; access-denied attempts can still be raised (closes #2351)
+- **Streamed cloud imports** — large streamed imports can be cancelled and their rows carry the source-file hash; manual states the per-batch limit on cross-account pairs (part of #2337)
+- **Cloud collection status** — a budget or full-disk stop before the first page is partial, not failed; a resumed collection no longer repeats source-record members (part of #2339)
+- **Empty CloudTrail S3 window** — a trail window with no files completes with 0 files instead of failing (closes #2352)
+- **Collector gaps** — an empty GCP sink window's listing is kept as evidence but not imported; a refused Azure subscription is skipped and named, others still collected (part of #2340)
+- **Large and gzip uploads** — the Import button uploads files over 32 MB and every `.gz` as the raw body (case writers, no server path needed, `DFIR_MAX_UPLOAD_MB`); the drop folder streams large and gzip cloud files and large Plaso CSVs (closes #2336)
+- **Vault temp files** — a failed cloud-vault or server-set write no longer leaves a temp copy of sealed secrets (closes #2342)
 - **Too-large import hint on Node 22** — an import too big to read shows the size hint again instead of "cannot read file" (closes #2316)
 - **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
 

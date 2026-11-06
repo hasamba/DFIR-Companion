@@ -465,7 +465,7 @@ function sigmaRenderRegrade(r, caseId, applied) {
   const c = r.counts || {};
   const head = applied
     ? `Re-graded with SigmaHQ ${r.release}.`
-    : r.current
+    : r.current && !((Number(c.changed) || 0) + (Number(c.tokenOnly) || 0))
       ? `Already graded with the current rules (SigmaHQ ${r.release}). A re-grade changes nothing.`
       : `A re-grade with SigmaHQ ${r.release} would change:`;
   box.appendChild(sigmaEl("div", head));

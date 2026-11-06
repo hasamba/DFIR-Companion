@@ -98,6 +98,11 @@ only.
   Files already collected are not imported twice.
 - When no trail writes to a bucket the identity can list, the S3 source is reported as missing,
   and the result tells you to collect event history instead.
+- When the trail folders hold no file for the window, the source **completes with 0 files**. The
+  manifest records which folders were listed. If the trail should have been logging, check the
+  trail status (a `StopLogging` call shows in the trail just before the gap) and the bucket's
+  lifecycle rules. For a window that ends in the last few minutes, collect again later: CloudTrail
+  delivers files 5 to 15 minutes late.
 
 ### Event history
 
@@ -250,6 +255,8 @@ and start** runs the collection as a background job.
   record can be read, which often takes **10 minutes or more**; the collection's row shows the
   query's status while it waits ("audit query running — 4 min"). A query that hits Microsoft's
   record limit is split into two halves, down to one minute, and then one query per record type.
+  That last step uses the list of record types known when this release was built, so a record type
+  Microsoft adds later is not covered by it until the list is updated.
   Each query counts against the tenant's daily quota (at least 200 a rolling day, shared with every
   other tool), and the collection stops as **partial — budget used** before it goes past this
   companion's share (`DFIR_CLOUD_M365_QUERY_BUDGET`, default 50). Resume it later.
@@ -260,7 +267,10 @@ and start** runs the collection as a background job.
   sign-in sources use beta. Graph allows 5 sign-in and directory-audit requests per 10 seconds per
   app and tenant; the collection keeps to that.
 - **Azure Activity.** Every subscription the app holds a role on is collected, one after another.
-  An app that can read no subscription fails this source with what to grant.
+  An app that can read no subscription fails this source with what to grant. A subscription that
+  refuses its Activity log (no role on it, or it was disabled or deleted) is skipped and the next
+  one is collected; the result is partial and names the skipped subscription, and **Resume** tries
+  it again.
 - **Not collected:** mailbox audit, transport rules and message trace. Collect them with Microsoft
   Extractor Suite (MES) and import the files; the cloud tool compatibility matrix (#2300) says which
   file covers what.
@@ -361,7 +371,8 @@ include the data_access audit logs` — and so does the manifest.
 
 From a sink, each saved page is one log file from the bucket, exactly as stored: the hourly files
 and the addendum files (`…_A0:<time>.json`) that Cloud Logging writes later for entries that
-arrived late. **Sinks write hourly batches, and parts of an hour can arrive late.** The companion
+arrived late. A window with no log file in the bucket saves the bucket listing as its page, as
+evidence that the window was empty; that page is not imported. **Sinks write hourly batches, and parts of an hour can arrive late.** The companion
 treats the logs as settled only up to the last whole hour that is at least **three hours** old, and
 the result says so: *Settled up to … only*. That delay is an estimate. Cloud Logging does not
 guarantee that a sink delivered every entry, so **a collection from a sink is never reported as

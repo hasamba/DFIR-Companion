@@ -47,6 +47,7 @@ import { isCloudRoutePath, resolveRequestPolicy } from "../auth/policy.js";
 import { setRequestAuthentication } from "../auth/types.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
+import { skipRawUploads } from "../http/rawUploadPath.js";
 import { CaseNotFoundError } from "../ingest/captureIngest.js";
 import { ZodError } from "zod";
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
@@ -210,11 +211,13 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
     });
   }
 
-  app.use(express.json({ limit: `${maxBodyMb}mb` }));
+  // The raw-body upload (POST /cases/:id/import-upload, #2336) streams its own body to disk; neither
+  // parser may buffer it, whatever content type the client sent (http/rawUploadPath.ts).
+  app.use(skipRawUploads(express.json({ limit: `${maxBodyMb}mb` })));
   // Also accept text/plain + NDJSON bodies so the generic push endpoint (#84) can take a raw blob
   // (a Velociraptor monitor dump, an NDJSON alert stream) without forcing every caller to wrap it in
   // a JSON envelope. JSON bodies still parse via express.json above; this only catches non-JSON types.
-  app.use(express.text({ limit: `${maxBodyMb}mb`, type: textBodyTypes }));
+  app.use(skipRawUploads(express.text({ limit: `${maxBodyMb}mb`, type: textBodyTypes })));
 
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right

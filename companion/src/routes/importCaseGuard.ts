@@ -13,6 +13,7 @@ import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission
 export const EVIDENCE_IMPORT_ROUTES = [
   "import",
   "import-file",
+  "import-upload", // the raw-body upload (#2336): guarded here before its body is read
   "import-csv",
   "import-log",
   "import-thor",
@@ -152,6 +153,7 @@ export function registerImportAssetHostGuard(app: Express): void {
   const accepting: string[] = [];
   const refusing: string[] = [];
   for (const route of EVIDENCE_IMPORT_ROUTES) {
+    if (route === "import-upload") continue; // takes and validates its declaration in the query (#2336)
     (isAssetHostRoute(route) ? accepting : refusing).push(`/cases/:id/${route}`);
   }
 

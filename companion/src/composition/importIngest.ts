@@ -51,6 +51,7 @@ import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSet
 import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
+import { createDiskIngest, type IngestDiskFile } from "./importIngestDisk.js";
 
 export interface ImportIngestDeps {
   store: CaseStore;
@@ -126,6 +127,8 @@ export interface ImportIngest {
      */
     debug?: ImportDebugRecorder,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  /** A cloud export or Plaso file streamed from an open handle: the drop folder's large/gzip path (#2336). */
+  ingestDiskFile: IngestDiskFile;
   /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
   ingestMacLoginItemStreamed(
     caseId: string,
@@ -494,6 +497,33 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   const ingestMacLoginItemStreamed: typeof ingestMacLoginItemAdmitted = (caseId, ...rest) =>
     withIngestAdmission(store.casesRoot, caseId, () => ingestMacLoginItemAdmitted(caseId, ...rest), statusOf);
 
+  // The tail every streamed ingest shares: known-good auto-marks BEFORE re-synthesis, like /import.
+  async function autoMarkAndResynthesize(caseId: string): Promise<void> {
+    try {
+      const wl = await applyWhitelistToCase(caseId);
+      if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} pushed IOC(s) legitimate`);
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      const ns = await applyNsrlToCase(caseId);
+      if (ns.added > 0)
+        logLine(`[nsrl] ${caseId} auto-marked ${ns.added} pushed known-good item(s) legitimate`);
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      const deob = await applyDeobfuscationToCase(caseId);
+      if (deob.deobfuscated > 0)
+        logLine(
+          `[deobfuscate] ${caseId} decoded ${deob.deobfuscated} pushed event(s), +${deob.newIocs} new IOC(s)`,
+        );
+    } catch {
+      /* non-fatal */
+    }
+    resynthesizeInBackground(caseId);
+  }
+
   async function ingestStreamedAdmitted(
     caseId: string,
     kind: string,
@@ -576,30 +606,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline });
     }
     const { addedEvents, addedIocs } = counts;
-    // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
-    try {
-      const wl = await applyWhitelistToCase(caseId);
-      if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} pushed IOC(s) legitimate`);
-    } catch {
-      /* non-fatal */
-    }
-    try {
-      const ns = await applyNsrlToCase(caseId);
-      if (ns.added > 0)
-        logLine(`[nsrl] ${caseId} auto-marked ${ns.added} pushed known-good item(s) legitimate`);
-    } catch {
-      /* non-fatal */
-    }
-    try {
-      const deob = await applyDeobfuscationToCase(caseId);
-      if (deob.deobfuscated > 0)
-        logLine(
-          `[deobfuscate] ${caseId} decoded ${deob.deobfuscated} pushed event(s), +${deob.newIocs} new IOC(s)`,
-        );
-    } catch {
-      /* non-fatal */
-    }
-    resynthesizeInBackground(caseId);
+    await autoMarkAndResynthesize(caseId);
     return { storedName, addedEvents, addedIocs, analyzed: true };
   }
 
@@ -696,6 +703,17 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     return { storedName, addedEvents, addedIocs, analyzed: true };
   }
 
+  // The drop folder's streamed import of a cloud export or Plaso file (#2336, importIngestDisk.ts).
+  const ingestDiskFile = createDiskIngest({
+    store,
+    options,
+    importLock,
+    runStateExclusive,
+    demoteForensic: demote.demoteForensic,
+    settleDeps,
+    afterImport: autoMarkAndResynthesize,
+  });
+
   return {
     importerRegistry: () => registry,
     importerPrecedence: () => precedence,
@@ -711,6 +729,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     demoteForensic: demote.demoteForensic,
     ingestStreamed,
     ingestMacLoginItemStreamed,
+    ingestDiskFile,
   };
 }
 

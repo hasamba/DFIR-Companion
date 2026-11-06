@@ -150,6 +150,13 @@ describe("team-auth configuration and policy", () => {
       kind: "global",
       permission: "admin",
     });
+    // #2336: the raw-body upload carries bytes FROM the client, never a server path, so it is the
+    // same per-case "write" as /import — not the global-admin bar /import-file needs.
+    expect(resolveRequestPolicy("POST", "/cases/c1/import-upload")).toEqual({
+      kind: "case",
+      permission: "write",
+      caseId: "c1",
+    });
     expect(resolveRequestPolicy("POST", "/cases/c1/%69mport-file")).toEqual({
       kind: "global",
       permission: "admin",

@@ -1531,7 +1531,9 @@ literally:
   row says nothing about organisations. The two records CloudTrail writes for one cross-account
   action (one in each account, sharing a `sharedEventID`) are **one row** with both records as
   provenance and `[also in account <B>]` — when they arrive in one file; two files are two
-  rows. On that row the caller's account is `cloud.accountId` and the resource owner's is
+  rows. A large file read in batches (see *Large cloud exports*) merges the pair only when both
+  records fall in the same batch of 5,000 records; a pair split across two batches stays two
+  rows, both kept. On that row the caller's account is `cloud.accountId` and the resource owner's is
   `cloud.recipientAccountId`, so a Hunt on either account finds the action. The notice sits in
   front of the row's caveats, which are never the part that clips.
 - **Issuance rows** — `AssumeRole`, `AssumeRoleWithSAML`, `AssumeRoleWithWebIdentity`,
@@ -1835,6 +1837,12 @@ they are imported. No AI is involved, and the same file always gets the same res
   and a link to the rule. The rule's ATT&CK techniques are added to the event.
 - **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
   stays one event with both verdicts.
+- **Tagger rules still match a Sigma-matched event.** The content tagger reads the description both
+  with and without the Sigma lead, so the cloud tags, ATT&CK techniques and grades still apply.
+- **A CloudTrail logging or AWS Config call that failed because its target was not found is only
+  tagged.** It changed nothing, so it keeps the importer's grade (Low) and carries a `Sigma note:`
+  saying why. A denied or otherwise failed attempt can still be raised. A rule that checks the error
+  code itself still grades.
 - **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
 - **An Entra audit record that becomes several rows** carries its match on the first row, with a note
   that the rule matched the whole record.
@@ -2576,9 +2584,9 @@ The command names follow each tool's own documentation; check `Get-Help <command
   REST Activity Log, with the caller taken from the record's sign-in claims (the user name, or the
   application id).
 - **AWS CloudTrail** — `aws s3 sync s3://<bucket>/AWSLogs/<account>/CloudTrail/ ./cloudtrail`.
-  The `.json.gz` objects are read as downloaded: the Import button asks for the file's path, and the
-  server decompresses it while it reads (see *Large cloud exports* below). The drop folder still
-  needs the decompressed `.json`. Prefer the S3 objects to the console's Event history CSV: the CSV
+  The `.json.gz` objects are read as downloaded: the Import button uploads the file, and the
+  server decompresses it while it reads (see *Large cloud exports* below). The drop folder reads
+  them the same way. Prefer the S3 objects to the console's Event history CSV: the CSV
   has no identity type, ARN or request parameters, so less can be concluded from each row.
 - **GCP Cloud Audit Logs** — `gcloud logging read 'logName:"cloudaudit.googleapis.com"' --format=json > audit.json`,
   or copy the objects a Cloud Storage log sink wrote (`gcloud storage cp -r gs://<bucket>/cloudaudit.googleapis.com ./`).
@@ -2661,13 +2669,28 @@ techniques that had no rule of their own:
   for review only. A user agent is what the client *claimed*, not proof of the tool used. The
   suite's country, ASN and application lists are not included.
 
-**Size limits.** The Import button reads a file of up to 200 MB in the browser and sends it
-(server limit 256 MB, `DFIR_MAX_BODY_MB`); a larger file, or a `.gz` file, is read from its path on
-the server. A cloud export (M365 / Entra, CloudTrail, GCP / Azure Activity) of 32 MB or more, or any
-`.gz` one, is **streamed** — see *Large cloud exports* below — and has no size limit. Any other file
-is held in memory whole and refused above 256 MB (`DFIR_MAX_IMPORT_FILE_MB`). A smaller cloud export
-takes the whole-file path, which keeps at most 2,000 aggregated events (`DFIR_MAX_EVENTS`), most
-severe first.
+**Size limits.** The Import button reads a file of up to 32 MB in the browser and sends it
+(server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file, or any `.gz` file, is **uploaded** as it
+is: the browser sends the file's bytes without reading them, and the server writes them to disk
+inside the case folder and imports them from there, the same way Import-from-path does. No path on
+the server is needed, so this works on a remote or Docker deployment, for any analyst who may add
+evidence to the case. An upload is limited to 2,048 MB (`DFIR_MAX_UPLOAD_MB`); a larger one is
+refused with a message that names the setting, and nothing is kept. If the upload stops part-way,
+nothing is kept either.
+
+A cloud export (M365 / Entra, CloudTrail, GCP / Azure Activity) of 32 MB or more, or any `.gz`
+one, is **streamed** — see *Large cloud exports* below — and has no size limit of its own. A Plaso
+super-timeline always streams. Any other file is held in memory whole and refused above 256 MB
+(`DFIR_MAX_IMPORT_FILE_MB`). A smaller cloud export takes the whole-file path, which keeps at most
+2,000 aggregated events (`DFIR_MAX_EVENTS`), most severe first.
+
+**Drop folder.** The drop folder reads a file up to 200 MB whole (`DFIR_DROP_MAX_BYTES`). A cloud
+export or a Plaso super-timeline over that size is streamed instead of refused, and a `.gz` cloud
+export is decompressed while it is read, at any size. The streamed import's note (which budgets were
+reached, whether the file was gzip) is written to `drop-log.txt` and the *last import* banner. A
+`.gz` file of any other kind is refused with *"gzip uploads are read only for cloud audit exports"*
+and moved to `_failed/`; decompress it and drop it again. Any other file over the cap is refused and
+moved to `_failed/`; import it from its path on the server instead.
 
 ### Large cloud exports
 
@@ -2689,6 +2712,9 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   one import never pushes out the rows earlier imports put there. Rows past that room are counted.
 - **Whole-export summaries** (credential lineages, compute lifecycles, privilege paths, mailbox
   chains, service-account joins) are built over the first 25,000 records of a larger file.
+- **CloudTrail cross-account pairs** (the two records one cross-account action writes, one per
+  account) become one row only when both records are in the same batch of 5,000 records. A pair
+  split across two batches stays two rows; neither record is lost.
 
 **What "counted" means.** A counted event stands for many rows: it carries how many, the first and
 last time, and the list of the records it stands for (open the event to page through them). When a
@@ -2714,8 +2740,8 @@ the whole file.
 minutes as CSV, with the server's memory peaking under 2 GB. A 30-object, 1.2M-record CloudTrail set
 (`.json.gz`) needs `--max-old-space-size=2048`: the limit is the size of the case it builds, not the
 file — at 1 GB the server's own heap guard refuses the last objects once the case holds ~21,000
-events. Below 32 MB, or for a file sent in the browser, the whole-file path still applies: an 80 MB
-CSV sent through the Import button needs more memory than the streamed import itself.
+events. Below 32 MB the whole-file path still applies: the Import button reads such a file in the browser
+and sends it whole. A larger file is uploaded as it is and streamed.
 
 **gzip.** A `.gz` file is decompressed while it is read. A file that decompresses to more than 100
 times its compressed size (past the first 64 MB), or to more than 20 GB, is refused as a possible
@@ -2753,7 +2779,7 @@ decompression bomb.
 | Azure diagnostic settings | — | `PT1H.json`, Entra `SignInLogs` category | `m365` | `m365` | works | Claimed by an Entra (`microsoft.aadiam`) `resourceId` + Entra category + `properties`; the Graph sign-in under `properties` is unwrapped and grades like the Graph record (#2304). |
 | Azure diagnostic settings | — | `PT1H.json`, Azure resource log (Key Vault `AuditEvent`) | `cloud` | `cloud` | works | Routing depends on `resourceId`; a record without it and without `correlationId` is not claimed. |
 | AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json` (decompressed) | `aws` | `aws` | works | — |
-| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `aws` | `aws` | works | Read by server path and decompressed while it streams (#2303); the dashboard asks for the path of a `.gz` file. |
+| AWS CloudTrail | — | S3 object `…_CloudTrail_<region>_….json.gz` (as downloaded) | `aws` | `aws` | works | Decompressed while it streams (#2303); the Import button uploads a `.gz` file as it is, and the drop folder reads it too (#2336). |
 | AWS CloudTrail | — | Console Event history CSV | `aws` | `aws` | works | Claimed by `Event name` + `Event source` + `Event time`. The CSV has no identity type, ARN or request parameters, so rows read from a `CloudTrail event` column when present, else from the columns alone. |
 | GCP Cloud Audit Logs | — | `gcloud logging read --format=json` (array) | `cloud` | `cloud` | works | — |
 | GCP Cloud Audit Logs | — | GCS sink JSON lines | `cloud` | `cloud` | works | — |

@@ -226,6 +226,7 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_IMPORT_MEMORY_GUARD",
   "DFIR_MAX_BODY_MB",
   "DFIR_MAX_IMPORT_FILE_MB",
+  "DFIR_MAX_UPLOAD_MB", // the dashboard's raw-body upload cap (#2336)
   "DFIR_FORENSIC_",
   // Import-time Sigma rules (#2202): the on/off switch, and #2204's status / level settings.
   "DFIR_SIGMA_",

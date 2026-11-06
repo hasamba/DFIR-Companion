@@ -49,6 +49,7 @@ function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
     resolveImportKind: (filename, text) => detectImportWithCustom(filename, text, new Map(), "builtin-first"),
     ingestStreamed: refuse,
     ingestMacLoginItemBinary: refuse,
+    ingestDiskFile: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,

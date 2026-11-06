@@ -58,7 +58,8 @@ describe("custody at receipt (#2111)", () => {
   it("records a received entry, hashed with SHA-256 and SHA-1, for every body-based import route", async () => {
     const { app, custody } = await makeApp();
     const bodyRoutes = EVIDENCE_IMPORT_ROUTES.filter(
-      (r) => r !== "import-file" && r !== "import-mac-login-item",
+      // import-upload takes the raw body, not a JSON one; it receipts after spooling (importUpload.test.ts).
+      (r) => r !== "import-file" && r !== "import-mac-login-item" && r !== "import-upload",
     );
     for (const route of bodyRoutes) {
       const field =

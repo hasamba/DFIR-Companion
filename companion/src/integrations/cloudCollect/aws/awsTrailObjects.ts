@@ -195,6 +195,36 @@ interface GotObject {
   $metadata?: { requestId?: string };
 }
 
+const SELECTION = `objects delivered from the window start's minute to ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after its end`;
+/** How many listed prefixes an empty-window page names before it stops (the count is always given). */
+const EMPTY_PREFIXES_SHOWN = 50;
+export const EMPTY_WINDOW_ADAPTATION =
+  "no CloudTrail object in the window; this page is not an S3 object, it closes the empty window";
+
+/** The closing page of a window whose listing found no trail file (#2352): a 0-record Records document. */
+function emptyWindowPage(cells: readonly Cell[], discovery: TrailDiscovery): CollectPage {
+  const buckets = [...new Set(cells.map((c) => c.bucket))];
+  const prefixes = cells.map(prefixOf);
+  const shown = prefixes.slice(0, EMPTY_PREFIXES_SHOWN);
+  return {
+    body: Buffer.from('{"Records":[]}', "utf8"),
+    extension: "json",
+    recordCount: 0,
+    requestParams: {
+      api: "s3:ListObjectsV2",
+      emptyWindow: "yes",
+      bucket: (buckets.length ? buckets : discovery.roots.map((r) => r.bucket)).join(","),
+      prefixesListed: String(prefixes.length),
+      prefixes: shown.join(",") + (prefixes.length > shown.length ? ",…" : ""),
+      selection: SELECTION,
+      adaptation: EMPTY_WINDOW_ADAPTATION,
+      ...(discovery.regionsNotEnabled.length
+        ? { regionsNotEnabled: discovery.regionsNotEnabled.join(",") }
+        : {}),
+    },
+  };
+}
+
 /** Fetch the page after `request.pageToken`: one trail object, saved as S3 returned it. */
 export async function fetchTrailObject(
   walk: TrailObjectWalk,
@@ -206,10 +236,13 @@ export async function fetchTrailObject(
   const cells = trailCells(roots, trailDays(request.window), request.partition?.region);
   const found = await walk.next(cells, positionOf(cells, request.pageToken), request.window, request.signal);
   if (!found) {
-    // Only a first page can find nothing: a token is only ever handed out when an object follows.
-    throw new Error(
-      `no CloudTrail file in the trail folders for this window (${roots.map((r) => `s3://${r.bucket}/${r.root}`).join(", ")})`,
-    );
+    // A token is only ever handed out when an object follows, so a later page finding nothing is wrong.
+    if (request.pageToken) {
+      throw new Error(
+        `no CloudTrail file in the trail folders for this window (${roots.map((r) => `s3://${r.bucket}/${r.root}`).join(", ")})`,
+      );
+    }
+    return emptyWindowPage(cells, discovery); // the listing worked and found nothing: complete with 0
   }
   const cell = cells[found.cell];
   const ahead = await walk.next(
@@ -249,7 +282,7 @@ export async function fetchTrailObject(
       day: cell.day,
       trails: root?.trails.join(",") ?? "",
       organizationTrail: root?.organization ? "yes" : "no",
-      selection: `objects delivered from the window start's minute to ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after its end`,
+      selection: SELECTION,
       ...(regionsNotEnabled.length ? { regionsNotEnabled: regionsNotEnabled.join(",") } : {}),
     },
   };

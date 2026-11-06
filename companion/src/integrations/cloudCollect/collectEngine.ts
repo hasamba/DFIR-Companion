@@ -107,17 +107,22 @@ export function missingWindows(subWindows: readonly SubWindowStatus[], stopReaso
     }));
 }
 
-/** complete / partial / failed. Pure. */
+/**
+ * complete / partial / failed. Pure. `stopReason`: the network stage stopped early on purpose (the
+ * query budget is used, the disk is full) — a resumable stop, so "partial" even with no page saved
+ * (#2339). "failed" is left for a run the cloud itself refused.
+ */
 export function collectionStatus(
   subWindows: readonly SubWindowStatus[],
   pagesSaved: number,
+  stopReason?: string,
 ): CollectionStatus {
   // Never "complete" while a page's completeness is unverified (#2314: a GCS sink) or an item the
   // cloud refused is unresolved (#2313).
   const tree = leaves(subWindows);
   const skipped = tree.some((sw) => (sw.skipped ?? 0) > 0);
   if (!skipped && tree.every((sw) => sw.state === "done" && !sw.unverified)) return "complete";
-  return pagesSaved > 0 || skipped ? "partial" : "failed";
+  return pagesSaved > 0 || skipped || stopReason ? "partial" : "failed";
 }
 
 /** Create the folder, write the header and the first checkpoint. The run itself is runCollection. */
@@ -275,7 +280,7 @@ export async function runCollection(
   const pagesSaved = replay.validPages.length + network.pages.length;
   await save({
     stage: "done",
-    status: collectionStatus(network.subWindows, pagesSaved),
+    status: collectionStatus(network.subWindows, pagesSaved, network.stopReason),
     missing: missingWindows(network.subWindows, network.stopReason),
     coverage: sourceCoverage(network.subWindows, deps.sources, {
       sources: cp.sources,

@@ -42,7 +42,8 @@ export function storedFileOf(
 
 /**
  * True when a row carries the hash of the text it was parsed from and the stored file is not that
- * text. Only CloudTrail rows carry the hash; the others are paired by stored file name alone.
+ * text. CloudTrail rows and every streamed cloud import's rows (#2337) carry the hash; the others
+ * are paired by stored file name alone.
  */
 export function storedFileChanged(e: Pick<ForensicEvent, "canonical">, text: string): boolean {
   const hash = e.canonical?.evidence?.sourceArtifactHash;

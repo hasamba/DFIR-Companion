@@ -19,9 +19,11 @@ import { splitDerivedNotes } from "./derivedNote.js";
 import { PROMOTED_MARKER } from "./labIntel.js";
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import type { SiemEvent } from "./siemImport.js";
+import { splitSigmaOverlay } from "./sigmaOverlay.js";
 
-const SIGMA_LINE = /^Sigma (?:rule|note): /;
-const RULE_LINE = /^Sigma rule: (.*) \[([^\]\s]+)\] — level (\w+)/;
+// Moved to sigmaOverlay.ts (#2350) so the tagger can read it; re-exported for existing callers.
+export { splitSigmaOverlay };
+
 const TOKEN_PREFIX = "sigma:";
 
 /** Rule id → its ATT&CK techniques, or undefined when the rule is not known to this server. */
@@ -109,38 +111,6 @@ export function recordKey(e: Pick<ForensicEvent, "canonical">): string | undefin
   const raw = e.canonical?.evidence?.rawRecords ?? [];
   const parts = raw.map((r) => `${r.source}|${r.locator}`).sort();
   return parts.length ? parts.join("\n") : undefined;
-}
-
-interface Overlay {
-  /** The description without the Sigma head. */
-  description: string;
-  /** The message without the Sigma lines. */
-  message: string;
-  /** The Sigma lines, in order. */
-  lines: string[];
-  ruleIds: string[];
-}
-
-/** The Sigma overlay split off a row's text (sigmaImportGrade.applySigmaMatches writes it). */
-export function splitSigmaOverlay(description: string, message: string | undefined): Overlay {
-  const all = (message ?? "").split("\n");
-  const lines = all.filter((l) => SIGMA_LINE.test(l));
-  const rules = lines.flatMap((l) => {
-    const m = RULE_LINE.exec(l);
-    return m ? [{ title: m[1], id: m[2], level: m[3] }] : [];
-  });
-  const more = rules.length > 1 ? ` (+${rules.length - 1} more)` : "";
-  const heads = rules.flatMap((r) => [
-    `Sigma: ${r.title}${more} - `,
-    `Sigma (${r.level}, tag only): ${r.title}${more} - `,
-  ]);
-  const head = heads.find((h) => description.startsWith(h));
-  return {
-    description: head ? description.slice(head.length) : description,
-    message: all.filter((l) => !SIGMA_LINE.test(l)).join("\n"),
-    lines,
-    ruleIds: rules.map((r) => r.id),
-  };
 }
 
 /** Two base texts read the same: equal, or one is the other cut at the 600-character cap. */
