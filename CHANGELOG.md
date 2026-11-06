@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Detection rule pack** — the curated tagger rules publish as a separate `rules-*` release when they change; Content tagger can check, review, measure, install (or install from a file) and roll back a pack without an app release, and reports name the rules that graded the case (closes #2349)
+- **New built-in rules for edited rules** — when an edited tagger copy is older than the built-in (or installed pack) rules, Content tagger lists what is new or changed and adds the chosen rules while keeping the analyst's edits; conflicts are picked per rule and deleted rules come back only on request (closes #2344)
 - **Cloud credentials end with the case** — closing a case offers Delete or Keep for its cloud credentials; archive and delete always remove them (a shared account goes with its last case); the cloud accounts list shows every held credential with its cases, who added it and when it was last used, with single and multi-select delete, audit and chain-of-custody entries (closes #2347)
 - **Detection-overlap check** — a CI test runs cloud samples through the importer, bundled Sigma and tagger rules and fails when two of them grade the same event differently, unless the pair is allowlisted with a reason (closes #2348)
 - **Upstream rule watch** — a weekly GitHub job compares the Microsoft-Analyzer-Suite lists with the recorded upstream commit and opens one issue when they change (closes #2343)
