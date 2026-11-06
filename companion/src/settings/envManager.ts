@@ -180,6 +180,11 @@ const WRITABLE_ENV_PREFIXES = [
   // TLS trust for a self-hosted audit-export collector (#929). The destinations themselves
   // live behind /audit-export, not in .env — only the CA path and the skip-verify flag are env.
   "DFIR_AUDIT_",
+  // Cloud collection's network settings (#2310) — exact keys, so the vault key path
+  // (DFIR_CLOUD_VAULT_KEY_FILE, denied above) can never ride in on a DFIR_CLOUD_ prefix.
+  "DFIR_CLOUD_CA",
+  "DFIR_CLOUD_INSECURE",
+  "DFIR_CLOUD_PROXY_URL",
   "DFIR_SMTP_",
   "DFIR_HASHLOOKUP_",
   "DFIR_RDAP_",
@@ -385,7 +390,11 @@ export function resolveEnvFilePath(): string {
   return resolve(process.cwd(), ".env");
 }
 
+// Secrets whose name has no secret suffix: a proxy URL can carry user:password (#2310).
+const SECRET_KEYS = new Set(["DFIR_CLOUD_PROXY_URL"]);
+
 export function isSecretKey(key: string): boolean {
+  if (SECRET_KEYS.has(key.toUpperCase())) return true;
   return SECRET_SUFFIXES.some((s) => key.toUpperCase().endsWith(s) || key.toUpperCase().includes(s + "_"));
 }
 

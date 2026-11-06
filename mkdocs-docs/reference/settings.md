@@ -356,6 +356,25 @@ made inside the container and is lost when the container is recreated.
 - **Evidence is not affected.** The key protects only the cloud credentials. Cases, evidence,
   timelines and reports never depend on it.
 
+#### TLS and proxy for cloud collection
+
+Cloud collection follows the same TLS rules as the other outbound features. The three fields sit
+above the Cloud accounts list. They apply to every request to AWS, Microsoft and Google, including
+the sign-in (token) requests to `sts.amazonaws.com`, `login.microsoftonline.com` and
+`oauth2.googleapis.com`. Each host is checked on its own. Restart after you change them.
+
+- **Cloud CA bundle** (`DFIR_CLOUD_CA`). The path to a PEM CA bundle, for example the CA of a
+  TLS-inspecting proxy. The Companion adds it to the built-in trust, so a host that the proxy does
+  not inspect still verifies. Verification stays on.
+- **Cloud: skip TLS verify** (`DFIR_CLOUD_INSECURE=1`). Accepts any certificate. Cloud hosts are
+  never on this machine, so the Companion refuses this setting unless **Allow insecure TLS to
+  external hosts** (`DFIR_TLS_ALLOW_INSECURE_EXTERNAL`) is also on. Use it in a lab only. Anyone on
+  the network path can then read the cloud credentials. Use the CA bundle instead.
+- **Cloud proxy URL** (`DFIR_CLOUD_PROXY_URL`). An `http://` or `https://` proxy, for example
+  `http://proxy.corp:3128`, with `user:password@` when the proxy needs a login. Every cloud request
+  goes through it. The Companion does not read `HTTPS_PROXY` or `NO_PROXY` for cloud collection.
+  The field is shown masked, because the URL can hold a password.
+
 ---
 
 ## Velociraptor
