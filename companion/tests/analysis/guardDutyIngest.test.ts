@@ -5,6 +5,13 @@ import { join } from "node:path";
 import { tempCase } from "../helpers/cloudCollectFakes.js";
 import { gdExport, gdFinding } from "../helpers/guardDutyFixtures.js";
 import { isStreamKind } from "../../src/analysis/ingest/cloudStreamProviders.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { parseGuardDuty } from "../../src/analysis/guardDutyImport.js";
+import { applyToForensicEvent, runTagger } from "../../src/analysis/tagger.js";
+import { compileText } from "../../src/analysis/taggerStore.js";
+import { createPreGrader } from "../../src/analysis/cloudStreamPreGrade.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // #2361 — GuardDuty findings through the real pipeline: the whole-file path (a hand-dropped
 // export) and the streaming path (a large or gzipped export, and every collected page).
@@ -86,5 +93,54 @@ describe("GuardDuty streaming import (#2361)", () => {
       batchRecords: 1,
     });
     expect(state.forensicTimeline.filter((e) => /^GuardDuty finding/.test(e.description))).toHaveLength(2);
+  });
+});
+
+// Codex review (#2361): a finding's resource names are adversary-reachable, so a shipped rule that
+// matches them (a bucket named `ntds.dit` → the Windows NTDS rule) must not regrade the finding.
+describe("GuardDuty keeps its own grade through the tagger (#2361 review)", () => {
+  const rules = compileText(
+    readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8"),
+  );
+  const bait = () =>
+    gdFinding(
+      7,
+      {
+        Type: "Discovery:S3/AnomalousBehavior",
+        Severity: 2,
+        Resource: { ResourceType: "S3Bucket", S3BucketDetails: [{ Name: "ntds.dit" }] },
+        Description: "vssadmin create shadow /for=C: then copy ntds.dit from the shadow copy",
+      },
+      { Archived: true },
+    );
+
+  it("the bait really matches a graded shipped rule (so the guard is what holds the grade)", () => {
+    const [row] = parseGuardDuty(gdExport([bait()]), { aggregate: false }).events;
+    const event = {
+      ...row,
+      id: "e1",
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    } as unknown as ForensicEvent;
+    const hit = runTagger([event], rules).perEvent[0];
+    expect(hit?.severity && hit.severity !== "Info").toBeTruthy();
+    const applied = applyToForensicEvent(event, hit);
+    expect(applied.severity).toBe("Info");
+    expect(applied.mitreTechniques).toEqual(row.mitreTechniques);
+    expect(createPreGrader(rules).grade([{ ...row, mitre: row.mitreTechniques, aggKey: "k" }]).raised).toBe(
+      0,
+    );
+  });
+
+  it("a streamed archived finding stays out of the forensic timeline even with tagger pre-grading on", async () => {
+    const t = await tempCase();
+    const path = join(t.root, "bait.json");
+    await writeFile(path, gdExport([bait(), gdFinding(8, { Severity: 7.2 })]));
+    const { state } = await t.pipeline.importCloudFile("c1", "guardduty", path, {
+      ...base(1),
+      preGradeRules: rules,
+    });
+    const rows = state.forensicTimeline.filter((e) => /^GuardDuty finding/.test(e.description));
+    expect(rows.map((e) => e.severity)).toEqual(["High"]);
   });
 });

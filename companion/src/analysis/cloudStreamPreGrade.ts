@@ -15,6 +15,7 @@ import { matchEvent } from "./taggerRules.js";
 import { raiseSeverity } from "./tagger.js";
 import { SEVERITY_RANK, type ForensicEvent, type Severity } from "./stateTypes.js";
 import type { MappedEvent } from "./siemImport.js";
+import { keepsVendorGrade } from "./vendorGrade.js";
 
 export interface PreGrader {
   /** Graded copies of the rows (a raised row is a new object), and how many a rule raised. */
@@ -59,7 +60,7 @@ export function createPreGrader(ruleset: CompiledRuleset | null): PreGrader {
       if (!rules.length) return { rows: [...rows], raised: 0 };
       let raised = 0;
       const out = rows.map((m) => {
-        if (m.severity === "Critical") return m;
+        if (m.severity === "Critical" || keepsVendorGrade(m)) return m;
         const event = asEvent(m);
         let severity: Severity = m.severity;
         const mitre = [...m.mitre];

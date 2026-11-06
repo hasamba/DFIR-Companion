@@ -11,6 +11,7 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { hasFieldValue, matchEvent, ruleFields, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
 import { withClrUsageLogNote } from "./clrUsageLogNote.js";
 import { capLabSetupSeverity, labSetupOf } from "./labSetupTransfer.js";
+import { keepsVendorGrade } from "./vendorGrade.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
 export interface RuleMatch {
@@ -194,6 +195,8 @@ export function applyToForensicEvent(input: ForensicEvent, result: EventTagResul
   // window is deterministic evidence the tagger cannot see, and a later manual "Run tagger" would
   // otherwise raise the provisioning-day log clear straight back to Critical.
   // A lab-setup row (#1946) may still be raised, but never above its Medium cap.
+  // A vendor-graded row (a GuardDuty finding, #2361) keeps its grade AND its MITRE: vendorGrade.ts.
+  if (keepsVendorGrade(event)) return event;
   const raised =
     event.origin === "collector" || event.buildTime
       ? event.severity

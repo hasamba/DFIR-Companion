@@ -42,7 +42,8 @@ import {
 
 type Row = Record<string, unknown>;
 
-export const GUARDDUTY_SOURCE = "AWS GuardDuty";
+import { GUARDDUTY_SOURCE } from "./vendorGrade.js";
+export { GUARDDUTY_SOURCE };
 const TITLE_MAX = 200;
 const RESOURCE_MAX = 160;
 const MESSAGE_MAX = 4000;

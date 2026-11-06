@@ -886,6 +886,7 @@
     "sysdigImport.ts": "analysis/ingest",
     "syslogImport.ts": "analysis/ingest",
     "tagger.ts": "analysis/findings",
+    "vendorGrade.ts": "analysis/findings",
     "taggerAuto.ts": "analysis/findings",
     "taggerRowTags.ts": "analysis/findings",
     "taggerRuleSuggest.ts": "analysis/findings",

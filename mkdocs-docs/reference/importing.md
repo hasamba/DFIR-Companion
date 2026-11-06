@@ -1847,7 +1847,9 @@ count and first, last and update times are in the event detail.
 | no numeric severity | **Low**, counted in the import note |
 
 An Info event never reaches the forensic timeline, so archived findings are in the super-timeline
-only. The remote address of the finding's action (network connection, API call, Kubernetes call,
+only. The grade is GuardDuty's own: content tagger rules may tag a GuardDuty event but never change
+its severity or techniques, because its resource names and description come from the account and
+could match an unrelated rule. The remote address of the finding's action (network connection, API call, Kubernetes call,
 port probe, RDS login) becomes an IP indicator, and a DNS request's domain a domain indicator.
 
 **MITRE ATT&CK** is added only where the finding type itself establishes the technique. Any other
