@@ -29,6 +29,7 @@ import { compileRuleset, type CompiledRuleset } from "./taggerRules.js";
 import {
   applyRuleUpdates,
   diffRuleSets,
+  ruleSetRevision,
   snapshotBase,
   type RuleBase,
   type RuleChoice,
@@ -57,6 +58,27 @@ export class TaggerRulesConflictError extends Error {
 
 // A revision is just a digest of the active rule text. It needs to change whenever the file does and
 // be cheap to compare — not to be unguessable — so a truncated sha256 is enough.
+// Thrown when a merge's upstream — the bundled set or the installed rule pack — is no longer the one
+// the analyst reviewed (#2344/#2349): a pack was installed or rolled back, or the app was upgraded,
+// after the review opened. The copy may be untouched, so TaggerRulesConflictError's check alone
+// would let a reviewed "accept" write a rule definition nobody saw. Answered 409 like that error.
+export class TaggerUpstreamChangedError extends Error {
+  constructor(
+    readonly currentUpstreamId: string | null,
+    readonly currentUpstreamRevision: string | null,
+  ) {
+    super("the rules your copy is compared with changed since this review was opened; reload the review");
+    this.name = "TaggerUpstreamChangedError";
+  }
+}
+
+/** What a merge was reviewed against: the copy's revision and the upstream's id and content revision. */
+export interface ReviewedRevisions {
+  revision: string;
+  upstreamId: string;
+  upstreamRevision: string;
+}
+
 export function rulesRevision(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
@@ -85,8 +107,9 @@ export interface RuleUpdatesView {
   report: RuleUpdateReport | null;
   /** The notice was dismissed at the current built-in revision. */
   dismissed: boolean;
-  /** What the copy is compared with: the built-in set or an installed rule pack (#2349). */
-  upstream: { id: string; label: string } | null;
+  /** What the copy is compared with: the built-in set or an installed rule pack (#2349), and the
+   *  ruleSetRevision() of its rules — sent back with apply/export so a changed upstream is refused. */
+  upstream: { id: string; label: string; revision: string } | null;
 }
 
 export interface RuleUpdatesApplied {
@@ -349,26 +372,41 @@ export class TaggerStore {
       ...view,
       report,
       dismissed: dismissedAt === report.upstreamRevision,
-      upstream: { id: upstream.id, label: upstream.label },
+      upstream: { id: upstream.id, label: upstream.label, revision: report.upstreamRevision },
     };
   }
 
   /**
+   * The current upstream, provided it is still the one the review was made against (#2344/#2349).
+   * Throws TaggerUpstreamChangedError otherwise. The returned snapshot is the ONE used for both the
+   * merge and the new base record, so a reviewed choice can never write an unseen definition.
+   */
+  private async reviewedUpstream(reviewed: ReviewedRevisions): Promise<Upstream> {
+    const upstream = await this.upstream();
+    const revision = upstream ? ruleSetRevision(upstream.map) : null;
+    if (!upstream || upstream.id !== reviewed.upstreamId || revision !== reviewed.upstreamRevision) {
+      throw new TaggerUpstreamChangedError(upstream?.id ?? null, revision);
+    }
+    return upstream;
+  }
+
+  /**
    * Bring chosen built-in rules into the user copy. Same lock and stale-revision check as save():
-   * the compare runs INSIDE the lock, and `expectedRevision` is required — a merge is always made
-   * from a review the analyst looked at, so it is never last-write-wins.
+   * the compare runs INSIDE the lock, and the reviewed revisions are required — a merge is always
+   * made from a review the analyst looked at, of this copy AND this upstream, so it is never
+   * last-write-wins.
    */
   async applyRuleUpdates(
     choices: Readonly<Record<string, RuleChoice>>,
-    expectedRevision: string,
+    reviewed: ReviewedRevisions,
   ): Promise<RuleUpdatesApplied> {
     this.assertEditable();
     return rulesLock.runExclusive(this.userRulesPath, async () => {
       const active = await this.readActiveText();
       const current = rulesRevision(active.text);
-      if (current !== expectedRevision) throw new TaggerRulesConflictError(current);
-      const upstream = active.source === "user" ? await this.upstream() : null;
-      if (!upstream) throw new NothingToMergeError();
+      if (current !== reviewed.revision) throw new TaggerRulesConflictError(current);
+      if (active.source !== "user") throw new NothingToMergeError();
+      const upstream = await this.reviewedUpstream(reviewed);
       const base = await this.readBaseRecord(upstream.id);
       const out = applyRuleUpdates({
         upstream: upstream.map,
@@ -388,12 +426,20 @@ export class TaggerStore {
     });
   }
 
-  /** The merged YAML the given choices would produce — for a TAGGER_RULES_FILE source. Writes nothing. */
-  async exportMergedRules(choices: Readonly<Record<string, RuleChoice>>): Promise<string> {
+  /**
+   * The merged YAML the given choices would produce — for a TAGGER_RULES_FILE source. Writes nothing,
+   * but checks the same reviewed revisions as apply, so a download never carries unseen rules.
+   */
+  async exportMergedRules(
+    choices: Readonly<Record<string, RuleChoice>>,
+    reviewed: ReviewedRevisions,
+  ): Promise<string> {
     const active = await this.readActiveText();
+    const current = rulesRevision(active.text);
+    if (current !== reviewed.revision) throw new TaggerRulesConflictError(current);
+    if (active.source === "default" || active.source === "pack") throw new NothingToMergeError();
+    const upstream = await this.reviewedUpstream(reviewed);
     const mine = parseRuleMap(active.text);
-    const upstream = active.source === "default" || active.source === "pack" ? null : await this.upstream();
-    if (!upstream) return stringifyRuleMap(mine);
     const base = active.source === "user" ? await this.readBaseRecord(upstream.id) : null;
     return stringifyRuleMap(applyRuleUpdates({ upstream: upstream.map, mine, base, choices }).rules);
   }

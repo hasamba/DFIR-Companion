@@ -41,6 +41,13 @@ afterEach(async () => {
 
 const app = () => createApp(store, { taggerStore });
 
+/** The three revisions the dashboard sends back with apply and export. */
+const reviewed = (body: { revision: string; upstreamId: string; upstreamRevision: string }) => ({
+  revision: body.revision,
+  upstreamId: body.upstreamId,
+  upstreamRevision: body.upstreamRevision,
+});
+
 async function upgradeBuiltin(): Promise<void> {
   await writeFile(defaultPath, r("one", "High") + r("two") + r("three", "High"));
 }
@@ -108,7 +115,7 @@ describe("POST /tagger/rules/updates/apply", () => {
     const view = await request(app()).get("/tagger/rules/updates");
     const res = await request(app())
       .post("/tagger/rules/updates/apply")
-      .send({ revision: view.body.revision, choices: { three: "upstream", one: "upstream", bogus: "nope" } });
+      .send({ ...reviewed(view.body), choices: { three: "upstream", one: "upstream", bogus: "nope" } });
     expect(res.status).toBe(200);
     expect(res.body.applied.sort()).toEqual(["one", "three"]);
     const doc = parseYaml(await readFile(userPath, "utf8"));
@@ -120,9 +127,10 @@ describe("POST /tagger/rules/updates/apply", () => {
     await taggerStore.save(r("one") + r("two"));
     await upgradeBuiltin();
     const before = await readFile(userPath, "utf8");
+    const view = await request(app()).get("/tagger/rules/updates");
     const res = await request(app())
       .post("/tagger/rules/updates/apply")
-      .send({ revision: "stale", choices: { three: "upstream" } });
+      .send({ ...reviewed(view.body), revision: "stale", choices: { three: "upstream" } });
     expect(res.status).toBe(409);
     expect(typeof res.body.revision).toBe("string");
     expect(await readFile(userPath, "utf8")).toBe(before);
@@ -132,6 +140,34 @@ describe("POST /tagger/rules/updates/apply", () => {
     await taggerStore.save(r("one"));
     const res = await request(app()).post("/tagger/rules/updates/apply").send({ choices: {} });
     expect(res.status).toBe(400);
+  });
+
+  it("requires the upstream the review was made against", async () => {
+    await taggerStore.save(r("one"));
+    await upgradeBuiltin();
+    const view = await request(app()).get("/tagger/rules/updates");
+    expect(view.body.upstreamId).toBe("builtin");
+    expect(view.body.upstreamRevision).toMatch(/^[0-9a-f]{16}$/);
+    const res = await request(app())
+      .post("/tagger/rules/updates/apply")
+      .send({ revision: view.body.revision, choices: { three: "upstream" } });
+    expect(res.status).toBe(400);
+    expect(await readFile(userPath, "utf8")).toBe(r("one"));
+  });
+
+  it("refuses with 409 when the compared-with rules changed after the review, and writes nothing", async () => {
+    await taggerStore.save(r("one") + r("two"));
+    await upgradeBuiltin();
+    const view = await request(app()).get("/tagger/rules/updates");
+    await writeFile(defaultPath, r("one", "High") + r("two") + r("three", "Critical"));
+    const before = await readFile(userPath, "utf8");
+    const res = await request(app())
+      .post("/tagger/rules/updates/apply")
+      .send({ ...reviewed(view.body), choices: { three: "upstream" } });
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe("upstream");
+    expect(res.body.error).toMatch(/changed since this review/);
+    expect(await readFile(userPath, "utf8")).toBe(before);
   });
 
   it("refuses a TAGGER_RULES_FILE source and never writes it", async () => {
@@ -157,13 +193,32 @@ describe("POST /tagger/rules/updates/export", () => {
     await writeFile(envFile, r("one"));
     process.env.TAGGER_RULES_FILE = envFile;
     await upgradeBuiltin();
+    const view = await request(app()).get("/tagger/rules/updates");
     const res = await request(app())
       .post("/tagger/rules/updates/export")
-      .send({ choices: { three: "upstream" } });
+      .send({ ...reviewed(view.body), choices: { three: "upstream" } });
     expect(res.status).toBe(200);
     expect(res.headers["content-disposition"]).toMatch(/attachment; filename="tagger-rules-merged\.yaml"/);
     expect(Object.keys(parseYaml(res.text)).sort()).toEqual(["one", "three"]);
     expect(await readFile(envFile, "utf8")).toBe(r("one"));
+  });
+
+  it("requires the reviewed revisions, and refuses with 409 when the built-in set changed since", async () => {
+    const envFile = join(dir, "operator.yaml");
+    await writeFile(envFile, r("one"));
+    process.env.TAGGER_RULES_FILE = envFile;
+    await upgradeBuiltin();
+    const view = await request(app()).get("/tagger/rules/updates");
+    const missing = await request(app())
+      .post("/tagger/rules/updates/export")
+      .send({ choices: { three: "upstream" } });
+    expect(missing.status).toBe(400);
+    await writeFile(defaultPath, r("one") + r("three", "Critical"));
+    const res = await request(app())
+      .post("/tagger/rules/updates/export")
+      .send({ ...reviewed(view.body), choices: { three: "upstream" } });
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe("upstream");
   });
 });
 

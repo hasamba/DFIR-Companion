@@ -244,6 +244,18 @@ function tuAppliedNote(d) {
   taggerUpdatesNoteUp = true;
 }
 
+// What the review was made against: the copy AND the rules it is compared with (#2344/#2349). The
+// server refuses (409) when either changed since — e.g. a rule pack installed or rolled back.
+function tuReviewed(view) {
+  return { revision: view.revision, upstreamId: view.upstreamId, upstreamRevision: view.upstreamRevision };
+}
+
+function tuStaleText(d, verb) {
+  return d && d.reason === "upstream"
+    ? `Not ${verb} — the rules your copy is compared with changed since this review was loaded (a rule pack was installed or rolled back, or the app was updated). It has been reloaded; check it and try again.`
+    : `Not ${verb} — the rules changed since this review was loaded. It has been reloaded; check it and try again.`;
+}
+
 async function applyTaggerUpdates() {
   const view = taggerUpdatesView;
   if (!view || view.readOnly) return;
@@ -251,12 +263,12 @@ async function applyTaggerUpdates() {
   try {
     const r = await fetch("/tagger/rules/updates/apply", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ revision: view.revision, choices: taggerUpdateChoices }),
+      body: JSON.stringify({ ...tuReviewed(view), choices: taggerUpdateChoices }),
     });
     const d = await r.json();
     if (r.status === 409) {
       await loadTaggerUpdates(); // re-renders the review, so the message goes after it
-      tuMsg("Not applied — the rules changed since this review was loaded. It has been reloaded; check it and apply again.", "var(--badge-danger-text)");
+      tuMsg(tuStaleText(d, "applied"), "var(--badge-danger-text)");
       return;
     }
     if (!r.ok) { tuMsg("Not applied: " + (d.error || r.status), "var(--badge-danger-text)"); return; }
@@ -268,12 +280,20 @@ async function applyTaggerUpdates() {
 }
 
 async function exportTaggerUpdates() {
+  const view = taggerUpdatesView;
+  if (!view) return;
   tuMsg("Preparing download…");
   try {
     const r = await fetch("/tagger/rules/updates/export", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ choices: taggerUpdateChoices }),
+      body: JSON.stringify({ ...tuReviewed(view), choices: taggerUpdateChoices }),
     });
+    if (r.status === 409) {
+      const d = await r.json();
+      await loadTaggerUpdates();
+      tuMsg(tuStaleText(d, "downloaded"), "var(--badge-danger-text)");
+      return;
+    }
     if (!r.ok) { const d = await r.json(); tuMsg("Download failed: " + (d.error || r.status), "var(--badge-danger-text)"); return; }
     const url = URL.createObjectURL(await r.blob());
     const a = document.createElement("a");

@@ -1,6 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { stringify as stringifyYaml } from "yaml";
-import { NothingToMergeError, TaggerRulesConflictError } from "../analysis/taggerStore.js";
+import {
+  NothingToMergeError,
+  TaggerRulesConflictError,
+  TaggerUpstreamChangedError,
+  type ReviewedRevisions,
+} from "../analysis/taggerStore.js";
 import type { RuleChoice, RuleUpdateItem } from "../analysis/taggerRulesMerge.js";
 import type { RouteContext } from "./context.js";
 
@@ -13,6 +18,10 @@ import type { RouteContext } from "./context.js";
  *   - POST /tagger/rules/updates/apply    — apply a selection through the editor's lock + revision check.
  *   - POST /tagger/rules/updates/export   — the merged YAML as a download; writes nothing (env source).
  *   - POST /tagger/rules/updates/dismiss  — hide the notice until the built-in set changes again.
+ *
+ * Apply and export carry the copy revision AND the upstream id + revision the review showed; either
+ * changing since (an edit, a rule pack installed or rolled back, an app upgrade) is a 409 and
+ * nothing is written.
  *
  * Applying never re-grades a case: open cases keep their grades until the analyst presses
  * Super-Timeline → Content tagger → Run tagger, and the dashboard says so.
@@ -30,6 +39,41 @@ function parseChoices(raw: unknown): Record<string, RuleChoice> {
     }
   }
   return out;
+}
+
+/**
+ * The revisions a review was made against: the copy, and the upstream (bundled set or rule pack) it
+ * was compared with. All three are required on apply and export — a pack installed or rolled back
+ * after the review opened must not let a reviewed choice write an unseen rule. Null when any is absent.
+ */
+function parseReviewed(body: unknown): ReviewedRevisions | null {
+  const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const revision = str(b.revision);
+  const upstreamId = str(b.upstreamId);
+  const upstreamRevision = str(b.upstreamRevision);
+  if (!revision || !upstreamId || !/^[0-9a-f]{16}$/.test(upstreamRevision)) return null;
+  return { revision, upstreamId, upstreamRevision };
+}
+
+const NEEDS_REVIEW = "revision, upstreamId and upstreamRevision are required — reload the review first";
+
+/** A stale review → 409 with what changed; anything else → undefined (the caller answers). */
+function staleReview(res: Response, err: unknown, logLine: (msg: string) => void, what: string) {
+  if (err instanceof TaggerRulesConflictError) {
+    logLine(`[tagger] rule update ${what} refused — the review was out of date`);
+    return res.status(409).json({ error: err.message, reason: "copy", revision: err.currentRevision });
+  }
+  if (err instanceof TaggerUpstreamChangedError) {
+    logLine(`[tagger] rule update ${what} refused — the compared-with rules changed since the review`);
+    return res.status(409).json({
+      error: err.message,
+      reason: "upstream",
+      upstreamId: err.currentUpstreamId,
+      upstreamRevision: err.currentUpstreamRevision,
+    });
+  }
+  return undefined;
 }
 
 export interface RuleSide {
@@ -74,6 +118,8 @@ export function registerTaggerUpdateRoutes(app: Express, ctx: RouteContext): voi
         dismissed: view.dismissed,
         // The built-in set, or the installed rule pack (#2349): the dashboard names it in the notice.
         upstreamLabel: view.upstream?.label ?? null,
+        // Sent back with apply/export: a pack installed or rolled back since is refused (409).
+        upstreamId: view.upstream?.id ?? null,
       };
       const report = view.report;
       if (!report) return res.status(200).json({ ...base, notice: false });
@@ -104,19 +150,17 @@ export function registerTaggerUpdateRoutes(app: Express, ctx: RouteContext): voi
 
   app.post("/tagger/rules/updates/apply", async (req: Request, res: Response) => {
     if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
-    const revision = typeof req.body?.revision === "string" ? req.body.revision : "";
-    if (!revision) return res.status(400).json({ error: "revision is required — reload the review first" });
+    const reviewed = parseReviewed(req.body);
+    if (!reviewed) return res.status(400).json({ error: NEEDS_REVIEW });
     try {
-      const out = await options.taggerStore.applyRuleUpdates(parseChoices(req.body?.choices), revision);
+      const out = await options.taggerStore.applyRuleUpdates(parseChoices(req.body?.choices), reviewed);
       logLine(
         `[tagger] built-in rule updates applied — ${out.applied.length} brought in, ${out.kept.length} kept as yours, ${out.ruleCount} rule(s)`,
       );
       return res.status(200).json(out);
     } catch (err) {
-      if (err instanceof TaggerRulesConflictError) {
-        logLine("[tagger] rule update refused — the review was out of date");
-        return res.status(409).json({ error: err.message, revision: err.currentRevision });
-      }
+      const stale = staleReview(res, err, logLine, "apply");
+      if (stale) return stale;
       if (err instanceof NothingToMergeError) return res.status(400).json({ error: err.message });
       return res.status(400).json({ error: (err as Error).message });
     }
@@ -124,11 +168,15 @@ export function registerTaggerUpdateRoutes(app: Express, ctx: RouteContext): voi
 
   app.post("/tagger/rules/updates/export", async (req: Request, res: Response) => {
     if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
+    const reviewed = parseReviewed(req.body);
+    if (!reviewed) return res.status(400).json({ error: NEEDS_REVIEW });
     try {
-      const text = await options.taggerStore.exportMergedRules(parseChoices(req.body?.choices));
+      const text = await options.taggerStore.exportMergedRules(parseChoices(req.body?.choices), reviewed);
       res.setHeader("Content-Disposition", 'attachment; filename="tagger-rules-merged.yaml"');
       return res.type("application/yaml").status(200).send(text);
     } catch (err) {
+      const stale = staleReview(res, err, logLine, "download");
+      if (stale) return stale;
       return res.status(400).json({ error: (err as Error).message });
     }
   });

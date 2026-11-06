@@ -62,13 +62,13 @@ When your copy is older than the built-in set, **Super-Timeline → Content tagg
 - **Review changes** lists each added and changed built-in rule with its description and grade. A changed rule shows your version and the built-in version.
 - **Changed on both sides** — when you edited a rule that the built-in set also changed, both versions are shown. Pick **Keep mine** or **Use built-in**. Nothing is applied for that rule until you pick.
 - **Removed by you** — a built-in rule you deleted is never brought back on its own. It is listed with a **Restore** box, one rule at a time.
-- **Add new rules** applies your selection to your copy. Your edited rules and your own rules are always kept. When someone else changed the rules after you opened the review, nothing is applied and the review reloads.
+- **Add new rules** applies your selection to your copy. Your edited rules and your own rules are always kept. When someone else changed the rules after you opened the review — or the rules your copy is compared with changed, because a rule pack was installed or rolled back — nothing is applied and the review reloads with a message.
 - **Dismiss** hides the notice on this server until the built-in set changes again.
 - **Open cases keep their grades.** Adding rules does not re-grade anything. Press **Super-Timeline → Content tagger → Run tagger** to apply the current rules to an imported case; the note shown after adding rules has a button for it.
 
 The server records which built-in rules your copy was taken from each time it writes the copy. A copy saved before this release has no record. Its review compares rules by name: a built-in rule missing from your copy is shown as *new, or removed by you* (not pre-selected), and a rule that differs is shown as *changed — unknown which side*, for you to pick. After you apply once, the record exists and later reviews are exact.
 
-With a `TAGGER_RULES_FILE` source the server never writes the file. You get the notice and the review, and **Download merged rules** gives you the merged YAML to put in place yourself.
+With a `TAGGER_RULES_FILE` source the server never writes the file. You get the notice and the review, and **Download merged rules** gives you the merged YAML to put in place yourself. The download is refused, and the review reloads, when the rules changed since you opened it.
 
 In team mode, only the instance administrator can see the notice and apply it, the same as editing rules.
 

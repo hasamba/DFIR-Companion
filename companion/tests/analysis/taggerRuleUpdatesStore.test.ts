@@ -3,7 +3,12 @@ import { mkdtemp, writeFile, rm, readFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { TaggerStore, TaggerRulesConflictError } from "../../src/analysis/taggerStore.js";
+import {
+  TaggerStore,
+  TaggerRulesConflictError,
+  TaggerUpstreamChangedError,
+  type RuleUpdatesView,
+} from "../../src/analysis/taggerStore.js";
 
 // #2344 at the store seam: the base record is written with every write of the user copy, survives
 // structural edits (stringifyYaml drops comments, so it is a sidecar, not a header), and the merge
@@ -35,6 +40,13 @@ const exists = (p: string) =>
     () => true,
     () => false,
   );
+
+/** What the dashboard sends back with a merge: the copy and the upstream it reviewed. */
+const reviewed = (view: RuleUpdatesView) => ({
+  revision: view.revision,
+  upstreamId: view.upstream!.id,
+  upstreamRevision: view.upstream!.revision,
+});
 
 /** The built-in set gains a rule and changes one — an app upgrade. */
 async function upgradeBuiltin(): Promise<void> {
@@ -87,8 +99,10 @@ describe("rule updates against the built-in set", () => {
     const s = store();
     await s.save(r("one") + r("two") + r("mine", "Critical"));
     await upgradeBuiltin();
-    const { revision } = await s.readActive();
-    const out = await s.applyRuleUpdates({ three: "upstream", one: "upstream" }, revision);
+    const out = await s.applyRuleUpdates(
+      { three: "upstream", one: "upstream" },
+      reviewed(await s.ruleUpdates()),
+    );
     expect(out.applied.sort()).toEqual(["one", "three"]);
     const doc = parseYaml(await readFile(userPath, "utf8"));
     expect(doc.three.severity).toBe("High");
@@ -102,7 +116,8 @@ describe("rule updates against the built-in set", () => {
     await s.save(r("one") + r("two"));
     await upgradeBuiltin();
     const before = await readFile(userPath, "utf8");
-    await expect(s.applyRuleUpdates({ three: "upstream" }, "stale")).rejects.toBeInstanceOf(
+    const stale = { ...reviewed(await s.ruleUpdates()), revision: "stale" };
+    await expect(s.applyRuleUpdates({ three: "upstream" }, stale)).rejects.toBeInstanceOf(
       TaggerRulesConflictError,
     );
     expect(await readFile(userPath, "utf8")).toBe(before);
@@ -111,7 +126,8 @@ describe("rule updates against the built-in set", () => {
   it("refuses to apply when the built-in rules are active — an apply never creates the copy", async () => {
     const s = store();
     const { revision } = await s.readActive();
-    await expect(s.applyRuleUpdates({ one: "upstream" }, revision)).rejects.toThrow(/nothing to merge/);
+    const asked = { revision, upstreamId: "builtin", upstreamRevision: "0000000000000000" };
+    await expect(s.applyRuleUpdates({ one: "upstream" }, asked)).rejects.toThrow(/nothing to merge/);
     expect(await exists(userPath)).toBe(false);
   });
 
@@ -125,12 +141,28 @@ describe("rule updates against the built-in set", () => {
     expect(u.source).toBe("env");
     expect(u.readOnly).toBe(true);
     expect(u.report?.added.map((i) => i.key).sort()).toEqual(["three", "two"]);
-    const { revision } = await s.readActive();
-    await expect(s.applyRuleUpdates({ three: "upstream" }, revision)).rejects.toThrow(/TAGGER_RULES_FILE/);
-    const exported = await s.exportMergedRules({ three: "upstream" });
+    await expect(s.applyRuleUpdates({ three: "upstream" }, reviewed(u))).rejects.toThrow(/TAGGER_RULES_FILE/);
+    const exported = await s.exportMergedRules({ three: "upstream" }, reviewed(u));
     expect(Object.keys(parseYaml(exported)).sort()).toEqual(["one", "three"]);
     expect(await readFile(envFile, "utf8")).toBe(r("one"));
     expect(await exists(userPath)).toBe(false);
+  });
+
+  it("refuses an apply or export reviewed against an older built-in set and writes nothing", async () => {
+    const s = store();
+    await s.save(r("one") + r("two"));
+    await upgradeBuiltin();
+    const view = await s.ruleUpdates();
+    expect(view.upstream?.revision).toBe(view.report?.upstreamRevision);
+    await writeFile(defaultPath, r("one", "High") + r("two") + r("three", "Critical")); // the app changed again
+    const before = await readFile(userPath, "utf8");
+    await expect(s.applyRuleUpdates({ three: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    await expect(s.exportMergedRules({ three: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    expect(await readFile(userPath, "utf8")).toBe(before);
   });
 
   it("remembers a dismiss until the built-in set changes again", async () => {

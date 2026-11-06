@@ -43,6 +43,7 @@ interface Api {
   loadTaggerUpdates: () => Promise<void>;
   openTaggerUpdates: () => void;
   applyTaggerUpdates: () => Promise<void>;
+  exportTaggerUpdates: () => Promise<void>;
   dismissTaggerUpdates: () => Promise<void>;
 }
 
@@ -59,6 +60,7 @@ const VIEW = {
   dismissed: false,
   notice: true,
   tracked: true,
+  upstreamId: "builtin",
   upstreamRevision: "0123456789abcdef",
   counts: { added: 2, changed: 1, conflicts: 1, removedByYou: 1 },
   added: [
@@ -74,7 +76,7 @@ const VIEW = {
   removedByYou: [{ key: "gone", uncertain: false, upstream: side("Gone", "Low") }],
 };
 
-function harness(view: Record<string, unknown>, applyStatus = 200) {
+function harness(view: Record<string, unknown>, applyStatus = 200, conflictReason = "copy") {
   const els: Record<string, FakeEl> = {
     taggerUpdatesNotice: new FakeEl("div"),
     taggerUpdatesPane: new FakeEl("div"),
@@ -101,8 +103,17 @@ function harness(view: Record<string, unknown>, applyStatus = 200) {
       calls.push({ url, body });
       if (url.endsWith("/apply")) {
         return applyStatus === 409
-          ? { ok: false, status: 409, json: async () => ({ error: "stale", revision: "rev2" }) }
+          ? {
+              ok: false,
+              status: 409,
+              json: async () => ({ error: "stale", reason: conflictReason, revision: "rev2" }),
+            }
           : { ok: true, status: 200, json: async () => ({ applied: ["new_rule"], kept: [], ruleCount: 9 }) };
+      }
+      if (url.endsWith("/export")) {
+        return applyStatus === 409
+          ? { ok: false, status: 409, json: async () => ({ error: "stale", reason: "upstream" }) }
+          : { ok: true, status: 200, blob: async () => new Blob(["x: 1\n"]) };
       }
       if (url.endsWith("/dismiss")) return { ok: true, status: 200, json: async () => ({ dismissed: true }) };
       return { ok: true, status: 200, json: async () => view };
@@ -195,6 +206,8 @@ describe("the review list", () => {
     const apply = h.calls.find((c) => c.url === "/tagger/rules/updates/apply")!;
     expect(apply.body).toEqual({
       revision: "rev1",
+      upstreamId: "builtin",
+      upstreamRevision: "0123456789abcdef",
       choices: { new_rule: "upstream", chg: "upstream", both: "mine", gone: "upstream" },
     });
   });
@@ -218,6 +231,32 @@ describe("the review list", () => {
     h.api.openTaggerUpdates();
     await h.api.applyTaggerUpdates();
     expect(h.pane().textContent).toContain("the rules changed since this review was loaded");
+  });
+
+  it("reloads the review and says so when the compared-with rules changed (pack installed or rolled back)", async () => {
+    const h = harness(VIEW, 409, "upstream");
+    await h.api.loadTaggerUpdates();
+    h.api.openTaggerUpdates();
+    const before = h.calls.filter((c) => c.url === "/tagger/rules/updates").length;
+    await h.api.applyTaggerUpdates();
+    expect(h.calls.filter((c) => c.url === "/tagger/rules/updates").length).toBe(before + 1);
+    expect(h.pane().textContent).toContain("the rules your copy is compared with changed");
+  });
+
+  it("sends the reviewed revisions with a download, and reloads on a stale review", async () => {
+    const h = harness({ ...VIEW, readOnly: true, source: "env" }, 409);
+    await h.api.loadTaggerUpdates();
+    h.api.openTaggerUpdates();
+    const before = h.calls.filter((c) => c.url === "/tagger/rules/updates").length;
+    await h.api.exportTaggerUpdates();
+    const exp = h.calls.find((c) => c.url === "/tagger/rules/updates/export")!;
+    expect(exp.body).toMatchObject({
+      revision: "rev1",
+      upstreamId: "builtin",
+      upstreamRevision: "0123456789abcdef",
+    });
+    expect(h.calls.filter((c) => c.url === "/tagger/rules/updates").length).toBe(before + 1);
+    expect(h.pane().textContent).toContain("Not downloaded");
   });
 
   it("lets a copy saved before tracking select every added rule in one click", async () => {

@@ -5,7 +5,11 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { RulePackStore, RulePackError } from "../../src/analysis/rulePackStore.js";
 import { parseRulePackManifest } from "../../src/analysis/rulePackManifest.js";
-import { TaggerStore } from "../../src/analysis/taggerStore.js";
+import {
+  TaggerStore,
+  TaggerUpstreamChangedError,
+  type RuleUpdatesView,
+} from "../../src/analysis/taggerStore.js";
 import { readRuleBase } from "../../src/analysis/taggerRulesBase.js";
 
 // The installed detection-rule pack (#2349): staging never installs, install / roll back move the
@@ -164,6 +168,13 @@ describe("rule pack store", () => {
   });
 });
 
+/** What the dashboard sends back with a merge: the copy and the upstream it reviewed. */
+const reviewed = (view: RuleUpdatesView) => ({
+  revision: view.revision,
+  upstreamId: view.upstream!.id,
+  upstreamRevision: view.upstream!.revision,
+});
+
 describe("the #2344 merge review with a pack as upstream", () => {
   it("offers a pack's added and changed rules to an edited copy and keeps the analyst's edits", async () => {
     // A copy made from the bundled set (base recorded under "builtin"), with one analyst edit.
@@ -178,7 +189,7 @@ describe("the #2344 merge review with a pack as upstream", () => {
     expect(view.report?.changed.map((i) => i.key)).toEqual(["one"]);
     expect(view.report?.analystEdited).toEqual(["two"]);
     expect(view.report?.conflicts).toEqual([]);
-    const out = await tagger.applyRuleUpdates({ one: "upstream", three: "upstream" }, view.revision);
+    const out = await tagger.applyRuleUpdates({ one: "upstream", three: "upstream" }, reviewed(view));
     expect(out.applied.sort()).toEqual(["one", "three"]);
     const text = await readFile(join(dir, "tagger", "tags.yaml"), "utf8");
     expect(text).toMatch(/two:[\s\S]*severity: Critical/);
@@ -193,5 +204,50 @@ describe("the #2344 merge review with a pack as upstream", () => {
     expect(await tagger.provenance()).toMatch(
       /^analyst-edited rules \(based on rule pack rules-2026\.11\.05/,
     );
+  });
+
+  it("refuses a merge reviewed before a pack was installed — the accepted rule was never seen", async () => {
+    await tagger.save(r("one") + r("two"));
+    await writeFile(defaultPath, r("one") + r("two") + r("three", "Low"));
+    const view = await tagger.ruleUpdates();
+    expect(view.upstream?.id).toBe("builtin");
+    const before = await readFile(join(dir, "tagger", "tags.yaml"), "utf8");
+    // The pack defines "three" differently from the definition the analyst reviewed.
+    await packs.install(downloaded(r("one") + r("two") + r("three", "Critical"), "rules-2026.11.05").token);
+    await expect(tagger.applyRuleUpdates({ three: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    await expect(tagger.exportMergedRules({ three: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    expect(await readFile(join(dir, "tagger", "tags.yaml"), "utf8")).toBe(before);
+    expect(await readRuleBase(tagger.baseRecordPath(), "rulepack")).toBeNull();
+  });
+
+  it("refuses a merge reviewed against a pack that was rolled back, or replaced by a newer pack", async () => {
+    await tagger.save(r("one"));
+    await packs.install(downloaded(r("one") + r("p1"), "rules-2026.11.01").token);
+    const view = await tagger.ruleUpdates();
+    expect(view.upstream?.id).toBe("rulepack");
+    await packs.install(downloaded(r("one") + r("p1", "Critical"), "rules-2026.11.05").token);
+    // Same upstream id ("rulepack"), different content: the revision catches it.
+    await expect(tagger.applyRuleUpdates({ p1: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    await packs.rollback("bundled");
+    await expect(tagger.applyRuleUpdates({ p1: "upstream" }, reviewed(view))).rejects.toBeInstanceOf(
+      TaggerUpstreamChangedError,
+    );
+    expect(await readFile(join(dir, "tagger", "tags.yaml"), "utf8")).toBe(r("one"));
+  });
+
+  it("applies when the copy and the upstream are both the ones reviewed", async () => {
+    await tagger.save(r("one"));
+    await packs.install(downloaded(r("one") + r("p1"), "rules-2026.11.01").token);
+    const view = await tagger.ruleUpdates();
+    const out = await tagger.applyRuleUpdates({ p1: "upstream" }, reviewed(view));
+    expect(out.applied).toEqual(["p1"]);
+    const base = await readRuleBase(tagger.baseRecordPath(), "rulepack");
+    expect(base?.revision).toBe(view.upstream?.revision);
   });
 });
