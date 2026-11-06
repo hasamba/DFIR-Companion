@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CheckClientFactory } from "../../../src/integrations/cloudCheck/checkClients.js";
 import { createCheckClientFactory } from "../../../src/integrations/cloudCheck/checkClients.js";
+import { X509Certificate } from "node:crypto";
+import { PFX_UNREADABLE } from "../../../src/integrations/cloudAccounts/microsoftCertificate.js";
+import { makeCertPem, makePfxBase64InMemory } from "../../helpers/cloudAccountFixtures.js";
 import {
-  PFX_NOT_TESTED,
   parseCloudCheckRequest,
   runCloudAccountCheck,
 } from "../../../src/integrations/cloudCheck/runCloudCheck.js";
@@ -99,18 +101,31 @@ describe("runCloudAccountCheck", () => {
     );
   });
 
-  it("does not sign in with a PFX certificate, and reports every source not tested", async () => {
+  it("signs in with a PFX certificate opened in memory (#2315)", async () => {
+    const { pem } = makeCertPem();
+    const pfxBase64 = makePfxBase64InMemory(pem, "pw-pfx");
+    const { clients } = mockGraph({ "/v1.0/auditLogs/signIns": { status: 200 } });
+    const seen: string[] = [];
+    const report = await runCloudAccountCheck(
+      microsoft("pfx", { pfxBase64, pfxPassword: "pw-pfx" }),
+      { sources: ["entra-signins"] },
+      factoryOf({ microsoft: (_s, derived) => (seen.push(derived), clients) }),
+    );
+    expect(seen).toHaveLength(1);
+    expect(new X509Certificate(seen[0]).fingerprint256).toBe(new X509Certificate(pem).fingerprint256);
+    expect(report.results[0].status).toBe("succeeded");
+  });
+
+  it("fails every source with fixed text when the PFX will not open, building no client", async () => {
     const factory = vi.fn(factoryOf({}));
     const report = await runCloudAccountCheck(
-      microsoft("pfx", { pfxBase64: "AAAA", pfxPassword: "pw" }),
+      microsoft("pfx", { pfxBase64: "AAAA", pfxPassword: "pw-wrong-sentinel" }),
       { sources: ["entra-signins", "entra-directory-audits"] },
       factory,
     );
     expect(factory).not.toHaveBeenCalled();
-    expect(report.results.every((r) => r.status === "not-tested" && r.detail === PFX_NOT_TESTED)).toBe(true);
-    expect(report.summary).toContain(
-      "Tested reads succeeded for: none. Failed: none. Not tested: Entra sign-in logs (",
-    );
+    expect(report.results.every((r) => r.status === "failed" && r.detail === PFX_UNREADABLE)).toBe(true);
+    expect(JSON.stringify(report)).not.toContain("sentinel");
   });
 
   it("checks a PEM Microsoft account with the stored certificate", async () => {

@@ -35,6 +35,11 @@ export interface RateLimitSpec {
   perMs: number;
   /** One limiter per value of this partition key (CloudTrail LookupEvents: per region). */
   perPartitionKey?: string;
+  /**
+   * Sources naming the same group share ONE limiter (#2315): Graph's identity reports allow 5
+   * requests per 10 s per app per tenant across sign-ins and directory audits together.
+   */
+  group?: string;
 }
 
 /** One source a provider can collect (e.g. "cloudtrail-s3", "entra-signins", "gcp-audit"). */
@@ -73,6 +78,12 @@ export interface CollectPageRequest {
   /** Partition fallback (#2312): only this slice of the source, e.g. `{ region: "eu-west-1" }`. */
   partition?: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * What the cloud is doing while this request waits (#2315): "audit query running — 4 min". The
+   * engine puts it on the sub-window in the checkpoint, so the panel shows it; a Graph audit query
+   * can sit in the network stage ten minutes and more before its first page exists.
+   */
+  onStatus?: (status: string) => void;
 }
 
 /** One page as the cloud returned it. `body` is saved byte for byte as evidence. */
@@ -134,6 +145,8 @@ export interface CloudCollectProvider {
   quotaScope?(settings: Readonly<Record<string, unknown>>): string | undefined;
   /** Throttle retries one collection run may spend (#2312). Default DEFAULT_RETRY_BUDGET. */
   retryBudget?: number;
+  /** Plain sentences the panel shows under the provider's sources: what it does NOT collect. */
+  notes?: readonly string[];
 }
 
 /** The providers this server can collect with, keyed by provider. Empty until #2313–#2315. */
@@ -268,6 +281,8 @@ export interface SubWindowStatus {
   /** When its first page came back (the disclosed cutoff is measured from it). */
   firstRetrievedAt?: string;
   acquiredUntil?: string;
+  /** The provider's own status while the sub-window waits (#2315); cleared by its next page. */
+  providerStatus?: string;
 }
 
 /** Per source, how far the collection really got (#2312): never "complete" past this. */

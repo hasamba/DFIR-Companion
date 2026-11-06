@@ -126,8 +126,9 @@ export class RateLimiter {
   }
 }
 
-/** The limiter key of one request: the source, plus the partition value it is limited per. */
+/** The limiter key of one request: the source (or its shared group), plus the partition value. */
 export function rateKey(source: string, spec: RateLimitSpec, partition?: Record<string, string>): string {
   const key = spec.perPartitionKey;
-  return key && partition?.[key] ? `${source}|${key}=${partition[key]}` : source;
+  const base = spec.group ? `group:${spec.group}` : source;
+  return key && partition?.[key] ? `${base}|${key}=${partition[key]}` : base;
 }

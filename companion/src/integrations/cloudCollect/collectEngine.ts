@@ -38,8 +38,8 @@ export interface CollectProgress {
   pages: number;
   records: number;
   imported: number;
-  /** Per source: pages and records saved so far. */
-  sources: Array<{ source: string; pages: number; records: number; state: string }>;
+  /** Per source: pages and records saved so far, and what the cloud is doing now (#2315). */
+  sources: Array<{ source: string; pages: number; records: number; state: string; status?: string }>;
 }
 
 export interface CollectRunDeps {
@@ -73,14 +73,21 @@ export interface NewCollection {
 }
 
 function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress["sources"] {
-  const by = new Map<string, { source: string; pages: number; records: number; state: string }>();
+  const by = new Map<string, CollectProgress["sources"][number]>();
   const RANK: Record<string, number> = { done: 0, incomplete: 1, pending: 2, capped: 2, failed: 3 };
   for (const sw of subWindows) {
     const prev = by.get(sw.source) ?? { source: sw.source, pages: 0, records: 0, state: "done" };
     // A split parent's pages count; its state does not — its children carry it (#2312).
     const mine = sw.state === "split" ? "done" : sw.state === "capped" ? "pending" : sw.state;
     const state = (RANK[mine] ?? 0) > (RANK[prev.state] ?? 0) ? mine : prev.state;
-    by.set(sw.source, { ...prev, pages: prev.pages + sw.pages, records: prev.records + sw.records, state });
+    const status = sw.providerStatus ?? prev.status;
+    by.set(sw.source, {
+      ...prev,
+      pages: prev.pages + sw.pages,
+      records: prev.records + sw.records,
+      state,
+      ...(status ? { status } : {}),
+    });
   }
   return [...by.values()];
 }

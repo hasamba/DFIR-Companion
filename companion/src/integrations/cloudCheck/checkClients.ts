@@ -10,7 +10,6 @@ import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
 import { fromTemporaryCredentials } from "@aws-sdk/credential-providers";
-import { ClientCertificateCredential } from "@azure/identity";
 import type { JWTInput } from "google-auth-library";
 import type {
   AwsSecrets,
@@ -21,7 +20,7 @@ import type {
 } from "../cloudAccounts/types.js";
 import type { CloudTransport } from "../cloudTransport/cloudAgent.js";
 import { awsClientConfig, type AwsTransportConfig } from "../cloudTransport/awsTransport.js";
-import { azureCredentialOptions } from "../cloudTransport/azureTransport.js";
+import { accessToken, GRAPH_SCOPE, microsoftCredential } from "../cloudTransport/microsoftCredential.js";
 import { cloudFetch, type CloudFetch } from "../cloudTransport/cloudFetch.js";
 import { createGoogleAuth, googleImpersonatedClient } from "../cloudTransport/googleTransport.js";
 import { googleAmbientImpersonatedClient } from "../cloudTransport/googleAmbient.js";
@@ -53,7 +52,6 @@ export interface CheckWire {
 
 const DEFAULT_AWS_REGION = "us-east-1";
 const ROLE_SESSION_NAME = "dfir-companion-read-check";
-const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 const LOGGING_READ_SCOPE = "https://www.googleapis.com/auth/logging.read";
 
 function awsCredentials(
@@ -134,20 +132,9 @@ function microsoftClients(
   transport: CloudTransport,
   wire: CheckWire,
 ): MicrosoftCheckClients {
-  const credential = new ClientCertificateCredential(
-    settings.tenantId,
-    settings.clientId,
-    { certificate: certificatePem },
-    azureCredentialOptions(transport),
-  );
+  const credential = microsoftCredential(settings, certificatePem, transport);
   return {
-    getToken: async () => {
-      const token = await credential.getToken(GRAPH_SCOPE, {
-        abortSignal: AbortSignal.timeout(CHECK_CALL_TIMEOUT_MS),
-      });
-      if (!token?.token) throw new CheckSetupError("Microsoft returned no access token");
-      return token.token;
-    },
+    getToken: () => accessToken(credential, GRAPH_SCOPE, AbortSignal.timeout(CHECK_CALL_TIMEOUT_MS)),
     fetch: wire.fetch,
   };
 }

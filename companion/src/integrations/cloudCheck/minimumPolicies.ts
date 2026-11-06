@@ -52,12 +52,14 @@ export const AWS_MINIMUM_POLICY_DOCUMENT = {
   ],
 } as const;
 
-/** Microsoft Graph application permissions (admin consent), as #2315 collects them. */
-export const MICROSOFT_GRAPH_PERMISSIONS = [
-  "AuditLogsQuery.Read.All",
-  "AuditLog.Read.All",
-  "Directory.Read.All",
-] as const;
+/**
+ * Microsoft Graph application permissions (admin consent), as #2315 collects them — checked against
+ * Microsoft Learn on 2026-11-06: AuditLogsQuery.Read.All for audit log queries (the per-workload
+ * AuditLogsQuery-*.Read.All names return only their workload's records); AuditLog.Read.All, the
+ * least-privileged permission for both sign-ins and directory audits. Directory.Read.All is only a
+ * higher-privileged alternative for directory audits, so it is not asked for.
+ */
+export const MICROSOFT_GRAPH_PERMISSIONS = ["AuditLogsQuery.Read.All", "AuditLog.Read.All"] as const;
 export const MICROSOFT_AZURE_ROLE = "Reader";
 
 export const GCP_ROLES = [
@@ -87,7 +89,8 @@ const MICROSOFT: MinimumPolicy = {
   ].join("\n"),
   notes: [
     "Add the Graph permissions as application permissions (not delegated) and grant admin consent.",
-    "AuditLogsQuery.Read.All is for unified audit log searches. Microsoft collection confirms the final permission names against Microsoft Learn.",
+    "AuditLogsQuery.Read.All reads the whole unified audit log. The per-workload permissions (AuditLogsQuery-Entra.Read.All, -Exchange, -SharePoint, -OneDrive, -CRM, -Endpoint) are narrower, but a query then returns only that workload's records.",
+    "AuditLog.Read.All reads sign-in and directory audit logs. Without Policy.Read.All the sign-ins leave out which Conditional Access policies applied; add it only if you need that.",
     "Reading sign-in logs needs a Microsoft Entra ID P1 or P2 licence in the tenant.",
     "Upload the certificate's public part to the app registration. The companion keeps the private key in its vault.",
   ],

@@ -4,6 +4,7 @@
 
 import type { OpenCloudAccount } from "../cloudAccounts/types.js";
 import { secretsOfAccount } from "../cloudAccounts/types.js";
+import { derivedSecretParts, microsoftCertificatePem } from "../cloudAccounts/microsoftCertificate.js";
 import { runAwsReadCheck } from "./awsReadCheck.js";
 import type { CheckClientFactory } from "./checkClients.js";
 import { runGcpReadCheck } from "./gcpReadCheck.js";
@@ -26,10 +27,6 @@ export type CloudCheckRunner = (
   account: OpenCloudAccount,
   request: CloudCheckRequest,
 ) => Promise<CloudCheckReport>;
-
-export const PFX_NOT_TESTED =
-  "this account uses a PFX certificate, which the check cannot sign in with until Microsoft collection " +
-  "adds PFX support; save the certificate as PEM to check it now";
 
 // S3's bucket naming rules: 3–63 lower-case letters, digits, dots and hyphens.
 const BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
@@ -104,11 +101,15 @@ async function resultsFor(
   }
   if (account.provider === "microsoft") {
     const sources = request.sources as MicrosoftCheckSource[];
-    const pem = account.secrets.certificatePem;
-    if (account.settings.certificateFormat === "pfx" || !pem)
-      return { results: sources.map((s) => sourceResult(s, "not-tested", PFX_NOT_TESTED)) };
+    // PEM as stored, or a PFX opened in memory (#2315) — before any client is built, so a PFX that
+    // will not open fails every source with fixed text and signs in with nothing.
+    const pem = microsoftCertificatePem(account.settings, account.secrets);
+    const all = [...secrets, ...derivedSecretParts(pem)];
     return {
-      results: await runMicrosoftReadCheck(factory().microsoft(account.settings, pem), { sources, secrets }),
+      results: await runMicrosoftReadCheck(factory().microsoft(account.settings, pem), {
+        sources,
+        secrets: all,
+      }),
     };
   }
   const sources = request.sources as GcpCheckSource[];
@@ -120,7 +121,7 @@ async function resultsFor(
 
 /**
  * Checks one opened account. `factory` is called only when a network check will run, so a PFX
- * account or a bad request never builds a client. A client that cannot be built (a credential
+ * that will not open or a bad request never builds a client. A client that cannot be built (a credential
  * missing from the account) fails every selected source with the reason.
  */
 export async function runCloudAccountCheck(

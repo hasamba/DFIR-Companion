@@ -7,7 +7,7 @@
 //   identity can also write. Use the minimum policy.
 //
 // A "Not tested: …" sentence sits before the closing sentence only when a source could not be tried
-// (no bucket named, a PFX certificate). The check never says an account is read-only or verified.
+// (no bucket named, no Data Access entry to read). The check never says an account is read-only or verified.
 
 import type { SourceCheckResult } from "./readCheckTypes.js";
 
@@ -52,8 +52,9 @@ function rawReason(err: unknown): string {
   if (err instanceof SyntaxError) return "the stored credential could not be read";
   const e = (err ?? {}) as ErrorShape;
   if (e.name === "AbortError" || e.name === "TimeoutError") return "no answer in time";
-  // The check's own refusals (an account stored without what it needs) are fixed text already.
-  if (e.name === "CheckSetupError") return text(e.message);
+  // The check's own refusals (an account stored without what it needs, a PFX that will not open)
+  // are fixed text already.
+  if (e.name === "CheckSetupError" || e.name === "CertificateError") return text(e.message);
   const gcp = e.response?.data?.error;
   const status = text(e.$metadata?.httpStatusCode) || text(e.response?.status) || text(e.status);
   const name = GENERIC_NAMES.has(text(e.name)) ? "" : text(e.name);

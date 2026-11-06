@@ -62,7 +62,9 @@ export function collectionDir(ctx: RouteContext, caseId: string, collectionId: s
 }
 
 function progressLine(p: CollectProgress): { done: number; total: number; detail: string } {
-  const per = p.sources.map((s) => `${s.source} ${s.pages} page(s) ${s.state}`).join(", ");
+  const per = p.sources
+    .map((s) => `${s.source} ${s.pages} page(s) ${s.state}${s.status ? ` (${s.status})` : ""}`)
+    .join(", ");
   if (p.stage === "network")
     return { done: p.pages, total: p.pages + 1, detail: `cloud collect — saving pages: ${per}` };
   return {
