@@ -372,7 +372,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     expected: "aws",
     status: "works",
     parsed: { records: 3, shows: "CreateAccessKey (iam) by user1" },
-    note: "Read by server path and decompressed while it streams (#2303); the dashboard asks for the path of a `.gz` file.",
+    note: "Decompressed while it streams (#2303); the Import button uploads a `.gz` file as it is, and the drop folder reads it too (#2336).",
   },
   {
     ...AWS,
