@@ -52,7 +52,9 @@ import { registerKerberoastChainRoutes } from "../routes/kerberoastChain.js";
 import { registerSensitiveAccessRoutes } from "../routes/sensitiveAccess.js";
 import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
+import { registerTaggerUpdateRoutes } from "../routes/taggerUpdates.js";
 import { registerSigmaRulesRoutes } from "../routes/sigmaRules.js";
+import { registerRulePackRoutes } from "../routes/rulePack.js";
 import { registerSigmaRegradeRoutes } from "../routes/sigmaRegrade.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
 import { registerMcpRoutes } from "../routes/mcp.js";
@@ -184,6 +186,8 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerSensitiveAccessRoutes(app, ctx);
   registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
+  registerTaggerUpdateRoutes(app, ctx);
+  registerRulePackRoutes(app, ctx); // Content tagger → Rule pack: check, review, install, roll back (#2349)
   registerSigmaRulesRoutes(app, ctx); // Settings → Sigma rules: updates, rollback, disabled list (#2204)
   registerSigmaRegradeRoutes(app, ctx); // re-grade an imported case with the current Sigma rules (#2206)
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the

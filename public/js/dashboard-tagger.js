@@ -168,6 +168,8 @@ async function refreshTaggerRuleList() {
     if (!r.ok || d.error) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = d.error || ("error " + r.status); return; }
     msg.style.color = "var(--text-muted)";
     msg.textContent = `${d.ruleCount} rule(s) · source: ${d.source}`;
+    // Any rule edit can change what the built-in set has that this copy lacks (#2344).
+    if (typeof loadTaggerUpdates === "function") loadTaggerUpdates();
     const readonly = d.source === "env";
     rows.innerHTML = "";
     (d.rules || []).forEach((rule) => {
@@ -275,6 +277,7 @@ async function saveTaggerRules() {
     msg.style.color = "#6bcB77";
     msg.textContent = `Saved — ${d.ruleCount} rule(s). Run tagger to apply.`;
     document.getElementById("taggerRulesSource").textContent = `user — ${d.ruleCount} rule(s)`;
+    if (typeof loadTaggerUpdates === "function") loadTaggerUpdates(); // #2344: the copy may differ from the built-in set now
   } catch (e) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "Save failed: " + e.message; }
 }
 

@@ -1096,7 +1096,7 @@ A Timesketch-style complete record of **every** imported event, kept separately 
 
 A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.
 
-**Content tagger** — click **Content tagger** in this panel's toolbar to run the content-based event tagger on demand (it also runs automatically after every import). See [Advanced → Content-Based Event Tagger](advanced.md#content-based-event-tagger) for the rule engine and AI-assisted rule authoring.
+**Content tagger** — click **Content tagger** in this panel's toolbar to run the content-based event tagger on demand (it also runs automatically after every import). See [Advanced → Content-Based Event Tagger](advanced.md#content-based-event-tagger) for the rule engine and AI-assisted rule authoring. When your edited rules are older than the built-in set, a notice in this area offers a review of the new and changed built-in rules ([New built-in rules for edited rules](advanced.md#new-built-in-rules-for-edited-rules)). The **Rule pack** box below it names the rules in use and offers **Check for updates**, **Install from file**, **Measure against this case** and **Roll back** for the detection rules released separately from the app ([Detection rule pack](advanced.md#detection-rule-pack)).
 
 **Export to Timesketch** — push or download the full super-timeline (forensic timeline + raw
 host-triage artifacts), alongside the existing Forensic Timeline export. Both push into the same

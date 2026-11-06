@@ -92,6 +92,8 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
 
   const recordRun = async (caseId: string, s: BulkRunSummary): Promise<void> => {
     if (!deps.analysisRunStore) return;
+    // Which rules graded this import (#2349), when the tagger ran on it.
+    const rulePack = s.rulesHash ? await deps.taggerStore?.provenance().catch(() => undefined) : undefined;
     try {
       await deps.analysisRunStore.record(caseId, {
         kind: "deterministic",
@@ -116,6 +118,7 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
             forensicKept: s.forensicKept,
             superAppended: s.superAppended,
             taggerMatched: s.tagged,
+            ...(rulePack ? { rulePack } : {}),
           },
           filteringPolicy: { scope: s.mode },
         },

@@ -230,6 +230,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_FORENSIC_",
   // Import-time Sigma rules (#2202): the on/off switch, and #2204's status / level settings.
   "DFIR_SIGMA_",
+  // The detection-rule pack's startup check (#2349): a notice switch, read once at startup.
+  "DFIR_RULE_PACK_",
   "DFIR_DROP_",
   "DFIR_BEACON_",
   "DFIR_PHASE_",

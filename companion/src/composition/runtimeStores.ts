@@ -112,6 +112,7 @@ import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
 import { CloudRecordStore } from "../analysis/cloudRecordStore.js";
 import { configureSigmaRules } from "./sigmaRules.js";
+import { configureRulePack } from "./rulePack.js";
 import { StarredReportStore } from "../analysis/starredReportStore.js";
 import { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
 import { CustodyStore } from "../analysis/custody.js";
@@ -220,7 +221,12 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   const dashboardViewStore = new DashboardViewStore(join(dirname(casesRoot), "dashboard-views"));
   // Content-based event tagger: dashboard-edited rules persist here; the bundled data/tags.yaml is
   // the fallback default (resolved inside TaggerStore), and TAGGER_RULES_FILE overrides both.
-  const taggerStore = new TaggerStore(join(dirname(casesRoot), "tagger", "tags.yaml"));
+  // An installed detection-rule pack (#2349) sits between the edited copy and the bundled default.
+  const rulePackStore = configureRulePack(dirname(casesRoot), getAppVersion());
+  const taggerStore = new TaggerStore(join(dirname(casesRoot), "tagger", "tags.yaml"), undefined, {
+    pack: rulePackStore,
+    appVersion: getAppVersion(),
+  });
   // Import-time Sigma rules (#2204): installed releases and the analyst's overrides live under the
   // server data folder, next to the tagger's; the grader reads the active release from here.
   const sigmaRules = configureSigmaRules(dirname(casesRoot));
@@ -530,6 +536,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     reportTemplateStore,
     dashboardViewStore,
     taggerStore,
+    rulePackStore,
     sigmaRules,
     iocWhitelistStore,
     importerStore,

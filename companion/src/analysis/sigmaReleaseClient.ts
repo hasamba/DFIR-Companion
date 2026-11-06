@@ -3,12 +3,13 @@
 // cap, and only when its bytes match the SHA-256 digest GitHub publishes for the asset. A release
 // without a digest is refused: the analyst can download it and use Install from file instead.
 //
-// The network calls are injected (the route passes the SSRF-guarded fetchOutbound), so this file
-// is testable without the network and never decides how a connection is made.
+// The download rules live in githubReleaseDownload.ts, shared with the detection-rule pack updater
+// (#2349). The network calls are injected (the route passes the SSRF-guarded fetchOutbound), so
+// this file is testable without the network and never decides how a connection is made.
 
-import { createHash } from "node:crypto";
-import { isAllowedAssetUrl, parseReleaseAssets } from "./velociraptorRelease.js";
+import { parseReleaseAssets } from "./velociraptorRelease.js";
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "./sigmaReleaseArchive.js";
+import { downloadVerifiedAsset, type ReleaseAssetFetch } from "./githubReleaseDownload.js";
 
 export const SIGMA_REPO = "SigmaHQ/sigma";
 export const SIGMA_RELEASE_ASSET = "sigma_all_rules.zip";
@@ -24,15 +25,7 @@ export interface SigmaLatestRelease {
 }
 
 /** The shape of fetchOutbound's result that the download needs. */
-export type SigmaAssetFetch = (
-  url: string,
-  timeoutMs: number,
-) => Promise<{ response: Response; url: URL; dispose: () => Promise<void> }>;
-
-const unexpectedHost = (where: string) =>
-  new Error(
-    `refusing the Sigma release from an unexpected host (${where}); only GitHub's release hosts are accepted`,
-  );
+export type SigmaAssetFetch = ReleaseAssetFetch;
 
 export async function latestSigmaRelease(
   fetchFn: typeof fetch,
@@ -57,50 +50,19 @@ export async function latestSigmaRelease(
   };
 }
 
-async function readCapped(body: ReadableStream<Uint8Array>): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  const reader = body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > SIGMA_RELEASE_MAX_ZIP_BYTES) {
-      await reader.cancel().catch(() => {});
-      throw new Error(
-        `the Sigma release download is larger than ${SIGMA_RELEASE_MAX_ZIP_BYTES / (1024 * 1024)} MB`,
-      );
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks);
-}
-
 /** The release zip's bytes, verified against GitHub's digest. */
 export async function downloadSigmaRelease(
   release: SigmaLatestRelease,
   fetchAsset: SigmaAssetFetch,
 ): Promise<Buffer> {
-  if (!release.sha256)
-    throw new Error(
-      "GitHub published no SHA-256 for this release, so it cannot be verified; download it yourself and use Install from file",
-    );
-  if (!isAllowedAssetUrl(release.url)) throw unexpectedHost("as listed by the release");
-  const fetched = await fetchAsset(release.url, ASSET_TIMEOUT_MS);
-  try {
-    if (!isAllowedAssetUrl(fetched.url.href)) {
-      await fetched.response.body?.cancel().catch(() => {});
-      throw unexpectedHost("after redirect");
-    }
-    if (!fetched.response.ok || !fetched.response.body)
-      throw new Error(`GitHub returned ${fetched.response.status} downloading the Sigma release`);
-    const bytes = await readCapped(fetched.response.body);
-    if (createHash("sha256").update(bytes).digest("hex") !== release.sha256)
-      throw new Error(
-        "the downloaded Sigma release does not match GitHub's published SHA-256; nothing was installed",
-      );
-    return bytes;
-  } finally {
-    await fetched.dispose();
-  }
+  return downloadVerifiedAsset(
+    {
+      url: release.url,
+      sha256: release.sha256,
+      maxBytes: SIGMA_RELEASE_MAX_ZIP_BYTES,
+      label: "Sigma release",
+      timeoutMs: ASSET_TIMEOUT_MS,
+    },
+    fetchAsset,
+  );
 }

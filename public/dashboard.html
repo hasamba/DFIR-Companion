@@ -221,6 +221,9 @@
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
+  <!-- Content tagger → built-in rule updates for an edited rules copy (#2344). Self-starts; refreshed after rule edits. -->
+  <script src="/js/dashboard-tagger-updates.js"></script>
+  <script src="/js/dashboard-rule-pack.js"></script>
   <!-- The CISA KEV catalog panel (#99), the second and last wholly-movable feature (#415 tier 3). -->
   <script src="/js/dashboard-kev.js"></script>
   <script src="/js/dashboard-sigma-rules.js"></script>
@@ -1479,6 +1482,7 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-TAGGER_AUTO">Content tagger auto-run<span class="sfield-hint">TAGGER_AUTO (true/false)</span></label><input id="env-TAGGER_AUTO" placeholder="true" /></div>
           <div class="sfield"><label for="env-TAGGER_SCOPE">Content tagger scope<span class="sfield-hint">TAGGER_SCOPE (forensic/super/both)</span></label><input id="env-TAGGER_SCOPE" placeholder="both" /></div>
+          <div class="sfield"><label for="env-DFIR_RULE_PACK_UPDATE_CHECK">Check for a new detection-rule pack at startup<span class="sfield-hint">DFIR_RULE_PACK_UPDATE_CHECK — on/off (default off); shows a notice in Content tagger → Rule pack, never installs</span></label><input id="env-DFIR_RULE_PACK_UPDATE_CHECK" placeholder="off" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_ANONYMIZE">Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off) — <b>read-only here</b>: a security toggle the dashboard must not be able to flip. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" readonly /></div>
@@ -4292,6 +4296,15 @@
         <button class="ev-bulk-btn" data-act="toggleTaggerRules" title="View / edit the tagging rules (YAML)">Edit rules</button>
         <button id="taggerSuggestToggle" class="ev-bulk-btn" data-act="toggleTaggerSuggest" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
         <span id="taggerMsg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
+      </div>
+      <!-- #2344: "your rules are older than the built-in set" + its review. Filled by js/dashboard-tagger-updates.js. -->
+      <div id="taggerUpdatesNotice" hidden data-safe-style="margin-bottom:6px;padding:6px;border:1px solid var(--warning-bg-strong);border-radius:6px;font-size:12px"></div>
+      <div id="taggerUpdatesPane" hidden data-safe-style="margin-bottom:8px;padding:6px;border:1px solid var(--border-color);border-radius:6px;font-size:12px;max-height:480px;overflow-y:auto"></div>
+      <!-- #2349: the detection-rule pack released separately from the app. Filled by js/dashboard-rule-pack.js. -->
+      <div id="rulePackPanel" hidden data-safe-style="margin-bottom:6px;padding:6px;border:1px solid var(--border-color);border-radius:6px;font-size:12px">
+        <div id="rulePackStatus"></div>
+        <div id="rulePackMsg" data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
+        <div id="rulePackReview" hidden data-safe-style="margin-top:6px;padding:6px;border:1px solid var(--border-color);border-radius:6px;max-height:480px;overflow-y:auto"></div>
       </div>
       <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
       <div id="taggerSuggestWrap" hidden>

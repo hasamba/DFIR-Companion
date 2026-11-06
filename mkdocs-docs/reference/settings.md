@@ -600,6 +600,10 @@ Controls the [content-based event tagger](advanced.md) (`companion/data/tags.yam
 
 - `TAGGER_AUTO` — run the tagger automatically after every import (default `true`; `false` = manual-only, via Super-Timeline → Content tagger → Run tagger)
 - `TAGGER_SCOPE` — `forensic` | `super` | `both` (default `both`); `super` only tags the super-timeline (never mutates severity/MITRE)
+- `TAGGER_RULES_FILE` — an operator rules file used instead of the built-in rules. The server never writes it; new built-in rules can be reviewed and downloaded merged (see [New built-in rules for edited rules](advanced.md#new-built-in-rules-for-edited-rules))
+- `DFIR_RULE_PACK_UPDATE_CHECK` — `on` / `off` (default `off`; a field in Settings next to the tagger fields). Checks once at startup for a newer [detection rule pack](advanced.md#detection-rule-pack) and shows a notice in Super-Timeline → Content tagger → Rule pack. It never installs; installing is always a click. Ignored in the public demo.
+
+Rule precedence: `TAGGER_RULES_FILE` > your edited rules > an installed rule pack > the rules bundled with the app.
 
 ---
 

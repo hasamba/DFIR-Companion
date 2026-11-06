@@ -13,6 +13,7 @@
  * this at all.
  */
 import { startupSigmaUpdateCheck } from "./sigmaRules.js";
+import { startupRulePackCheck } from "./rulePack.js";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -321,6 +322,11 @@ export function startPostListenTasks({
   // a "new release available" notice for Settings → Sigma rules and logs it; it never installs.
   void startupSigmaUpdateCheck(fetch).catch((e) =>
     warnLine(`[sigma] update check failed: ${(e as Error).message}`),
+  );
+  // Rule pack update check (#2349): only when DFIR_RULE_PACK_UPDATE_CHECK=on, once at startup, never
+  // in demo. A notice for Content tagger → Rule pack and a log line; it never installs.
+  void startupRulePackCheck(fetch, demoMode).catch((e) =>
+    warnLine(`[rule-pack] update check failed: ${(e as Error).message}`),
   );
   // SIEM audit export (#929): deliver whatever was still pending when this process last stopped.
   //

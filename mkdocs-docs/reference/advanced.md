@@ -53,6 +53,50 @@ A Timesketch-style rule engine (`tags.yaml`) that matches events on any real fie
 
 **AI-assisted rule authoring** — describe a rule in plain English and the AI drafts a valid `tags.yaml` rule you can preview (live match count against the open case), edit, and add. Includes per-rule remove (including shipped defaults) and a reset-to-defaults button. Uses the ejectable prompt `tagger-rule.txt` (`npm run prompts:eject`). AI-gated — falls back cleanly with no provider configured.
 
+### New built-in rules for edited rules
+
+The rules come from one of four places, in this order: a `TAGGER_RULES_FILE` file, your edited copy (made the first time you save in **Edit rules**, add a suggested rule, or remove a rule), an installed [rule pack](#detection-rule-pack), or the built-in `tags.yaml` bundled with the app. The first one found is used alone. An edited copy therefore does not get rules added or changed in a later release or pack on its own. When a rule pack is installed, the review below compares your copy with the pack instead of the bundled rules, and the notice names the pack.
+
+When your copy is older than the built-in set, **Super-Timeline → Content tagger** shows a notice: *Your detection rules are older than the built-in set: N added, M changed since your copy.* There is no notice while the built-in rules are active, or when your copy already holds every built-in rule.
+
+- **Review changes** lists each added and changed built-in rule with its description and grade. A changed rule shows your version and the built-in version.
+- **Changed on both sides** — when you edited a rule that the built-in set also changed, both versions are shown. Pick **Keep mine** or **Use built-in**. Nothing is applied for that rule until you pick.
+- **Removed by you** — a built-in rule you deleted is never brought back on its own. It is listed with a **Restore** box, one rule at a time.
+- **Add new rules** applies your selection to your copy. Your edited rules and your own rules are always kept. When someone else changed the rules after you opened the review — or the rules your copy is compared with changed, because a rule pack was installed or rolled back — nothing is applied and the review reloads with a message.
+- **Dismiss** hides the notice on this server until the built-in set changes again.
+- **Open cases keep their grades.** Adding rules does not re-grade anything. Press **Super-Timeline → Content tagger → Run tagger** to apply the current rules to an imported case; the note shown after adding rules has a button for it.
+
+The server records which built-in rules your copy was taken from each time it writes the copy. A copy saved before this release has no record. Its review compares rules by name: a built-in rule missing from your copy is shown as *new, or removed by you* (not pre-selected), and a rule that differs is shown as *changed — unknown which side*, for you to pick. After you apply once, the record exists and later reviews are exact.
+
+With a `TAGGER_RULES_FILE` source the server never writes the file. You get the notice and the review, and **Download merged rules** gives you the merged YAML to put in place yourself. The download is refused, and the review reloads, when the rules changed since you opened it.
+
+In team mode, only the instance administrator can see the notice and apply it, the same as editing rules.
+
+### Detection rule pack
+
+The built-in tagger rules are also published separately from the app, as a *rule pack*: a GitHub release of this project tagged `rules-YYYY.MM.DD` (or `rules-YYYY.MM.DD.N` for a second pack on one day). A pack is published on its own every time the rules change on `master`, so a lab can take new and fixed rules without upgrading the app. A pack holds the rules file and a manifest with its version, the minimum app version that can load it, the upstream sources its ported rules came from (with the upstream commit of each port), and the SHA-256 of every file. Pack releases never replace the app release as GitHub's "latest", and the app's "new version available" notice ignores them.
+
+**Super-Timeline → Content tagger → Rule pack** shows which rules are in use — bundled with the app, an installed pack (downloaded or installed from a file), your edited copy and the rules it is based on, or an operator file — and offers:
+
+- **Check for updates** — finds the newest pack this app can load and downloads it. A pack is accepted only from this project's GitHub releases, from GitHub's release hosts, under a size limit, and only when its files match the SHA-256 GitHub publishes for them **and** the SHA-256 in the pack's own manifest. It then shows the rules the pack adds, changes and removes compared with the rules a pack replaces. **Nothing is installed until you click Install.** A pack that needs a newer app is refused with a message naming the version it needs.
+- **Install from file** — for an offline lab: choose the pack's `tags.yaml` and, if you have it, its `rule-pack-manifest.json`. You get the same review. The pack is marked *not checked against GitHub*, and its file SHA-256 is recorded. With the manifest, the rules must still match the manifest's SHA-256 and the minimum app version still applies.
+- **Measure against this case** — counts the rows of the open case the pack would grade or tag differently: raised, entering the forensic timeline, no longer raised, staying out of it, and tagged differently. It changes nothing. The tagger only raises grades, so a rule the pack removes or narrows does not lower a grade already in the case; *no longer raised* counts rows a new import graded with the pack would leave lower.
+- **Install** — makes the reviewed pack the installed one. The pack it replaces is kept for roll back.
+- **Roll back** — to the previous pack, or to the rules bundled with the app.
+
+After you install or roll back, **open cases keep their grades** until you press **Run tagger**; the message after installing has a button for it.
+
+Which pack is used:
+
+- The order is `TAGGER_RULES_FILE` > your edited copy > installed pack > bundled rules. An installed pack does not replace your edited copy: its added and changed rules are offered through the [review above](#new-built-in-rules-for-edited-rules), and your own edits are kept. **Reset to defaults** in the rule editor drops your copy and falls back to the installed pack, if there is one.
+- A pack built for an older app version than the one you run is *superseded*: the rules bundled with your app already contain it. It is not offered, and an installed one stops being used after an app upgrade — the bundled rules take over, and the panel says why.
+- A pack whose file was changed on disk after installing is not used; the bundled rules are used and the panel says so.
+- Installing or rolling back switches packs in one step: an import running at that moment uses the old pack or the new one, never the bundled rules by accident, and an install that fails part-way leaves the pack in use unchanged. If the server's record of which pack is installed is missing or cannot be read, the bundled rules are used, no installed pack is deleted, and the panel says so; installing a pack again fixes it.
+
+Every import's tagger run records which rules graded it (for example `rule pack rules-2026.11.20 (downloaded from GitHub)` or `bundled with the app (0.45.0)`) in the case's analysis-run record, and the Markdown and HTML reports list them under **Tagger rules**. A case graded by two packs over time names both.
+
+An optional startup check, `DFIR_RULE_PACK_UPDATE_CHECK=on` (off by default), looks for a newer pack once when the server starts and shows a notice in the panel. It never installs. In team mode only the instance administrator — the users who may edit tagger rules — can check, install or roll back. The public demo does not download or install packs.
+
 ---
 
 ## Detection Passes
@@ -199,7 +243,7 @@ Synthesis is told to give a confirmed staging→upload pairing its own dedicated
 
 **Transfer tool staged with its config.** Operators often drop a bulk-transfer tool and its config file side by side before an upload, for example `rclone.exe` and `rclone.conf` in `C:\Users\Public\Music`. When a known transfer tool (rclone, WinSCP, MEGAcmd, MEGAsync, megatools) and its config file appear in one folder on one host within 10 minutes of each other, both file rows are raised to Medium and tagged T1567.002. A Prefetch, Amcache or process-start record for the same tool path on that host is raised to High. Each raised row carries a `[transfer tool staged: …]` note that names the folder and the partner rows. This proves the kit was staged and recorded. It does not prove that data left the host.
 
-An Amcache entry for rclone, restic, MEGAsync or MEGAcmd is graded Medium (T1567.002), the same as its Prefetch entry, so the AI sees the tool even when Amcache is its only trace. The rule applies at import: re-import an older case to grade its rows. A custom tagger rules file does not get this rule.
+An Amcache entry for rclone, restic, MEGAsync or MEGAcmd is graded Medium (T1567.002), the same as its Prefetch entry, so the AI sees the tool even when Amcache is its only trace. The rule applies at import: re-import an older case, or press **Run tagger**, to grade its rows. An edited or custom tagger rules file does not get this rule on its own: bring it in from the [built-in rule review](#new-built-in-rules-for-edited-rules).
 
 **Attack-tool store folder.** Operators often keep their whole kit in one folder that any user can write to. When one such folder (for example `C:\Users\Public\Music`, Temp, ProgramData or Downloads) holds three or more different attack tools on one host, the companion raises one record per tool to Medium. Each raised record carries an `attack tool store` note that names the folder and every tool. The tool list combines the named offensive tools, remote-execution and transfer tools (PsExec, rclone, MEGA), AD recon tools (AdFind, SharpHound, PingCastle) and portable archivers (rar, WinRAR, 7-Zip). Tools under Program Files never count. This is a lead to check, not a verdict: an administrator's tool folder in a public location can also trigger it.
 
