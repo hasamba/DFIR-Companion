@@ -13,6 +13,7 @@ import {
 } from "../../src/integrations/cloudCollectMicrosoft/microsoftSources.js";
 import { UAL_RECORD_TYPES } from "../../src/integrations/cloudCollectMicrosoft/ualRecordTypes.js";
 import { NO_SUBSCRIPTION } from "../../src/integrations/cloudCollectMicrosoft/azureActivitySource.js";
+import { rateKey } from "../../src/integrations/cloudCollect/collectRateLimit.js";
 import { fakeClock } from "../helpers/cloudCollectDense.js";
 import {
   activityRecord,
@@ -110,6 +111,13 @@ describe("the Microsoft provider", () => {
     expect(new Set(UAL_RECORD_TYPES).size).toBe(UAL_RECORD_TYPES.length);
     expect(UAL_RECORD_TYPES).toContain("exchangeAdmin");
     expect(UAL_RECORD_TYPES).not.toContain("unknownFutureValue");
+  });
+
+  it("puts sign-ins and directory audits on ONE limiter: Graph counts them together", () => {
+    const keys = MICROSOFT_SOURCES.filter((s) => s.rateLimit).map((s) => rateKey(s.id, s.rateLimit!));
+    expect(keys).toHaveLength(5);
+    expect(new Set(keys)).toEqual(new Set(["group:graph-identity-reports"]));
+    expect(rateKey("ct", { requests: 2, perMs: 1000 })).toBe("ct"); // no group: per source, as before
   });
 
   it("names the tenant and app in the identity, with the pinned API version per endpoint", async () => {

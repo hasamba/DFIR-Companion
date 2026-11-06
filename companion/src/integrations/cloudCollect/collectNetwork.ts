@@ -362,6 +362,10 @@ export async function runNetworkStage(
     if (err instanceof BudgetStopError) return { subWindows, pages, nextSeq: seq, stopReason: err.message };
     if (!(err instanceof EvidenceWriteError)) throw err;
     return { subWindows, pages, nextSeq: seq, stopReason: err.message };
+  } finally {
+    // A status write still in flight must land BEFORE whatever writes the checkpoint next — a
+    // cancel's "interrupted" mark must never be overwritten by a late "running" status.
+    await statusWrites;
   }
   return { subWindows, pages, nextSeq: seq };
 }

@@ -6,11 +6,14 @@ import { describe, expect, it } from "vitest";
 import { createCollection, runCollection } from "../../src/integrations/cloudCollect/collectEngine.js";
 import { collectionPaths, parseManifest } from "../../src/integrations/cloudCollect/collectManifest.js";
 import { QueryUsageStore } from "../../src/integrations/cloudCollect/collectBudget.js";
+import { readCheckpoint } from "../../src/integrations/cloudCollect/collectCheckpoint.js";
+import { nodeCollectFs } from "../../src/integrations/cloudCollect/collectFs.js";
 import type { CollectionCheckpoint } from "../../src/integrations/cloudCollect/collectTypes.js";
 import type { OpenCloudAccount } from "../../src/integrations/cloudAccounts/types.js";
 import { microsoftCollectProvider } from "../../src/integrations/cloudCollectMicrosoft/microsoftProvider.js";
 import { faultFs, pipelineImporter, tempCase, type TempCase } from "../helpers/cloudCollectFakes.js";
 import { fakeClock } from "../helpers/cloudCollectDense.js";
+import { pollBudget, pollFor } from "../helpers/poll.js";
 import {
   activityRecord,
   directoryAuditRecord,
@@ -175,10 +178,17 @@ describe("Microsoft collection into a case (#2315)", () => {
       {
         sources: ["m365-ual"],
         onPoll: async () => {
-          const raw = await readFile(collectionPaths(t.dir).checkpoint, "utf8").catch(() => "{}");
-          const cp = JSON.parse(raw) as CollectionCheckpoint;
-          for (const sw of cp.subWindows ?? []) if (sw.providerStatus) seen.push(sw.providerStatus);
-          await new Promise((r) => setTimeout(r, 30)); // let the status write land before the next poll
+          if (seen.length) return;
+          // Wait (bounded) for the status write to land: a checkpoint commit fsyncs, slow on Windows.
+          const status = await pollFor(
+            "a provider status in the checkpoint",
+            async () => {
+              const cp = await readCheckpoint(nodeCollectFs, collectionPaths(t.dir));
+              return cp?.subWindows.find((sw) => sw.providerStatus)?.providerStatus ?? null;
+            },
+            { timeoutMs: pollBudget(5_000) },
+          );
+          seen.push(status);
         },
       },
     );
