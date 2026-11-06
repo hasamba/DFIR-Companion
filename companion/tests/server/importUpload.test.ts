@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -297,7 +298,7 @@ describe("POST /cases/:id/import-upload in team mode (#2336)", () => {
     const { app, spoolDir } = await makeApp({ teamAuth: teamAuth({}, null) });
     const res = await upload(app, "filename=supertimeline.csv", PLASO);
     expect(res.status).toBe(401);
-    await noSpool(spoolDir);
+    expect(existsSync(spoolDir)).toBe(false); // the route never ran, so no spool folder was made
   });
 
   it("403s a case reader (not a writer), before any byte is spooled", async () => {
@@ -309,7 +310,7 @@ describe("POST /cases/:id/import-upload in team mode (#2336)", () => {
       .set("Authorization", `Bearer ${holder.token}`)
       .send(Buffer.from(PLASO));
     expect(res.status).toBe(403);
-    await noSpool(spoolDir);
+    expect(existsSync(spoolDir)).toBe(false);
   });
 
   it("accepts a case writer — case write, not global admin", async () => {
