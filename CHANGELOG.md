@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud collection status** — a budget or full-disk stop before the first page is partial, not failed; a resumed collection no longer repeats source-record members (part of #2339)
 - **Empty CloudTrail S3 window** — a trail window with no files completes with 0 files instead of failing (closes #2352)
 - **Collector gaps** — an empty GCP sink window's listing is kept as evidence but not imported; a refused Azure subscription is skipped and named, others still collected (part of #2340)
+- **Large and gzip uploads** — the Import button uploads files over 32 MB and every `.gz` as the raw body (case writers, no server path needed, `DFIR_MAX_UPLOAD_MB`); the drop folder streams large and gzip cloud files and large Plaso CSVs (closes #2336)
 - **Vault temp files** — a failed cloud-vault or server-set write no longer leaves a temp copy of sealed secrets (closes #2342)
 - **Too-large import hint on Node 22** — an import too big to read shows the size hint again instead of "cannot read file" (closes #2316)
 - **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
