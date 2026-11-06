@@ -9,7 +9,6 @@
 import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
-import { fromTemporaryCredentials } from "@aws-sdk/credential-providers";
 import { ClientCertificateCredential } from "@azure/identity";
 import type {
   AwsSecrets,
@@ -27,7 +26,7 @@ import {
   LOGGING_READ_SCOPE,
   googleAccountClient,
 } from "../cloudTransport/googleAccountAuth.js";
-import { awsAmbientCredentials } from "../cloudTransport/awsAmbient.js";
+import { awsAccountCredentials, DEFAULT_AWS_REGION } from "../cloudTransport/awsCredentials.js";
 import type { AwsCheckClients } from "./awsReadCheck.js";
 import type { GcpRequester } from "./gcpReadCheck.js";
 import type { MicrosoftCheckClients } from "./microsoftReadCheck.js";
@@ -53,64 +52,8 @@ export interface CheckWire {
   fetch: CloudFetch;
 }
 
-const DEFAULT_AWS_REGION = "us-east-1";
 const ROLE_SESSION_NAME = "dfir-companion-read-check";
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
-
-function awsCredentials(
-  settings: AwsSettings,
-  secrets: AwsSecrets,
-  config: CheckWire["awsConfig"],
-  transport: CloudTransport,
-) {
-  const { accessKeyId, secretAccessKey, sessionToken } = secrets;
-  const keys =
-    accessKeyId && secretAccessKey
-      ? { accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) }
-      : undefined;
-  if (settings.authMode === "access-key") {
-    if (!keys) throw new CheckSetupError("the account has no stored access key");
-    return keys;
-  }
-  if (!settings.roleArn) throw new CheckSetupError("the account has no role ARN");
-  const ambient = settings.baseCredential === "ambient";
-  if (!ambient && !keys)
-    throw new CheckSetupError("the account has no stored access key to assume the role with");
-  const region = settings.region || DEFAULT_AWS_REGION;
-  // An ambient base is the machine's own chain, built with the transport on every inner client —
-  // never fromTemporaryCredentials' option-less default chain (see cloudTransport/awsAmbient.ts).
-  const masterCredentials = ambient
-    ? awsAmbientCredentials(transport, { region, clientConfig: config })
-    : keys;
-  return onePerCheck(
-    fromTemporaryCredentials({
-      params: {
-        RoleArn: settings.roleArn,
-        RoleSessionName: ROLE_SESSION_NAME,
-        DurationSeconds: settings.sessionSeconds ?? 3600,
-        ...(secrets.externalId ? { ExternalId: secrets.externalId } : {}),
-      },
-      masterCredentials,
-      // The provider's own STS client is the token path: it goes through the transport too.
-      clientConfig: { region, ...(config as AwsTransportConfig) },
-    }),
-  );
-}
-
-/**
- * One AssumeRole for the whole check, shared by the STS, CloudTrail and S3 clients (each would
- * otherwise assume the role on its own). A check lasts minutes; the shortest session is 15.
- */
-function onePerCheck<P, T>(provider: (props?: P) => Promise<T>): (props?: P) => Promise<T> {
-  let pending: Promise<T> | undefined;
-  return (props) => {
-    pending ??= provider(props).catch((err: unknown) => {
-      pending = undefined;
-      throw err;
-    });
-    return pending;
-  };
-}
 
 function awsClients(
   settings: AwsSettings,
@@ -119,7 +62,12 @@ function awsClients(
   transport: CloudTransport,
 ): AwsCheckClients {
   const config = wire.awsConfig as AwsTransportConfig;
-  const credentials = awsCredentials(settings, secrets, config, transport);
+  const credentials = awsAccountCredentials(settings, secrets, {
+    config,
+    transport,
+    roleSessionName: ROLE_SESSION_NAME,
+    fail: (message) => new CheckSetupError(message),
+  });
   const region = settings.region || DEFAULT_AWS_REGION;
   return {
     sts: new STSClient({ region, credentials, ...config }),

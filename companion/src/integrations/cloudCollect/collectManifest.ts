@@ -55,7 +55,8 @@ function isEntry(value: unknown): value is ManifestEntry {
     type === "restart" ||
     type === "quarantine" ||
     type === "resume" ||
-    type === "split"
+    type === "split" ||
+    type === "skip"
   );
 }
 
