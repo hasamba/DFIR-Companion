@@ -156,7 +156,8 @@ describe("minimum policy and Check access", () => {
     await flush();
     const call = net.calls.find((c) => c.method === "POST");
     expect(call?.body).toEqual({
-      sources: ["cloudtrail-lookup", "s3-trail", "ec2-regions"], // #2363: the region list is tested too
+      // #2363: the region list is tested too; #2361: and one GuardDuty read
+      sources: ["cloudtrail-lookup", "s3-trail", "ec2-regions", "guardduty"],
       s3Bucket: "trail-bucket",
     });
     expect(el("ccSources").textContent).toContain("Enabled regions (ec2:DescribeRegions)");

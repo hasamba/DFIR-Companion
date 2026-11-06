@@ -19,10 +19,13 @@ export interface AwsCollectClients {
   ec2: AwsSender;
   /** A CloudTrail client for `region` (LookupEvents and DescribeTrails are regional). */
   cloudtrail(region: string): AwsSender;
+  /** A GuardDuty client for `region` (detectors and findings are regional, #2361). */
+  guardduty(region: string): AwsSender;
 }
 
 export const S3_TRAIL_SOURCE = "s3-trail";
 export const LOOKUP_SOURCE = "cloudtrail-lookup";
+export const GUARDDUTY_SOURCE = "guardduty-findings";
 
 /**
  * The FALLBACK region list (#2363), after the account's own region: the commercial regions AWS

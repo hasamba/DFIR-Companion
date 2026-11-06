@@ -1,4 +1,4 @@
-// The three cloud importers as the streaming import sees them (#2303): how to prepare a batch of
+// The cloud importers as the streaming import sees them (#2303; GuardDuty findings #2361): how to prepare a batch of
 // raw records, identify each one for dedup, map the batch with the importer's own parse function
 // (`rowsOnly`, so nothing is aggregated or capped there), read each record's rule / actor / address
 // for the output budget, and build the whole-export summaries over the bounded summary window.
@@ -28,10 +28,12 @@ import { createApiResolverLearner, type Resolver } from "../entraAuditImport.js"
 import { parseCloudTrail } from "../awsImport.js";
 import { cloudTrailConsoleRow } from "../cloudRecords.js";
 import { parseCloudActivity } from "../cloudActivityImport.js";
+import { guardDutyRemoteIp, parseGuardDuty, GUARDDUTY_SOURCE } from "../guardDutyImport.js";
+import { unwrapGuardDutyRecords } from "../guardDutyRecord.js";
 
 type Row = Record<string, unknown>;
 
-export type StreamKind = "m365" | "aws" | "cloud"; // the import kinds (importIngest.ts dispatch)
+export type StreamKind = "m365" | "aws" | "cloud" | "guardduty"; // the import kinds (importIngest.ts dispatch)
 
 export interface BatchMapping {
   mapped: MappedEvent[];
@@ -217,10 +219,41 @@ const cloudActivity: StreamProvider = {
   },
 };
 
-const PROVIDERS: Record<StreamKind, StreamProvider> = { m365, aws, cloud: cloudActivity };
+// GuardDuty findings (#2361): a large or gzipped export, and every page the live collector saved.
+// `prepare` unwraps a {"Findings":[...]} document the scanner handed over whole (JSON lines of CLI
+// outputs); the importer has no whole-export summaries.
+const guardDuty: StreamProvider = {
+  kind: "guardduty",
+  source: GUARDDUTY_SOURCE,
+  prepare: (raw) => unwrapGuardDutyRecords(raw),
+  identities: (records) => records.map((rec) => cloudRecordIdentity("guardduty", rec)),
+  map(records, ctx) {
+    const r = parseGuardDuty("", {
+      records,
+      recordGate: ctx.gate,
+      recordIndexBase: ctx.base,
+      debug: ctx.debug,
+      rowsOnly: true,
+    });
+    return { ...asMapping(r), signInObservations: [] };
+  },
+  facts: (rec) => ({
+    rule: pick(rec, ["Type"]),
+    actor: pick(rec, ["Resource.AccessKeyDetails.UserName", "Resource.AccessKeyDetails.PrincipalId"]),
+    ip: guardDutyRemoteIp(rec),
+  }),
+  summaries: () => [],
+};
+
+const PROVIDERS: Record<StreamKind, StreamProvider> = {
+  m365,
+  aws,
+  cloud: cloudActivity,
+  guardduty: guardDuty,
+};
 
 /** The import kinds that stream (the route dispatches only these). */
-export const STREAM_KINDS: readonly StreamKind[] = ["m365", "aws", "cloud"];
+export const STREAM_KINDS: readonly StreamKind[] = ["m365", "aws", "cloud", "guardduty"];
 
 export function isStreamKind(kind: string): kind is StreamKind {
   return (STREAM_KINDS as readonly string[]).includes(kind);

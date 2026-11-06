@@ -216,6 +216,7 @@ describe("the read check's source", () => {
       new Set([
         "GetCallerIdentityCommand",
         "LookupEventsCommand",
+        "ListDetectorsCommand", // GuardDuty, a read (#2361)
         "ListObjectsV2Command",
         "GetObjectCommand",
         "DescribeRegionsCommand", // #2363: ec2:DescribeRegions, a read

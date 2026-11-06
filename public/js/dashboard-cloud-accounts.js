@@ -51,6 +51,7 @@
       ["s3-trail", "CloudTrail S3 bucket"],
       // #2363: the region picker's list — without it collection falls back and says so.
       ["ec2-regions", "Enabled regions (ec2:DescribeRegions)"],
+      ["guardduty", "GuardDuty findings"],
     ],
     microsoft: [
       ["entra-signins", "Entra sign-in logs"],

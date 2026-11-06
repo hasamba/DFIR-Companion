@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GuardDuty findings** — collect findings live from every region with a GuardDuty detector, and import exported findings, each graded by GuardDuty's own severity (archived ones Info) with MITRE from the finding type; Check access tests the GuardDuty read (closes #2361)
 - **AWS region picker** — event history and trail discovery walk the regions enabled on the account (`ec2:DescribeRegions`, opt-in regions included), the analyst can untick regions and the result names them as skipped by choice; without the permission the default list is used and disclosed (closes #2363)
 - **GCP detection rules** — SigmaHQ's GCP audit rules are bundled and run on GCP imports (and in Re-grade), and 9 graded plus 6 tag-only GCP rules are ported from Panther, Sentinel, Chronicle and Rhino Security Labs, with upstream commits recorded and watched weekly (closes #2346)
 - **AWS detection rules from TrailDiscover** — 12 graded rules for in-the-wild CloudTrail operations the importer and Sigma did not grade, and 211 more operations tagged by ATT&CK tactic for super-timeline search; TrailDiscover is watched by the weekly upstream check (closes #2345)

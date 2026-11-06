@@ -342,6 +342,10 @@ describe("LookupEvents fallback (#2313)", () => {
     const pre = precheckSource(lookup, WINDOW, Date.parse("2026-10-02T00:00:00Z"));
     expect(pre.warnings).toContain(LOOKUP_NOTICE);
     expect(LOOKUP_NOTICE).toMatch(/90 days of management events only/);
-    expect(AWS_COLLECT_SOURCES.map((x) => x.id)).toEqual(["s3-trail", "cloudtrail-lookup"]);
+    expect(AWS_COLLECT_SOURCES.map((x) => x.id)).toEqual([
+      "s3-trail",
+      "cloudtrail-lookup",
+      "guardduty-findings",
+    ]);
   });
 });

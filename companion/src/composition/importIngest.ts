@@ -372,6 +372,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importAws(caseId, text, base));
       case "cloud":
         return observe(pipeline.importCloudActivity(caseId, text, base));
+      case "guardduty":
+        return observe(pipeline.importGuardDuty(caseId, text, base));
       case "cloudsnapshot":
         return observe(pipeline.importCloudSnapshot(caseId, text, base));
       case "k8s":

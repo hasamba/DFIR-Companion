@@ -20,6 +20,7 @@ type Row = Record<string, unknown>;
 /**
  * The wrapper keys whose array holds the records (siemImport.ts RECORD_ARRAY_KEYS, plus `data`).
  * `entries`: a Cloud Logging entries:list response, saved as is by the GCP collector (#2314).
+ * `findings`: a GuardDuty findings export / collected page, {"Findings":[...]} (#2361).
  */
 const RECORD_KEYS = new Set([
   "events",
@@ -32,6 +33,7 @@ const RECORD_KEYS = new Set([
   "value",
   "data",
   "entries",
+  "findings",
 ]);
 const KEY_MAX = 64;
 

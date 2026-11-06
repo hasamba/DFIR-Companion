@@ -82,7 +82,7 @@ const AWS: MinimumPolicy = {
     "Replace <trail-bucket> with the bucket the trail writes to. For an organization trail, use the organization's log bucket.",
     "Keep the kms:Decrypt statement only when the trail is encrypted with a KMS key, and name that key. Without it, listing works but every trail file read fails.",
     "ec2:DescribeRegions lists the regions enabled on the account, opt-in regions included. Without it, collection uses the default region list and says so.",
-    "The GuardDuty statement is optional. Remove it if you do not collect GuardDuty findings.",
+    "The GuardDuty statement is needed only to collect GuardDuty findings and to test them with Check access. Remove it if you do not collect GuardDuty findings.",
     "For an assumed role, the role's trust policy must also allow the calling identity (and the external ID, if you set one).",
   ],
 };
