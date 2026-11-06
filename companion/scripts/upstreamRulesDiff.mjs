@@ -1,8 +1,8 @@
 /**
  * Pure logic for the weekly upstream rule-list check (#2343).
  *
- * Some built-in tagger rules in data/tags.yaml are HAND-PORTED from upstream lists — today the
- * five Microsoft-Analyzer-Suite blacklists (#2306). A port is a judgment call (what to leave out,
+ * Some built-in tagger rules in data/tags.yaml are HAND-PORTED from upstream lists — the five
+ * Microsoft-Analyzer-Suite blacklists (#2306) and the TrailDiscover AWS event files (#2345). A port is a judgment call (what to leave out,
  * what grade to give), so the check never edits rules: it compares the upstream lists at the commit
  * the port came from with the lists at upstream's newest commit, and the workflow files ONE issue
  * listing what was added, removed or changed per list. A person then re-ports with the same
@@ -13,8 +13,13 @@
  * so the workflow runs it under bare `node` with no `npm ci`; upstreamRulesDiff.d.mts carries the
  * types for the tests.
  *
- * Adding a source (the AWS/GCP ports, #2345/#2346): append one entry to UPSTREAM_GROUPS and put a
- * matching "<marker>: <sha> (<date>)" line in that port's tags.yaml header.
+ * Adding a source (the GCP port, #2346): append one entry to UPSTREAM_GROUPS and put a matching
+ * "<marker>: <sha> (<date>)" line in that port's tags.yaml header. A group is one of two kinds:
+ *   "csv-lists"   (the default) a fixed set of CSV files, each diffed entry by entry (first column = key);
+ *   "event-files" one JSON file per entry under `watchPath` (TrailDiscover's events/<Service>/<Event>.json),
+ *                 listed at both commits with `listFiles`. Only the fields the port used are compared
+ *                 (the operation, usedInWild and the ATT&CK ids): a new incident link or a reworded
+ *                 description is not a change, a flipped usedInWild flag or a new technique is.
  */
 
 /** Matches "<marker>: <40-hex sha> (<YYYY-MM-DD>)" on a `#` comment line of tags.yaml. */
@@ -27,6 +32,7 @@ export function recordedCommitPattern(marker) {
 export const UPSTREAM_GROUPS = Object.freeze([
   Object.freeze({
     id: "analyzer-suite",
+    kind: "csv-lists",
     name: "Microsoft-Analyzer-Suite",
     repo: "evild3ad/Microsoft-Analyzer-Suite",
     marker: "Microsoft-Analyzer-Suite upstream commit",
@@ -39,6 +45,16 @@ export const UPSTREAM_GROUPS = Object.freeze([
       "Blacklists/DelegatedPermission-Blacklist.csv",
       "Blacklists/UserAgent-Blacklist.csv",
     ]),
+  }),
+  Object.freeze({
+    id: "traildiscover",
+    kind: "event-files",
+    name: "TrailDiscover",
+    repo: "adanalvarez/TrailDiscover",
+    marker: "TrailDiscover upstream commit",
+    // The event files are the source; docs/events.json is a generated copy that can lag behind them.
+    watchPath: "events",
+    files: Object.freeze([]),
   }),
 ]);
 
@@ -118,8 +134,11 @@ const sameCells = (a, b) => a.length === b.length && a.every((cell, idx) => cell
 
 /** Per-list diff of two CSV texts: added, removed and changed (same key, other columns differ). */
 export function diffList(baseText, headText, label = "list") {
-  const base = parseList(baseText, `${label} (base)`);
-  const head = parseList(headText, `${label} (head)`);
+  return diffEntries(parseList(baseText, `${label} (base)`), parseList(headText, `${label} (head)`));
+}
+
+/** Diff two `{ header, entries }` maps (key → cells): added, removed and changed. */
+export function diffEntries(base, head) {
   const added = [...head.entries.keys()].filter((k) => !base.entries.has(k));
   const removed = [...base.entries.keys()].filter((k) => !head.entries.has(k));
   const changed = [...head.entries.keys()]
@@ -144,8 +163,14 @@ export function hasChanges(diff) {
  * to the file text or reject; a rejection (a renamed or deleted upstream file) propagates — the
  * check fails loudly rather than reporting "no change".
  */
-export async function compareGroup(group, base, head, fetchFile) {
+export async function compareGroup(group, base, head, fetchFile, listFiles) {
   if (base === head) return { group, base, head, lists: [] };
+  if (group.kind === "event-files") {
+    if (typeof listFiles !== "function")
+      throw new Error(`${group.name}: an event-files group needs listFiles`);
+    const diff = await diffEventFiles(group, base, head, fetchFile, listFiles);
+    return { group, base, head, lists: [{ path: `${group.watchPath}/`, diff }] };
+  }
   const lists = [];
   for (const path of group.files) {
     const [baseText, headText] = await Promise.all([
@@ -155,6 +180,81 @@ export async function compareGroup(group, base, head, fetchFile) {
     lists.push({ path, diff: diffList(baseText, headText, path) });
   }
   return { group, base, head, lists };
+}
+
+// ── Event-file groups (TrailDiscover) ─────────────────────────────────────────────────────────
+export const EVENT_HEADER = Object.freeze(["file", "event", "usedInWild", "mitre"]);
+
+/** True for one entry file directly under `<watchPath>/<Service>/` — not the `.json.cloudtrail` samples. */
+export function isEventFile(path, watchPath) {
+  if (!path.startsWith(`${watchPath}/`)) return false;
+  const rest = path.slice(watchPath.length + 1).split("/");
+  return rest.length === 2 && rest[0] !== "" && /^[^/]+\.json$/.test(rest[1]);
+}
+
+const TECHNIQUE_ID = /^(T\d{4}(?:\.\d{3})?)\b/;
+const techniqueIds = (values) =>
+  (Array.isArray(values) ? values : []).map((v) => TECHNIQUE_ID.exec(String(v).trim())?.[1]).filter(Boolean);
+
+/**
+ * The fields of one event file the port used, as diff cells: the file, "<source> <eventName>",
+ * "usedInWild=<bool>" and the sorted ATT&CK ids (techniques and sub-techniques). Throws on a file
+ * that is not JSON or names no event — the check never reads a broken file as "no change".
+ */
+export function summariseEventFile(text, path) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`${path}: not valid JSON (${err instanceof Error ? err.message : String(err)})`);
+  }
+  if (
+    !data ||
+    typeof data !== "object" ||
+    typeof data.eventName !== "string" ||
+    typeof data.eventSource !== "string"
+  ) {
+    throw new Error(`${path}: no eventName / eventSource — refusing to treat it as an event`);
+  }
+  const ids = [
+    ...new Set([...techniqueIds(data.mitreAttackTechniques), ...techniqueIds(data.mitreAttackSubTechniques)]),
+  ].sort();
+  return [
+    path,
+    `${data.eventSource.replace(/\.amazonaws\.com$/i, "")} ${data.eventName}`,
+    `usedInWild=${data.usedInWild === true}`,
+    `mitre=${ids.join(" ")}`,
+  ];
+}
+
+/**
+ * Diff the event files of one group between two commits. `listFiles(repo, dir, ref)` resolves to a
+ * Map of path → blob sha for the files under `dir`. A file whose blob is the same at both commits is
+ * not fetched (it cannot differ); every other event file is fetched and summarised.
+ */
+export async function diffEventFiles(group, base, head, fetchFile, listFiles) {
+  const [baseFiles, headFiles] = await Promise.all(
+    [base, head].map(async (ref) => {
+      const all = await listFiles(group.repo, group.watchPath, ref);
+      const events = new Map([...all].filter(([path]) => isEventFile(path, group.watchPath)));
+      if (events.size === 0) {
+        throw new Error(`${group.repo}@${ref}: no event files under "${group.watchPath}/" — was it moved?`);
+      }
+      return events;
+    }),
+  );
+  const summarise = async (files, other, ref) => {
+    const entries = new Map();
+    const touched = [...files.keys()].filter((p) => other.get(p) !== files.get(p)).sort();
+    for (const path of touched) {
+      entries.set(path, summariseEventFile(await fetchFile(group.repo, path, ref), path));
+    }
+    return { header: [...EVENT_HEADER], entries };
+  };
+  return diffEntries(
+    await summarise(baseFiles, headFiles, base),
+    await summarise(headFiles, baseFiles, head),
+  );
 }
 
 export function groupChanged(result) {

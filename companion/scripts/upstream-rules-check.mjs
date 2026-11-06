@@ -61,6 +61,19 @@ async function fetchFile(repo, path, ref) {
   return text;
 }
 
+/** Every blob under `dir` at `ref` (path → blob sha), from one recursive tree read. */
+async function listFiles(repo, dir, ref) {
+  const tree = JSON.parse(await gh([`repos/${repo}/git/trees/${ref}?recursive=1`]));
+  // A truncated tree would silently drop event files and read as "removed upstream".
+  if (tree.truncated) throw new Error(`${repo}@${ref}: the git tree is truncated — cannot list ${dir}/`);
+  const prefix = `${dir}/`;
+  return new Map(
+    (tree.tree ?? [])
+      .filter((entry) => entry.type === "blob" && String(entry.path).startsWith(prefix))
+      .map((entry) => [entry.path, entry.sha]),
+  );
+}
+
 function summarise(result) {
   const head = `${result.group.name}: ${result.base.slice(0, 7)}..${result.head.slice(0, 7)}`;
   if (result.lists.length === 0) return `${head} — recorded commit is upstream's newest, nothing to compare`;
@@ -87,7 +100,7 @@ async function main() {
   for (const group of UPSTREAM_GROUPS) {
     const { sha: base } = readRecordedCommit(tagsYaml, group.marker);
     const head = await latestCommit(group);
-    results.push(await compareGroup(group, base, head, fetchFile));
+    results.push(await compareGroup(group, base, head, fetchFile, listFiles));
   }
   for (const result of results) console.log(summarise(result));
 

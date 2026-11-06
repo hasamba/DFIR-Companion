@@ -1116,6 +1116,363 @@ cloud_gcp_external_member_added:
   severity: Medium
   view: 'GCP IAM'
 
+# ─────────────────────────── TrailDiscover — AWS operations seen in the wild (#2345) ───────────────────────────
+# Ported from TrailDiscover by Adan Alvarez (adanalvarez), https://github.com/adanalvarez/TrailDiscover —
+# events/<Service>/<Event>.json: the operation, its MITRE ATT&CK technique and the "usedInWild" flag
+# with incident links. Licensed CC-BY-4.0 (attribution required; see NOTICE). Changes: only the
+# operation names, the used-in-the-wild flag and the technique ids are used; the grades, the grouping
+# and the conditions below are this project's, not TrailDiscover's.
+# TrailDiscover upstream commit: 78156accdf5b6c325100ddb64c5300586f67079c (2026-10-04)
+# That is the newest upstream commit touching events/ when the port was made (2026-11-06). The weekly
+# .github/workflows/upstream-rules-check.yml compares the event files (usedInWild and techniques) from
+# this commit to upstream's newest and opens an issue when they changed (#2343). A re-port moves this
+# SHA and date forward in the same PR.
+#
+# HOW THE 305 IN-THE-WILD OPERATIONS WERE PORTED (same judgment as #2306):
+# - 61 are left out because something already grades or tags them: the CloudTrail importer
+#   (awsImport.ts AWS_ACTIONS, the IAM / logging / AWS Config / SSM / STS readers), a bundled Sigma
+#   CloudTrail rule at ANY level (data/sigma — Sigma is bundled, never copied in here), or an existing
+#   ts_aws_* / cloud_aws_* rule above.
+# - 16 are graded below (td_aws_* rules with a severity): the call is rare and clearly suspicious on its
+#   own. Each rule's comment gives the reason for its grade.
+# - 211 are tag-only (td_aws_<tactic>, one grouped rule per ATT&CK tactic, no severity, no MITRE) so an
+#   analyst can find them in the super-timeline. Discovery calls and routine writes are never graded:
+#   grading them would fill the forensic timeline with day-to-day administration (CLAUDE.md §7).
+# - 17 high-volume data-plane calls are left out entirely (S3 Get/Put/Delete/HeadObject and
+#   ListObjects, KMS Encrypt / GenerateDataKeyWithoutPlaintext, CloudWatch Logs PutLogEvents /
+#   CreateLogStream, Bedrock InvokeModel*, Lambda Invoke, SES SendEmail / SendRawEmail, SNS Publish,
+#   ECR BatchGetImage / GetAuthorizationToken): a tag on every one would mark thousands of routine rows.
+# Cross-checked, nothing copied: Azure/Azure-Sentinel "Solutions/Amazon Web Services/Analytic Rules"
+# (MIT) and panther-labs/panther-analysis rules/aws_cloudtrail_rules (Apache-2.0). Panther alerts on a
+# single GetPasswordData only past a threshold of 30 at Info, and on SES quota / identity checks at
+# Info with no alert, so those stay tag-only here. elastic/detection-rules is NOT used (Elastic
+# License 2.0).
+#
+# WHAT A RULE CAN READ: the rendered CloudTrail row, `AWS <EventName> (<source>) by <who> …` (awsImport.ts
+# head, pinned by tests/analysis/tagsYamlTrailDiscover.test.ts). Request parameters are NOT rendered for
+# these calls, so a condition that needs them (Panther's RDS snapshot shared with "all", Lambda
+# AddPermission to principal "*", RDS DeleteDBInstance with skipFinalSnapshot) cannot be expressed:
+# RDS ModifyDBSnapshotAttribute and Lambda AddPermission stay tag-only until a reader renders them,
+# as awsExposure.ts does for EBS snapshots and S3 buckets. Every graded rule leaves out:
+# - a call made by an AWS service on the account's behalf ("request made by AWS service …",
+#   "AWSService (not a credential in use)") — e.g. an Aurora auto-scaling replica removal;
+# - a failed call (the rendered `[ErrorCode]`): the importer already grades a failed mutating call
+#   Medium as a probe, and that grade stands.
+
+td_aws_guardduty_member_disassociated:
+  description: GuardDuty member account removed itself from its administrator account — findings stop reaching the security team
+  # High: a member account leaving its GuardDuty administrator is not an administrative routine (the
+  # administrator removes members from its own side) and blinds the central security team, the same
+  # class as DeleteDetector, which the importer grades High. The newer API name is the same operation.
+  all:
+    - { field: description, regex: '^AWS (?:DisassociateFromMasterAccount|DisassociateFromAdministratorAccount) \(guardduty\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'defense_evasion', 'guardduty']
+  mitre: ['T1562.001']
+  severity: High
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_guardduty_invitations_deleted:
+  description: GuardDuty membership invitations deleted — the account cannot be enrolled by its administrator
+  # Medium: removes the path back under central monitoring without disabling the detector itself.
+  all:
+    - { field: description, regex: '^AWS DeleteInvitations \(guardduty\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'defense_evasion', 'guardduty']
+  mitre: ['T1562.001']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_org_handshake_accepted:
+  description: AWS Organizations handshake accepted — the account joined (or changed) an organization
+  # Medium: accepting an invitation moves the account under another management account, which then
+  # controls its policies and billing; seen in the wild moving a victim account into an attacker's
+  # organization. Rare enough in a settled estate to be worth a look, not proof on its own.
+  all:
+    - { field: description, regex: '^AWS AcceptHandshake \(organizations\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'defense_evasion', 'organizations']
+  mitre: ['T1666']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_ses_production_access_requested:
+  description: SES production access requested (PutAccountDetails) — the account asks to leave the SES sandbox
+  # Medium: a one-time request to send mail to anyone; in the wild it precedes SES spam / phishing
+  # runs from a compromised account.
+  all:
+    - { field: description, regex: '^AWS PutAccountDetails \(ses\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'defense_evasion', 'ses_abuse']
+  mitre: ['T1578.005']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_ec2_serial_console_enabled:
+  description: EC2 serial console access enabled for the account — out-of-band shell access to instances
+  # Medium: an account-level switch that opens a console path bypassing network controls; rarely
+  # turned on outside break-glass recovery.
+  all:
+    - { field: description, regex: '^AWS EnableSerialConsoleAccess \(ec2\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'lateral_movement', 'serial_console']
+  mitre: ['T1021.008']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_ec2_serial_console_key_pushed:
+  description: SSH public key pushed for an EC2 serial console session (EC2 Instance Connect)
+  # Medium: the serial-console variant is the break-glass path, not the everyday Instance Connect
+  # login (SendSSHPublicKey stays tag-only for that reason).
+  all:
+    - { field: description, regex: '^AWS SendSerialConsoleSSHPublicKey \(ec2-instance-connect\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'lateral_movement', 'serial_console']
+  mitre: ['T1021.004']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_ec2_instance_profile_replaced:
+  description: IAM instance profile on a running EC2 instance replaced — the instance now acts with another role
+  # Medium: swapping the role of a live instance is a known privilege-escalation path (code already on
+  # the instance gets the new role's credentials); the role named is not in the rendered row.
+  all:
+    - { field: description, regex: '^AWS ReplaceIamInstanceProfileAssociation \(ec2\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'privilege_escalation', 'instance_profile']
+  mitre: ['T1098.003']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_ec2_shared_snapshot_copied:
+  description: Another account copied, or made a volume from, an EBS snapshot shared with it
+  # Medium: the evidence that a shared snapshot was actually taken (the share itself is graded High
+  # by the importer and cloud_aws_snapshot_shared). Cross-account backup copies look the same, so this
+  # stays below the share. AWS records the other account as the caller, so the service-caller
+  # exclusion is not applied here.
+  all:
+    - { field: description, regex: '^AWS (?:SharedSnapshotCopyInitiated|SharedSnapshotVolumeCreated) \(ec2\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'exfiltration', 'snapshot_shared']
+  mitre: ['T1537']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_iam_identity_provider_created:
+  description: IAM SAML or OpenID Connect identity provider created — a new outside identity source can assume roles
+  # Medium: a federation trust is a durable backdoor (any role trusting the provider can be assumed
+  # from outside the account) and is created rarely. Updating or deleting a SAML provider is covered by
+  # bundled Sigma rules and is left out.
+  all:
+    - { field: description, regex: '^AWS (?:CreateSAMLProvider|CreateOpenIDConnectProvider) \(iam\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'persistence', 'federation']
+  mitre: ['T1136.003', 'T1484.002']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_rds_instance_deleted:
+  description: RDS database instance deleted by a user
+  # Medium: destructive (seen in the wild in extortion and wiper cases) but also routine in
+  # development accounts. Panther rates it High and Critical when the final snapshot is skipped; that
+  # flag is not in the rendered row, so the grade stays one step lower. The cluster variant is graded by
+  # a bundled Sigma rule and left out.
+  all:
+    - { field: description, regex: '^AWS DeleteDBInstance \(rds\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'impact', 'data_destruction']
+  mitre: ['T1485']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_bedrock_model_access_enabled:
+  description: Bedrock model access enabled — use-case form submitted, model agreement or entitlement created
+  # Medium: one-time account set-up calls that open paid foundation models; outside a planned Bedrock
+  # onboarding they are the opening steps of LLMjacking (stolen keys used to resell model access).
+  all:
+    - { field: description, regex: '^AWS (?:PutUseCaseForModelAccess|CreateFoundationModelAgreement|PutFoundationModelEntitlement) \(bedrock\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'impact', 'llmjacking']
+  mitre: ['T1496']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_root_password_recovery:
+  description: Root account password recovery requested from the sign-in page
+  # Medium: the root password is reset almost never; a recovery request is either the owner locked
+  # out or someone with the root e-mail mailbox taking over the account.
+  all:
+    - { field: description, regex: '^AWS PasswordRecoveryRequested \(signin\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+  tags: ['traildiscover', 'initial_access', 'root_account']
+  mitre: ['T1078']
+  severity: Medium
+  view: 'TrailDiscover (AWS in the wild)'
+
+# ── Tag-only: the remaining in-the-wild operations, one rule per ATT&CK tactic (no grade) ──
+# Keyed on the operation AND its source, because names repeat across services (CreateUser exists in
+# IAM, Identity Center, WorkMail and Transfer Family). Lambda operations carry an API-version suffix
+# in CloudTrail (CreateFunction20150331), so the suffix is optional there.
+td_aws_discovery:
+  description: AWS API call TrailDiscover lists as used in the wild — discovery (147 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:SearchAgreements) \(agreement-marketplace\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListAccessPolicies|ListCollections) \(aoss\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetQueryResults) \(athena\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetFoundationModelAvailability|GetKnowledgeBase|GetModelInvocationLoggingConfiguration|GetUseCaseForModelAccess|ListAgents|ListCustomModels|ListFoundationModelAgreementOffers|ListFoundationModels|ListInferenceProfiles|ListKnowledgeBases|ListModelInvocationJobs|ListProvisionedModelThroughputs) \(bedrock\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetCostAndUsage|GetCostForecast) \(ce\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:LookupEvents) \(cloudtrail\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetListingView) \(discovery-marketplace\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeAccountAttributes|DescribeAvailabilityZones|DescribeBundleTasks|DescribeCarrierGateways|DescribeClientVpnRoutes|DescribeDhcpOptions|DescribeFlowLogs|DescribeHosts|DescribeImages|DescribeInstanceAttribute|DescribeInstanceStatus|DescribeInstanceTypes|DescribeInstances|DescribeInternetGateways|DescribeKeyPairs|DescribeLaunchTemplates|DescribeNetworkInterfaces|DescribeRegions) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeRouteTables|DescribeSecurityGroups|DescribeSnapshotAttribute|DescribeSnapshotTierStatus|DescribeSnapshots|DescribeSubnets|DescribeTags|DescribeTransitGatewayMulticastDomains|DescribeVolumeStatus|DescribeVolumes|DescribeVolumesModifications|DescribeVpcEndpointConnectionNotifications|DescribeVpcs|GetConsoleScreenshot|GetEbsDefaultKmsKeyId|GetEbsEncryptionByDefault) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetFlowLogsIntegrationTemplate|GetLaunchTemplateData|GetTransitGatewayRouteTableAssociations) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeImages|DescribeRepositories) \(ecr\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeTasks|ListClusters|ListTaskDefinitions|ListTasks) \(ecs\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeCluster|ListClusters) \(eks\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListVaults) \(glacier\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetDetector|GetFindings|ListDetectors|ListFindings) \(guardduty\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeEventAggregates|DescribeEvents) \(health\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetUser|ListAccessKeys|ListAccountAliases|ListAttachedRolePolicies|ListAttachedUserPolicies|ListGroups|ListGroupsForUser|ListInstanceProfiles|ListOpenIDConnectProviders|ListRolePolicies|ListRoles|ListSAMLProviders|ListSSHPublicKeys|ListServiceSpecificCredentials|ListSigningCertificates|ListUserPolicies|ListUsers|SimulatePrincipalPolicy) \(iam\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetFunction|GetFunctionConfiguration|ListFunctions)(?:\d{8}(?:v\d+)?)? \(lambda\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeLogGroups|DescribeLogStreams|DescribeSubscriptionFilters|GetLogRecord) \(logs\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeAlarms|DescribeAlarmsForMetric) \(monitoring\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeOrganization|ListAccounts|ListOrganizationalUnitsForParent) \(organizations\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeBlueGreenDeployments|DescribeDBClusters|DescribeDBEngineVersions|DescribeDBInstances|DescribeDBProxies|DescribeDBSnapshots|DescribeDBSubnetGroups|DescribeExportTasks|DescribeGlobalClusters|DescribeOrderableDBInstanceOptions|DescribePendingMaintenanceActions|DescribeValidDBInstanceModifications) \(rds\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:Search) \(resource-explorer-2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListHostedZones) \(route53\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetBucketAccelerateConfiguration|GetBucketAcl|GetBucketLifecycle|GetBucketLocation|GetBucketLogging|GetBucketOwnershipControls|GetBucketPolicy|GetBucketPublicAccessBlock|GetBucketReplication|GetBucketRequestPayment|GetBucketTagging|GetBucketVersioning|GetObjectLockConfiguration|ListBuckets) \(s3\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListEndpoints|ListModels|ListTrainingJobs) \(sagemaker\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListApplications) \(servicecatalog-appregistry\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetServiceQuota|ListServiceQuotas) \(servicequotas\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetAccount|GetAccountSendingEnabled|GetIdentityVerificationAttributes|GetSendQuota|ListEmailIdentities|ListIdentities) \(ses\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetSMSAttributes|GetSMSSandboxAccountStatus) \(sns\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeParameters|GetParameters) \(ssm\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ListInstances) \(sso\)', flags: 'i' }
+  tags: ['traildiscover', 'discovery']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_credential_access:
+  description: AWS API call TrailDiscover lists as used in the wild — credential access (3 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:GetPasswordData) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:DescribeSecret|ListSecrets) \(secretsmanager\)', flags: 'i' }
+  tags: ['traildiscover', 'credential_access']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_persistence:
+  description: AWS API call TrailDiscover lists as used in the wild — persistence (18 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:AcceptAgreementRequest|CreateAgreementRequest) \(agreement-marketplace\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateApi|CreateIntegration|CreateStage) \(apigateway\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetTokensFromRefreshToken) \(cognito-idp\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateDefaultVpc|CreateKeyPair|StartInstances) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:PutTargets) \(events\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateServiceLinkedRole) \(iam\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:AddPermission|CreateFunction|UpdateFunctionCode|UpdateFunctionConfiguration)(?:\d{8}(?:v\d+)?)? \(lambda\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateAccount) \(organizations\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:UpdateSsoConfiguration) \(sso\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:RegisterToWorkMail) \(workmail\)', flags: 'i' }
+  tags: ['traildiscover', 'persistence']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_privilege_escalation:
+  description: AWS API call TrailDiscover lists as used in the wild — privilege escalation (1 operation, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:GetClusterCredentials) \(redshift\)', flags: 'i' }
+  tags: ['traildiscover', 'privilege_escalation']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_defense_evasion:
+  description: AWS API call TrailDiscover lists as used in the wild — defense evasion (5 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:CreateInstances) \(lightsail\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:InviteAccountToOrganization) \(organizations\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ModifyActivityStream) \(rds\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ModifyCluster) \(redshift\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateCase) \(support\)', flags: 'i' }
+  tags: ['traildiscover', 'defense_evasion']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_lateral_movement:
+  description: AWS API call TrailDiscover lists as used in the wild — lateral movement (6 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:AttachVolume|CreateSnapshot|CreateVolume) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:SendSSHPublicKey) \(ec2-instance-connect\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ExecuteCommand) \(ecs\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:SwitchRole) \(signin\)', flags: 'i' }
+  tags: ['traildiscover', 'lateral_movement']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_execution:
+  description: AWS API call TrailDiscover lists as used in the wild — execution (1 operation, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:CreateSession) \(cloudshell\)', flags: 'i' }
+  tags: ['traildiscover', 'execution']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_collection:
+  description: AWS API call TrailDiscover lists as used in the wild — collection (1 operation, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:ExecuteStatement) \(redshift-data\)', flags: 'i' }
+  tags: ['traildiscover', 'collection']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_exfiltration:
+  description: AWS API call TrailDiscover lists as used in the wild — exfiltration (4 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:CreateImage) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateDBSnapshot|ModifyDBSnapshotAttribute) \(rds\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateServer) \(transfer\)', flags: 'i' }
+  tags: ['traildiscover', 'exfiltration']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_impact:
+  description: AWS API call TrailDiscover lists as used in the wild — impact (24 operations, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:CreateAutoScalingGroup) \(autoscaling\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateStack) \(cloudformation\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:AuthorizeApplication|CreateAlias) \(ds\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateLaunchTemplate|DeleteSnapshot|DeleteVolume|DeregisterImage|StopInstances|TerminateInstances) \(ec2\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateCluster|CreateService) \(ecs\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:PutRule) \(events\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:ChangeResourceRecordSets|CreateHostedZone) \(route53\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:PutBucketLifecycle) \(s3\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:RequestServiceQuotaIncrease) \(servicequotas\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateEmailIdentity|UpdateAccountSendingEnabled|VerifyDomainDkim|VerifyDomainIdentity|VerifyEmailIdentity) \(ses\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:PurgeQueue) \(sqs\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:CreateOrganization) \(workmail\)', flags: 'i' }
+  tags: ['traildiscover', 'impact']
+  view: 'TrailDiscover (AWS in the wild)'
+
+td_aws_resource_development:
+  description: AWS API call TrailDiscover lists as used in the wild — resource development (1 operation, tag only)
+  any:
+    - { field: description, regex: '^AWS (?:RegisterDomain) \(route53domains\)', flags: 'i' }
+  tags: ['traildiscover', 'resource_development']
+  view: 'TrailDiscover (AWS in the wild)'
+
 # ─────────────────────────── Microsoft-Analyzer-Suite lists (#2306) ───────────────────────────
 # Ported from Microsoft-Analyzer-Suite by Martin Willing (evild3ad),
 # https://github.com/evild3ad/Microsoft-Analyzer-Suite — Blacklists/Operation-Blacklist.csv,

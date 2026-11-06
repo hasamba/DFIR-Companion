@@ -95,3 +95,25 @@ BSD 3-Clause licence.
     ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
     (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+================================================================================
+TrailDiscover — Adan Alvarez
+================================================================================
+
+Used in: companion/data/tags.yaml (the "TrailDiscover — AWS operations seen in the
+         wild (#2345)" section, rules td_aws_*)
+
+TrailDiscover (https://github.com/adanalvarez/TrailDiscover) is a catalogue of AWS
+CloudTrail events with their MITRE ATT&CK techniques and whether each has been
+used in the wild. Its data is licensed under the Creative Commons Attribution 4.0
+International licence (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/).
+
+Material used: from events/<Service>/<Event>.json at upstream commit
+78156accdf5b6c325100ddb64c5300586f67079c, the event names and sources, the
+"usedInWild" flag and the ATT&CK technique identifiers. Changes made: the events
+were filtered (only those used in the wild, and only those no other rule in this
+program already grades), grouped into tagger rules, and given severities and
+conditions that are this program's own judgment, not TrailDiscover's. No
+descriptions, incident texts or other prose from TrailDiscover are included.
+TrailDiscover's author does not endorse this program.

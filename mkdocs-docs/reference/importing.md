@@ -2668,6 +2668,40 @@ techniques that had no rule of their own:
   TeamFiltration, …) grades **Medium**; PowerShell, Azure CLI, Python and Postman clients are tagged
   for review only. A user agent is what the client *claimed*, not proof of the tool used. The
   suite's country, ASN and application lists are not included.
+- **TrailDiscover (AWS operations seen in the wild)** — the AWS CloudTrail operations that
+  [TrailDiscover](https://github.com/adanalvarez/TrailDiscover) by Adan Alvarez (CC BY 4.0) marks as
+  used in real attacks are the `td_aws_*` rules. Of its 305 in-the-wild operations, 61 are left out
+  because the CloudTrail importer, a bundled Sigma rule or an earlier rule already grades or tags
+  them, and 17 high-volume data calls (S3 object reads and writes, KMS encrypt, Bedrock model calls,
+  SES send, …) are left out so that routine traffic is not tagged. These grade:
+
+    | Grade | Operations | ATT&CK |
+    |---|---|---|
+    | **High** | a GuardDuty member account leaving its administrator (`DisassociateFromMasterAccount` / `DisassociateFromAdministratorAccount`) | T1562.001 |
+    | **Medium** | GuardDuty invitations deleted (`DeleteInvitations`) | T1562.001 |
+    | **Medium** | an AWS Organizations invitation accepted (`AcceptHandshake`) | T1666 |
+    | **Medium** | SES production access requested (`PutAccountDetails`) | T1578.005 |
+    | **Medium** | EC2 serial console enabled (`EnableSerialConsoleAccess`), or an SSH key pushed for a serial console session (`SendSerialConsoleSSHPublicKey`) | T1021.008, T1021.004 |
+    | **Medium** | the IAM role of a running instance replaced (`ReplaceIamInstanceProfileAssociation`) | T1098.003 |
+    | **Medium** | another account copied, or made a volume from, a snapshot shared with it (`SharedSnapshotCopyInitiated`, `SharedSnapshotVolumeCreated`) | T1537 |
+    | **Medium** | a SAML or OpenID Connect identity provider created in IAM | T1136.003, T1484.002 |
+    | **Medium** | an RDS database instance deleted (`DeleteDBInstance`) | T1485 |
+    | **Medium** | Bedrock model access enabled (`PutUseCaseForModelAccess`, `CreateFoundationModelAgreement`, `PutFoundationModelEntitlement`) — the first steps of LLMjacking | T1496 |
+    | **Medium** | a root password recovery request (`PasswordRecoveryRequested`) | T1078 |
+
+    A graded rule does not fire when an AWS service made the call on the account's behalf, or when the
+    call failed (the importer already grades a failed change Medium, and that grade stays). The other
+    211 operations are **tagged only** — `traildiscover` plus their ATT&CK tactic (`discovery`,
+    `persistence`, `impact`, …) — so you can find them in the super-timeline; they keep the importer's
+    grade. Discovery calls and routine changes are never graded, so they do not fill the forensic
+    timeline. The rules read the row as the importer writes it, which does not show the request
+    details for these calls: an RDS snapshot shared publicly or a Lambda permission granted to
+    everyone cannot be told apart from a harmless one yet, so those two are tagged only. Grading of
+    `PutBucketAcl` / `PutBucketPolicy` is unchanged. Azure Sentinel (MIT) and Panther (Apache-2.0)
+    AWS rules were used as a cross-check only; Elastic rules are not used (their licence does not
+    allow it). A weekly check in the project's repository opens an issue when TrailDiscover adds an
+    operation or changes its used-in-the-wild flag or techniques, so the rules can be brought up to
+    date in a later rule pack.
 
 **Size limits.** The Import button reads a file of up to 32 MB in the browser and sends it
 (server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file, or any `.gz` file, is **uploaded** as it

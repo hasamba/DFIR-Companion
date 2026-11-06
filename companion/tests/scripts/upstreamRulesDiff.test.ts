@@ -5,11 +5,14 @@ import {
   compareGroup,
   diffList,
   groupChanged,
+  isEventFile,
   issueTitle,
   parseCsv,
   readRecordedCommit,
   renderReport,
+  summariseEventFile,
   type FetchFile,
+  type ListFiles,
 } from "../../scripts/upstreamRulesDiff.mjs";
 
 // The weekly upstream rule-list check (#2343). The diff logic is pure, so it is tested on fixture
@@ -129,6 +132,123 @@ describe("compareGroup", () => {
     expect(body).not.toContain(`evil${FENCE}ua`);
     expect(body).not.toMatch(/\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\b[^\n]{0,20}#\d+/i);
     expect(issueTitle([result])).toContain("[upstream-rules analyzer-suite@aaaaaaa]");
+  });
+});
+
+describe("event-file groups — TrailDiscover (#2345)", () => {
+  const group = UPSTREAM_GROUPS.find((g) => g.id === "traildiscover")!;
+  const sha = (c: string) => c.repeat(40);
+  const event = (o: Record<string, unknown>) =>
+    JSON.stringify({
+      eventName: "DeleteInvitations",
+      eventSource: "guardduty.amazonaws.com",
+      mitreAttackTechniques: ["T1562 - Impair Defenses"],
+      mitreAttackSubTechniques: ["T1562.001 - Impair Defenses: Disable or Modify Tools"],
+      usedInWild: true,
+      incidents: [],
+      ...o,
+    });
+  const GD = "events/GuardDuty/DeleteInvitations.json";
+  const SES = "events/SES/PutAccountDetails.json";
+  const OLD = "events/S3/GetBucketAcl.json";
+  const NEW = "events/Bedrock/PutUseCaseForModelAccess.json";
+  // Base and head trees (path → blob sha) and the file text at each blob.
+  const trees: Record<string, Map<string, string>> = {
+    [sha("a")]: new Map([
+      [GD, "b1"],
+      [SES, "s1"],
+      [OLD, "o1"],
+      [`${GD}.cloudtrail`, "c1"],
+      ["events/README.md", "r1"],
+    ]),
+    [sha("b")]: new Map([
+      [GD, "b2"],
+      [SES, "s2"],
+      [NEW, "n1"],
+      [`${GD}.cloudtrail`, "c2"],
+    ]),
+  };
+  const blobs: Record<string, string> = {
+    b1: event({}),
+    b2: event({ usedInWild: false }),
+    s1: event({ eventName: "PutAccountDetails", eventSource: "ses.amazonaws.com", incidents: [] }),
+    s2: event({
+      eventName: "PutAccountDetails",
+      eventSource: "ses.amazonaws.com",
+      incidents: [{ description: "a new write-up", link: "https://example.com/x" }],
+    }),
+    o1: event({ eventName: "GetBucketAcl", eventSource: "s3.amazonaws.com" }),
+    n1: event({ eventName: "PutUseCaseForModelAccess", eventSource: "bedrock.amazonaws.com" }),
+  };
+  const listFiles: ListFiles = async (_repo, _dir, ref) => trees[ref];
+  const fetched: string[] = [];
+  const fetchFile: FetchFile = async (_repo, path, ref) => {
+    fetched.push(`${path}@${ref.slice(0, 1)}`);
+    const blob = trees[ref].get(path);
+    if (!blob) throw new Error(`HTTP 404 for ${path}`);
+    return blobs[blob];
+  };
+
+  it("is watched on events/ with its own tags.yaml marker", () => {
+    expect(group.kind).toBe("event-files");
+    expect(group.watchPath).toBe("events");
+    expect(group.marker).toBe("TrailDiscover upstream commit");
+  });
+
+  it("only counts <Service>/<Event>.json as an event file", () => {
+    expect(isEventFile(GD, "events")).toBe(true);
+    expect(isEventFile(`${GD}.cloudtrail`, "events")).toBe(false);
+    expect(isEventFile("events/README.md", "events")).toBe(false);
+    expect(isEventFile("events/a/b/c.json", "events")).toBe(false);
+    expect(isEventFile("docs/events.json", "events")).toBe(false);
+  });
+
+  it("summarises the operation, usedInWild and the sorted ATT&CK ids — nothing else", () => {
+    expect(summariseEventFile(event({}), GD)).toEqual([
+      GD,
+      "guardduty DeleteInvitations",
+      "usedInWild=true",
+      "mitre=T1562 T1562.001",
+    ]);
+    // A stray trailing colon upstream ("T1562.001:") still reads as the id.
+    expect(summariseEventFile(event({ mitreAttackSubTechniques: ["T1562.001:"] }), GD)[3]).toBe(
+      "mitre=T1562 T1562.001",
+    );
+    expect(() => summariseEventFile("{not json", GD)).toThrow(/not valid JSON/);
+    expect(() => summariseEventFile("{}", GD)).toThrow(/no eventName/);
+  });
+
+  it("reports added, removed and flipped usedInWild files; ignores an incident-only edit", async () => {
+    fetched.length = 0;
+    const result = await compareGroup(group, sha("a"), sha("b"), fetchFile, listFiles);
+    const diff = result.lists[0].diff;
+    expect(diff.added.map((e) => e.key)).toEqual([NEW]);
+    expect(diff.removed.map((e) => e.key)).toEqual([OLD]);
+    expect(diff.changed.map((c) => [c.key, c.before[2], c.after[2]])).toEqual([
+      [GD, "usedInWild=true", "usedInWild=false"],
+    ]);
+    expect(diff.headerChanged).toBe(false);
+    expect(groupChanged(result)).toBe(true);
+    // The .cloudtrail sample and README are never fetched.
+    expect(fetched.some((f) => f.includes(".cloudtrail") || f.includes("README"))).toBe(false);
+    const body = renderReport([result]);
+    expect(body).toContain("#### events/ — 1 added, 1 removed, 1 changed");
+    expect(body).toContain("bedrock PutUseCaseForModelAccess");
+    expect(issueTitle([result])).toContain("[upstream-rules traildiscover@aaaaaaa]");
+  });
+
+  it("does not fetch an event file whose blob is unchanged", async () => {
+    fetched.length = 0;
+    const same: ListFiles = async () => new Map([[GD, "b1"]]);
+    const result = await compareGroup(group, sha("a"), sha("b"), fetchFile, same);
+    expect(fetched).toEqual([]);
+    expect(groupChanged(result)).toBe(false);
+  });
+
+  it("fails loudly when the events folder is gone or listFiles is missing", async () => {
+    const empty: ListFiles = async (_repo, _dir, ref) => (ref === sha("b") ? new Map() : trees[sha("a")]);
+    await expect(compareGroup(group, sha("a"), sha("b"), fetchFile, empty)).rejects.toThrow(/no event files/);
+    await expect(compareGroup(group, sha("a"), sha("b"), fetchFile)).rejects.toThrow(/needs listFiles/);
   });
 });
 
