@@ -119,6 +119,8 @@ example `af-south-1`) are in it. The account's own region is marked **(account r
   and the regions AWS enables by default) with a warning that says why. The pre-check and the
   result say the same, so an opt-in region missing from the list is never a silent gap. Add the
   permission (see the minimum policy) and start a new collection to collect those regions.
+- Listing the regions signs in with the account's credential, so each listing is recorded in the
+  team audit log as `cloud-account-regions`.
 - If the list cannot be loaded at all, the panel says so, the companion lists the regions itself
   when the collection starts, and the result says which list it used. A collection whose sign-in
   fails is not created; the start error says why.
