@@ -97,6 +97,10 @@ export class FakeEl {
       } else this.appendChild(item);
     }
   }
+  replaceChildren(...items: Array<FakeEl | string>): void {
+    this.textContent = "";
+    this.append(...items);
+  }
   removeChild(child: FakeEl): FakeEl {
     this.children = this.children.filter((c) => c !== child);
     child.parent = null;
