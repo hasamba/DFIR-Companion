@@ -31,6 +31,7 @@ import {
   type SubWindowStatus,
 } from "./collectTypes.js";
 import { applySplit, decideSplit, nextWork } from "./collectSplit.js";
+import { NOTE_MAX, withPageDisclosure } from "./collectCoverage.js";
 import { budgetStopReason, type QueryBudget } from "./collectBudget.js";
 import {
   backoffMs,
@@ -109,6 +110,8 @@ export async function commitPage(
       records: page.recordCount,
       ...(meta.capped ? { capped: meta.capped } : {}),
       ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
+      ...(page.note ? { note: page.note.slice(0, NOTE_MAX) } : {}),
+      ...(page.unverified ? { unverified: true as const } : {}),
     };
     await appendManifest(fs, paths, line);
     return line;
@@ -256,14 +259,17 @@ async function fetchStep(
   const capped = cappedBy(page, sw, source);
   const retrievedAt = deps.now();
   const line = await commitPage(deps.fs, deps.paths, page, { seq, sw, retrievedAt, capped });
-  const counted: SubWindowStatus = {
-    ...sw,
-    pages: sw.pages + 1,
-    records: sw.records + line.records,
-    firstRetrievedAt: sw.firstRetrievedAt ?? retrievedAt,
-    ...(line.acquiredUntil ? { acquiredUntil: line.acquiredUntil } : {}),
-    reason: undefined,
-  };
+  const counted: SubWindowStatus = withPageDisclosure(
+    {
+      ...sw,
+      pages: sw.pages + 1,
+      records: sw.records + line.records,
+      firstRetrievedAt: sw.firstRetrievedAt ?? retrievedAt,
+      ...(line.acquiredUntil ? { acquiredUntil: line.acquiredUntil } : {}),
+      reason: undefined,
+    },
+    line,
+  );
   if (capped)
     return { sw: { ...counted, state: "capped", capped, pageToken: undefined }, page: line, done: false };
   const next: SubWindowStatus = {

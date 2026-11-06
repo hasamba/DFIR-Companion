@@ -30,5 +30,8 @@ describe("cloud-collection.md — Collect GCP audit logs", () => {
     expect(SINK_LATE_SHARD_MS).toBe(3 * 3_600_000);
     expect(section).toMatch(/Data Access logs are off\s+by default/);
     expect(section).toContain("**24 hours**");
+    expect(section).toContain("**a collection from a sink is never reported as\ncomplete**");
+    expect(section).toContain("implicit `AND`");
+    expect(section).toContain("`…_A0:<time>.json`");
   });
 });

@@ -177,7 +177,8 @@ export function gcpCollectSession(deps: GcpSessionDeps): CloudCollectSession {
       if (req.source === GCP_SINK_SOURCE && !req.pageToken) {
         const route = await sink.route(req.window, req.signal);
         if (route.ok) return sink.page(req);
-        return apiPage(deps, req, { sinkRejected: route.reason });
+        const page = await apiPage(deps, req, { sinkRejected: route.reason });
+        return { ...page, note: `Log sink not used: ${route.reason}. Collected from the Logging API.` };
       }
       return apiPage(deps, req, {});
     },

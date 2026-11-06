@@ -230,22 +230,31 @@ logName=("projects/<p>/logs/cloudaudit.googleapis.com%2Factivity" OR "projects/<
 A log sink can copy audit logs to a Cloud Storage bucket, which often keeps them longer than Cloud
 Logging does. The companion uses a sink **only after it checks**:
 
-1. **The filter.** The sink must send all four audit logs. An empty filter sends everything. A
-   filter that leaves out an audit log is rejected, and so is a filter the companion cannot prove:
-   one with `NOT` or `-`, one that narrows the logs with `AND`, or a sink with exclusion filters.
-2. **The history.** Logs are in the bucket from when the sink was created, or from its oldest audit
-   log file if that is later. A window that starts earlier is collected from the Cloud Logging API.
+1. **The filter.** The sink must provably send all four audit logs. The companion accepts only an
+   empty filter, or a filter made of `logName` terms joined by `OR` — for example
+   `logName:"cloudaudit.googleapis.com"`, or the four exact audit log names. Any other filter is
+   rejected because the companion cannot prove it keeps every audit entry. That includes a second
+   condition on its own line (Cloud Logging joins it with an implicit `AND`), `AND`, `NOT` or `-`,
+   another field, and a sink with exclusion filters.
+2. **The history.** Logs are in the bucket from the latest of three times: when the sink was
+   created, when it was last changed (its filter may have been widened then), and its oldest audit
+   log file. A sink whose last-change time is unknown is not used. A window that starts earlier is
+   collected from the Cloud Logging API.
 3. **The permission.** The account must be able to list the bucket (`roles/storage.objectViewer`).
 
-When a check fails, the companion collects from the Cloud Logging API, and the manifest's first page
-records why the sink was rejected — for example `sink "audit-sink": its filter does not include the
-data_access audit logs`.
+When a check fails, the companion collects from the Cloud Logging API. The result's notes say why
+the sink was not used — for example `Log sink not used: sink "audit-sink": its filter does not
+include the data_access audit logs` — and so does the manifest.
 
-From a sink, each saved page is one hourly log file from the bucket, exactly as stored. **Sinks
-write hourly batches, and parts of an hour can arrive late.** The companion does not assume a sink
-is complete minutes after the fact: it treats the logs as settled only up to the last whole hour
-that is at least **three hours** old, and the result says so: *Settled up to … only*. Collect that
-window again later to pick up what arrived after; duplicates are removed.
+From a sink, each saved page is one log file from the bucket, exactly as stored: the hourly files
+and the addendum files (`…_A0:<time>.json`) that Cloud Logging writes later for entries that
+arrived late. **Sinks write hourly batches, and parts of an hour can arrive late.** The companion
+treats the logs as settled only up to the last whole hour that is at least **three hours** old, and
+the result says so: *Settled up to … only*. That delay is an estimate. Cloud Logging does not
+guarantee that a sink delivered every entry, so **a collection from a sink is never reported as
+complete**: it ends as partial, with the note *Log sink delivery is not guaranteed complete*. For a
+completeness guarantee, collect the same window with the **GCP audit logs** source as well;
+duplicates are removed.
 
 ### Roles
 

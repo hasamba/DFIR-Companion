@@ -1,9 +1,10 @@
 // The GCS log sink path of the GCP collector (#2314). A sink is used ONLY after three checks:
 //
-//   1. its filter routes all four Cloud Audit Logs to it (an empty filter routes everything) — a
-//      filter the companion cannot prove (a negation, a narrowing AND) counts as missing them;
-//   2. its history: audit logs are in the bucket from the later of the sink's creation and the
-//      oldest audit object, and a window starting earlier is not the sink's to answer;
+//   1. its filter routes all four Cloud Audit Logs to it — a strict allowlist (gcpSinkFilter.ts);
+//      any filter outside it is unprovable and rejected;
+//   2. its history: audit logs are in the bucket from the latest of the sink's creation, its last
+//      update (the filter may have been widened then) and the oldest audit object; a sink with no
+//      update time is unverified, and a window starting earlier is not the sink's to answer;
 //   3. the storage permission: the bucket can be listed (roles/storage.objectViewer).
 //
 // A sink that fails any check is rejected with the reason, and the collector uses the Logging API.
@@ -11,18 +12,29 @@
 // Sinks write HOURLY batches, and shards of an hour can arrive late
 // (https://cloud.google.com/logging/docs/export/storage), so a sink is never assumed settled five
 // minutes after the fact: each page states the end of the last whole hour before SINK_LATE_SHARD_MS
-// as its cutoff (`acquiredUntil`), and the result discloses it.
+// as its estimated cutoff (`acquiredUntil`), and every sink page is marked unverified, so a sink
+// collection is never reported plainly complete.
 //
-// Object names: cloudaudit.googleapis.com/<log>/YYYY/MM/DD/HH:00:00_HH:59:59_S<n>.json
+// Object names: cloudaudit.googleapis.com/<log>/YYYY/MM/DD/HH:00:00_HH:59:59_S<n>.json, and the
+// addendum shards late entries of an hour are written to afterwards, …_A<n>:<epoch seconds>.json.
+// Both are collected. (A copied folder may have dashes for the colons.)
 
 import type { CollectWindow } from "../cloudCollect/collectTypes.js";
 import { GCP_AUDIT_LOGS, type GcpAuditLog } from "./gcpFilter.js";
 import { throwForStatus } from "./gcpErrors.js";
+import { sinkFilterMisses } from "./gcpSinkFilter.js";
 import type { GcpWire } from "./gcpWire.js";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** How long after its hour a batch may still gain a late shard. A default, not a guarantee. */
+/**
+ * Disclosed on every sink page, which the engine never counts as complete: a sink delivers on a
+ * best-effort basis, so the 3 h settle delay below is an estimate, not a completeness guarantee.
+ */
+export const SINK_UNVERIFIED_NOTE =
+  "Log sink delivery is not guaranteed complete; collect the same window with the Logging API " +
+  '(source "GCP audit logs") for a completeness guarantee.';
+/** How long after its hour a batch may still gain a late shard. An estimate, not a guarantee. */
 export const SINK_LATE_SHARD_MS = 3 * HOUR;
 const AUDIT_PREFIX = "cloudaudit.googleapis.com/";
 const STORAGE_DESTINATION = "storage.googleapis.com/";
@@ -37,31 +49,14 @@ export interface LogSink {
   disabled?: boolean;
   exclusions?: Array<{ name?: string; filter?: string; disabled?: boolean }>;
   createTime?: string;
-}
-
-/** Which audit logs a sink filter does not route; `unprovable` when it cannot be judged at all. */
-export function sinkFilterMisses(
-  filter: string | undefined,
-  logs: readonly GcpAuditLog[],
-): { missing: GcpAuditLog[]; unprovable?: string } {
-  const f = (filter ?? "").trim();
-  if (!f) return { missing: [] };
-  if (/\bNOT\b|!=|!~|(^|[\s(:=])-["\w]/.test(f))
-    return { missing: [...logs], unprovable: "its filter has a negation the companion cannot evaluate" };
-  if (/\bAND\b/.test(f))
-    return {
-      missing: [...logs],
-      unprovable: "its filter narrows the logs with AND, so it cannot be shown to keep every audit entry",
-    };
-  const text = f.toLowerCase().replace(/%2f/g, "/");
-  const all = /cloudaudit\.googleapis\.com(?!\/)/.test(text);
-  return { missing: logs.filter((l) => !all && !text.includes(`cloudaudit.googleapis.com/${l}`)) };
+  /** When the sink (its filter included) last changed: history before it is not the sink's. */
+  updateTime?: string;
 }
 
 export type SinkVerdict = { ok: true; bucket: string } | { ok: false; reason: string };
 
 /** Checks 1 (filter) and the sink's own shape. Pure. */
-export function sinkVerdict(sink: LogSink, logs: readonly GcpAuditLog[]): SinkVerdict {
+export function sinkVerdict(sink: LogSink, projectId: string, logs: readonly GcpAuditLog[]): SinkVerdict {
   const who = `sink "${String(sink.name).slice(0, 100)}"`;
   const bucket = sink.destination?.startsWith(STORAGE_DESTINATION)
     ? sink.destination.slice(STORAGE_DESTINATION.length)
@@ -71,7 +66,7 @@ export function sinkVerdict(sink: LogSink, logs: readonly GcpAuditLog[]): SinkVe
   if (sink.disabled) return { ok: false, reason: `${who}: the sink is disabled` };
   if ((sink.exclusions ?? []).some((e) => !e.disabled))
     return { ok: false, reason: `${who}: it has exclusion filters, which may drop audit entries` };
-  const { missing, unprovable } = sinkFilterMisses(sink.filter, logs);
+  const { missing, unprovable } = sinkFilterMisses(sink.filter, projectId, logs);
   if (unprovable) return { ok: false, reason: `${who}: ${unprovable}` };
   if (missing.length)
     return { ok: false, reason: `${who}: its filter does not include the ${missing.join(", ")} audit logs` };
@@ -79,7 +74,7 @@ export function sinkVerdict(sink: LogSink, logs: readonly GcpAuditLog[]): SinkVe
 }
 
 const OBJECT_NAME =
-  /^cloudaudit\.googleapis\.com\/([a-z_]+)\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})[:-]00[:-]00_\d{2}[:-]59[:-]59_S\d+\.json$/;
+  /^cloudaudit\.googleapis\.com\/([a-z_]+)\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})[:-]00[:-]00_\d{2}[:-]59[:-]59_(?:S\d+|A\d+[:-]\d+)\.json$/;
 
 /** The log and hour a sink object holds, or null for any other name. */
 export function objectHour(name: string): { log: GcpAuditLog; startMs: number; endMs: number } | null {
@@ -147,8 +142,12 @@ async function probeBucket(
   const first = parse<{ items?: Array<{ name?: string }> }>(res.body).items?.[0]?.name;
   const oldest = first ? objectHour(first) : null;
   if (!oldest) return { reason: `${who}: its bucket holds no audit log objects` };
+  // The filter may have been widened at the last update: only after it is the routing known.
+  const updated = sink.updateTime ? Date.parse(sink.updateTime) : NaN;
+  if (!Number.isFinite(updated))
+    return { reason: `${who}: its last update time is unknown, so its history cannot be verified` };
   const created = sink.createTime ? Date.parse(sink.createTime) : NaN;
-  const from = Number.isFinite(created) ? Math.max(created, oldest.startMs) : oldest.startMs;
+  const from = Math.max(updated, Number.isFinite(created) ? created : updated, oldest.startMs);
   return { coveredFrom: new Date(from).toISOString() };
 }
 
@@ -168,7 +167,7 @@ export async function chooseSink(
   if (!sinks.length) return { rejected: ["the project has no log sink"] };
   const rejected: string[] = [];
   for (const sink of sinks) {
-    const verdict = sinkVerdict(sink, GCP_AUDIT_LOGS);
+    const verdict = sinkVerdict(sink, projectId, GCP_AUDIT_LOGS);
     if (!verdict.ok) {
       rejected.push(verdict.reason);
       continue;

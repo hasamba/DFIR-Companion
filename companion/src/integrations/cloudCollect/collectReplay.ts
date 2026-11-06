@@ -31,6 +31,7 @@ import type {
   QuarantinedFile,
   SubWindowStatus,
 } from "./collectTypes.js";
+import { withPageDisclosure } from "./collectCoverage.js";
 
 export interface ReplayResult {
   header: ManifestHeader;
@@ -75,13 +76,16 @@ function applyRestart(sw: SubWindowStatus): SubWindowStatus {
 }
 
 function applyPage(sw: SubWindowStatus, page: ManifestPage): SubWindowStatus {
-  const counted = {
-    ...sw,
-    pages: sw.pages + 1,
-    records: sw.records + page.records,
-    firstRetrievedAt: sw.firstRetrievedAt ?? page.retrievedAt,
-    ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
-  };
+  const counted = withPageDisclosure(
+    {
+      ...sw,
+      pages: sw.pages + 1,
+      records: sw.records + page.records,
+      firstRetrievedAt: sw.firstRetrievedAt ?? page.retrievedAt,
+      ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
+    },
+    page,
+  );
   if (SETTLED.has(sw.state) || sw.state === "incomplete") return counted;
   if (page.capped) return { ...counted, state: "capped", capped: page.capped, pageToken: undefined };
   return { ...counted, pageToken: page.pageTokenOut, state: page.pageTokenOut ? "pending" : "done" };

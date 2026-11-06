@@ -4,10 +4,10 @@ import {
   chooseSink,
   lastCompleteBatchEnd,
   objectHour,
-  sinkFilterMisses,
   sinkVerdict,
   type LogSink,
 } from "../../../src/integrations/cloudCollectGcp/gcpSink.js";
+import { sinkFilterMisses } from "../../../src/integrations/cloudCollectGcp/gcpSinkFilter.js";
 import { GCP_AUDIT_LOGS } from "../../../src/integrations/cloudCollectGcp/gcpFilter.js";
 import { googleError, mockWire, PROJECT } from "./gcpCollectMocks.js";
 
@@ -19,50 +19,72 @@ const sink = (over: Partial<LogSink> = {}): LogSink => ({
   destination: "storage.googleapis.com/audit-bucket-01",
   filter: 'logName:"cloudaudit.googleapis.com"',
   createTime: "2026-01-01T00:00:00Z",
+  updateTime: "2026-01-01T00:00:00Z",
   ...over,
 });
 
-describe("sinkFilterMisses", () => {
-  it("accepts an empty filter and a filter naming every audit log", () => {
-    expect(sinkFilterMisses("", GCP_AUDIT_LOGS)).toEqual({ missing: [] });
-    expect(sinkFilterMisses('logName:"cloudaudit.googleapis.com"', GCP_AUDIT_LOGS)).toEqual({ missing: [] });
-    const all = GCP_AUDIT_LOGS.map(
-      (l) => `logName="projects/${PROJECT}/logs/cloudaudit.googleapis.com%2F${l}"`,
-    );
-    expect(sinkFilterMisses(all.join(" OR "), GCP_AUDIT_LOGS)).toEqual({ missing: [] });
+const UNPROVABLE = "its filter cannot be proven to keep every audit entry";
+const misses = (f: string) => sinkFilterMisses(f, PROJECT, GCP_AUDIT_LOGS);
+const full = (l: string, sep = "%2F") => `projects/${PROJECT}/logs/cloudaudit.googleapis.com${sep}${l}`;
+
+describe("sinkFilterMisses — a strict allowlist, never a heuristic", () => {
+  it("accepts an empty filter, the audit-log 'has' term, and the four exact logName terms", () => {
+    expect(misses("")).toEqual({ missing: [] });
+    expect(misses('logName:"cloudaudit.googleapis.com"')).toEqual({ missing: [] });
+    expect(misses("  logName : cloudaudit.googleapis.com \n")).toEqual({ missing: [] });
+    const all = GCP_AUDIT_LOGS.map((l, i) => `logName="${full(l, i % 2 ? "/" : "%2F")}"`);
+    expect(misses(all.join(" OR "))).toEqual({ missing: [] });
+    expect(misses(`(${all.join("\n  OR ")})`)).toEqual({ missing: [] });
+    expect(misses(`logName=(${GCP_AUDIT_LOGS.map((l) => `"${full(l)}"`).join(" OR ")})`)).toEqual({
+      missing: [],
+    });
   });
 
-  it("names the audit logs a filter misses", () => {
+  it("names the audit logs a well-formed logName filter misses", () => {
+    expect(misses(`logName="${full("activity")}" OR logName="${full("policy", "/")}"`)).toEqual({
+      missing: ["data_access", "system_event"],
+    });
+    // Another project's logs are not this project's.
     expect(
-      sinkFilterMisses(
-        `logName="projects/${PROJECT}/logs/cloudaudit.googleapis.com%2Factivity" OR logName="projects/${PROJECT}/logs/cloudaudit.googleapis.com/policy"`,
-        GCP_AUDIT_LOGS,
-      ),
-    ).toEqual({ missing: ["data_access", "system_event"] });
-    expect(sinkFilterMisses('resource.type="gce_instance"', GCP_AUDIT_LOGS).missing).toEqual([
-      ...GCP_AUDIT_LOGS,
-    ]);
+      misses(
+        GCP_AUDIT_LOGS.map((l) => `logName="projects/other/logs/cloudaudit.googleapis.com%2F${l}"`).join(
+          " OR ",
+        ),
+      ).missing,
+    ).toEqual([...GCP_AUDIT_LOGS]);
   });
 
-  it("refuses a filter it cannot prove: a negation or a narrowing AND", () => {
-    expect(
-      sinkFilterMisses('logName:"cloudaudit.googleapis.com" AND severity>=WARNING', GCP_AUDIT_LOGS)
-        .unprovable,
-    ).toMatch(/AND/);
-    expect(
-      sinkFilterMisses('NOT logName:"cloudaudit.googleapis.com%2Fdata_access"', GCP_AUDIT_LOGS).unprovable,
-    ).toMatch(/negation/);
+  it("refuses an implicit AND: a second term on its own line narrows the sink", () => {
+    expect(misses('logName:"cloudaudit.googleapis.com"\nseverity>=ERROR')).toEqual({
+      missing: [...GCP_AUDIT_LOGS],
+      unprovable: UNPROVABLE,
+    });
+  });
+
+  it("refuses the audit-log hostname in another field, an explicit AND, and a negation", () => {
+    for (const f of [
+      'protoPayload.serviceName:"cloudaudit.googleapis.com"',
+      '"cloudaudit.googleapis.com"',
+      'logName:"cloudaudit.googleapis.com" AND severity>=WARNING',
+      `NOT logName:"${full("data_access")}"`,
+      '-logName:"cloudaudit.googleapis.com"',
+      'logName:"cloudaudit.googleapis.com" OR resource.type="gce_instance"',
+      'logName!="x"',
+      'resource.type="gce_instance"',
+    ])
+      expect(misses(f).unprovable, f).toBe(UNPROVABLE);
   });
 });
 
 describe("sinkVerdict", () => {
   it("accepts a Cloud Storage sink whose filter covers the audit logs", () => {
-    expect(sinkVerdict(sink(), GCP_AUDIT_LOGS)).toEqual({ ok: true, bucket: "audit-bucket-01" });
+    expect(sinkVerdict(sink(), PROJECT, GCP_AUDIT_LOGS)).toEqual({ ok: true, bucket: "audit-bucket-01" });
   });
 
   it("rejects, with the reason, a sink whose filter misses audit logs", () => {
     const v = sinkVerdict(
       sink({ filter: `logName="projects/${PROJECT}/logs/cloudaudit.googleapis.com%2Factivity"` }),
+      PROJECT,
       GCP_AUDIT_LOGS,
     );
     expect(v).toEqual({
@@ -73,15 +95,19 @@ describe("sinkVerdict", () => {
   });
 
   it("rejects a disabled sink, one with active exclusions, and one that is not a bucket", () => {
-    expect(sinkVerdict(sink({ disabled: true }), GCP_AUDIT_LOGS)).toMatchObject({
+    expect(sinkVerdict(sink({ disabled: true }), PROJECT, GCP_AUDIT_LOGS)).toMatchObject({
       ok: false,
       reason: /disabled/,
     });
     expect(
-      sinkVerdict(sink({ exclusions: [{ name: "drop-da", filter: "x" }] }), GCP_AUDIT_LOGS),
+      sinkVerdict(sink({ exclusions: [{ name: "drop-da", filter: "x" }] }), PROJECT, GCP_AUDIT_LOGS),
     ).toMatchObject({ ok: false, reason: /exclusion/ });
     expect(
-      sinkVerdict(sink({ destination: "bigquery.googleapis.com/projects/p/datasets/d" }), GCP_AUDIT_LOGS),
+      sinkVerdict(
+        sink({ destination: "bigquery.googleapis.com/projects/p/datasets/d" }),
+        PROJECT,
+        GCP_AUDIT_LOGS,
+      ),
     ).toMatchObject({ ok: false, reason: /not a Cloud Storage bucket/ });
   });
 });
@@ -98,6 +124,13 @@ describe("objectHour and the late-shard cutoff", () => {
       objectHour("cloudaudit.googleapis.com/data_access/2026/11/01/15-00-00_15-59-59_S1.json")?.log,
     ).toBe("data_access");
     expect(objectHour("cloudaudit.googleapis.com/activity/2026/11/01/readme.txt")).toBeNull();
+    // Addendum shards: late entries for the hour, written after it (A<n>:<epoch seconds>).
+    expect(
+      objectHour("cloudaudit.googleapis.com/activity/2026/11/01/15:00:00_15:59:59_A0:1762016400.json"),
+    ).toEqual({ log: "activity", startMs: start, endMs: start + 3_600_000 });
+    expect(
+      objectHour("cloudaudit.googleapis.com/policy/2026/11/01/15-00-00_15-59-59_A12-1762016400.json")?.log,
+    ).toBe("policy");
     expect(objectHour("other/activity/2026/11/01/15:00:00_15:59:59_S0.json")).toBeNull();
   });
 
@@ -162,10 +195,23 @@ describe("chooseSink", () => {
     expect(empty).toMatchObject({ rejected: [expect.stringMatching(/holds no audit log objects/)] });
   });
 
-  it("covers from the later of the sink's creation and its oldest object", async () => {
-    const late = sink({ createTime: "2026-09-15T12:34:00Z" });
+  it("covers from the latest of the sink's creation, its last update and its oldest object", async () => {
+    const late = sink({ createTime: "2026-09-15T12:34:00Z", updateTime: "2026-09-15T12:34:00Z" });
     const choice = await chooseSink(sinkCloud({ sinks: [late], firstObject: FIRST }).wire, PROJECT);
     expect(choice).toMatchObject({ coveredFrom: "2026-09-15T12:34:00.000Z" });
+  });
+
+  it("covers a sink widened after creation only from the widening (its update time)", async () => {
+    const widened = sink({ createTime: "2026-01-01T00:00:00Z", updateTime: "2026-10-20T08:00:00Z" });
+    const choice = await chooseSink(sinkCloud({ sinks: [widened], firstObject: FIRST }).wire, PROJECT);
+    expect(choice).toMatchObject({ coveredFrom: "2026-10-20T08:00:00.000Z" });
+  });
+
+  it("rejects a sink whose last update time is unknown: its history cannot be verified", async () => {
+    const unknown = sink({ updateTime: undefined });
+    expect(await chooseSink(sinkCloud({ sinks: [unknown], firstObject: FIRST }).wire, PROJECT)).toEqual({
+      rejected: ['sink "audit-to-gcs": its last update time is unknown, so its history cannot be verified'],
+    });
   });
 
   it("says so when the project has no sink at all", async () => {

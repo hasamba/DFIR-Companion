@@ -11,6 +11,7 @@ import {
   lastCompleteBatchEnd,
   listSinkObjects,
   objectMediaUrl,
+  SINK_UNVERIFIED_NOTE,
   type SinkChoice,
   type SinkListing,
 } from "./gcpSink.js";
@@ -109,6 +110,8 @@ export function gcpSinkPager(wire: GcpWire, projectId: string, now: () => number
       const at = cursor.a ? listing.names.findIndex((n) => n > (cursor.a as string)) : 0;
       const base = { route: "gcs-sink", sink: cursor.s, bucket: cursor.b };
       const acquiredUntil = lastCompleteBatchEnd(now());
+      // Best-effort delivery: never counted complete, and the result says why (gcpSink.ts).
+      const disclosure = { note: SINK_UNVERIFIED_NOTE, unverified: true };
       if (at < 0 || listing.names.length === 0)
         return {
           body: listing.lastListing,
@@ -116,6 +119,7 @@ export function gcpSinkPager(wire: GcpWire, projectId: string, now: () => number
           recordCount: 0,
           requestParams: { ...base, objects: "0", prefixesListed: String(listing.prefixes) },
           acquiredUntil,
+          ...disclosure,
         };
       const name = listing.names[at];
       const res = await wire({
@@ -132,6 +136,7 @@ export function gcpSinkPager(wire: GcpWire, projectId: string, now: () => number
         ...(more ? { nextPageToken: encodeToken({ ...cursor, a: name }) } : {}),
         requestParams: { ...base, object: name },
         acquiredUntil,
+        ...disclosure,
       };
     },
   };

@@ -7,7 +7,10 @@ import {
   gcpCollectSession,
 } from "../../../src/integrations/cloudCollectGcp/gcpCollectProvider.js";
 import { GCP_ENTRIES_LIST_URL } from "../../../src/integrations/cloudCollectGcp/gcpFilter.js";
-import { lastCompleteBatchEnd } from "../../../src/integrations/cloudCollectGcp/gcpSink.js";
+import {
+  SINK_UNVERIFIED_NOTE,
+  lastCompleteBatchEnd,
+} from "../../../src/integrations/cloudCollectGcp/gcpSink.js";
 import { authorizedWire } from "../../../src/integrations/cloudCollectGcp/gcpWire.js";
 import {
   LOGGING_READ_SCOPE,
@@ -114,15 +117,20 @@ describe("the Logging API path", () => {
 });
 
 const BUCKET = "audit-bucket-01";
+const ADDENDUM = "cloudaudit.googleapis.com/activity/2026/11/01/15:00:00_15:59:59_A0:1762016400.json";
 const OBJ = (log: string, hh: string) =>
   `cloudaudit.googleapis.com/${log}/2026/11/01/${hh}:00:00_${hh}:59:59_S0.json`;
 
-/** A project with one sink (filter as given); its bucket starts in June and holds hours 15–16 of 1 Nov. */
+/**
+ * A project with one sink (filter as given); its bucket starts in June and holds hours 15–16 of
+ * 1 Nov, hour 15 with a late addendum shard.
+ */
 function sinkProject(filter: string) {
   const objects: Record<string, string> = {
     ["cloudaudit.googleapis.com/activity/2026/06/01/00:00:00_00:59:59_S0.json"]: "",
     [OBJ("activity", "15")]:
       [gcpAuditEntry(1), gcpAuditEntry(2)].map((e) => JSON.stringify(e)).join("\n") + "\n",
+    [ADDENDUM]: JSON.stringify(gcpAuditEntry(4, "SetIamPolicy", "2026-11-01T15:59:00Z")) + "\n",
     [OBJ("activity", "16")]: JSON.stringify(gcpAuditEntry(3, "SetIamPolicy", "2026-11-01T16:01:00Z")) + "\n",
   };
   return mockWire((req) => {
@@ -136,6 +144,7 @@ function sinkProject(filter: string) {
               destination: `storage.googleapis.com/${BUCKET}`,
               filter,
               createTime: "2026-01-01T00:00:00Z",
+              updateTime: "2026-01-01T00:00:00Z",
             },
           ],
         },
@@ -162,23 +171,25 @@ describe("the GCS sink path", () => {
     const session = gcpCollectSession({ wire, settings: SETTINGS, now: () => NOW });
     const first = await session.fetchPage({ source: GCP_SINK_SOURCE, subWindowId: "k:0", window: WINDOW });
     expect(first.extension).toBe("jsonl");
-    expect(first.recordCount).toBe(2);
+    expect(first.recordCount).toBe(1);
     expect(first.requestParams).toMatchObject({
       route: "gcs-sink",
       sink: "audit-sink",
       bucket: BUCKET,
-      object: OBJ("activity", "15"),
+      object: ADDENDUM,
     });
     expect(first.acquiredUntil).toBe(lastCompleteBatchEnd(NOW));
+    // The 3 h delay is an estimate: every sink page says its delivery is unverified.
+    expect(first.unverified).toBe(true);
+    expect(first.note).toBe(SINK_UNVERIFIED_NOTE);
     expect(first.nextPageToken).toMatch(/^gcs1:/);
-    const second = await session.fetchPage({
-      source: GCP_SINK_SOURCE,
-      subWindowId: "k:0",
-      window: WINDOW,
-      pageToken: first.nextPageToken,
-    });
-    expect(second.requestParams.object).toBe(OBJ("activity", "16"));
-    expect(second.nextPageToken).toBeUndefined();
+    const next = (token?: string) =>
+      session.fetchPage({ source: GCP_SINK_SOURCE, subWindowId: "k:0", window: WINDOW, pageToken: token });
+    const second = await next(first.nextPageToken);
+    expect(second.requestParams.object).toBe(OBJ("activity", "15"));
+    const third = await next(second.nextPageToken);
+    expect(third.requestParams.object).toBe(OBJ("activity", "16"));
+    expect(third.nextPageToken).toBeUndefined();
   });
 
   it("rejects a sink whose filter misses audit logs, says why, and uses the Logging API", async () => {
@@ -191,6 +202,12 @@ describe("the GCS sink path", () => {
     );
     expect(calls.at(-1)?.url).toBe(GCP_ENTRIES_LIST_URL);
     expect(page.acquiredUntil).toBeUndefined();
+    // The reason reaches the result's coverage notes, not only the manifest.
+    expect(page.note).toBe(
+      'Log sink not used: sink "audit-sink": its filter does not include the data_access, system_event, ' +
+        "policy audit logs. Collected from the Logging API.",
+    );
+    expect(page.unverified).toBeUndefined();
   });
 
   it("uses the Logging API for a window that starts before the sink's history", async () => {
@@ -213,6 +230,7 @@ describe("the GCS sink path", () => {
       extension: "json",
       recordCount: 0,
       requestParams: { route: "gcs-sink", objects: "0" },
+      unverified: true,
     });
     expect(page.nextPageToken).toBeUndefined();
   });

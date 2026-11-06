@@ -97,6 +97,13 @@ export interface CollectPage {
    * complete hourly batch). The disclosed cutoff is never later than it.
    */
   acquiredUntil?: string;
+  /** One plain sentence for the result's coverage notes (a log sink not used, and why). */
+  note?: string;
+  /**
+   * The cloud gives no completeness guarantee for this page's data (a GCS sink delivers best
+   * effort). A source with such a page is never reported "complete" — at best "partial", with `note`.
+   */
+  unverified?: boolean;
 }
 
 /** Who the session is, for the manifest header. Never a secret. */
@@ -199,6 +206,9 @@ export interface ManifestPage {
   /** #2312: why this page ended its sub-window as capped — the cloud said so, or the page cap. */
   capped?: "provider" | "page-cap";
   acquiredUntil?: string;
+  /** #2314: the page's disclosure and its unverified completeness (CollectPage.note/unverified). */
+  note?: string;
+  unverified?: true;
 }
 
 /**
@@ -268,6 +278,9 @@ export interface SubWindowStatus {
   /** When its first page came back (the disclosed cutoff is measured from it). */
   firstRetrievedAt?: string;
   acquiredUntil?: string;
+  /** #2314: the notes its pages disclosed, and whether any page's completeness is unverified. */
+  notes?: string[];
+  unverified?: boolean;
 }
 
 /** Per source, how far the collection really got (#2312): never "complete" past this. */

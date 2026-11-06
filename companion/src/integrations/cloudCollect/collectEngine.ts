@@ -102,7 +102,8 @@ export function collectionStatus(
   subWindows: readonly SubWindowStatus[],
   pagesSaved: number,
 ): CollectionStatus {
-  if (leaves(subWindows).every((sw) => sw.state === "done")) return "complete";
+  // A page whose completeness the cloud does not guarantee (#2314: a GCS sink) is never "complete".
+  if (leaves(subWindows).every((sw) => sw.state === "done" && !sw.unverified)) return "complete";
   return pagesSaved > 0 ? "partial" : "failed";
 }
 

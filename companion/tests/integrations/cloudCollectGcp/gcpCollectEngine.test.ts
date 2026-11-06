@@ -15,7 +15,10 @@ import {
   gcpCollectSession,
 } from "../../../src/integrations/cloudCollectGcp/gcpCollectProvider.js";
 import { GCP_ENTRIES_LIST_URL } from "../../../src/integrations/cloudCollectGcp/gcpFilter.js";
-import { lastCompleteBatchEnd } from "../../../src/integrations/cloudCollectGcp/gcpSink.js";
+import {
+  SINK_UNVERIFIED_NOTE,
+  lastCompleteBatchEnd,
+} from "../../../src/integrations/cloudCollectGcp/gcpSink.js";
 import { faultFs, pipelineImporter, tempCase, type TempCase } from "../../helpers/cloudCollectFakes.js";
 import { fakeClock } from "../../helpers/cloudCollectDense.js";
 import { gcpAuditEntry, googleError, mockWire, PROJECT } from "./gcpCollectMocks.js";
@@ -169,7 +172,16 @@ describe("GCP collection through the engine", () => {
       const url = new URL(req.url);
       if (url.pathname.endsWith("/sinks"))
         return {
-          body: { sinks: [{ name: "all-audit", destination: "storage.googleapis.com/audit-bucket-01" }] },
+          body: {
+            sinks: [
+              {
+                name: "all-audit",
+                destination: "storage.googleapis.com/audit-bucket-01",
+                createTime: "2026-01-01T00:00:00Z",
+                updateTime: "2026-01-01T00:00:00Z",
+              },
+            ],
+          },
         };
       if (url.searchParams.get("alt") === "media") return { body: JSON.stringify(gcpAuditEntry(7)) + "\n" };
       const prefix = url.searchParams.get("prefix") ?? "";
@@ -184,5 +196,44 @@ describe("GCP collection through the engine", () => {
     const coverage = cp.coverage?.find((c) => c.source === GCP_SINK_SOURCE);
     expect(coverage?.acquiredCutoff).toBe("2026-11-02T07:00:00.000Z");
     expect(coverage?.notes.join(" ")).toMatch(/Settled up to 2026-11-02T07:00:00.000Z only/);
+    // Sink delivery is not guaranteed: never a plain "complete" on sink pages alone.
+    expect(page.unverified).toBe(true);
+    expect(cp.status).toBe("partial");
+    expect(cp.missing).toEqual([]);
+    expect(coverage?.notes).toContain(SINK_UNVERIFIED_NOTE);
+    // A resume rebuilds the same verdict from the manifest.
+    const again = await runCollection(
+      { fs: faultFs(), session, importer: pipelineImporter(t), sources: GCP_COLLECT_SOURCES, now },
+      t.dir,
+      { resume: true },
+    );
+    expect(again.status).toBe("partial");
+    expect(again.coverage?.[0].notes).toContain(SINK_UNVERIFIED_NOTE);
+  });
+
+  it("puts a rejected sink's reason in the result's coverage notes, and the API data completes", async () => {
+    const t = await tempCase();
+    const { wire } = mockWire((req) => {
+      if (new URL(req.url).pathname.endsWith("/sinks"))
+        return {
+          body: {
+            sinks: [
+              {
+                name: "narrow",
+                destination: "storage.googleapis.com/audit-bucket-01",
+                filter: 'logName:"cloudaudit.googleapis.com"\nseverity>=ERROR',
+              },
+            ],
+          },
+        };
+      return { body: { entries: [gcpAuditEntry(1)] } };
+    });
+    const { cp } = await collect(t, gcpCollectSession({ wire, settings: SETTINGS }), {
+      source: GCP_SINK_SOURCE,
+    });
+    expect(cp.status).toBe("complete");
+    expect(cp.coverage?.[0].notes.join(" ")).toContain(
+      'Log sink not used: sink "narrow": its filter cannot be proven to keep every audit entry.',
+    );
   });
 });
