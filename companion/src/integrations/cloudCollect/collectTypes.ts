@@ -117,6 +117,11 @@ export interface CollectPage {
    * effort). A source with such a page is never reported "complete" — at best "partial", with `note`.
    */
   unverified?: boolean;
+  /**
+   * The page is kept as evidence but holds no log data, so it is never imported (#2340): a GCS
+   * sink's bucket listing for a window with no object. Copied to the manifest; replay honours it.
+   */
+  evidenceOnly?: boolean;
 }
 
 /** Who the session is, for the manifest header. Never a secret. */
@@ -240,6 +245,8 @@ export interface ManifestPage {
   /** #2314: the page's disclosure and its unverified completeness (CollectPage.note/unverified). */
   note?: string;
   unverified?: true;
+  /** #2340: kept as evidence, never imported (CollectPage.evidenceOnly). */
+  evidenceOnly?: true;
 }
 
 /**

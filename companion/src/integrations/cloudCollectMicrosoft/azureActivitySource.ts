@@ -13,8 +13,13 @@
 // subscription's pages run out → the next subscription in id order. `le` is the only upper bound the
 // API accepts and it is inclusive, so the filter ends 1 ms before the window's end; an event on that
 // exact instant is picked up by the next window and the #2301 dedup absorbs any repeat.
+//
+// A subscription that refuses its FIRST page (403 no role, 404 gone, 409 disabled) is skipped, not
+// fatal (#2340): a SkippedItemError names it, the walk goes on to the next subscription, the result
+// is partial and Resume retries it. A 429, a 5xx, a network or token failure, and a rejected
+// next-page link keep failing (or retrying) the source as before.
 
-import type { CollectPage, CollectPageRequest } from "../cloudCollect/collectTypes.js";
+import { SkippedItemError, type CollectPage, type CollectPageRequest } from "../cloudCollect/collectTypes.js";
 import {
   ACTIVITY_LOG_API_VERSION,
   ARM_BASE,
@@ -30,6 +35,8 @@ import {
 
 export const AZURE_ACTIVITY_SOURCE = "azure-activity";
 const SUBSCRIPTION_ID = /^[0-9a-fA-F-]{36}$/;
+/** First-page answers that mean "this subscription cannot be read", not "the source is broken". */
+const SUBSCRIPTION_REFUSED = new Set([403, 404, 409]);
 /** A safety stop, far above any real tenant: reaching it with a nextLink left is an error. */
 export const MAX_SUBSCRIPTION_PAGES = 1000;
 
@@ -110,14 +117,21 @@ export async function fetchActivityPage(
   const filter = activityFilter(req);
   const url = token?.next ? assertLink(token.next, ARM_HOST) : firstUrl(sub, filter);
   const answer = await arm({ method: "GET", url, ...(req.signal ? { signal: req.signal } : {}) });
+  // The first subscription after this one in id order: the walk goes on there.
+  const after = subscriptions.find((s) => s > sub);
   if (answer.status < 200 || answer.status >= 300) {
     const err = failure(answer, { pageLink: !!token?.next, nowMs: nowMs() });
+    if (!token?.next && SUBSCRIPTION_REFUSED.has(answer.status))
+      throw new SkippedItemError(
+        `subscription ${sub}`,
+        err.message,
+        after ? JSON.stringify({ sub: after } satisfies ActivityToken) : undefined,
+      );
     err.message = `subscription ${sub}: ${err.message}`;
     throw err;
   }
   const { records, nextLink } = listPage(answer);
   // Next: this subscription's next page, else the first subscription after it in id order.
-  const after = subscriptions.find((s) => s > sub);
   const next: ActivityToken | undefined = nextLink
     ? { sub, next: assertLink(nextLink, ARM_HOST) }
     : after

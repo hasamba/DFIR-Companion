@@ -5,9 +5,10 @@
 // partition split that walked only "interesting" types would leave the others silently missing while
 // every child reported done. Copied from the auditLogRecordType enumeration on Microsoft Learn
 // (graph/api/security-auditcoreroot-post-auditlogqueries, v1.0), 247 values; `unknownFutureValue` is
-// the enum's sentinel, not a filter. A type Microsoft adds later is missed by the fallback — the docs
-// say so. Each child is one query submission, so a split this wide usually stops on the tenant
-// budget and resumes later ("partial — budget used").
+// the enum's sentinel, not a filter. A type Microsoft adds later is missed by the fallback until this
+// list is updated; the manual says so (cloud-collection.md, the unified audit log bullet). Each
+// child is one query submission, so a split this wide usually stops on the tenant budget and
+// resumes later ("partial — budget used").
 
 export const UAL_RECORD_TYPES: readonly string[] = [
   "exchangeAdmin",

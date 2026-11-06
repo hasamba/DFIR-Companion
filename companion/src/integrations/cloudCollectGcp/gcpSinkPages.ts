@@ -120,6 +120,8 @@ export function gcpSinkPager(wire: GcpWire, projectId: string, now: () => number
           requestParams: { ...base, objects: "0", prefixesListed: String(listing.prefixes) },
           acquiredUntil,
           ...disclosure,
+          // The listing is the evidence of an empty window, not log data: never imported (#2340).
+          evidenceOnly: true,
         };
       const name = listing.names[at];
       const res = await wire({

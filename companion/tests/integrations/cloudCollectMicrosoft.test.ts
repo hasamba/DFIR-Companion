@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CursorExpiredError,
   RateLimitedError,
+  SkippedItemError,
   type CollectPage,
   type CollectPageRequest,
 } from "../../src/integrations/cloudCollect/collectTypes.js";
@@ -32,6 +33,7 @@ import {
 const TENANT = "00000000-0000-4000-8000-000000000001";
 const SUB_A = "11111111-1111-4111-8111-111111111111";
 const SUB_B = "22222222-2222-4222-8222-222222222222";
+const SUB_C = "33333333-3333-4333-8333-333333333333";
 const WINDOW = { start: "2026-10-01T10:00:00.000Z", end: "2026-10-01T11:00:00.000Z" };
 const at = (min: number) => new Date(Date.parse(WINDOW.start) + min * 60_000).toISOString();
 
@@ -351,11 +353,74 @@ describe("Azure Activity: every readable subscription", () => {
     );
   });
 
-  it("names the subscription whose Activity log could not be read", async () => {
+  it("skips a subscription whose Activity log is refused, naming it and why (#2340)", async () => {
     const { session: s } = session({ subscriptions: [SUB_A], deniedSubscriptions: [SUB_A] });
-    await expect(s.fetchPage(req("azure-activity"))).rejects.toThrow(
-      new RegExp(`subscription ${SUB_A}: HTTP 403 AuthorizationFailed`),
-    );
+    const err = await s.fetchPage(req("azure-activity")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SkippedItemError);
+    expect(err).toMatchObject({ item: `subscription ${SUB_A}`, nextPageToken: undefined });
+    expect((err as SkippedItemError).reason).toMatch(/HTTP 403 AuthorizationFailed/);
+  });
+
+  it.each([403, 404, 409])(
+    "skips a subscription refused with %i on its first page and walks on to the next (#2340)",
+    async (status) => {
+      const activity = {
+        [SUB_A]: [activityRecord(1, at(1), SUB_A)],
+        [SUB_C]: [activityRecord(3, at(3), SUB_C)],
+      };
+      const { session: s } = session({
+        subscriptions: [SUB_C, SUB_B, SUB_A],
+        activity,
+        subscriptionStatus: { [SUB_B]: status },
+      });
+      const collected: string[] = [];
+      const skipped: string[] = [];
+      let token: string | undefined;
+      do {
+        try {
+          const page = await s.fetchPage(req("azure-activity", token ? { pageToken: token } : {}));
+          collected.push(page.requestParams.subscriptionId);
+          token = page.nextPageToken;
+        } catch (err) {
+          if (!(err instanceof SkippedItemError)) throw err;
+          skipped.push(err.item);
+          token = err.nextPageToken;
+        }
+      } while (token);
+      expect(collected).toEqual([SUB_A, SUB_C]);
+      expect(skipped).toEqual([`subscription ${SUB_B}`]);
+    },
+  );
+
+  it.each([500, 503])("still fails the source on HTTP %i, naming the subscription", async (status) => {
+    const { session: s } = session({ subscriptions: [SUB_A], subscriptionStatus: { [SUB_A]: status } });
+    const err = await s.fetchPage(req("azure-activity")).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(SkippedItemError);
+    expect((err as Error).message).toMatch(new RegExp(`subscription ${SUB_A}: HTTP ${status}`));
+  });
+
+  it("still returns a throttled subscription as RateLimitedError, never a skip", async () => {
+    const { session: s } = session({
+      subscriptions: [SUB_A, SUB_B],
+      throttle: { match: new RegExp(SUB_B), times: 1, retryAfter: "2" },
+    });
+    const first = await s.fetchPage(req("azure-activity"));
+    const err = await s
+      .fetchPage(req("azure-activity", { pageToken: first.nextPageToken }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RateLimitedError);
+    expect(err).toMatchObject({ retryAfterMs: 2000 });
+  });
+
+  it("keeps a refused NEXT-page link a cursor expiry, not a skip", async () => {
+    const activity = { [SUB_A]: [activityRecord(1, at(1), SUB_A), activityRecord(2, at(2), SUB_A)] };
+    const opts = { subscriptions: [SUB_A], activity, pageSize: 1 } as MockTenantOptions;
+    const { session: s } = session(opts);
+    const first = await s.fetchPage(req("azure-activity"));
+    opts.subscriptionStatus = { [SUB_A]: 404 };
+    await expect(
+      s.fetchPage(req("azure-activity", { pageToken: first.nextPageToken })),
+    ).rejects.toBeInstanceOf(CursorExpiredError);
   });
 
   it("fails with what to grant when the app can read no subscription", async () => {

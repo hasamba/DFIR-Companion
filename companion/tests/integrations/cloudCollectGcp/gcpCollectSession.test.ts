@@ -232,6 +232,8 @@ describe("the GCS sink path", () => {
       requestParams: { route: "gcs-sink", objects: "0" },
       unverified: true,
     });
+    // #2340: the listing is the evidence of an empty window, not log data — never imported.
+    expect(page.evidenceOnly).toBe(true);
     expect(page.nextPageToken).toBeUndefined();
   });
 });
