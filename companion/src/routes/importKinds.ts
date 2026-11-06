@@ -3,6 +3,7 @@ import { emitImportRefused } from "./importDebugEmit.js";
 import type { Response } from "express";
 import { chargeAiBudget, markAiBudgetUnspent, sendRateLimited } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
+import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
 
 // The import kinds whose parsers STREAM: they report parse progress and honor the abort signal
 // mid-parse, so their jobs are cancellable even without an AI dependency. One list shared by the
@@ -16,6 +17,19 @@ export const PARSE_PROGRESS_KINDS: ReadonlySet<string> = new Set(["evtxxml", "sy
 // Accepts unknown so the resume handler can pass `job.parameters?.kind` unvalidated.
 export function hasParseProgress(kind: unknown): boolean {
   return typeof kind === "string" && PARSE_PROGRESS_KINDS.has(kind);
+}
+
+/**
+ * Whether an import job is cancellable because its PARSE honours the abort signal: a
+ * parse-progress kind, or a cloud export that takes the streaming path (#2337) — it reports parse
+ * progress and checks the signal per batch, so a 10-30 minute import can be stopped. A small cloud
+ * file keeps the whole-file path and stays uncancellable, which is why the cloud kinds are not in
+ * PARSE_PROGRESS_KINDS. `streaming` alone is not enough: a Plaso job streams too and does not stop.
+ * Shared by the /import + /import-file registrations and the resume handler (raw job parameters).
+ */
+export function cancellableByParse(kind: unknown, streaming: unknown): boolean {
+  if (hasParseProgress(kind)) return true;
+  return streaming === true && typeof kind === "string" && isStreamKind(kind);
 }
 
 // CSV/log imports are themselves an LLM call (free-form data the model must interpret), so they

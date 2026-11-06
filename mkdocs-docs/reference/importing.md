@@ -1531,7 +1531,9 @@ literally:
   row says nothing about organisations. The two records CloudTrail writes for one cross-account
   action (one in each account, sharing a `sharedEventID`) are **one row** with both records as
   provenance and `[also in account <B>]` — when they arrive in one file; two files are two
-  rows. On that row the caller's account is `cloud.accountId` and the resource owner's is
+  rows. A large file read in batches (see *Large cloud exports*) merges the pair only when both
+  records fall in the same batch of 5,000 records; a pair split across two batches stays two
+  rows, both kept. On that row the caller's account is `cloud.accountId` and the resource owner's is
   `cloud.recipientAccountId`, so a Hunt on either account finds the action. The notice sits in
   front of the row's caveats, which are never the part that clips.
 - **Issuance rows** — `AssumeRole`, `AssumeRoleWithSAML`, `AssumeRoleWithWebIdentity`,
@@ -2691,6 +2693,9 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   one import never pushes out the rows earlier imports put there. Rows past that room are counted.
 - **Whole-export summaries** (credential lineages, compute lifecycles, privilege paths, mailbox
   chains, service-account joins) are built over the first 25,000 records of a larger file.
+- **CloudTrail cross-account pairs** (the two records one cross-account action writes, one per
+  account) become one row only when both records are in the same batch of 5,000 records. A pair
+  split across two batches stays two rows; neither record is lost.
 
 **What "counted" means.** A counted event stands for many rows: it carries how many, the first and
 last time, and the list of the records it stands for (open the event to page through them). When a

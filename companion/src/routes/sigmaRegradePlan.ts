@@ -5,6 +5,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { decodeImportedText } from "../ingest/decodeText.js";
 import type { ForensicRowStore } from "../analysis/forensicRows.js";
 import type { SigmaGradingSnapshot } from "../analysis/sigmaImportGrade.js";
 import type { Severity } from "../analysis/stateTypes.js";
@@ -86,14 +87,20 @@ async function fileInput(
 ): Promise<RegradeFileInput> {
   const base = { file, importer: g.importer, rows: g.rows };
   if (file === MISSING) return { ...base, reparsed: { skipped: "file-missing" } };
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = await readFile(join(dir, file), "utf8");
+    bytes = await readFile(join(dir, file));
   } catch {
     return { ...base, reparsed: { skipped: "file-missing" } };
   }
+  // A .gz upload (streamed, #2303) is not decompressed here, so its rows' hash — taken over the
+  // decompressed text (#2337) — cannot be compared: it is not reported as changed, and its rows
+  // stay unpaired as before. Otherwise decode as the import did (BOM honoured), so the hash matches.
+  const gzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const text = gzip ? "" : decodeImportedText(bytes);
   const rows = [...g.rows.values()].map((r) => (r.forensic ?? r.super)!);
-  if (rows.some((e) => storedFileChanged(e, text))) return { ...base, reparsed: { skipped: "file-changed" } };
+  if (!gzip && rows.some((e) => storedFileChanged(e, text)))
+    return { ...base, reparsed: { skipped: "file-changed" } };
   return { ...base, reparsed: reparseForRegrade(g.importer, text, snapshot) };
 }
 

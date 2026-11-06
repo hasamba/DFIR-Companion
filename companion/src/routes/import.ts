@@ -57,7 +57,7 @@ import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
 import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
-import { hasParseProgress, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
+import { cancellableByParse, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { importBodyError, importBodyText, withSourceUrl } from "./importRequestBody.js";
 import { siemFallbackWarning } from "./importNotes.js";
 import { openImportFile, saveReceiptedImport } from "./importFileSource.js";
@@ -289,23 +289,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const body = { file: storedName, minSeverity, ...siemFallbackWarning(kind, debug) }; // #1795
       if (await refuseAiOffImport({ kind, caseId, res, aiEnabled, onAiStatus, debug, body })) return;
 
+      const streaming = cloudStream.streams(kind, text.length, false); // a large cloud export streams (#2303)
       const job = options.jobManager?.register({
         caseId,
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || hasParseProgress(kind),
+        cancellable: aiDependent || cancellableByParse(kind, streaming),
         resumable: true,
         maxRetries: 2,
-        parameters: importJobParameters({
-          kind,
-          storedName,
-          seq,
-          importedAt,
-          minSeverity,
-          streaming: cloudStream.streams(kind, text.length, false), // a large cloud export streams (#2303)
-          req,
-        }),
+        parameters: importJobParameters({ kind, storedName, seq, importedAt, minSeverity, streaming, req }),
       });
       await job?.durable;
       res.status(202).json({ accepted: true, kind, ...body });
@@ -569,7 +562,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         kind: "import",
         label: `${kind}: ${storedName}`,
         detail: IMPORT_JOB_PENDING_DETAIL,
-        cancellable: aiDependent || hasParseProgress(kind),
+        cancellable: aiDependent || cancellableByParse(kind, streaming), // Plaso streams, never cancels
         resumable: true,
         maxRetries: 2,
         parameters: importJobParameters({ kind, storedName, seq, importedAt, minSeverity, streaming, req }),
