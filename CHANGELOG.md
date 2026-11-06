@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-case cloud accounts and demo block** — in team mode a cloud account belongs to the cases it is attached to and only their writers can see or use it; shared-credential edits need write on every attached case; the public demo refuses every cloud route (closes #2308)
 - **Cloud account vault** — add AWS accounts, Microsoft tenants and GCP projects in Settings; secrets are sealed with a separate key file kept out of the data folder, show Locked when the key is missing, and never appear in responses, logs or exports (closes #2307)
 - **MFA fatigue detection and cloud rule gaps** — repeated denied or timed-out MFA prompts followed by a success raise one High finding; new AWS/GCP exposure rules and Microsoft-Analyzer-Suite (MIT) operation, folder, OAuth and user-agent rules (closes #2306)
 - **Million-row cloud imports** — large and gzip cloud exports stream from disk with bounded, disclosed output and no lost High/Critical events (closes #2303)
