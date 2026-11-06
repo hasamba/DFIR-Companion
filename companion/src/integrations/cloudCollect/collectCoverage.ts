@@ -74,7 +74,7 @@ export function precheckSource(
   const retention = source.retention
     ? retentionWarnings(source.retention, window, nowMs)
     : { warnings: [] as string[] };
-  const warnings = [...retention.warnings];
+  const warnings = [...retention.warnings, ...(source.notice ? [source.notice] : [])];
   const settled = nowMs - overlapMs;
   if (overlapMs > 0 && Date.parse(window.end) > settled)
     warnings.push(
@@ -92,6 +92,18 @@ function cutoffOf(endLeaves: readonly SubWindowStatus[], end: number, overlapMs:
     if (leaf.acquiredUntil) cutoff = Math.min(cutoff, Date.parse(leaf.acquiredUntil));
   }
   return endLeaves.length ? cutoff : undefined;
+}
+
+/** The items of a source the cloud refused (#2313), as one note; null when there were none. */
+function skippedNote(sourceLeaves: readonly SubWindowStatus[]): string | null {
+  const count = sourceLeaves.reduce((n, s) => n + (s.skipped ?? 0), 0);
+  if (!count) return null;
+  const listed = sourceLeaves.flatMap((s) => s.skippedItems ?? []);
+  const more = count > listed.length ? `; ${count - listed.length} more` : "";
+  return (
+    `${count} item(s) could not be read and were skipped: ${listed.join("; ")}${more}. ` +
+    "Each one is a skip line in the collection's manifest.jsonl."
+  );
 }
 
 /** Per source: the acquired cutoff and what the analyst must know about it. */
@@ -120,6 +132,9 @@ export function sourceCoverage(
         `Settled up to ${iso(cutoff)} only: later events may still have been arriving. Collect again ` +
           "from that time to pick them up — overlapping windows are safe, duplicates are removed.",
       );
+    const skipped = skippedNote(tree.filter((s) => s.source === id));
+    if (skipped) notes.push(skipped);
+    if (info?.notice) notes.push(info.notice);
     if (info?.retention) {
       const check = retentionWarnings(info.retention, input.window, Date.parse(input.startedAt));
       notes.push(...check.warnings);

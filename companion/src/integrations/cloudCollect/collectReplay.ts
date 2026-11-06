@@ -27,6 +27,7 @@ import type {
   ManifestEntry,
   ManifestHeader,
   ManifestPage,
+  ManifestSkip,
   ManifestQuarantine,
   QuarantinedFile,
   SubWindowStatus,
@@ -87,6 +88,32 @@ function applyPage(sw: SubWindowStatus, page: ManifestPage): SubWindowStatus {
   return { ...counted, pageToken: page.pageTokenOut, state: page.pageTokenOut ? "pending" : "done" };
 }
 
+/** The first skipped items a sub-window lists for the result; the manifest keeps every one. */
+export const SKIPPED_ITEMS_LISTED = 20;
+
+/** A skip line (#2313): count the item and move on to its next token, or finish. Pure. */
+export function applySkip(
+  sw: SubWindowStatus,
+  skip: Pick<ManifestSkip, "item" | "reason" | "pageTokenOut" | "at">,
+): SubWindowStatus {
+  const listed = sw.skippedItems ?? [];
+  const counted: SubWindowStatus = {
+    ...sw,
+    skipped: (sw.skipped ?? 0) + 1,
+    // A refused read is still a read of the window at that time: the cutoff is measured from it.
+    firstRetrievedAt: sw.firstRetrievedAt ?? skip.at,
+    reason: undefined,
+    skippedItems:
+      listed.length < SKIPPED_ITEMS_LISTED ? [...listed, `${skip.item} (${skip.reason})`] : listed,
+  };
+  if (SETTLED.has(sw.state) || sw.state === "incomplete") return counted;
+  return {
+    ...counted,
+    pageToken: skip.pageTokenOut,
+    state: skip.pageTokenOut ? "pending" : "done",
+  };
+}
+
 /** Each sub-window's state — the split tree included (#2312) — as the manifest tells it. Pure. */
 export function deriveSubWindows(
   header: ManifestHeader,
@@ -100,6 +127,7 @@ export function deriveSubWindows(
     if (entry.type === "split") list = applySplit(list, entry);
     else if (entry.type === "restart") update(entry.subWindowId, applyRestart);
     else if (entry.type === "page") update(entry.subWindowId, (sw) => applyPage(sw, entry));
+    else if (entry.type === "skip") update(entry.subWindowId, (sw) => applySkip(sw, entry));
   }
   return list;
 }

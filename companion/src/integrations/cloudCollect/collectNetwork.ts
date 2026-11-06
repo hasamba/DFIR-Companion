@@ -23,6 +23,7 @@ import { sha256Hex } from "./collectFs.js";
 import { appendManifest, type CollectionPaths } from "./collectManifest.js";
 import {
   CursorExpiredError,
+  SkippedItemError,
   type CloudCollectSession,
   type CollectPage,
   type CollectSourceInfo,
@@ -31,6 +32,7 @@ import {
   type SubWindowStatus,
 } from "./collectTypes.js";
 import { applySplit, decideSplit, nextWork } from "./collectSplit.js";
+import { applySkip } from "./collectReplay.js";
 import { budgetStopReason, type QueryBudget } from "./collectBudget.js";
 import {
   backoffMs,
@@ -227,6 +229,28 @@ function cappedBy(
   return undefined;
 }
 
+/** One item the cloud refused (#2313): a manifest line, then on to its next token. */
+async function skipStep(
+  deps: NetworkStageDeps,
+  sw: SubWindowStatus,
+  err: SkippedItemError,
+  note: (e: ManifestEntry) => Promise<void>,
+): Promise<Step> {
+  const line = {
+    type: "skip" as const,
+    source: sw.source,
+    subWindowId: sw.id,
+    item: err.item.slice(0, 1024),
+    reason: err.reason.slice(0, 300),
+    ...(sw.pageToken ? { pageTokenIn: sw.pageToken } : {}),
+    ...(err.nextPageToken ? { pageTokenOut: err.nextPageToken } : {}),
+    at: deps.now(),
+  };
+  await note(line);
+  const next = applySkip(sw, line);
+  return { sw: next, done: next.state === "done" };
+}
+
 async function fetchStep(
   deps: NetworkStageDeps,
   pacing: Pacing,
@@ -241,6 +265,7 @@ async function fetchStep(
   } catch (err) {
     const name = (err as Error)?.name;
     if (name === "AbortError" || err instanceof BudgetStopError) throw err;
+    if (err instanceof SkippedItemError) return skipStep(deps, sw, err, note);
     if (err instanceof CursorExpiredError && sw.pageToken && sw.restarts < MAX_RESTARTS) {
       await note({ type: "restart", subWindowId: sw.id, reason: "cursor-expired", at: deps.now() });
       return { sw: { ...sw, pageToken: undefined, restarts: sw.restarts + 1 }, done: false };

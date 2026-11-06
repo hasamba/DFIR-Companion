@@ -61,6 +61,65 @@ appears in a result, a log line or the audit log.
 
 ---
 
+## Collect from AWS
+
+Open the **Collect cloud logs** panel in a case, pick an AWS account, tick the log sources and set
+the time window. The companion saves what AWS returns as case evidence and imports it through the
+same CloudTrail importer as an uploaded CloudTrail file, so the events are graded by the same rules.
+
+| Source | What it reads | Covers |
+|---|---|---|
+| **CloudTrail S3 trail files** | The trail's own files in its S3 bucket | Everything the trail logs, for as long as the bucket keeps it — data events included |
+| **CloudTrail event history** | `LookupEvents`, region by region | The last 90 days of management events only |
+
+Pick **CloudTrail S3 trail files** whenever the account has a trail that writes to S3. Pick
+**CloudTrail event history** when it has none, or as a quick look at recent management activity.
+The pre-check and the result always say that event history holds 90 days of management events
+only.
+
+### S3 trail files
+
+- The companion asks CloudTrail in every region which trails the account has (`DescribeTrails`) and reads each
+  trail's bucket and key prefix. It finds the account's folder itself, for an account trail
+  (`AWSLogs/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`) and for an **organization trail**
+  (`AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`). From an organization bucket it
+  reads only the folder of the account you collect with, never the other member accounts.
+- It reads every region folder the bucket holds, and only the days the window touches. A file is
+  taken when its delivery time is inside the window or up to one hour after its end, because
+  CloudTrail delivers a file 5 to 15 minutes after the events in it. A file can hold a few events
+  just outside the window; they are imported too.
+- **Each file is saved exactly as stored** — the `.json.gz` CloudTrail wrote, not unpacked or
+  changed. The collection's manifest records its bucket, key, SHA-256 and, when the bucket has
+  versioning on, its **S3 version id**.
+- When the trail is encrypted with a KMS key and the identity may not use that key, that file
+  cannot be read. The collection goes on with the other files, and the result lists each file it
+  skipped, with the reason. Add `kms:Decrypt` on the trail key (see the minimum policy) and collect
+  the window again; files already collected are not imported twice.
+- When no trail writes to a bucket the identity can list, the S3 source is reported as missing,
+  and the result tells you to collect event history instead.
+
+### Event history
+
+- The companion asks every region in turn: the account's own region first, then the regions AWS
+  enables by default. A region the account has not enabled answers with an error; it is skipped
+  and named in the result. Regions you enabled yourself (opt-in regions) are not asked, apart from
+  the account's own region.
+- Requests are paced at 2 a second per region, the CloudTrail limit, and slowed further when AWS
+  asks.
+- Event history returns each event inside an envelope. The companion saves the CloudTrail record
+  text from each event exactly as AWS returned it, inside a standard `{"Records": [...]}` file, so
+  the importer reads it like a trail file. The manifest notes this on every event history page.
+
+### Both sources
+
+- Every request — sign-in included — goes through the cloud network settings below.
+- The newest 15 minutes of the window may still be arriving when you collect. The result states
+  the time the collection is settled up to. Collect again from that time to pick up later events;
+  overlapping windows are safe, duplicates are removed.
+- GuardDuty findings are not collected yet.
+
+---
+
 ## Minimum policies
 
 The add form in Settings shows the minimum policy for the provider you pick. Grant this and

@@ -53,6 +53,8 @@ import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
 import type { CloudCollectProviders } from "../integrations/cloudCollect/collectTypes.js";
+import { createAwsCollectProvider } from "../integrations/cloudCollect/aws/awsCollectProvider.js";
+import { cloudTransportFromEnv } from "./cloudTransportEnv.js";
 import { cloudAccountStoreDir } from "../integrations/cloudAccounts/storePath.js";
 import {
   parseQueryBudget,
@@ -299,6 +301,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   // Live cloud collection providers (#2311). None ships yet: #2313 (AWS), #2314 (GCP) and #2315
   // (Microsoft) each add one here, and the Collect cloud logs panel lists only what is present.
   const cloudCollectProviders: CloudCollectProviders = {};
+  cloudCollectProviders.aws = createAwsCollectProvider({ transport: () => cloudTransportFromEnv() });
   // #2312: the shared-quota usage count, per tenant, beside the cases root (never in a case).
   const cloudQueryUsage = new QueryUsageStore(queryUsageFile(casesRoot));
   const cloudQueryBudget = parseQueryBudget(process.env.DFIR_CLOUD_M365_QUERY_BUDGET);

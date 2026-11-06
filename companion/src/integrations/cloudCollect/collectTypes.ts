@@ -61,6 +61,8 @@ export interface CollectSourceInfo {
   /** Default ingestion-delay overlap: the newest part of the window that may still be arriving. */
   overlapMs?: number;
   retention?: RetentionSpec;
+  /** One sentence the pre-check and the result always show (LookupEvents: 90 days, management only). */
+  notice?: string;
 }
 
 /** What the engine asks a provider for: one page of one sub-window. */
@@ -153,6 +155,22 @@ export class RateLimitedError extends Error {
   }
 }
 
+/**
+ * ONE item of a sub-window the cloud refused (a KMS-denied trail object, a region that rejects the
+ * call), #2313. Not a failure of the sub-window: the engine writes a `skip` manifest line, moves on
+ * to `nextPageToken` (or finishes the sub-window when there is none) and the result lists the item.
+ */
+export class SkippedItemError extends Error {
+  constructor(
+    readonly item: string,
+    readonly reason: string,
+    readonly nextPageToken?: string,
+  ) {
+    super(`skipped ${item}: ${reason}`);
+    this.name = "SkippedItemError";
+  }
+}
+
 /** A page token the cloud no longer accepts. */
 export class CursorExpiredError extends Error {
   constructor(message = "page token expired") {
@@ -234,13 +252,31 @@ export interface ManifestQuarantine {
   at: string;
 }
 
+/** An item the cloud refused, skipped (#2313). Replay advances the sub-window to `pageTokenOut`. */
+export interface ManifestSkip {
+  type: "skip";
+  source: string;
+  subWindowId: string;
+  item: string;
+  reason: string;
+  pageTokenIn?: string;
+  pageTokenOut?: string;
+  at: string;
+}
+
 export interface ManifestResume {
   type: "resume";
   at: string;
 }
 
 export type ManifestEntry =
-  ManifestHeader | ManifestPage | ManifestRestart | ManifestQuarantine | ManifestResume | ManifestSplit;
+  | ManifestHeader
+  | ManifestPage
+  | ManifestRestart
+  | ManifestQuarantine
+  | ManifestResume
+  | ManifestSplit
+  | ManifestSkip;
 
 // ── Checkpoint and result ─────────────────────────────────────────────────────────────────────
 
@@ -268,6 +304,9 @@ export interface SubWindowStatus {
   /** When its first page came back (the disclosed cutoff is measured from it). */
   firstRetrievedAt?: string;
   acquiredUntil?: string;
+  /** #2313: items the cloud refused and the engine skipped, and the first few of them. */
+  skipped?: number;
+  skippedItems?: string[];
 }
 
 /** Per source, how far the collection really got (#2312): never "complete" past this. */
