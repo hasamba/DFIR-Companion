@@ -120,10 +120,11 @@ function addTrails(by: Map<string, Location>, trails: readonly TrailRecord[]): v
 /**
  * The trails that deliver to S3, asked in EVERY region: a single-region trail is only listed in its
  * home region (shadow trails cover multi-region and organization trails only). A region the account
- * has not enabled is passed over; any other error stops the discovery.
+ * has not enabled is passed over and named on every page; any other error stops the discovery.
  */
 async function trailLocations(clients: AwsCollectClients, regions: readonly string[], signal?: AbortSignal) {
   const by = new Map<string, Location>();
+  const notEnabled: string[] = [];
   for (const region of regions) {
     try {
       const out = await sendAws<{ trailList?: TrailRecord[] }>(
@@ -134,9 +135,10 @@ async function trailLocations(clients: AwsCollectClients, regions: readonly stri
       addTrails(by, out.trailList ?? []);
     } catch (err) {
       if (!regionOff(err)) throw err;
+      notEnabled.push(region);
     }
   }
-  return [...by.values()];
+  return { locations: [...by.values()], notEnabled };
 }
 
 /** No trail writes to a bucket this identity can read: the S3 source has nothing to collect. */
@@ -144,13 +146,19 @@ export const NO_TRAIL_REASON =
   "no CloudTrail trail of this account delivers to an S3 folder this identity can list — collect " +
   '"CloudTrail event history" instead (LookupEvents: 90 days, management events only)';
 
+export interface TrailDiscovery {
+  roots: TrailRoot[];
+  /** Regions that answered "not enabled" to DescribeTrails. */
+  regionsNotEnabled: string[];
+}
+
 /** Every account folder of every S3-delivering trail, sorted, so a page token means the same on resume. */
 export async function discoverTrailRoots(
   clients: AwsCollectClients,
   input: { account: string; regions: readonly string[] },
   signal?: AbortSignal,
-): Promise<TrailRoot[]> {
-  const locations = await trailLocations(clients, input.regions, signal);
+): Promise<TrailDiscovery> {
+  const { locations, notEnabled } = await trailLocations(clients, input.regions, signal);
   const roots: TrailRoot[] = [];
   for (const loc of locations) {
     for (const r of await rootsOfTrail(clients, loc, input.account, signal)) {
@@ -158,5 +166,8 @@ export async function discoverTrailRoots(
     }
   }
   if (!roots.length) throw new Error(NO_TRAIL_REASON);
-  return roots.sort((a, b) => `${a.bucket}/${a.root}`.localeCompare(`${b.bucket}/${b.root}`));
+  return {
+    roots: roots.sort((a, b) => `${a.bucket}/${a.root}`.localeCompare(`${b.bucket}/${b.root}`)),
+    regionsNotEnabled: notEnabled,
+  };
 }

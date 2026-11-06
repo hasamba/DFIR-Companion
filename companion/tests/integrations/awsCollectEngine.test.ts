@@ -81,7 +81,15 @@ async function collect(t: TempCase, opts: FakeAwsOptions, sources: string[], clo
     { resume: false },
   );
   const manifest = parseManifest(await readFile(collectionPaths(t.dir).manifest, "utf8"));
-  return { cp, manifest, clients, clock };
+  const resume = async () => {
+    const again = await runCollection(
+      { fs, session, importer: pipelineImporter(t), sources: provider.sources, now, clock },
+      t.dir,
+      { resume: true },
+    );
+    return { cp: again, manifest: parseManifest(await readFile(collectionPaths(t.dir).manifest, "utf8")) };
+  };
+  return { cp, manifest, clients, clock, resume };
 }
 
 const ROOT = `AWSLogs/${ACCOUNT}/`;
@@ -115,7 +123,8 @@ describe("AWS collection through the engine (#2313)", () => {
       },
       ["s3-trail", "cloudtrail-lookup"],
     );
-    expect(cp.status).toBe("complete");
+    expect(cp.status).toBe("partial"); // the KMS-denied object is unresolved until a Resume reads it
+    expect(cp.missing).toMatchObject([{ source: "s3-trail" }]);
     expect(manifest.header).toMatchObject({
       accountRef: ACCOUNT,
       caller: `arn:aws:iam::${ACCOUNT}:role/collector`,
@@ -135,6 +144,9 @@ describe("AWS collection through the engine (#2313)", () => {
     const s3Notes = cp.coverage!.find((c) => c.source === "s3-trail")!.notes.join(" ");
     expect(s3Notes).toMatch(/1 item\(s\) could not be read.*kms:Decrypt/);
     expect(cp.coverage!.find((c) => c.source === "cloudtrail-lookup")!.notes).toContain(LOOKUP_NOTICE);
+    expect(cp.coverage!.find((c) => c.source === "s3-trail")!.notes.join(" ")).toMatch(
+      /delivered more than 24 h after the window end are not collected/,
+    );
     // Graded by the existing CloudTrail rules, with the page's provenance.
     const state = await t.stateStore.load("c1");
     const stop = state.forensicTimeline.find((e) => /StopLogging/.test(e.description))!;
@@ -168,6 +180,32 @@ describe("AWS collection through the engine (#2313)", () => {
     expect(clock.sleeps[0]).toBe(1000); // the SlowDown back-off (first retry: 1 s)
     // Six LookupEvents pages in one region at 2 per second: the limiter waited between them.
     expect(clock.sleeps.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("a DNS failure mid-pagination fails the window keeping its token; Resume continues from it", async () => {
+    const t = await tempCase();
+    const pages = [[recordJson(1)], [recordJson(2)], [recordJson(3)]];
+    const first = await collect(
+      t,
+      {
+        trails: [],
+        buckets: {},
+        lookup: { "eu-west-1": pages },
+        lookupDnsFail: { region: "eu-west-1", page: 1, times: 1 },
+      },
+      ["cloudtrail-lookup"],
+    );
+    expect(first.cp.status).toBe("partial");
+    expect(first.manifest.entries.filter((e) => e.type === "skip")).toEqual([]);
+    const sw = first.cp.subWindows[0];
+    expect(sw.state).toBe("failed");
+    expect(sw.reason).toMatch(/EAI_AGAIN/);
+    expect(JSON.parse(sw.pageToken!)).toEqual({ r: "eu-west-1", n: "n1" });
+    const { cp, manifest } = await first.resume();
+    expect(cp.status).toBe("complete");
+    const lookupCalls = first.clients.sent.filter((c) => c.op === "LookupEvents" && c.region === "eu-west-1");
+    expect(lookupCalls.map((c) => c.input.NextToken ?? null)).toEqual([null, "n1", "n1", "n2"]);
+    expect(manifest.pages.filter((p) => p.requestParams.region === "eu-west-1")).toHaveLength(3);
   });
 
   it("no S3 trail: the S3 source is missing with the fallback reason; LookupEvents still collects", async () => {

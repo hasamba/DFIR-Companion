@@ -236,7 +236,8 @@ export interface ManifestSplit {
 export interface ManifestRestart {
   type: "restart";
   subWindowId: string;
-  reason: "cursor-expired" | "corrupt-page";
+  /** `skipped-retry` (#2313): a resume re-collects a window that had items the cloud refused. */
+  reason: "cursor-expired" | "corrupt-page" | "skipped-retry";
   at: string;
 }
 

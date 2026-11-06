@@ -87,7 +87,8 @@ export function precheckSource(
 function cutoffOf(endLeaves: readonly SubWindowStatus[], end: number, overlapMs: number): number | undefined {
   let cutoff = end;
   for (const leaf of endLeaves) {
-    if (leaf.state !== "done" || !leaf.firstRetrievedAt) return undefined;
+    // An item the cloud refused leaves the window unsettled, however much else came back (#2313).
+    if (leaf.state !== "done" || !leaf.firstRetrievedAt || leaf.skipped) return undefined;
     cutoff = Math.min(cutoff, Date.parse(leaf.firstRetrievedAt) - overlapMs);
     if (leaf.acquiredUntil) cutoff = Math.min(cutoff, Date.parse(leaf.acquiredUntil));
   }
@@ -95,14 +96,14 @@ function cutoffOf(endLeaves: readonly SubWindowStatus[], end: number, overlapMs:
 }
 
 /** The items of a source the cloud refused (#2313), as one note; null when there were none. */
-function skippedNote(sourceLeaves: readonly SubWindowStatus[]): string | null {
+export function skippedNote(sourceLeaves: readonly SubWindowStatus[]): string | null {
   const count = sourceLeaves.reduce((n, s) => n + (s.skipped ?? 0), 0);
   if (!count) return null;
   const listed = sourceLeaves.flatMap((s) => s.skippedItems ?? []);
   const more = count > listed.length ? `; ${count - listed.length} more` : "";
   return (
     `${count} item(s) could not be read and were skipped: ${listed.join("; ")}${more}. ` +
-    "Each one is a skip line in the collection's manifest.jsonl."
+    "Each one is a skip line in the collection's manifest.jsonl; Resume retries them."
   );
 }
 

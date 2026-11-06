@@ -14,11 +14,11 @@
 import type { CollectFs } from "./collectFs.js";
 import { appendManifest, collectionPaths, type CollectionPaths } from "./collectManifest.js";
 import { readCheckpoint, writeCheckpoint } from "./collectCheckpoint.js";
-import { initialSubWindows, replayCollection } from "./collectReplay.js";
+import { initialSubWindows, replayCollection, retrySkipped, windowsToRetry } from "./collectReplay.js";
 import { runNetworkStage } from "./collectNetwork.js";
 import { runImportStage, type CollectPageImporter } from "./collectImport.js";
 import { leaves } from "./collectSplit.js";
-import { sourceCoverage } from "./collectCoverage.js";
+import { skippedNote, sourceCoverage } from "./collectCoverage.js";
 import type { QueryBudget } from "./collectBudget.js";
 import type { CollectClock } from "./collectRateLimit.js";
 import type {
@@ -88,12 +88,15 @@ function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress
 /** Which windows are missing, and why. Pure. */
 export function missingWindows(subWindows: readonly SubWindowStatus[], stopReason?: string): MissingWindow[] {
   return leaves(subWindows)
-    .filter((sw) => sw.state !== "done")
+    .filter((sw) => sw.state !== "done" || (sw.skipped ?? 0) > 0)
     .map((sw) => ({
       source: sw.source,
       subWindowId: sw.id,
       window: sw.window,
-      reason: sw.reason ?? stopReason ?? "not collected",
+      reason:
+        sw.state === "done"
+          ? (skippedNote([sw]) ?? "not collected")
+          : (sw.reason ?? stopReason ?? "not collected"),
     }));
 }
 
@@ -102,8 +105,10 @@ export function collectionStatus(
   subWindows: readonly SubWindowStatus[],
   pagesSaved: number,
 ): CollectionStatus {
-  if (leaves(subWindows).every((sw) => sw.state === "done")) return "complete";
-  return pagesSaved > 0 ? "partial" : "failed";
+  const tree = leaves(subWindows);
+  const skipped = tree.some((sw) => (sw.skipped ?? 0) > 0); // an unresolved refusal (#2313)
+  if (!skipped && tree.every((sw) => sw.state === "done")) return "complete";
+  return pagesSaved > 0 || skipped ? "partial" : "failed";
 }
 
 /** Create the folder, write the header and the first checkpoint. The run itself is runCollection. */
@@ -176,7 +181,21 @@ export async function runCollection(
   const paths = collectionPaths(dir);
   const replay = await replayCollection(deps.fs, paths, deps.now);
   let cp = await baseCheckpoint(deps, paths, replay.header.collectionId);
-  if (opts.resume) await appendManifest(deps.fs, paths, { type: "resume", at: deps.now() });
+  let derived = replay.subWindows;
+  if (opts.resume) {
+    await appendManifest(deps.fs, paths, { type: "resume", at: deps.now() });
+    // #2313: a resume retries every window with an item the cloud refused. The restart line is
+    // written first, so a crash after it replays to the same restarted window.
+    for (const id of windowsToRetry(derived)) {
+      await appendManifest(deps.fs, paths, {
+        type: "restart",
+        subWindowId: id,
+        reason: "skipped-retry",
+        at: deps.now(),
+      });
+      derived = retrySkipped(derived, id);
+    }
+  }
   const failedReasons = new Map(cp.subWindows.filter((s) => s.reason).map((s) => [s.id, s.reason]));
   const save = async (patch: Partial<CollectionCheckpoint>): Promise<void> => {
     cp = { ...cp, ...patch, updatedAt: deps.now() };
@@ -186,7 +205,7 @@ export async function runCollection(
     status: "running",
     stage: "network",
     ...(opts.jobId ? { jobId: opts.jobId } : {}),
-    subWindows: replay.subWindows.map((s) =>
+    subWindows: derived.map((s) =>
       failedReasons.has(s.id) && s.state !== "done" ? { ...s, reason: failedReasons.get(s.id) } : s,
     ),
     quarantined: replay.quarantined,

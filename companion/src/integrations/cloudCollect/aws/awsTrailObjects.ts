@@ -3,9 +3,11 @@
 //
 // The walk is a fixed order of CELLS — trail folder × region × UTC day — and the page token is the
 // cell plus the last key read in it (`StartAfter`), so a token never expires and means the same
-// after a restart. Only days the window touches are listed, plus DELIVERY_SLACK_MS past its end
-// (CloudTrail delivers a file 5–15 minutes after its events), and within a day an object is taken
-// when the delivery time in its name falls in [start, end + slack).
+// after a restart. Only days the window touches are listed, plus CLOUDTRAIL_DELIVERY_HORIZON_MS past
+// its end (CloudTrail usually delivers within 5–15 minutes, but late files happen), never past now.
+// Within a day an object is taken when the minute in its name falls in [the start's minute, end +
+// horizon] — rounded so the starting minute and the whole last minute are kept. Files delivered
+// later than the horizon are not collected; the source's notice says so in the result.
 //
 // A page's token is set only when ANOTHER object follows (the look-ahead is listed, and cached,
 // before the object is read), so the last object ends the sub-window. An object the cloud refuses
@@ -21,10 +23,11 @@ import {
   type CollectPageRequest,
 } from "../collectTypes.js";
 import { errorName, sendAws, awsReason, type AwsCollectClients } from "./awsCollectTypes.js";
-import type { TrailRoot } from "./awsTrailDiscovery.js";
+import type { TrailDiscovery, TrailRoot } from "./awsTrailDiscovery.js";
 
-/** How far past the window's end a delivered file may still hold the window's last events. */
-export const DELIVERY_SLACK_MS = 60 * 60_000;
+/** How far past the window's end a delivered file is still looked for (disclosed in the result). */
+export const CLOUDTRAIL_DELIVERY_HORIZON_MS = 24 * 60 * 60_000;
+const MINUTE_MS = 60_000;
 /** A trail object is small (CloudTrail rolls files every ~5 min); counting its records stops here. */
 const COUNT_MAX_BYTES = 256 * 1024 * 1024;
 const DAY_MS = 86_400_000;
@@ -57,10 +60,15 @@ interface Listed {
 
 const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10).replace(/-/g, "/");
 
-/** The UTC days `[start, end + slack)` touches, as `YYYY/MM/DD`. Pure. */
-export function trailDays(window: { start: string; end: string }): string[] {
+/** The newest delivery minute a file of the window is taken from: end + horizon, never past now. */
+function lastDelivery(window: { end: string }, nowMs: number): number {
+  return Math.min(Date.parse(window.end) + CLOUDTRAIL_DELIVERY_HORIZON_MS, nowMs);
+}
+
+/** The UTC days `[start, min(end + horizon, now)]` touches, as `YYYY/MM/DD`. Pure. */
+export function trailDays(window: { start: string; end: string }, nowMs: number = Date.now()): string[] {
   const start = Date.parse(window.start);
-  const last = Date.parse(window.end) + DELIVERY_SLACK_MS - 1;
+  const last = Math.max(start, lastDelivery(window, nowMs));
   const days: string[] = [];
   for (let d = Math.floor(start / DAY_MS) * DAY_MS; d <= last; d += DAY_MS) days.push(dayOf(d));
   return days;
@@ -74,9 +82,10 @@ export function deliveredAt(key: string): number | null {
 
 function inWindow(key: string, window: { start: string; end: string }): boolean {
   if (!/\.json(\.gz)?$/.test(key)) return false;
-  const at = deliveredAt(key);
+  const at = deliveredAt(key); // minute resolution
   if (at === null) return true; // no time in the name: the day folder is the only bound
-  return at >= Date.parse(window.start) && at < Date.parse(window.end) + DELIVERY_SLACK_MS;
+  const first = Math.floor(Date.parse(window.start) / MINUTE_MS) * MINUTE_MS;
+  return at >= first && at <= Date.parse(window.end) + CLOUDTRAIL_DELIVERY_HORIZON_MS;
 }
 
 export function trailCells(roots: readonly TrailRoot[], days: readonly string[], region?: string): Cell[] {
@@ -190,9 +199,10 @@ interface GotObject {
 export async function fetchTrailObject(
   walk: TrailObjectWalk,
   clients: AwsCollectClients,
-  roots: readonly TrailRoot[],
+  discovery: TrailDiscovery,
   request: CollectPageRequest,
 ): Promise<CollectPage> {
+  const { roots, regionsNotEnabled } = discovery;
   const cells = trailCells(roots, trailDays(request.window), request.partition?.region);
   const found = await walk.next(cells, positionOf(cells, request.pageToken), request.window, request.signal);
   if (!found) {
@@ -239,7 +249,8 @@ export async function fetchTrailObject(
       day: cell.day,
       trails: root?.trails.join(",") ?? "",
       organizationTrail: root?.organization ? "yes" : "no",
-      selection: `objects delivered in [window start, window end + ${DELIVERY_SLACK_MS / 60_000} min)`,
+      selection: `objects delivered from the window start's minute to ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after its end`,
+      ...(regionsNotEnabled.length ? { regionsNotEnabled: regionsNotEnabled.join(",") } : {}),
     },
   };
 }

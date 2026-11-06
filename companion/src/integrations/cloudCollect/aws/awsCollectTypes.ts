@@ -90,13 +90,15 @@ export async function sendAws<T>(client: AwsSender, command: object, signal?: Ab
   }
 }
 
-/** Errors that mean "this region is not enabled for the account", not "access denied". */
-const REGION_OFF = new Set(["UnrecognizedClientException", "InvalidClientTokenId", "OptInRequired"]);
-const NETWORK_OFF = new Set(["ENOTFOUND", "EAI_AGAIN"]);
+/**
+ * The answers AWS gives for a region the account has not enabled — definitive service responses
+ * only. A transport failure (DNS, reset, timeout) is NEVER read as "region off": it fails the window
+ * with its page token kept, so a Resume carries on from the same page.
+ */
+const REGION_OFF = new Set(["UnrecognizedClientException", "OptInRequired"]);
 
 export function regionOff(err: unknown): boolean {
-  const code = (err as { code?: unknown })?.code;
-  return REGION_OFF.has(errorName(err)) || (typeof code === "string" && NETWORK_OFF.has(code));
+  return REGION_OFF.has(errorName(err)) && httpStatus(err) !== undefined;
 }
 
 /** A short reason from an AWS error: its name and status, never the request. */

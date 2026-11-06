@@ -54,10 +54,9 @@ function scripted(plan: Record<string, "ok" | "skip">, order: string[]): CloudCo
   };
 }
 
-async function runOnce(t: TempCase, session: CloudCollectSession) {
-  const fs = faultFs();
+async function startCollection(t: TempCase, session: CloudCollectSession) {
   await createCollection(
-    fs,
+    faultFs(),
     session,
     {
       dir: t.dir,
@@ -73,48 +72,79 @@ async function runOnce(t: TempCase, session: CloudCollectSession) {
     },
     now,
   );
+}
+
+async function runAgain(t: TempCase, session: CloudCollectSession, resume: boolean) {
   const cp = await runCollection(
-    { fs, session, importer: pipelineImporter(t), sources: SOURCES, now },
+    { fs: faultFs(), session, importer: pipelineImporter(t), sources: SOURCES, now },
     t.dir,
-    { resume: false },
+    { resume },
   );
   const manifest = parseManifest(await readFile(collectionPaths(t.dir).manifest, "utf8"));
   return { cp, manifest };
 }
 
+async function runOnce(t: TempCase, session: CloudCollectSession) {
+  await startCollection(t, session);
+  return runAgain(t, session, false);
+}
+
 describe("the skip hook (#2313)", () => {
-  it("a skipped item mid-window is a manifest line, not a failure; the rest is collected", async () => {
+  it("a skipped item mid-window is a manifest line; the rest is collected; the result is partial", async () => {
     const t = await tempCase();
     const { cp, manifest } = await runOnce(
       t,
       scripted({ k1: "ok", k2: "skip", k3: "ok" }, ["k1", "k2", "k3"]),
     );
-    expect(cp.status).toBe("complete");
+    expect(cp.status).toBe("partial");
     expect(manifest.pages.map((p) => p.requestParams.item)).toEqual(["k1", "k3"]);
     const skips = manifest.entries.filter((e) => e.type === "skip");
     expect(skips).toHaveLength(1);
     expect(skips[0]).toMatchObject({ item: "k2", source: "ct", subWindowId: "ct:0" });
     expect(cp.subWindows[0].skipped).toBe(1);
-    const notes = cp.coverage?.[0].notes.join(" ") ?? "";
-    expect(notes).toMatch(/1 item\(s\) could not be read/);
-    expect(notes).toMatch(/k2/);
+    expect(cp.missing).toHaveLength(1);
+    expect(cp.missing[0].reason).toMatch(/1 item\(s\) could not be read.*k2/);
+    const cov = cp.coverage![0];
+    expect(cov.acquiredCutoff).toBeUndefined(); // never "settled" past an unread item
+    expect(cov.notes.join(" ")).toMatch(/1 item\(s\) could not be read.*k2/);
   });
 
-  it("a skipped LAST item still finishes the sub-window", async () => {
+  it("a skipped LAST item still finishes the walk, and the result is partial", async () => {
     const t = await tempCase();
     const { cp } = await runOnce(t, scripted({ k1: "ok", k2: "skip" }, ["k1", "k2"]));
-    expect(cp.status).toBe("complete");
+    expect(cp.status).toBe("partial");
     expect(cp.subWindows[0]).toMatchObject({ state: "done", pages: 1, skipped: 1 });
   });
 
-  it("every item skipped (a fully KMS-encrypted trail): done, and the note names the refusal, not a gap", async () => {
+  it("every item refused (a fully KMS-encrypted trail): partial, no acquired cutoff, no read time", async () => {
     const t = await tempCase();
     const { cp } = await runOnce(t, scripted({ k1: "skip", k2: "skip" }, ["k1", "k2"]));
+    expect(cp.status).toBe("partial");
     expect(cp.subWindows[0]).toMatchObject({ state: "done", pages: 0, skipped: 2 });
-    const notes = cp.coverage?.[0].notes.join(" ") ?? "";
-    expect(notes).toMatch(/2 item\(s\) could not be read.*kms:Decrypt/);
-    expect(notes).not.toMatch(/see the missing windows/);
+    expect(cp.subWindows[0].firstRetrievedAt).toBeUndefined();
+    expect(cp.coverage![0].acquiredCutoff).toBeUndefined();
+    expect(cp.coverage![0].notes.join(" ")).toMatch(/2 item\(s\) could not be read.*kms:Decrypt/);
+    expect(cp.missing[0].reason).toMatch(/2 item\(s\) could not be read/);
+  });
+
+  it("a resume retries the skipped items: complete once the permission is fixed", async () => {
+    const t = await tempCase();
+    const plan: Record<string, "ok" | "skip"> = { k1: "ok", k2: "skip", k3: "ok" };
+    const session = scripted(plan, ["k1", "k2", "k3"]);
+    await startCollection(t, session);
+    expect((await runAgain(t, session, false)).cp.status).toBe("partial");
+    plan.k2 = "ok"; // kms:Decrypt granted
+    const { cp, manifest } = await runAgain(t, session, true);
+    expect(cp.status).toBe("complete");
     expect(cp.missing).toEqual([]);
+    expect(cp.subWindows[0].skipped ?? 0).toBe(0);
+    expect(cp.coverage![0].acquiredCutoff).toBeDefined();
+    expect(manifest.pages.some((p) => p.requestParams.item === "k2")).toBe(true);
+    expect(manifest.entries.filter((e) => e.type === "restart")).toMatchObject([
+      { subWindowId: "ct:0", reason: "skipped-retry" },
+    ]);
+    // Replay of the whole manifest agrees: the retry cleared the skip.
+    expect(deriveSubWindows(manifest.header!, manifest.entries)[0].skipped ?? 0).toBe(0);
   });
 
   it("replay rebuilds the same token and count from the skip line", async () => {

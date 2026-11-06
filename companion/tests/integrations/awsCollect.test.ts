@@ -103,7 +103,7 @@ describe("S3 trail discovery and paths (#2313)", () => {
     const root = `AWSLogs/${ACCOUNT}/`;
     const inside = trailKey(root, "us-east-1", "2026-10-01T05:59:00Z");
     const slack = trailKey(root, "us-east-1", "2026-10-01T06:40:00Z"); // delivered after the end, within slack
-    const late = trailKey(root, "us-east-1", "2026-10-01T07:30:00Z");
+    const late = trailKey(root, "us-east-1", "2026-10-02T07:30:00Z"); // past the 24 h horizon
     const early = trailKey(root, "us-east-1", "2026-09-30T23:50:00Z");
     const { session: s } = session({
       trails: [
@@ -132,6 +132,44 @@ describe("S3 trail discovery and paths (#2313)", () => {
     const asked = clients.sent.filter((c) => c.op === "DescribeTrails").map((c) => c.region);
     expect(asked[0]).toBe("eu-west-1"); // the account's own region first
     expect(asked).toContain("us-east-2"); // not enabled: passed over, not fatal
+  });
+
+  it("a DNS failure during discovery is reported, never read as a disabled region", async () => {
+    const { session: s } = session({
+      trails: [],
+      trailsByRegion: { "us-east-1": "dns", "eu-west-1": [{ Name: "t", S3BucketName: "b" }] },
+      buckets: { b: [] },
+    });
+    await expect(s.fetchPage({ source: "s3-trail", subWindowId: "x", window: WINDOW })).rejects.toThrow(
+      /EAI_AGAIN/,
+    );
+  });
+
+  it("a region that is not enabled is named on the pages, not dropped silently", async () => {
+    const root = `AWSLogs/${ACCOUNT}/`;
+    const key = trailKey(root, "us-east-1", "2026-10-01T01:00:00Z");
+    const { session: s } = session({
+      trails: [],
+      trailsByRegion: { "us-east-2": "off", "us-east-1": [{ Name: "t", S3BucketName: "b" }] },
+      buckets: { b: [{ key, body: trailObject([trailRecord(1)]) }] },
+    });
+    const page = await s.fetchPage({ source: "s3-trail", subWindowId: "x", window: WINDOW });
+    expect(page.requestParams.regionsNotEnabled).toBe("us-east-2");
+  });
+
+  it("takes a file delivered 3 h after the window end, and the starting minute of a mid-minute start", async () => {
+    const root = `AWSLogs/${ACCOUNT}/`;
+    const startMinute = trailKey(root, "us-east-1", "2026-10-01T00:10:00Z", 1);
+    const late = trailKey(root, "us-east-1", "2026-10-01T09:00:00Z", 2);
+    const beyond = trailKey(root, "us-east-1", "2026-10-02T06:01:00Z", 3); // > 24 h after the end
+    const { session: s } = session({
+      trails: [{ Name: "main", S3BucketName: "b" }],
+      buckets: {
+        b: [startMinute, late, beyond].map((key) => ({ key, body: trailObject([trailRecord(1)]) })),
+      },
+    });
+    const window = { start: "2026-10-01T00:10:30Z", end: WINDOW.end };
+    expect(keysOf(await walk(s, "s3-trail", { window }))).toEqual([startMinute, late]);
   });
 
   it("walks a truncated listing with StartAfter and keeps the S3 version id", async () => {

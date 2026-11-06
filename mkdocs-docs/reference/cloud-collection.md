@@ -84,26 +84,32 @@ only.
   (`AWSLogs/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`) and for an **organization trail**
   (`AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`). From an organization bucket it
   reads only the folder of the account you collect with, never the other member accounts.
-- It reads every region folder the bucket holds, and only the days the window touches. A file is
-  taken when its delivery time is inside the window or up to one hour after its end, because
-  CloudTrail delivers a file 5 to 15 minutes after the events in it. A file can hold a few events
-  just outside the window; they are imported too.
+- It reads every region folder the bucket holds, and only the days the window touches plus the
+  day after. A file is taken when its delivery time is inside the window or up to **24 hours**
+  after its end: CloudTrail usually delivers a file 5 to 15 minutes after the events in it, but a
+  late file can come hours later. A file can hold events outside the window; they are imported
+  too, and duplicates are removed. Files delivered more than 24 hours after the window end are not
+  collected, and the result says so. Collect the window again later to pick them up.
 - **Each file is saved exactly as stored** — the `.json.gz` CloudTrail wrote, not unpacked or
   changed. The collection's manifest records its bucket, key, SHA-256 and, when the bucket has
   versioning on, its **S3 version id**.
 - When the trail is encrypted with a KMS key and the identity may not use that key, that file
-  cannot be read. The collection goes on with the other files, and the result lists each file it
-  skipped, with the reason. Add `kms:Decrypt` on the trail key (see the minimum policy) and collect
-  the window again; files already collected are not imported twice.
+  cannot be read. The collection goes on with the other files, the result is **partial**, and it
+  lists each file it skipped, with the reason. Add `kms:Decrypt` on the trail key (see the minimum
+  policy) and press **Resume**: the collection reads the window again, the skipped files included.
+  Files already collected are not imported twice.
 - When no trail writes to a bucket the identity can list, the S3 source is reported as missing,
   and the result tells you to collect event history instead.
 
 ### Event history
 
 - The companion asks every region in turn: the account's own region first, then the regions AWS
-  enables by default. A region the account has not enabled answers with an error; it is skipped
-  and named in the result. Regions you enabled yourself (opt-in regions) are not asked, apart from
-  the account's own region.
+  enables by default. A region the account has not enabled answers that it is not enabled; it is
+  skipped and named in the result. Regions you enabled yourself (opt-in regions) are not asked,
+  apart from the account's own region.
+- A network failure (a name that does not resolve, a dropped connection) is never taken for a
+  region that is not enabled. That part of the collection is reported missing with the error, and
+  **Resume** carries on from the page it stopped at.
 - Requests are paced at 2 a second per region, the CloudTrail limit, and slowed further when AWS
   asks.
 - Event history returns each event inside an envelope. The companion saves the CloudTrail record

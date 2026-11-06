@@ -44,8 +44,10 @@ export interface FakeTrail {
 export interface FakeAwsOptions {
   /** DescribeTrails' answer in every region, unless `trailsByRegion` names the region. */
   trails: FakeTrail[];
-  /** DescribeTrails per region: its own trails, or "off" (region not enabled). */
-  trailsByRegion?: Record<string, FakeTrail[] | "off">;
+  /** DescribeTrails per region: its own trails, "off" (region not enabled) or "dns" (lookup fails). */
+  trailsByRegion?: Record<string, FakeTrail[] | "off" | "dns">;
+  /** LookupEvents in `region` fails DNS on page `page` (0-based) `times` times. */
+  lookupDnsFail?: { region: string; page: number; times: number };
   buckets: Record<string, FakeObject[]>;
   /** LookupEvents per region: pages of CloudTrailEvent strings, or "off" (region not enabled). */
   lookup?: Record<string, string[][] | "off">;
@@ -63,6 +65,13 @@ export interface Sent {
 
 const awsError = (name: string, status: number, message = name) =>
   Object.assign(new Error(message), { name, $metadata: { httpStatusCode: status } });
+
+/** What Node throws when a hostname does not resolve. */
+const dnsError = (region: string) =>
+  Object.assign(new Error(`getaddrinfo EAI_AGAIN cloudtrail.${region}.amazonaws.com`), {
+    name: "Error",
+    code: "EAI_AGAIN",
+  });
 
 /** A gzipped CloudTrail object of `records` (what CloudTrail writes to S3). */
 export function trailObject(records: unknown[]): Uint8Array {
@@ -123,6 +132,7 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
         case "DescribeTrails": {
           const own = opts.trailsByRegion?.[region ?? ""];
           if (own === "off") throw awsError("UnrecognizedClientException", 400);
+          if (own === "dns") throw dnsError(region ?? "");
           return { trailList: own ?? (opts.trailsByRegion ? [] : opts.trails) };
         }
         case "ListObjectsV2": {
@@ -154,6 +164,11 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
           const plan = opts.lookup?.[region ?? ""] ?? [];
           if (plan === "off") throw awsError("UnrecognizedClientException", 400);
           const index = input.NextToken ? Number(String(input.NextToken).slice(1)) : 0;
+          const dns = opts.lookupDnsFail;
+          if (dns && dns.region === region && dns.page === index && dns.times > 0) {
+            dns.times--;
+            throw dnsError(region);
+          }
           const events = (plan[index] ?? []).map((CloudTrailEvent, i) => ({
             EventId: `e${index}-${i}`,
             CloudTrailEvent,

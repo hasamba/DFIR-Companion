@@ -42,13 +42,18 @@ import {
   type AwsCollectClients,
 } from "./awsCollectTypes.js";
 import { createAwsCollectClients } from "./awsCollectClients.js";
-import { discoverTrailRoots, type TrailRoot } from "./awsTrailDiscovery.js";
-import { fetchTrailObject, TrailObjectWalk } from "./awsTrailObjects.js";
+import { discoverTrailRoots, type TrailDiscovery } from "./awsTrailDiscovery.js";
+import { CLOUDTRAIL_DELIVERY_HORIZON_MS, fetchTrailObject, TrailObjectWalk } from "./awsTrailObjects.js";
 import { fetchLookupPage } from "./awsLookupEvents.js";
 
 export const LOOKUP_NOTICE =
   "CloudTrail event history (LookupEvents) holds the last 90 days of management events only — no " +
   "data events (S3 object reads, Lambda invocations). Collect the S3 trail for full history.";
+
+/** The S3 source's limit, always disclosed: a file delivered later is not looked for. */
+export const S3_TRAIL_NOTICE =
+  `Trail files delivered more than ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after the window end ` +
+  "are not collected; collect the window again later to pick up a file delivered that late.";
 
 export const AWS_COLLECT_SOURCES: readonly CollectSourceInfo[] = [
   {
@@ -58,6 +63,7 @@ export const AWS_COLLECT_SOURCES: readonly CollectSourceInfo[] = [
     minWindowMs: MIN_WINDOW_MS.cloudTrail,
     partition: { key: PARTITION_KEYS.aws },
     overlapMs: DEFAULT_OVERLAP_MS.aws,
+    notice: S3_TRAIL_NOTICE,
   },
   {
     id: LOOKUP_SOURCE,
@@ -100,7 +106,7 @@ export function lookupRegions(settings: AwsSettings): string[] {
 class AwsCollectSession implements CloudCollectSession {
   private clientsCache?: AwsCollectClients;
   private who?: Promise<{ account: string; caller: string }>;
-  private roots?: Promise<TrailRoot[]>;
+  private roots?: Promise<TrailDiscovery>;
   private walk?: TrailObjectWalk;
 
   constructor(
@@ -128,7 +134,7 @@ class AwsCollectSession implements CloudCollectSession {
     return this.who;
   }
 
-  private trailRoots(signal?: AbortSignal): Promise<TrailRoot[]> {
+  private trailRoots(signal?: AbortSignal): Promise<TrailDiscovery> {
     this.roots ??= this.caller(signal)
       .then(({ account }) =>
         discoverTrailRoots(this.clients, { account, regions: lookupRegions(this.settings) }, signal),
@@ -149,14 +155,14 @@ class AwsCollectSession implements CloudCollectSession {
     if (request.source === LOOKUP_SOURCE)
       return fetchLookupPage(this.clients, lookupRegions(this.settings), request);
     if (request.source !== S3_TRAIL_SOURCE) throw new Error(`unknown AWS source "${request.source}"`);
-    const roots = await this.trailRoots(request.signal);
+    const discovery = await this.trailRoots(request.signal);
     this.walk ??= new TrailObjectWalk(this.clients);
-    return fetchTrailObject(this.walk, this.clients, roots, request);
+    return fetchTrailObject(this.walk, this.clients, discovery, request);
   }
 
   async partitionValues(source: string, signal?: AbortSignal): Promise<readonly string[]> {
     if (source === LOOKUP_SOURCE) return lookupRegions(this.settings);
-    const roots = await this.trailRoots(signal);
+    const { roots } = await this.trailRoots(signal);
     return [...new Set(roots.flatMap((r) => r.regions))].sort();
   }
 }
