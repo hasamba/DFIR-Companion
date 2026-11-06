@@ -10,6 +10,19 @@ export function githubLatestUrl(repo: string): string {
   return `https://api.github.com/repos/${repo}/releases/latest`;
 }
 
+// The app notice LISTS releases instead of reading /releases/latest (#2349). The same repository
+// also publishes detection-rule packs as `rules-YYYY.MM.DD` releases; if one were ever marked
+// "latest", /releases/latest would hand back a rules tag, which parses as version 0 and silences
+// the "new version available" notice for everyone until the next app release.
+export function githubReleasesUrl(repo: string): string {
+  return `https://api.github.com/repos/${repo}/releases?per_page=30`;
+}
+
+/** An app release tag: `v` followed by a digit. `rules-*` packs and anything else are not. */
+export function isAppReleaseTag(tag: string): boolean {
+  return /^v\d/i.test(tag.trim());
+}
+
 function parseVersion(v: string): { core: number[]; pre: string } {
   const cleaned = (v ?? "").trim().replace(/^v/i, "");
   const [main, ...preParts] = cleaned.split("-");
@@ -48,18 +61,37 @@ export interface LatestRelease {
   publishedAt?: string;
 }
 
-// Tolerant parse of GitHub's GET /repos/:owner/:repo/releases/latest body.
+// Tolerant parse of ONE GitHub release body. A tag that is not an app release (a `rules-*` pack,
+// #2349) is not an answer to "is there a newer app": null.
 export function parseLatestRelease(json: unknown): LatestRelease | null {
-  if (!json || typeof json !== "object") return null;
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
   const o = json as Record<string, unknown>;
   const tag = typeof o.tag_name === "string" ? o.tag_name.trim() : "";
-  if (!tag) return null;
+  if (!tag || !isAppReleaseTag(tag)) return null;
   return {
     tag,
     version: tag.replace(/^v/i, ""),
     htmlUrl: typeof o.html_url === "string" && o.html_url.startsWith("https://") ? o.html_url : "",
     publishedAt: typeof o.published_at === "string" ? o.published_at : undefined,
   };
+}
+
+/**
+ * The newest app release in a GitHub answer: the release list (drafts, prereleases and every
+ * non-`v` tag skipped, newest by version), or a single release object (accepted when it is an app
+ * release). Null when there is none.
+ */
+export function pickLatestAppRelease(json: unknown): LatestRelease | null {
+  if (!Array.isArray(json)) return parseLatestRelease(json);
+  let best: LatestRelease | null = null;
+  for (const item of json) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (o.draft === true || o.prerelease === true) continue;
+    const parsed = parseLatestRelease(o);
+    if (parsed && (!best || compareVersions(parsed.version, best.version) === 1)) best = parsed;
+  }
+  return best;
 }
 
 export interface UpdateMode {

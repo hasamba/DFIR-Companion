@@ -599,6 +599,7 @@ export class ReportWriter {
     const modelPerf = await this.loadModelPerf(caseId);
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
     const custody = this.custodyStore ? await this.custodyStore.load(caseId) : undefined;
+    const sourceRuns = this.analysisRuns ? await this.analysisRuns.list(caseId) : [];
     const c = renderReportContents(
       state,
       meta,
@@ -616,12 +617,11 @@ export class ReportWriter {
       complianceControl,
       custody,
       (await this.hostScope?.(caseId)) ?? null,
+      sourceRuns,
     );
-    // Staged, not published: nothing in reports/ changes until every artifact AND the provenance
-    // record below have succeeded. Writing them straight over the previous report left a mixed
-    // generation behind whenever anything in between failed — see reports/reportGeneration.ts.
+    // Staged, not published: nothing in reports/ changes until every artifact AND the provenance record
+    // below succeed. A straight overwrite left a mixed generation on any failure (reportGeneration.ts).
     const generation = new ReportGeneration();
-    const sourceRuns = this.analysisRuns ? await this.analysisRuns.list(caseId) : [];
     let reportRunId: string | undefined;
     // discard() is a no-op once published, so the finally covers every failure path — a render
     // error, a full disk, a permission error, or a provenance write that never completed — without

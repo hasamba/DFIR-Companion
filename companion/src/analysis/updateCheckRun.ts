@@ -1,6 +1,6 @@
 // companion/src/analysis/updateCheckRun.ts
 import type { UpdateCheckStore } from "./updateCheckStore.js";
-import { githubLatestUrl, parseLatestRelease, type UpdateResult } from "./updateCheck.js";
+import { githubReleasesUrl, pickLatestAppRelease, type UpdateResult } from "./updateCheck.js";
 
 export type FetchLike = typeof fetch;
 
@@ -17,13 +17,14 @@ export async function performUpdateCheck(opts: {
   const { store, repo, fetchFn, now, timeoutMs = 5000 } = opts;
   const prev = (await store.load()).result;
   try {
-    const resp = await fetchFn(githubLatestUrl(repo), {
+    // The list, not /releases/latest: rule-pack releases (`rules-*`, #2349) share this repository.
+    const resp = await fetchFn(githubReleasesUrl(repo), {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "dfir-companion" },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!resp.ok) throw new Error(`GitHub returned ${resp.status}`);
-    const parsed = parseLatestRelease(await resp.json());
-    if (!parsed) throw new Error("could not parse the latest release");
+    const parsed = pickLatestAppRelease(await resp.json());
+    if (!parsed) throw new Error("no app release (v*) found in the release list");
     const result: UpdateResult = {
       latestVersion: parsed.version,
       latestTag: parsed.tag,

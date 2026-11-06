@@ -19,6 +19,8 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { RuleBase } from "./taggerRulesMerge.js";
 
 export const BUILTIN_UPSTREAM = "builtin";
+/** The installed detection-rule pack (#2349): one id for every pack version, as for "builtin". */
+export const RULE_PACK_UPSTREAM = "rulepack";
 
 interface BaseFile {
   version: 1;

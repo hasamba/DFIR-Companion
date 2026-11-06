@@ -7,8 +7,42 @@ import {
   resolveUpdateMode,
   buildUpdateStatus,
   githubLatestUrl,
+  githubReleasesUrl,
+  pickLatestAppRelease,
   DEFAULT_UPDATE_REPO,
 } from "../../src/analysis/updateCheck.js";
+
+// #2349: rule packs are released from the same repository as `rules-*` tags. They must never
+// answer "is there a newer app".
+describe("rule-pack releases do not reach the app update notice", () => {
+  it("parseLatestRelease ignores a rules-* tag", () => {
+    expect(parseLatestRelease({ tag_name: "rules-2026.11.20", html_url: "https://x" })).toBeNull();
+  });
+  it("pickLatestAppRelease keeps only v* releases from a list", () => {
+    const list = [
+      { tag_name: "rules-2026.11.20", html_url: "https://x/r" },
+      { tag_name: "v0.41.0", html_url: "https://x/41" },
+      { tag_name: "rules-2026.11.21.2", html_url: "https://x/r2" },
+      { tag_name: "v0.40.2", html_url: "https://x/40" },
+    ];
+    expect(pickLatestAppRelease(list)?.tag).toBe("v0.41.0");
+  });
+  it("skips drafts and prereleases, and returns null with no app release", () => {
+    const list = [
+      { tag_name: "v0.50.0", draft: true },
+      { tag_name: "v0.49.0", prerelease: true },
+      { tag_name: "v0.42.0" },
+    ];
+    expect(pickLatestAppRelease(list)?.version).toBe("0.42.0");
+    expect(pickLatestAppRelease([{ tag_name: "rules-2026.11.20" }])).toBeNull();
+  });
+  it("still accepts a single release object", () => {
+    expect(pickLatestAppRelease({ tag_name: "v1.2.3" })?.version).toBe("1.2.3");
+  });
+  it("builds the release-list API url", () => {
+    expect(githubReleasesUrl("a/b")).toBe("https://api.github.com/repos/a/b/releases?per_page=30");
+  });
+});
 
 describe("compareVersions", () => {
   it("orders numeric cores and ignores a leading v", () => {

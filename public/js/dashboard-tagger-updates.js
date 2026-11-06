@@ -80,6 +80,11 @@ async function loadTaggerUpdates() {
   }
 }
 
+// What the copy is compared with: the built-in set, or an installed rule pack (#2349).
+function tuUpstreamName(view) {
+  return (view && view.upstreamLabel && view.upstreamLabel.indexOf("rule pack") === 0) ? `the installed ${view.upstreamLabel}` : "the built-in set";
+}
+
 function renderTaggerUpdatesNotice(view) {
   if (taggerUpdatesNoteUp) return;
   const notice = document.getElementById("taggerUpdatesNotice");
@@ -87,7 +92,7 @@ function renderTaggerUpdatesNotice(view) {
   if (!view || !view.notice) { notice.hidden = true; return; }
   const added = (view.counts && view.counts.added) || 0;
   const text =
-    `Your detection rules are older than the built-in set: ${added} added, ${tuChangedCount(view)} changed since your copy.` +
+    `Your detection rules are older than ${tuUpstreamName(view)}: ${added} added, ${tuChangedCount(view)} changed since your copy.` +
     (view.readOnly ? " Your rules come from an operator file (TAGGER_RULES_FILE), so they can be reviewed and downloaded merged, not changed here." : "");
   notice.appendChild(tuEl("span", text + " ", ""));
   notice.appendChild(tuBtn("Review changes", openTaggerUpdates, "See every added and changed built-in rule and pick what to bring in"));
@@ -187,13 +192,13 @@ function renderTaggerUpdatesReview(view) {
   const pane = document.getElementById("taggerUpdatesPane");
   pane.textContent = "";
   pane.appendChild(tuEl("div", "Built-in rule updates — your own edits and rules are always kept.", "font-weight:600"));
-  tuGroup(pane, "Added to the built-in set", view.added, tuAddedRow);
+  tuGroup(pane, `Added in ${tuUpstreamName(view)}`.replace("in the built-in set", "to the built-in set"), view.added, tuAddedRow);
   // A copy saved before changes were tracked has every added rule unticked ("new, or removed by
   // you"). One click selects the whole group; rules the analyst is sure they removed can be unticked.
   if ((view.added || []).some((i) => i.uncertain)) {
     pane.appendChild(tuBtn("Select all added rules", () => selectAllTaggerUpdates("added"), "Tick every rule in the added group"));
   }
-  tuGroup(pane, "Changed in the built-in set", view.changed, tuChangedRow);
+  tuGroup(pane, `Changed in ${tuUpstreamName(view)}`, view.changed, tuChangedRow);
   tuGroup(pane, "Changed on both sides — pick one", view.conflicts, tuConflictRow);
   tuGroup(pane, "Removed by you — restore one at a time", view.removedByYou, tuRemovedRow);
   const bar = tuEl("div", null, "display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px");

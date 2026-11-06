@@ -160,7 +160,12 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
             entityIds: [],
           },
           configuration: {
-            parameters: { analyzer: "tagger", mode: "manual" },
+            // Which rules graded the case — bundled, a rule pack, an edited copy (#2349).
+            parameters: {
+              analyzer: "tagger",
+              mode: "manual",
+              rulePack: await options.taggerStore.provenance(),
+            },
             filteringPolicy: { scope },
           },
           output: investigationOutput(state),

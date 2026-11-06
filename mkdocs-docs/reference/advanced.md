@@ -55,7 +55,7 @@ A Timesketch-style rule engine (`tags.yaml`) that matches events on any real fie
 
 ### New built-in rules for edited rules
 
-The rules come from one of three places, in this order: a `TAGGER_RULES_FILE` file, your edited copy (made the first time you save in **Edit rules**, add a suggested rule, or remove a rule), or the built-in `tags.yaml`. The first one found is used alone. An edited copy therefore does not get rules added or changed in a later release on its own.
+The rules come from one of four places, in this order: a `TAGGER_RULES_FILE` file, your edited copy (made the first time you save in **Edit rules**, add a suggested rule, or remove a rule), an installed [rule pack](#detection-rule-pack), or the built-in `tags.yaml` bundled with the app. The first one found is used alone. An edited copy therefore does not get rules added or changed in a later release or pack on its own. When a rule pack is installed, the review below compares your copy with the pack instead of the bundled rules, and the notice names the pack.
 
 When your copy is older than the built-in set, **Super-Timeline → Content tagger** shows a notice: *Your detection rules are older than the built-in set: N added, M changed since your copy.* There is no notice while the built-in rules are active, or when your copy already holds every built-in rule.
 
@@ -71,6 +71,30 @@ The server records which built-in rules your copy was taken from each time it wr
 With a `TAGGER_RULES_FILE` source the server never writes the file. You get the notice and the review, and **Download merged rules** gives you the merged YAML to put in place yourself.
 
 In team mode, only the instance administrator can see the notice and apply it, the same as editing rules.
+
+### Detection rule pack
+
+The built-in tagger rules are also published separately from the app, as a *rule pack*: a GitHub release of this project tagged `rules-YYYY.MM.DD` (or `rules-YYYY.MM.DD.N` for a second pack on one day). A pack is published on its own every time the rules change on `master`, so a lab can take new and fixed rules without upgrading the app. A pack holds the rules file and a manifest with its version, the minimum app version that can load it, the upstream sources its ported rules came from (with the upstream commit of each port), and the SHA-256 of every file. Pack releases never replace the app release as GitHub's "latest", and the app's "new version available" notice ignores them.
+
+**Super-Timeline → Content tagger → Rule pack** shows which rules are in use — bundled with the app, an installed pack (downloaded or installed from a file), your edited copy and the rules it is based on, or an operator file — and offers:
+
+- **Check for updates** — finds the newest pack this app can load and downloads it. A pack is accepted only from this project's GitHub releases, from GitHub's release hosts, under a size limit, and only when its files match the SHA-256 GitHub publishes for them **and** the SHA-256 in the pack's own manifest. It then shows the rules the pack adds, changes and removes compared with the rules a pack replaces. **Nothing is installed until you click Install.** A pack that needs a newer app is refused with a message naming the version it needs.
+- **Install from file** — for an offline lab: choose the pack's `tags.yaml` and, if you have it, its `rule-pack-manifest.json`. You get the same review. The pack is marked *not checked against GitHub*, and its file SHA-256 is recorded. With the manifest, the rules must still match the manifest's SHA-256 and the minimum app version still applies.
+- **Measure against this case** — counts the rows of the open case the pack would grade or tag differently: raised, entering the forensic timeline, no longer raised, staying out of it, and tagged differently. It changes nothing. The tagger only raises grades, so a rule the pack removes or narrows does not lower a grade already in the case; *no longer raised* counts rows a new import graded with the pack would leave lower.
+- **Install** — makes the reviewed pack the installed one. The pack it replaces is kept for roll back.
+- **Roll back** — to the previous pack, or to the rules bundled with the app.
+
+After you install or roll back, **open cases keep their grades** until you press **Run tagger**; the message after installing has a button for it.
+
+Which pack is used:
+
+- The order is `TAGGER_RULES_FILE` > your edited copy > installed pack > bundled rules. An installed pack does not replace your edited copy: its added and changed rules are offered through the [review above](#new-built-in-rules-for-edited-rules), and your own edits are kept. **Reset to defaults** in the rule editor drops your copy and falls back to the installed pack, if there is one.
+- A pack built for an older app version than the one you run is *superseded*: the rules bundled with your app already contain it. It is not offered, and an installed one stops being used after an app upgrade — the bundled rules take over, and the panel says why.
+- A pack whose file was changed on disk after installing is not used; the bundled rules are used and the panel says so.
+
+Every import's tagger run records which rules graded it (for example `rule pack rules-2026.11.20 (downloaded from GitHub)` or `bundled with the app (0.45.0)`) in the case's analysis-run record, and the Markdown and HTML reports list them under **Tagger rules**. A case graded by two packs over time names both.
+
+An optional startup check, `DFIR_RULE_PACK_UPDATE_CHECK=on` (off by default), looks for a newer pack once when the server starts and shows a notice in the panel. It never installs. In team mode only the instance administrator — the users who may edit tagger rules — can check, install or roll back. The public demo does not download or install packs.
 
 ---
 

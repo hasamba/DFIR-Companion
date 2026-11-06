@@ -5,7 +5,15 @@
 // Active-ruleset precedence, most-specific first:
 //   1. TAGGER_RULES_FILE env  — an explicit operator override (read-only from our side).
 //   2. the user-edited file    — written by PUT /tagger/rules (dashboard rule editor).
-//   3. the bundled default     — companion/data/tags.yaml, shipped with the app.
+//   3. the installed rule pack — a `rules-*` release installed from Content tagger → Rule pack
+//                                (#2349, rulePackStore.ts), while it is not superseded by the app.
+//   4. the bundled default     — companion/data/tags.yaml, shipped with the app.
+//
+// The UPSTREAM of an edited copy (#2344) is the newest non-user source: the installed pack when one
+// is in use, else the bundled default. So a pack installed under an edited copy is offered through
+// the same merge review, and the analyst's edits are kept. The copy's base record is read under the
+// pack's id, falling back to the built-in one — a copy made from the bundled rules and never merged
+// with a pack still has an exact base (the pack is the same rule lineage, only newer).
 // Invalid YAML / an invalid ruleset THROWS (never a partial load): the manual-run route surfaces the
 // error; the auto-run pipeline hook catches it and skips (a broken hand-edit must not break imports).
 
@@ -53,7 +61,19 @@ export function rulesRevision(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
-export type RulesSource = "env" | "user" | "default";
+export type RulesSource = "env" | "user" | "pack" | "default";
+
+/** The installed rule pack, as the store sees it (#2349). Injected, so this file knows no downloads. */
+export interface PackRulesProvider {
+  /** The pack's rules while one is installed and in use; null otherwise. */
+  activeRules(): Promise<{ text: string; path: string; id: string; label: string } | null>;
+}
+
+interface Upstream {
+  id: string;
+  label: string;
+  map: Record<string, unknown>;
+}
 
 /** The active copy compared with the built-in set (#2344). `report` is null for the built-in source. */
 export interface RuleUpdatesView {
@@ -65,6 +85,8 @@ export interface RuleUpdatesView {
   report: RuleUpdateReport | null;
   /** The notice was dismissed at the current built-in revision. */
   dismissed: boolean;
+  /** What the copy is compared with: the built-in set or an installed rule pack (#2349). */
+  upstream: { id: string; label: string } | null;
 }
 
 export interface RuleUpdatesApplied {
@@ -153,6 +175,7 @@ export class TaggerStore {
   constructor(
     private readonly userRulesPath: string,
     private readonly defaultPaths: string[] = defaultCandidatePaths(),
+    private readonly opts: { pack?: PackRulesProvider; appVersion?: string } = {},
   ) {}
 
   private envPath(): string | undefined {
@@ -184,6 +207,8 @@ export class TaggerStore {
     if (await exists(this.userRulesPath)) {
       return { text: await readFile(this.userRulesPath, "utf8"), source: "user", path: this.userRulesPath };
     }
+    const pack = await this.activePack();
+    if (pack) return { text: pack.text, source: "pack", path: pack.path };
     const def = this.resolveDefaultPath();
     if (def) return { text: await readFile(def, "utf8"), source: "default", path: def };
     return { text: "", source: "default", path: this.userRulesPath };
@@ -237,12 +262,13 @@ export class TaggerStore {
     const compiled = compileText(yamlText); // throws on invalid — nothing is written
     const hadCopy = await exists(this.userRulesPath);
     await mkdir(dirname(this.userRulesPath), { recursive: true }); // atomicWrite won't create parents
-    const base = nextBase ?? (hadCopy ? undefined : await this.builtinBase());
+    const upstream = await this.upstream();
+    const base = nextBase ?? (hadCopy || !upstream ? undefined : snapshotBase(upstream.map));
     // The copy first, the base after. A base that lands without its copy would mark rules as
     // decided that the copy never got — they would silently stop being offered. A base write that
     // fails after the copy only offers those rules again, which is the safe direction.
     await atomicWrite(this.userRulesPath, yamlText);
-    if (base) await writeRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM, base);
+    if (base && upstream) await writeRuleBase(this.baseRecordPath(), upstream.id, base);
     return compiled;
   }
 
@@ -255,32 +281,76 @@ export class TaggerStore {
     return `${this.userRulesPath}.updates.json`;
   }
 
-  /** The bundled default's raw rule map, or null when no bundled file is found. */
-  private async readBuiltinMap(): Promise<Record<string, unknown> | null> {
+  /** The installed pack while it is in use; a pack that cannot be read is skipped (bundled wins). */
+  private async activePack(): Promise<Awaited<ReturnType<PackRulesProvider["activeRules"]>>> {
+    if (!this.opts.pack) return null;
+    try {
+      return await this.opts.pack.activeRules();
+    } catch {
+      return null;
+    }
+  }
+
+  private bundledLabel(): string {
+    return `bundled with the app${this.opts.appVersion ? ` (${this.opts.appVersion})` : ""}`;
+  }
+
+  /** What an edited copy is compared with: the pack in use, else the bundled default. */
+  async upstream(): Promise<Upstream | null> {
+    const pack = await this.activePack();
+    if (pack) return { id: pack.id, label: pack.label, map: parseRuleMap(pack.text) };
+    const def = this.resolveDefaultPath();
+    if (!def) return null;
+    return {
+      id: BUILTIN_UPSTREAM,
+      label: this.bundledLabel(),
+      map: parseRuleMap(await readFile(def, "utf8")),
+    };
+  }
+
+  /** The bundled default's raw rule map (for Roll back → bundled previews), or null. */
+  async bundledRules(): Promise<Record<string, unknown> | null> {
     const def = this.resolveDefaultPath();
     return def ? parseRuleMap(await readFile(def, "utf8")) : null;
   }
 
-  private async builtinBase(): Promise<RuleBase | undefined> {
-    const builtin = await this.readBuiltinMap();
-    return builtin ? snapshotBase(builtin) : undefined;
+  // The copy's base under the upstream's id, else the built-in one (see the header).
+  private async readBaseRecord(upstreamId: string): Promise<RuleBase | null> {
+    const own = await readRuleBase(this.baseRecordPath(), upstreamId);
+    if (own || upstreamId === BUILTIN_UPSTREAM) return own;
+    return readRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM);
   }
 
-  private async readBuiltinBaseRecord(): Promise<RuleBase | null> {
-    return readRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM);
+  /**
+   * One line naming the rules that grade an import, for the analysis-run ledger and the report
+   * (#2349) — the tagger's counterpart of the Sigma release stamp.
+   */
+  async provenance(): Promise<string> {
+    const active = await this.readActiveText();
+    if (active.source === "env") return "operator rules file (TAGGER_RULES_FILE)";
+    if (active.source === "default") return this.bundledLabel();
+    const upstream = await this.upstream();
+    if (active.source === "pack") return upstream?.label ?? "rule pack";
+    return `analyst-edited rules (based on ${upstream?.label ?? "the bundled rules"})`;
   }
 
   /** Compare the active copy with the built-in set. Throws when the active YAML does not parse. */
   async ruleUpdates(): Promise<RuleUpdatesView> {
     const active = await this.readActive();
     const view = { source: active.source, revision: active.revision, readOnly: active.source === "env" };
-    const builtin = active.source === "default" ? null : await this.readBuiltinMap();
-    if (!builtin) return { ...view, report: null, dismissed: false };
+    // The pack or the bundled default IS the upstream: there is nothing to merge into it.
+    const upstream = active.source === "default" || active.source === "pack" ? null : await this.upstream();
+    if (!upstream) return { ...view, report: null, dismissed: false, upstream: null };
     // A TAGGER_RULES_FILE source never has a base record: it is not a copy this server wrote.
-    const base = active.source === "user" ? await this.readBuiltinBaseRecord() : null;
-    const report = diffRuleSets({ upstream: builtin, mine: parseRuleMap(active.text), base });
-    const dismissedAt = await readDismissedRevision(this.dismissRecordPath(), BUILTIN_UPSTREAM);
-    return { ...view, report, dismissed: dismissedAt === report.upstreamRevision };
+    const base = active.source === "user" ? await this.readBaseRecord(upstream.id) : null;
+    const report = diffRuleSets({ upstream: upstream.map, mine: parseRuleMap(active.text), base });
+    const dismissedAt = await readDismissedRevision(this.dismissRecordPath(), upstream.id);
+    return {
+      ...view,
+      report,
+      dismissed: dismissedAt === report.upstreamRevision,
+      upstream: { id: upstream.id, label: upstream.label },
+    };
   }
 
   /**
@@ -297,10 +367,15 @@ export class TaggerStore {
       const active = await this.readActiveText();
       const current = rulesRevision(active.text);
       if (current !== expectedRevision) throw new TaggerRulesConflictError(current);
-      const builtin = active.source === "user" ? await this.readBuiltinMap() : null;
-      if (!builtin) throw new NothingToMergeError();
-      const base = await this.readBuiltinBaseRecord();
-      const out = applyRuleUpdates({ upstream: builtin, mine: parseRuleMap(active.text), base, choices });
+      const upstream = active.source === "user" ? await this.upstream() : null;
+      if (!upstream) throw new NothingToMergeError();
+      const base = await this.readBaseRecord(upstream.id);
+      const out = applyRuleUpdates({
+        upstream: upstream.map,
+        mine: parseRuleMap(active.text),
+        base,
+        choices,
+      });
       const text = stringifyRuleMap(out.rules);
       const compiled = await this.persist(text, out.base);
       return {
@@ -317,15 +392,16 @@ export class TaggerStore {
   async exportMergedRules(choices: Readonly<Record<string, RuleChoice>>): Promise<string> {
     const active = await this.readActiveText();
     const mine = parseRuleMap(active.text);
-    const builtin = active.source === "default" ? null : await this.readBuiltinMap();
-    if (!builtin) return stringifyRuleMap(mine);
-    const base = active.source === "user" ? await this.readBuiltinBaseRecord() : null;
-    return stringifyRuleMap(applyRuleUpdates({ upstream: builtin, mine, base, choices }).rules);
+    const upstream = active.source === "default" || active.source === "pack" ? null : await this.upstream();
+    if (!upstream) return stringifyRuleMap(mine);
+    const base = active.source === "user" ? await this.readBaseRecord(upstream.id) : null;
+    return stringifyRuleMap(applyRuleUpdates({ upstream: upstream.map, mine, base, choices }).rules);
   }
 
   /** Hide the notice until the built-in set changes again. Per server; never touches the rules. */
   async dismissRuleUpdates(upstreamRevision: string): Promise<void> {
-    await writeDismissedRevision(this.dismissRecordPath(), BUILTIN_UPSTREAM, upstreamRevision);
+    const id = (await this.upstream())?.id ?? BUILTIN_UPSTREAM;
+    await writeDismissedRevision(this.dismissRecordPath(), id, upstreamRevision);
   }
 
   /** True when an operator env override (TAGGER_RULES_FILE) owns the ruleset (read-only from our side). */
@@ -393,7 +469,10 @@ export class TaggerStore {
     });
   }
 
-  /** Delete the user rule file so the active ruleset falls back to the bundled default. No-op if absent. */
+  /**
+   * Delete the user rule file so the active ruleset falls back to the installed rule pack, or the
+   * bundled default when none is in use. No-op if absent.
+   */
   async resetToDefault(): Promise<{ ruleCount: number }> {
     this.assertEditable();
     return rulesLock.runExclusive(this.userRulesPath, async () => {

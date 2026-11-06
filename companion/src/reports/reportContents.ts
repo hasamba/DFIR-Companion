@@ -17,6 +17,8 @@ import type { SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta
 import { renderMarkdownReport } from "./markdown.js";
 import { renderHtmlReport } from "./html.js";
 import { renderScopeSection } from "./scopeSection.js";
+import { taggerRuleSourcesIn, taggerRulesMarkdown, withTaggerRulesHtml } from "./taggerRulesProvenance.js";
+import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
 import { caseDomains, defangIndicators } from "./defang.js";
 import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportMeta } from "./reportMeta.js";
@@ -56,7 +58,9 @@ export function renderReportContents(
   complianceControl?: ComplianceControl,
   custody?: CustodyRecord[],
   hostScope?: HostScopeLedger | null,
+  analysisRuns: readonly AnalysisRunManifest[] = [], // #2349: which tagger rules graded the imports
 ): RedactedReportContents {
+  const taggerRuleSources = taggerRuleSourcesIn(analysisRuns);
   // Each hypothesis link read on the event it lives on today (#1715), as the dashboard reads it.
   const resolve = stateEventResolver(state);
   const linkedHypotheses = hypotheses?.map((h) => resolveHypothesisLinks(h, resolve));
@@ -79,20 +83,25 @@ export function renderReportContents(
       modelPerf,
       complianceControl,
       custody,
-    ) + scopeSection,
+    ) +
+      scopeSection +
+      taggerRulesMarkdown(taggerRuleSources),
     caseDomains(state),
   );
-  const html = renderHtmlReport(
-    state,
-    meta,
-    exposure,
-    graph,
-    notebookEntries,
-    playbookTasks,
-    template,
-    linkedHypotheses,
-    custody,
-    hostScope,
+  const html = withTaggerRulesHtml(
+    renderHtmlReport(
+      state,
+      meta,
+      exposure,
+      graph,
+      notebookEntries,
+      playbookTasks,
+      template,
+      linkedHypotheses,
+      custody,
+      hostScope,
+    ),
+    taggerRuleSources,
   );
   // The last check at the door (#1006): asked of the finished text, before the warning it may
   // add — the banner names its values defanged, so it can never be what the check finds.

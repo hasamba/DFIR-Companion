@@ -1,0 +1,98 @@
+name: Rule pack publish
+
+# Publishes the built-in detection rules (companion/data/tags.yaml) as a rule pack, released
+# separately from the app (#2349). The companion's Super-Timeline -> Content tagger -> Rule pack
+# panel checks these releases, verifies them and installs one only when the analyst clicks Install.
+#
+#   - Runs on a push to master that changes the rules file or NOTICE (where rule sources are
+#     credited), and on demand. A push that does not change the rules or their recorded upstream
+#     sources publishes nothing: buildRulePack.mjs compares with the newest pack's manifest.
+#   - Tag: rules-YYYY.MM.DD, or rules-YYYY.MM.DD.N when that day already has a pack. These tags are
+#     kept apart from the vX.Y.Z app releases: the app release workflows (docker-publish.yml,
+#     release-artifacts.yml) trigger on `v*` tags only, and companion/tests/architecture/
+#     rulePackWorkflow.test.ts fails if any workflow starts reacting to a rules-* tag.
+#   - Published with --latest=false, so the app's own release stays GitHub's "latest". The app's
+#     update notice also ignores every non-v* release (updateCheck.ts).
+#   - Only GITHUB_TOKEN with contents: write. A tag created with GITHUB_TOKEN does not start other
+#     workflows either. No other secrets.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "companion/data/tags.yaml"
+      - "NOTICE"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish even when the rules equal the newest pack (republish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rule-pack-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish the rule pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The rules-* tags already taken (for the .N suffix) and the newest pack's manifest (to skip an
+      # unchanged pack). No previous pack yet is fine: the first pack is always built.
+      - name: Find the newest pack
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          taken=$(gh release list --limit 200 --json tagName --jq '.[].tagName | select(startswith("rules-"))' | tr '\n' ' ')
+          echo "taken=$taken" >> "$GITHUB_OUTPUT"
+          latest=$(printf '%s\n' $taken | sort -V | tail -n 1)
+          mkdir -p "$RUNNER_TEMP/prev"
+          if [ -n "$latest" ]; then
+            gh release download "$latest" --pattern rule-pack-manifest.json --dir "$RUNNER_TEMP/prev" || true
+          fi
+
+      - name: Build the pack
+        id: build
+        env:
+          TAKEN: ${{ steps.prev.outputs.taken }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && '--force' || '' }}
+        run: |
+          node companion/scripts/buildRulePack.mjs \
+            --out "$RUNNER_TEMP/pack" \
+            --previous-manifest "$RUNNER_TEMP/prev/rule-pack-manifest.json" \
+            --taken "$TAKEN" \
+            --commit "$GITHUB_SHA" \
+            $FORCE
+
+      - name: Publish the release
+        if: steps.build.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+          OUT: ${{ steps.build.outputs.out }}
+        run: |
+          {
+            echo "Detection rule pack $VERSION, built from commit $GITHUB_SHA."
+            echo
+            echo "Install it from the companion: Super-Timeline -> Content tagger -> Rule pack -> Check for updates."
+            echo "The manifest names the minimum app version, the upstream sources and the SHA-256 of every file."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$VERSION" "$OUT/tags.yaml" "$OUT/rule-pack-manifest.json" \
+            --title "Detection rules $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --target "$GITHUB_SHA" \
+            --latest=false

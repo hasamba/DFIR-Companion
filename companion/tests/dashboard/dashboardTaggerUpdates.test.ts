@@ -124,6 +124,14 @@ describe("the rule-updates notice", () => {
     );
   });
 
+  it("names an installed rule pack as what the copy is older than (#2349)", async () => {
+    const h = harness({ ...VIEW, upstreamLabel: "rule pack rules-2026.11.05 (downloaded from GitHub)" });
+    await h.api.loadTaggerUpdates();
+    expect(h.els.taggerUpdatesNotice.textContent).toContain(
+      "Your detection rules are older than the installed rule pack rules-2026.11.05 (downloaded from GitHub): 2 added",
+    );
+  });
+
   it("stays hidden when there is nothing new, and on a refused request", async () => {
     const h = harness({ source: "default", revision: "r", readOnly: false, dismissed: false, notice: false });
     await h.api.loadTaggerUpdates();

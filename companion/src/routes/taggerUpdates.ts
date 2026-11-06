@@ -32,7 +32,7 @@ function parseChoices(raw: unknown): Record<string, RuleChoice> {
   return out;
 }
 
-interface RuleSide {
+export interface RuleSide {
   description?: string;
   severity?: string;
   tags?: string[];
@@ -40,7 +40,7 @@ interface RuleSide {
   yaml: string;
 }
 
-function side(key: string, rule: unknown): RuleSide {
+export function side(key: string, rule: unknown): RuleSide {
   const r = rule && typeof rule === "object" ? (rule as Record<string, unknown>) : {};
   return {
     description: typeof r.description === "string" ? r.description : undefined,
@@ -50,7 +50,7 @@ function side(key: string, rule: unknown): RuleSide {
   };
 }
 
-function itemView(i: RuleUpdateItem) {
+export function itemView(i: RuleUpdateItem) {
   return {
     key: i.key,
     uncertain: i.uncertain,
@@ -72,6 +72,8 @@ export function registerTaggerUpdateRoutes(app: Express, ctx: RouteContext): voi
         revision: view.revision,
         readOnly: view.readOnly,
         dismissed: view.dismissed,
+        // The built-in set, or the installed rule pack (#2349): the dashboard names it in the notice.
+        upstreamLabel: view.upstream?.label ?? null,
       };
       const report = view.report;
       if (!report) return res.status(200).json({ ...base, notice: false });

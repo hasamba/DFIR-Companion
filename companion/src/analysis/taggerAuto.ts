@@ -49,6 +49,7 @@ export async function autoTagNewEvents(
   try {
     const startedAt = new Date().toISOString();
     const active = await taggerStore.readActive();
+    const ruleSource = await taggerStore.provenance(); // named in the run ledger and the report (#2349)
     const ruleset = await taggerStore.load(); // throws on an invalid hand-edited file → skip (below)
     if (!ruleset.rules.length) return;
 
@@ -108,7 +109,7 @@ export async function autoTagNewEvents(
         selectionHash: hashManifestValue(added.map((event) => event.id)),
       },
       configuration: {
-        parameters: { analyzer: "tagger", mode: "automatic" },
+        parameters: { analyzer: "tagger", mode: "automatic", rulePack: ruleSource },
         filteringPolicy: { scope: settings.scope },
       },
       output: {
