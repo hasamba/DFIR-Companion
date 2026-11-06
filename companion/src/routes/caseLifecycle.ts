@@ -14,8 +14,10 @@ import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
 import {
   closeCredentialChoice,
+  releaseBeforeCaseEnd,
   releaseOnCaseEnd,
   runningCollectionRefusal,
+  type ReleaseReport,
 } from "./cloudCredentialRelease.js"; // #2347
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
@@ -210,7 +212,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (status !== "open" && status !== "closed")
         return res.status(400).json({ error: "status must be 'open' or 'closed'" });
       // #2347: closing deletes the case's cloud credentials unless the analyst keeps them, and a
-      // running cloud collection blocks it.
+      // running cloud collection blocks it. Unlike archive and delete, the release FOLLOWS the
+      // status change: a close is reversible and keeps the case in the list, so a vault failure is
+      // reported (cloudCredentialsError) rather than refusing the close — and a close the store
+      // refuses (an archived case) never costs the credentials.
       const credentials = closeCredentialChoice(req.body);
       if (!credentials) return res.status(400).json({ error: "cloudCredentials must be 'delete' or 'keep'" });
       const running = status === "closed" ? runningCollectionRefusal(ctx, id) : undefined;
@@ -232,16 +237,19 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // AFTER the caller has already fully built the archive/export bytes. Failure here must NOT
   // undo or discard the archive/export itself — the caller already has (or is about to send)
   // their file; it just means the case stays visible in the active list until retried.
+  // An archived case keeps no credentials (#2347), and their release is a prerequisite: if it
+  // fails, the case is not moved (`credentials: true`), so it never leaves the list still holding them.
   async function removeCaseFromActiveListBestEffort(
     id: string,
     logPrefix: string,
     req: Request,
-  ): Promise<{ removed: boolean; error?: string }> {
+  ): Promise<{ removed: boolean; error?: string; credentials?: true; released?: ReleaseReport }> {
+    const release = await releaseBeforeCaseEnd(ctx, req, id, "case archived");
+    if (!release.ok) return { removed: false, error: release.error, credentials: true };
     try {
       await store.archiveCaseFolder(id, "archived"); // move + status in one locked step (#1809)
       logLine(`${logPrefix} case=${id} removed from active list (moved to _archived/)`);
-      await releaseOnCaseEnd(ctx, req, id, "case archived"); // an archived case keeps no credentials (#2347)
-      return { removed: true };
+      return { removed: true, released: release.report };
     } catch (err) {
       errLine(`${logPrefix} case=${id} failed to remove from active list: ${(err as Error).message}`);
       return { removed: false, error: (err as Error).message };
@@ -283,17 +291,14 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         exportedBy: meta.investigator || "analyst",
         destination: `zip archive: ${result.archivePath}`,
       });
-      let removedFromList = false;
-      let removeFromListError: string | undefined;
-      if (removeFromList) {
-        const outcome = await removeCaseFromActiveListBestEffort(id, "[archive]", req);
-        removedFromList = outcome.removed;
-        removeFromListError = outcome.error;
-      }
+      const outcome = removeFromList
+        ? await removeCaseFromActiveListBestEffort(id, "[archive]", req)
+        : { removed: false };
       return res.status(200).json({
         ...result,
-        removedFromList,
-        ...(removeFromListError ? { removeFromListError } : {}),
+        removedFromList: outcome.removed,
+        ...(outcome.error ? { removeFromListError: outcome.error } : {}),
+        ...outcome.released,
       });
     } catch (err) {
       errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
@@ -362,24 +367,27 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           .json({ error: `case ${id} must be closed or archived before it can be deleted` });
       }
       const body = (req.body ?? {}) as { archiveFirst?: unknown; password?: unknown };
-      const archiveFirst = body.archiveFirst;
+      const { archiveFirst, password } = body;
       if (archiveFirst !== "none" && archiveFirst !== "zip" && archiveFirst !== "encrypted") {
         return res.status(400).json({ error: `archiveFirst must be 'none', 'zip', or 'encrypted'` });
       }
+      // The whole request is validated before any credential changes (#2347).
+      const badPassword =
+        archiveFirst === "encrypted" &&
+        (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH);
+      if (badPassword)
+        return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       const running = runningCollectionRefusal(ctx, id);
       if (running) return res.status(409).json({ error: running });
       // #2347: the credentials go BEFORE the archive is built, so their custody entries travel in it —
-      // the folder, and its custody log, are gone after the delete. A delete that then fails leaves a
-      // closed case without credentials, which is what closing does by default anyway.
-      const released = await releaseOnCaseEnd(ctx, req, id, "case deleted");
+      // the folder, and its custody log, are gone after the delete. Their release is a prerequisite:
+      // if it fails, nothing is archived or deleted. A delete that fails after it leaves a closed case
+      // without credentials, which is what closing does by default anyway.
+      const release = await releaseBeforeCaseEnd(ctx, req, id, "case deleted");
+      if (!release.ok) return res.status(500).json({ error: release.error });
+      const released = release.report;
 
-      if (archiveFirst === "encrypted") {
-        const password = body.password;
-        if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-          return res
-            .status(400)
-            .json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
-        }
+      if (archiveFirst === "encrypted" && typeof password === "string") {
         const archive = await exportEncryptedCase(store, id, password, [], {
           runExclusive: ctx.runStateExclusive, // same lock as /export/encrypted (#2247)
         });
@@ -539,15 +547,14 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         exportedBy: meta?.investigator || "analyst",
         destination: `encrypted archive: ${filename}`,
       });
-      let removedFromList = false;
-      if (removeFromList) {
-        const outcome = await removeCaseFromActiveListBestEffort(id, "[export]", req);
-        removedFromList = outcome.removed;
-      }
+      const outcome = removeFromList
+        ? await removeCaseFromActiveListBestEffort(id, "[export]", req)
+        : { removed: false };
       res.type("application/octet-stream");
       res.setHeader("Content-Disposition", attachmentContentDisposition(filename));
       res.setHeader("Cache-Control", "private, no-cache");
-      res.setHeader("X-Case-Removed-From-List", String(removedFromList));
+      res.setHeader("X-Case-Removed-From-List", String(outcome.removed));
+      if (outcome.credentials) res.setHeader("X-Case-Remove-Error", "cloud-credentials"); // #2347
       return res.send(archive);
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {

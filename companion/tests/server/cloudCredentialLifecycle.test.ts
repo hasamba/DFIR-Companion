@@ -83,6 +83,14 @@ async function credentialEntries(caseId: string) {
   return (await custody.load(caseId)).filter((r) => r.event === "credential-deleted");
 }
 
+async function detachedEntries(caseId: string) {
+  return (await custody.load(caseId)).filter((r) => r.event === "credential-detached");
+}
+
+const VAULT_DOWN = () => {
+  throw new Error("vault write failed");
+};
+
 describe("closing a case", () => {
   it("deletes an account only this case used, by default, with a custody entry", async () => {
     const s = secret();
@@ -114,12 +122,35 @@ describe("closing a case", () => {
   });
 
   it("only detaches an account another case shares, and deletes it with its last case", async () => {
-    const shared = vault.create(gcpKeyInput("Shared", makeGcpKeyJson()), "c1").account;
+    const shared = vault.create(gcpKeyInput("Shared", makeGcpKeyJson()), "c1", {
+      id: "u1",
+      displayName: "Alice",
+    }).account;
     vault.attach(shared.id, "c2");
     const app = soloApp();
     expect((await close(app, "c1")).body.cloudCredentials).toEqual({ deleted: 0, detached: 1 });
     expect(vault.view(shared.id).caseIds).toEqual(["c2"]);
     expect(await credentialEntries("c1")).toEqual([]);
+    // The detached case keeps the provenance: which credential its evidence came through.
+    const [detached, ...more] = await detachedEntries("c1");
+    expect(more).toEqual([]);
+    expect(detached.credential).toMatchObject({
+      accountId: shared.id,
+      provider: "gcp",
+      identifier: "project test-project-01",
+      addedBy: "Alice",
+      addedAt: shared.createdAt,
+      collections: [],
+      reason: "case closed",
+    });
+    expect(detached.collectedBy).toBe("analyst");
+    expect(detached.trigger).toContain("detached");
+    expect(detached.artifactPath).toBe(`cloud-credential:gcp/${shared.id}`);
+    expect(await detachedEntries("c2")).toEqual([]);
+    expect(await custody.verifyIntegrity("c1")).toEqual([]);
+    // No file stands behind it, so an export has nothing to re-hash or to claim it carried.
+    expect(await custody.recordExport("c1", { exportedBy: "a", destination: "zip" })).toEqual([]);
+    expectNoSecret(JSON.stringify(detached), "detached custody entry");
     expect((await close(app, "c2")).body.cloudCredentials).toEqual({ deleted: 1, detached: 0 });
     expect(vault.list()).toEqual([]);
     const [entry] = await credentialEntries("c2");
@@ -163,6 +194,27 @@ describe("closing a case", () => {
     expect((await close(app, "c1")).status).toBe(200);
   });
 
+  it("records the detach before removing it: a failed custody write leaves the account attached", async () => {
+    const shared = vault.create(awsKeyInput("Shared", secret()), "c1").account;
+    vault.attach(shared.id, "c2");
+    vi.spyOn(custody, "record").mockRejectedValue(new Error("custody disk full"));
+    const res = await close(soloApp(), "c1");
+    expect(res.status, res.text).toBe(200);
+    expect(res.body.cloudCredentialsError).toMatch(/could not be deleted/i);
+    expect(vault.view(shared.id).caseIds).toEqual(["c1", "c2"]);
+  });
+
+  it("a client cannot submit a credential custody event", async () => {
+    const app = soloApp();
+    for (const event of ["credential-deleted", "credential-detached"]) {
+      const res = await request(app)
+        .post("/cases/c1/custody")
+        .send({ artifactPath: join(dir, "x"), event });
+      expect(res.status, event).toBe(400);
+    }
+    expect(await custody.load("c1")).toEqual([]);
+  });
+
   it("reopening a case does not bring deleted credentials back", async () => {
     vault.create(awsKeyInput("A", secret()), "c1");
     const app = soloApp();
@@ -197,6 +249,90 @@ describe("archiving and deleting a case", () => {
     expect(res.body.deleted).toBe(true);
     expect(res.body.cloudCredentials).toEqual({ deleted: 1, detached: 1 });
     expect(vault.list().map((a) => [a.name, a.caseIds])).toEqual([["Shared", ["c2"]]]);
+  });
+});
+
+describe("a credential release that fails", () => {
+  // The credentials go first, so a failed release leaves the case exactly where it was: closed, in the
+  // active list, with its credentials. The analyst can retry.
+  async function closedWithKeptCredentials() {
+    const a = vault.create(awsKeyInput("A", secret()), "c1").account;
+    const app = soloApp();
+    expect((await close(app, "c1", { cloudCredentials: "keep" })).status).toBe(200);
+    vi.spyOn(vault, "releaseCase").mockImplementation(VAULT_DOWN);
+    return { app, a };
+  }
+
+  async function expectCaseLeftInPlace(accountId: string) {
+    expect((await cases.getCaseMeta("c1"))?.status).toBe("closed");
+    expect(cases.isInArchive("c1")).toBe(false);
+    expect(vault.view(accountId).caseIds).toEqual(["c1"]);
+    expect(await credentialEntries("c1")).toEqual([]);
+  }
+
+  it("archive builds the ZIP but does not remove the case from the list", async () => {
+    const { app, a } = await closedWithKeptCredentials();
+    const res = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
+    expect(res.status, res.text).toBe(200);
+    expect(res.body.removedFromList).toBe(false);
+    expect(res.body.removeFromListError).toMatch(/credentials could not be deleted.*left in place/i);
+    await expectCaseLeftInPlace(a.id);
+  });
+
+  it("encrypted export does not remove the case from the list", async () => {
+    const { app, a } = await closedWithKeptCredentials();
+    const res = await request(app)
+      .post("/cases/c1/export/encrypted")
+      .send({ password: PASSWORD, removeFromList: true });
+    expect(res.status, res.text).toBe(200);
+    expect(res.headers["x-case-removed-from-list"]).toBe("false");
+    expect(res.headers["x-case-remove-error"]).toBe("cloud-credentials");
+    await expectCaseLeftInPlace(a.id);
+  });
+
+  it("plain delete refuses and deletes nothing", async () => {
+    const { app, a } = await closedWithKeptCredentials();
+    const res = await request(app).post("/cases/c1/delete").send({ archiveFirst: "none" });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/credentials could not be deleted.*left in place/i);
+    expect(await cases.caseExists("c1")).toBe(true);
+    await expectCaseLeftInPlace(a.id);
+  });
+
+  it("encrypted delete refuses with a JSON error, never an archive download", async () => {
+    const { app, a } = await closedWithKeptCredentials();
+    const res = await request(app)
+      .post("/cases/c1/delete")
+      .send({ archiveFirst: "encrypted", password: PASSWORD });
+    expect(res.status).toBe(500);
+    expect(res.headers["content-type"]).toMatch(/json/);
+    expect(res.body.error).toMatch(/credentials could not be deleted/i);
+    expect(await cases.caseExists("c1")).toBe(true);
+    await expectCaseLeftInPlace(a.id);
+  });
+});
+
+describe("an invalid delete request", () => {
+  it("is refused before any credential changes: vault and custody log untouched", async () => {
+    const own = vault.create(awsKeyInput("Own", secret()), "c1").account;
+    const shared = vault.create(awsKeyInput("Shared", secret()), "c1").account;
+    vault.attach(shared.id, "c2");
+    const app = soloApp();
+    await close(app, "c1", { cloudCredentials: "keep" });
+    const before = await custody.load("c1");
+    const vaultBefore = vault.list();
+    for (const body of [
+      { archiveFirst: "encrypted", password: "short" },
+      { archiveFirst: "encrypted" },
+      { archiveFirst: "bogus" },
+    ]) {
+      const res = await request(app).post("/cases/c1/delete").send(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(vault.list()).toEqual(vaultBefore);
+    expect(vault.view(own.id).caseIds).toEqual(["c1"]);
+    expect(await custody.load("c1")).toEqual(before);
+    expect(await cases.caseExists("c1")).toBe(true);
   });
 });
 

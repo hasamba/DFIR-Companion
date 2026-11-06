@@ -8,17 +8,26 @@
  *     entry naming the provider, the account / tenant / project ID, who added it and when, which of
  *     the case's collections used it, who deleted it, when and why. Reports can then still say where
  *     collected evidence came from after the credential is gone.
+ *   - a shared credential only DETACHED from an ending case leaves the same provenance in that case's
+ *     log as a `credential-detached` entry. It is written BEFORE the detach: a detach is cheap to
+ *     retry, lost provenance is not, so a custody write that fails stops the release instead.
  *
  * Erasing the companion's copy does not stop the credential working in the cloud — the dashboard
  * reminds the analyst to revoke the key or app secret in AWS, Azure or GCP as well.
  *
- * A custody write never fails the delete: the secret is already gone when it runs, and reporting
- * "not deleted" for an erased credential would be the worse lie. Failures are logged instead.
+ * A `credential-deleted` custody write never fails the delete: the secret is already gone when it
+ * runs, and reporting "not deleted" for an erased credential would be the worse lie. Failures are
+ * logged instead.
  */
 import { createHash } from "node:crypto";
 import type { Request } from "express";
 import { requestAuthentication } from "../auth/types.js";
-import { CREDENTIAL_DELETED_EVENT, CREDENTIAL_PATH_PREFIX } from "../analysis/custody.js";
+import {
+  CREDENTIAL_DELETED_EVENT,
+  CREDENTIAL_DETACHED_EVENT,
+  CREDENTIAL_PATH_PREFIX,
+  type CredentialCustodyEvent,
+} from "../analysis/custody.js";
 import type {
   AwsSettings,
   GcpSettings,
@@ -70,6 +79,60 @@ async function collectionsUsing(ctx: RouteContext, caseId: string, accountId: st
 
 const PROVIDER_LABEL: Record<string, string> = { aws: "AWS", gcp: "GCP", microsoft: "Microsoft" };
 
+const VERB: Record<CredentialCustodyEvent, string> = {
+  [CREDENTIAL_DELETED_EVENT]: "deleted",
+  [CREDENTIAL_DETACHED_EVENT]: "detached",
+};
+
+/** Writes one credential custody entry on `caseId`. Throws when the write fails. */
+async function writeCredentialCustody(
+  ctx: RouteContext,
+  req: Request,
+  caseId: string,
+  account: ReleasedCloudAccount,
+  reason: CredentialReleaseReason,
+  event: CredentialCustodyEvent,
+): Promise<void> {
+  const custody = ctx.options.custodyStore;
+  if (!custody) return;
+  const identifier = credentialIdentifier(account);
+  const addedBy = account.createdBy?.displayName ?? NOT_RECORDED;
+  const actor = actorName(req);
+  const at = new Date().toISOString();
+  const collections = await collectionsUsing(ctx, caseId, account.id);
+  const credential = {
+    accountId: account.id,
+    provider: account.provider,
+    name: account.name,
+    identifier,
+    addedBy,
+    addedAt: account.createdAt,
+    collections,
+    reason,
+  };
+  const label = PROVIDER_LABEL[account.provider] ?? account.provider;
+  const used = collections.length ? `; used by ${collections.join(", ")}` : "";
+  // The hash keys keep the names a `credential-deleted` entry has always hashed under.
+  const by =
+    event === CREDENTIAL_DELETED_EVENT
+      ? { deletedBy: actor, deletedAt: at }
+      : { detachedBy: actor, detachedAt: at };
+  await custody.record(caseId, {
+    artifactPath: `${CREDENTIAL_PATH_PREFIX}${account.provider}/${account.id}`,
+    // No file stands behind the entry: the hash pins the entry's own description of the credential.
+    sha256: createHash("sha256")
+      .update(JSON.stringify({ ...credential, ...by }))
+      .digest("hex"),
+    caseId,
+    event,
+    collectedBy: actor,
+    collectedAt: at,
+    source: `${label} ${identifier} ("${account.name}"), added by ${addedBy} at ${account.createdAt}${used}`,
+    trigger: `cloud credential ${VERB[event]} — ${reason}`,
+    credential,
+  });
+}
+
 /** Writes one `credential-deleted` custody entry on `caseId`. Never throws. */
 async function recordCredentialCustody(
   ctx: RouteContext,
@@ -78,40 +141,8 @@ async function recordCredentialCustody(
   account: ReleasedCloudAccount,
   reason: CredentialReleaseReason,
 ): Promise<void> {
-  const custody = ctx.options.custodyStore;
-  if (!custody) return;
   try {
-    const identifier = credentialIdentifier(account);
-    const addedBy = account.createdBy?.displayName ?? NOT_RECORDED;
-    const deletedBy = actorName(req);
-    const deletedAt = new Date().toISOString();
-    const collections = await collectionsUsing(ctx, caseId, account.id);
-    const credential = {
-      accountId: account.id,
-      provider: account.provider,
-      name: account.name,
-      identifier,
-      addedBy,
-      addedAt: account.createdAt,
-      collections,
-      reason,
-    };
-    const label = PROVIDER_LABEL[account.provider] ?? account.provider;
-    const used = collections.length ? `; used by ${collections.join(", ")}` : "";
-    await custody.record(caseId, {
-      artifactPath: `${CREDENTIAL_PATH_PREFIX}${account.provider}/${account.id}`,
-      // No file stands behind the entry: the hash pins the entry's own description of the credential.
-      sha256: createHash("sha256")
-        .update(JSON.stringify({ ...credential, deletedBy, deletedAt }))
-        .digest("hex"),
-      caseId,
-      event: CREDENTIAL_DELETED_EVENT,
-      collectedBy: deletedBy,
-      collectedAt: deletedAt,
-      source: `${label} ${identifier} ("${account.name}"), added by ${addedBy} at ${account.createdAt}${used}`,
-      trigger: `cloud credential deleted — ${reason}`,
-      credential,
-    });
+    await writeCredentialCustody(ctx, req, caseId, account, reason, CREDENTIAL_DELETED_EVENT);
   } catch (err) {
     ctx.serverLogger.error(
       `[cloud-accounts] case=${caseId} credential ${account.id} deleted, but its custody entry failed: ${(err as Error).message}`,
@@ -156,6 +187,9 @@ export async function releaseCaseCredentials(
 ): Promise<ReleaseOutcome> {
   const vault = ctx.options.cloudAccountVault;
   if (!vault || ctx.options.demoMode) return { deleted: 0, detached: 0 };
+  // Provenance first: a failed write throws here, before anything is detached or erased.
+  for (const account of vault.sharedWith(caseId))
+    await writeCredentialCustody(ctx, req, caseId, account, reason, CREDENTIAL_DETACHED_EVENT);
   const { deleted, detached } = vault.releaseCase(caseId);
   await recordDeleted(ctx, req, deleted, reason, caseId);
   for (const account of detached)
@@ -187,9 +221,9 @@ export async function deleteCloudCredentials(
 export type ReleaseReport = { cloudCredentials?: ReleaseOutcome; cloudCredentialsError?: string };
 
 /**
- * `releaseCaseCredentials` for a lifecycle route that has already made its change (closed, archived,
- * or about to delete): never throws, so a failed release cannot undo or misreport the transition.
- * Nothing to release adds nothing to the answer.
+ * `releaseCaseCredentials` for close, which has already made its change: never throws, so a failed
+ * release cannot undo or misreport the close — the answer carries the error for the dashboard to
+ * show. Nothing to release adds nothing to the answer. Archive and delete use releaseBeforeCaseEnd.
  */
 export async function releaseOnCaseEnd(
   ctx: RouteContext,
@@ -208,6 +242,33 @@ export async function releaseOnCaseEnd(
       cloudCredentialsError:
         "The case's cloud credentials could not be deleted. Delete them from Settings → Cloud accounts.",
     };
+  }
+}
+
+/** Why archive or delete stopped: the credentials go first, so the case is still as it was. */
+export const RELEASE_BLOCKED_CASE_END =
+  "The case's cloud credentials could not be deleted, so the case was left in place, unchanged. " +
+  "Try again; if it keeps failing, delete them from Settings → Cloud accounts first.";
+
+/**
+ * `releaseCaseCredentials` as a PREREQUISITE of archive and delete: the caller goes on only when it
+ * succeeded, so a case never leaves the active list, or disappears, with its credentials still held.
+ * Never throws.
+ */
+export async function releaseBeforeCaseEnd(
+  ctx: RouteContext,
+  req: Request,
+  caseId: string,
+  reason: CredentialReleaseReason,
+): Promise<{ ok: true; report: ReleaseReport } | { ok: false; error: string }> {
+  try {
+    const outcome = await releaseCaseCredentials(ctx, req, caseId, reason);
+    return { ok: true, report: outcome.deleted || outcome.detached ? { cloudCredentials: outcome } : {} };
+  } catch (err) {
+    ctx.serverLogger.error(
+      `[cloud-accounts] case=${caseId} ${reason} refused: its credentials were not released: ${(err as Error).message}`,
+    );
+    return { ok: false, error: RELEASE_BLOCKED_CASE_END };
   }
 }
 

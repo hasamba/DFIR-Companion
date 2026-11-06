@@ -70,6 +70,19 @@ describe("releaseCase", () => {
     expect(readFileSync(storeFile(), "utf8")).not.toContain(soleSecret);
   });
 
+  it("sharedWith previews the accounts releaseCase would detach, and changes nothing", () => {
+    vault.create(awsKeyInput("Sole", fakeAwsSecret()), "c1");
+    const shared = vault.create(awsKeyInput("Shared", fakeAwsSecret()), "c1").account;
+    vault.attach(shared.id, "c2");
+    const before = readFileSync(storeFile(), "utf8");
+    const preview = vault.sharedWith("c1");
+    expect(preview.map((a) => a.id)).toEqual([shared.id]);
+    expect(preview[0].caseIds).toEqual(["c1", "c2"]);
+    expect(preview[0]).not.toHaveProperty("sealed");
+    expect(readFileSync(storeFile(), "utf8")).toBe(before);
+    expect(vault.sharedWith("c3")).toEqual([]);
+  });
+
   it("is a no-op for a case with no accounts", () => {
     vault.create(awsKeyInput("A", fakeAwsSecret()), "c2");
     expect(vault.releaseCase("c1")).toEqual({ deleted: [], detached: [] });

@@ -96,16 +96,28 @@ export const CUSTODY_EVENTS = ["collected", "accessed", "transferred", "exported
  * like `received`, its path is a virtual `cloud-credential:` marker that integrity re-hashing skips.
  */
 export const CREDENTIAL_DELETED_EVENT = "credential-deleted";
-export type CustodyEvent = (typeof CUSTODY_EVENTS)[number] | typeof CREDENTIAL_DELETED_EVENT;
+/**
+ * `credential-detached` (#2347): a credential this case used was detached from it when the case
+ * ended, because another case still uses it. Same provenance, same rules as `credential-deleted`:
+ * server-written only, and a virtual path that integrity re-hashing skips.
+ */
+export const CREDENTIAL_DETACHED_EVENT = "credential-detached";
+export type CredentialCustodyEvent = typeof CREDENTIAL_DELETED_EVENT | typeof CREDENTIAL_DETACHED_EVENT;
+export type CustodyEvent = (typeof CUSTODY_EVENTS)[number] | CredentialCustodyEvent;
 
 /** True for the events a client may record (POST /cases/:id/custody). */
 export function isCustodyEvent(value: unknown): value is CustodyEvent {
   return typeof value === "string" && (CUSTODY_EVENTS as readonly string[]).includes(value);
 }
 
-/** True for an entry with no file behind it: a receipt (#2111) or a deleted credential (#2347). */
+/** True for every event the SERVER may write: the client ones plus the credential events (#2347). */
+function isRecordableCustodyEvent(value: unknown): value is CustodyEvent {
+  return isCustodyEvent(value) || value === CREDENTIAL_DELETED_EVENT || value === CREDENTIAL_DETACHED_EVENT;
+}
+
+/** True for an entry with no file behind it: a receipt (#2111) or a deleted/detached credential (#2347). */
 export function isVirtualCustodyEvent(event: CustodyEvent | undefined): boolean {
-  return event === "received" || event === CREDENTIAL_DELETED_EVENT;
+  return event === "received" || event === CREDENTIAL_DELETED_EVENT || event === CREDENTIAL_DETACHED_EVENT;
 }
 
 export interface CustodyRecord {
@@ -126,9 +138,9 @@ export interface CustodyRecord {
   caseId: string;
   event: CustodyEvent;
   /**
-   * On a `credential-deleted` entry only (#2347): which credential, never its secret. `identifier`
-   * is the AWS account, Microsoft tenant or GCP project; `collections` the case's collections that
-   * used it.
+   * On a `credential-deleted` or `credential-detached` entry only (#2347): which credential, never
+   * its secret. `identifier` is the AWS account, Microsoft tenant or GCP project; `collections` the
+   * case's collections that used it.
    */
   credential?: {
     accountId: string;
@@ -241,7 +253,7 @@ function hashLine(line: string): string {
 
 /** Prefix of the virtual path a `received` entry carries — never a filesystem location (#2111). */
 export const RECEIVED_PATH_PREFIX = "received:";
-/** Prefix of the virtual path a `credential-deleted` entry carries (#2347). */
+/** Prefix of the virtual path a `credential-deleted` or `credential-detached` entry carries (#2347). */
 export const CREDENTIAL_PATH_PREFIX = "cloud-credential:";
 export const isReceivedPath = (artifactPath: string): boolean =>
   artifactPath.startsWith(RECEIVED_PATH_PREFIX) || artifactPath.startsWith(CREDENTIAL_PATH_PREFIX);
@@ -373,10 +385,7 @@ export class CustodyStore {
         const record: CustodyRecord = {
           ...input,
           ...(authenticated ? { ...authenticated, collectedBy: authenticated.actorDisplayName } : {}),
-          event:
-            isCustodyEvent(input.event) || input.event === CREDENTIAL_DELETED_EVENT
-              ? input.event
-              : "collected",
+          event: isRecordableCustodyEvent(input.event) ? input.event : "collected",
           seq: await this.cases.nextCustodySeq(caseId),
           prevHash,
         };
@@ -556,10 +565,7 @@ export class CustodyStore {
     const record: CustodyRecord = {
       ...rest,
       // Records written before the chain existed have no event; they were all collections.
-      event:
-        isCustodyEvent(stored.event) || stored.event === CREDENTIAL_DELETED_EVENT
-          ? stored.event
-          : "collected",
+      event: isRecordableCustodyEvent(stored.event) ? stored.event : "collected",
     };
     if (relativeTo !== "case-dir") return record;
     return { ...record, artifactPath: join(this.cases.caseDir(caseId), stored.artifactPath) };
@@ -623,7 +629,7 @@ export class CustodyStore {
     const mismatches: CustodyMismatch[] = [];
     for (const record of records) {
       // A receipt has no file to re-hash; reading it as "missing" would turn every case red (#2111).
-      if (isVirtualCustodyEvent(record.event)) continue; // nor has a deleted credential (#2347)
+      if (isVirtualCustodyEvent(record.event)) continue; // nor has a deleted or detached credential (#2347)
       const found = await rehash(record.artifactPath);
       const base = { artifactPath: record.artifactPath, recordedSha256: record.sha256 };
       if ("missing" in found) mismatches.push({ ...base, actualSha256: null, reason: "missing" });

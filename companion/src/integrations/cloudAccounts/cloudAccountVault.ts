@@ -217,6 +217,16 @@ export class CloudAccountVault {
     return { deleted, detached };
   }
 
+  /**
+   * The accounts `releaseCase(caseId)` would detach rather than erase — attached to this case and
+   * at least one other — without changing anything, so the detach can be recorded first (#2347).
+   */
+  sharedWith(caseId: string): ReleasedCloudAccount[] {
+    return this.readRaw()
+      .filter((a) => (a.caseIds ?? []).includes(caseId) && (a.caseIds ?? []).length > 1)
+      .map(releasedOf);
+  }
+
   /** Stamps when collection or a read check last opened the account (#2347). A gone account is ignored. */
   markUsed(id: string): void {
     const raw = this.readRaw();

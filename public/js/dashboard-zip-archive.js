@@ -37,9 +37,14 @@
       loadCaseList();
       // #1784: say WHERE the file went. textContent only — the path holds the case name.
       const where = typeof body.archivePath === "string" && body.archivePath ? ": " + body.archivePath : "";
-      document.getElementById("status").textContent = removeFromList
+      // The server's answer, not the checkbox: removal can fail after the ZIP is built — e.g. the
+      // case's cloud credentials could not be deleted, so the case was left in place (#2347).
+      document.getElementById("status").textContent = body.removedFromList
         ? "case archived to ZIP" + where + " — and removed from the active list"
         : "case archived to ZIP" + where;
+      if (removeFromList && !body.removedFromList)
+        alert("The archive was built, but the case was not removed from the active list: " +
+          (body.removeFromListError || "unknown error"));
     } catch (err) {
       msg.textContent = "archive failed: " + err.message;
     } finally {
