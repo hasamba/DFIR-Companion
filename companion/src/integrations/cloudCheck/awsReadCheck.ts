@@ -5,6 +5,7 @@
 //   cloudtrail:LookupEvents      one page of one event                 → "cloudtrail-lookup"
 //   s3:ListObjectsV2             one key under the trail prefix        → "s3-trail"
 //   s3:GetObject                 the first byte of that key            → "s3-trail"
+//   ec2:DescribeRegions          the regions enabled on the account    → "ec2-regions" (#2363)
 //
 // No policy simulator (it needs extra permission and cannot prove read-only) and no write of any
 // kind. The clients are injected, so a test can record every command sent.
@@ -12,6 +13,7 @@
 import { GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { LookupEventsCommand } from "@aws-sdk/client-cloudtrail";
 import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { DescribeRegionsCommand } from "@aws-sdk/client-ec2";
 import {
   CHECK_CALL_TIMEOUT_MS,
   sourceResult,
@@ -29,6 +31,8 @@ export interface AwsCheckClients {
   sts: AwsCommandSender;
   cloudtrail: AwsCommandSender;
   s3: AwsCommandSender;
+  /** #2363: EC2 in the account's own region, for ec2:DescribeRegions only. */
+  ec2: AwsCommandSender;
 }
 
 export interface AwsCheckInput {
@@ -57,6 +61,29 @@ async function checkLookup(clients: AwsCheckClients, secrets: readonly string[])
     return sourceResult("cloudtrail-lookup", "succeeded");
   } catch (err) {
     return sourceResult("cloudtrail-lookup", "failed", checkFailureReason(err, secrets));
+  }
+}
+
+/** Without ec2:DescribeRegions a collection falls back to the default region list (#2363). */
+const REGIONS_FALLBACK_HINT =
+  "without it, collection uses the default region list and says so — opt-in regions may be missed";
+
+async function checkRegions(
+  clients: AwsCheckClients,
+  secrets: readonly string[],
+): Promise<SourceCheckResult> {
+  try {
+    const out = (await send(clients.ec2, new DescribeRegionsCommand({ AllRegions: false }))) as {
+      Regions?: unknown[];
+    };
+    const n = Array.isArray(out.Regions) ? out.Regions.length : 0;
+    return sourceResult("ec2-regions", "succeeded", `${n} region(s) enabled on the account`);
+  } catch (err) {
+    return sourceResult(
+      "ec2-regions",
+      "failed",
+      `${checkFailureReason(err, secrets)}; ${REGIONS_FALLBACK_HINT}`,
+    );
   }
 }
 
@@ -131,7 +158,9 @@ export async function runAwsReadCheck(
     results.push(
       source === "cloudtrail-lookup"
         ? await checkLookup(clients, input.secrets)
-        : await checkS3(clients, input),
+        : source === "ec2-regions"
+          ? await checkRegions(clients, input.secrets)
+          : await checkS3(clients, input),
     );
   }
   return { results, ...(signedInAs ? { signedInAs } : {}) };

@@ -17,6 +17,13 @@
 // of the tenant's daily query quota ("used by this companion (estimate)", never "tenant remaining")
 // — and only "Confirm and start" starts. A collection's row shows each source's acquired cutoff and
 // every incomplete window with its reason (too dense, budget used, …).
+//
+// #2363: an AWS account gets a REGION PICKER — the regions enabled on the account (asked with
+// ec2:DescribeRegions, opt-in regions included), all ticked. Without that permission the server
+// answers with the default list and a note; the note is shown in the picker, the pre-check and the
+// result. Unticked regions are sent as `excludeRegions` and named in the result as skipped by
+// choice. Any change to the form clears the pre-check, so "Confirm and start" can only send the
+// body that was checked.
 (function () {
   "use strict";
 
@@ -138,6 +145,80 @@
     return box;
   }
 
+  function splitCsv(value) {
+    return String(value || "")
+      .split(",")
+      .filter(Boolean);
+  }
+
+  // The picker for one account. `state` is the form's: a stale answer (the analyst picked another
+  // account while this one loaded) is dropped by its sequence number.
+  function regionPicker(caseId, accountId, state, onChange) {
+    const box = el("fieldset", null, "cc-regions");
+    box.appendChild(el("legend", "Regions"));
+    const status = el("p", "Listing the regions enabled on this account…", "cc-note");
+    box.appendChild(status);
+    const seq = ++state.seq;
+    state.listing = null;
+    state.error = "";
+    post(`${base(caseId)}/regions`, { accountId }).then((res) => {
+      if (seq !== state.seq) return;
+      if (!res.ok || !Array.isArray(res.body.regions)) {
+        state.error = res.body.error || `HTTP ${res.status}`;
+        status.textContent = `Regions could not be listed (${state.error}). The server lists them when the collection starts, and the result says which list was used.`;
+        status.className = "cc-missing";
+        onChange();
+        return;
+      }
+      state.listing = res.body;
+      status.remove();
+      const tools = el("div", null, "cc-region-tools");
+      const all = el("button", "Tick all");
+      all.type = "button";
+      const none = el("button", "Untick all");
+      none.type = "button";
+      tools.append(all, none);
+      box.appendChild(tools);
+      for (const r of res.body.regions) {
+        const input = el("input");
+        input.type = "checkbox";
+        input.value = r;
+        input.checked = true;
+        input.className = "cc-region";
+        box.appendChild(labelled(r === res.body.home ? `${r} (account region)` : r, input));
+      }
+      const setAll = (on) => {
+        for (const b of box.querySelectorAll(".cc-region")) b.checked = on;
+        onChange();
+      };
+      all.addEventListener("click", () => setAll(true));
+      none.addEventListener("click", () => setAll(false));
+      if (res.body.note) box.appendChild(el("p", res.body.note, "cc-missing"));
+      onChange();
+    });
+    return box;
+  }
+
+  // What the picker sends, and the lines the pre-check shows about it.
+  function regionChoice(box, state) {
+    if (!state.listing || !box) return null;
+    const boxes = [...box.querySelectorAll(".cc-region")];
+    return {
+      regions: boxes.filter((b) => b.checked).map((b) => b.value),
+      excludeRegions: boxes.filter((b) => !b.checked).map((b) => b.value),
+    };
+  }
+
+  function regionLines(state, choice) {
+    if (state.error)
+      return [[`Regions could not be listed (${state.error}). The server lists them when the collection starts, and the result says which list was used.`, "cc-missing"]];
+    if (!state.listing || !choice) return [];
+    const total = choice.regions.length + choice.excludeRegions.length;
+    const lines = [[`Regions: ${choice.regions.length} of ${total} ticked${choice.excludeRegions.length ? ` — skipped by choice: ${choice.excludeRegions.join(", ")}` : ""}`, ""]];
+    if (state.listing.note) lines.push([state.listing.note, "cc-missing"]);
+    return lines;
+  }
+
   function startForm(caseId, accounts, providers) {
     const form = el("form", null, "cc-form");
     form.setAttribute("aria-label", "Start a cloud collection");
@@ -149,6 +230,7 @@
       opt.dataset.provider = a.provider;
       select.appendChild(opt);
     }
+    if (accounts.length) select.value = accounts[0].id; // what a browser shows first, made explicit
     const providerOf = () => providers.find((p) => p.provider === select.selectedOptions[0]?.dataset.provider);
     const start = el("input");
     start.type = "datetime-local";
@@ -159,10 +241,32 @@
     end.id = "cloudCollectEnd";
     end.value = toLocalInput(new Date());
     let sources = sourceBoxes(providerOf());
+    const regionState = { seq: 0, listing: null, error: "" };
+    const checkBox = el("div", null, "cc-precheck");
+    checkBox.setAttribute("aria-live", "polite");
+    // Any edit invalidates a shown pre-check: Confirm would otherwise start the old body.
+    // `revision` also drops a pre-check answer that arrives after an edit made while it was pending.
+    let revision = 0;
+    const invalidate = () => {
+      revision++;
+      checkBox.replaceChildren();
+    };
+    const pickerFor = () => {
+      const p = providerOf();
+      if (p && p.available && p.regionPicker) return regionPicker(caseId, select.value, regionState, invalidate);
+      regionState.seq++; // drop an answer still in flight for the previous account
+      regionState.listing = null;
+      regionState.error = "";
+      return el("div", null, "cc-regions-none");
+    };
+    let regions = pickerFor();
     select.addEventListener("change", () => {
       const next = sourceBoxes(providerOf());
       sources.replaceWith(next);
       sources = next;
+      const nextRegions = pickerFor();
+      regions.replaceWith(nextRegions);
+      regions = nextRegions;
     });
     const overlap = el("input");
     overlap.type = "number";
@@ -172,36 +276,44 @@
     overlap.placeholder = "provider default";
     const go = el("button", "Check and start…");
     go.type = "submit";
-    const checkBox = el("div", null, "cc-precheck");
-    checkBox.setAttribute("aria-live", "polite");
+    form.addEventListener("change", invalidate);
+    form.addEventListener("input", invalidate);
     form.append(
       labelled("Account", select),
       labelled("From", start),
       labelled("To", end),
       labelled("Ingestion overlap (min)", overlap),
       sources,
+      regions,
       go,
       checkBox,
     );
-    const bodyOf = (chosen) => ({
+    const bodyOf = (chosen, picked) => ({
       accountId: select.value,
       sources: chosen,
       start: new Date(start.value).toISOString(),
       end: new Date(end.value).toISOString(),
       ...(overlap.value !== "" ? { overlapMinutes: Number(overlap.value) } : {}),
+      ...(picked ? picked : {}),
     });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const chosen = [...form.querySelectorAll(".cc-source:checked")].map((b) => b.value);
+      const chosen = [...form.querySelectorAll(".cc-source")].filter((b) => b.checked).map((b) => b.value);
       const provider = providerOf();
       if (!provider || !provider.available) return setMsg(provider ? provider.notice : "Pick an account.", true);
       if (!chosen.length) return setMsg("Pick at least one log source.", true);
+      const picked = regionChoice(regions, regionState);
+      if (picked && !picked.regions.length) return setMsg("Tick at least one region.", true);
       go.disabled = true;
-      const body = bodyOf(chosen);
+      const body = bodyOf(chosen, picked);
+      const extra = regionLines(regionState, picked);
+      const asked = revision;
       const check = await post(`${base(caseId)}/precheck`, body);
       go.disabled = false;
+      if (asked !== revision) return setMsg("The form changed while it was checked — press Check and start again.", true);
       if (!check.ok) return setMsg(check.body.error || `Pre-check failed (HTTP ${check.status})`, true);
-      renderPrecheck(checkBox, check.body, async (confirm) => {
+      renderPrecheck(checkBox, check.body, extra, async (confirm) => {
+        if (asked !== revision) return checkBox.replaceChildren();
         confirm.disabled = true;
         const res = await post(base(caseId), body);
         confirm.disabled = false;
@@ -212,7 +324,7 @@
     return form;
   }
 
-  function renderPrecheck(box, check, onConfirm) {
+  function renderPrecheck(box, check, extra, onConfirm) {
     box.replaceChildren();
     box.appendChild(el("strong", "Before you start"));
     const list = el("ul", null, "cc-lines");
@@ -222,6 +334,7 @@
       for (const w of s.warnings || []) list.appendChild(el("li", `${s.label}: ${w}`, "cc-missing"));
     }
     if (check.quota) list.appendChild(el("li", check.quota.note, check.quota.enough ? "" : "cc-missing"));
+    for (const [text, cls] of extra || []) list.appendChild(el("li", text, cls));
     box.appendChild(list);
     const confirm = el("button", "Confirm and start");
     confirm.type = "button";
@@ -250,6 +363,20 @@
     );
   }
 
+  // The region scope the start recorded in the manifest header (#2363) — shown even when no page
+  // was saved, so a fallback list is never silent.
+  function regionScopeLines(filters) {
+    const f = filters || {};
+    if (!f.regions) return [];
+    const lines = [[`Regions collected: ${splitCsv(f.regions).join(", ")}`, ""]];
+    if (f.regionsSkippedByChoice) lines.push([`Regions skipped by choice (unticked): ${splitCsv(f.regionsSkippedByChoice).join(", ")}`, "cc-note"]);
+    if (f.regionsNoLongerEnabled)
+      lines.push([`Ticked but not enabled on the account when the collection started, not collected: ${splitCsv(f.regionsNoLongerEnabled).join(", ")}`, "cc-missing"]);
+    if (f.regionList === "fallback")
+      lines.push([`The regions enabled on this account could not be listed (${f.regionListReason || "unknown error"}) — the default region list was used, so an opt-in region may be missing. Grant ec2:DescribeRegions.`, "cc-missing"]);
+    return lines;
+  }
+
   function collectionRow(caseId, c) {
     const cp = c.checkpoint;
     const row = el("div", null, "cc-row");
@@ -261,6 +388,7 @@
     row.appendChild(head);
     const lines = el("ul", null, "cc-lines");
     for (const line of perSource(cp)) lines.appendChild(el("li", line));
+    for (const [text, cls] of regionScopeLines(c.header && c.header.filters)) lines.appendChild(el("li", text, cls));
     lines.appendChild(el("li", `${c.pages} page(s) saved (${c.bytes} bytes, SHA-256 in the manifest); ${cp.imported.length} imported`));
     for (const cov of cp.coverage || []) {
       const cut = cov.acquiredCutoff ? `acquired up to ${cov.acquiredCutoff}` : "end of window not acquired";

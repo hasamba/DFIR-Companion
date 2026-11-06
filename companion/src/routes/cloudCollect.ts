@@ -6,6 +6,7 @@
  *   POST /cases/:id/cloud-collect                        { accountId, sources[], start, end } — start
  *   POST /cases/:id/cloud-collect/:collectionId/resume   resume an interrupted / failed / partial one
  *   POST /cases/:id/cloud-collect/precheck               retention, overlap and quota before a start (#2312)
+ *   POST /cases/:id/cloud-collect/regions                the AWS region picker's list (#2363)
  *
  * A credential is opened ONLY through openCloudAccountForCollect — on start and again on every
  * resume — so the attachment, case-write and demo checks and the audit entry are never skipped.
@@ -46,6 +47,11 @@ import {
   registerCloudCollectPrecheck,
   spendsQuota,
 } from "./cloudCollectPrecheck.js";
+import {
+  parseRegionChoice,
+  regionChoiceRefusal,
+  registerCloudCollectRegions,
+} from "./cloudCollectRegions.js";
 
 const CASE_NOT_FOUND = "Case not found or access denied.";
 const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: "AWS", gcp: "GCP", microsoft: "Microsoft" };
@@ -67,6 +73,7 @@ function providerList(ctx: RouteContext) {
       label: PROVIDER_LABEL[provider],
       available: !!p,
       sources: p ? p.sources.map((s) => ({ id: s.id, label: s.label })) : [],
+      ...(p?.regionPicker ? { regionPicker: true } : {}),
       ...(p?.notes?.length ? { notes: [...p.notes] } : {}),
       ...(p ? {} : { notice: notAvailable(provider) }),
     };
@@ -164,6 +171,10 @@ function registerStart(app: Express, ctx: RouteContext): void {
         return res.status(400).json({ error: `Unknown log source: ${unknown.join(", ")}.` });
       const overlapMs = parseOverlap(req.body, parsed.sources);
       if (typeof overlapMs === "string") return res.status(400).json({ error: overlapMs });
+      const regionChoice = parseRegionChoice(req.body);
+      if (typeof regionChoice === "string") return res.status(400).json({ error: regionChoice });
+      const regionRefused = regionChoiceRefusal(found.provider, regionChoice);
+      if (regionRefused) return res.status(400).json({ error: regionRefused });
       const refused = await budgetRefusal(found.budget, found.provider, parsed.sources);
       if (refused) return res.status(409).json({ error: refused });
       if (manager.hasActive(caseId, "cloud-collect"))
@@ -180,7 +191,7 @@ function registerStart(app: Express, ctx: RouteContext): void {
         resume: false,
         label: `cloud collect: ${PROVIDER_LABEL[found.provider.provider]} ${found.name}`,
         parameters: { collectionId, accountId: parsed.accountId, provider: found.provider.provider },
-        before: (id, signal) =>
+        before: async (id, signal) =>
           createCollection(
             nodeCollectFs,
             session,
@@ -193,7 +204,8 @@ function registerStart(app: Express, ctx: RouteContext): void {
               provider: found.provider.provider,
               sources: parsed.sources,
               window: parsed.window,
-              filters: {},
+              // #2363: the region scope, decided now and recorded in the header (resume reuses it).
+              filters: session.prepareFilters ? await session.prepareFilters(regionChoice ?? {}, signal) : {},
               companionVersion: getAppVersion(),
               jobId: id,
               ...(overlapMs ? { overlapMs } : {}),
@@ -252,6 +264,7 @@ export function registerCloudCollectRoutes(app: Express, ctx: RouteContext): voi
   registerList(app, ctx);
   registerStart(app, ctx);
   registerCloudCollectPrecheck(app, ctx, parseStart);
+  registerCloudCollectRegions(app, ctx);
   app.post(
     "/cases/:id/cloud-collect/:collectionId/resume",
     withCloudVault(ctx, (vault, req, res) => resumeCollection(ctx, vault, req, res)),

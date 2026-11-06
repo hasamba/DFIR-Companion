@@ -81,6 +81,20 @@ export class FakeEl {
   get options(): FakeEl[] {
     return this.children.filter((c) => c.tagName === "OPTION");
   }
+  /** A select's chosen option: the one whose value is the select's, else the first (as a browser). */
+  get selectedOptions(): FakeEl[] {
+    const chosen = this.options.find((o) => o.value === this.value) ?? this.options[0];
+    return chosen ? [chosen] : [];
+  }
+  /** The browser's replaceWith, for one node. */
+  replaceWith(node: FakeEl): void {
+    const parent = this.parent;
+    if (!parent) return;
+    node.parent?.removeChild(node);
+    parent.children = parent.children.map((c) => (c === this ? node : c));
+    node.parent = parent;
+    this.parent = null;
+  }
 
   appendChild(child: FakeEl): FakeEl {
     child.parent?.removeChild(child);

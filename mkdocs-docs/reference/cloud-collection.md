@@ -49,6 +49,7 @@ which failed, with the reason the cloud gave.
 |---|---|---|
 | AWS | CloudTrail event history | One page of CloudTrail event history (`LookupEvents`) |
 | AWS | CloudTrail S3 bucket | List one file under the trail's key prefix, then read the first byte of that file |
+| AWS | Enabled regions (ec2:DescribeRegions) | List the regions enabled on the account (`DescribeRegions`) |
 | Microsoft | Entra sign-in logs | One page of sign-ins |
 | Microsoft | Entra directory audit logs | One page of directory audits |
 | GCP | Admin Activity, System Event and Policy audit logs | One page of those logs (`entries.list`) |
@@ -98,6 +99,32 @@ same CloudTrail importer as an uploaded CloudTrail file, so the events are grade
 | **CloudTrail S3 trail files** | The trail's own files in its S3 bucket | Everything the trail logs, for as long as the bucket keeps it — data events included |
 | **CloudTrail event history** | `LookupEvents`, region by region | The last 90 days of management events only |
 
+### Regions
+
+When you pick an AWS account, the panel lists the regions enabled on it, **all ticked**. The
+companion asks AWS for this list (`ec2:DescribeRegions`), so opt-in regions you turned on (for
+example `af-south-1`) are in it. The account's own region is marked **(account region)**. Use
+**Tick all** and **Untick all**, or untick single regions.
+
+- The choice applies to **event history** (only the ticked regions are asked) and to the
+  **S3 trail files** (only the ticked regions are asked for trails, and a region folder you
+  unticked is not read). A trail folder of a region that is not enabled any more (an opt-in region
+  turned off after it logged) is still read unless you unticked it.
+- The pre-check lists how many regions are ticked and names each one you unticked.
+- The result names every region you unticked as **skipped by choice**. A region you ticked but
+  that is no longer enabled when the collection starts is not asked, and the result names it.
+- The regions are fixed when the collection starts and recorded in its manifest. **Resume** asks
+  the same regions again, even if the account's regions changed since.
+- **Without `ec2:DescribeRegions`** the panel shows the default list (the account's own region
+  and the regions AWS enables by default) with a warning that says why. The pre-check and the
+  result say the same, so an opt-in region missing from the list is never a silent gap. Add the
+  permission (see the minimum policy) and start a new collection to collect those regions.
+- Listing the regions signs in with the account's credential, so each listing is recorded in the
+  team audit log as `cloud-account-regions`.
+- If the list cannot be loaded at all, the panel says so, the companion lists the regions itself
+  when the collection starts, and the result says which list it used. A collection whose sign-in
+  fails is not created; the start error says why.
+
 Pick **CloudTrail S3 trail files** whenever the account has a trail that writes to S3. Pick
 **CloudTrail event history** when it has none, or as a quick look at recent management activity.
 The pre-check and the result always say that event history holds 90 days of management events
@@ -105,12 +132,12 @@ only.
 
 ### S3 trail files
 
-- The companion asks CloudTrail in every region which trails the account has (`DescribeTrails`) and reads each
+- The companion asks CloudTrail in every ticked region which trails the account has (`DescribeTrails`) and reads each
   trail's bucket and key prefix. It finds the account's folder itself, for an account trail
   (`AWSLogs/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`) and for an **organization trail**
   (`AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`). From an organization bucket it
   reads only the folder of the account you collect with, never the other member accounts.
-- It reads every region folder the bucket holds, and only the days the window touches plus the
+- It reads every region folder the bucket holds that you did not untick, and only the days the window touches plus the
   day after. A file is taken when its delivery time is inside the window or up to **24 hours**
   after its end: CloudTrail usually delivers a file 5 to 15 minutes after the events in it, but a
   late file can come hours later. A file can hold events outside the window; they are imported
@@ -134,10 +161,9 @@ only.
 
 ### Event history
 
-- The companion asks every region in turn: the account's own region first, then the regions AWS
-  enables by default. A region the account has not enabled answers that it is not enabled; it is
-  skipped and named in the result. Regions you enabled yourself (opt-in regions) are not asked,
-  apart from the account's own region.
+- The companion asks every ticked region in turn, the account's own region first (see
+  [Regions](#regions)). Opt-in regions enabled on the account are asked too. A region that answers
+  that it is not enabled is skipped and named in the result.
 - A network failure (a name that does not resolve, a dropped connection) is never taken for a
   region that is not enabled. That part of the collection is reported missing with the error, and
   **Resume** carries on from the page it stopped at.
@@ -182,6 +208,14 @@ bucket the trail writes to — for an organization trail, the organization's log
       "Resource": "*"
     },
     {
+      "Sid": "EnabledRegionsList",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeRegions"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "TrailBucketList",
       "Effect": "Allow",
       "Action": [
@@ -221,6 +255,9 @@ bucket the trail writes to — for an organization trail, the organization's log
 
 - Keep the `kms:Decrypt` statement only when the trail is encrypted with a KMS key, and name that
   key. Without it, listing works but every trail file read fails.
+- `ec2:DescribeRegions` lists the regions enabled on the account, opt-in regions included, for
+  the region picker. It reads nothing else. Without it, collection uses the default region list
+  and says so (see [Regions](#regions)).
 - The GuardDuty statement is optional. Remove it if you do not collect GuardDuty findings.
 - For an assumed role, the role's trust policy must also allow the calling identity (and the
   external ID, if you set one).
