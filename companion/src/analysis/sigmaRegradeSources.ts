@@ -10,7 +10,6 @@ import { parseCloudTrail } from "./awsImport.js";
 import { parseM365Audit } from "./m365Import.js";
 import { parseCombinedLog } from "./combinedLogImport.js";
 import { parseCloudActivity } from "./cloudActivityImport.js";
-import { sourceArtifactHash } from "./canonicalEvent.js";
 import type { SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import type { SiemEvent } from "./siemImport.js";
@@ -45,13 +44,14 @@ export function storedFileOf(
 }
 
 /**
- * True when a row carries the hash of the text it was parsed from and the stored file is not that
- * text. CloudTrail rows and every streamed cloud import's rows (#2337) carry the hash; the others
- * are paired by stored file name alone.
+ * True when a row carries the hash of the text it was parsed from and the stored file's text hash
+ * (`sourceArtifactHash` of its decoded, decompressed text — taken once per file by the caller) is
+ * not it. Every cloud import's rows carry the hash: whole-file CloudTrail, M365 and Cloud Activity
+ * (#2353) and every streamed cloud import (#2337); web log rows are paired by stored file name alone.
  */
-export function storedFileChanged(e: Pick<ForensicEvent, "canonical">, text: string): boolean {
+export function storedFileChanged(e: Pick<ForensicEvent, "canonical">, textHash: string): boolean {
   const hash = e.canonical?.evidence?.sourceArtifactHash;
-  return !!hash && hash !== sourceArtifactHash(text);
+  return !!hash && hash !== textHash;
 }
 
 /** Every record of one stored file, graded by `snapshot`, one row per record. */

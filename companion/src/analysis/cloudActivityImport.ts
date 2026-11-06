@@ -26,7 +26,7 @@ import { AZURE_RUN_COMMAND_RE } from "./azureComputeState.js";
 import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "./gcpCompute.js";
 import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
-import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
+import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
 import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
@@ -625,13 +625,16 @@ function parseActivityRecords(
         maxEvents: GCP_COMPUTE_MAX + 1,
       }).events
     : [];
-  const events = [
+  const rows = [
     ...aggregated.events,
     ...summaries,
     ...azureLifecycles,
     ...azureVmssLifecycles,
     ...gcpLifecycles,
   ];
+  // The hash of the parsed text on every row (#2353), as whole-file CloudTrail does. A parse with
+  // no text (the streaming providers) stamps nothing: the stream stamps its own reader's hash.
+  const events = text ? stampSourceArtifactHash(rows, text) : rows;
   const groups = aggregated.groups;
 
   const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);

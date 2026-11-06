@@ -55,3 +55,11 @@ export const SUMMARY_RECORDS_MAX = 25_000;
 
 /** IOCs one import keeps (the whole-file importers' own default). */
 export const STREAM_IOCS_MAX = 5_000;
+
+/**
+ * Decoded text a Sigma re-grade reads from one stored import file (#2353). The re-grade parses the
+ * file again with the whole-file importer, which needs the text as one string, so this is that
+ * path's ceiling — the same 256 MB as DFIR_MAX_BODY_MB's default — not the streamed import's
+ * GZIP_MAX_OUTPUT_BYTES. A stored file past it is skipped and counted, never read whole.
+ */
+export const REGRADE_TEXT_MAX_BYTES = 256 * 1024 * 1024;
