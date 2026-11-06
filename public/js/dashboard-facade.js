@@ -65,6 +65,7 @@
     "scheduleEvidenceGapsReload",
     "loadCloudCoverage",
     "scheduleCloudCoverageReload",
+    "loadCloudCollect", // #2311 — the case-panel loaders call it bare
     "loadPlaybookMatch",
     "schedulePlaybookMatchReload",
     "loadAttackMitigations",

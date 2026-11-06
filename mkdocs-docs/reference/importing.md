@@ -2758,6 +2758,63 @@ decompression bomb.
 | GCP Cloud Audit Logs | — | `gcloud logging read --format=json` (array) | `cloud` | `cloud` | works | — |
 | GCP Cloud Audit Logs | — | GCS sink JSON lines | `cloud` | `cloud` | works | — |
 
+### Collection jobs and evidence manifest
+
+Live cloud collection (the **Cloud logs** toolbar button, which opens the **Cloud Collection**
+panel) pulls logs straight from a cloud account of the case instead of from an export file. This
+version ships the collection engine only: the AWS, GCP and Microsoft collectors come with #2313,
+#2314 and #2315, and until then the panel lists each provider as *not available yet*.
+
+**Starting one.** Pick a cloud account attached to the case (Settings → Cloud accounts), the log
+sources and the time window, then press **Start collection**. It runs as a background job with a
+progress line per source. You need write access to the case; the public demo has no cloud
+collection at all. Every start and every resume is written to the audit log.
+
+**Every page is evidence.** Each page the cloud returns is saved byte for byte under
+`<case>/evidence/cloud/<collection>/pages/`, and `manifest.jsonl` beside it gets one line per page:
+the request (no secrets), the provider's request id, when it was retrieved, the page token in and
+out, the file name, its size, its SHA-256 and its record count. The first line records the provider,
+the account, tenant or project id, the caller identity, the sources, the window, the SDK versions,
+the companion version and the start time. The manifest is append-only — nothing in it is ever
+rewritten.
+
+**Two stages.** The cloud is read first, outside the case's import slot, so a slow query (a Graph
+audit query can take ten minutes) never blocks other imports into the case. Then each saved page is
+imported, one at a time, through the same streaming importer as a large export file, with the same
+grading, budgets and deduplication. Every event names its collection and page file in its sources,
+and carries the provider's record id. Other background jobs of the case wait behind a running
+collection while `DFIR_JOBS_PER_CASE` is 1.
+
+**The result** is **complete** (every source's results for the window were read to the end),
+**partial** (the panel lists every missing window and why: a provider error, a page token that
+expired too often, a full disk) or **failed** (nothing came back).
+
+**If the server stops.** The collection shows **Resume** in the panel. Press it to continue — the
+account's credential is opened again, with the same checks. (The Resume of the Background jobs menu
+refuses a collection and points to the panel, because it cannot open the credential.) Resuming
+never loses or duplicates evidence or events:
+
+- Every saved page is hashed again. A page whose hash no longer matches, or whose file is gone, is
+  marked corrupt, moved to `quarantine/`, and its window is fetched again.
+- A page file with no manifest line (the server stopped between saving it and writing its line) is
+  moved to `quarantine/`, hashed and listed. It is never deleted: after a page token expires it may
+  be the only copy of what the cloud returned.
+- A half-written last line of the manifest is dropped and cut off before anything is appended.
+- Each source continues from its last page token. A token the cloud no longer accepts (GCP tokens
+  expire after 24 hours, Graph queries expire too) restarts that window from its start; the
+  deduplication absorbs the overlap.
+- A page that was half imported when the server stopped is imported again from the start: what its
+  first attempt left (deduplication records, super-timeline rows, sign-in records) is undone or
+  matched, so the event and finding counts end up the same as an uninterrupted run.
+
+**A full disk** stops the collection as partial and keeps everything already written. Free space,
+then press Resume.
+
+**Durability on Windows.** Each page is written to a temporary file, flushed to disk, renamed, and
+only then given its manifest line, which is flushed too. Linux and macOS also flush the folder after
+the rename. Windows cannot flush a folder, so there a power cut right after a rename can leave a page
+with no manifest line — which the next Resume finds and quarantines as above.
+
 ## What the log says about an import
 
 Every import — the Import button, a server path, the drop folder, a push, an external tool, MCP, a

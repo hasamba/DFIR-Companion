@@ -7,7 +7,15 @@
 import { z } from "zod";
 import type { ManifestValue } from "./analysisRunTypes.js";
 
-export const JOB_KINDS = ["import", "synthesis", "enrichment", "deep-pass", "mcp", "second-opinion"] as const;
+export const JOB_KINDS = [
+  "import",
+  "synthesis",
+  "enrichment",
+  "deep-pass",
+  "mcp",
+  "second-opinion",
+  "cloud-collect", // live cloud collection (#2311): network stage, then the import stage
+] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled", "interrupted"] as const;

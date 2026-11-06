@@ -223,6 +223,31 @@ The same one-click collect directive also appears wherever a next step or key qu
 
 ---
 
+## Cloud Collection
+
+Collect AWS, Microsoft or GCP logs live with a cloud account attached to the case. Open it with the
+**Cloud logs** button in the toolbar's Evidence group (a cloud with a down arrow; the icon stays when
+the toolbar collapses to icons). Opening the panel costs nothing; **Start collection** inside it
+starts the job.
+
+- **Start** — pick the account, the log sources and the window. A provider whose live collector has
+  not shipped yet (#2313 AWS, #2314 GCP, #2315 Microsoft) is listed as not available, and the panel
+  says so instead of offering its sources. Accounts are added in Settings → Cloud accounts.
+- **Progress** — each collection shows its pages and records per source while it runs, and the
+  number of pages imported. The same job is in the Background jobs menu.
+- **Result** — *complete*, *partial* or *failed*. A partial collection lists every missing window
+  with its reason, and every quarantined file with its SHA-256.
+- **Resume** — shown for an interrupted, failed or partial collection. It opens the account's
+  credential again and continues where the evidence stopped, never losing or duplicating pages or
+  events.
+
+The panel is in the Analyst, Lead, Deep-Dive and Hunt Prep views, and can be switched off in
+Settings → section visibility. It is hidden on the public demo. See
+[Collection jobs and evidence manifest](importing.md#collection-jobs-and-evidence-manifest) for what
+is saved and how a resume repairs a collection.
+
+---
+
 ## Collection Plan
 
 Shown only for a case with an [incident type](cases.md#incident-types). Lists the evidence that type calls for, in collection order, and marks each one:
