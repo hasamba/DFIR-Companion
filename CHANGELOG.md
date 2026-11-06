@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live AWS CloudTrail collection** — collect CloudTrail trail objects from S3 (account and organization trails, version ids recorded, KMS-denied objects disclosed) or the 90-day LookupEvents history as manifest-backed evidence, imported through the CloudTrail importer (part of #2313)
+- **Live GCP audit log collection** — collect Admin Activity, Data Access, System Event and Policy audit logs from the Logging API or a verified log sink bucket as manifest-backed evidence, imported through the GCP importer (part of #2314)
 - **Live Microsoft 365, Entra and Azure Activity collection** — collect the unified audit log via Graph AuditLogQuery (status shown, capped windows split), Entra directory audits and sign-ins per category, and Azure Activity per subscription as manifest-backed evidence; PFX certificates are converted in memory only (part of #2315)
 - **Cloud collection quotas, window splitting and completeness** — a pre-check shows retention, overlap and quota estimates; capped windows split down to a minimum then partition; a per-tenant Microsoft query budget (`DFIR_CLOUD_M365_QUERY_BUDGET`) persists across jobs and restarts; 429 back-off; each source discloses its acquired cutoff (closes #2312)
 - **Cloud account read check and minimum policies** — Check access tests one read per selected source and says which reads succeeded or failed, never claiming read-only; the minimum AWS, Microsoft and GCP read policies show at add time and in the manual (closes #2309)

@@ -27,10 +27,12 @@ import type {
   ManifestEntry,
   ManifestHeader,
   ManifestPage,
+  ManifestSkip,
   ManifestQuarantine,
   QuarantinedFile,
   SubWindowStatus,
 } from "./collectTypes.js";
+import { withPageDisclosure } from "./collectCoverage.js";
 
 export interface ReplayResult {
   header: ManifestHeader;
@@ -70,24 +72,68 @@ function applyRestart(sw: SubWindowStatus): SubWindowStatus {
     pageToken: undefined,
     capped: undefined,
     reason: undefined,
+    // A restart re-reads the whole window, the refused items included: their skips are retried.
+    skipped: undefined,
+    skippedItems: undefined,
     restarts: sw.restarts + 1,
   };
 }
 
 function applyPage(sw: SubWindowStatus, page: ManifestPage): SubWindowStatus {
-  const counted = {
-    ...sw,
-    pages: sw.pages + 1,
-    records: sw.records + page.records,
-    firstRetrievedAt: sw.firstRetrievedAt ?? page.retrievedAt,
-    ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
-  };
+  const counted = withPageDisclosure(
+    {
+      ...sw,
+      pages: sw.pages + 1,
+      records: sw.records + page.records,
+      firstRetrievedAt: sw.firstRetrievedAt ?? page.retrievedAt,
+      ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
+    },
+    page,
+  );
   if (SETTLED.has(sw.state) || sw.state === "incomplete") return counted;
   if (page.capped) return { ...counted, state: "capped", capped: page.capped, pageToken: undefined };
   return { ...counted, pageToken: page.pageTokenOut, state: page.pageTokenOut ? "pending" : "done" };
 }
 
+/** The first skipped items a sub-window lists for the result; the manifest keeps every one. */
+export const SKIPPED_ITEMS_LISTED = 20;
+
+/**
+ * A skip line (#2313): count the item and move on to its next token, or finish. The skip stays
+ * UNRESOLVED — the result is partial and claims no cutoff for the window — until a resume restarts
+ * the window and the item is read. A refused read sets no read time. Pure.
+ */
+export function applySkip(
+  sw: SubWindowStatus,
+  skip: Pick<ManifestSkip, "item" | "reason" | "pageTokenOut">,
+): SubWindowStatus {
+  const listed = sw.skippedItems ?? [];
+  const counted: SubWindowStatus = {
+    ...sw,
+    skipped: (sw.skipped ?? 0) + 1,
+    reason: undefined,
+    skippedItems:
+      listed.length < SKIPPED_ITEMS_LISTED ? [...listed, `${skip.item} (${skip.reason})`] : listed,
+  };
+  if (SETTLED.has(sw.state) || sw.state === "incomplete") return counted;
+  return {
+    ...counted,
+    pageToken: skip.pageTokenOut,
+    state: skip.pageTokenOut ? "pending" : "done",
+  };
+}
+
 /** Each sub-window's state — the split tree included (#2312) — as the manifest tells it. Pure. */
+/** The leaves a resume must re-collect: a refused item is retried, never written off. Pure. */
+export function windowsToRetry(subWindows: readonly SubWindowStatus[]): string[] {
+  return subWindows.filter((s) => s.state !== "split" && (s.skipped ?? 0) > 0).map((s) => s.id);
+}
+
+/** The restart line a resume writes for each of them, applied the way replay applies it. Pure. */
+export function retrySkipped(subWindows: readonly SubWindowStatus[], id: string): SubWindowStatus[] {
+  return subWindows.map((s) => (s.id === id ? applyRestart(s) : s));
+}
+
 export function deriveSubWindows(
   header: ManifestHeader,
   entries: readonly ManifestEntry[],
@@ -100,6 +146,7 @@ export function deriveSubWindows(
     if (entry.type === "split") list = applySplit(list, entry);
     else if (entry.type === "restart") update(entry.subWindowId, applyRestart);
     else if (entry.type === "page") update(entry.subWindowId, (sw) => applyPage(sw, entry));
+    else if (entry.type === "skip") update(entry.subWindowId, (sw) => applySkip(sw, entry));
   }
   return list;
 }

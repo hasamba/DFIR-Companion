@@ -61,7 +61,18 @@ export type ImportKind = (typeof IMPORT_KINDS)[number];
 
 type Row = Record<string, unknown>;
 
-const CONTAINER_KEYS = ["Records", "data", "events", "records", "results", "logs", "value", "alerts"];
+// `entries`: a Cloud Logging entries:list response page, as the GCP collector saves it (#2314).
+const CONTAINER_KEYS = [
+  "Records",
+  "data",
+  "events",
+  "records",
+  "results",
+  "logs",
+  "value",
+  "alerts",
+  "entries",
+];
 
 function firstObj(arr: unknown[]): Row | null {
   for (const el of arr) if (isObject(el)) return el;

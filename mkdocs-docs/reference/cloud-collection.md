@@ -59,6 +59,71 @@ appears in a result, a log line or the audit log.
 
 ---
 
+## Collect from AWS
+
+Open the **Collect cloud logs** panel in a case, pick an AWS account, tick the log sources and set
+the time window. The companion saves what AWS returns as case evidence and imports it through the
+same CloudTrail importer as an uploaded CloudTrail file, so the events are graded by the same rules.
+
+| Source | What it reads | Covers |
+|---|---|---|
+| **CloudTrail S3 trail files** | The trail's own files in its S3 bucket | Everything the trail logs, for as long as the bucket keeps it — data events included |
+| **CloudTrail event history** | `LookupEvents`, region by region | The last 90 days of management events only |
+
+Pick **CloudTrail S3 trail files** whenever the account has a trail that writes to S3. Pick
+**CloudTrail event history** when it has none, or as a quick look at recent management activity.
+The pre-check and the result always say that event history holds 90 days of management events
+only.
+
+### S3 trail files
+
+- The companion asks CloudTrail in every region which trails the account has (`DescribeTrails`) and reads each
+  trail's bucket and key prefix. It finds the account's folder itself, for an account trail
+  (`AWSLogs/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`) and for an **organization trail**
+  (`AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/YYYY/MM/DD/`). From an organization bucket it
+  reads only the folder of the account you collect with, never the other member accounts.
+- It reads every region folder the bucket holds, and only the days the window touches plus the
+  day after. A file is taken when its delivery time is inside the window or up to **24 hours**
+  after its end: CloudTrail usually delivers a file 5 to 15 minutes after the events in it, but a
+  late file can come hours later. A file can hold events outside the window; they are imported
+  too, and duplicates are removed. Files delivered more than 24 hours after the window end are not
+  collected, and the result says so. Collect the window again later to pick them up.
+- **Each file is saved exactly as stored** — the `.json.gz` CloudTrail wrote, not unpacked or
+  changed. The collection's manifest records its bucket, key, SHA-256 and, when the bucket has
+  versioning on, its **S3 version id**.
+- When the trail is encrypted with a KMS key and the identity may not use that key, that file
+  cannot be read. The collection goes on with the other files, the result is **partial**, and it
+  lists each file it skipped, with the reason. Add `kms:Decrypt` on the trail key (see the minimum
+  policy) and press **Resume**: the collection reads the window again, the skipped files included.
+  Files already collected are not imported twice.
+- When no trail writes to a bucket the identity can list, the S3 source is reported as missing,
+  and the result tells you to collect event history instead.
+
+### Event history
+
+- The companion asks every region in turn: the account's own region first, then the regions AWS
+  enables by default. A region the account has not enabled answers that it is not enabled; it is
+  skipped and named in the result. Regions you enabled yourself (opt-in regions) are not asked,
+  apart from the account's own region.
+- A network failure (a name that does not resolve, a dropped connection) is never taken for a
+  region that is not enabled. That part of the collection is reported missing with the error, and
+  **Resume** carries on from the page it stopped at.
+- Requests are paced at 2 a second per region, the CloudTrail limit, and slowed further when AWS
+  asks.
+- Event history returns each event inside an envelope. The companion saves the CloudTrail record
+  text from each event exactly as AWS returned it, inside a standard `{"Records": [...]}` file, so
+  the importer reads it like a trail file. The manifest notes this on every event history page.
+
+### Both sources
+
+- Every request — sign-in included — goes through the cloud network settings below.
+- The newest 15 minutes of the window may still be arriving when you collect. The result states
+  the time the collection is settled up to. Collect again from that time to pick up later events;
+  overlapping windows are safe, duplicates are removed.
+- GuardDuty findings are not collected yet.
+
+---
+
 ## Minimum policies
 
 The add form in Settings shows the minimum policy for the provider you pick. Grant this and
@@ -238,3 +303,74 @@ Cloud collection refuses to run when:
 
 An AWS profile with `credential_process` runs the program you configured. Whatever network that
 program uses is its own, outside the companion's settings.
+
+---
+
+## Collect GCP audit logs
+
+Pick a GCP cloud account, a source and a time window. The companion collects the project's four
+Cloud Audit Logs — **Admin Activity**, **Data Access**, **System Event** and **Policy** — saves
+every page as evidence, and imports it through the GCP importer. It needs no `gcloud` and no
+Windows tools.
+
+| Source | Where the logs come from |
+|---|---|
+| **GCP audit logs** | The Cloud Logging API |
+| **GCP audit logs from a log sink bucket** | A Cloud Storage bucket that a log sink writes to, when the sink passes the checks below. Otherwise the Cloud Logging API |
+
+### The Cloud Logging API
+
+The companion asks for 1,000 entries per page, oldest first, with this filter:
+
+```
+logName=("projects/<p>/logs/cloudaudit.googleapis.com%2Factivity" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fdata_access" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fsystem_event" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fpolicy") AND timestamp>="<start>" AND timestamp<"<end>"
+```
+
+- It makes at most **60 requests per minute**, the Cloud Logging read limit. When Google answers
+  that the quota is used, the companion waits and tries again.
+- Each saved page is Google's answer exactly as it came back. The manifest records the filter.
+- A page token expires after **24 hours**. If a stopped collection resumes later than that, the
+  companion starts that part of the window again from its start. Pages already saved stay as
+  evidence; the import removes the duplicates.
+- A part of the window with very many pages is split into smaller time windows, down to one
+  second, and then into one request per audit log.
+- Cloud Logging keeps Admin Activity, System Event and Policy logs **400 days**, and Data Access
+  logs **30 days** in the `_Default` bucket unless someone changed it. **Data Access logs are off
+  by default** for most services: unless someone turned them on, there are none to collect.
+
+### A log sink bucket
+
+A log sink can copy audit logs to a Cloud Storage bucket, which often keeps them longer than Cloud
+Logging does. The companion uses a sink **only after it checks**:
+
+1. **The filter.** The sink must provably send all four audit logs. The companion accepts only an
+   empty filter, or a filter made of `logName` terms joined by `OR` — for example
+   `logName:"cloudaudit.googleapis.com"`, or the four exact audit log names. Any other filter is
+   rejected because the companion cannot prove it keeps every audit entry. That includes a second
+   condition on its own line (Cloud Logging joins it with an implicit `AND`), `AND`, `NOT` or `-`,
+   another field, and a sink with exclusion filters.
+2. **The history.** Logs are in the bucket from the latest of three times: when the sink was
+   created, when it was last changed (its filter may have been widened then), and its oldest audit
+   log file. A sink whose last-change time is unknown is not used. A window that starts earlier is
+   collected from the Cloud Logging API.
+3. **The permission.** The account must be able to list the bucket (`roles/storage.objectViewer`).
+
+When a check fails, the companion collects from the Cloud Logging API. The result's notes say why
+the sink was not used — for example `Log sink not used: sink "audit-sink": its filter does not
+include the data_access audit logs` — and so does the manifest.
+
+From a sink, each saved page is one log file from the bucket, exactly as stored: the hourly files
+and the addendum files (`…_A0:<time>.json`) that Cloud Logging writes later for entries that
+arrived late. **Sinks write hourly batches, and parts of an hour can arrive late.** The companion
+treats the logs as settled only up to the last whole hour that is at least **three hours** old, and
+the result says so: *Settled up to … only*. That delay is an estimate. Cloud Logging does not
+guarantee that a sink delivered every entry, so **a collection from a sink is never reported as
+complete**: it ends as partial, with the note *Log sink delivery is not guaranteed complete*. For a
+completeness guarantee, collect the same window with the **GCP audit logs** source as well;
+duplicates are removed.
+
+### Roles
+
+- `roles/logging.viewer` — Admin Activity, System Event and Policy logs, and the list of log sinks
+- `roles/logging.privateLogViewer` — Data Access logs
+- `roles/storage.objectViewer` — on the sink's bucket, only for the log sink source

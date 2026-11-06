@@ -9,8 +9,6 @@
 import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
-import { fromTemporaryCredentials } from "@aws-sdk/credential-providers";
-import type { JWTInput } from "google-auth-library";
 import type {
   AwsSecrets,
   AwsSettings,
@@ -22,9 +20,12 @@ import type { CloudTransport } from "../cloudTransport/cloudAgent.js";
 import { awsClientConfig, type AwsTransportConfig } from "../cloudTransport/awsTransport.js";
 import { accessToken, GRAPH_SCOPE, microsoftCredential } from "../cloudTransport/microsoftCredential.js";
 import { cloudFetch, type CloudFetch } from "../cloudTransport/cloudFetch.js";
-import { createGoogleAuth, googleImpersonatedClient } from "../cloudTransport/googleTransport.js";
-import { googleAmbientImpersonatedClient } from "../cloudTransport/googleAmbient.js";
-import { awsAmbientCredentials } from "../cloudTransport/awsAmbient.js";
+import {
+  GoogleAccountSetupError,
+  LOGGING_READ_SCOPE,
+  googleAccountClient,
+} from "../cloudTransport/googleAccountAuth.js";
+import { awsAccountCredentials, DEFAULT_AWS_REGION } from "../cloudTransport/awsCredentials.js";
 import type { AwsCheckClients } from "./awsReadCheck.js";
 import type { GcpRequester } from "./gcpReadCheck.js";
 import type { MicrosoftCheckClients } from "./microsoftReadCheck.js";
@@ -50,64 +51,7 @@ export interface CheckWire {
   fetch: CloudFetch;
 }
 
-const DEFAULT_AWS_REGION = "us-east-1";
 const ROLE_SESSION_NAME = "dfir-companion-read-check";
-const LOGGING_READ_SCOPE = "https://www.googleapis.com/auth/logging.read";
-
-function awsCredentials(
-  settings: AwsSettings,
-  secrets: AwsSecrets,
-  config: CheckWire["awsConfig"],
-  transport: CloudTransport,
-) {
-  const { accessKeyId, secretAccessKey, sessionToken } = secrets;
-  const keys =
-    accessKeyId && secretAccessKey
-      ? { accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) }
-      : undefined;
-  if (settings.authMode === "access-key") {
-    if (!keys) throw new CheckSetupError("the account has no stored access key");
-    return keys;
-  }
-  if (!settings.roleArn) throw new CheckSetupError("the account has no role ARN");
-  const ambient = settings.baseCredential === "ambient";
-  if (!ambient && !keys)
-    throw new CheckSetupError("the account has no stored access key to assume the role with");
-  const region = settings.region || DEFAULT_AWS_REGION;
-  // An ambient base is the machine's own chain, built with the transport on every inner client —
-  // never fromTemporaryCredentials' option-less default chain (see cloudTransport/awsAmbient.ts).
-  const masterCredentials = ambient
-    ? awsAmbientCredentials(transport, { region, clientConfig: config })
-    : keys;
-  return onePerCheck(
-    fromTemporaryCredentials({
-      params: {
-        RoleArn: settings.roleArn,
-        RoleSessionName: ROLE_SESSION_NAME,
-        DurationSeconds: settings.sessionSeconds ?? 3600,
-        ...(secrets.externalId ? { ExternalId: secrets.externalId } : {}),
-      },
-      masterCredentials,
-      // The provider's own STS client is the token path: it goes through the transport too.
-      clientConfig: { region, ...(config as AwsTransportConfig) },
-    }),
-  );
-}
-
-/**
- * One AssumeRole for the whole check, shared by the STS, CloudTrail and S3 clients (each would
- * otherwise assume the role on its own). A check lasts minutes; the shortest session is 15.
- */
-function onePerCheck<P, T>(provider: (props?: P) => Promise<T>): (props?: P) => Promise<T> {
-  let pending: Promise<T> | undefined;
-  return (props) => {
-    pending ??= provider(props).catch((err: unknown) => {
-      pending = undefined;
-      throw err;
-    });
-    return pending;
-  };
-}
 
 function awsClients(
   settings: AwsSettings,
@@ -116,7 +60,12 @@ function awsClients(
   transport: CloudTransport,
 ): AwsCheckClients {
   const config = wire.awsConfig as AwsTransportConfig;
-  const credentials = awsCredentials(settings, secrets, config, transport);
+  const credentials = awsAccountCredentials(settings, secrets, {
+    config,
+    transport,
+    roleSessionName: ROLE_SESSION_NAME,
+    fail: (message) => new CheckSetupError(message),
+  });
   const region = settings.region || DEFAULT_AWS_REGION;
   return {
     sts: new STSClient({ region, credentials, ...config }),
@@ -139,48 +88,18 @@ function microsoftClients(
   };
 }
 
-function parseKey(json: string | undefined): JWTInput {
-  if (!json) throw new CheckSetupError("the account has no stored service-account key");
-  try {
-    return JSON.parse(json) as JWTInput;
-  } catch {
-    // A JSON parse error quotes part of its input, and this input is a private key.
-    throw new CheckSetupError("the stored service-account key is not valid JSON");
-  }
-}
-
 async function gcpClient(
   settings: GcpSettings,
   secrets: GcpSecrets,
   transport: CloudTransport,
 ): Promise<GcpRequester> {
-  const scopes = [LOGGING_READ_SCOPE];
-  if (settings.authMode === "service-account-key") {
-    const auth = createGoogleAuth(transport, {
-      credentials: parseKey(secrets.serviceAccountKeyJson),
-      scopes,
-      // Known already; without it the library runs the gcloud CLI and asks the metadata server.
-      projectId: settings.projectId,
-    });
-    return await auth.getClient();
+  try {
+    return await googleAccountClient(settings, secrets, transport, [LOGGING_READ_SCOPE]);
+  } catch (err) {
+    // The check words its own setup errors (readCheckWording.ts matches CheckSetupError).
+    if (err instanceof GoogleAccountSetupError) throw new CheckSetupError(err.message);
+    throw err;
   }
-  const targetPrincipal = settings.targetServiceAccount;
-  if (!targetPrincipal) throw new CheckSetupError("the account names no service account to impersonate");
-  if (settings.baseCredential === "service-account-key") {
-    const sourceCredentials = parseKey(secrets.serviceAccountKeyJson);
-    return googleImpersonatedClient(transport, {
-      sourceCredentials,
-      targetPrincipal,
-      targetScopes: scopes,
-    });
-  }
-  // Ambient base: the machine's own credentials call the IAM Credentials API, through the transport;
-  // only a GCE metadata token stays direct (see cloudTransport/googleAmbient.ts).
-  return googleAmbientImpersonatedClient(transport, {
-    targetPrincipal,
-    targetScopes: scopes,
-    projectId: settings.projectId,
-  });
 }
 
 /** The real clients, all over `transport`. `wire` replaces the AWS handler and Graph fetch in tests. */

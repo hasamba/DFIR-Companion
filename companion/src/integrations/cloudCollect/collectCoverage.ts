@@ -19,6 +19,26 @@ import type {
 } from "./collectTypes.js";
 
 const DAY_MS = 86_400_000;
+/** The longest page note kept (#2314). */
+export const NOTE_MAX = 600;
+
+/** A sub-window with one more page's disclosure: its note (once) and unverified completeness. Pure. */
+export function withPageDisclosure(
+  sw: SubWindowStatus,
+  page: { note?: string; unverified?: boolean },
+): SubWindowStatus {
+  const notes = page.note && !sw.notes?.includes(page.note) ? [...(sw.notes ?? []), page.note] : sw.notes;
+  return {
+    ...sw,
+    ...(notes ? { notes } : {}),
+    ...(page.unverified || sw.unverified ? { unverified: true } : {}),
+  };
+}
+
+/** The notes a source's sub-windows disclosed, each once. */
+function pageNotes(subWindows: readonly SubWindowStatus[], source: string): string[] {
+  return [...new Set(subWindows.filter((s) => s.source === source).flatMap((s) => s.notes ?? []))];
+}
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -74,7 +94,7 @@ export function precheckSource(
   const retention = source.retention
     ? retentionWarnings(source.retention, window, nowMs)
     : { warnings: [] as string[] };
-  const warnings = [...retention.warnings];
+  const warnings = [...retention.warnings, ...(source.notice ? [source.notice] : [])];
   const settled = nowMs - overlapMs;
   if (overlapMs > 0 && Date.parse(window.end) > settled)
     warnings.push(
@@ -87,11 +107,24 @@ export function precheckSource(
 function cutoffOf(endLeaves: readonly SubWindowStatus[], end: number, overlapMs: number): number | undefined {
   let cutoff = end;
   for (const leaf of endLeaves) {
-    if (leaf.state !== "done" || !leaf.firstRetrievedAt) return undefined;
+    // An item the cloud refused leaves the window unsettled, however much else came back (#2313).
+    if (leaf.state !== "done" || !leaf.firstRetrievedAt || leaf.skipped) return undefined;
     cutoff = Math.min(cutoff, Date.parse(leaf.firstRetrievedAt) - overlapMs);
     if (leaf.acquiredUntil) cutoff = Math.min(cutoff, Date.parse(leaf.acquiredUntil));
   }
   return endLeaves.length ? cutoff : undefined;
+}
+
+/** The items of a source the cloud refused (#2313), as one note; null when there were none. */
+export function skippedNote(sourceLeaves: readonly SubWindowStatus[]): string | null {
+  const count = sourceLeaves.reduce((n, s) => n + (s.skipped ?? 0), 0);
+  if (!count) return null;
+  const listed = sourceLeaves.flatMap((s) => s.skippedItems ?? []);
+  const more = count > listed.length ? `; ${count - listed.length} more` : "";
+  return (
+    `${count} item(s) could not be read and were skipped: ${listed.join("; ")}${more}. ` +
+    "Each one is a skip line in the collection's manifest.jsonl; Resume retries them."
+  );
 }
 
 /** Per source: the acquired cutoff and what the analyst must know about it. */
@@ -120,6 +153,10 @@ export function sourceCoverage(
         `Settled up to ${iso(cutoff)} only: later events may still have been arriving. Collect again ` +
           "from that time to pick them up — overlapping windows are safe, duplicates are removed.",
       );
+    const skipped = skippedNote(tree.filter((s) => s.source === id));
+    if (skipped) notes.push(skipped);
+    if (info?.notice) notes.push(info.notice);
+    notes.push(...pageNotes(subWindows, id));
     if (info?.retention) {
       const check = retentionWarnings(info.retention, input.window, Date.parse(input.startedAt));
       notes.push(...check.warnings);
