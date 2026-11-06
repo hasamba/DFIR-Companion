@@ -258,6 +258,7 @@ describe("team-auth configuration and policy", () => {
       ["DELETE", "/cases/c1/cloud-accounts/a1"],
       ["POST", "/cases/c1/cloud-accounts/a1/attach"],
       ["POST", "/cases/c1/cloud-accounts/a1/detach"],
+      ["POST", "/cases/c1/cloud-accounts/a1/check"], // read check (#2309): uses the credential
       ["GET", "/cases/c1/CLOUD-ACCOUNTS/"],
       ["GET", "/cases/c1/cloud-collect"],
       ["GET", "/cases/c1/cloud-collect/j1"],
@@ -276,6 +277,7 @@ describe("team-auth configuration and policy", () => {
       "/cloud-accounts/a1",
       "/cases/c1/cloud-accounts",
       "/cases/c1/Cloud-Accounts/a1/detach",
+      "/cases/c1/cloud-accounts/a1/check",
       "/cases/c1/cloud-collect/j1",
       "/cases/c%31/cloud-accounts",
     ]) {

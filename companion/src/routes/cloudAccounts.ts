@@ -6,7 +6,8 @@
  * (cloudAccountsCase.ts). These top-level routes are the INSTANCE ADMINISTRATOR's view of every
  * account — name, provider and attached cases, never a secret — and stay global admin:
  *
- *   GET    /cloud-accounts                     every account (no secrets), its cases, the key's state
+ *   GET    /cloud-accounts                     every account (no secrets), its cases, the key's state,
+ *                                              and the minimum read-only policy per provider (#2309)
  *   POST   /cloud-accounts                     add an UNATTACHED account; on first use makes the key
  *   POST   /cloud-accounts/reset               Reset vault — wipes the accounts, needs confirm
  *   PUT    /cloud-accounts/:accountId          edit (a left-out secret keeps the stored one)
@@ -22,6 +23,7 @@
 import type { Express } from "express";
 import type { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
 import { parseCloudAccountInput } from "../integrations/cloudAccounts/accountInput.js";
+import { MINIMUM_POLICIES } from "../integrations/cloudCheck/minimumPolicies.js";
 import { cloudAudit, withCloudVault } from "./cloudAccountAccess.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
@@ -40,7 +42,7 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
     "/cloud-accounts",
     withCloudVault(ctx, (vault, _req, res) => {
       const { keyPath, keyState } = vault.status();
-      return res.json({ keyPath, keyState, accounts: vault.list() });
+      return res.json({ keyPath, keyState, accounts: vault.list(), minimumPolicies: MINIMUM_POLICIES });
     }),
   );
 

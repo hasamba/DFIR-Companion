@@ -78,6 +78,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
+import type { CloudCheckRunner } from "../integrations/cloudCheck/runCloudCheck.js";
 import type { CloudCollectProviders } from "../integrations/cloudCollect/collectTypes.js";
 import type { IrisExportStore } from "../integrations/iris/irisExportStore.js";
 import type { ToolRunner } from "../integrations/tools/toolRunner.js";
@@ -455,6 +456,9 @@ export interface AppOptions {
   serverSetStore?: ServerSetStore;
   // The cloud account vault behind /cloud-accounts (#2307). Tests that omit it get 503 from it.
   cloudAccountVault?: CloudAccountVault;
+  // The cloud account read check (#2309): one read per source over the cloud transport. Tests that
+  // omit it get 503 from POST /cases/:id/cloud-accounts/:accountId/check; tests inject mocked clients.
+  cloudCheck?: CloudCheckRunner;
   // Live cloud collection (#2311): the provider adapters /cases/:id/cloud-collect may start. Empty
   // until the AWS / GCP / Microsoft collectors (#2313–#2315) register theirs; tests inject a fake.
   cloudCollectProviders?: CloudCollectProviders;

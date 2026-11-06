@@ -9,6 +9,7 @@
  *   DELETE /cases/:id/cloud-accounts/:accountId          delete — write on EVERY attached case
  *   POST   /cases/:id/cloud-accounts/:accountId/attach   { caseId } — share with another case you write
  *   POST   /cases/:id/cloud-accounts/:accountId/detach   remove from THIS case only; others keep it
+ *   POST   /cases/:id/cloud-accounts/:accountId/check    test one read per source (cloudAccountCheck.ts)
  *
  * An account seen from a case it is not attached to does not exist (404). The case ids a response
  * lists are cut to the cases the caller can write, so a shared account names no case they cannot.
@@ -16,6 +17,7 @@
 import type { Express, Request } from "express";
 import type { CloudAccountView } from "../integrations/cloudAccounts/types.js";
 import { parseCloudAccountInput } from "../integrations/cloudAccounts/accountInput.js";
+import { MINIMUM_POLICIES } from "../integrations/cloudCheck/minimumPolicies.js";
 import {
   canWriteCloudCase,
   cloudAccountEditable,
@@ -24,6 +26,7 @@ import {
   sendCloudRefusal,
   withCloudVault,
 } from "./cloudAccountAccess.js";
+import { registerCloudAccountCheckRoute } from "./cloudAccountCheck.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
@@ -48,7 +51,8 @@ function registerListAndAdd(app: Express, ctx: RouteContext): void {
     withCloudVault(ctx, (vault, req, res) => {
       const { keyState } = vault.status();
       const accounts = vault.listForCase(req.params.id).map((a) => visibleView(ctx, req, a));
-      return res.json({ keyState, accounts });
+      // The minimum read-only grant per provider (#2309), shown in the add form.
+      return res.json({ keyState, accounts, minimumPolicies: MINIMUM_POLICIES });
     }),
   );
 
@@ -153,5 +157,6 @@ export function registerCaseCloudAccountRoutes(app: Express, ctx: RouteContext):
   // Before the :accountId routes is not needed (attach/detach are a level deeper), but kept
   // together so the inventory reads as one family.
   registerAttachDetach(app, ctx);
+  registerCloudAccountCheckRoute(app, ctx);
   registerOne(app, ctx);
 }

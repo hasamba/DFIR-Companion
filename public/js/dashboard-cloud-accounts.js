@@ -9,6 +9,10 @@
 // The server never sends a stored credential back — only the NAMES of the secrets an account holds.
 // An empty secret field on Edit keeps the stored value; typing a new value replaces it (rotation).
 // Account names come from analysts, so every one is written with textContent, never innerHTML.
+//
+// Since #2309 the add form shows the provider's minimum read-only policy (sent with the account
+// list), and each account has Check access: one read per picked source, reported in the server's
+// fixed wording. Results echo cloud error text, so they too are written with textContent only.
 (function () {
   "use strict";
 
@@ -36,9 +40,30 @@
     ["caMsPfxPassword", "microsoft", "secrets", "pfxPassword"],
   ];
 
+  // The sources a read check can test, per provider (integrations/cloudCheck/readCheckTypes.ts).
+  const CHECK_SOURCES = {
+    aws: [
+      ["cloudtrail-lookup", "CloudTrail event history"],
+      ["s3-trail", "CloudTrail S3 bucket"],
+    ],
+    microsoft: [
+      ["entra-signins", "Entra sign-in logs"],
+      ["entra-directory-audits", "Entra directory audit logs"],
+    ],
+    gcp: [
+      ["audit-logs", "Admin Activity, System Event and Policy audit logs"],
+      ["data-access-logs", "Data Access audit logs"],
+    ],
+  };
+  const STATUS_TEXT = { succeeded: "Read worked", failed: "Failed", "not-tested": "Not tested" };
+
   // The account open in the form and where it was opened from: { account, url } — `url` is the
   // account's own route (case or instance-wide). null for a new account.
   let editing = null;
+  // The minimum policy per provider, from the last account list the server sent.
+  let policies = {};
+  // The account open in the check panel: { account, url, boxes: [[sourceId, checkbox]] }, or null.
+  let checking = null;
 
   const byId = (id) => document.getElementById(id);
 
@@ -146,6 +171,7 @@
     const url = `${caseBase(caseId)}/${encodeURIComponent(a.id)}`;
     const actions = el("span", null, "server-set-actions");
     if (!a.locked) actions.appendChild(button("Edit", () => openForm(a, url)));
+    if (!a.locked) actions.appendChild(button("Check access", () => openCheck(a, url)));
     actions.appendChild(button("Share with case…", () => shareAccount(a, url)));
     actions.appendChild(button("Detach", () => detachAccount(a, url, caseId)));
     actions.appendChild(button("Delete", () => deleteAccount(a, url)));
@@ -217,6 +243,8 @@
     // The instance-wide list answers only an instance administrator (403 for everyone else).
     const all = await getJson("/cloud-accounts");
     if (inCase.body.demo || all.body.demo) return hidePanel();
+    const sent = (all.ok && all.body.minimumPolicies) || (inCase.ok && inCase.body.minimumPolicies);
+    if (sent && typeof sent === "object") policies = sent;
     setMsg("", false);
     keyLine(all.ok ? all.body : inCase.body);
     renderCaseList(box, caseId, inCase);
@@ -229,6 +257,103 @@
     document.querySelectorAll("#cloudAccountForm [data-cloud-provider]").forEach((node) => {
       node.hidden = node.dataset.cloudProvider !== provider;
     });
+    renderPolicy(provider);
+  }
+
+  // The provider's minimum read-only policy, in the add/edit form.
+  function renderPolicy(provider) {
+    const box = byId("caPolicyBox");
+    if (!box) return;
+    const policy = policies[provider];
+    box.hidden = !policy;
+    if (!policy) return;
+    byId("caPolicyTitle").textContent = policy.title || "";
+    byId("caPolicyGrant").textContent = policy.grant || "";
+    const notes = Array.isArray(policy.notes) ? policy.notes : [];
+    byId("caPolicyNotes").replaceChildren(...notes.map((n) => el("li", n)));
+  }
+
+  function checkbox(id, label) {
+    const wrap = el("label");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.dataset.source = id;
+    wrap.appendChild(box);
+    wrap.appendChild(el("span", ` ${label}`));
+    return { wrap, box };
+  }
+
+  // Opens the check panel for one account of the open case, every source picked.
+  function openCheck(account, url) {
+    const panel = byId("cloudCheckPanel");
+    if (!panel) return;
+    const sources = CHECK_SOURCES[account.provider] || [];
+    const made = sources.map(([id, label]) => ({ id, ...checkbox(id, label) }));
+    checking = { account, url, boxes: made.map((m) => [m.id, m.box]) };
+    byId("ccTitle").textContent = `Check access: ${account.name}`;
+    byId("ccSources").replaceChildren(...made.map((m) => m.wrap));
+    byId("ccS3Fields").hidden = account.provider !== "aws";
+    byId("ccResult").replaceChildren();
+    panel.hidden = false;
+  }
+
+  function closeCheck() {
+    checking = null;
+    const panel = byId("cloudCheckPanel");
+    if (panel) panel.hidden = true;
+  }
+
+  function checkBody() {
+    const body = { sources: checking.boxes.filter(([, box]) => box.checked).map(([id]) => id) };
+    if (checking.account.provider === "aws") {
+      const bucket = byId("ccS3Bucket").value.trim();
+      const prefix = byId("ccS3Prefix").value.trim();
+      if (bucket) body.s3Bucket = bucket;
+      if (prefix) body.s3Prefix = prefix;
+    }
+    return body;
+  }
+
+  function renderReport(report) {
+    const out = byId("ccResult");
+    const lines = [];
+    if (report.signedInAs) lines.push(el("div", `Signed in as ${report.signedInAs}`));
+    for (const r of Array.isArray(report.results) ? report.results : []) {
+      const status = STATUS_TEXT[r.status] || r.status;
+      const line = el("div", `${status}: ${r.label}${r.detail ? ` — ${r.detail}` : ""}`);
+      if (r.status === "failed") line.style.color = "var(--badge-danger-text)";
+      lines.push(line);
+    }
+    lines.push(el("p", report.summary || ""));
+    out.replaceChildren(...lines);
+  }
+
+  async function runCheck() {
+    if (!checking) return;
+    const body = checkBody();
+    if (body.sources.length === 0) {
+      byId("ccResult").replaceChildren(el("div", "Pick at least one source to check."));
+      return;
+    }
+    const target = checking;
+    byId("ccRun").disabled = true;
+    byId("ccResult").replaceChildren(el("div", "Checking… each source can take up to 20 seconds."));
+    let res;
+    try {
+      res = await send(`${target.url}/check`, "POST", body);
+    } catch (e) {
+      res = { ok: false, status: 0, body: { error: e.message } };
+    }
+    byId("ccRun").disabled = false;
+    if (checking !== target) return;
+    if (!res.ok || !res.body.report) {
+      const msg = el("div", res.body.error || `Check failed (HTTP ${res.status})`);
+      msg.style.color = "var(--badge-danger-text)";
+      byId("ccResult").replaceChildren(msg);
+      return;
+    }
+    renderReport(res.body.report);
   }
 
   function openForm(account, url) {
@@ -359,6 +484,8 @@
     byId("cloudAccountAddBtn").onclick = () => openForm(null, null);
     byId("cloudVaultResetBtn").onclick = resetVault;
     byId("caCancel").onclick = closeForm;
+    if (byId("ccRun")) byId("ccRun").onclick = runCheck;
+    if (byId("ccClose")) byId("ccClose").onclick = closeCheck;
     byId("cloudAccountForm").addEventListener("submit", saveForm);
     byId("caProvider").addEventListener("change", (e) => showProvider(e.target.value));
     document.querySelectorAll(".stab").forEach((tab) => {
