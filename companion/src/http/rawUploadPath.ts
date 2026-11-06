@@ -20,3 +20,15 @@ export function skipRawUploads(parser: RequestHandler): RequestHandler {
     parser(req, res, next);
   };
 }
+
+/**
+ * `Connection: close` on a raw-upload request from the first layer on (#2353), so a refusal answered
+ * before the route reads the body — origin guard, demo gate, team auth, the case gates — ends the
+ * connection instead of letting Node read and discard a possibly multi-GB unread body. The route
+ * takes the header off once it has read the whole body (routes/importUpload.ts), so an answer after
+ * the read keeps the connection. Every other request is untouched.
+ */
+export function closeUnreadRawUploads(req: Request, res: Response, next: NextFunction): void {
+  if (isRawUploadRequest(req)) res.setHeader("Connection", "close");
+  next();
+}

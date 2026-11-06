@@ -324,3 +324,112 @@ describe("POST /cases/:id/import-upload in team mode (#2336)", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(202);
   });
 });
+
+// #2353 — a refusal answered BEFORE the route (origin guard, team auth, case gates) closes the
+// connection, so Node does not read and discard a possibly huge unread body after the answer.
+// Raw keep-alive requests: supertest's client asks for Connection: close itself.
+describe("POST /cases/:id/import-upload — refusals close the connection (#2353)", () => {
+  type Answer = { status: number; connection?: string; hungUp: boolean };
+
+  /**
+   * POST over a keep-alive socket. `body` is sent whole; with `declared` larger than the body, only
+   * the first part is sent and the client never finishes. `hungUp` is whether the server ended the
+   * socket within a moment of answering.
+   */
+  async function post(
+    app: Awaited<ReturnType<typeof makeApp>>["app"],
+    path: string,
+    opts: { body: Buffer; declared?: number; headers?: Record<string, string> },
+  ): Promise<Answer> {
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", () => r()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      return await new Promise<Answer>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            method: "POST",
+            path,
+            headers: {
+              "content-type": OCTET,
+              connection: "keep-alive",
+              "content-length": String(opts.declared ?? opts.body.length),
+              ...opts.headers,
+            },
+          },
+          (res) => {
+            res.resume();
+            const answer = { status: res.statusCode ?? 0, connection: res.headers.connection };
+            const timer = setTimeout(() => resolve({ ...answer, hungUp: false }), 1500);
+            res.socket.once("close", () => {
+              clearTimeout(timer);
+              resolve({ ...answer, hungUp: true });
+            });
+          },
+        );
+        req.on("error", () => undefined); // the server may hang up mid-write after answering
+        req.write(opts.body);
+        if (opts.declared === undefined) req.end();
+        setTimeout(() => reject(new Error("no answer")), 8000);
+      });
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  }
+
+  const HALF = { body: Buffer.alloc(64 * 1024, 0x41), declared: 64 * 1024 * 1024 };
+
+  it("answers a half-sent upload to an unknown case (404) and hangs up without the rest", async () => {
+    const { app } = await makeApp();
+    expect(await post(app, "/cases/nope/import-upload?filename=big.csv", HALF)).toEqual({
+      status: 404,
+      connection: "close",
+      hungUp: true,
+    });
+  });
+
+  it("does the same for a closed case (423) and the origin guard (403)", async () => {
+    const { app, store } = await makeApp();
+    const foreign = await post(app, "/cases/c1/import-upload?filename=big.csv", {
+      ...HALF,
+      headers: { origin: "https://attacker.example" },
+    });
+    expect(foreign).toEqual({ status: 403, connection: "close", hungUp: true });
+    await store.updateCaseMeta("c1", { status: "closed" });
+    expect(await post(app, "/cases/c1/import-upload?filename=big.csv", HALF)).toEqual({
+      status: 423,
+      connection: "close",
+      hungUp: true,
+    });
+  });
+
+  it("does the same for team auth's 401", async () => {
+    const { app } = await makeApp({
+      teamAuth: async (root) =>
+        new TeamAuth({
+          store: new AuthStore(join(root, "auth.sqlite")),
+          bootstrapToken: "upload-bootstrap-token-with-entropy",
+          cookieSecure: false,
+          sessionTtlMs: 60 * 60_000,
+        }),
+    });
+    expect(await post(app, "/cases/c1/import-upload?filename=big.csv", HALF)).toEqual({
+      status: 401,
+      connection: "close",
+      hungUp: true,
+    });
+  });
+
+  it("keeps the connection for an upload whose body was read", async () => {
+    const { app } = await makeApp();
+    const got = await post(app, "/cases/c1/import-upload?filename=supertimeline.csv", {
+      body: Buffer.from(PLASO),
+    });
+    expect(got.status).toBe(202);
+    expect(got.connection).not.toBe("close");
+    expect(got.hungUp).toBe(false);
+  });
+});
