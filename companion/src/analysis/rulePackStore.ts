@@ -197,7 +197,9 @@ export class RulePackStore implements PackRulesProvider {
       ...(input.htmlUrl ? { htmlUrl: input.htmlUrl } : {}),
       stagedAt: new Date().toISOString(),
     };
-    this.prune();
+    this.expire();
+    // Room for the new review: only staging evicts the oldest, so a lookup never drops a review.
+    while (this.staged.size >= MAX_STAGED) this.staged.delete(this.staged.keys().next().value as string);
     const token = randomUUID();
     const staged = { token, pack, rulesText: input.rulesText };
     this.staged.set(token, { ...staged, expires: Date.now() + STAGE_TTL_MS });
@@ -205,15 +207,14 @@ export class RulePackStore implements PackRulesProvider {
   }
 
   getStaged(token: string): StagedPack | undefined {
-    this.prune();
+    this.expire();
     const s = this.staged.get(token);
     return s ? { token: s.token, pack: s.pack, rulesText: s.rulesText } : undefined;
   }
 
-  private prune(): void {
+  private expire(): void {
     const now = Date.now();
     for (const [k, v] of this.staged) if (v.expires < now) this.staged.delete(k);
-    while (this.staged.size >= MAX_STAGED) this.staged.delete(this.staged.keys().next().value as string);
   }
 
   /** Make a staged pack the installed one; the pack it replaces becomes the previous one. */

@@ -62,6 +62,15 @@ const downloaded = (rules: string, version: string, min = "0.45.0") =>
   });
 
 describe("rule pack store", () => {
+  it("looking a review up never evicts it; only a new review makes room", () => {
+    const tokens = [1, 2, 3, 4, 5].map((n) => downloaded(r("one") + r(`n${n}`), `rules-2026.11.0${n}`).token);
+    expect(packs.getStaged(tokens[0])).toBeDefined();
+    expect(packs.getStaged(tokens[0])).toBeDefined();
+    downloaded(r("one") + r("n6"), "rules-2026.11.06");
+    expect(packs.getStaged(tokens[0])).toBeUndefined();
+    expect(packs.getStaged(tokens[1])).toBeDefined();
+  });
+
   it("staging changes nothing; install makes the pack the active rules", async () => {
     const rules = r("one", "High") + r("two") + r("three", "High");
     const staged = downloaded(rules, "rules-2026.11.05");

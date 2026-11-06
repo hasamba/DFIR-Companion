@@ -7,7 +7,12 @@
 import type { ReleaseAssetFetch } from "./githubReleaseDownload.js";
 import { findLatestRulePack } from "./rulePackClient.js";
 import { comparePackVersions } from "./rulePackManifest.js";
-import type { RulePackCheckRecord, RulePackStore, StagedPack } from "./rulePackStore.js";
+import {
+  RulePackError,
+  type RulePackCheckRecord,
+  type RulePackStore,
+  type StagedPack,
+} from "./rulePackStore.js";
 
 const ON = new Set(["on", "1", "true", "yes"]);
 
@@ -75,6 +80,12 @@ export async function checkRulePack(
       staged,
     );
   } catch (err) {
-    return done({ at, status: "error", message: (err as Error).message });
+    const record: RulePackCheckRecord = { at, status: "error", message: (err as Error).message };
+    // A pack refused while staging keeps its own status (422 and the like) for the route to answer.
+    if (err instanceof RulePackError) {
+      store.lastCheck = record;
+      throw err;
+    }
+    return done(record);
   }
 }
