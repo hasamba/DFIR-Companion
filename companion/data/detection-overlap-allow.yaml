@@ -1,0 +1,53 @@
+# Detection-overlap allowlist (#2348) — read by companion/tests/analysis/detectionOverlap.test.ts.
+#
+# An imported cloud event can be graded by three paths: the importer's own grading, the bundled
+# SigmaHQ rules (data/sigma, import-time, default settings) and the tagger rules (data/tags.yaml).
+# Severity only ever rises, so when two paths grade the same event differently the higher grade
+# silently wins. The check runs synthetic samples (tests/analysis/fixtures/detectionSamples/)
+# through all three and FAILS on such a disagreement unless the pair is listed here.
+#
+# HOW TO READ A FAILURE
+#   aws.CreateUser.s3browser#0: importer:cloudtrail (importer grading) = Medium  vs
+#                               sigma:<rule id> (AWS IAM S3Browser User ...) = High
+#   - the sample id and the row it produced (#0 = first row);
+#   - the two paths that graded that row, each with its grade. A path is one of
+#       importer:<cloudtrail|m365|gcp>  the importer's own grade (above its floor for an unknown
+#                                       operation, or an operation in its own grading table)
+#       sigma:<rule id>                 a bundled Sigma rule at or above the minimum level (high)
+#       tagger:<rule id>                a tags.yaml rule that sets a severity
+#   Then decide:
+#   - the disagreement is a mistake: fix the rule or the importer grade (its own PR);
+#   - it is intended (for example a narrow rule raising a broad grade on purpose): add an entry
+#     below naming both paths, with the reason;
+#   - it needs a product decision: add an entry with reason "pending decision: <one line>" and
+#     file an issue for it.
+# A rule raising an event the importer left at its floor (Info, or Low for an unknown CloudTrail /
+# GCP write) is the normal job of a rule and never fails. Same grade + same MITRE is printed as a
+# likely duplicate and never fails. An entry here that no longer matches any conflict FAILS — remove
+# it. Entries are order-free pairs; one entry covers every sample on which that pair disagrees.
+entries:
+  - rules: [importer:cloudtrail, sigma:db014773-d9d9-4792-91e5-133337c0ffee]
+    reason: >-
+      Intended. The importer grades every IAM CreateUser / CreateAccessKey by the event name alone
+      (CreateUser Medium); the Sigma rule AWS IAM S3Browser User or AccessKey Creation only matches
+      when the S3 Browser client made the call, a narrow attacker-tooling signal that should raise
+      the row to High.
+  - rules: [importer:cloudtrail, sigma:07330162-dba1-4746-8121-a9647d49d297]
+    reason: >-
+      Intended (#2351). The importer keeps a failed AWS Config disable call at a conservative Medium;
+      the Sigma rule AWS Config Disabling Channel/Recorder raises a DENIED attempt to High on purpose,
+      as a probe signal. Only a not-found failure (which changed nothing) keeps the importer's grade,
+      through the CloudTrail Sigma veto, so it never reaches this check.
+  - rules: [importer:m365, sigma:53bb4f7f-48a8-4475-ac30-5a82ddfdf6fc]
+    reason: >-
+      intended (owner decision, #2355): a successful BAV2ROPC (legacy-auth) Entra sign-in is
+      graded Medium by the importer (#931 item 3: the user agent is client-supplied and ROPC is not
+      proof of an MFA bypass), and the Sigma rule Potential MFA Bypass Using Legacy Client
+      Authentication raises it to High. High stands: a successful legacy-auth sign-in is a common
+      password-spray success path and should be in front of the analyst.
+  - rules: [sigma:35b781cc-1a08-4a5a-80af-42fd7c315c6b, tagger:mas_user_agent_offensive_tool]
+    reason: >-
+      intended (owner decision, #2355): an AzureHound user agent on an Entra sign-in is graded
+      Medium by the Analyzer-Suite tagger rule (a user agent is client-supplied and never proves the
+      tool used), and the Sigma rule Discovery Using AzureHound grades it High. High stands: an
+      attacker rarely fakes an AzureHound user agent, and it marks Entra reconnaissance.

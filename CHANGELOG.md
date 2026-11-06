@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloud credentials end with the case** — closing a case offers Delete or Keep for its cloud credentials; archive and delete always remove them (a shared account goes with its last case); the cloud accounts list shows every held credential with its cases, who added it and when it was last used, with single and multi-select delete, audit and chain-of-custody entries (closes #2347)
+- **Detection-overlap check** — a CI test runs cloud samples through the importer, bundled Sigma and tagger rules and fails when two of them grade the same event differently, unless the pair is allowlisted with a reason (closes #2348)
+- **Upstream rule watch** — a weekly GitHub job compares the Microsoft-Analyzer-Suite lists with the recorded upstream commit and opens one issue when they change (closes #2343)
 - **Live AWS CloudTrail collection** — collect CloudTrail trail objects from S3 (account and organization trails, version ids recorded, KMS-denied objects disclosed) or the 90-day LookupEvents history as manifest-backed evidence, imported through the CloudTrail importer (part of #2313)
 - **Live GCP audit log collection** — collect Admin Activity, Data Access, System Event and Policy audit logs from the Logging API or a verified log sink bucket as manifest-backed evidence, imported through the GCP importer (part of #2314)
 - **Live Microsoft 365, Entra and Azure Activity collection** — collect the unified audit log via Graph AuditLogQuery (status shown, capped windows split), Entra directory audits and sign-ins per category, and Azure Activity per subscription as manifest-backed evidence; PFX certificates are converted in memory only (part of #2315)

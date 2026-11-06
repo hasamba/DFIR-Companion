@@ -137,6 +137,35 @@ describe("chain of custody appendix", () => {
     expect(text).not.toContain("Chain of Custody");
   });
 
+  // #2347: a cloud credential has no file behind it. Its status follows the last event in its chain.
+  it("labels a detached cloud credential, and a later delete wins", () => {
+    const credential = {
+      accountId: "acc-1",
+      provider: "aws",
+      name: "Prod",
+      identifier: "account 123456789012",
+      addedBy: "alice",
+      addedAt: "2026-07-01T00:00:00.000Z",
+      collections: ["col-1"],
+      reason: "case closed",
+    };
+    const detached = record({
+      artifactPath: "cloud-credential:aws/acc-1",
+      event: "credential-detached",
+      source: 'AWS account 123456789012 ("Prod"), added by alice',
+      trigger: "cloud credential detached — case closed",
+      credential,
+    });
+    const text = render([detached]);
+    expect(text).toContain("| credential-detached |");
+    expect(text).toContain("- Status: cloud credential — detached from this case, no file");
+    expect(text).not.toContain("deleted, no file");
+
+    const both = render([detached, record({ ...detached, event: "credential-deleted", seq: 2 })]);
+    expect(both).toContain("- Status: cloud credential — deleted, no file");
+    expect(both).not.toContain("detached from this case, no file");
+  });
+
   it("does not break a report rendered without any custody data at all", () => {
     expect(() => render(undefined)).not.toThrow();
   });

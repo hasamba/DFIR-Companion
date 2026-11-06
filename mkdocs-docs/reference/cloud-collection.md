@@ -10,6 +10,34 @@ use its accounts. Cloud accounts are disabled on the public demo.
 
 ---
 
+## When the case ends
+
+A cloud credential is usually issued for one investigation, so it ends with the case:
+
+- **Close the case.** If the case has cloud accounts, the close dialog lists them and asks
+  **Delete credentials** (the default) or **Keep credentials**. Kept credentials stay usable, and
+  Settings → Cloud accounts shows the case as **closed — credentials kept**.
+- **Archive or delete the case.** Its credentials are always deleted, first. If the companion
+  cannot delete them, the case is left in place, unchanged: delete refuses with an error, and
+  archive still gives you the archive file but keeps the case in the active list. Try again, or
+  delete the credentials from Settings → Cloud accounts first.
+- **Shared accounts.** An account another case also uses is only detached. It is deleted with its
+  last case.
+- **A running collection** blocks closing, archiving or deleting the case until it is stopped or
+  finishes.
+- **Revoke it in the cloud.** Deleting the companion's copy does not stop the key working. Revoke
+  the AWS access key, the Microsoft app certificate or secret, or the GCP service-account key, as
+  well.
+- **The record stays.** Each case the credential was attached to gets a `credential-deleted` entry
+  in its chain of custody: provider, account, tenant or project ID, who added it and when, which
+  collections used it, who deleted it, when and why. A case a shared account is only detached from
+  gets the same details as a `credential-detached` entry. Reports can still say where the collected
+  evidence came from. No secret is recorded.
+
+Settings → Cloud accounts lists every credential you can see, with its cases, who added it and when
+it was last used, and deletes one or several at once. See
+[Settings → Cloud accounts](settings.md#cloud-accounts).
+
 ## Check access
 
 Each account in the list has a **Check access** button. Pick the log sources to test and press

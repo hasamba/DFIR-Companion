@@ -298,7 +298,10 @@ describe("cloud accounts per case (team mode)", () => {
     // An account stored before #2308 has no case.
     const old = vault.create(awsKeyInput("Before 2308", secret())).account;
     expect((await alice.agent.get("/cases/c1/cloud-accounts")).body.accounts).toHaveLength(1);
-    expect((await alice.agent.get("/cloud-accounts")).status).toBe(403);
+    // Since #2347 an analyst's list holds only the accounts of cases they write — never unattached ones.
+    const mine = await alice.agent.get("/cloud-accounts");
+    expect(mine.status).toBe(200);
+    expect(mine.body.accounts.map((a: { name: string }) => a.name)).toEqual(["In c1"]);
     const all = await admin.agent.get("/cloud-accounts");
     expect(all.status).toBe(200);
     expect(all.body.accounts.map((a: { name: string; caseIds: string[] }) => [a.name, a.caseIds])).toEqual([

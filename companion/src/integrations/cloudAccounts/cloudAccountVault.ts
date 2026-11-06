@@ -16,10 +16,12 @@ import { CloudVaultError } from "./errors.js";
 import {
   secretsOfAccount,
   storedSecretNames,
+  type CloudAccountAdder,
   type CloudAccountInput,
   type CloudAccountView,
   type CloudCredential,
   type OpenCloudAccount,
+  type ReleasedCloudAccount,
   type StoredCloudAccount,
 } from "./types.js";
 import { deriveCloudVaultKey, openSecrets, sealSecrets } from "./vaultCrypto.js";
@@ -121,7 +123,11 @@ export class CloudAccountVault {
    * Adds an account. With no key file and an empty vault, the key is made first (`keyCreated`);
    * with no key file and accounts already stored, it refuses — a new key would orphan them.
    */
-  create(input: CloudAccountInput, caseId?: string): { account: CloudAccountView; keyCreated: boolean } {
+  create(
+    input: CloudAccountInput,
+    caseId?: string,
+    createdBy?: CloudAccountAdder,
+  ): { account: CloudAccountView; keyCreated: boolean } {
     const raw = this.readRaw();
     const credential = buildCredential(input);
     const caseIds = caseId ? [caseId] : [];
@@ -134,7 +140,8 @@ export class CloudAccountVault {
     }
     if (!key.ok) throw new CloudVaultError("locked", key.reason);
     const now = new Date().toISOString();
-    const meta = { id: randomUUID(), name, revision: 1, createdAt: now, updatedAt: now, caseIds };
+    const adder = createdBy ? { createdBy: { id: createdBy.id, displayName: createdBy.displayName } } : {};
+    const meta = { id: randomUUID(), name, revision: 1, createdAt: now, updatedAt: now, ...adder, caseIds };
     const stored = this.sealed(meta, credential, key.key);
     this.write([...raw, stored]);
     return { account: viewOf(stored, storedSecretNames(credential.secrets)), keyCreated };
@@ -154,6 +161,9 @@ export class CloudAccountVault {
       revision: prev.revision + 1,
       createdAt: prev.createdAt,
       updatedAt: new Date().toISOString(),
+      // Who added it and when it was last used survive an edit (#2347).
+      ...(prev.createdBy ? { createdBy: prev.createdBy } : {}),
+      ...(prev.lastUsedAt ? { lastUsedAt: prev.lastUsedAt } : {}),
       caseIds: prev.caseIds ?? [],
     };
     const next = this.sealed(meta, credential, this.requireKey());
@@ -168,6 +178,61 @@ export class CloudAccountVault {
     this.overwriteSealed(raw.map((a) => (a.id === id ? { ...a, sealed: "0".repeat(a.sealed.length) } : a)));
     this.write(raw.filter((a) => a.id !== id));
     return { id: gone.id, name: gone.name, provider: gone.provider };
+  }
+
+  /**
+   * Erases several accounts in one write, each sealed entry overwritten first (#2347). Throws
+   * `not-found` — and erases nothing — when any id is unknown.
+   */
+  removeMany(ids: readonly string[]): ReleasedCloudAccount[] {
+    const raw = this.readRaw();
+    const wanted = new Set(ids);
+    const gone = ids.map((id) => this.find(id, raw));
+    this.overwriteSealed(
+      raw.map((a) => (wanted.has(a.id) ? { ...a, sealed: "0".repeat(a.sealed.length) } : a)),
+    );
+    this.write(raw.filter((a) => !wanted.has(a.id)));
+    return gone.map(releasedOf);
+  }
+
+  /**
+   * A case ends (#2347): an account only this case used is erased (sealed entry overwritten first),
+   * an account other cases share is detached from it. One pass, one write.
+   */
+  releaseCase(caseId: string): { deleted: ReleasedCloudAccount[]; detached: ReleasedCloudAccount[] } {
+    const raw = this.readRaw();
+    const attached = raw.filter((a) => (a.caseIds ?? []).includes(caseId));
+    if (attached.length === 0) return { deleted: [], detached: [] };
+    const sole = new Set(attached.filter((a) => (a.caseIds ?? []).length === 1).map((a) => a.id));
+    const deleted = attached.filter((a) => sole.has(a.id)).map(releasedOf);
+    if (sole.size)
+      this.overwriteSealed(
+        raw.map((a) => (sole.has(a.id) ? { ...a, sealed: "0".repeat(a.sealed.length) } : a)),
+      );
+    const kept = raw
+      .filter((a) => !sole.has(a.id))
+      .map((a) => ({ ...a, caseIds: (a.caseIds ?? []).filter((c) => c !== caseId) }));
+    this.write(kept);
+    const detached = kept.filter((a) => attached.some((b) => b.id === a.id)).map(releasedOf);
+    return { deleted, detached };
+  }
+
+  /**
+   * The accounts `releaseCase(caseId)` would detach rather than erase — attached to this case and
+   * at least one other — without changing anything, so the detach can be recorded first (#2347).
+   */
+  sharedWith(caseId: string): ReleasedCloudAccount[] {
+    return this.readRaw()
+      .filter((a) => (a.caseIds ?? []).includes(caseId) && (a.caseIds ?? []).length > 1)
+      .map(releasedOf);
+  }
+
+  /** Stamps when collection or a read check last opened the account (#2347). A gone account is ignored. */
+  markUsed(id: string): void {
+    const raw = this.readRaw();
+    if (!raw.some((a) => a.id === id)) return;
+    const now = new Date().toISOString();
+    this.write(raw.map((a) => (a.id === id ? { ...a, lastUsedAt: now } : a)));
   }
 
   /** Reset vault: wipes every account (overwritten first). The key file is left alone. */
@@ -296,6 +361,11 @@ export class CloudAccountVault {
   }
 }
 
+function releasedOf(raw: StoredCloudAccount): ReleasedCloudAccount {
+  const { sealed: _sealed, caseIds, ...rest } = raw;
+  return { ...rest, settings: { ...raw.settings }, caseIds: [...(caseIds ?? [])] };
+}
+
 function viewOf(raw: StoredCloudAccount, storedSecrets: string[]): CloudAccountView {
   const { id, name, revision, createdAt, updatedAt, provider, settings } = raw;
   const caseIds = [...(raw.caseIds ?? [])];
@@ -305,6 +375,8 @@ function viewOf(raw: StoredCloudAccount, storedSecrets: string[]): CloudAccountV
     revision,
     createdAt,
     updatedAt,
+    ...(raw.createdBy ? { createdBy: { ...raw.createdBy } } : {}),
+    ...(raw.lastUsedAt ? { lastUsedAt: raw.lastUsedAt } : {}),
     provider,
     settings: { ...settings },
     storedSecrets,

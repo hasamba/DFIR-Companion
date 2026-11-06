@@ -1129,6 +1129,11 @@ cloud_gcp_external_member_added:
 # blanket grade: an operation is graded only where the importer leaves something clearly wrong at Info
 # or Low; the rest are tags. Two scope typos in the source ("Notes.Read.Al", "Sites.FullControl.Al")
 # are spelled as the real scopes. The country, ASN and application lists are not ported.
+# Microsoft-Analyzer-Suite upstream commit: dcd78b5008a3adc1dc09d2b86345e2a040e6f4a8 (2026-10-26)
+# That is the newest upstream commit touching Blacklists/ when the port was made (2026-11-06). The
+# weekly .github/workflows/upstream-rules-check.yml diffs the lists from this commit to upstream's
+# newest and opens an issue when entries changed (#2343). A re-port moves this SHA and date forward
+# in the same PR.
 
 # ── Suspicious operations ──
 mas_operation_audit_config_changed:

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { CaseStore } from "../storage/caseStore.js";
 import {
+  isVirtualCustodyEvent,
   toCaseRelative,
   type CustodyStore,
   type CustodyRecord,
@@ -112,7 +113,7 @@ export function assembleCustodyManifest(input: {
     path: (input.caseDir ? toCaseRelative(input.caseDir, artifactPath) : null) ?? artifactPath,
     sha256: chain[chain.length - 1].sha256,
     ...(chain[chain.length - 1].sha1 ? { sha1: chain[chain.length - 1].sha1 } : {}),
-    ...(chain.every((r) => r.event === "received") ? { stored: false as const } : {}),
+    ...(chain.every((r) => isVirtualCustodyEvent(r.event)) ? { stored: false as const } : {}),
     chain,
   }));
 

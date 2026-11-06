@@ -284,15 +284,38 @@ account is added to the open case.
   to, so editing or deleting it needs write access to **every** attached case. Otherwise the
   Companion refuses and tells you how many attached cases you cannot write. Detach it instead, or
   ask an instance administrator.
-- **Instance administrators** also see **All cloud accounts**: every account with its provider and
-  the cases it is attached to, never a secret. **Reset vault** is there too.
-- **Accounts added before this change** are not attached to any case. Only an instance
-  administrator sees them, under **All cloud accounts**, until they click **Attach to this case** or
-  delete them. In single-user mode you are the administrator: open a case, then attach them.
-- **Deleting a case** detaches its accounts. An account that other cases use stays.
-- **Audit.** In team mode, the authentication audit records every add, edit, delete, attach,
-  detach and collect with the case, the user, and the account name and provider. It never records a
-  credential.
+- **Cloud credentials held.** Below the open case's accounts is the list of every credential the
+  Companion holds that you can see. Each row shows the provider, the name, the account, tenant or
+  project ID, the cases it is attached to with each case's status (**open**, or **closed —
+  credentials kept**), who added it and when, and when it was last used. "Not recorded" means the
+  account was added, or last used, before the Companion recorded it.
+  - An analyst sees the accounts of the cases they can write. An account shared with a case they
+    cannot write shows how many such cases there are, never their names.
+  - An instance administrator sees every account, including accounts **not attached to a case**:
+    added before cases owned accounts, or left after a case was deleted by an earlier version. They
+    are not deleted on upgrade; the administrator attaches them to the open case or deletes them.
+    In single-user mode you are the administrator.
+  - **Delete** on a row, or tick several rows and click **Delete selected**. Deleting needs write
+    access to every case the account is attached to; only an administrator can delete an
+    unattached account. **Reset vault** is for the administrator too.
+- **Credentials end with the case.**
+  - **Closing a case** that has cloud accounts asks first: **Delete credentials** (the default) or
+    **Keep credentials**. Kept credentials stay usable, and the list shows the case as **closed —
+    credentials kept**. A reopened case has only the credentials that were kept.
+  - **Archiving** a case (removing it from the active list) and **deleting** a case always delete
+    its credentials.
+  - An account that another case uses is only **detached** from the case. It is deleted when its
+    last case is closed with Delete, archived or deleted.
+  - A **running cloud collection** blocks closing, archiving and deleting the case. Stop it, or let
+    it finish, first.
+  - **Revoke the key in the cloud too.** Deleting the Companion's copy does not stop the credential
+    working. Revoke the access key, app secret or certificate, or the service-account key, in AWS,
+    Azure or GCP as well. The close dialog and every delete confirmation remind you.
+- **Audit and chain of custody.** In team mode, the authentication audit records every add, edit,
+  delete, attach, detach and collect with the case, the user, and the account name and provider.
+  When a credential is deleted, each case it was attached to gets a **credential-deleted** custody
+  entry: the provider, the account, tenant or project ID, who added it and when, which collections
+  used it, who deleted it, when and why. Neither ever records a credential.
 - **Public demo.** With `DFIR_DEMO_MODE=1` there are no cloud features: the panel is hidden and
   every cloud request is refused.
 

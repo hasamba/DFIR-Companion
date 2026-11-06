@@ -73,6 +73,10 @@
       document.getElementById("status").textContent = wasRemoved
         ? "encrypted case archive downloaded and removed from the active list"
         : "encrypted case archive downloaded";
+      // #2347: the credentials go before the case leaves the list; if they could not, it stays.
+      if (removeFromList && res.headers.get("x-case-remove-error") === "cloud-credentials")
+        alert("The archive was downloaded, but the case's cloud credentials could not be deleted, " +
+          "so the case was left in the active list. Try again, or delete them from Settings → Cloud accounts first.");
     } catch (err) {
       msg.textContent = "export failed: " + err.message;
     } finally {

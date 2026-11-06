@@ -66,20 +66,17 @@ afterEach(() => {
 });
 
 describe("cloud account policy", () => {
-  it("every /cloud-accounts route, GET included, is global admin", () => {
+  it("every /cloud-accounts change is global admin; the list and deletes are cut by the route (#2347)", () => {
     for (const [m, p] of [
-      ["GET", "/cloud-accounts"],
       ["POST", "/cloud-accounts"],
       ["POST", "/cloud-accounts/reset"],
       ["PUT", "/cloud-accounts/a1"],
-      ["DELETE", "/cloud-accounts/a1"],
-      ["GET", "/CLOUD-ACCOUNTS/"],
     ]) {
       expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "global", permission: "admin" });
     }
   });
 
-  it("a team member gets 403 on every route; the admin gets through", async () => {
+  it("a team member gets 403 on every change and an empty list; the admin gets through", async () => {
     await cases.createCase({ caseId: "c1", name: "Case c1", investigator: "i", aiProvider: null });
     const store = new AuthStore(join(dir, "auth.sqlite"));
     authStores.push(store);
@@ -110,14 +107,19 @@ describe("cloud account policy", () => {
     const secret = fakeAwsSecret();
     remember(secret);
     for (const res of [
-      await member.get("/cloud-accounts"),
       await member.post("/cloud-accounts").set("X-DFIR-CSRF", csrf).send(awsKeyInput("M", secret)),
       await member.post("/cloud-accounts/reset").set("X-DFIR-CSRF", csrf).send({ confirm: true }),
       await member.put("/cloud-accounts/x").set("X-DFIR-CSRF", csrf).send(awsKeyInput("M", secret)),
-      await member.delete("/cloud-accounts/x").set("X-DFIR-CSRF", csrf),
     ]) {
       expect(res.status).toBe(403);
     }
+    // The list answers everyone, cut to the cases they can write (none here); a delete of an
+    // account they cannot see is a 404 (#2347).
+    const list = await member.get("/cloud-accounts");
+    expect(list.status).toBe(200);
+    expect(list.body).toMatchObject({ admin: false, accounts: [] });
+    expect(list.body.keyPath).toBeUndefined();
+    expect((await member.delete("/cloud-accounts/x").set("X-DFIR-CSRF", csrf)).status).toBe(404);
     expect(existsSync(keyPath)).toBe(false);
     const ok = await admin
       .post("/cloud-accounts")
