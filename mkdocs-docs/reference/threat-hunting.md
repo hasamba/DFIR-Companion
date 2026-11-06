@@ -136,9 +136,9 @@ an empty result is a miss as before.
 ## Sigma Rules at Import
 
 Besides compiling a Sigma rule into a fleet hunt, the Companion runs bundled SigmaHQ rules over AWS
-CloudTrail and Entra ID sign-in and audit logs **while they are imported**. High and critical rules
+CloudTrail, Entra ID sign-in and audit logs and GCP Cloud Audit Logs **while they are imported**. High and critical rules
 raise the matching event's severity; lower levels only tag it. See
-[Importing → Sigma rules grade CloudTrail and Entra imports](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports).
+[Importing → Sigma rules grade CloudTrail, Entra and GCP imports](importing.md#sigma-rules-grade-cloudtrail-entra-and-gcp-imports).
 
 The Companion ships SigmaHQ release `r2026-07-01`; newer releases are installed from
 [Settings → Sigma rules](settings.md#sigma-rules) after you review what changes. The rules are licensed

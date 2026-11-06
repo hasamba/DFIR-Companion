@@ -35,6 +35,7 @@ describe("bundled Sigma rules", () => {
       "azure-auditlogs:loaded": 17,
       "azure-auditlogs:disabled": 1,
       "azure-auditlogs:refused": 26,
+      "gcp-audit:loaded": 15,
       "web-server:loaded": 76,
       "web-server:status": 5,
       "web-server:refused": 2,

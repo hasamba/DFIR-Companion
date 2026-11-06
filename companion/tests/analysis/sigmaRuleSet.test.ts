@@ -127,11 +127,11 @@ describe("buildSigmaRuleSet", () => {
   });
 
   it("reports a rule for a log source the Companion does not grade", () => {
-    const gcp = file(
-      "gcp.yml",
-      ruleText({ id: "g", product: "gcp", service: "gcp.audit", detection: "  sel:\n    a: b" }),
+    const okta = file(
+      "okta.yml",
+      ruleText({ id: "g", product: "okta", service: "okta", detection: "  sel:\n    a: b" }),
     );
-    expect(buildSigmaRuleSet([gcp], META).inventory[0].outcome).toBe("no-source");
+    expect(buildSigmaRuleSet([okta], META).inventory[0].outcome).toBe("no-source");
   });
 
   it("grades a second log source with nothing but a registry entry", () => {

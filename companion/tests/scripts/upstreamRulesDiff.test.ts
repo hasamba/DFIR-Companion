@@ -12,6 +12,7 @@ import {
   renderReport,
   summariseEventFile,
   type FetchFile,
+  type ListDir,
   type ListFiles,
 } from "../../scripts/upstreamRulesDiff.mjs";
 
@@ -249,6 +250,80 @@ describe("event-file groups — TrailDiscover (#2345)", () => {
     const empty: ListFiles = async (_repo, _dir, ref) => (ref === sha("b") ? new Map() : trees[sha("a")]);
     await expect(compareGroup(group, sha("a"), sha("b"), fetchFile, empty)).rejects.toThrow(/no event files/);
     await expect(compareGroup(group, sha("a"), sha("b"), fetchFile)).rejects.toThrow(/needs listFiles/);
+  });
+});
+
+describe("rule-file groups — Panther and Sentinel GCP (#2346)", () => {
+  const sha = (c: string) => c.repeat(40);
+  const panther = UPSTREAM_GROUPS.find((g) => g.id === "panther-gcp")!;
+  const DIR = "rules/gcp_audit_rules";
+  const listings: Record<string, Map<string, string>> = {
+    [sha("a")]: new Map([
+      [`${DIR}/gcp_gcs_public.py`, "h1"],
+      [`${DIR}/gcp_gcs_public.yml`, "h2"],
+      [`${DIR}/gcp_old_rule.py`, "h3"],
+    ]),
+    [sha("b")]: new Map([
+      [`${DIR}/gcp_gcs_public.py`, "h1-edited"],
+      [`${DIR}/gcp_gcs_public.yml`, "h2"],
+      [`${DIR}/gcp_new_rule.py`, "h4"],
+    ]),
+  };
+  const listDir: ListDir = async (_repo, dir, ref) => {
+    expect(dir).toBe(DIR);
+    return listings[ref];
+  };
+  const noFetch: FetchFile = async () => {
+    throw new Error("a rule-files group never fetches file content");
+  };
+
+  it("watches the Panther folder and both Sentinel GCP folders, each with its own marker", () => {
+    const byId = Object.fromEntries(UPSTREAM_GROUPS.map((g) => [g.id, g]));
+    expect(byId["panther-gcp"]).toMatchObject({
+      kind: "rule-files",
+      repo: "panther-labs/panther-analysis",
+      watchPath: DIR,
+      marker: "Panther upstream commit",
+    });
+    expect(byId["sentinel-gcp-audit"]).toMatchObject({
+      kind: "rule-files",
+      repo: "Azure/Azure-Sentinel",
+      watchPath: "Solutions/Google Cloud Platform Audit Logs/Analytic Rules",
+      marker: "Sentinel GCP Audit Logs upstream commit",
+    });
+    expect(byId["sentinel-gcp-iam"]).toMatchObject({
+      kind: "rule-files",
+      watchPath: "Solutions/GoogleCloudPlatformIAM/Analytic Rules",
+      marker: "Sentinel GCP IAM upstream commit",
+    });
+  });
+
+  it("reports added, removed and content-changed files from the listings alone", async () => {
+    const result = await compareGroup(panther, sha("a"), sha("b"), noFetch, undefined, listDir);
+    const diff = result.lists[0].diff;
+    expect(diff.added.map((e) => e.key)).toEqual([`${DIR}/gcp_new_rule.py`]);
+    expect(diff.removed.map((e) => e.key)).toEqual([`${DIR}/gcp_old_rule.py`]);
+    expect(diff.changed.map((c) => [c.key, c.before[1], c.after[1]])).toEqual([
+      [`${DIR}/gcp_gcs_public.py`, "h1", "h1-edited"],
+    ]);
+    expect(groupChanged(result)).toBe(true);
+    const body = renderReport([result]);
+    expect(body).toContain(`#### ${DIR}/ — 1 added, 1 removed, 1 changed`);
+    expect(issueTitle([result])).toContain("[upstream-rules panther-gcp@aaaaaaa]");
+  });
+
+  it("reports no change when every content hash is the same", async () => {
+    const same: ListDir = async () => new Map([[`${DIR}/x.py`, "h"]]);
+    const result = await compareGroup(panther, sha("a"), sha("b"), noFetch, undefined, same);
+    expect(groupChanged(result)).toBe(false);
+  });
+
+  it("fails loudly when the folder is empty or gone, or listDir is missing", async () => {
+    const empty: ListDir = async (_r, _d, ref) => (ref === sha("b") ? new Map() : listings[sha("a")]);
+    await expect(compareGroup(panther, sha("a"), sha("b"), noFetch, undefined, empty)).rejects.toThrow(
+      /no files in "rules\/gcp_audit_rules\/"/,
+    );
+    await expect(compareGroup(panther, sha("a"), sha("b"), noFetch)).rejects.toThrow(/needs listDir/);
   });
 });
 

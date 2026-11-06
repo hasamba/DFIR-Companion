@@ -13,6 +13,7 @@ import {
   AWS_CLOUDTRAIL,
   AZURE_AUDIT_LOGS,
   AZURE_SIGNIN_LOGS,
+  GCP_AUDIT,
   fieldResolvers,
   type SigmaLogSourceDef,
 } from "../../../../src/analysis/sigmaLogSources.js";
@@ -21,6 +22,7 @@ import type { SigmaRuleSet } from "../../../../src/analysis/sigmaRuleSet.js";
 import type { SigmaCondition, SigmaFieldMatch, SigmaRule } from "../../../../src/analysis/sigmaRuleTypes.js";
 import { cloudTrailBase } from "./aws.js";
 import { auditBase, signInBase } from "./m365.js";
+import { gcpBase } from "./gcp.js";
 import type { DetectionSample } from "./types.js";
 
 type Row = Record<string, unknown>;
@@ -39,6 +41,8 @@ export const CLOUD_SIGMA_SOURCES: Record<
   },
   "azure-signinlogs": { def: AZURE_SIGNIN_LOGS, base: () => signInBase(), kind: "m365" },
   "azure-auditlogs": { def: AZURE_AUDIT_LOGS, base: () => auditBase(), kind: "m365" },
+  // A neutral read call; a rule that names a method overwrites it (#2346).
+  "gcp-audit": { def: GCP_AUDIT, base: () => gcpBase(), kind: "gcp" },
 };
 
 export interface SigmaBuild {

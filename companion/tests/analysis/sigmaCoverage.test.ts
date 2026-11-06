@@ -5,6 +5,7 @@ import {
   SIGMA_LOG_SOURCES,
   SIGMA_ORIGIN_CLOUDTRAIL,
   SIGMA_ORIGIN_ENTRA,
+  SIGMA_ORIGIN_GCP,
   SIGMA_ORIGIN_WEB,
 } from "../../src/analysis/sigmaLogSources.js";
 import { COMBINED_LOG_SOURCE } from "../../src/analysis/combinedLogImport.js";
@@ -128,5 +129,6 @@ describe("Sigma log source origins", () => {
     expect(await src("awsImport.ts")).toContain(`sources: [${JSON.stringify(SIGMA_ORIGIN_CLOUDTRAIL)}]`);
     expect(await src("m365Import.ts")).toContain(`sources: [${JSON.stringify(SIGMA_ORIGIN_ENTRA)}]`);
     expect(await src("entraAuditImport.ts")).toContain(`sources: [${JSON.stringify(SIGMA_ORIGIN_ENTRA)}]`);
+    expect(await src("gcpRow.ts")).toContain(`sources: [${JSON.stringify(SIGMA_ORIGIN_GCP)}]`);
   });
 });

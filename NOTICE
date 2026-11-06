@@ -117,3 +117,36 @@ program already grades), grouped into tagger rules, and given severities and
 conditions that are this program's own judgment, not TrailDiscover's. No
 descriptions, incident texts or other prose from TrailDiscover are included.
 TrailDiscover's author does not endorse this program.
+
+
+================================================================================
+GCP detection rule sets — Panther Labs, Microsoft (Azure Sentinel), Google
+(Chronicle), Rhino Security Labs
+================================================================================
+
+Used in: companion/data/tags.yaml (the "GCP audit — Panther / Sentinel / Chronicle
+         gaps (#2346)" section, rules gcp_*)
+
+The detection logic of a subset of the rules below was re-expressed as tagger rules
+over this program's rendered GCP Cloud Audit Log rows. No rule file, query or code
+was copied; the method names, the conditions that could be expressed and the
+grades are this program's own judgment. None of these projects endorses this
+program.
+
+- panther-labs/panther-analysis (https://github.com/panther-labs/panther-analysis),
+  rules/gcp_audit_rules at upstream commit 30588fdcfd6ac9e55ecb3c85f7e8e74c996220e4.
+  Copyright Panther Labs, Inc. Licensed under the Apache License, Version 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0).
+- Azure/Azure-Sentinel (https://github.com/Azure/Azure-Sentinel), "Solutions/Google
+  Cloud Platform Audit Logs/Analytic Rules" at upstream commit
+  e12f3355af3523d3859588c4ecff05ba2df50b14 and "Solutions/GoogleCloudPlatformIAM/
+  Analytic Rules" at upstream commit 56ee993e6bc86db9487754f9efe517019c93a03c.
+  Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+- chronicle/detection-rules (https://github.com/chronicle/detection-rules),
+  rules/community/gcp at upstream commit e2551bddbae76e8a367fd64c9275e7417a57777a.
+  Copyright Google LLC. Licensed under the Apache License, Version 2.0.
+- RhinoSecurityLabs/GCP-IAM-Privilege-Escalation
+  (https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation), at upstream
+  commit 75f38d73dbae5efd9d981bb01993d97c23fdedb0: its list of permissions that
+  allow privilege escalation was used as a reference for which methods matter.
+  Copyright Rhino Security Labs. Licensed under the BSD 3-Clause License.

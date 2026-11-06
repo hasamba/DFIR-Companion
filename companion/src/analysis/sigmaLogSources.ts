@@ -39,10 +39,11 @@ export interface SigmaLogSourceDef {
 }
 
 // The importers' own `sources` labels (awsImport.ts, m365Import.ts + entraAuditImport.ts,
-// combinedLogImport.ts COMBINED_LOG_SOURCE). sigmaCoverage.test.ts pins them to those files.
+// combinedLogImport.ts COMBINED_LOG_SOURCE, gcpRow.ts). sigmaCoverage.test.ts pins them to those files.
 export const SIGMA_ORIGIN_CLOUDTRAIL = "AWS CloudTrail";
 export const SIGMA_ORIGIN_ENTRA = "Entra ID";
 export const SIGMA_ORIGIN_WEB = "Web Access Log";
+export const SIGMA_ORIGIN_GCP = "GCP Audit";
 
 const same = (...names: string[]): Record<string, string[]> =>
   Object.fromEntries(names.map((n) => [n.toLowerCase(), [n]]));
@@ -220,6 +221,62 @@ export const AZURE_AUDIT_LOGS: SigmaLogSourceDef = {
   origins: [SIGMA_ORIGIN_ENTRA],
 };
 
+// GCP Cloud Audit Logs (#2346): a Cloud Logging LogEntry whose `protoPayload` is an AuditLog, as
+// cloudActivityImport.ts reads it. SigmaHQ's GCP rules use two naming schemes: the Elastic
+// integration's `gcp.audit.*` names and a `data.protoPayload.*` export wrapper. Both name AuditLog
+// fields, read at their LogEntry paths. Two wrapper names point at fields that are NOT inside
+// protoPayload in a real LogEntry — the monitored-resource type and the log name — so those read
+// the LogEntry's own top-level fields (an exact entry wins over the prefix below). The importer
+// accepts `jsonPayload` in place of `protoPayload`, so every payload path reads both.
+
+/** A LogEntry `logName` (`projects/p/logs/cloudaudit.googleapis.com%2Factivity`) as a rule may
+ * write it: the whole name, the log id after `/logs/`, and that id URL-decoded. */
+function gcpLogName(record: Row): SigmaFieldLookup {
+  const raw = firstText(record, "logName");
+  if (raw === undefined) return found([]);
+  const at = raw.lastIndexOf("/logs/");
+  if (at < 0) return found([raw]);
+  const id = raw.slice(at + "/logs/".length);
+  let decoded = id;
+  try {
+    decoded = decodeURIComponent(id);
+  } catch {
+    // A malformed escape is kept as written.
+  }
+  return found([...new Set([raw, id, decoded])]);
+}
+
+const payload = (path: string): string[] => [`protoPayload.${path}`, `jsonPayload.${path}`];
+
+export const GCP_AUDIT: SigmaLogSourceDef = {
+  id: "gcp-audit",
+  label: "GCP Cloud Audit Logs",
+  matches: (ls) => is(ls, "gcp", "gcp.audit"),
+  fields: {
+    exact: {
+      // Elastic GCP integration names, each the AuditLog field of the same meaning.
+      "gcp.audit.method_name": payload("methodName"),
+      "gcp.audit.service_name": payload("serviceName"),
+      "gcp.audit.resource_name": payload("resourceName"),
+      "gcp.audit.authentication_info.principal_email": payload("authenticationInfo.principalEmail"),
+      "gcp.audit.authorization_info.permission": payload("authorizationInfo.permission"),
+      "gcp.audit.authorization_info.granted": payload("authorizationInfo.granted"),
+      "gcp.audit.request_metadata.caller_ip": payload("requestMetadata.callerIp"),
+      "gcp.audit.status.code": payload("status.code"),
+      "gcp.audit.status.message": payload("status.message"),
+      // The two top-level LogEntry fields under the `data.protoPayload` wrapper (see above).
+      "data.protopayload.resource.type": ["resource.type"],
+      "data.protopayload.logname": [gcpLogName],
+    },
+    prefixes: [
+      { from: "data.protopayload.", to: ["protoPayload.", "jsonPayload."] },
+      { from: "protopayload.", to: ["protoPayload."] },
+    ],
+  },
+  indexFields: ["gcp.audit.method_name"],
+  origins: [SIGMA_ORIGIN_GCP],
+};
+
 const category = (ls: SigmaLogsource, name: string): boolean =>
   ls.category?.toLowerCase() === name && !ls.product && !ls.service;
 
@@ -287,6 +344,7 @@ export const SIGMA_LOG_SOURCES: readonly SigmaLogSourceDef[] = [
   AWS_CLOUDTRAIL,
   AZURE_SIGNIN_LOGS,
   AZURE_AUDIT_LOGS,
+  GCP_AUDIT,
   WEB_SERVER,
   WEB_PROXY,
 ];

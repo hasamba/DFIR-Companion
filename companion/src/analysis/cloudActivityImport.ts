@@ -50,6 +50,8 @@ import type { ImportDebugRecorder } from "./importDebug.js";
 import { gateRecords, gateRows, isDuplicateRecord, type CloudRecordParseOptions } from "./cloudRecordGate.js";
 import { readCloudRecords } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
+import { applySigmaToRecordRows, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
+import { GCP_AUDIT } from "./sigmaLogSources.js";
 
 type Row = Record<string, unknown>;
 
@@ -60,6 +62,8 @@ export interface CloudActivityImportOptions extends CloudRecordParseOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
+  /** The Sigma snapshot this import is graded with (#2346) — GCP audit records only. */
+  sigma?: SigmaGradingSnapshot;
 }
 
 export interface CloudActivityParseResult {
@@ -78,6 +82,8 @@ export interface CloudActivityParseResult {
   mapped?: MappedEvent[];
   /** For each `mapped` row, the index (in this batch) of the record it came from. */
   rowRecords?: number[];
+  /** GCP rows a Sigma rule matched (#2346); 0 without a snapshot. */
+  sigmaRowsMatched?: number;
 }
 
 type Rule = [RegExp, Severity, string[]];
@@ -425,6 +431,26 @@ export function azureRemoteExecutionTarget(
   return { id: `${resource.toLowerCase() || "unknown"}#${recordId}`, display: short.slice(0, 160) };
 }
 
+/**
+ * One GCP record's rows graded by the import's Sigma snapshot (#2346). A record that became several
+ * rows (one per binding delta) carries the verdict on its first row only, the Entra-audit rule.
+ * Azure Activity records never come here: no Sigma log source reads them.
+ */
+function gradeGcpRows(
+  rows: MappedEvent[],
+  rec: Row,
+  opts: CloudActivityImportOptions,
+  onMatch: () => void,
+): MappedEvent[] {
+  const snapshot = opts.sigma;
+  if (!snapshot || rows.length === 0) return rows;
+  const matches = sigmaMatchesFor(snapshot, GCP_AUDIT.id, rec, (n) =>
+    opts.debug?.observed("sigma_incomplete", n),
+  );
+  if (matches.length) onMatch();
+  return applySigmaToRecordRows(rows, matches, snapshot);
+}
+
 // ───────────────────────────── classification ─────────────────────────────
 
 function isGcp(rec: Row): boolean {
@@ -486,7 +512,8 @@ function parseActivityRecords(
   const gcpRecords: Row[] = [];
   const azureRecords: Row[] = [];
   let sawGcp = false,
-    sawAzure = false;
+    sawAzure = false,
+    sigmaRows = 0;
 
   // Over the whole upload: coverage describes the export itself, duplicates included (#2301).
   const indexBase = opts.recordIndexBase ?? 0;
@@ -499,7 +526,12 @@ function parseActivityRecords(
     if (isGcp(rec)) {
       gcpRecords.push(rec);
       if (duplicate) return;
-      const rows = gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${indexBase + recordIndex}`));
+      const rows = gradeGcpRows(
+        gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${indexBase + recordIndex}`)),
+        rec,
+        opts,
+        () => sigmaRows++,
+      );
       if (rows.length) sawGcp = true;
       // No methodName: the record is never mapped (#1736).
       else opts.debug?.skipped("missing_required_field");
@@ -523,10 +555,24 @@ function parseActivityRecords(
     ...gcpCoverage(gcpRecords).map((d) => ({ ...d, uploadId })),
     ...azureCoverage(azureRecords).map((d) => ({ ...d, uploadId })),
   ];
+  if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (opts.rowsOnly) {
     const format = sawGcp && sawAzure ? "mixed" : sawGcp ? "gcp" : sawAzure ? "azure" : "empty";
     const iocs = [...iocSink.values()].slice(0, maxIocs);
-    return { events: [], iocs, total, kept: 0, dropped: 0, groups: 0, format, coverage, mapped, rowRecords };
+    const sigmaRowsMatched = sigmaRows;
+    return {
+      events: [],
+      iocs,
+      total,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      format,
+      coverage,
+      mapped,
+      rowRecords,
+      sigmaRowsMatched,
+    };
   }
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty", coverage };
@@ -600,5 +646,6 @@ function parseActivityRecords(
     groups,
     format,
     coverage,
+    sigmaRowsMatched: sigmaRows,
   };
 }

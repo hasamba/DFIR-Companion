@@ -71,7 +71,7 @@ const notChecked = builds
     (b) => `${b.source} ${b.title} — ${b.notBuilt ?? "the built sample did not fire through the importer"}`,
   );
 
-const CLOUD_TAGGER = /^(?:ts_aws|ts_gcp|ts_m365|ts_entra|cloud_|mas_|td_aws_)/;
+const CLOUD_TAGGER = /^(?:ts_aws|ts_gcp|ts_m365|ts_entra|cloud_|mas_|td_aws_|gcp_)/;
 const gradedCloudTagger = TAGGER_RULES.rules.filter(
   (r) => CLOUD_TAGGER.test(r.id) && r.severity && r.severity !== "Info",
 );

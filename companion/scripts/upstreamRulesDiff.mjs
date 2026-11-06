@@ -2,7 +2,8 @@
  * Pure logic for the weekly upstream rule-list check (#2343).
  *
  * Some built-in tagger rules in data/tags.yaml are HAND-PORTED from upstream lists — the five
- * Microsoft-Analyzer-Suite blacklists (#2306) and the TrailDiscover AWS event files (#2345). A port is a judgment call (what to leave out,
+ * Microsoft-Analyzer-Suite blacklists (#2306), the TrailDiscover AWS event files (#2345) and the
+ * Panther and Sentinel GCP rule folders (#2346). A port is a judgment call (what to leave out,
  * what grade to give), so the check never edits rules: it compares the upstream lists at the commit
  * the port came from with the lists at upstream's newest commit, and the workflow files ONE issue
  * listing what was added, removed or changed per list. A person then re-ports with the same
@@ -13,13 +14,17 @@
  * so the workflow runs it under bare `node` with no `npm ci`; upstreamRulesDiff.d.mts carries the
  * types for the tests.
  *
- * Adding a source (the GCP port, #2346): append one entry to UPSTREAM_GROUPS and put a matching
- * "<marker>: <sha> (<date>)" line in that port's tags.yaml header. A group is one of two kinds:
+ * Adding a source: append one entry to UPSTREAM_GROUPS and put a matching
+ * "<marker>: <sha> (<date>)" line in that port's tags.yaml header. A group is one of three kinds:
  *   "csv-lists"   (the default) a fixed set of CSV files, each diffed entry by entry (first column = key);
  *   "event-files" one JSON file per entry under `watchPath` (TrailDiscover's events/<Service>/<Event>.json),
  *                 listed at both commits with `listFiles`. Only the fields the port used are compared
  *                 (the operation, usedInWild and the ATT&CK ids): a new incident link or a reworded
  *                 description is not a change, a flipped usedInWild flag or a new technique is.
+ *   "rule-files"  every file directly in `watchPath` (a Panther or Sentinel rule folder), listed at both
+ *                 commits with `listDir` (path -> content hash, the git blob sha). A rule is code or a
+ *                 query, so nothing is parsed: a file added, removed or whose content hash changed is
+ *                 reported, and a person reads the upstream diff.
  */
 
 /** Matches "<marker>: <40-hex sha> (<YYYY-MM-DD>)" on a `#` comment line of tags.yaml. */
@@ -54,6 +59,34 @@ export const UPSTREAM_GROUPS = Object.freeze([
     marker: "TrailDiscover upstream commit",
     // The event files are the source; docs/events.json is a generated copy that can lag behind them.
     watchPath: "events",
+    files: Object.freeze([]),
+  }),
+  // GCP (#2346). Read as directory listings, not a recursive tree: Azure-Sentinel's tree is too large.
+  Object.freeze({
+    id: "panther-gcp",
+    kind: "rule-files",
+    name: "Panther GCP audit rules",
+    repo: "panther-labs/panther-analysis",
+    marker: "Panther upstream commit",
+    watchPath: "rules/gcp_audit_rules",
+    files: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "sentinel-gcp-audit",
+    kind: "rule-files",
+    name: "Sentinel GCP Audit Logs analytic rules",
+    repo: "Azure/Azure-Sentinel",
+    marker: "Sentinel GCP Audit Logs upstream commit",
+    watchPath: "Solutions/Google Cloud Platform Audit Logs/Analytic Rules",
+    files: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "sentinel-gcp-iam",
+    kind: "rule-files",
+    name: "Sentinel GCP IAM analytic rules",
+    repo: "Azure/Azure-Sentinel",
+    marker: "Sentinel GCP IAM upstream commit",
+    watchPath: "Solutions/GoogleCloudPlatformIAM/Analytic Rules",
     files: Object.freeze([]),
   }),
 ]);
@@ -163,8 +196,13 @@ export function hasChanges(diff) {
  * to the file text or reject; a rejection (a renamed or deleted upstream file) propagates — the
  * check fails loudly rather than reporting "no change".
  */
-export async function compareGroup(group, base, head, fetchFile, listFiles) {
+export async function compareGroup(group, base, head, fetchFile, listFiles, listDir) {
   if (base === head) return { group, base, head, lists: [] };
+  if (group.kind === "rule-files") {
+    if (typeof listDir !== "function") throw new Error(`${group.name}: a rule-files group needs listDir`);
+    const diff = await diffRuleFiles(group, base, head, listDir);
+    return { group, base, head, lists: [{ path: `${group.watchPath}/`, diff }] };
+  }
   if (group.kind === "event-files") {
     if (typeof listFiles !== "function")
       throw new Error(`${group.name}: an event-files group needs listFiles`);
@@ -254,6 +292,34 @@ export async function diffEventFiles(group, base, head, fetchFile, listFiles) {
   return diffEntries(
     await summarise(baseFiles, headFiles, base),
     await summarise(headFiles, baseFiles, head),
+  );
+}
+
+// ── Rule-file groups (Panther, Sentinel) ──────────────────────────────────────────────────────
+export const RULE_FILE_HEADER = Object.freeze(["file", "content"]);
+
+/**
+ * Diff the files directly in one rule folder between two commits. `listDir(repo, dir, ref)` resolves
+ * to a Map of path -> content hash (the blob sha) for the files in `dir`. An empty folder at either
+ * commit throws — a moved folder never reads as "every rule removed".
+ */
+export async function diffRuleFiles(group, base, head, listDir) {
+  const [baseFiles, headFiles] = await Promise.all(
+    [base, head].map(async (ref) => {
+      const files = await listDir(group.repo, group.watchPath, ref);
+      if (!(files instanceof Map) || files.size === 0) {
+        throw new Error(`${group.repo}@${ref}: no files in "${group.watchPath}/" — was it moved?`);
+      }
+      return files;
+    }),
+  );
+  const entries = (files) =>
+    new Map(
+      [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, hash]) => [path, [path, String(hash)]]),
+    );
+  return diffEntries(
+    { header: [...RULE_FILE_HEADER], entries: entries(baseFiles) },
+    { header: [...RULE_FILE_HEADER], entries: entries(headFiles) },
   );
 }
 

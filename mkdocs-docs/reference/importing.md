@@ -1821,10 +1821,10 @@ three feeds the beacon detector (an interval-aggregated row would read as a low-
   compare to the other two providers. **The records are sampled**: a flow that does not appear is
   not evidence that no traffic occurred, and the import note says so.
 
-### Sigma rules grade CloudTrail and Entra imports
+### Sigma rules grade CloudTrail, Entra and GCP imports
 
-AWS CloudTrail records and Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
-Analytics exports) are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
+AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
+Analytics exports), and **GCP Cloud Audit Log** records are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
 they are imported. No AI is involved, and the same file always gets the same result.
 
 - **A high or critical rule raises the event** to the rule's level. The description starts with
@@ -1844,11 +1844,19 @@ they are imported. No AI is involved, and the same file always gets the same res
   saying why. A denied or otherwise failed attempt can still be raised. A rule that checks the error
   code itself still grades.
 - **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
-- **An Entra audit record that becomes several rows** carries its match on the first row, with a note
-  that the rule matched the whole record.
+- **An Entra audit record or a GCP record that becomes several rows** (a GCP IAM policy change with
+  several binding changes) carries its match on the first row, with a note that the rule matched the
+  whole record.
+- **GCP records only.** A GCP Cloud Audit Log file can hold Azure Activity Log records too; those are
+  never graded by Sigma, and the import note names the Sigma release only when the file held GCP records.
+  This applies to file imports and to live GCP collection alike.
 
-Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs` and
-`azure/auditlogs`. A rule is not run when it uses a field the Companion cannot read in these exports
+Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs`,
+`azure/auditlogs` and `gcp/audit`. The 15 bundled GCP audit rules are all `medium`, so at the default
+minimum level (high) they **only tag** GCP events — for example `Sigma (medium, tag only): Google Cloud
+Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
+name GCP methods the way another log pipeline spells them, so they may match fewer real records than
+their titles suggest; the Companion runs them as SigmaHQ wrote them. A rule is not run when it uses a field the Companion cannot read in these exports
 (for example `properties.message`), and six rules that need tenant-specific values (an application id,
 a country list, an approved-inviter list) or that match routine sign-ins are shipped switched off.
 The server log lists, per source, how many rules loaded, were disabled, or were refused.
@@ -1861,7 +1869,7 @@ report's chain-of-custody appendix.
 
 An import keeps the grading it got. To apply a newer release, a disabled rule or a new exclusion to a
 case you already imported, use **Re-grade this case** in [Settings → Sigma rules](settings.md#sigma-rules).
-It parses the stored import files again (CloudTrail, Entra and web access logs), shows a preview of
+It parses the stored import files again (CloudTrail, Entra, GCP audit and web access logs), shows a preview of
 what would change, and changes only the Sigma part of the rows the import kept. It never adds rows;
 re-import the file for records the import did not keep.
 
@@ -2702,6 +2710,41 @@ techniques that had no rule of their own:
     allow it). A weekly check in the project's repository opens an issue when TrailDiscover adds an
     operation or changes its used-in-the-wild flag or techniques, so the rules can be brought up to
     date in a later rule pack.
+- **GCP audit rules from Panther, Sentinel and Chronicle** — the `gcp_*` rules fill gaps in GCP Cloud
+  Audit Log coverage, ported from [Panther](https://github.com/panther-labs/panther-analysis) GCP
+  audit rules (Apache-2.0, the main source), the Azure Sentinel GCP Audit Logs and GCP IAM analytic
+  rules (MIT) and Google's [Chronicle](https://github.com/chronicle/detection-rules) GCP rules
+  (Apache-2.0), with Rhino Security Labs'
+  [GCP privilege-escalation list](https://github.com/RhinoSecurityLabs/GCP-IAM-Privilege-Escalation)
+  (BSD-3-Clause) as the reference for which methods matter. A call the GCP importer, a bundled Sigma
+  GCP rule or an earlier rule already grades or tags is left out — service-account keys, access-token
+  minting and signing, logging sinks, audit-config changes, owner and high-privilege role grants,
+  public or outside members, firewall changes and disk / image / snapshot sharing are all graded by
+  the importer already. These grade:
+
+    | Grade | Calls | ATT&CK |
+    |---|---|---|
+    | **High** | a GCS object created whose name looks like a ransom note (`HOW_TO_DECRYPT_YOUR_FILES.txt`, `RANSOM_NOTE.html`, …) | T1486 |
+    | **Medium** | a custom IAM role updated (`UpdateRole`) — permissions added to a role the caller holds | T1098.003 |
+    | **Medium** | an organization policy deleted or cleared (`OrgPolicy.DeletePolicy`, `ClearOrgPolicy`) | T1484 |
+    | **Medium** | a project ownership invitation sent (`InsertProjectOwnershipInvite`) | T1098.003 |
+    | **Medium** | a GCS HMAC key or an API key created (`storage.hmacKeys.create`, `ApiKeys.CreateKey`) | T1098.001 |
+    | **Medium** | a workload identity pool provider or a workforce pool created or updated, or an inbound SSO profile created or updated — an outside identity provider trusted | T1484.002 |
+    | **Medium** | a Cloud Logging log bucket deleted (`ConfigServiceV2.DeleteBucket`) | T1562.008 |
+    | **Medium** | a VPC Flow Logs configuration deleted (`DeleteVpcFlowLogsConfig`) | T1562.008 |
+
+    A graded rule does not fire when the call was denied (the importer already grades a denied call
+    Medium) or when a Google-managed service agent made it. Where the sources disagree on a grade the
+    lower one is used. Other calls are **tagged only**, so you can find them in the super-timeline:
+    code and workload deployments under a service account (Cloud Build, Deployment Manager, Cloud
+    Functions, Cloud Run, Cloud Scheduler, instance metadata) — everyday CI/CD that the importer
+    already reads for the attached service account — policy, security-service and logging changes,
+    key / secret / data destruction, API key reads, and service-account and role enumeration. The rules
+    read the row as the importer writes it, which does not show the request body: a firewall rule
+    opened to `0.0.0.0/0`, flow logs switched off on a subnet, DNSSEC turned off or an owner invitation
+    to an outside domain cannot be told apart from a harmless change yet. Elastic rules are not used.
+    A weekly check in the project's repository opens an issue when a Panther or Sentinel GCP rule file
+    is added, removed or changed.
 
 **Size limits.** The Import button reads a file of up to 32 MB in the browser and sends it
 (server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file, or any `.gz` file, is **uploaded** as it

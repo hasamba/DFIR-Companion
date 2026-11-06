@@ -1473,6 +1473,286 @@ td_aws_resource_development:
   tags: ['traildiscover', 'resource_development']
   view: 'TrailDiscover (AWS in the wild)'
 
+# ─────────────────────────── GCP audit — Panther / Sentinel / Chronicle gaps (#2346) ───────────────────────────
+# Ported with the #2306 judgment from three permissive GCP rule sets; the logic is re-expressed over
+# the rendered row, nothing is copied verbatim. Licences and credit: see NOTICE.
+# - panther-labs/panther-analysis, rules/gcp_audit_rules/*.py + *.yml (Apache-2.0) — primary source.
+# Panther upstream commit: 30588fdcfd6ac9e55ecb3c85f7e8e74c996220e4 (2026-04-07)
+# - Azure/Azure-Sentinel, "Solutions/Google Cloud Platform Audit Logs/Analytic Rules" and
+#   "Solutions/GoogleCloudPlatformIAM/Analytic Rules" (MIT).
+# Sentinel GCP Audit Logs upstream commit: e12f3355af3523d3859588c4ecff05ba2df50b14 (2026-07-02)
+# Sentinel GCP IAM upstream commit: 56ee993e6bc86db9487754f9efe517019c93a03c (2025-12-15)
+# - chronicle/detection-rules, rules/community/gcp/*.yaral (Apache-2.0).
+# Chronicle upstream commit: e2551bddbae76e8a367fd64c9275e7417a57777a (2025-05-01)
+# - RhinoSecurityLabs/GCP-IAM-Privilege-Escalation (BSD-3-Clause), the list of permissions that allow
+#   privilege escalation — used as a reference for WHICH methods matter, no code is used.
+# Rhino upstream commit: 75f38d73dbae5efd9d981bb01993d97c23fdedb0 (2025-10-06)
+# Each SHA is the newest upstream commit touching that path when the port was made (2026-11-06). The
+# weekly .github/workflows/upstream-rules-check.yml compares the Panther and both Sentinel folders
+# (file list + per-file content hash) from these commits to upstream's newest and opens an issue
+# when they changed (#2343). Chronicle and Rhino are recorded but not watched. A re-port moves the
+# SHA and date forward in the same PR. elastic/detection-rules is NOT used (Elastic License 2.0).
+#
+# WHAT A RULE CAN READ: the rendered GCP row, `GCP <methodName> (<service>) by <principal> from <ip>
+# on <resource>` (cloudActivityImport.ts head, pinned by tests/analysis/tagsYamlGcpPorted.test.ts),
+# then the importer's own reading of bindings, logging changes, credentials, keys and attachments.
+# The request body is NOT rendered, so conditions on it cannot be expressed and stay out:
+# Sentinel / Chronicle "firewall opened to 0.0.0.0/0" (request.sourceRanges), Panther / Sentinel
+# "VPC flow logs disabled" on a subnet patch (request.enableFlowLogs) or a config update (state),
+# Sentinel "DNSSEC disabled" (response zoneContext), Chronicle "SCC service disabled"
+# (service_enablement_state), Panther "external member invited as owner" (request.member domain),
+# Panther "KMS key granted to the GCS service account" (request.policy). Neither is the
+# authorizationInfo permission list rendered, so the Panther rules that test a granted permission
+# are re-expressed on the method that carries it.
+#
+# LEFT OUT because something already grades or tags it:
+# - the GCP importer (gcpSeverityRules.ts GCP_RULES, gcpIamRecord.ts bindings + roles, the logging
+#   reader for sinks / exclusions / audit-config deltas, the iamcredentials reader, the key reader and
+#   the workload-attachment reader): service-account key create / upload, getAccessToken /
+#   generateIdToken / signBlob / signJwt / implicitDelegation (Rhino 4, 5, 6, 7, 8), sink delete /
+#   update, data-access logging disabled or a principal exempted (Sentinel, Chronicle), owner /
+#   editor / high-privileged roles granted (Sentinel, Chronicle), public or out-of-domain members
+#   (Panther gcs_public, iam_corp_email; Chronicle gmail domains — cloud_gcp_external_member_added
+#   above), disk / image / snapshot setIamPolicy and snapshot insert, firewall insert / patch /
+#   delete, compute.instances.insert (Rhino 11 — the importer grades it Low on purpose, with the
+#   attached service account read as an attachment, not credential minting), secret access;
+# - the bundled SigmaHQ GCP audit rules (data/sigma/rules/cloud/gcp/audit, at any level): bucket,
+#   DNS zone, SQL instance / user, VPN tunnel, packet mirroring, service-account disable / delete /
+#   modify, GKE role bindings / secrets / cron jobs / admission webhooks, access-policy delete;
+# - existing rules above: ts_gcp_bucket_* and cloud_gcp_*.
+# Also left out: Panther / Chronicle rules that need a count over time or a baseline (bulk deletion,
+# bulk KMS encryption, BigQuery large scan, unused regions, multiple denials, Tor exit nodes) and the
+# Panther per-organisation lists (privileged groups, expected domain); GetIamPolicy and
+# TestIamPermissions (Panther enumeration, Info) are on almost every console page view.
+#
+# GRADES: Medium unless the comment says otherwise. Where sources disagree the lower grade is used
+# (the reason is in the rule's comment); a Panther catch-all at Info (privileged operation, custom
+# role changes) leaves the call tag-only unless a dedicated rule grades it. Every graded rule
+# leaves out:
+# - a failed call (`[DENIED…]`): the importer already grades a failed call Medium as a probe;
+# - a Google-managed service agent (service-<n>@…, <n>@cloudservices…, …@gcp-sa-…), which makes these
+#   calls on the project's behalf.
+
+gcp_iam_custom_role_updated:
+  description: GCP custom IAM role updated — permissions can be added to a role the caller already holds
+  # Medium: Rhino privilege-escalation method 3 (iam.roles.update). Panther grades it High
+  # (iam_roles_update_privilege_escalation) and Info (iam_custom_role_changes) — the lower dedicated
+  # grade of the two sets is used, as routine role maintenance looks the same. The importer's
+  # role-change entry is meant to grade this Medium but its pattern does not match the real method
+  # name (google.iam.admin.v1.UpdateRole), so this rule is the only grade.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?UpdateRole \(iam\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_iam', 'privilege_escalation', 'rhino_privesc']
+  mitre: ['T1098.003']
+  severity: Medium
+  view: 'GCP IAM'
+
+gcp_org_policy_removed:
+  description: GCP organization policy deleted or cleared — a guardrail constraint no longer applies
+  # Medium: Sentinel (GCPOrgPolicyDeletion) and Chronicle (iam_organization_policy_updated_or_deleted)
+  # grade any delete or update High; Rhino lists orgpolicy.policy.set as privilege escalation; Panther
+  # lists it at Info. Only a deletion / clear is graded: whether an update weakens the policy is in the
+  # request body, which is not rendered (updates are tag-only below). Medium, not High: removing a
+  # constraint is also a planned change.
+  all:
+    - { field: description, regex: '^GCP (?:(?:[\w.-]+\.)?OrgPolicy\.DeletePolicy \(orgpolicy\)|(?:[\w.-]+\.)?ClearOrgPolicy \(cloudresourcemanager\))', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_org_policy', 'defense_evasion']
+  mitre: ['T1484']
+  severity: Medium
+  view: 'GCP IAM'
+
+gcp_project_ownership_invite:
+  description: GCP project ownership invitation sent — the console's path for making an outside account an owner
+  # Medium: Panther (invite_external_user_as_owner) grades High when the invited member is outside the
+  # caller's domain. The member is in the request body, which is not rendered, so the domain cannot be
+  # checked; the invitation flow itself is used for accounts outside the organisation.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?InsertProjectOwnershipInvite \(', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_iam', 'persistence', 'owner_invite']
+  mitre: ['T1098.003']
+  severity: Medium
+  view: 'GCP IAM'
+
+gcp_hmac_key_created:
+  description: GCS HMAC key created — a long-lived access key / secret pair for a service account
+  # Medium: Rhino privilege-escalation method 15; Panther grades it High (storage_hmac_keys_create) and
+  # Info in its catch-all list. A credential minted for a service account, the same class as a
+  # service-account key, but HMAC keys are also issued for S3-compatible tools, so Medium.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?hmacKeys\.create \(storage\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_credentials', 'persistence', 'rhino_privesc']
+  mitre: ['T1098.001']
+  severity: Medium
+  view: 'GCP credentials'
+
+gcp_api_key_created:
+  description: GCP API key created
+  # Medium: Rhino privilege-escalation method 16 (serviceusage.apiKeys.create); Panther grades it High
+  # (serviceusage_apikeys_create_privilege_escalation) and Info in its catch-all list. Developers
+  # create API keys for routine work too, so Medium.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?ApiKeys\.CreateKey \(apikeys\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_credentials', 'persistence', 'rhino_privesc']
+  mitre: ['T1098.001']
+  severity: Medium
+  view: 'GCP credentials'
+
+gcp_identity_federation_changed:
+  description: GCP workload identity pool provider or workforce pool created or updated — an outside identity provider trusted
+  # Medium: Panther grades both High (workload_identity_pool_created_or_updated,
+  # workforce_pool_created_or_updated). A new or changed federation trust lets identities from
+  # another provider act in the project — persistence when an attacker sets it — but it is also
+  # how CI systems are connected, so Medium.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:WorkloadIdentityPools\.(?:Create|Update)WorkloadIdentityPoolProvider|WorkforcePools\.(?:Create|Update)WorkforcePool) \(iam\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_iam', 'persistence', 'federation']
+  mitre: ['T1484.002']
+  severity: Medium
+  view: 'GCP IAM'
+
+gcp_inbound_sso_profile_changed:
+  description: Google inbound SSO profile created or updated — the identity provider users sign in through changed
+  # Medium: Panther grades it High (inbound_sso_profile_created_or_updated). Changing the SAML / OIDC
+  # provider lets whoever controls it sign in as the organisation's users; also a rare planned change.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?inboundSsoProfile(?:Created|Updated) \(', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+  tags: ['gcp_iam', 'persistence', 'federation']
+  mitre: ['T1484.002']
+  severity: Medium
+  view: 'GCP IAM'
+
+gcp_log_bucket_deleted:
+  description: Cloud Logging log bucket deleted — the logs it stored go with it
+  # Medium: Panther (log_bucket_or_sink_deleted) grades a log bucket or sink deletion Medium. The
+  # importer's logging reader already grades a sink deletion; a log BUCKET deletion it leaves at Low.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?ConfigServiceV2\.DeleteBucket \(logging\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_logging', 'logging_change', 'defense_evasion']
+  mitre: ['T1562.008']
+  severity: Medium
+  view: 'GCP logging'
+
+gcp_vpc_flow_logs_config_deleted:
+  description: VPC Flow Logs configuration deleted (Network Management) — network flow records stop
+  # Medium: Sentinel (GCPVpcFlowLogsDisabled) grades a deletion High; Panther grades the subnet-level
+  # switch-off (vpc_flow_logs_disabled) Medium — the lower of the two. A flow-log config is also
+  # removed in routine network clean-up. Updates are tag-only: the new state is in the request body.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?VpcFlowLogsService\.DeleteVpcFlowLogsConfig \(networkmanagement\)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+    - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
+  tags: ['gcp_logging', 'logging_change', 'defense_evasion']
+  mitre: ['T1562.008']
+  severity: Medium
+  view: 'GCP logging'
+
+gcp_gcs_ransom_note_uploaded:
+  description: GCS object created whose name looks like a ransom note (HOW_TO_DECRYPT…, RANSOM_NOTE…, YOUR_FILES_ARE_ENCRYPTED…)
+  # High: Panther (gcs_ransom_note_upload) grades it High and no other source grades it; a file named
+  # like this has no routine reason to appear in a bucket. The object name is the end of the rendered
+  # resource; Panther's name patterns are ported, anchored to the start of the object name.
+  all:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?objects\.create \(storage\)', flags: 'i' }
+  any:
+    - { field: description, regex: '[/ ](?:(?:ransom|payment)[_-]?(?:note|info|instructions?)|how[_-]?to[_-]?(?:decrypt|restore|recover)[_-]?(?:your[_-]?)?files|decrypt[_-]?(?:instructions?|guide|info|your[_-]?files)|restore[_-]?(?:instructions?|guide|info|your[_-]?files)|recovery[_-]?(?:instructions?|key|guide))[^/\s]*\.(?:txt|html?)(?:\s|$)', flags: 'i' }
+    - { field: description, regex: '[/ ](?:(?:all[_-]?)?files?[_-]?(?:have[_-]?been[_-]?)?(?:encrypted|locked)|your[_-]?files?[_-]?(?:are|have[_-]?been)[_-]?(?:encrypted|locked)|data[_-]?(?:has[_-]?been[_-]?)?(?:encrypted|locked)|unlock[_-]?(?:instructions?|guide|your[_-]?files)|help[_-]?(?:restore|decrypt|recover)[_-]?(?:your[_-]?)?files)[^/\s]*\.(?:txt|html?)(?:\s|$)', flags: 'i' }
+  none:
+    - { field: description, regex: '\[DENIED' }
+  tags: ['gcs', 'ransomware', 'impact']
+  mitre: ['T1486']
+  severity: High
+  view: 'GCP data'
+
+# ── Tag-only (no severity): searchable in the super-timeline, never graded ──
+gcp_privilege_escalation_methods:
+  description: GCP call on the Rhino privilege-escalation list that deploys code or a workload under a service account (tag only)
+  # Rhino 1, 2, 9, 10, 12, 13; Panther grades the build / deployment / function / Cloud Run calls High
+  # on the granted permission. Tag-only here: every one is also everyday CI/CD, and the importer
+  # already reads which service account a function / Cloud Run service / instance is attached to and
+  # grades that attachment Low on purpose. Instance metadata changes (Panther compute_ssh_connection,
+  # Info) carry SSH keys; the key delta is not rendered.
+  any:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?CloudBuild\.CreateBuild \(cloudbuild\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?deployments\.insert \(deploymentmanager\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?CloudFunctionsService\.(?:Create|Update)Function \(cloudfunctions\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?Services\.(?:CreateService|ReplaceService|UpdateService) \(run\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?CloudScheduler\.CreateJob \(cloudscheduler\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:instances\.setMetadata|projects\.setCommonInstanceMetadata) \(compute\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?CreateRole \(iam\)', flags: 'i' }
+  tags: ['gcp_ported', 'privilege_escalation']
+  view: 'GCP audit (ported)'
+
+gcp_defense_evasion:
+  description: GCP call that changes a policy, a security service or logging (tag only)
+  # Sentinel / Chronicle grade org-policy updates High and Chronicle grades SCC switch-off and
+  # several API disables High — but whether the change weakens anything is in the request body,
+  # which is not rendered, or needs a count over time. Panther grades logging-settings changes Low.
+  any:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:OrgPolicy\.(?:Create|Update)Policy \(orgpolicy\)|SetOrgPolicy \(cloudresourcemanager\))', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?ServiceUsage\.DisableService \(serviceusage\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:Settings\w*\.Update\w*|(?:Create|Update)MuteConfig|SetMute|(?:Update|Delete)NotificationConfig) \(securitycenter\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?ConfigServiceV2\.(?:UpdateSettings|UpdateCmekSettings) \(logging\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?VpcFlowLogsService\.UpdateVpcFlowLogsConfig \(networkmanagement\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?UpdatePolicy \(binaryauthorization\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?WorkloadIdentityPools\.(?:Delete|Update)WorkloadIdentityPool \(iam\)', flags: 'i' }
+  tags: ['gcp_ported', 'defense_evasion']
+  view: 'GCP audit (ported)'
+
+gcp_impact:
+  description: GCP call that destroys keys, secrets or data (tag only)
+  # Chronicle grades these High only past a count (10 KMS keys or secrets, 2 HMAC keys in an hour);
+  # Panther grades a single KMS key destruction and destructive BigQuery deletions Info — the lower.
+  any:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:DestroyCryptoKeyVersion|UpdateCryptoKeyVersion) \(cloudkms\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?SecretManagerService\.(?:DeleteSecret|DestroySecretVersion) \(secretmanager\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?hmacKeys\.delete \(storage\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:TableService\.DeleteTable|DatasetService\.DeleteDataset) \(bigquery\)', flags: 'i' }
+  tags: ['gcp_ported', 'impact']
+  view: 'GCP audit (ported)'
+
+gcp_credential_access:
+  description: GCP API key string read (tag only)
+  # Chronicle (service_api_key_retrieved) grades it High; tag-only here because "show key" in the
+  # console makes the same call, and the record does not say who later used the key.
+  any:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?ApiKeys\.GetKeyString \(apikeys\)', flags: 'i' }
+  tags: ['gcp_ported', 'credential_access']
+  view: 'GCP audit (ported)'
+
+gcp_discovery:
+  description: GCP service-account, role or tag enumeration call (tag only)
+  # Sentinel grades service-account / key / privilege enumeration Low only past a count; Panther tags
+  # tag enumeration at Info.
+  any:
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:ListServiceAccounts|ListServiceAccountKeys|QueryGrantableRoles|QueryTestablePermissions) \(iam\)', flags: 'i' }
+    - { field: description, regex: '^GCP (?:[\w.-]+\.)?(?:TagKeys\.ListTagKeys|TagKeys\.ListTagValues|TagValues\.ListTagValues|TagBindings\.ListEffectiveTags) \(cloudresourcemanager\)', flags: 'i' }
+  tags: ['gcp_ported', 'discovery']
+  view: 'GCP audit (ported)'
+
 # ─────────────────────────── Microsoft-Analyzer-Suite lists (#2306) ───────────────────────────
 # Ported from Microsoft-Analyzer-Suite by Martin Willing (evild3ad),
 # https://github.com/evild3ad/Microsoft-Analyzer-Suite — Blacklists/Operation-Blacklist.csv,

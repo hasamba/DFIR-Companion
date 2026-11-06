@@ -9,6 +9,7 @@
 import { parseCloudTrail } from "./awsImport.js";
 import { parseM365Audit } from "./m365Import.js";
 import { parseCombinedLog } from "./combinedLogImport.js";
+import { parseCloudActivity } from "./cloudActivityImport.js";
 import { sourceArtifactHash } from "./canonicalEvent.js";
 import type { SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { ForensicEvent } from "./stateTypes.js";
@@ -22,6 +23,9 @@ export const SIGMA_REGRADE_IMPORTERS: ReadonlySet<string> = new Set([
   "m365",
   "m365-audit",
   "combined-log",
+  // GCP Cloud Audit Log rows (#2346). A stored cloud-activity file can also hold Azure Activity
+  // records; those rows are written by another importer, are never Sigma-graded, and stay as they are.
+  "gcp-audit",
 ]);
 
 const ALL = { aggregate: false, maxEvents: Number.MAX_SAFE_INTEGER } as const;
@@ -60,6 +64,7 @@ export function reparseForRegrade(
   if (importer === "m365" || importer === "m365-audit")
     return parseM365Audit(text, { ...ALL, sigma: snapshot }).events;
   if (importer === "combined-log") return parseCombinedLog(text, { ...ALL, sigma: snapshot }).events;
+  if (importer === "gcp-audit") return parseCloudActivity(text, { ...ALL, sigma: snapshot }).events;
   return [];
 }
 

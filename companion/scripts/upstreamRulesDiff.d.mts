@@ -4,8 +4,9 @@
 
 export interface UpstreamGroup {
   readonly id: string;
-  /** "csv-lists" (fixed CSV files, the default) or "event-files" (one JSON file per entry under watchPath). */
-  readonly kind?: "csv-lists" | "event-files";
+  /** "csv-lists" (fixed CSV files, the default), "event-files" (one JSON file per entry under
+   * watchPath) or "rule-files" (every file directly in watchPath, compared by content hash). */
+  readonly kind?: "csv-lists" | "event-files" | "rule-files";
   readonly name: string;
   readonly repo: string;
   /** The tags.yaml comment label in front of "<sha> (<date>)". */
@@ -50,6 +51,8 @@ export interface GroupResult {
 export type FetchFile = (repo: string, path: string, ref: string) => Promise<string>;
 /** Every file under `dir` at `ref`, as path → blob sha. */
 export type ListFiles = (repo: string, dir: string, ref: string) => Promise<Map<string, string>>;
+/** The files directly in `dir` at `ref` (not recursive), as path → content hash. */
+export type ListDir = (repo: string, dir: string, ref: string) => Promise<Map<string, string>>;
 
 export const UPSTREAM_GROUPS: readonly UpstreamGroup[];
 export function recordedCommitPattern(marker: string): RegExp;
@@ -71,6 +74,13 @@ export function diffEventFiles(
   fetchFile: FetchFile,
   listFiles: ListFiles,
 ): Promise<ListDiff>;
+export const RULE_FILE_HEADER: readonly string[];
+export function diffRuleFiles(
+  group: UpstreamGroup,
+  base: string,
+  head: string,
+  listDir: ListDir,
+): Promise<ListDiff>;
 export function hasChanges(diff: ListDiff): boolean;
 export function compareGroup(
   group: UpstreamGroup,
@@ -78,6 +88,7 @@ export function compareGroup(
   head: string,
   fetchFile: FetchFile,
   listFiles?: ListFiles,
+  listDir?: ListDir,
 ): Promise<GroupResult>;
 export function groupChanged(result: GroupResult): boolean;
 export function issueMarker(result: GroupResult): string;
