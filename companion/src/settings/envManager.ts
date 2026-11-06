@@ -185,6 +185,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_CLOUD_CA",
   "DFIR_CLOUD_INSECURE",
   "DFIR_CLOUD_PROXY_URL",
+  // #2312: this companion's per-tenant share of Microsoft's daily audit query quota.
+  "DFIR_CLOUD_M365_QUERY_BUDGET",
   "DFIR_SMTP_",
   "DFIR_HASHLOOKUP_",
   "DFIR_RDAP_",

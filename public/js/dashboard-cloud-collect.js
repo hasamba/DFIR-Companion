@@ -11,6 +11,12 @@
 // live collector ships (#2313 AWS, #2314 GCP, #2315 Microsoft) the server lists it as not
 // available and says so. On the public demo every cloud route answers 403 and the panel hides.
 // Analyst-named and cloud-returned strings are written with textContent only, never innerHTML.
+//
+// #2312: Start first runs a PRE-CHECK and shows it — the windows outside each source's retention,
+// "off by default" warnings, the ingestion-delay overlap, and for Microsoft this companion's own use
+// of the tenant's daily query quota ("used by this companion (estimate)", never "tenant remaining")
+// — and only "Confirm and start" starts. A collection's row shows each source's acquired cutoff and
+// every incomplete window with its reason (too dense, budget used, …).
 (function () {
   "use strict";
 
@@ -155,9 +161,32 @@
       sources.replaceWith(next);
       sources = next;
     });
-    const go = el("button", "Start collection");
+    const overlap = el("input");
+    overlap.type = "number";
+    overlap.min = "0";
+    overlap.max = "1440";
+    overlap.id = "cloudCollectOverlap";
+    overlap.placeholder = "provider default";
+    const go = el("button", "Check and start…");
     go.type = "submit";
-    form.append(labelled("Account", select), labelled("From", start), labelled("To", end), sources, go);
+    const checkBox = el("div", null, "cc-precheck");
+    checkBox.setAttribute("aria-live", "polite");
+    form.append(
+      labelled("Account", select),
+      labelled("From", start),
+      labelled("To", end),
+      labelled("Ingestion overlap (min)", overlap),
+      sources,
+      go,
+      checkBox,
+    );
+    const bodyOf = (chosen) => ({
+      accountId: select.value,
+      sources: chosen,
+      start: new Date(start.value).toISOString(),
+      end: new Date(end.value).toISOString(),
+      ...(overlap.value !== "" ? { overlapMinutes: Number(overlap.value) } : {}),
+    });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const chosen = [...form.querySelectorAll(".cc-source:checked")].map((b) => b.value);
@@ -165,24 +194,49 @@
       if (!provider || !provider.available) return setMsg(provider ? provider.notice : "Pick an account.", true);
       if (!chosen.length) return setMsg("Pick at least one log source.", true);
       go.disabled = true;
-      const res = await post(base(caseId), {
-        accountId: select.value,
-        sources: chosen,
-        start: new Date(start.value).toISOString(),
-        end: new Date(end.value).toISOString(),
-      });
+      const body = bodyOf(chosen);
+      const check = await post(`${base(caseId)}/precheck`, body);
       go.disabled = false;
-      setMsg(res.ok ? "Collection started — progress below and in Background jobs." : res.body.error || `Start failed (HTTP ${res.status})`, !res.ok);
-      loadCloudCollect(caseId);
+      if (!check.ok) return setMsg(check.body.error || `Pre-check failed (HTTP ${check.status})`, true);
+      renderPrecheck(checkBox, check.body, async (confirm) => {
+        confirm.disabled = true;
+        const res = await post(base(caseId), body);
+        confirm.disabled = false;
+        setMsg(res.ok ? "Collection started — progress below and in Background jobs." : res.body.error || `Start failed (HTTP ${res.status})`, !res.ok);
+        if (res.ok) loadCloudCollect(caseId);
+      });
     });
     return form;
   }
 
+  function renderPrecheck(box, check, onConfirm) {
+    box.replaceChildren();
+    box.appendChild(el("strong", "Before you start"));
+    const list = el("ul", null, "cc-lines");
+    for (const s of check.sources || []) {
+      const mins = Math.round((s.overlapMs || 0) / 60000);
+      list.appendChild(el("li", `${s.label}: ingestion overlap ${mins} min (a default, not a completeness guarantee)`));
+      for (const w of s.warnings || []) list.appendChild(el("li", `${s.label}: ${w}`, "cc-missing"));
+    }
+    if (check.quota) list.appendChild(el("li", check.quota.note, check.quota.enough ? "" : "cc-missing"));
+    box.appendChild(list);
+    const confirm = el("button", "Confirm and start");
+    confirm.type = "button";
+    confirm.addEventListener("click", () => onConfirm(confirm));
+    const cancel = el("button", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => box.replaceChildren());
+    box.append(confirm, cancel);
+  }
+
   function perSource(cp) {
     const by = new Map();
+    const rank = { done: 0, incomplete: 1, pending: 2, failed: 3 };
     for (const sw of cp.subWindows || []) {
       const prev = by.get(sw.source) || { pages: 0, records: 0, state: "done" };
-      const state = prev.state === "failed" || sw.state === "failed" ? "failed" : sw.state === "pending" ? "pending" : prev.state;
+      // A split parent's pages count, its state does not: its children carry it (#2312).
+      const mine = sw.state === "split" ? "done" : sw.state === "capped" ? "pending" : sw.state;
+      const state = (rank[mine] || 0) > (rank[prev.state] || 0) ? mine : prev.state;
       by.set(sw.source, { pages: prev.pages + sw.pages, records: prev.records + sw.records, state });
     }
     return [...by.entries()].map(([source, v]) => `${source}: ${v.pages} page(s), ${v.records} record(s), ${v.state}`);
@@ -200,6 +254,12 @@
     const lines = el("ul", null, "cc-lines");
     for (const line of perSource(cp)) lines.appendChild(el("li", line));
     lines.appendChild(el("li", `${c.pages} page(s) saved (${c.bytes} bytes, SHA-256 in the manifest); ${cp.imported.length} imported`));
+    for (const cov of cp.coverage || []) {
+      const cut = cov.acquiredCutoff ? `acquired up to ${cov.acquiredCutoff}` : "end of window not acquired";
+      lines.appendChild(el("li", `${cov.source}: ${cut}`));
+      for (const n of cov.notes || []) lines.appendChild(el("li", `${cov.source}: ${n}`, "cc-note"));
+    }
+    if (cp.stopReason) lines.appendChild(el("li", `Stopped early: ${cp.stopReason}`, "cc-missing"));
     for (const m of cp.missing || []) lines.appendChild(el("li", `Missing ${m.source} ${m.window.start} → ${m.window.end}: ${m.reason}`, "cc-missing"));
     for (const q of cp.quarantined || [])
       lines.appendChild(el("li", `Quarantined (${q.reason}): ${q.file}${q.sha256 ? ` sha256 ${q.sha256}` : ""}`, "cc-quarantine"));

@@ -374,6 +374,14 @@ the sign-in (token) requests to `sts.amazonaws.com`, `login.microsoftonline.com`
   `http://proxy.corp:3128`, with `user:password@` when the proxy needs a login. Every cloud request
   goes through it. The Companion does not read `HTTPS_PROXY` or `NO_PROXY` for cloud collection.
   The field is shown masked, because the URL can hold a password.
+- **Microsoft query budget (per tenant, 24 h)** (`DFIR_CLOUD_M365_QUERY_BUDGET`, default 50,
+  1–200). Microsoft guarantees each tenant at least 200 audit-log query submissions per rolling
+  24 hours, shared with every other tool that uses the tenant. The Companion counts its own
+  submissions per tenant id — across collections, cases, restarts, and accounts that name the same
+  tenant — in `cloud-quota/` beside the cases root. A collection stops as **partial — budget used**
+  before it passes this number; press Resume after the 24 hours have rolled on. The panel shows the
+  count as *used by this companion (estimate)*: other tools spend from the same quota and are not
+  counted. Restart to apply.
 
 ---
 

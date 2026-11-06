@@ -30,7 +30,13 @@ export type VaultFs = Pick<
 >;
 
 // A folder fsync the platform cannot do (Windows, some filesystems) is not a failure.
-const DIR_FSYNC_UNSUPPORTED = new Set(["EISDIR", "EPERM", "EINVAL", "ENOTSUP", "EBADF"]);
+export const DIR_FSYNC_UNSUPPORTED: ReadonlySet<string> = new Set([
+  "EISDIR",
+  "EPERM",
+  "EINVAL",
+  "ENOTSUP",
+  "EBADF",
+]);
 const POSIX = process.platform !== "win32";
 
 /**

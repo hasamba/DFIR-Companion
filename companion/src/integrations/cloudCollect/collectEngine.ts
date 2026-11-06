@@ -8,7 +8,8 @@
 //
 // The result is COMPLETE (every sub-window's results exhausted), PARTIAL (some windows missing,
 // each with its reason) or FAILED (nothing collected). "Complete" is the source's available
-// results for the disclosed window — retention and ingestion limits are #2312's disclosure.
+// results for the disclosed window: per source, the checkpoint's `coverage` (#2312) states the
+// acquired cutoff and the retention limits, and a split tree is judged on its leaves.
 
 import type { CollectFs } from "./collectFs.js";
 import { appendManifest, collectionPaths, type CollectionPaths } from "./collectManifest.js";
@@ -16,6 +17,10 @@ import { readCheckpoint, writeCheckpoint } from "./collectCheckpoint.js";
 import { initialSubWindows, replayCollection } from "./collectReplay.js";
 import { runNetworkStage } from "./collectNetwork.js";
 import { runImportStage, type CollectPageImporter } from "./collectImport.js";
+import { leaves } from "./collectSplit.js";
+import { sourceCoverage } from "./collectCoverage.js";
+import type { QueryBudget } from "./collectBudget.js";
+import type { CollectClock } from "./collectRateLimit.js";
 import type {
   CloudCollectSession,
   CollectSourceInfo,
@@ -45,6 +50,10 @@ export interface CollectRunDeps {
   now: () => string;
   signal?: AbortSignal;
   onProgress?: (progress: CollectProgress) => void;
+  /** #2312: pacing clock, the tenant's daily query budget, the throttle retry budget. */
+  clock?: CollectClock;
+  budget?: QueryBudget;
+  retryBudget?: number;
 }
 
 export interface NewCollection {
@@ -59,18 +68,18 @@ export interface NewCollection {
   filters: Record<string, string>;
   companionVersion: string;
   jobId?: string;
+  /** Per source: the ingestion-delay overlap the cutoff is disclosed with (#2312). */
+  overlapMs?: Record<string, number>;
 }
 
 function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress["sources"] {
   const by = new Map<string, { source: string; pages: number; records: number; state: string }>();
+  const RANK: Record<string, number> = { done: 0, incomplete: 1, pending: 2, capped: 2, failed: 3 };
   for (const sw of subWindows) {
     const prev = by.get(sw.source) ?? { source: sw.source, pages: 0, records: 0, state: "done" };
-    const state =
-      prev.state === "failed" || sw.state === "failed"
-        ? "failed"
-        : sw.state === "pending"
-          ? "pending"
-          : prev.state;
+    // A split parent's pages count; its state does not — its children carry it (#2312).
+    const mine = sw.state === "split" ? "done" : sw.state === "capped" ? "pending" : sw.state;
+    const state = (RANK[mine] ?? 0) > (RANK[prev.state] ?? 0) ? mine : prev.state;
     by.set(sw.source, { ...prev, pages: prev.pages + sw.pages, records: prev.records + sw.records, state });
   }
   return [...by.values()];
@@ -78,7 +87,7 @@ function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress
 
 /** Which windows are missing, and why. Pure. */
 export function missingWindows(subWindows: readonly SubWindowStatus[], stopReason?: string): MissingWindow[] {
-  return subWindows
+  return leaves(subWindows)
     .filter((sw) => sw.state !== "done")
     .map((sw) => ({
       source: sw.source,
@@ -93,7 +102,7 @@ export function collectionStatus(
   subWindows: readonly SubWindowStatus[],
   pagesSaved: number,
 ): CollectionStatus {
-  if (subWindows.every((sw) => sw.state === "done")) return "complete";
+  if (leaves(subWindows).every((sw) => sw.state === "done")) return "complete";
   return pagesSaved > 0 ? "partial" : "failed";
 }
 
@@ -125,6 +134,7 @@ export async function createCollection(
     sdkVersions: identity.sdkVersions,
     companionVersion: input.companionVersion,
     startedAt,
+    ...(input.overlapMs ? { overlapMs: input.overlapMs } : {}),
   };
   await appendManifest(fs, paths, header);
   await writeCheckpoint(fs, paths, {
@@ -199,6 +209,10 @@ export async function runCollection(
       paths,
       session: deps.session,
       now: deps.now,
+      sources: deps.sources,
+      ...(deps.clock ? { clock: deps.clock } : {}),
+      ...(deps.budget ? { budget: deps.budget } : {}),
+      ...(deps.retryBudget !== undefined ? { retryBudget: deps.retryBudget } : {}),
       ...(deps.signal ? { signal: deps.signal } : {}),
       onChange: async (subWindows) => {
         await save({ subWindows });
@@ -235,6 +249,12 @@ export async function runCollection(
     stage: "done",
     status: collectionStatus(network.subWindows, pagesSaved),
     missing: missingWindows(network.subWindows, network.stopReason),
+    coverage: sourceCoverage(network.subWindows, deps.sources, {
+      sources: cp.sources,
+      window: cp.window,
+      ...(replay.header.overlapMs ? { overlapMs: replay.header.overlapMs } : {}),
+      startedAt: replay.header.startedAt,
+    }),
   });
   return cp;
 }

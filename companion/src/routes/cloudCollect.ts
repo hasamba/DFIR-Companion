@@ -5,6 +5,7 @@
  *   GET  /cases/:id/cloud-collect                        providers available here + the case's collections
  *   POST /cases/:id/cloud-collect                        { accountId, sources[], start, end } — start
  *   POST /cases/:id/cloud-collect/:collectionId/resume   resume an interrupted / failed / partial one
+ *   POST /cases/:id/cloud-collect/precheck               retention, overlap and quota before a start (#2312)
  *
  * A credential is opened ONLY through openCloudAccountForCollect — on start and again on every
  * resume — so the attachment, case-write and demo checks and the audit entry are never skipped.
@@ -22,6 +23,7 @@ import {
   readCollection,
 } from "../integrations/cloudCollect/collectStore.js";
 import type { CloudCollectProvider, CollectWindow } from "../integrations/cloudCollect/collectTypes.js";
+import { budgetStopReason, type QueryBudget } from "../integrations/cloudCollect/collectBudget.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { getAppVersion } from "../version.js";
 import {
@@ -38,6 +40,12 @@ import {
   unparkResumeSession,
 } from "./cloudCollectJob.js";
 import type { RouteContext } from "./context.js";
+import {
+  parseOverlap,
+  quotaBudgetFor,
+  registerCloudCollectPrecheck,
+  spendsQuota,
+} from "./cloudCollectPrecheck.js";
 
 const CASE_NOT_FOUND = "Case not found or access denied.";
 const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: "AWS", gcp: "GCP", microsoft: "Microsoft" };
@@ -97,12 +105,32 @@ function providerFor(
   vault: CloudAccountVault,
   caseId: string,
   accountId: string,
-): { ok: true; provider: CloudCollectProvider; name: string } | { ok: false; status: number; error: string } {
+):
+  | { ok: true; provider: CloudCollectProvider; name: string; budget?: QueryBudget }
+  | { ok: false; status: number; error: string } {
   const found = cloudAccountInCase(ctx, req, vault, caseId, accountId);
   if (!found.ok) return found;
   const provider = ctx.options.cloudCollectProviders?.[found.value.provider];
   if (!provider) return { ok: false, status: 501, error: notAvailable(found.value.provider) };
-  return { ok: true, provider, name: found.value.name };
+  const budget = quotaBudgetFor(ctx, provider, found.value);
+  return { ok: true, provider, name: found.value.name, ...(budget ? { budget } : {}) };
+}
+
+/** Refuse a start whose tenant budget is already used up: it would send nothing. */
+async function budgetRefusal(
+  budget: QueryBudget | undefined,
+  provider: CloudCollectProvider,
+  sources: string[],
+) {
+  if (!budget || !spendsQuota(provider, sources)) return null;
+  let used: number;
+  try {
+    used = await budget.used();
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err); // an unreadable record fails closed
+  }
+  if (used < budget.limit) return null;
+  return budgetStopReason(used, budget.limit);
 }
 
 function registerList(app: Express, ctx: RouteContext): void {
@@ -133,6 +161,10 @@ function registerStart(app: Express, ctx: RouteContext): void {
       const unknown = parsed.sources.filter((s) => !known.has(s));
       if (unknown.length)
         return res.status(400).json({ error: `Unknown log source: ${unknown.join(", ")}.` });
+      const overlapMs = parseOverlap(req.body, parsed.sources);
+      if (typeof overlapMs === "string") return res.status(400).json({ error: overlapMs });
+      const refused = await budgetRefusal(found.budget, found.provider, parsed.sources);
+      if (refused) return res.status(409).json({ error: refused });
       if (manager.hasActive(caseId, "cloud-collect"))
         return res.status(409).json({ error: "A cloud collection is already running for this case." });
       const opened = openCloudAccountForCollect(ctx, req, caseId, parsed.accountId);
@@ -143,7 +175,7 @@ function registerStart(app: Express, ctx: RouteContext): void {
       const jobId = await launchCollectJob(ctx, manager, {
         caseId,
         dir,
-        ref: { provider: found.provider, session },
+        ref: { provider: found.provider, session, ...(found.budget ? { budget: found.budget } : {}) },
         resume: false,
         label: `cloud collect: ${PROVIDER_LABEL[found.provider.provider]} ${found.name}`,
         parameters: { collectionId, accountId: parsed.accountId, provider: found.provider.provider },
@@ -163,6 +195,7 @@ function registerStart(app: Express, ctx: RouteContext): void {
               filters: {},
               companionVersion: getAppVersion(),
               jobId: id,
+              ...(overlapMs ? { overlapMs } : {}),
             },
             () => new Date().toISOString(),
             signal,
@@ -191,7 +224,11 @@ async function resumeCollection(ctx: RouteContext, vault: CloudAccountVault, req
   if (!found.ok) return sendCloudRefusal(res, found);
   const opened = openCloudAccountForCollect(ctx, req, caseId, cp.accountId); // again, on every resume
   if (!opened.ok) return sendCloudRefusal(res, opened);
-  const ref = { provider: found.provider, session: found.provider.open(opened.value) };
+  const ref = {
+    provider: found.provider,
+    session: found.provider.open(opened.value),
+    ...(found.budget ? { budget: found.budget } : {}),
+  };
   if (existing && (existing.status === "interrupted" || existing.status === "failed")) {
     parkResumeSession(existing.id, ref);
     const result = await runInCaseScope(ctx.store.casesRoot, caseId, () => manager.resume(existing.id));
@@ -213,6 +250,7 @@ export function registerCloudCollectRoutes(app: Express, ctx: RouteContext): voi
   registerCloudCollectResumeHandler(ctx);
   registerList(app, ctx);
   registerStart(app, ctx);
+  registerCloudCollectPrecheck(app, ctx, parseStart);
   app.post(
     "/cases/:id/cloud-collect/:collectionId/resume",
     withCloudVault(ctx, (vault, req, res) => resumeCollection(ctx, vault, req, res)),

@@ -184,6 +184,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     appVersion,
     updateRepo,
     cloudCollectProviders,
+    cloudQueryUsage,
+    cloudQueryBudget,
   } = rt;
   const {
     teamAuth,
@@ -371,6 +373,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     cloudCheck: (account, request) =>
       runCloudAccountCheck(account, request, () => createCheckClientFactory(cloudTransportFromEnv())),
     cloudCollectProviders,
+    cloudQueryUsage,
+    cloudQueryBudget,
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
