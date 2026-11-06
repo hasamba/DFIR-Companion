@@ -12,12 +12,14 @@
 // that stopped naming it is in place.
 //
 // The pointer is data on disk, so its ids are checked against PACK_ID before they are joined into a
-// path. A missing pointer means no pack was ever installed; one that does not parse is "corrupt" and
-// the store reports it (the bundled rules are used and the panel says why) instead of guessing.
+// path. A missing pointer with no pack folders means no pack was ever installed; a missing pointer
+// beside pack folders, or one that does not parse, is reported by the store (the bundled rules are
+// used and the panel says why) instead of guessing — and no pack folder is deleted.
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 /** The fs calls the layout makes — injectable so tests can fail or delay any one step. */
 export interface PackFs {
@@ -99,18 +101,24 @@ export class PackLayout {
     }
   }
 
-  /** Atomically replace the pointer. On failure the old pointer is untouched and the temp is removed. */
+  /**
+   * Atomically replace the pointer, through atomicWrite: temp file + rename, with its retry on a
+   * transient Windows lock (EPERM/EBUSY/EACCES from antivirus or an indexer holding the file). On
+   * failure the old pointer is untouched and the temp is removed. The fs seam is passed through, so
+   * a test can fail or lock any step.
+   */
   async writePointer(pointer: PackPointer): Promise<void> {
     await this.fs.mkdir(this.dir, { recursive: true });
-    const target = join(this.dir, POINTER);
-    const temp = `${target}.${randomUUID()}.tmp`;
-    try {
-      await this.fs.writeFile(temp, JSON.stringify({ schema: 1, ...pointer }, null, 2) + "\n");
-      await this.fs.rename(temp, target);
-    } catch (err) {
-      await this.fs.rm(temp, { recursive: true, force: true }).catch(() => {});
-      throw err;
-    }
+    await atomicWrite(join(this.dir, POINTER), JSON.stringify({ schema: 1, ...pointer }, null, 2) + "\n", {
+      writeFile: (p, c) => this.fs.writeFile(p, typeof c === "string" ? c : Buffer.from(c).toString("utf8")),
+      rename: (a, b) => this.fs.rename(a, b),
+      unlink: (p) => this.fs.rm(p, { recursive: true, force: true }),
+    });
+  }
+
+  /** The pack folders on disk (complete packs, named by id), whether or not the pointer names them. */
+  async listPackIds(): Promise<string[]> {
+    return (await this.list(this.packsDir)).filter((name) => PACK_ID.test(name));
   }
 
   /**

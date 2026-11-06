@@ -236,6 +236,44 @@ describe("startup recovery", () => {
     expect(status.problem).toMatch(/files are missing/);
   });
 
+  it("a lost pointer with pack folders present deletes no pack and says so in the status", async () => {
+    const store = storeWith();
+    await installRules(store, V1, "rules-2026.11.01");
+    await installRules(store, V2, "rules-2026.11.02");
+    const kept = await packEntries();
+    await fsp.rm(join(packDir, "active.json"));
+    await mkdir(join(packDir, "packs", "staging-0b7c1f9e-0000-4000-8000-000000000000"), { recursive: true });
+    await writeFile(join(packDir, "active.json.1b2c3d4e-0000-4000-8000-000000000000.tmp"), "{");
+    const restarted = storeWith();
+    await restarted.recover();
+    expect(await packEntries()).toEqual(kept); // staging goes, pack folders stay
+    expect((await readdir(packDir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+    expect(await restarted.activeRules()).toBeNull();
+    const status = await restarted.status();
+    expect(status.inUse).toBe("bundled");
+    expect(status.installed).toBeNull();
+    expect(status.problem).toMatch(
+      /no record of which pack is installed; 2 pack folders found; the bundled rules are in use/,
+    );
+    await installRules(restarted, V3, "rules-2026.11.03");
+    expect((await restarted.status()).problem).toBeUndefined();
+  });
+
+  it("rides out a transient lock on the pointer file (Windows antivirus / indexer)", async () => {
+    let busy = 1;
+    const store = storeWith({
+      rename: async (a, b) => {
+        if (b.endsWith("active.json") && busy-- > 0)
+          throw Object.assign(new Error("busy"), { code: "EBUSY" });
+        return defaultPackFs.rename(a, b);
+      },
+    });
+    await installRules(store, V1, "rules-2026.11.01");
+    expect(busy).toBe(-1); // the first rename was refused and retried
+    expect((await store.activeRules())?.text).toBe(V1);
+    expect((await readdir(packDir)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("no pointer at all is simply no pack installed — no problem shown", async () => {
     const store = storeWith();
     await store.recover();

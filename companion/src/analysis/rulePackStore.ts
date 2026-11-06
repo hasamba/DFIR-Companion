@@ -122,6 +122,8 @@ interface Resolved {
   current: PackRead | null;
   /** Set when the pointer names a pack that cannot be used for a reason other than its content. */
   problem?: string;
+  /** There is no pointer file at all (a fresh install — or a lost record, when pack folders exist). */
+  noPointer?: boolean;
 }
 
 const NO_PACK: PackPointer = { current: null, previous: null };
@@ -163,7 +165,7 @@ export class RulePackStore implements PackRulesProvider {
   private async resolve(): Promise<Resolved> {
     for (let attempt = 0; ; attempt++) {
       const read = await this.layout.readPointer();
-      if (read.kind === "missing") return { pointer: NO_PACK, current: null };
+      if (read.kind === "missing") return { pointer: NO_PACK, current: null, noPointer: true };
       if (read.kind === "corrupt") {
         return {
           pointer: null,
@@ -188,16 +190,16 @@ export class RulePackStore implements PackRulesProvider {
 
   /**
    * Startup recovery, once per store: sweep staging leftovers, pointer temp files and pack folders
-   * the pointer no longer names. With an unreadable pointer no pack folder is touched. Returns the
-   * paths that could not be removed (they are retried at the next start). Never throws.
+   * the pointer no longer names. With a missing or unreadable pointer no pack folder is touched.
+   * Returns the paths that could not be removed (retried at the next start). Never throws.
    */
   recover(): Promise<string[]> {
     this.recovered ??= lock
       .runExclusive(this.dir, async () => {
         const read = await this.layout.readPointer();
-        const keep =
-          read.kind === "ok" ? pointerIds(read.pointer) : read.kind === "missing" ? new Set<string>() : null;
-        return this.layout.sweep(keep);
+        // Only a readable pointer says which folders are unwanted. Missing or corrupt, no pack folder
+        // is touched: they may be the installed pack whose record was lost (status() says so).
+        return this.layout.sweep(read.kind === "ok" ? pointerIds(read.pointer) : null);
       })
       .catch((err: Error) => [`${this.dir}: ${err.message}`]);
     return this.recovered;
@@ -227,10 +229,18 @@ export class RulePackStore implements PackRulesProvider {
     return { text: current.text, path: current.path, id: RULE_PACK_UPSTREAM, label: packLabel(current.pack) };
   }
 
+  /** A missing pointer beside pack folders is a lost record, not "no pack" — say so, never silently. */
+  private async lostPointerProblem(): Promise<string | undefined> {
+    const n = (await this.layout.listPackIds()).length;
+    if (n === 0) return undefined;
+    return `no record of which pack is installed; ${n} pack folder${n === 1 ? "" : "s"} found; the bundled rules are in use until a pack is installed`;
+  }
+
   async status(): Promise<PackStatus> {
     const res = await this.resolve();
     const prev = res.pointer?.previous ? await this.readPack(res.pointer.previous) : null;
-    const problem = res.problem ?? (res.current ? this.unusable(res.current) : undefined);
+    const lost = res.noPointer ? await this.lostPointerProblem() : undefined;
+    const problem = res.problem ?? lost ?? (res.current ? this.unusable(res.current) : undefined);
     return {
       appVersion: this.appVersion,
       installed: res.current?.pack ?? null,
