@@ -12,8 +12,8 @@ import {
 const docs = readFileSync(
   new URL("../../../../mkdocs-docs/reference/cloud-collection.md", import.meta.url),
   "utf8",
-);
-const nav = readFileSync(new URL("../../../../mkdocs.yml", import.meta.url), "utf8");
+).replace(/\r\n/g, "\n"); // Windows CI checks the docs out with CRLF
+const nav = readFileSync(new URL("../../../../mkdocs.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 describe("mkdocs-docs/reference/cloud-collection.md", () => {
   it("is in the manual's navigation", () => {
