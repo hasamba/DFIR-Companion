@@ -13,6 +13,7 @@
 
 import { getCI, isObject, str } from "./siemImport.js";
 import { show } from "./loggingChange.js";
+import type { Severity } from "./stateTypes.js";
 
 type Row = Record<string, unknown>;
 const LIST_MAX = 5;
@@ -117,4 +118,38 @@ export function awsExposurePosture(eventName: string, request: unknown, errorCod
           ? policyReading(request)
           : "";
   return reading && errorCode ? `requested: ${reading} — failed (${show(errorCode, 30)})` : reading;
+}
+
+// True only when a ModifySnapshotAttribute request positively states that its sole effect is
+// removing sharing: no add side at all (an add side in a shape this reader does not understand is
+// unknown, not "none"), and every removal item names the world group or an account.
+function snapshotRemovesOnly(request: Row): boolean {
+  const perm = getCI(request, "createVolumePermission");
+  if (!isObject(perm)) return false;
+  const add = getCI(perm, "add");
+  if (add !== undefined && add !== null) {
+    if (!isObject(add)) return false;
+    if (asList(getCI(add, "items")).length) return false;
+  }
+  const remove = asList(at(perm, "remove", "items"));
+  return (
+    remove.length > 0 &&
+    remove.every(
+      (i) => isObject(i) && (/^all$/i.test(str(getCI(i, "group"))) || str(getCI(i, "userId")).trim() !== ""),
+    )
+  );
+}
+
+/**
+ * The base grade the request itself establishes (#2338), or undefined to keep the action table's.
+ * Only a ModifySnapshotAttribute whose sole effect is removing sharing is lowered, to Low: it stays
+ * in the forensic timeline (an un-share can be cleanup after exfiltration) but is not High. Every
+ * share, a mixed add/remove, and any missing or unreadable request keeps the table's High.
+ * PutBucketAcl / PutBucketPolicy are deliberately NOT lowered: an empty reading there cannot tell a
+ * private policy from a cross-account grant (T1537) or a truncated request — deferred to #2345.
+ */
+export function awsExposureGrade(eventName: string, request: unknown): Severity | undefined {
+  if (!isObject(request)) return undefined;
+  if (eventName.toLowerCase() !== "modifysnapshotattribute") return undefined;
+  return snapshotRemovesOnly(request) ? "Low" : undefined;
 }

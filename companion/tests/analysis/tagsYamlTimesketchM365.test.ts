@@ -191,6 +191,19 @@ describe("bundled data/tags.yaml — Timesketch M365/Entra parity", () => {
     );
   });
 
+  // #2338: the real sync-download operation is FileSyncDownloadedFull (no "ed" after Sync).
+  it("tags a OneDrive/SharePoint FileSyncDownloadedFull as a file download and a mass download", () => {
+    const r = ids(
+      ual({
+        Operation: "FileSyncDownloadedFull",
+        Workload: "OneDrive",
+        ObjectId: "https://example.sharepoint.com/a.docx",
+      }),
+    );
+    expect(r).toContain("ts_m365_file_download");
+    expect(r).toContain("ts_m365_mass_download");
+  });
+
   // ── the benign half: an unrelated operation must not pick up a cloud tag ──
   it("leaves a routine operation untagged", () => {
     const r = ids(ual({ Operation: "MailItemsAccessed", Workload: "Exchange" }));
