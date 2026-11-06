@@ -342,3 +342,85 @@ describe("manifest parsing and startup recovery (#2311)", () => {
     expect(await markInterruptedCollections(fs, t.cases.caseDir("c1"), now)).toBe(0);
   });
 });
+
+describe("a quarantined page's window is always fetched again (#2311 review)", () => {
+  async function corruptFirstPage(t: TempCase, fs: ReturnType<typeof faultFs>, session: CloudCollectSession) {
+    await start(t, fs, session);
+    const importer = pipelineImporter(t, {
+      duringPage: () => {
+        throw kill();
+      },
+      noCleanup: () => true,
+    });
+    await expect(run(t, fs, session, importer)).rejects.toThrow("simulated kill");
+    const first = (await manifestOf(t)).pages[0];
+    await writeFile(join(collectionPaths(t.dir).pages, first.file), "tampered");
+    return first;
+  }
+
+  /** Kill the n-th manifest append of the next run. */
+  function killNthAppend(fs: ReturnType<typeof faultFs>, n: number) {
+    let appends = 0;
+    fs.inject("appendSync", (p) => p.endsWith("manifest.jsonl") && ++appends === n, kill);
+  }
+
+  async function finish(
+    t: TempCase,
+    fs: ReturnType<typeof faultFs>,
+    session: CloudCollectSession,
+    base: Awaited<ReturnType<typeof baseline>>,
+  ) {
+    const cp = await run(t, fs, session, pipelineImporter(t), true);
+    expect(cp.status).toBe("complete");
+    const m = await manifestOf(t);
+    expect(m.entries.filter((e) => e.type === "restart" && e.reason === "corrupt-page")).toHaveLength(1);
+    expect(m.pages).toHaveLength(4); // the two originals + the window fetched again
+    expect(await counts(t)).toEqual(base.counts);
+  }
+
+  it("crash after the quarantine line, before the restart line", async () => {
+    const base = await baseline(2);
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 2 });
+    await corruptFirstPage(t, fs, session);
+    killNthAppend(fs, 2); // 1 = quarantine, 2 = restart
+    await expect(run(t, fs, session, pipelineImporter(t), true)).rejects.toThrow("simulated kill");
+    fs.clear();
+    const m = await manifestOf(t);
+    expect(m.entries.some((e) => e.type === "quarantine" && e.reason === "corrupt")).toBe(true);
+    expect(m.entries.some((e) => e.type === "restart")).toBe(false);
+    await finish(t, fs, session, base);
+  });
+
+  it("a torn restart line is dropped and the restart made again", async () => {
+    const base = await baseline(2);
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 2 });
+    await corruptFirstPage(t, fs, session);
+    killNthAppend(fs, 2);
+    await expect(run(t, fs, session, pipelineImporter(t), true)).rejects.toThrow("simulated kill");
+    fs.clear();
+    await appendFile(collectionPaths(t.dir).manifest, '{"type":"restart","subWindowId":"ct:');
+    await finish(t, fs, session, base);
+  });
+
+  it("repeated crashes around the restart never let the window be skipped", async () => {
+    const base = await baseline(2);
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 2 });
+    await corruptFirstPage(t, fs, session);
+    killNthAppend(fs, 2);
+    await expect(run(t, fs, session, pipelineImporter(t), true)).rejects.toThrow("simulated kill");
+    fs.clear();
+    killNthAppend(fs, 1); // the next replay's first append is the recreated restart
+    await expect(run(t, fs, session, pipelineImporter(t), true)).rejects.toThrow("simulated kill");
+    fs.clear();
+    killNthAppend(fs, 1);
+    await expect(run(t, fs, session, pipelineImporter(t), true)).rejects.toThrow("simulated kill");
+    fs.clear();
+    await finish(t, fs, session, base);
+  });
+});

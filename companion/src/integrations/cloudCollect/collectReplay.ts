@@ -4,7 +4,8 @@
 //  1. A torn last manifest line is dropped and cut off the file.
 //  2. EVERY committed page is re-hashed. A missing file or a hash mismatch marks the page corrupt:
 //     the file (when present) moves to quarantine/, a quarantine line records both hashes, and a
-//     restart line sends its sub-window back to its start — so the window is fetched again and the
+//     restart line — derived from the quarantine line on every replay (outstandingRestarts), so a
+//     crash between the two appends cannot lose it — sends its sub-window back to its start — so the window is fetched again and the
 //     #2301 dedup absorbs whatever overlaps what was already imported.
 //  3. A file in pages/ that no manifest line names — a page renamed just before a crash, or a
 //     leftover .tmp — is an ORPHAN: moved to quarantine/, hashed and listed. Never deleted; after a
@@ -122,7 +123,6 @@ async function validatePages(
   note: Note,
 ): Promise<ManifestPage[]> {
   const settled = new Set(quarantinedOf(loaded.entries).map((q) => q.file));
-  const restarted = new Set<string>();
   const valid: ManifestPage[] = [];
   for (const page of loaded.pages) {
     if (settled.has(page.file)) continue; // quarantined on an earlier resume
@@ -143,12 +143,31 @@ async function validatePages(
       expectedSha256: page.sha256,
       at: now(),
     });
-    if (!restarted.has(page.subWindowId)) {
-      restarted.add(page.subWindowId);
-      await note({ type: "restart", subWindowId: page.subWindowId, reason: "corrupt-page", at: now() });
-    }
+    // Its restart line is NOT written here: outstandingRestarts derives it from this quarantine
+    // line, so a crash between the two lines (or a torn restart line) cannot lose it.
   }
   return valid.sort((a, b) => a.seq - b.seq);
+}
+
+/**
+ * Sub-windows that owe a restart: a committed page of theirs was quarantined as corrupt or missing,
+ * and no restart line comes AFTER that quarantine line. Derived from the manifest on every replay,
+ * never remembered — so a crash between the quarantine and restart appends, a torn restart line, or
+ * an older manifest all heal the same way: the window is fetched again. Pure.
+ */
+export function outstandingRestarts(
+  pages: readonly ManifestPage[],
+  entries: readonly ManifestEntry[],
+): string[] {
+  const windowOf = new Map(pages.map((p) => [p.file, p.subWindowId]));
+  const owed = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type === "restart") owed.delete(entry.subWindowId);
+    if (entry.type !== "quarantine" || entry.reason === "orphan") continue;
+    const sw = windowOf.get(entry.file);
+    if (sw) owed.add(sw);
+  }
+  return [...owed];
 }
 
 async function quarantineOrphans(
@@ -186,6 +205,8 @@ export async function replayCollection(
   };
   const validPages = await validatePages(fs, paths, loaded, now, note);
   const orphanSeq = await quarantineOrphans(fs, paths, loaded, now, note);
+  for (const subWindowId of outstandingRestarts(loaded.pages, [...loaded.entries, ...added]))
+    await note({ type: "restart", subWindowId, reason: "corrupt-page", at: now() });
   const entries = [...loaded.entries, ...added];
   const pageSeq = loaded.pages.reduce((m, p) => Math.max(m, p.seq), 0);
   const valid = new Set(validPages.map((p) => p.file));
