@@ -1,8 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  randomBytes,
+  X509Certificate,
+} from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import forge from "node-forge";
 import { buildCertificatePem } from "../../src/http/x509Builder.js";
 import type { CloudAccountInput } from "../../src/integrations/cloudAccounts/types.js";
 
@@ -56,6 +63,20 @@ export function makePfxBase64(pem: string, password: string): string | undefined
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * A PFX of `pem` built in memory with node-forge (no openssl, no file): the PFX tests run on every
+ * platform, Windows CI included. `pem` must hold one certificate and an RSA key.
+ */
+export function makePfxBase64InMemory(pem: string, password: string): string {
+  // forge reads only the first PEM block of a text: hand it the key and the certificate one each.
+  const key = forge.pki.privateKeyFromPem(
+    createPrivateKey(pem).export({ type: "pkcs1", format: "pem" }).toString(),
+  );
+  const cert = forge.pki.certificateFromPem(new X509Certificate(pem).toString());
+  const asn1 = forge.pkcs12.toPkcs12Asn1(key, cert, password, { algorithm: "3des" });
+  return Buffer.from(forge.asn1.toDer(asn1).getBytes(), "binary").toString("base64");
 }
 
 /** A service-account key JSON shaped like Google's, with a freshly generated private key. */

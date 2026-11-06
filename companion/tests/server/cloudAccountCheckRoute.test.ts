@@ -17,10 +17,10 @@ import {
   awsKeyInput,
   fakeAwsSecret,
   makeCertPem,
-  makePfxBase64,
+  makePfxBase64InMemory,
   microsoftPemInput,
 } from "../helpers/cloudAccountFixtures.js";
-import { AWS_ALL_OK, awsDenied, mockAws } from "../integrations/cloudCheck/readCheckMocks.js";
+import { AWS_ALL_OK, awsDenied, mockAws, mockGraph } from "../integrations/cloudCheck/readCheckMocks.js";
 
 // #2309: POST /cases/:id/cloud-accounts/:accountId/check — one read per source, the fixed wording,
 // no secret in any answer or log line, the same case gate as collection, and refused on the demo.
@@ -102,10 +102,9 @@ describe("POST /cases/:id/cloud-accounts/:accountId/check", () => {
     expect(logged.some((l) => l.includes("cloud-account-check") && l.includes('case="c1"'))).toBe(true);
   });
 
-  it("does not sign in with a PFX account, and says how to check it now", async () => {
+  it("checks a PFX account by opening it in memory, and leaks neither the PFX nor its password", async () => {
     const password = secret();
-    const pfxBase64 = makePfxBase64(makeCertPem().pem, password);
-    if (!pfxBase64) return; // openssl is not installed here: nothing to make a PFX with
+    const pfxBase64 = makePfxBase64InMemory(makeCertPem().pem, password);
     sentinels.push(pfxBase64);
     const input = microsoftPemInput("Tenant", "");
     const id = vault.create(
@@ -116,16 +115,26 @@ describe("POST /cases/:id/cloud-accounts/:accountId/check", () => {
       },
       "c1",
     ).account.id;
-    const app = createApp(cases, { cloudAccountVault: vault, cloudCheck: mockedRunner() });
+    const pems: string[] = [];
+    // Sign-ins answer; directory audits are refused (an unlisted path answers 403).
+    const { clients } = mockGraph({ "/v1.0/auditLogs/signIns": { status: 200 } });
+    const runner: CloudCheckRunner = (account, req) =>
+      runCloudAccountCheck(
+        account,
+        req,
+        () =>
+          ({
+            microsoft: (_s: unknown, pem: string) => (pems.push(pem), clients),
+          }) as unknown as CheckClientFactory,
+      );
+    const app = createApp(cases, { cloudAccountVault: vault, cloudCheck: runner });
     const res = await request(app).post(`/cases/c1/cloud-accounts/${id}/check`).send({});
     expect(res.status, res.text).toBe(200);
-    expect(res.body.report.results.map((r: { status: string }) => r.status)).toEqual([
-      "not-tested",
-      "not-tested",
-    ]);
-    expect(res.body.report.summary).toContain("save the certificate as PEM to check it now");
-    expect(sent).toEqual([]);
+    expect(res.body.report.results.map((r: { status: string }) => r.status)).toEqual(["succeeded", "failed"]);
+    expect(pems).toHaveLength(1);
+    expect(res.text).not.toMatch(/not tested/i);
     expectNoSecret(res.text, "pfx check");
+    expectNoSecret(logged.join("\n"), "pfx server log");
   });
 
   it("refuses an unknown source with 400 and opens nothing", async () => {

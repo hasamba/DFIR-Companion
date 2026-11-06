@@ -55,6 +55,8 @@ import { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVau
 import type { CloudCollectProviders } from "../integrations/cloudCollect/collectTypes.js";
 import { createAwsCollectProvider } from "../integrations/cloudCollect/aws/awsCollectProvider.js";
 import { gcpCollectProvider } from "../integrations/cloudCollectGcp/gcpCollectProvider.js";
+import { microsoftCollectProvider } from "../integrations/cloudCollectMicrosoft/microsoftProvider.js";
+import { microsoftWire } from "../integrations/cloudCollectMicrosoft/microsoftWire.js";
 import { cloudTransportFromEnv } from "./cloudTransportEnv.js";
 import { cloudAccountStoreDir } from "../integrations/cloudAccounts/storePath.js";
 import {
@@ -305,6 +307,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   cloudCollectProviders.aws = createAwsCollectProvider({ transport: () => cloudTransportFromEnv() });
   // #2314: GCP audit logs, Logging API or a checked GCS sink; one transport per collection run.
   cloudCollectProviders.gcp = gcpCollectProvider({ transport: () => cloudTransportFromEnv() });
+  // #2315: Microsoft 365 audit (Graph AuditLogQuery), Entra and Azure Activity, over the cloud transport.
+  cloudCollectProviders.microsoft = microsoftCollectProvider({
+    wire: (account) => microsoftWire(account, cloudTransportFromEnv()),
+  });
   // #2312: the shared-quota usage count, per tenant, beside the cases root (never in a case).
   const cloudQueryUsage = new QueryUsageStore(queryUsageFile(casesRoot));
   const cloudQueryBudget = parseQueryBudget(process.env.DFIR_CLOUD_M365_QUERY_BUDGET);

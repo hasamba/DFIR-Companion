@@ -159,12 +159,13 @@ function providerReason(err: unknown): string {
 
 type Step = { sw: SubWindowStatus; page?: ManifestPage; done: boolean };
 
-/** Per-run state shared by every request: limiter and retry budget. */
+/** Per-run state shared by every request: limiter, retry budget, the provider-status reporter. */
 interface Pacing {
   clock: CollectClock;
   limiter: RateLimiter;
   retriesLeft: number;
   readonly retryBudget: number;
+  status?: (subWindowId: string, status: string) => void;
 }
 
 type Fetched = { page: CollectPage } | { failed: string };
@@ -206,6 +207,7 @@ async function requestPage(
         ...(sw.pageToken ? { pageToken: sw.pageToken } : {}),
         ...(sw.partition ? { partition: sw.partition } : {}),
         ...(deps.signal ? { signal: deps.signal } : {}),
+        ...(pacing.status ? { onStatus: (text: string) => pacing.status?.(sw.id, text) } : {}),
       });
       return { page };
     } catch (err) {
@@ -348,9 +350,26 @@ export async function runNetworkStage(
   const pages: ManifestPage[] = [];
   const clock = deps.clock ?? realClock;
   const retryBudget = deps.retryBudget ?? DEFAULT_RETRY_BUDGET;
-  const pacing: Pacing = { clock, limiter: new RateLimiter(clock), retriesLeft: retryBudget, retryBudget };
+  // A provider status (#2315) is written to the checkpoint as it comes, one write at a time, and
+  // every page commit waits for the last one — so an older status never lands after newer state.
+  let statusWrites: Promise<void> = Promise.resolve();
+  const status = (id: string, text: string): void => {
+    subWindows = subWindows.map((s) => (s.id === id ? { ...s, providerStatus: text.slice(0, 200) } : s));
+    const snapshot = subWindows;
+    statusWrites = statusWrites.then(() => deps.onChange(snapshot)).catch(() => {}); // best effort
+  };
+  const pacing: Pacing = {
+    clock,
+    limiter: new RateLimiter(clock),
+    retriesLeft: retryBudget,
+    retryBudget,
+    status,
+  };
   const note = (e: ManifestEntry) => guardWrite(() => appendManifest(deps.fs, deps.paths, e));
-  const persist = () => guardWrite(() => deps.onChange(subWindows));
+  const persist = async () => {
+    await statusWrites;
+    await guardWrite(() => deps.onChange(subWindows));
+  };
   try {
     await guardWrite(() => deps.fs.mkdir(deps.paths.pages));
     for (let sw = nextWork(subWindows); sw; sw = nextWork(subWindows)) {
@@ -366,13 +385,18 @@ export async function runNetworkStage(
         pages.push(step.page);
         deps.onPage?.(step.page);
       }
-      subWindows = subWindows.map((s) => (s.id === step.sw.id ? step.sw : s));
+      const { providerStatus: _settled, ...next } = step.sw;
+      subWindows = subWindows.map((s) => (s.id === next.id ? next : s));
       await persist();
     }
   } catch (err) {
     if (err instanceof BudgetStopError) return { subWindows, pages, nextSeq: seq, stopReason: err.message };
     if (!(err instanceof EvidenceWriteError)) throw err;
     return { subWindows, pages, nextSeq: seq, stopReason: err.message };
+  } finally {
+    // A status write still in flight must land BEFORE whatever writes the checkpoint next — a
+    // cancel's "interrupted" mark must never be overwritten by a late "running" status.
+    await statusWrites;
   }
   return { subWindows, pages, nextSeq: seq };
 }

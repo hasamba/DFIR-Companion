@@ -132,6 +132,9 @@
       input.className = "cc-source";
       box.appendChild(labelled(s.label, input));
     }
+    // What the provider does NOT collect, and where to get it instead (#2315: Microsoft mailbox
+    // audit, transport rules and message trace → MES and the #2300 matrix).
+    for (const n of provider.notes || []) box.appendChild(el("p", n, "cc-note"));
     return box;
   }
 
@@ -237,9 +240,14 @@
       // A split parent's pages count, its state does not: its children carry it (#2312).
       const mine = sw.state === "split" ? "done" : sw.state === "capped" ? "pending" : sw.state;
       const state = (rank[mine] || 0) > (rank[prev.state] || 0) ? mine : prev.state;
-      by.set(sw.source, { pages: prev.pages + sw.pages, records: prev.records + sw.records, state });
+      // The cloud's own status while a request waits (#2315): a Graph audit query can run 10+ min.
+      const status = sw.providerStatus || prev.status;
+      by.set(sw.source, { pages: prev.pages + sw.pages, records: prev.records + sw.records, state, status });
     }
-    return [...by.entries()].map(([source, v]) => `${source}: ${v.pages} page(s), ${v.records} record(s), ${v.state}`);
+    return [...by.entries()].map(
+      ([source, v]) =>
+        `${source}: ${v.pages} page(s), ${v.records} record(s), ${v.state}${v.status && v.state === "pending" ? ` — ${v.status}` : ""}`,
+    );
   }
 
   function collectionRow(caseId, c) {

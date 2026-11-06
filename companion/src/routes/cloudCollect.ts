@@ -67,6 +67,7 @@ function providerList(ctx: RouteContext) {
       label: PROVIDER_LABEL[provider],
       available: !!p,
       sources: p ? p.sources.map((s) => ({ id: s.id, label: s.label })) : [],
+      ...(p?.notes?.length ? { notes: [...p.notes] } : {}),
       ...(p ? {} : { notice: notAvailable(provider) }),
     };
   });
