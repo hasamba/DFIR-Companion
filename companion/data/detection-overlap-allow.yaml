@@ -46,6 +46,7 @@ entries:
       raises it to High.
   - rules: [sigma:35b781cc-1a08-4a5a-80af-42fd7c315c6b, tagger:mas_user_agent_offensive_tool]
     reason: >-
-      pending decision: an AzureHound user agent on an Entra sign-in is graded Medium by the
-      Analyzer-Suite tagger rule (a user agent is client-supplied and never proves the tool used),
-      but the Sigma rule Discovery Using AzureHound grades the same sign-in High.
+      intended (owner decision, #2355): an AzureHound user agent on an Entra sign-in is graded
+      Medium by the Analyzer-Suite tagger rule (a user agent is client-supplied and never proves the
+      tool used), and the Sigma rule Discovery Using AzureHound grades it High. High stands: an
+      attacker rarely fakes an AzureHound user agent, and it marks Entra reconnaissance.
