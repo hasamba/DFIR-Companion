@@ -68,6 +68,7 @@ async function seed(kind = "csv", overrides: Partial<DropFolderDeps> = {}) {
     resolveImportKind: () => kind,
     ingestStreamed,
     ingestMacLoginItemBinary: refuse,
+    ingestDiskFile: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,

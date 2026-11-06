@@ -152,6 +152,7 @@ describe("drop folder names a guessed JSON kind (#1824)", () => {
       },
       ingestStreamed: vi.fn(async () => ({ storedName: "s", addedEvents: 1, addedIocs: 0, analyzed: true })),
       ingestMacLoginItemBinary: refuse,
+      ingestDiskFile: refuse,
       liveToolConfigs: () => new Map(),
       resolveToolForExt: () => null,
       rawExtClaimed: () => false,

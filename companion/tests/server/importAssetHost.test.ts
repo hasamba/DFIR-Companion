@@ -99,7 +99,10 @@ describe(
   "dedicated import routes — assetHost is refused, not ignored (#1509)",
   { timeout: POLL_TIMEOUT_MS * 2 },
   () => {
-    const DEDICATED = EVIDENCE_IMPORT_ROUTES.filter((r) => r !== "import" && r !== "import-file");
+    // import-upload honours the declaration too, from its query string (importUpload.test.ts, #2336).
+    const DEDICATED = EVIDENCE_IMPORT_ROUTES.filter(
+      (r) => r !== "import" && r !== "import-file" && r !== "import-upload",
+    );
 
     it("400s a declared host on /import-chainsaw and names the routes that accept it", async () => {
       const { app } = await makeApp();

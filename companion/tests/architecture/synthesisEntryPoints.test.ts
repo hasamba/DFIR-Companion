@@ -31,7 +31,8 @@ const RESYNTHESIZE_IN_BACKGROUND: Sites = {
   "composition/importIngest.ts": 2,
   "composition/veloExternalIngest.ts": 4,
   "composition/veloHunts.ts": 1,
-  "routes/import.ts": 2,
+  "routes/import.ts": 1,
+  "routes/importFromHandle.ts": 1, // /import-file and /import-upload, moved out of import.ts (#2336)
   "routes/importCommit.ts": 1,
   "routes/importRecovery.ts": 1,
   "routes/reportsExport.ts": 1, // IRIS import

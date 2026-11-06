@@ -105,6 +105,7 @@ async function sweepDrop(files: Record<string, string>, ingestFails = false) {
     },
     ingestStreamed,
     ingestMacLoginItemBinary: refuse,
+    ingestDiskFile: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,

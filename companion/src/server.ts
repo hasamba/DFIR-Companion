@@ -245,6 +245,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     resolveImportKind: imports.resolveImportKind,
     ingestStreamed: imports.ingestStreamed,
     ingestMacLoginItemBinary: imports.ingestMacLoginItemStreamed,
+    ingestDiskFile: imports.ingestDiskFile,
     liveToolConfigs: tools.liveToolConfigs,
     resolveToolForExt: tools.resolveToolForExt,
     rawExtClaimed: tools.rawExtClaimed,

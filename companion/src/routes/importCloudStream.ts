@@ -13,7 +13,7 @@ import type { CompiledRuleset } from "../analysis/taggerRules.js";
 import type { ImportBase, RouteContext } from "./context.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
-import { routeSettleDeps } from "./routeSettleDeps.js";
+import { routeSettleDeps, type SettleContext } from "./routeSettleDeps.js";
 
 /**
  * The streamed cloud import seen from the routes (#2303). `/import-file`, `/import` and the job
@@ -70,7 +70,7 @@ export function streamedImportMeta(
 }
 
 /** The tagger's ruleset when its severity rules may raise a forensic grade (TAGGER_AUTO on, scope not super-only). */
-async function preGradeRules(ctx: RouteContext): Promise<CompiledRuleset | null> {
+async function preGradeRules(ctx: SettleContext): Promise<CompiledRuleset | null> {
   const settings = readTaggerSettings();
   if (!settings.auto || settings.scope === "super" || !ctx.options.taggerStore) return null;
   try {
@@ -81,7 +81,7 @@ async function preGradeRules(ctx: RouteContext): Promise<CompiledRuleset | null>
 }
 
 async function importCloudFileLogged(
-  ctx: RouteContext,
+  ctx: SettleContext,
   caseId: string,
   kind: StreamKind,
   storedPath: string,
@@ -126,7 +126,7 @@ async function importCloudFileLogged(
 
 /** Run a stored upload that reads from disk: a Plaso super-timeline, or a streamed cloud export. */
 export function runDiskImport(
-  ctx: RouteContext,
+  ctx: SettleContext,
   kind: string,
   caseId: string,
   storedPath: string,

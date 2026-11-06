@@ -56,6 +56,7 @@ async function seed(files: Record<string, string>) {
     resolveImportKind: (filename, text) => detectImportWithCustom(filename, text, new Map(), "builtin-first"),
     ingestStreamed,
     ingestMacLoginItemBinary: refuse,
+    ingestDiskFile: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,

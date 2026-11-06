@@ -44,6 +44,8 @@ import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
+import type { IngestDiskFile } from "./importIngestDisk.js";
+import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -55,6 +57,7 @@ import {
   DROP_PROCESSED,
   DROP_FAILED,
   DROP_README,
+  DROP_README_TEXT,
   type DropFileStat,
   type StuckDropFile,
 } from "../analysis/dropScan.js";
@@ -85,25 +88,6 @@ export function dropDirOf(store: CaseStore, caseId: string): string {
 
 const DROP_CONCURRENCY = 4;
 
-const DROP_README_TEXT = [
-  "DFIR Companion — evidence drop folder",
-  "",
-  "Copy artifacts into this folder (subfolders are fine — they're scanned recursively).",
-  "Each file is auto-detected and imported into this case, exactly like the dashboard Import button.",
-  "Images (.png/.jpg/...) are ingested as screenshot evidence.",
-  "",
-  "A subfolder named asset=<HOST> (e.g. asset=DESKTOP-01) declares the host its files came from —",
-  "for Windows log exports with no client name inside (a GUI/notebook download); records under",
-  "an older machine name are then shown as that host's history.",
-  "After processing, files move to _processed/ (success) or _failed/ (error).",
-  "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
-  "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
-  "drop-log.txt in this same folder.",
-  "",
-  "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
-  "",
-].join("\n");
-
 export interface DropFolderDeps {
   store: CaseStore;
   options: AppOptions;
@@ -129,6 +113,9 @@ export interface DropFolderDeps {
     modelCall?: ModelCallHooks, // names the sweep job's model when a CSV/log runs one (#1629)
     debug?: ImportDebugRecorder, // this attempt's import-debug recorder (#1736)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  // A cloud export or Plaso file streamed from the sweep's own no-follow handle (#2336): a gzip, or
+  // a file over DFIR_DROP_MAX_BYTES, imported as Import-from-path imports it instead of refused.
+  ingestDiskFile: IngestDiskFile;
   // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
   // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
   // so a real BTM (name + bplist00 magic both required) auto-imports instead of sitting as a
@@ -186,6 +173,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     resolveImportKind,
     ingestStreamed,
     ingestMacLoginItemBinary,
+    ingestDiskFile,
     liveToolConfigs,
     resolveToolForExt,
     rawExtClaimed,
@@ -198,6 +186,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const watchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
   const dropMaxBytes = dropMaxBytesFromEnv();
+  const streamDropFile = createDropStreamer({ resolveImportKind, ingestDiskFile, dropMaxBytes }); // #2336
   // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
   // same-id successor, and its late `finally` never clears the successor's scanning mark.
   const seen = new CaseKeyedMap<Map<string, { size: number; mtimeMs: number }>>(() => store.casesRoot);
@@ -455,6 +444,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         /* unreadable head → fall back to extension-only classification */
       }
 
+      // A gzip file is binary to the classifier below, which would hand it to a tool: it is read here
+      // instead, decompressed on read when it holds a cloud export, refused otherwise (#2336).
+      if (head && isGzipMagic(head))
+        return streamGzipDropFile(streamDropFile, caseId, full, file.relpath, debug);
+
       // A macOS Background Task Management file (#1013) is the one binary this codebase natively
       // decodes — checked BEFORE the raw-tool-input routing below claims it, even if an operator has
       // a custom tool configured for `.btm`: the native importer is purpose-built for exactly this
@@ -525,6 +519,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           : { ok: true };
       }
       if (isOversize(file.size, dropMaxBytes)) {
+        // A cloud export or Plaso file streams from disk instead (#2336); anything else is refused.
+        const streamed = await streamDropFile(caseId, full, file.relpath, debug);
+        if (streamed) return streamed;
         return {
           ok: false,
           reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path`,

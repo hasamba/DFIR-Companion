@@ -43,7 +43,7 @@ import {
  *  by their own generous per-case limiter (getDeterministicImportLimiter), NOT the 20/min AI cap —
  *  which used to reject most files of a normal multi-file Velociraptor collection. /import-csv and
  *  /import-log stay on the AI limiter: each is a single AI analysis call, not a bulk path. */
-export const IMPORT_LIMIT_PATHS = new Set(["/import", "/import-file"]);
+export const IMPORT_LIMIT_PATHS = new Set(["/import", "/import-file", "/import-upload"]);
 
 /** Static AI-cost POST routes, relative to /cases/:id. Exported for the coverage test. */
 export const AI_LIMIT_PATHS = new Set([

@@ -10,7 +10,13 @@ import type { RouteContext } from "./context.js";
  * (composition/importIngestSettle.ts builds the streamed-ingest twin from AppOptions; routes may
  * not import composition.) Null when no state store is wired: there is nothing to settle.
  */
-export function routeSettleDeps(ctx: RouteContext): SettleDeps | null {
+/** What routeSettleDeps reads from the context: the drop folder's streamed import builds this too (#2336). */
+export type SettleContext = Pick<
+  RouteContext,
+  "options" | "runStateExclusive" | "serverLogger" | "demoteForensic"
+>;
+
+export function routeSettleDeps(ctx: SettleContext): SettleDeps | null {
   const { options } = ctx;
   if (!options.stateStore) return null;
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.

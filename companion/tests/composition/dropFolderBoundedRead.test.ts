@@ -55,6 +55,7 @@ function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
     },
     ingestStreamed: refuse,
     ingestMacLoginItemBinary: refuse,
+    ingestDiskFile: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,
