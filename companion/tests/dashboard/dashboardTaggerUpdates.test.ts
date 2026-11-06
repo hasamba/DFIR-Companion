@@ -211,6 +211,17 @@ describe("the review list", () => {
     await h.api.applyTaggerUpdates();
     expect(h.pane().textContent).toContain("the rules changed since this review was loaded");
   });
+
+  it("lets a copy saved before tracking select every added rule in one click", async () => {
+    const h = harness(VIEW);
+    await h.api.loadTaggerUpdates();
+    h.api.openTaggerUpdates();
+    h.button(h.pane(), "Select all added rules")!.onclick!();
+    await h.api.applyTaggerUpdates();
+    const apply = h.calls.find((c) => c.url === "/tagger/rules/updates/apply")!;
+    expect(apply.body?.choices).toMatchObject({ new_rule: "upstream", maybe_new: "upstream" });
+    expect(apply.body?.choices).not.toHaveProperty("gone"); // removed-by-you is not part of "added"
+  });
 });
 
 describe("wiring", () => {

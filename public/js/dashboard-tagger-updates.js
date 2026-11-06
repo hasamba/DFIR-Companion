@@ -188,6 +188,11 @@ function renderTaggerUpdatesReview(view) {
   pane.textContent = "";
   pane.appendChild(tuEl("div", "Built-in rule updates — your own edits and rules are always kept.", "font-weight:600"));
   tuGroup(pane, "Added to the built-in set", view.added, tuAddedRow);
+  // A copy saved before changes were tracked has every added rule unticked ("new, or removed by
+  // you"). One click selects the whole group; rules the analyst is sure they removed can be unticked.
+  if ((view.added || []).some((i) => i.uncertain)) {
+    pane.appendChild(tuBtn("Select all added rules", () => selectAllTaggerUpdates("added"), "Tick every rule in the added group"));
+  }
   tuGroup(pane, "Changed in the built-in set", view.changed, tuChangedRow);
   tuGroup(pane, "Changed on both sides — pick one", view.conflicts, tuConflictRow);
   tuGroup(pane, "Removed by you — restore one at a time", view.removedByYou, tuRemovedRow);
@@ -199,6 +204,13 @@ function renderTaggerUpdatesReview(view) {
   msg.id = "taggerUpdatesMsg";
   bar.appendChild(msg);
   pane.appendChild(bar);
+}
+
+function selectAllTaggerUpdates(group) {
+  const view = taggerUpdatesView;
+  if (!view) return;
+  for (const i of view[group] || []) taggerUpdateChoices[i.key] = "upstream";
+  renderTaggerUpdatesReview(view);
 }
 
 function tuMsg(text, color) {
@@ -288,6 +300,7 @@ window.DfirTaggerUpdates = {
   openTaggerUpdates,
   closeTaggerUpdates,
   renderTaggerUpdatesReview,
+  selectAllTaggerUpdates,
   applyTaggerUpdates,
   exportTaggerUpdates,
   dismissTaggerUpdates,

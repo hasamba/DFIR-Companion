@@ -238,8 +238,11 @@ export class TaggerStore {
     const hadCopy = await exists(this.userRulesPath);
     await mkdir(dirname(this.userRulesPath), { recursive: true }); // atomicWrite won't create parents
     const base = nextBase ?? (hadCopy ? undefined : await this.builtinBase());
-    if (base) await writeRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM, base);
+    // The copy first, the base after. A base that lands without its copy would mark rules as
+    // decided that the copy never got — they would silently stop being offered. A base write that
+    // fails after the copy only offers those rules again, which is the safe direction.
     await atomicWrite(this.userRulesPath, yamlText);
+    if (base) await writeRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM, base);
     return compiled;
   }
 
