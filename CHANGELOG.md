@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GCP detection rules** — SigmaHQ's GCP audit rules are bundled and run on GCP imports (and in Re-grade), and 10 graded plus 5 tag-only GCP rules are ported from Panther, Sentinel, Chronicle and Rhino Security Labs, with upstream commits recorded and watched weekly (closes #2346)
+- **AWS detection rules from TrailDiscover** — 12 graded rules for in-the-wild CloudTrail operations the importer and Sigma did not grade, and 211 more operations tagged by ATT&CK tactic for super-timeline search; TrailDiscover is watched by the weekly upstream check (closes #2345)
 - **Detection rule pack** — the curated tagger rules publish as a separate `rules-*` release when they change; Content tagger can check, review, measure, install (or install from a file) and roll back a pack without an app release, and reports name the rules that graded the case (closes #2349)
 - **New built-in rules for edited rules** — when an edited tagger copy is older than the built-in (or installed pack) rules, Content tagger lists what is new or changed and adds the chosen rules while keeping the analyst's edits; conflicts are picked per rule and deleted rules come back only on request (closes #2344)
 - **Cloud credentials end with the case** — closing a case offers Delete or Keep for its cloud credentials; archive and delete always remove them (a shared account goes with its last case); the cloud accounts list shows every held credential with its cases, who added it and when it was last used, with single and multi-select delete, audit and chain-of-custody entries (closes #2347)
