@@ -225,10 +225,17 @@ function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
 
-function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): ReplicaCandidate | null {
+/** A record's action; null when it lacks an eventName or eventSource — such a record never maps (#1736). */
+function trailAction(rec: Row): { name: string; source: string } | null {
   const name = str(getCI(rec, "eventName"));
   const source = str(getCI(rec, "eventSource"));
-  if (!name || !source) return null;
+  return name && source ? { name, source } : null;
+}
+
+function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): ReplicaCandidate | null {
+  const action = trailAction(rec);
+  if (!action) return null;
+  const { name, source } = action;
 
   const readOnly = truthy(getCI(rec, "readOnly"));
   const def = lookupAwsAction(source, name);
@@ -627,6 +634,40 @@ export function readCloudTrailRecords(text: string): ReturnType<typeof readCloud
   return readCloudRecords(text, cloudTrailConsoleRow);
 }
 
+/**
+ * The whole-upload summary rows, built from the raw records alone (never from the mapped rows).
+ * The credential lineages (#979): built over every record of this upload, appended AFTER the
+ * source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
+ * one, and `kept` / `dropped` / `groups` count source rows alone. Then the compute lifecycles
+ * (#931 item 8), keyed with this upload's identity so an identical re-import folds and two uploads
+ * about one instance stay two rows. The order is part of the result: event ids are positional.
+ */
+function trailSummaries(fresh: Row[], uploadId: string, opts: AwsImportOptions): SiemEvent[] {
+  return [
+    ...aggregateEvents(awsLineages(fresh), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: AWS_LINEAGE_MAX + 1,
+    }).events,
+    ...aggregateEvents(awsComputeLifecycles(fresh, uploadId), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: AWS_COMPUTE_MAX + 1,
+    }).events,
+  ];
+}
+
+/**
+ * The summary rows a streamed import builds over its summary window (#2362): exactly
+ * `parseCloudTrail("", { records }).events.slice(kept)`, without mapping, Sigma-grading and
+ * aggregating every window record only to throw those rows away. Same early return — no record that
+ * maps, no summaries — and the same stamp of the empty text's hash (the caller restamps it).
+ */
+export function cloudTrailSummaries(records: Row[]): SiemEvent[] {
+  if (!records.some((rec) => trailAction(rec))) return [];
+  return stampSourceArtifactHash(trailSummaries(records, sourceArtifactHash(""), {}), "");
+}
+
 function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions): AwsParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const total = records.length;
@@ -716,23 +757,7 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     provenance: opts.provenance,
   });
   const fresh = gateRecords(gate, records); // summaries read new records only (#2301)
-  // The credential lineages (#979): built over every record of this upload, appended AFTER the
-  // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
-  // one, and `kept` / `dropped` / `groups` count source rows alone.
-  const summaries = [
-    ...aggregateEvents(awsLineages(fresh), {
-      aggregate: opts.aggregate,
-      minSeverity: opts.minSeverity,
-      maxEvents: AWS_LINEAGE_MAX + 1,
-    }).events,
-    // The compute lifecycles (#931 item 8), keyed with this upload's identity so an identical
-    // re-import folds and two uploads about one instance stay two rows.
-    ...aggregateEvents(awsComputeLifecycles(fresh, uploadId), {
-      aggregate: opts.aggregate,
-      minSeverity: opts.minSeverity,
-      maxEvents: AWS_COMPUTE_MAX + 1,
-    }).events,
-  ];
+  const summaries = trailSummaries(fresh, uploadId, opts);
   const finalEvents = stampSourceArtifactHash([...events, ...summaries], text);
 
   // A merged cross-account action is ONE event that represents every replica record it carries

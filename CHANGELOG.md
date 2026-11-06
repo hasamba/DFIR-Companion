@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster large CloudTrail imports** — the streamed import no longer re-maps each object's summary window; same rows, counts, grades and disclosures; 400k-record set 693 s → 509 s under `npm run dev`, 500 s → 455 s built (closes #2362)
 - **Default server set name** — a new install names its first server set "Default" instead of "Testing"; an existing set keeps its name
 
 ## [0.45.0] - 2026-11-05

@@ -8,7 +8,10 @@
  *   npx tsx scripts/cloud-scale-gen.ts --out=<dir>
  *   npx tsx scripts/bench-cloud-import.ts --dir=<dir> [--heap-mb=4096] [--timeout-min=30]
  *       [--runs=ual-realistic-100k.csv,ual-realistic-100k.jsonl,...,cloudtrail-realistic]
- *       [--max-import-mb=<n>] [--out=<results dir>]
+ *       [--max-import-mb=<n>] [--out=<results dir>] [--dist]
+ *
+ * `--dist` runs the server from tsc's build (`npm run build` first) — the code the Docker image and
+ * the packaged app run — instead of the TypeScript sources under tsx (`npm run dev`).
  *
  * WHAT "THE REAL IMPORT PATH" MEANS HERE. The child process builds the app exactly as startServer
  * does (createRuntimeStores → buildAiRuntime → buildAppOptions → createApp) over a throwaway cases
@@ -23,7 +26,10 @@
  *
  * Each run is a separate `node --max-old-space-size=<heap-mb>` server, one at a time. The parent
  * samples /proc/<pid>/status (VmHWM) and /proc/<pid>/stat (utime+stime) every 250 ms, so a server
- * that dies of OOM still gets its peak RSS and CPU recorded. Linux only.
+ * that dies of OOM still gets its peak RSS and CPU recorded. Linux only. The server also samples its
+ * own main-thread heap (`process.memoryUsage().heapUsed`) every 250 ms and reports the largest
+ * sample as `peakHeapMiB` (#2362) — a sampled maximum: a timer cannot fire inside a synchronous
+ * stretch, so a peak between two samples can be missed. SQLite worker threads are not in it.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
@@ -89,20 +95,40 @@ interface ServerResult {
   hmCountSum: number;
   hmLineageEvents: number;
   maxRssKiB: number;
+  peakHeapMiB: number;
   cpuUserMs: number;
   cpuSystemMs: number;
 }
 
 // ───────────────────────────── child: a real server ─────────────────────────────
 
+/** The largest sampled main-thread heap, in bytes (see the header: a sampled maximum). */
+function heapSampler(): () => number {
+  let peak = process.memoryUsage().heapUsed;
+  setInterval(() => (peak = Math.max(peak, process.memoryUsage().heapUsed)), 250).unref();
+  return () => Math.max(peak, process.memoryUsage().heapUsed);
+}
+
 async function server(): Promise<void> {
   const root = arg("cases-root")!;
-  const { createRuntimeStores } = await import("../src/composition/runtimeStores.js");
-  const { startMaintenanceTasks } = await import("../src/composition/maintenanceTasks.js");
-  const { buildBulkImportSink } = await import("../src/composition/bulkImportSink.js");
-  const { buildAiRuntime } = await import("../src/composition/aiRuntime.js");
-  const { buildAppOptions } = await import("../src/composition/appWiring.js");
-  const { createApp } = await import("../src/server.js");
+  const peakHeap = heapSampler();
+  // Typed against the sources either way; `--dist` loads tsc's output of the same modules.
+  const src = process.argv.includes("--dist") ? "../dist" : "../src";
+  const load = <T>(mod: string): Promise<T> => import(`${src}/${mod}`) as Promise<T>;
+  const { createRuntimeStores } = await load<typeof import("../src/composition/runtimeStores.js")>(
+    "composition/runtimeStores.js",
+  );
+  const { startMaintenanceTasks } = await load<typeof import("../src/composition/maintenanceTasks.js")>(
+    "composition/maintenanceTasks.js",
+  );
+  const { buildBulkImportSink } = await load<typeof import("../src/composition/bulkImportSink.js")>(
+    "composition/bulkImportSink.js",
+  );
+  const { buildAiRuntime } =
+    await load<typeof import("../src/composition/aiRuntime.js")>("composition/aiRuntime.js");
+  const { buildAppOptions } =
+    await load<typeof import("../src/composition/appWiring.js")>("composition/appWiring.js");
+  const { createApp } = await load<typeof import("../src/server.js")>("server.js");
 
   const rt = createRuntimeStores({
     casesRoot: root,
@@ -195,6 +221,7 @@ async function server(): Promise<void> {
       hmCountSum: hm.filter((e) => !isLineage(e)).reduce((n, e) => n + (e.count ?? 1), 0),
       hmLineageEvents: hm.filter(isLineage).length,
       maxRssKiB: usage.maxRSS,
+      peakHeapMiB: Math.round(peakHeap() / 1024 / 1024),
       cpuUserMs: Math.round(usage.userCPUTime / 1000),
       cpuSystemMs: Math.round(usage.systemCPUTime / 1000),
     };
@@ -370,6 +397,7 @@ async function oneRun(
     self,
     "--server",
     `--cases-root=${join(work, "cases")}`,
+    ...(process.argv.includes("--dist") ? ["--dist"] : []),
   ];
   const started = Date.now();
   const proc = spawn(process.execPath, nodeArgs, { env, stdio: ["pipe", "pipe", "pipe"] });
@@ -423,6 +451,7 @@ async function oneRun(
   rmSync(work, { recursive: true, force: true }); // the evidence copy and case database are as large as the input
   return {
     run,
+    build: process.argv.includes("--dist") ? "dist (tsc)" : "src (tsx)",
     heapMb,
     exit: code,
     wallS: Math.round((Date.now() - started) / 100) / 10,
