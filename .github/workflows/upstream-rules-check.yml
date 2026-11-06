@@ -1,0 +1,92 @@
+name: Upstream rules check
+
+# Weekly check for changes to the upstream lists that are HAND-PORTED into companion/data/tags.yaml
+# (today the five Microsoft-Analyzer-Suite blacklists, #2306). It never changes rules: porting
+# needs judgment, so when entries changed upstream it opens ONE issue listing what was added,
+# removed or changed per list, and a person ports them. Nothing changed -> no issue. Bundled Sigma
+# is not covered here: Settings -> Sigma rules already checks and installs SigmaHQ releases.
+#
+# The comparison base is the commit recorded in the tags.yaml header; the head is upstream's newest
+# commit touching the watched path. Logic: companion/scripts/upstreamRulesDiff.mjs (tested), I/O:
+# companion/scripts/upstream-rules-check.mjs. Run it locally with `--dry-run`.
+
+on:
+  schedule:
+    # Mondays 05:41 UTC. Off the hour on purpose: GitHub's scheduler is busiest on the hour.
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-rules-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Compare upstream rule lists
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Plain node, no npm ci: the scripts use only node built-ins and the gh CLI. A missing or
+      # renamed upstream file makes this step fail — it never reports "no change" for a list it
+      # could not read.
+      - name: Diff upstream lists
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node companion/scripts/upstream-rules-check.mjs --body-file "$RUNNER_TEMP/upstream-rules-body.md"
+
+      # Dedupe on the title marker, which names the source and the RECORDED (base) commit rather
+      # than the full range. The base only moves when someone re-ports, so while the port is
+      # pending each weekly run updates the same issue with the newer head instead of filing a
+      # sibling. Same pattern as the nightly-failure notice in e2e.yml.
+      - name: Open or update the issue
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.diff.outputs.title }}
+          BODY_FILE: ${{ runner.temp }}/upstream-rules-body.md
+        run: |
+          markers=$(printf '%s' "$TITLE" | grep -o '\[upstream-rules [^]]*\]' | tr '\n' ' ')
+          existing=$(gh issue list --state open --limit 200 --json number,title \
+            --jq "map(select(.title | contains(\"${markers% }\"))) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing already tracks this upstream range; updating it."
+            gh issue edit "$existing" --title "$TITLE" --body-file "$BODY_FILE"
+            exit 0
+          fi
+          # Labels are a convenience. Create them if missing; if that is refused, file without them.
+          gh label create detection-rules --color 5319e7 --description "Built-in detection rules" 2>/dev/null || true
+          gh label create upstream --color c5def5 --description "Changes in an upstream rule source" 2>/dev/null || true
+          gh issue create --title "$TITLE" --body-file "$BODY_FILE" --label detection-rules --label upstream \
+            || gh issue create --title "$TITLE" --body-file "$BODY_FILE"
+
+      # A weekly job nobody watches rots. A failed run (upstream file moved, API error, header
+      # line missing) also opens an issue, once — later failures comment on it.
+      - name: Open an issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Upstream rules check failed"
+          existing=$(gh issue list --state open --limit 200 --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "The upstream rules check failed again: $RUN_URL"
+          else
+            gh issue create --title "$title" --body "The weekly upstream rules check could not compare the upstream lists. A source file may have been moved or renamed upstream, or the recorded commit line in companion/data/tags.yaml may be missing.
+
+          Run: $RUN_URL"
+          fi
