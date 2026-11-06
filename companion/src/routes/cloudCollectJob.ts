@@ -36,6 +36,18 @@ import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import { caseCollectImporter } from "./cloudCollectImporter.js";
 import type { RouteContext } from "./context.js";
 
+/**
+ * The job's warning for a run that did not fail: the stop reason when the network stage stopped
+ * early (budget used, disk full — #2339), else the missing-window count. Always reads "partial", the
+ * collection's own status. Pure.
+ */
+export function collectionJobWarning(cp: CollectionCheckpoint): string | undefined {
+  if (cp.status === "complete" && !cp.missing.length) return undefined;
+  if (cp.stopReason)
+    return cp.stopReason.startsWith("partial") ? cp.stopReason : `partial — ${cp.stopReason}`;
+  return cp.missing.length ? `partial — ${cp.missing.length} window(s) missing` : undefined;
+}
+
 /** A collection may be resumed many times (a long Graph query, a flaky link): do not run out. */
 export const CLOUD_COLLECT_MAX_RETRIES = 1000;
 
@@ -117,9 +129,8 @@ export async function executeCollection(
         `${cp.missing.length} window(s) missing, ${cp.quarantined.length} file(s) quarantined`,
     );
     if (cp.status === "failed") throw new Error(cp.missing[0]?.reason ?? "nothing was collected");
-    if (cp.stopReason?.startsWith("partial — budget used")) await manager?.warn(input.jobId, cp.stopReason);
-    else if (cp.missing.length)
-      await manager?.warn(input.jobId, `partial — ${cp.missing.length} window(s) missing`);
+    const warning = collectionJobWarning(cp);
+    if (warning) await manager?.warn(input.jobId, warning);
     return cp;
   } catch (err) {
     const cancelled = (err as Error)?.name === "AbortError";

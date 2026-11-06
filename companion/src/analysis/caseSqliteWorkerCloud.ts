@@ -109,6 +109,39 @@ function appendKindRows(db, kind, entities) {
   ).run(kind, entities.length);
 }
 
+// #2339: group -> member rows, skipping a member already stored. A crash replay of a streamed page
+// writes the same group keys and members again; the member identity (ref + payload hash) is the
+// row's entity_id, so the check is one (kind, entity_id) index probe per member, filtered by group
+// (host) — no read-time dedup, the page and its count stay one index range. Rows written before
+// #2339 carry no entity_id and are not matched.
+function cloudMembersAppend(dbPath, entities) {
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const kind = "cloudRecordMember";
+      const stored = db.prepare(
+        "SELECT 1 FROM entities INDEXED BY entities_id_idx WHERE kind=? AND entity_id=? AND host=? LIMIT 1"
+      );
+      const writer = createEntityWriter(db);
+      let ordinal = Number(db.prepare("SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind=?").get(kind).n) + 1;
+      let added = 0;
+      for (const entity of entities || []) {
+        const key = String(entity.ref) + "\n" + (entity.payloadHash || "");
+        if (stored.get(kind, key, entity.asset)) continue;
+        writer.insert({ ...entityProjection(kind, entity, ordinal++), entityId: key }, entity);
+        added++;
+      }
+      if (added) db.prepare(
+        "INSERT INTO entity_counts(kind, count) VALUES(?, ?) " +
+        "ON CONFLICT(kind) DO UPDATE SET count=entity_counts.count+excluded.count"
+      ).run(kind, added);
+      return added;
+    });
+  } finally {
+    db.close();
+  }
+}
+
 // #2301: ledger rows AND their batch's ownership row in ONE transaction, so a ledger row can never
 // exist without the batch an undo checkpoint claims by the import's stored file name (host column).
 // #2305: the configuration-snapshot observations (cloudStateStore.ts) share the batch rows, so one
@@ -176,6 +209,7 @@ function dispatchCloud(message) {
     case "cloudBatchesForLabels": return cloudBatchesForLabels(message.dbPath, message.labels);
     case "cloudInactiveBatches": return cloudInactiveBatches(message.dbPath);
     case "cloudBatchesSetInactive": return cloudBatchesSetInactive(message.dbPath, message.batches, message.inactive);
+    case "cloudMembersAppend": return cloudMembersAppend(message.dbPath, message.entities);
     case "cloudMembersPage": return cloudMembersPage(message.dbPath, message.group, message.afterRowId, message.limit);
     case "authObservationsPage": return authObservationsPage(message.dbPath, message.query);
     case "pruneEntitiesBeforeNewest": return pruneEntitiesBeforeNewest(message.dbPath, message.kind, message.spanMs);

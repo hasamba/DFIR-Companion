@@ -8,6 +8,7 @@ import type {
   CloudCollectSession,
   CollectionCheckpoint,
 } from "../../src/integrations/cloudCollect/collectTypes.js";
+import { collectionJobWarning } from "../../src/routes/cloudCollectJob.js";
 import {
   diskFull,
   fakeSession,
@@ -68,6 +69,23 @@ async function counts(t: TempCase) {
     iocs: state.iocs.length,
     superRows: superMeta.rows,
   };
+}
+
+/** Every aggregated event's member list: its paged total, and the refs that appear more than once. */
+async function memberLists(t: TempCase) {
+  const state = await t.stateStore.load("c1");
+  const out: Record<string, { total: number; count: number; repeated: string[] }> = {};
+  for (const e of state.forensicTimeline) {
+    if (!e.sourceRecords?.group) continue;
+    const page = await t.cloudRecordStore.pageMembers("c1", e.sourceRecords.group, { limit: 5000 });
+    const refs = page.members.map((m) => `${m.ref}|${m.locator ?? ""}`);
+    out[e.sourceRecords.group] = {
+      total: page.total,
+      count: e.sourceRecords.count,
+      repeated: refs.filter((r, i) => refs.indexOf(r) !== i),
+    };
+  }
+  return out;
 }
 
 /** The same collection, run once with nothing going wrong — the baseline every crash must match. */
@@ -217,6 +235,11 @@ describe("cloud collection engine (#2311)", () => {
     expect(cp.status).toBe("complete");
     expect(resumed.imports).toEqual(["evidence/cloud/cc-test-abc123/p000002-ct.json"]);
     expect(await counts(t)).toEqual(base.counts);
+    // #2339: the dead attempt's member rows are not listed twice; each total is the event's count.
+    const members = await memberLists(t);
+    expect(Object.keys(members).length).toBeGreaterThan(0);
+    for (const m of Object.values(members))
+      expect(m).toEqual({ total: m.count, count: m.count, repeated: [] });
     // And again: a third run over a finished collection changes nothing.
     const again = await run(t, fs, session, pipelineImporter(t), true);
     expect(again.status).toBe("complete");
@@ -278,6 +301,23 @@ describe("cloud collection engine (#2311)", () => {
     const resumed = await run(t, fs, session, pipelineImporter(t), true);
     expect(resumed.status).toBe("complete");
     expect((await manifestOf(t)).pages).toHaveLength(4);
+  });
+
+  it("disk full before the first page is still partial, not failed (#2339)", async () => {
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 2 });
+    await start(t, fs, session);
+    fs.inject("writeFileSync", (p) => p.endsWith(".json.tmp") && p.includes("pages"), diskFull);
+    const cp = await run(t, fs, session);
+    expect(cp.status).toBe("partial");
+    expect(cp.imported).toEqual([]);
+    expect(cp.stopReason).toMatch(/ENOSPC/);
+    expect(collectionJobWarning(cp)).toMatch(/^partial — evidence write failed \(ENOSPC\)/);
+    fs.clear();
+    const resumed = await run(t, fs, session, pipelineImporter(t), true);
+    expect(resumed.status).toBe("complete");
+    expect((await manifestOf(t)).pages).toHaveLength(2);
   });
 
   it("a provider error fails only its window: partial with the reason, failed when nothing came back", async () => {
