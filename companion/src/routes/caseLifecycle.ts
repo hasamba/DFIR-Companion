@@ -252,7 +252,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return { removed: true, released: release.report };
     } catch (err) {
       errLine(`${logPrefix} case=${id} failed to remove from active list: ${(err as Error).message}`);
-      return { removed: false, error: (err as Error).message };
+      return { removed: false, error: (err as Error).message, released: release.report };
     }
   }
 

@@ -211,6 +211,7 @@ describe("closing a case", () => {
         .post("/cases/c1/custody")
         .send({ artifactPath: join(dir, "x"), event });
       expect(res.status, event).toBe(400);
+      expect(res.body.error, event).toMatch(/event must be one of/);
     }
     expect(await custody.load("c1")).toEqual([]);
   });
