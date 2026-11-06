@@ -1,0 +1,166 @@
+// Samples built from bundled cloud Sigma rules' selections for the detection-overlap check (#2348).
+//
+// A FILTER, not a compiler: it handles a condition of `ref`, `and` (its `not` operands are left
+// unsatisfied by the plain base record), `or` / `1 of` (the first operand), `all of`; map
+// selections and the first alternative of a list selection; and the modifiers contains, startswith,
+// endswith and all. Anything else — keywords, `re`, `cidr`, numeric comparisons, a bare negation —
+// makes the rule "not checked" with the reason. A built sample is only a candidate: the check
+// counts it only after the real importer, run with the bundled rules, reports that rule matched.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { bundledSigmaDir } from "../../../../src/analysis/sigmaBundledRules.js";
+import {
+  AWS_CLOUDTRAIL,
+  AZURE_AUDIT_LOGS,
+  AZURE_SIGNIN_LOGS,
+  fieldResolvers,
+  type SigmaLogSourceDef,
+} from "../../../../src/analysis/sigmaLogSources.js";
+import { parseSigmaRule } from "../../../../src/analysis/sigmaRule.js";
+import type { SigmaRuleSet } from "../../../../src/analysis/sigmaRuleSet.js";
+import type { SigmaCondition, SigmaFieldMatch, SigmaRule } from "../../../../src/analysis/sigmaRuleTypes.js";
+import { cloudTrailBase } from "./aws.js";
+import { auditBase, signInBase } from "./m365.js";
+import type { DetectionSample } from "./types.js";
+
+type Row = Record<string, unknown>;
+
+/** The cloud log sources in scope, with the importer and base record each one's samples use. */
+export const CLOUD_SIGMA_SOURCES: Record<
+  string,
+  { def: SigmaLogSourceDef; base: () => Row; kind: DetectionSample["kind"] }
+> = {
+  // A neutral read call: the importer needs an event name, and a rule that names one overwrites it.
+  "aws-cloudtrail": {
+    def: AWS_CLOUDTRAIL,
+    base: () =>
+      cloudTrailBase({ eventSource: "ec2.amazonaws.com", eventName: "DescribeInstances", readOnly: true }),
+    kind: "cloudtrail",
+  },
+  "azure-signinlogs": { def: AZURE_SIGNIN_LOGS, base: () => signInBase(), kind: "m365" },
+  "azure-auditlogs": { def: AZURE_AUDIT_LOGS, base: () => auditBase(), kind: "m365" },
+};
+
+export interface SigmaBuild {
+  ruleId: string;
+  title: string;
+  source: string;
+  sample?: DetectionSample;
+  /** Why no sample could be built. */
+  notBuilt?: string;
+}
+
+class NotBuildable extends Error {}
+
+/** The selection names that, all true, satisfy the condition. */
+function positives(c: SigmaCondition): string[] {
+  switch (c.kind) {
+    case "ref":
+      return [c.name];
+    case "allOf":
+      return [...c.names];
+    case "oneOf":
+      if (!c.names.length) throw new NotBuildable("a '1 of' pattern names no selection");
+      return [c.names[0]];
+    case "or":
+      return positives(c.operands[0]);
+    case "and": {
+      const pos = c.operands.filter((o) => o.kind !== "not").flatMap(positives);
+      if (!pos.length) throw new NotBuildable("the condition has no positive selection");
+      return pos;
+    }
+    case "not":
+      throw new NotBuildable("the condition is only a negation");
+  }
+}
+
+const PLAIN_MODIFIERS = new Set(["contains", "startswith", "endswith", "all"]);
+
+function valueFor(f: SigmaFieldMatch): string | undefined {
+  if (f.nullValue) return undefined;
+  const odd = f.modifiers.find((m) => !PLAIN_MODIFIERS.has(m));
+  if (odd) throw new NotBuildable(`field ${f.field} uses the '${odd}' modifier`);
+  if (!f.values.length) throw new NotBuildable(`field ${f.field} has no value`);
+  const values = f.modifiers.includes("all") ? f.values.map(String) : [String(f.values[0])];
+  // A plain Sigma value may carry wildcards; a literal stand-in satisfies them.
+  return values.map((v) => v.replace(/\*/g, "").replace(/\?/g, "x")).join(" ");
+}
+
+/** Set a dotted path on a record, reusing existing keys case-insensitively. Returns a new record. */
+function setPath(rec: Row, path: string[], value: unknown): Row {
+  const [head, ...rest] = path;
+  const key = Object.keys(rec).find((k) => k.toLowerCase() === head.toLowerCase()) ?? head;
+  if (!rest.length) return { ...rec, [key]: value };
+  const child = rec[key];
+  const next = child && typeof child === "object" && !Array.isArray(child) ? (child as Row) : {};
+  return { ...rec, [key]: setPath(next, rest, value) };
+}
+
+/** The value for a path, joined with what THIS build already wrote there (never the base's). */
+function written(done: Map<string, string>, path: string, value: string): string {
+  const prev = done.get(path.toLowerCase());
+  // Two fields landing on one path (e.g. two `contains`) are both kept in one string.
+  const next = prev !== undefined && prev !== value ? `${prev} ${value}` : value;
+  done.set(path.toLowerCase(), next);
+  return next;
+}
+
+/** Sign-in fields Sigma derives from the record rather than reading a path. */
+function derived(field: string, value: string): Array<[string, unknown]> {
+  const f = field.toLowerCase();
+  if (f === "status") return [["status", { errorCode: value.toLowerCase() === "success" ? 0 : 50126 }]];
+  if (f === "location") return [["location.countryOrRegion", value]];
+  throw new NotBuildable(`field ${field} is derived and has no stand-in`);
+}
+
+function apply(rec: Row, def: SigmaLogSourceDef, f: SigmaFieldMatch, done: Map<string, string>): Row {
+  const value = valueFor(f);
+  if (value === undefined) return rec;
+  const resolvers = fieldResolvers(def, f.field);
+  if (!Array.isArray(resolvers)) throw new NotBuildable(resolvers.refused);
+  const path = resolvers.find((r): r is string => typeof r === "string");
+  const writes: Array<[string, unknown]> = path
+    ? [[path, written(done, path, value)]]
+    : derived(f.field, value);
+  return writes.reduce((acc, [p, v]) => setPath(acc, p.split("."), v), rec);
+}
+
+function build(rule: SigmaRule, source: string): Row {
+  const { def, base } = CLOUD_SIGMA_SOURCES[source];
+  const names = positives(rule.detection.condition);
+  let rec = base();
+  const done = new Map<string, string>();
+  for (const name of names) {
+    const sel = rule.detection.selections.find((s) => s.name === name);
+    if (!sel) throw new NotBuildable(`selection ${name} is not defined`);
+    if (sel.kind === "keywords") throw new NotBuildable(`selection ${name} is a keyword list`);
+    const fields = sel.kind === "map" ? sel.fields : (sel.alternatives[0] ?? []);
+    for (const f of fields) rec = apply(rec, def, f, done);
+  }
+  return rec;
+}
+
+/** One build per LOADED rule of an in-scope cloud source (the rules import grading can run). */
+export function buildCloudSigmaSamples(set: SigmaRuleSet): SigmaBuild[] {
+  const dir = bundledSigmaDir();
+  if (!dir) throw new Error("the bundled Sigma rules folder (data/sigma) is missing");
+  return set.inventory
+    .filter((e) => e.outcome === "loaded" && e.source && e.source in CLOUD_SIGMA_SOURCES)
+    .map((e): SigmaBuild => {
+      const source = e.source as string;
+      const head = { ruleId: e.id, title: e.title, source };
+      const parsed = parseSigmaRule(readFileSync(join(dir, e.path), "utf8"), { allowNull: true });
+      if (!parsed.ok) return { ...head, notBuilt: "the rule did not parse here" };
+      try {
+        const record = build(parsed.rule, source);
+        const kind = CLOUD_SIGMA_SOURCES[source].kind;
+        return {
+          ...head,
+          sample: { id: `sigma.${e.id}`, kind, from: `built from Sigma: ${e.title}`, record },
+        };
+      } catch (err) {
+        if (err instanceof NotBuildable) return { ...head, notBuilt: err.message };
+        throw err;
+      }
+    });
+}
