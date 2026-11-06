@@ -385,6 +385,8 @@
   <script src="/js/dashboard-case-servers.js"></script>
   <!-- Settings → Cloud accounts (#2307). initCloudAccounts() runs from initCaseConnect(). -->
   <script src="/js/dashboard-cloud-accounts.js"></script>
+  <!-- Cloud Collection panel + toolbar button (#2311). initCloudCollect() runs from initCaseConnect(). -->
+  <script src="/js/dashboard-cloud-collect.js"></script>
   <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
   <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
@@ -565,6 +567,9 @@
     <span class="tb-sep" aria-hidden="true"></span>
     <span class="tb-group" data-tb-group="Evidence">
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
+    <!-- Collect cloud logs (#2311) — OPENS the Cloud Collection panel; starting a collection is a
+         separate press inside it. The ::before icon keeps it visible under .icons-only. -->
+    <button id="cloudCollectBtn" type="button" aria-label="Collect cloud logs" data-tip="Collect cloud logs: pull AWS, Microsoft or GCP logs live with one of this case's cloud accounts. Every page the cloud returns is saved as evidence with its SHA-256 in an append-only manifest, imported, and a stopped collection resumes without losing or duplicating anything. Opening the panel costs nothing.">Cloud logs</button>
     <button id="importUndoBtn" type="button" data-safe-style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" data-safe-style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
       <span class="tb-group-label" aria-hidden="true">Evidence</span>
@@ -3719,6 +3724,7 @@
     <section id="sec-hostranking" data-safe-style="grid-column: 1 / -1"><h2>Host &amp; Account Ranking<span class="ev-sub">which hosts/accounts carry the attack — scored by signal (severity-weighted events + techniques + connective IOCs), not volume (derived, no AI)</span></h2><div id="hostRanking">—</div></section>
     <section id="sec-evidence-gaps" data-safe-style="grid-column: 1 / -1"><h2>Evidence Gaps<span class="ev-sub">what this case is MISSING — uncovered kill-chain phases (with where to collect), silent windows, and lookalike-actor next moves (derived, no AI); a lead, not proof</span></h2><div id="evidenceGaps">—</div></section>
     <section id="sec-cloud-coverage" data-safe-style="grid-column: 1 / -1"><h2>Cloud Coverage<span class="ev-sub">what each imported CloudTrail/GCP/Azure/M365/Workspace upload can and cannot answer — record counts and categories present, per account/project/subscription/tenant (derived, no AI); a missing category is stated, never assumed to mean nothing happened</span></h2><div id="cloudCoverage">—</div></section>
+    <section id="sec-cloud-collect" data-safe-style="grid-column: 1 / -1"><h2>Cloud Collection<span class="ev-sub">collect AWS / Microsoft / GCP logs live with a cloud account of this case — every page saved as evidence with its SHA-256 in an append-only manifest; the result is complete, partial (which windows are missing, and why) or failed, and Resume continues a stopped collection without losing or duplicating evidence or events</span></h2><div id="cloudCollect">—</div></section>
     <section id="sec-gaps" data-safe-style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is High only next to attack activity or a log-clear event (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <section id="sec-swimlane" data-safe-style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
@@ -4664,7 +4670,7 @@
       { id: "sec-hostranking",  label: "Host & Account Ranking" },
       { id: "sec-gaps",         label: "Timeline Gaps" },
       { id: "sec-evidence-gaps", label: "Evidence Gaps" },
-      { id: "sec-cloud-coverage", label: "Cloud Coverage" },
+      { id: "sec-cloud-coverage", label: "Cloud Coverage" }, { id: "sec-cloud-collect", label: "Cloud Collection" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-login-graph",  label: "Login Graph" },

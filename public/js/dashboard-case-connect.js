@@ -402,6 +402,7 @@
       ["timelineGaps", () => loadTimelineGaps(caseId)],
       ["evidenceGaps", () => loadEvidenceGaps(caseId)],
       ["cloudCoverage", () => loadCloudCoverage(caseId)],
+      ["cloudCollect", () => loadCloudCollect(caseId)], // #2311 live collection jobs
       ["beacons", () => loadBeacons(caseId)],
       ["anomalies", () => loadAnomalies(caseId)],
       ["sessions", () => loadSessions(caseId)],
@@ -727,6 +728,7 @@
     // missing module costs its own controls, never this wiring).
     if (typeof initServerSets === "function") initServerSets();
     if (typeof initCloudAccounts === "function") initCloudAccounts();
+    if (typeof initCloudCollect === "function") initCloudCollect();
     if (typeof initCaseServers === "function") initCaseServers();
     // Guarded like every other markup binding here: an older cached dashboard.html without the
     // button must not throw and take the rest of this wiring — the mismatch banner and the

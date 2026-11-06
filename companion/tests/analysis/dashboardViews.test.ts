@@ -118,6 +118,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-gaps",
       "sec-evidence-gaps",
       "sec-cloud-coverage",
+      "sec-cloud-collect",
       "sec-swimlane",
       "sec-assets",
       "sec-login-graph",

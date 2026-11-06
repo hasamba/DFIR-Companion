@@ -180,6 +180,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     updateCheckStore,
     appVersion,
     updateRepo,
+    cloudCollectProviders,
   } = rt;
   const {
     teamAuth,
@@ -363,6 +364,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     serverClients: createServerClients(rt.serverSetStore, process.env),
     serverSetStore: rt.serverSetStore,
     cloudAccountVault: rt.cloudAccountVault,
+    cloudCollectProviders,
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,

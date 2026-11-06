@@ -23,7 +23,7 @@
    hover tooltips (data-tip) keep every icon discoverable. */
 #connect::before, #newCaseBtn::before, #seedDemoBtn::before, #enrichToggle::before, #anonToggle::before,
 #aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondLookBtn::before, #secondOpinion::before, #deepPassBtn::before,
-#importBtn::before, #importCaseBtn::before,
+#importBtn::before, #importCaseBtn::before, #cloudCollectBtn::before,
 #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
 #toggleAll::before, #toggleSearchBar::before, #presidioRetryBtn::before, #presidioContinueBtn::before {
   content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -51,6 +51,8 @@
    the one prompt's worth normal synthesis sees. */
 #deepPassBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2 3 7l9 5 9-5z'/><path d='M3 12l9 5 9-5'/><path d='M3 17l9 5 9-5'/></svg>"); }
 #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+/* Collect cloud logs (#2311) — a cloud with a down arrow: pull logs from the cloud into the case. */
+#cloudCollectBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 18a5 5 0 1 1 1.1-9.9A6 6 0 0 1 19.5 10 4 4 0 0 1 18 18'/><path d='M12 11v9'/><path d='M9 17l3 3 3-3'/></svg>"); }
 /* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
 #importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
 /* Undo / redo the latest import (#76) — curved arrows, distinct from the synthesize refresh circle. */
