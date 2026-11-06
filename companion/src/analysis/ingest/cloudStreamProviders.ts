@@ -25,7 +25,7 @@ import {
   type UndatedRows,
 } from "../m365ExportAdapters.js";
 import { createApiResolverLearner, type Resolver } from "../entraAuditImport.js";
-import { parseCloudTrail } from "../awsImport.js";
+import { cloudTrailSummaries, parseCloudTrail } from "../awsImport.js";
 import { cloudTrailConsoleRow } from "../cloudRecords.js";
 import { parseCloudActivity } from "../cloudActivityImport.js";
 
@@ -179,10 +179,8 @@ const aws: StreamProvider = {
     ]),
     ip: pick(rec, ["sourceIPAddress"]),
   }),
-  summaries(window) {
-    const r = parseCloudTrail("", { records: window });
-    return r.events.slice(r.kept);
-  },
+  // The lineage and compute summaries read the raw window only (#2362): no re-mapping.
+  summaries: (window) => cloudTrailSummaries(window),
 };
 
 const cloudActivity: StreamProvider = {

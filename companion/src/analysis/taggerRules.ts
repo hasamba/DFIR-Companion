@@ -212,10 +212,15 @@ export function compileRuleset(raw: unknown): CompiledRuleset {
 
 // Extract the comparable strings for a field: array fields yield one string per element, scalars a
 // single string, numbers their decimal form. Each string is capped (ReDoS/perf). Absent/empty → [].
+// Module-level, not a closure inside fieldValues: that runs once per condition per event, and under
+// tsx (`npm run dev`) every re-created named closure also paid esbuild's keepNames wrapper (#2362).
+function cap(s: string): string {
+  return s.length > FIELD_SCAN_CAP ? s.slice(0, FIELD_SCAN_CAP) : s;
+}
+
 function fieldValues(event: ForensicEvent, field: string): string[] {
   const raw = (event as unknown as Record<string, unknown>)[field];
   if (raw === undefined || raw === null) return [];
-  const cap = (s: string): string => (s.length > FIELD_SCAN_CAP ? s.slice(0, FIELD_SCAN_CAP) : s);
   if (ARRAY_SET.has(field)) {
     if (!Array.isArray(raw)) return [];
     return raw.map((x) => cap(String(x))).filter((s) => s.length > 0);
