@@ -40,10 +40,11 @@ entries:
       through the CloudTrail Sigma veto, so it never reaches this check.
   - rules: [importer:m365, sigma:53bb4f7f-48a8-4475-ac30-5a82ddfdf6fc]
     reason: >-
-      pending decision: a successful BAV2ROPC (legacy-auth) Entra sign-in is graded Medium by the
-      importer on purpose (#931 item 3: the user agent is client-supplied and ROPC is not proof of
-      an MFA bypass), but the Sigma rule Potential MFA Bypass Using Legacy Client Authentication
-      raises it to High.
+      intended (owner decision, #2355): a successful BAV2ROPC (legacy-auth) Entra sign-in is
+      graded Medium by the importer (#931 item 3: the user agent is client-supplied and ROPC is not
+      proof of an MFA bypass), and the Sigma rule Potential MFA Bypass Using Legacy Client
+      Authentication raises it to High. High stands: a successful legacy-auth sign-in is a common
+      password-spray success path and should be in front of the analyst.
   - rules: [sigma:35b781cc-1a08-4a5a-80af-42fd7c315c6b, tagger:mas_user_agent_offensive_tool]
     reason: >-
       intended (owner decision, #2355): an AzureHound user agent on an Entra sign-in is graded
