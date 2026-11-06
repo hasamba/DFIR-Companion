@@ -11,7 +11,7 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
 import { fromTemporaryCredentials } from "@aws-sdk/credential-providers";
 import { ClientCertificateCredential } from "@azure/identity";
-import { Impersonated, type JWTInput } from "google-auth-library";
+import type { JWTInput } from "google-auth-library";
 import type {
   AwsSecrets,
   AwsSettings,
@@ -23,11 +23,9 @@ import type { CloudTransport } from "../cloudTransport/cloudAgent.js";
 import { awsClientConfig, type AwsTransportConfig } from "../cloudTransport/awsTransport.js";
 import { azureCredentialOptions } from "../cloudTransport/azureTransport.js";
 import { cloudFetch, type CloudFetch } from "../cloudTransport/cloudFetch.js";
-import {
-  createGoogleAuth,
-  googleClientOptions,
-  googleImpersonatedClient,
-} from "../cloudTransport/googleTransport.js";
+import { createGoogleAuth, googleImpersonatedClient } from "../cloudTransport/googleTransport.js";
+import { googleAmbientImpersonatedClient } from "../cloudTransport/googleAmbient.js";
+import { awsAmbientCredentials } from "../cloudTransport/awsAmbient.js";
 import type { AwsCheckClients } from "./awsReadCheck.js";
 import type { GcpRequester } from "./gcpReadCheck.js";
 import type { MicrosoftCheckClients } from "./microsoftReadCheck.js";
@@ -57,9 +55,13 @@ const DEFAULT_AWS_REGION = "us-east-1";
 const ROLE_SESSION_NAME = "dfir-companion-read-check";
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 const LOGGING_READ_SCOPE = "https://www.googleapis.com/auth/logging.read";
-const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
-function awsCredentials(settings: AwsSettings, secrets: AwsSecrets, config: CheckWire["awsConfig"]) {
+function awsCredentials(
+  settings: AwsSettings,
+  secrets: AwsSecrets,
+  config: CheckWire["awsConfig"],
+  transport: CloudTransport,
+) {
   const { accessKeyId, secretAccessKey, sessionToken } = secrets;
   const keys =
     accessKeyId && secretAccessKey
@@ -73,22 +75,50 @@ function awsCredentials(settings: AwsSettings, secrets: AwsSecrets, config: Chec
   const ambient = settings.baseCredential === "ambient";
   if (!ambient && !keys)
     throw new CheckSetupError("the account has no stored access key to assume the role with");
-  return fromTemporaryCredentials({
-    params: {
-      RoleArn: settings.roleArn,
-      RoleSessionName: ROLE_SESSION_NAME,
-      DurationSeconds: settings.sessionSeconds ?? 3600,
-      ...(secrets.externalId ? { ExternalId: secrets.externalId } : {}),
-    },
-    ...(keys && !ambient ? { masterCredentials: keys } : {}),
-    // The provider's own STS client is the token path: it goes through the transport too.
-    clientConfig: { region: settings.region || DEFAULT_AWS_REGION, ...(config as AwsTransportConfig) },
-  });
+  const region = settings.region || DEFAULT_AWS_REGION;
+  // An ambient base is the machine's own chain, built with the transport on every inner client —
+  // never fromTemporaryCredentials' option-less default chain (see cloudTransport/awsAmbient.ts).
+  const masterCredentials = ambient
+    ? awsAmbientCredentials(transport, { region, clientConfig: config })
+    : keys;
+  return onePerCheck(
+    fromTemporaryCredentials({
+      params: {
+        RoleArn: settings.roleArn,
+        RoleSessionName: ROLE_SESSION_NAME,
+        DurationSeconds: settings.sessionSeconds ?? 3600,
+        ...(secrets.externalId ? { ExternalId: secrets.externalId } : {}),
+      },
+      masterCredentials,
+      // The provider's own STS client is the token path: it goes through the transport too.
+      clientConfig: { region, ...(config as AwsTransportConfig) },
+    }),
+  );
 }
 
-function awsClients(settings: AwsSettings, secrets: AwsSecrets, wire: CheckWire): AwsCheckClients {
+/**
+ * One AssumeRole for the whole check, shared by the STS, CloudTrail and S3 clients (each would
+ * otherwise assume the role on its own). A check lasts minutes; the shortest session is 15.
+ */
+function onePerCheck<P, T>(provider: (props?: P) => Promise<T>): (props?: P) => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return (props) => {
+    pending ??= provider(props).catch((err: unknown) => {
+      pending = undefined;
+      throw err;
+    });
+    return pending;
+  };
+}
+
+function awsClients(
+  settings: AwsSettings,
+  secrets: AwsSecrets,
+  wire: CheckWire,
+  transport: CloudTransport,
+): AwsCheckClients {
   const config = wire.awsConfig as AwsTransportConfig;
-  const credentials = awsCredentials(settings, secrets, config);
+  const credentials = awsCredentials(settings, secrets, config, transport);
   const region = settings.region || DEFAULT_AWS_REGION;
   return {
     sts: new STSClient({ region, credentials, ...config }),
@@ -142,6 +172,8 @@ async function gcpClient(
     const auth = createGoogleAuth(transport, {
       credentials: parseKey(secrets.serviceAccountKeyJson),
       scopes,
+      // Known already; without it the library runs the gcloud CLI and asks the metadata server.
+      projectId: settings.projectId,
     });
     return await auth.getClient();
   }
@@ -155,15 +187,12 @@ async function gcpClient(
       targetScopes: scopes,
     });
   }
-  // Ambient base: the machine's own credentials call the IAM Credentials API.
-  const sourceClient = await createGoogleAuth(transport, { scopes: [CLOUD_PLATFORM_SCOPE] }).getClient();
-  return new Impersonated({
-    sourceClient,
+  // Ambient base: the machine's own credentials call the IAM Credentials API, through the transport;
+  // only a GCE metadata token stays direct (see cloudTransport/googleAmbient.ts).
+  return googleAmbientImpersonatedClient(transport, {
     targetPrincipal,
     targetScopes: scopes,
-    delegates: [],
-    lifetime: 3600,
-    ...googleClientOptions(transport),
+    projectId: settings.projectId,
   });
 }
 
@@ -173,7 +202,7 @@ export function createCheckClientFactory(
   wire: CheckWire = { awsConfig: awsClientConfig(transport), fetch: cloudFetch(transport) },
 ): CheckClientFactory {
   return {
-    aws: (settings, secrets) => awsClients(settings, secrets, wire),
+    aws: (settings, secrets) => awsClients(settings, secrets, wire, transport),
     microsoft: (settings, pem) => microsoftClients(settings, pem, transport, wire),
     gcp: (settings, secrets) => gcpClient(settings, secrets, transport),
   };

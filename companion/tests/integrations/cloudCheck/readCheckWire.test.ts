@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCheckClientFactory } from "../../../src/integrations/cloudCheck/checkClients.js";
 import { runCloudAccountCheck } from "../../../src/integrations/cloudCheck/runCloudCheck.js";
 import { createCloudTransport } from "../../../src/integrations/cloudTransport/cloudAgent.js";
@@ -26,6 +27,12 @@ const STS_OK =
   '<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetCallerIdentityResult>' +
   "<Arn>arn:aws:iam::123456789012:user/collector</Arn><UserId>U1</UserId><Account>123456789012</Account>" +
   "</GetCallerIdentityResult><ResponseMetadata><RequestId>r1</RequestId></ResponseMetadata></GetCallerIdentityResponse>";
+// AssumeRole / AssumeRoleWithWebIdentity: test credentials the chain then signs with.
+const stsCredentials = (op: string) =>
+  `<${op}Response xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><${op}Result><Credentials>` +
+  "<AccessKeyId>TESTKEYID0002</AccessKeyId><SecretAccessKey>test-secret</SecretAccessKey>" +
+  "<SessionToken>test-session</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration>" +
+  `</Credentials></${op}Result><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></${op}Response>`;
 const S3_LIST =
   '<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">' +
   "<Name>trail-bucket</Name><Prefix>AWSLogs/</Prefix><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys>" +
@@ -53,7 +60,10 @@ function recordingHandler(sent: WireRequest[]) {
     metadata: { handlerProtocol: "http/1.1" },
     handle: async (req: WireRequest) => {
       sent.push(req);
-      if (req.hostname.startsWith("sts.")) return reply(200, STS_OK);
+      if (req.hostname.startsWith("sts.")) {
+        const action = /(?:^|&)Action=([A-Za-z]+)/.exec(bodyText(req.body))?.[1] ?? "";
+        return reply(200, action.startsWith("AssumeRole") ? stsCredentials(action) : STS_OK);
+      }
       if (req.hostname.includes("s3") && req.query["list-type"] === "2") return reply(200, S3_LIST);
       return reply(403, DENIED);
     },
@@ -111,6 +121,75 @@ describe("the read check on the wire", () => {
     expect(report.signedInAs).toBe("arn:aws:iam::123456789012:user/collector");
     expect(report.results.map((r) => r.status)).toEqual(["failed", "failed"]);
     expect(report.summary).toMatch(/^Tested reads succeeded for: none\. Failed: CloudTrail event history/);
+  });
+});
+
+describe("the read check with the machine's own AWS credentials, on the wire", () => {
+  const NAMES = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_PROFILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_EC2_METADATA_DISABLED",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+  ];
+  let saved: Record<string, string | undefined> = {};
+  let dir = "";
+  beforeEach(() => {
+    saved = Object.fromEntries(NAMES.map((n) => [n, process.env[n]]));
+    for (const n of NAMES) delete process.env[n];
+    dir = mkdtempSync(join(tmpdir(), "read-check-ambient-"));
+    writeFileSync(join(dir, "token"), "web-identity-token");
+    process.env.AWS_WEB_IDENTITY_TOKEN_FILE = join(dir, "token");
+    process.env.AWS_ROLE_ARN = "arn:aws:iam::123456789012:role/base";
+    process.env.AWS_CONFIG_FILE = join(dir, "config");
+    process.env.AWS_SHARED_CREDENTIALS_FILE = join(dir, "credentials");
+    process.env.AWS_EC2_METADATA_DISABLED = "true";
+  });
+  afterEach(() => {
+    for (const n of NAMES) {
+      if (saved[n] === undefined) delete process.env[n];
+      else process.env[n] = saved[n];
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("sends the ambient web-identity exchange and the AssumeRole through the transport handler", async () => {
+    const sent: WireRequest[] = [];
+    const factory = createCheckClientFactory(createCloudTransport({}), {
+      awsConfig: { requestHandler: recordingHandler(sent) },
+      fetch: async () => {
+        throw new Error("no Graph call expected for AWS");
+      },
+    });
+    const account: OpenCloudAccount = {
+      id: "a2",
+      name: "AWS ambient",
+      revision: 1,
+      createdAt: "",
+      updatedAt: "",
+      provider: "aws",
+      settings: {
+        authMode: "assume-role",
+        roleArn: "arn:aws:iam::123456789012:role/collector",
+        baseCredential: "ambient",
+        region: "eu-west-1",
+      },
+      secrets: {},
+    };
+    const report = await runCloudAccountCheck(account, { sources: ["cloudtrail-lookup"] }, () => factory);
+    expect(sent.map(operation)).toEqual([
+      "AssumeRoleWithWebIdentity",
+      "AssumeRole",
+      "GetCallerIdentity",
+      "LookupEvents",
+    ]);
+    expect(report.signedInAs).toBe("arn:aws:iam::123456789012:user/collector");
   });
 });
 

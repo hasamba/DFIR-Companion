@@ -164,3 +164,29 @@ impersonated service account.
 Every cloud request — sign-in token requests included — goes through the cloud TLS and proxy
 settings in **Settings → Integrations → Cloud accounts**: `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`
 and `DFIR_CLOUD_PROXY_URL`. The standard `HTTPS_PROXY` variable is not used for cloud collection.
+
+### The machine's own credentials
+
+An AWS account set to assume a role with the **ambient profile or instance role**, and a GCP account
+that impersonates with **ambient credentials**, sign in with the credentials of the machine the
+companion runs on. Those sign-ins go through the same proxy and TLS settings: AWS profiles that
+assume a role, SSO profiles, web-identity tokens, and Google user logins and service-account key
+files.
+
+**Metadata endpoints are always reached directly, never through the proxy.** On a cloud VM or
+container the credentials come from a metadata service on the machine's own network link: AWS
+instance metadata (`169.254.169.254`), the ECS and EKS container credential endpoints
+(`169.254.170.2`, `169.254.170.23`) and the Google metadata server (`metadata.google.internal`). A
+proxy cannot reach those addresses, and they only answer the machine itself.
+
+Cloud collection refuses to run when:
+
+- `AWS_EC2_METADATA_SERVICE_ENDPOINT` or `AWS_CONTAINER_CREDENTIALS_FULL_URI` points at a host that
+  is not on the machine's own link, or `GCE_METADATA_HOST` / `GCE_METADATA_IP` does. Those requests
+  would leave the machine without the proxy and TLS settings.
+- The machine's Google credentials are an **external account** (workload identity federation). That
+  sign-in fetches tokens with its own network clients. Store a service-account key on the account
+  instead.
+
+An AWS profile with `credential_process` runs the program you configured. Whatever network that
+program uses is its own, outside the companion's settings.
