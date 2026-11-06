@@ -18,6 +18,23 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import { compileRuleset, type CompiledRuleset } from "./taggerRules.js";
+import {
+  applyRuleUpdates,
+  diffRuleSets,
+  snapshotBase,
+  type RuleBase,
+  type RuleChoice,
+  type RuleMap,
+  type RuleUpdateReport,
+} from "./taggerRulesMerge.js";
+import {
+  BUILTIN_UPSTREAM,
+  readDismissedRevision,
+  readRuleBase,
+  removeRuleBase,
+  writeDismissedRevision,
+  writeRuleBase,
+} from "./taggerRulesBase.js";
 
 // Thrown when a whole-document save carries a revision that no longer matches the file on disk —
 // somebody else changed the rules while this editor was open. A distinct type so the route can
@@ -37,6 +54,48 @@ export function rulesRevision(text: string): string {
 }
 
 export type RulesSource = "env" | "user" | "default";
+
+/** The active copy compared with the built-in set (#2344). `report` is null for the built-in source. */
+export interface RuleUpdatesView {
+  source: RulesSource;
+  /** Revision of the active text — sent back on apply, like the editor's save. */
+  revision: string;
+  /** True for a TAGGER_RULES_FILE source: review and export only, never written. */
+  readOnly: boolean;
+  report: RuleUpdateReport | null;
+  /** The notice was dismissed at the current built-in revision. */
+  dismissed: boolean;
+}
+
+export interface RuleUpdatesApplied {
+  ruleCount: number;
+  revision: string;
+  applied: string[];
+  kept: string[];
+  /** The copy had no base record; this apply recorded one at the current built-in set. */
+  baseEstablished: boolean;
+}
+
+// An apply asked of the built-in source. Merging into the bundled default would mean CREATING the
+// user copy, which nobody asked for — it is refused (400) instead.
+export class NothingToMergeError extends Error {
+  constructor() {
+    super("nothing to merge: the built-in rules are active");
+    this.name = "NothingToMergeError";
+  }
+}
+
+/** Parse rule YAML into its raw id → rule map. Empty/non-map → {}. Throws on invalid YAML. */
+function parseRuleMap(text: string): Record<string, unknown> {
+  if (!text.trim()) return {};
+  const doc = parseYaml(text);
+  return doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : {};
+}
+
+function stringifyRuleMap(map: RuleMap): string {
+  // An empty map serializes to "{}"; persist "" instead so the store reads back an empty ruleset.
+  return Object.keys(map).length ? stringifyYaml(map) : "";
+}
 
 export interface ActiveRules {
   text: string;
@@ -169,11 +228,101 @@ export class TaggerStore {
   // The unlocked body of save(). StateLock is NOT reentrant — a runExclusive nested inside another
   // on the same key waits on a tail that is waiting on it — so the structural edits below, which
   // already hold the lock, must persist through here rather than calling save().
-  private async persist(yamlText: string): Promise<CompiledRuleset> {
+  //
+  // Every write of the user copy passes here, so this is where the base record (#2344) is kept: a
+  // merge passes the base it computed; otherwise, when no copy existed before this write, the copy
+  // was taken from the built-in set as it is now, and that is recorded. An existing copy keeps the
+  // base it already has — re-basing on a later save would hide every built-in change since.
+  private async persist(yamlText: string, nextBase?: RuleBase): Promise<CompiledRuleset> {
     const compiled = compileText(yamlText); // throws on invalid — nothing is written
+    const hadCopy = await exists(this.userRulesPath);
     await mkdir(dirname(this.userRulesPath), { recursive: true }); // atomicWrite won't create parents
+    const base = nextBase ?? (hadCopy ? undefined : await this.builtinBase());
+    if (base) await writeRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM, base);
     await atomicWrite(this.userRulesPath, yamlText);
     return compiled;
+  }
+
+  /** Where the base record for the user copy lives (a sidecar next to it). */
+  baseRecordPath(): string {
+    return `${this.userRulesPath}.base.json`;
+  }
+
+  private dismissRecordPath(): string {
+    return `${this.userRulesPath}.updates.json`;
+  }
+
+  /** The bundled default's raw rule map, or null when no bundled file is found. */
+  private async readBuiltinMap(): Promise<Record<string, unknown> | null> {
+    const def = this.resolveDefaultPath();
+    return def ? parseRuleMap(await readFile(def, "utf8")) : null;
+  }
+
+  private async builtinBase(): Promise<RuleBase | undefined> {
+    const builtin = await this.readBuiltinMap();
+    return builtin ? snapshotBase(builtin) : undefined;
+  }
+
+  private async readBuiltinBaseRecord(): Promise<RuleBase | null> {
+    return readRuleBase(this.baseRecordPath(), BUILTIN_UPSTREAM);
+  }
+
+  /** Compare the active copy with the built-in set. Throws when the active YAML does not parse. */
+  async ruleUpdates(): Promise<RuleUpdatesView> {
+    const active = await this.readActive();
+    const view = { source: active.source, revision: active.revision, readOnly: active.source === "env" };
+    const builtin = active.source === "default" ? null : await this.readBuiltinMap();
+    if (!builtin) return { ...view, report: null, dismissed: false };
+    // A TAGGER_RULES_FILE source never has a base record: it is not a copy this server wrote.
+    const base = active.source === "user" ? await this.readBuiltinBaseRecord() : null;
+    const report = diffRuleSets({ upstream: builtin, mine: parseRuleMap(active.text), base });
+    const dismissedAt = await readDismissedRevision(this.dismissRecordPath(), BUILTIN_UPSTREAM);
+    return { ...view, report, dismissed: dismissedAt === report.upstreamRevision };
+  }
+
+  /**
+   * Bring chosen built-in rules into the user copy. Same lock and stale-revision check as save():
+   * the compare runs INSIDE the lock, and `expectedRevision` is required — a merge is always made
+   * from a review the analyst looked at, so it is never last-write-wins.
+   */
+  async applyRuleUpdates(
+    choices: Readonly<Record<string, RuleChoice>>,
+    expectedRevision: string,
+  ): Promise<RuleUpdatesApplied> {
+    this.assertEditable();
+    return rulesLock.runExclusive(this.userRulesPath, async () => {
+      const active = await this.readActiveText();
+      const current = rulesRevision(active.text);
+      if (current !== expectedRevision) throw new TaggerRulesConflictError(current);
+      const builtin = active.source === "user" ? await this.readBuiltinMap() : null;
+      if (!builtin) throw new NothingToMergeError();
+      const base = await this.readBuiltinBaseRecord();
+      const out = applyRuleUpdates({ upstream: builtin, mine: parseRuleMap(active.text), base, choices });
+      const text = stringifyRuleMap(out.rules);
+      const compiled = await this.persist(text, out.base);
+      return {
+        ruleCount: compiled.rules.length,
+        revision: rulesRevision(text),
+        applied: out.applied,
+        kept: out.kept,
+        baseEstablished: base === null,
+      };
+    });
+  }
+
+  /** The merged YAML the given choices would produce — for a TAGGER_RULES_FILE source. Writes nothing. */
+  async exportMergedRules(choices: Readonly<Record<string, RuleChoice>>): Promise<string> {
+    const active = await this.readActiveText();
+    const mine = parseRuleMap(active.text);
+    const builtin = active.source === "default" ? null : await this.readBuiltinMap();
+    if (!builtin) return stringifyRuleMap(mine);
+    const base = active.source === "user" ? await this.readBuiltinBaseRecord() : null;
+    return stringifyRuleMap(applyRuleUpdates({ upstream: builtin, mine, base, choices }).rules);
+  }
+
+  /** Hide the notice until the built-in set changes again. Per server; never touches the rules. */
+  async dismissRuleUpdates(upstreamRevision: string): Promise<void> {
+    await writeDismissedRevision(this.dismissRecordPath(), BUILTIN_UPSTREAM, upstreamRevision);
   }
 
   /** True when an operator env override (TAGGER_RULES_FILE) owns the ruleset (read-only from our side). */
@@ -183,10 +332,7 @@ export class TaggerStore {
 
   /** Parse the active ruleset into its raw id → rule map (for structural edits). Empty → {}. */
   private async loadRawMap(): Promise<Record<string, unknown>> {
-    const active = await this.readActive();
-    if (!active.text.trim()) return {};
-    const doc = parseYaml(active.text);
-    return doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : {};
+    return parseRuleMap((await this.readActive()).text);
   }
 
   private assertEditable(): void {
@@ -239,9 +385,7 @@ export class TaggerStore {
         return { removed: false, ruleCount: current.rules.length };
       }
       const { [id]: _removed, ...next } = map;
-      // An empty map serializes to "{}"; persist "" instead so the store reads back an empty ruleset.
-      const text = Object.keys(next).length ? stringifyYaml(next) : "";
-      const compiled = await this.persist(text);
+      const compiled = await this.persist(stringifyRuleMap(next));
       return { removed: true, ruleCount: compiled.rules.length };
     });
   }
@@ -251,6 +395,7 @@ export class TaggerStore {
     this.assertEditable();
     return rulesLock.runExclusive(this.userRulesPath, async () => {
       await rm(this.userRulesPath, { force: true });
+      await removeRuleBase(this.baseRecordPath()); // no copy, no base — the next copy records a fresh one
       const compiled = await this.load();
       return { ruleCount: compiled.rules.length };
     });

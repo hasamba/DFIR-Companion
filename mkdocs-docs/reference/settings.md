@@ -600,6 +600,7 @@ Controls the [content-based event tagger](advanced.md) (`companion/data/tags.yam
 
 - `TAGGER_AUTO` — run the tagger automatically after every import (default `true`; `false` = manual-only, via Super-Timeline → Content tagger → Run tagger)
 - `TAGGER_SCOPE` — `forensic` | `super` | `both` (default `both`); `super` only tags the super-timeline (never mutates severity/MITRE)
+- `TAGGER_RULES_FILE` — an operator rules file used instead of the built-in rules. The server never writes it; new built-in rules can be reviewed and downloaded merged (see [New built-in rules for edited rules](advanced.md#new-built-in-rules-for-edited-rules))
 
 ---
 

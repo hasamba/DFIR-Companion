@@ -53,6 +53,25 @@ A Timesketch-style rule engine (`tags.yaml`) that matches events on any real fie
 
 **AI-assisted rule authoring** — describe a rule in plain English and the AI drafts a valid `tags.yaml` rule you can preview (live match count against the open case), edit, and add. Includes per-rule remove (including shipped defaults) and a reset-to-defaults button. Uses the ejectable prompt `tagger-rule.txt` (`npm run prompts:eject`). AI-gated — falls back cleanly with no provider configured.
 
+### New built-in rules for edited rules
+
+The rules come from one of three places, in this order: a `TAGGER_RULES_FILE` file, your edited copy (made the first time you save in **Edit rules**, add a suggested rule, or remove a rule), or the built-in `tags.yaml`. The first one found is used alone. An edited copy therefore does not get rules added or changed in a later release on its own.
+
+When your copy is older than the built-in set, **Super-Timeline → Content tagger** shows a notice: *Your detection rules are older than the built-in set: N added, M changed since your copy.* There is no notice while the built-in rules are active, or when your copy already holds every built-in rule.
+
+- **Review changes** lists each added and changed built-in rule with its description and grade. A changed rule shows your version and the built-in version.
+- **Changed on both sides** — when you edited a rule that the built-in set also changed, both versions are shown. Pick **Keep mine** or **Use built-in**. Nothing is applied for that rule until you pick.
+- **Removed by you** — a built-in rule you deleted is never brought back on its own. It is listed with a **Restore** box, one rule at a time.
+- **Add new rules** applies your selection to your copy. Your edited rules and your own rules are always kept. When someone else changed the rules after you opened the review, nothing is applied and the review reloads.
+- **Dismiss** hides the notice on this server until the built-in set changes again.
+- **Open cases keep their grades.** Adding rules does not re-grade anything. Press **Super-Timeline → Content tagger → Run tagger** to apply the current rules to an imported case; the note shown after adding rules has a button for it.
+
+The server records which built-in rules your copy was taken from each time it writes the copy. A copy saved before this release has no record. Its review compares rules by name: a built-in rule missing from your copy is shown as *new, or removed by you* (not pre-selected), and a rule that differs is shown as *changed — unknown which side*, for you to pick. After you apply once, the record exists and later reviews are exact.
+
+With a `TAGGER_RULES_FILE` source the server never writes the file. You get the notice and the review, and **Download merged rules** gives you the merged YAML to put in place yourself.
+
+In team mode, only the instance administrator can see the notice and apply it, the same as editing rules.
+
 ---
 
 ## Detection Passes
@@ -199,7 +218,7 @@ Synthesis is told to give a confirmed staging→upload pairing its own dedicated
 
 **Transfer tool staged with its config.** Operators often drop a bulk-transfer tool and its config file side by side before an upload, for example `rclone.exe` and `rclone.conf` in `C:\Users\Public\Music`. When a known transfer tool (rclone, WinSCP, MEGAcmd, MEGAsync, megatools) and its config file appear in one folder on one host within 10 minutes of each other, both file rows are raised to Medium and tagged T1567.002. A Prefetch, Amcache or process-start record for the same tool path on that host is raised to High. Each raised row carries a `[transfer tool staged: …]` note that names the folder and the partner rows. This proves the kit was staged and recorded. It does not prove that data left the host.
 
-An Amcache entry for rclone, restic, MEGAsync or MEGAcmd is graded Medium (T1567.002), the same as its Prefetch entry, so the AI sees the tool even when Amcache is its only trace. The rule applies at import: re-import an older case to grade its rows. A custom tagger rules file does not get this rule.
+An Amcache entry for rclone, restic, MEGAsync or MEGAcmd is graded Medium (T1567.002), the same as its Prefetch entry, so the AI sees the tool even when Amcache is its only trace. The rule applies at import: re-import an older case, or press **Run tagger**, to grade its rows. An edited or custom tagger rules file does not get this rule on its own: bring it in from the [built-in rule review](#new-built-in-rules-for-edited-rules).
 
 **Attack-tool store folder.** Operators often keep their whole kit in one folder that any user can write to. When one such folder (for example `C:\Users\Public\Music`, Temp, ProgramData or Downloads) holds three or more different attack tools on one host, the companion raises one record per tool to Medium. Each raised record carries an `attack tool store` note that names the folder and every tool. The tool list combines the named offensive tools, remote-execution and transfer tools (PsExec, rclone, MEGA), AD recon tools (AdFind, SharpHound, PingCastle) and portable archivers (rar, WinRAR, 7-Zip). Tools under Program Files never count. This is a lead to check, not a verdict: an administrator's tool folder in a public location can also trigger it.
 

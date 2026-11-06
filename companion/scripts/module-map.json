@@ -886,6 +886,8 @@
     "taggerRowTags.ts": "analysis/findings",
     "taggerRuleSuggest.ts": "analysis/findings",
     "taggerRules.ts": "analysis/findings",
+    "taggerRulesBase.ts": "analysis/findings",
+    "taggerRulesMerge.ts": "analysis/findings",
     "taggerRun.ts": "analysis/findings",
     "taggerStore.ts": "analysis/findings",
     "tags.ts": "analysis/findings",
