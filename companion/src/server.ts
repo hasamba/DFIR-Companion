@@ -46,6 +46,7 @@ import {
 import { registerAllRoutes } from "./composition/routeRegistry.js";
 import { createRuntimeStores } from "./composition/runtimeStores.js";
 import { startMaintenanceTasks, startPostListenTasks } from "./composition/maintenanceTasks.js";
+import { cloudCollectStartupRecoverers } from "./composition/cloudCollectRecovery.js";
 import { buildAiRuntime } from "./composition/aiRuntime.js";
 import { buildBulkImportSink } from "./composition/bulkImportSink.js";
 import { buildAppOptions } from "./composition/appWiring.js";
@@ -665,6 +666,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     updateCheckStore,
     updateRepo,
     auditExporter: rt.auditExporter,
+    // #2311: a collection running when the server stopped is marked interrupted; Resume is the analyst's.
+    cloudCollectRecoverers: cloudCollectStartupRecoverers(store, logLine),
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Cloud account read check and minimum policies** — Check access tests one read per selected source and says which reads succeeded or failed, never claiming read-only; the minimum AWS, Microsoft and GCP read policies show at add time and in the manual (closes #2309)
+- **Durable cloud collection with an evidence manifest** — Cloud Collection panel runs collections as resumable jobs; every page is saved with a SHA-256 in an append-only manifest, orphans are quarantined, resume never loses or duplicates evidence or events, and results are complete, partial or failed (closes #2311)
 - **Cloud TLS and proxy settings** — AWS, Azure and Google SDK traffic, including sign-in token calls, follows a custom CA, an insecure override and a proxy (`DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`, `DFIR_CLOUD_PROXY_URL`) (closes #2310)
 - **Per-case cloud accounts and demo block** — in team mode a cloud account belongs to the cases it is attached to and only their writers can see or use it; shared-credential edits need write on every attached case; the public demo refuses every cloud route (closes #2308)
 - **Cloud account vault** — add AWS accounts, Microsoft tenants and GCP projects in Settings; secrets are sealed with a separate key file kept out of the data folder, show Locked when the key is missing, and never appear in responses, logs or exports (closes #2307)

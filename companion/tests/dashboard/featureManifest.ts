@@ -1185,6 +1185,13 @@ export const FEATURES: Feature[] = [
     private: ["editing", "policies", "checking"],
   },
   {
+    // The Cloud Collection panel and its toolbar button (#2311).
+    // No `initializer`: initCaseConnect() runs initCloudCollect(), not the inline script.
+    file: "dashboard-cloud-collect.js",
+    publish: ["initCloudCollect", "loadCloudCollect"],
+    private: ["pollTimer", "pollCase"],
+  },
+  {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.

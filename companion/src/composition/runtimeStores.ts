@@ -52,6 +52,7 @@ import { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import { serverSetStoreDir } from "../integrations/serverSets/storePath.js";
 import { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
+import type { CloudCollectProviders } from "../integrations/cloudCollect/collectTypes.js";
 import { cloudAccountStoreDir } from "../integrations/cloudAccounts/storePath.js";
 import { VaultKeyFile, defaultVaultKeyPath } from "../integrations/cloudAccounts/vaultKeyFile.js";
 import { registerCollectorEndpoints } from "./collectorEndpoints.js";
@@ -290,6 +291,9 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     cloudAccountStoreDir(casesRoot),
     new VaultKeyFile(defaultVaultKeyPath(process.env), logLine),
   );
+  // Live cloud collection providers (#2311). None ships yet: #2313 (AWS), #2314 (GCP) and #2315
+  // (Microsoft) each add one here, and the Collect cloud logs panel lists only what is present.
+  const cloudCollectProviders: CloudCollectProviders = {};
   const appVersion = getAppVersion();
   const updateRepo = (() => {
     const envRepo = process.env.DFIR_UPDATE_REPO;
@@ -519,6 +523,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     updateCheckStore,
     serverSetStore,
     cloudAccountVault,
+    cloudCollectProviders,
     appVersion,
     updateRepo,
     notificationStore,

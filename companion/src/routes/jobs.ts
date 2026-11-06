@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { CLOUD_COLLECT_RESUME_ELSEWHERE } from "../integrations/cloudCollect/collectStore.js";
 
 function canAccessGlobalJob(ctx: RouteContext, req: Request): boolean {
   const teamAuth = ctx.options.teamAuth;
@@ -64,6 +65,9 @@ async function resumeJob(ctx: RouteContext, req: Request, res: Response): Promis
   if (!canWrite(ctx, req, job.caseId)) {
     return res.status(403).json({ error: "case role does not permit resuming this job" });
   }
+  // A cloud collection needs its account's credential opened again, with the attachment, case-write
+  // and demo checks and the audit entry that go with it (#2308) — only its own route does that.
+  if (job.kind === "cloud-collect") return res.status(409).json({ error: CLOUD_COLLECT_RESUME_ELSEWHERE });
   // #1866: /api/jobs is not under /cases/:id, so the case gate never scoped it. The resumed run is
   // work of the case incarnation that owns the job now; a delete + same-id re-create refuses it.
   const resume = () => manager.resume(req.params.id);

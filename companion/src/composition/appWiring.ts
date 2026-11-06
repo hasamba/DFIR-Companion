@@ -183,6 +183,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     updateCheckStore,
     appVersion,
     updateRepo,
+    cloudCollectProviders,
   } = rt;
   const {
     teamAuth,
@@ -369,6 +370,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     // A fresh transport per check, so saved DFIR_CLOUD_* settings apply without a restart.
     cloudCheck: (account, request) =>
       runCloudAccountCheck(account, request, () => createCheckClientFactory(cloudTransportFromEnv())),
+    cloudCollectProviders,
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,

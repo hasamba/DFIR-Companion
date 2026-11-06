@@ -262,6 +262,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-case-servers.js": "application/javascript; charset=utf-8",
   // Settings → Cloud accounts (#2307): the vault-backed AWS / Microsoft / GCP account list.
   "/js/dashboard-cloud-accounts.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-cloud-collect.js": "application/javascript; charset=utf-8",
   "/js/dashboard-wizard-server-set.js": "application/javascript; charset=utf-8",
   // Case templates and incident types — the new-case template picker and its caches.
   "/js/dashboard-case-templates.js": "application/javascript; charset=utf-8",
