@@ -80,4 +80,32 @@ describe("cloud account case attachment", () => {
     expect(() => vault.view("nope")).toThrow(/not found/);
     expect(() => vault.attach("nope", "c1")).toThrow(/not found/);
   });
+
+  it("attach with an expected source case refuses once that case is detached", () => {
+    const { id } = vault.create(awsKeyInput("Raced", fakeAwsSecret()), "c1").account;
+    vault.detach(id, "c1");
+    expect(() => vault.attach(id, "c2", "c1")).toThrow(/not found/);
+    expect(vault.view(id).caseIds).toEqual([]);
+  });
+
+  it("scopes name uniqueness to the case: two cases may share a label, one case may not", () => {
+    vault.create(awsKeyInput("Prod", fakeAwsSecret()), "c1");
+    expect(vault.create(awsKeyInput("prod", fakeAwsSecret()), "c2").account.caseIds).toEqual(["c2"]);
+    expect(() => vault.create(awsKeyInput("PROD", fakeAwsSecret()), "c1")).toThrow(/name already used/);
+    // Unattached (instance-admin) accounts are their own scope.
+    vault.create(awsKeyInput("Prod", fakeAwsSecret()));
+    expect(() => vault.create(awsKeyInput("Prod", fakeAwsSecret()))).toThrow(/name already used/);
+  });
+
+  it("attach refuses a name already used in the target case; edit checks every attached case", () => {
+    const a = vault.create(awsKeyInput("Prod", fakeAwsSecret()), "c1").account;
+    const b = vault.create(awsKeyInput("Prod", fakeAwsSecret()), "c2").account;
+    expect(() => vault.attach(a.id, "c2", "c1")).toThrow(/name already used in that case/);
+    expect(vault.view(a.id).caseIds).toEqual(["c1"]);
+    const c = vault.create(awsKeyInput("Other", fakeAwsSecret()), "c1").account;
+    vault.attach(c.id, "c3", "c1");
+    vault.create(awsKeyInput("Taken", fakeAwsSecret()), "c3");
+    expect(() => vault.update(c.id, awsKeyInput("taken", ""))).toThrow(/name already used/);
+    expect(vault.update(b.id, awsKeyInput("Other", "")).name).toBe("Other");
+  });
 });

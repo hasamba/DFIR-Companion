@@ -76,9 +76,24 @@ export class CloudAccountVault {
     return this.viewWith(this.find(id), this.key());
   }
 
-  /** Attaches a case to an account (#2308). Attaching an attached case changes nothing. */
-  attach(id: string, caseId: string): CloudAccountView {
-    return this.setCases(id, (cases) => (cases.includes(caseId) ? cases : [...cases, caseId]));
+  /**
+   * Attaches a case to an account (#2308). Attaching an attached case changes nothing. With
+   * `fromCase`, refuses (`not-found`) unless the account is STILL attached to that case at the
+   * moment of the write — a detach that won a race with the caller's checks wins. A name already
+   * used in the target case is a `conflict` that names only that case.
+   */
+  attach(id: string, caseId: string, fromCase?: string): CloudAccountView {
+    return this.setCases(id, (cases, account, raw) => {
+      if (fromCase !== undefined && !cases.includes(fromCase))
+        throw new CloudVaultError("not-found", "cloud account not found");
+      if (cases.includes(caseId)) return cases;
+      const lower = account.name.toLowerCase();
+      if (
+        raw.some((a) => a.id !== id && (a.caseIds ?? []).includes(caseId) && a.name.toLowerCase() === lower)
+      )
+        throw new CloudVaultError("conflict", "name already used in that case");
+      return [...cases, caseId];
+    });
   }
 
   /** Detaches one case. The account and its other cases stay; the last detach leaves it unattached. */
@@ -110,8 +125,9 @@ export class CloudAccountVault {
    */
   create(input: CloudAccountInput, caseId?: string): { account: CloudAccountView; keyCreated: boolean } {
     const raw = this.readRaw();
-    const name = this.uniqueName(raw, input.name);
     const credential = buildCredential(input);
+    const caseIds = caseId ? [caseId] : [];
+    const name = this.uniqueName(raw, input.name, caseIds);
     let keyCreated = false;
     let key = this.key();
     if (!key.ok && key.state === "missing" && raw.length === 0) {
@@ -120,7 +136,6 @@ export class CloudAccountVault {
     }
     if (!key.ok) throw new CloudVaultError("locked", key.reason);
     const now = new Date().toISOString();
-    const caseIds = caseId ? [caseId] : [];
     const meta = { id: randomUUID(), name, revision: 1, createdAt: now, updatedAt: now, caseIds };
     const stored = this.sealed(meta, credential, key.key);
     this.write([...raw, stored]);
@@ -132,7 +147,7 @@ export class CloudAccountVault {
     const raw = this.readRaw();
     const prev = this.find(id, raw);
     if (input.provider !== prev.provider) throw new CloudVaultError("invalid", "provider cannot change");
-    const name = this.uniqueName(raw, input.name, id);
+    const name = this.uniqueName(raw, input.name, prev.caseIds ?? [], id);
     const opened = this.open(id);
     const credential = buildCredential(input, opened);
     const meta = {
@@ -200,10 +215,13 @@ export class CloudAccountVault {
     return { ...view, storedSecrets: storedSecretNames(secrets) };
   }
 
-  private setCases(id: string, next: (cases: string[]) => string[]): CloudAccountView {
+  private setCases(
+    id: string,
+    next: (cases: string[], account: StoredCloudAccount, raw: StoredCloudAccount[]) => string[],
+  ): CloudAccountView {
     const raw = this.readRaw();
     const prev = this.find(id, raw);
-    const updated = { ...prev, caseIds: next(prev.caseIds ?? []) };
+    const updated = { ...prev, caseIds: next(prev.caseIds ?? [], prev, raw) };
     this.write(raw.map((a) => (a.id === id ? updated : a)));
     return this.viewWith(updated, this.key());
   }
@@ -224,10 +242,17 @@ export class CloudAccountVault {
     return hit;
   }
 
-  private uniqueName(raw: StoredCloudAccount[], wanted: string, selfId?: string): string {
+  // Names are unique per case (#2308), so a clash never reveals an account in a case the caller
+  // cannot see: an account's peers are the accounts sharing one of its cases, and an unattached
+  // account's peers are the other unattached ones (the instance administrator's scope).
+  private uniqueName(raw: StoredCloudAccount[], wanted: string, caseIds: string[], selfId?: string): string {
     const name = cleanName(wanted);
     const lower = name.toLowerCase();
-    if (raw.some((a) => a.id !== selfId && a.name.toLowerCase() === lower))
+    const peer = (a: StoredCloudAccount): boolean => {
+      const theirs = a.caseIds ?? [];
+      return caseIds.length === 0 ? theirs.length === 0 : theirs.some((c) => caseIds.includes(c));
+    };
+    if (raw.some((a) => a.id !== selfId && peer(a) && a.name.toLowerCase() === lower))
       throw new CloudVaultError("conflict", "name already used");
     return name;
   }

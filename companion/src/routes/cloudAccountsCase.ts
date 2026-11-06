@@ -88,7 +88,11 @@ function registerAttachDetach(app: Express, ctx: RouteContext): void {
       // answers like a case that does not exist.
       if (!canWriteCloudCase(ctx, req, targetId) || !(await ctx.store.caseExists(targetId)))
         return res.status(404).json({ error: CASE_NOT_FOUND });
-      const account = vault.attach(accountId, targetId);
+      // The await above can interleave with a detach or a role change. Re-check both cases now,
+      // synchronously, and let the vault refuse if the account left the source case meanwhile.
+      if (!canWriteCloudCase(ctx, req, caseId) || !canWriteCloudCase(ctx, req, targetId))
+        return res.status(404).json({ error: CASE_NOT_FOUND });
+      const account = vault.attach(accountId, targetId, caseId);
       cloudAudit(ctx, req, "cloud-account-attached", account, targetId);
       return res.json({ account: visibleView(ctx, req, account) });
     }),

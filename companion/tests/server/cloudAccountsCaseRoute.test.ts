@@ -228,6 +228,49 @@ describe("cloud accounts per case (team mode)", () => {
     expect(vault.list()).toEqual([]);
   });
 
+  it("refuses an attach whose source case was detached while the target lookup was pending", async () => {
+    const { agents } = await team({ alice: { c1: "investigator", c2: "investigator" } });
+    const { alice } = agents;
+    const id = await add(alice, "c1", "Raced");
+    const realExists = cases.caseExists.bind(cases);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let pending!: () => void;
+    const started = new Promise<void>((r) => (pending = r));
+    vi.spyOn(cases, "caseExists").mockImplementation(async (caseId: string) => {
+      if (caseId === "c2") {
+        pending();
+        await gate;
+      }
+      return realExists(caseId);
+    });
+    const attach = alice.agent
+      .post(`/cases/c1/cloud-accounts/${id}/attach`)
+      .set("X-DFIR-CSRF", alice.csrf)
+      .send({ caseId: "c2" })
+      .then((r) => r);
+    await started;
+    vault.detach(id, "c1");
+    release();
+    const res = await attach;
+    expect(res.status).toBe(404);
+    expect(vault.view(id).caseIds).toEqual([]);
+  });
+
+  it("a name used only in a case the user cannot write does not change their create", async () => {
+    const { agents } = await team({ alice: { c1: "investigator" }, sam: { c2: "investigator" } });
+    const { alice, sam } = agents;
+    await add(sam, "c2", "AWS prod");
+    // Same label in an unrelated case: created, no 409 that would reveal the hidden account.
+    const id = await add(alice, "c1", "AWS prod");
+    expect(vault.view(id).caseIds).toEqual(["c1"]);
+    const clash = await alice.agent
+      .post("/cases/c1/cloud-accounts")
+      .set("X-DFIR-CSRF", alice.csrf)
+      .send(awsKeyInput("aws PROD", secret()));
+    expect(clash.status).toBe(409);
+  });
+
   it("a detach leaves the other cases intact", async () => {
     const { agents } = await team({
       alice: { c1: "investigator", c2: "investigator" },
