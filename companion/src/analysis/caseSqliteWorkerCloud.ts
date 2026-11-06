@@ -112,13 +112,20 @@ function appendKindRows(db, kind, entities) {
 // #2339: group -> member rows, skipping a member already stored. A crash replay of a streamed page
 // writes the same group keys and members again; the member identity (ref + payload hash) is the
 // row's entity_id, so the check is one (kind, entity_id) index probe per member, filtered by group
-// (host) — no read-time dedup, the page and its count stay one index range. Rows written before
-// #2339 carry no entity_id and are not matched.
+// (host) — no read-time dedup, the page and its count stay one index range.
+// #2353: rows written before #2339 carry no entity_id, so first give them the same key, in this
+// transaction. The id-less rows are one (kind, entity_id IS NULL) range of entities_id_idx: the
+// first append on a case backfills them all once, every later one finds the range empty. Only
+// entity_id changes, so the payload-update journal triggers do not fire.
 function cloudMembersAppend(dbPath, entities) {
   const db = openDatabase(dbPath);
   try {
     return withTransaction(db, () => {
       const kind = "cloudRecordMember";
+      db.prepare(
+        "UPDATE entities SET entity_id = json_extract(payload, '$.ref') || char(10) || " +
+        "coalesce(json_extract(payload, '$.payloadHash'), '') WHERE kind=? AND entity_id IS NULL"
+      ).run(kind);
       const stored = db.prepare(
         "SELECT 1 FROM entities INDEXED BY entities_id_idx WHERE kind=? AND entity_id=? AND host=? LIMIT 1"
       );

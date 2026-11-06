@@ -279,7 +279,7 @@ function sigmaMeasureLines(r) {
   const lines = [
     `On this case, release ${r.release} would raise ${n("raised")} row(s), lower ${n("lowered")} and leave ${n("unchanged")} unchanged; ${n("entersForensic")} would join the forensic timeline and ${n("leavesForensic")} would leave it (scanned ${files.length - skipped} of ${files.length} Sigma-graded import(s)).`,
   ];
-  if (skipped) lines.push(`${skipped} import(s) were not scanned — the stored file is missing or changed — so their rows are not counted.`);
+  if (skipped) lines.push(`${skipped} import(s) were not scanned — the stored file is missing, changed, too large to re-read or unreadable — so their rows are not counted.`);
   if (n("lowered")) lines.push("A lowered row loses only the Sigma grade: it never drops below the importer's own grade, and a row the analyst promoted stays in the forensic timeline.");
   return lines;
 }
@@ -443,7 +443,7 @@ const SIGMA_REGRADE_STATUS = {
   current: "already graded with the current rules",
   other: "graded with another release or setting",
   never: "never graded by Sigma",
-  skipped: "skipped — the stored file is missing or changed",
+  skipped: "skipped — the stored file is missing, changed, too large to re-read or unreadable",
 };
 
 function sigmaRegradeCountsText(c) {

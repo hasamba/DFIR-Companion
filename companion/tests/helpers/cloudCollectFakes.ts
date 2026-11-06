@@ -30,7 +30,10 @@ export function trailRecord(i: number, name = i % 3 === 0 ? "StopLogging" : "Cre
     eventVersion: "1.09",
     eventID: `00000000-0000-4000-b000-${String(i).padStart(12, "0")}`,
     eventTime: `2026-10-01T10:${String(i % 60).padStart(2, "0")}:00Z`,
-    eventSource: "iam.amazonaws.com",
+    // The real service per operation: grading now checks the event source (#2358).
+    eventSource: /^(StopLogging|StartLogging|DeleteTrail|UpdateTrail|PutEventSelectors)$/.test(name)
+      ? "cloudtrail.amazonaws.com"
+      : "iam.amazonaws.com",
     eventName: name,
     awsRegion: "us-east-1",
     sourceIPAddress: "198.51.100.7",
