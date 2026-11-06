@@ -105,9 +105,11 @@ export function collectionStatus(
   subWindows: readonly SubWindowStatus[],
   pagesSaved: number,
 ): CollectionStatus {
+  // Never "complete" while a page's completeness is unverified (#2314: a GCS sink) or an item the
+  // cloud refused is unresolved (#2313).
   const tree = leaves(subWindows);
-  const skipped = tree.some((sw) => (sw.skipped ?? 0) > 0); // an unresolved refusal (#2313)
-  if (!skipped && tree.every((sw) => sw.state === "done")) return "complete";
+  const skipped = tree.some((sw) => (sw.skipped ?? 0) > 0);
+  if (!skipped && tree.every((sw) => sw.state === "done" && !sw.unverified)) return "complete";
   return pagesSaved > 0 || skipped ? "partial" : "failed";
 }
 

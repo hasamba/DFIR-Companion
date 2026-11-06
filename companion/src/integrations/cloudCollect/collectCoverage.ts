@@ -19,6 +19,26 @@ import type {
 } from "./collectTypes.js";
 
 const DAY_MS = 86_400_000;
+/** The longest page note kept (#2314). */
+export const NOTE_MAX = 600;
+
+/** A sub-window with one more page's disclosure: its note (once) and unverified completeness. Pure. */
+export function withPageDisclosure(
+  sw: SubWindowStatus,
+  page: { note?: string; unverified?: boolean },
+): SubWindowStatus {
+  const notes = page.note && !sw.notes?.includes(page.note) ? [...(sw.notes ?? []), page.note] : sw.notes;
+  return {
+    ...sw,
+    ...(notes ? { notes } : {}),
+    ...(page.unverified || sw.unverified ? { unverified: true } : {}),
+  };
+}
+
+/** The notes a source's sub-windows disclosed, each once. */
+function pageNotes(subWindows: readonly SubWindowStatus[], source: string): string[] {
+  return [...new Set(subWindows.filter((s) => s.source === source).flatMap((s) => s.notes ?? []))];
+}
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -136,6 +156,7 @@ export function sourceCoverage(
     const skipped = skippedNote(tree.filter((s) => s.source === id));
     if (skipped) notes.push(skipped);
     if (info?.notice) notes.push(info.notice);
+    notes.push(...pageNotes(subWindows, id));
     if (info?.retention) {
       const check = retentionWarnings(info.retention, input.window, Date.parse(input.startedAt));
       notes.push(...check.warnings);

@@ -196,6 +196,8 @@ const RECORD_ARRAY_KEYS = [
   "alerts",
   "Alerts",
   "value",
+  // A Cloud Logging entries:list response page (#2314): {"entries":[…],"nextPageToken":…}.
+  "entries",
 ];
 
 // Parse the file and extract the flat array of event records + a label for the shape.
