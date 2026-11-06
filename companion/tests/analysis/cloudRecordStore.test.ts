@@ -111,6 +111,50 @@ describe("CloudRecordStore (#2301)", () => {
     expect(page.members.map((m) => m.ref)).toEqual(["ual|t|a", "ual|t|b", "ual|t|c", "ual|t|a"]);
   });
 
+  it("a replay over member rows written before #2339 (no id) never stores them twice (#2353)", async () => {
+    await store.recordMembers("c1", [{ group: "seed", ref: "seed" }]); // creates the database
+    const dbPath = join(cases.stateDir("c1"), INVESTIGATION_DB_FILENAME);
+    const DatabaseSync = loadDatabaseSync();
+    const db = new DatabaseSync(dbPath);
+    try {
+      // The pre-#2339 shape: appendEntities wrote the payload with no entity_id.
+      const insert = db.prepare(
+        "INSERT INTO entities (kind, entity_id, ordinal, version, host, payload) " +
+          "VALUES ('cloudRecordMember', NULL, ?, 1, 'g1', ?)",
+      );
+      insert.run(
+        100,
+        JSON.stringify({ asset: "g1", ref: "ual|t|a", payloadHash: "h1", locator: "record:1" }),
+      );
+      insert.run(101, JSON.stringify({ asset: "g1", ref: "ual|t|b", locator: "record:2" }));
+    } finally {
+      db.close();
+    }
+    const replay = [
+      { group: "g1", ref: "ual|t|a", payloadHash: "h1", locator: "record:1" },
+      { group: "g1", ref: "ual|t|b", locator: "record:2" },
+      { group: "g1", ref: "ual|t|c", payloadHash: "h3", locator: "record:3" },
+    ];
+    expect(await store.recordMembers("c1", replay)).toBe(1);
+    expect(await store.recordMembers("c1", replay)).toBe(0);
+    const page = await store.pageMembers("c1", "g1");
+    expect(page.total).toBe(3);
+    expect(page.members.map((m) => m.ref)).toEqual(["ual|t|a", "ual|t|b", "ual|t|c"]);
+    // The backfill is a range of the (kind, entity_id) index, so later appends probe nothing else.
+    const check = new DatabaseSync(dbPath);
+    try {
+      const plan = check
+        .prepare(
+          "EXPLAIN QUERY PLAN UPDATE entities SET entity_id='x' " +
+            "WHERE kind='cloudRecordMember' AND entity_id IS NULL",
+        )
+        .all() as Array<{ detail: string }>;
+      expect(plan.map((r) => r.detail).join(" ")).toMatch(/entities_id_idx/);
+    } finally {
+      check.close();
+    }
+  });
+
   it("pages an aggregated event's 1M source records without loading them all", async () => {
     await store.recordMembers("c1", [{ group: "seed", ref: "seed" }]); // creates the database
     const N = 1_000_000;

@@ -32,7 +32,13 @@ export type SigmaRuleMitre = (id: string) => readonly string[] | undefined;
 export type RegradeKind = "changed" | "token-only" | "unchanged";
 
 /** Why a stored row was not re-graded. */
-export type UnmatchedReason = "file-missing" | "file-changed" | "no-record" | "text-differs";
+export type UnmatchedReason =
+  | "file-missing"
+  | "file-changed"
+  | "file-too-large" // past the re-grade's decoded-text cap (#2353)
+  | "file-unreadable" // a corrupt or truncated gzip (#2353)
+  | "no-record"
+  | "text-differs";
 
 /** One stored row the re-grade can rewrite: its two copies before and after. */
 export interface RegradeRow {

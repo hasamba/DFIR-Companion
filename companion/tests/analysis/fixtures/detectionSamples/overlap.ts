@@ -3,7 +3,7 @@
 // resulting row, and with what. Pure apart from reading data/tags.yaml and the bundled Sigma set.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { AWS_ACTIONS, parseCloudTrail } from "../../../../src/analysis/awsImport.js";
+import { lookupAwsAction, parseCloudTrail } from "../../../../src/analysis/awsImport.js";
 import { parseCloudActivity } from "../../../../src/analysis/cloudActivityImport.js";
 import { matchGcpRule } from "../../../../src/analysis/gcpSeverityRules.js";
 import { parseM365Audit } from "../../../../src/analysis/m365Import.js";
@@ -106,7 +106,10 @@ function importerFloor(s: DetectionSample): Severity {
  */
 function importerListed(s: DetectionSample, row: SiemEvent | undefined): boolean {
   if (s.kind === "cloudtrail")
-    return strField(s.record, "eventName").toLowerCase() in AWS_ACTIONS || !!row?.canonical?.loggingChange;
+    return (
+      lookupAwsAction(strField(s.record, "eventSource"), strField(s.record, "eventName")) !== undefined ||
+      !!row?.canonical?.loggingChange
+    );
   if (s.kind === "gcp") return matchGcpRule(strField(s.record.protoPayload as Row, "methodName")) !== null;
   return false;
 }

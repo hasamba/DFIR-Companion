@@ -103,6 +103,9 @@ export function registerImportUploadRoute(app: Express, ctx: RouteContext): void
       ctx.serverLogger.info(`[import-upload] ${caseId}: spool failed — ${(err as Error).message}`);
       return refuse(res, 500, `the upload could not be written to disk: ${(err as Error).message}`);
     }
+    // The whole body is read: an answer from here on may keep the connection (#2353 — the first
+    // layer set `Connection: close` so that refusals before the read hang up).
+    res.removeHeader("Connection");
     try {
       return await importSpooled(ctx, req, res, caseId, opts, spooled);
     } finally {

@@ -5,6 +5,7 @@
 // The credential is built once per session and shared by every client, regional ones included.
 
 import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
+import { EC2Client } from "@aws-sdk/client-ec2";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
 import type { AwsSecrets, AwsSettings } from "../../cloudAccounts/types.js";
@@ -41,6 +42,8 @@ export function createAwsCollectClients(
   return {
     sts: new STSClient({ region, credentials, ...wire }),
     s3: new S3Client({ region, credentials, followRegionRedirects: true, ...wire }),
+    // #2363: ec2:DescribeRegions only — asked in the account's own region.
+    ec2: new EC2Client({ region, credentials, ...wire }),
     cloudtrail(r: string) {
       let client = trails.get(r);
       if (!client) {

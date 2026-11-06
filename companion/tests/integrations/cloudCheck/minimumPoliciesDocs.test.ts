@@ -24,6 +24,14 @@ describe("mkdocs-docs/reference/cloud-collection.md", () => {
     expect(docs).toContain(MINIMUM_POLICIES.aws.grant);
   });
 
+  it("#2363: the AWS policy grants ec2:DescribeRegions and the manual explains the region picker", () => {
+    expect(MINIMUM_POLICIES.aws.grant).toContain('"ec2:DescribeRegions"');
+    expect(MINIMUM_POLICIES.aws.notes.join(" ")).toMatch(/ec2:DescribeRegions/);
+    expect(docs).toContain("### Regions");
+    expect(docs).toMatch(/skipped by choice/);
+    expect(docs).toMatch(/Without `ec2:DescribeRegions`/);
+  });
+
   it("names every Microsoft permission and the Azure role", () => {
     for (const p of MICROSOFT_GRAPH_PERMISSIONS) expect(docs).toContain(`\`${p}\``);
     expect(docs).toContain(`**${MICROSOFT_AZURE_ROLE}**`);

@@ -31,7 +31,8 @@ export function collectionsRoot(caseDir: string): string {
 /** What the panel shows for one collection. No secrets: the manifest and checkpoint hold none. */
 export interface CollectionSummary {
   checkpoint: CollectionCheckpoint;
-  header: Pick<ManifestHeader, "accountName" | "accountRef" | "caller" | "startedAt"> | null;
+  /** `filters`: the scope the start decided (#2363: the AWS regions walked and skipped by choice). */
+  header: Pick<ManifestHeader, "accountName" | "accountRef" | "caller" | "startedAt" | "filters"> | null;
   pages: number;
   bytes: number;
 }
@@ -45,7 +46,13 @@ export async function readCollection(fs: CollectFs, dir: string): Promise<Collec
   return {
     checkpoint,
     header: h
-      ? { accountName: h.accountName, accountRef: h.accountRef, caller: h.caller, startedAt: h.startedAt }
+      ? {
+          accountName: h.accountName,
+          accountRef: h.accountRef,
+          caller: h.caller,
+          startedAt: h.startedAt,
+          filters: h.filters ?? {},
+        }
       : null,
     pages: manifest?.pages.length ?? 0,
     bytes: manifest?.pages.reduce((n, p) => n + p.bytes, 0) ?? 0,

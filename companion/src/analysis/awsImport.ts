@@ -90,30 +90,37 @@ export interface AwsParseResult {
   rowRecords?: number[];
 }
 
-interface ActionDef {
+export interface ActionDef {
+  /**
+   * The services (eventSource without `.amazonaws.com`) the call is graded for. A name alone is not
+   * enough: `CreateUser` is also a Transfer Family / WorkMail / Identity Store call, `CreateFunction`
+   * a CloudFront / AppSync one, `CreatePolicyVersion` an IoT one (#2358).
+   */
+  sources: readonly string[];
   severity: Severity;
   mitre?: string[];
 }
 
-// Curated high-risk CloudTrail actions → derived severity + MITRE (keys = lowercased eventName).
+// Curated high-risk CloudTrail actions → derived severity + MITRE. Keys are the lowercased eventName;
+// read them through lookupAwsAction, which also checks the service.
 export const AWS_ACTIONS: Record<string, ActionDef> = {
-  consolelogin: { severity: "Info", mitre: ["T1078.004"] },
+  consolelogin: { sources: ["signin"], severity: "Info", mitre: ["T1078.004"] },
   // IAM persistence / privilege escalation
-  createuser: { severity: "Medium", mitre: ["T1136.003"] },
-  createaccesskey: { severity: "High", mitre: ["T1098.001"] },
-  createloginprofile: { severity: "High", mitre: ["T1098"] },
-  updateloginprofile: { severity: "High", mitre: ["T1098"] },
-  attachuserpolicy: { severity: "High", mitre: ["T1098.003"] },
-  attachrolepolicy: { severity: "High", mitre: ["T1098.003"] },
-  attachgrouppolicy: { severity: "High", mitre: ["T1098.003"] },
-  putuserpolicy: { severity: "High", mitre: ["T1098.003"] },
-  putrolepolicy: { severity: "High", mitre: ["T1098.003"] },
-  putgrouppolicy: { severity: "High", mitre: ["T1098.003"] },
-  addusertogroup: { severity: "Medium", mitre: ["T1098"] },
-  createrole: { severity: "Medium" },
-  updateassumerolepolicy: { severity: "High", mitre: ["T1098"] },
-  createpolicyversion: { severity: "High", mitre: ["T1098.003"] },
-  setdefaultpolicyversion: { severity: "High", mitre: ["T1098.003"] },
+  createuser: { sources: ["iam"], severity: "Medium", mitre: ["T1136.003"] },
+  createaccesskey: { sources: ["iam"], severity: "High", mitre: ["T1098.001"] },
+  createloginprofile: { sources: ["iam"], severity: "High", mitre: ["T1098"] },
+  updateloginprofile: { sources: ["iam"], severity: "High", mitre: ["T1098"] },
+  attachuserpolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  attachrolepolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  attachgrouppolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  putuserpolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  putrolepolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  putgrouppolicy: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  addusertogroup: { sources: ["iam"], severity: "Medium", mitre: ["T1098"] },
+  createrole: { sources: ["iam"], severity: "Medium" },
+  updateassumerolepolicy: { sources: ["iam"], severity: "High", mitre: ["T1098"] },
+  createpolicyversion: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
+  setdefaultpolicyversion: { sources: ["iam"], severity: "High", mitre: ["T1098.003"] },
   // Lambda-based execution/persistence — from the IAM-priv-esc skill
   // (Anthropic-Cybersecurity-Skills `detecting-aws-iam-privilege-escalation`, Apache-2.0).
   //
@@ -123,41 +130,54 @@ export const AWS_ACTIONS: Record<string, ActionDef> = {
   // the #931 review. Detecting role-passing means reading the assigned role out of the request
   // parameters of the call that passes it (RunInstances, CreateFunction, ...), which #931 item 6
   // proposes and this table cannot express.
-  createfunction: { severity: "Medium", mitre: ["T1648"] },
-  deactivatemfadevice: { severity: "High", mitre: ["T1556"] },
-  deletevirtualmfadevice: { severity: "High", mitre: ["T1556"] },
+  createfunction: { sources: ["lambda"], severity: "Medium", mitre: ["T1648"] },
+  deactivatemfadevice: { sources: ["iam"], severity: "High", mitre: ["T1556"] },
+  deletevirtualmfadevice: { sources: ["iam"], severity: "High", mitre: ["T1556"] },
   // Defense evasion — disabling logging / detection
-  deletetrail: { severity: "High", mitre: ["T1562.008"] },
-  stoplogging: { severity: "High", mitre: ["T1562.008"] },
-  updatetrail: { severity: "High", mitre: ["T1562.008"] },
-  puteventselectors: { severity: "High", mitre: ["T1562.008"] },
-  deleteflowlogs: { severity: "High", mitre: ["T1562.008"] },
-  deletedetector: { severity: "High", mitre: ["T1562.001"] },
-  updatedetector: { severity: "High", mitre: ["T1562.001"] },
+  deletetrail: { sources: ["cloudtrail"], severity: "High", mitre: ["T1562.008"] },
+  stoplogging: { sources: ["cloudtrail"], severity: "High", mitre: ["T1562.008"] },
+  updatetrail: { sources: ["cloudtrail"], severity: "High", mitre: ["T1562.008"] },
+  puteventselectors: { sources: ["cloudtrail"], severity: "High", mitre: ["T1562.008"] },
+  deleteflowlogs: { sources: ["ec2"], severity: "High", mitre: ["T1562.008"] },
+  deletedetector: { sources: ["guardduty"], severity: "High", mitre: ["T1562.001"] },
+  updatedetector: { sources: ["guardduty"], severity: "High", mitre: ["T1562.001"] },
   // Exfil / exposure
-  putbucketpolicy: { severity: "High", mitre: ["T1530"] },
-  putbucketacl: { severity: "High", mitre: ["T1530"] },
-  putobjectacl: { severity: "Medium", mitre: ["T1530"] },
-  putbucketpublicaccessblock: { severity: "Medium", mitre: ["T1530"] },
-  modifysnapshotattribute: { severity: "High", mitre: ["T1537"] },
-  modifyimageattribute: { severity: "High", mitre: ["T1537"] },
-  sharesnapshot: { severity: "High", mitre: ["T1537"] },
+  putbucketpolicy: { sources: ["s3"], severity: "High", mitre: ["T1530"] },
+  putbucketacl: { sources: ["s3"], severity: "High", mitre: ["T1530"] },
+  putobjectacl: { sources: ["s3"], severity: "Medium", mitre: ["T1530"] },
+  putbucketpublicaccessblock: { sources: ["s3"], severity: "Medium", mitre: ["T1530"] },
+  modifysnapshotattribute: { sources: ["ec2"], severity: "High", mitre: ["T1537"] },
+  modifyimageattribute: { sources: ["ec2"], severity: "High", mitre: ["T1537"] },
+  // NO `sharesnapshot` ENTRY (#2358): no service records a CloudTrail event of that name. EBS snapshot
+  // sharing is ModifySnapshotAttribute, above.
   // Credential access / recon / compute
-  getsecretvalue: { severity: "Medium", mitre: ["T1552.001"] },
-  batchgetsecretvalue: { severity: "High", mitre: ["T1552.001"] },
-  getcalleridentity: { severity: "Info", mitre: ["T1087"] },
-  assumerole: { severity: "Info", mitre: ["T1078.004"] },
+  getsecretvalue: { sources: ["secretsmanager"], severity: "Medium", mitre: ["T1552.001"] },
+  batchgetsecretvalue: { sources: ["secretsmanager"], severity: "High", mitre: ["T1552.001"] },
+  getcalleridentity: { sources: ["sts"], severity: "Info", mitre: ["T1087"] },
+  assumerole: { sources: ["sts"], severity: "Info", mitre: ["T1078.004"] },
   // AssumeRoot is graded by the issuance reader (awsIdentity.ts): High on success, Medium when
   // denied — a table entry would make a denied attempt High too.
-  getfederationtoken: { severity: "Low", mitre: ["T1078.004"] },
-  getsessiontoken: { severity: "Low", mitre: ["T1078.004"] }, // STS token minting (cryptomining/priv-esc skills)
+  getfederationtoken: { sources: ["sts"], severity: "Low", mitre: ["T1078.004"] },
+  getsessiontoken: { sources: ["sts"], severity: "Low", mitre: ["T1078.004"] }, // STS token minting (cryptomining/priv-esc skills)
   // NOTE: S3 object-level ops (GetObject/CopyObject/DeleteObject) are deliberately NOT graded here —
   // they are extremely high-volume in normal operation, so grading each would flood the timeline
   // (same signal-to-noise discipline as logAggregate). Bucket-policy/ACL exposure above is the signal.
-  authorizesecuritygroupingress: { severity: "Medium", mitre: ["T1562.007"] },
-  runinstances: { severity: "Low", mitre: ["T1578.002"] },
-  importkeypair: { severity: "Medium", mitre: ["T1098.004"] },
+  authorizesecuritygroupingress: { sources: ["ec2"], severity: "Medium", mitre: ["T1562.007"] },
+  runinstances: { sources: ["ec2"], severity: "Low", mitre: ["T1578.002"] },
+  importkeypair: { sources: ["ec2"], severity: "Medium", mitre: ["T1098.004"] },
 };
+
+// Lambda records its API version in the eventName: `CreateFunction20150331`, `...20150331v2`.
+const LAMBDA_VERSION_SUFFIX = /\d{8}(?:v\d+)?$/;
+
+/** The table entry for a call, only when the service that recorded it is one the entry names. */
+export function lookupAwsAction(eventSource: string, eventName: string): ActionDef | undefined {
+  const service = shortSource(eventSource).toLowerCase();
+  let name = eventName.toLowerCase();
+  if (service === "lambda") name = name.replace(LAMBDA_VERSION_SUFFIX, "");
+  const def = Object.hasOwn(AWS_ACTIONS, name) ? AWS_ACTIONS[name] : undefined;
+  return def?.sources.includes(service) ? def : undefined;
+}
 
 function truthy(v: unknown): boolean {
   return v === true || /^(true|1|yes)$/i.test(str(v).trim());
@@ -218,7 +238,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   const { name, source } = action;
 
   const readOnly = truthy(getCI(rec, "readOnly"));
-  const def = AWS_ACTIONS[name.toLowerCase()];
+  const def = lookupAwsAction(source, name);
   let severity: Severity = def?.severity ?? (readOnly ? "Info" : "Low");
   const mitre = [...(def?.mitre ?? [])];
   // Systems Manager remote execution (#931 item 7): the phase, target, document, id, status and

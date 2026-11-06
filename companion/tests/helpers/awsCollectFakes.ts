@@ -57,6 +57,12 @@ export interface FakeAwsOptions {
   slowDowns?: number;
   /** Buckets whose object listing (no delimiter, the trail walk) is refused; folder listing still works. */
   walkListDenied?: string[];
+  /**
+   * #2363: DescribeRegions' answer — the regions enabled on the account (name + OptInStatus), or
+   * "denied" (UnauthorizedOperation, the identity lacks ec2:DescribeRegions). Default: the
+   * account's region and us-east-1, both opt-in-not-required.
+   */
+  enabledRegions?: Array<{ RegionName: string; OptInStatus?: string }> | "denied";
 }
 
 export interface Sent {
@@ -184,6 +190,17 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
             $metadata: { requestId: `ct-${region}-${index}` },
           };
         }
+        case "DescribeRegions": {
+          const plan = opts.enabledRegions;
+          if (plan === "denied")
+            throw awsError("UnauthorizedOperation", 403, "You are not authorized to perform this operation.");
+          return {
+            Regions: plan ?? [
+              { RegionName: "eu-west-1", OptInStatus: "opt-in-not-required" },
+              { RegionName: "us-east-1", OptInStatus: "opt-in-not-required" },
+            ],
+          };
+        }
         default:
           throw new Error(`unexpected AWS command ${op}`);
       }
@@ -191,5 +208,6 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
   });
   const s3 = sender();
   const sts = sender();
-  return { sent, sts, s3, cloudtrail: (region) => sender(region) };
+  const ec2 = sender();
+  return { sent, sts, s3, ec2, cloudtrail: (region) => sender(region) };
 }

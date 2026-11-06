@@ -47,7 +47,7 @@ import { isCloudRoutePath, resolveRequestPolicy } from "../auth/policy.js";
 import { setRequestAuthentication } from "../auth/types.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
-import { skipRawUploads } from "../http/rawUploadPath.js";
+import { closeUnreadRawUploads, skipRawUploads } from "../http/rawUploadPath.js";
 import { CaseNotFoundError } from "../ingest/captureIngest.js";
 import { ZodError } from "zod";
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
@@ -97,6 +97,9 @@ export interface HttpStackDeps {
  * Register every layer that runs BEFORE the route families. Call once, before any registerXRoutes.
  */
 export function mountRequestPipeline(app: Express, { store, options, instanceSecret }: HttpStackDeps): void {
+  // First of all: a raw-upload request carries `Connection: close` until its route has read the
+  // body, so any refusal below hangs up instead of draining a huge unread upload (#2353).
+  app.use(closeUnreadRawUploads);
   // Let the browser extension and the dashboard reach this server, and turn every OTHER browser
   // origin away (issue #211) — plus every request arriving under a hostname we do not answer to
   // (#280), which is what a DNS-rebinding attack looks like from in here. Binding to 127.0.0.1

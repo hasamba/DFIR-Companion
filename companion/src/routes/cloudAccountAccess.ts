@@ -36,6 +36,7 @@ export type CloudAuditAction =
   | "cloud-account-detached"
   | "cloud-account-collect"
   | "cloud-account-check"
+  | "cloud-account-regions"
   | "cloud-vault-reset";
 
 type Who = { id: string; name: string; provider?: string };
@@ -134,14 +135,15 @@ export function cloudAccountEditable(
 /**
  * Opens an account's secrets for use in `caseId`, and records the use in the audit log.
  * The single entry point the collect routes use: attached to the case, caller can write the case.
- * A read check (#2309) opens the account the same way and is audited as "cloud-account-check".
+ * A read check (#2309) opens the account the same way and is audited as "cloud-account-check"; the
+ * region picker's listing (#2363) as "cloud-account-regions".
  */
 export function openCloudAccountForCollect(
   ctx: RouteContext,
   req: Request,
   caseId: string,
   accountId: string,
-  action: "cloud-account-collect" | "cloud-account-check" = "cloud-account-collect",
+  action: "cloud-account-collect" | "cloud-account-check" | "cloud-account-regions" = "cloud-account-collect",
 ): CloudAccess<OpenCloudAccount> {
   const vault = ctx.options.cloudAccountVault;
   if (!vault) return { ok: false, status: 503, error: UNAVAILABLE };
