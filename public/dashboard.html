@@ -275,6 +275,8 @@
   <script src="/js/dashboard-import-undo.js"></script>
   <!-- Case lifecycle (#119). initCaseLifecycle() binds its buttons. -->
   <script src="/js/dashboard-case-lifecycle.js"></script>
+  <!-- Close case with cloud credentials (#2347). initCaseLifecycle() runs initCaseClose(). -->
+  <script src="/js/dashboard-case-close.js"></script>
   <!-- Threat-intel enrichment. initEnrichment() binds its two controls. -->
   <script src="/js/dashboard-enrichment.js"></script>
   <!-- Unified import. Wiring only: initUnifiedImport() is the whole module. -->
@@ -1213,6 +1215,7 @@
         <input id="zaRemoveFromList" type="checkbox" data-safe-style="margin:0" />
         Remove this case from the active list (moves it to <code>_archived/</code>, fully recoverable)
       </label>
+      <p data-safe-style="color:var(--text-muted); font-size:12px; margin:4px 0 0">Removing it from the list deletes the case&rsquo;s cloud credentials. Deleting the companion&rsquo;s copy does not stop the credential working: also revoke the key or app secret in AWS, Azure or GCP.</p>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="zaArchive">Archive</button>
         <button id="zaCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
@@ -1237,6 +1240,7 @@
         <input id="eeRemoveFromList" type="checkbox" data-safe-style="margin:0" />
         Remove this case from the active list (moves it to <code>_archived/</code>, fully recoverable)
       </label>
+      <p data-safe-style="color:var(--text-muted); font-size:12px; margin:4px 0 0">Removing it from the list deletes the case&rsquo;s cloud credentials. Deleting the companion&rsquo;s copy does not stop the credential working: also revoke the key or app secret in AWS, Azure or GCP.</p>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="eeDownload">Export &amp; download</button>
         <button id="eeCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
@@ -1245,10 +1249,33 @@
     </div>
   </div>
 
+  <div id="closeCaseOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3>Close case</h3>
+      <p id="ccaCaseName" data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 6px"></p>
+      <ul id="ccaList" data-safe-style="font-size:12px; margin:0 0 10px; padding-left:18px;"></ul>
+      <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input type="radio" name="ccaCredentials" id="ccaDelete" value="delete" checked data-safe-style="margin:0" />
+        Delete credentials (recommended) &mdash; an account another case uses is only detached from this one
+      </label>
+      <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px; cursor:pointer;">
+        <input type="radio" name="ccaCredentials" id="ccaKeep" value="keep" data-safe-style="margin:0" />
+        Keep credentials &mdash; the case shows as &ldquo;closed &mdash; credentials kept&rdquo; in the cloud accounts list
+      </label>
+      <p id="ccaRevoke" data-safe-style="font-size:12px; margin:0 0 6px;"><strong>Revoke in the cloud too.</strong> Deleting the companion&rsquo;s copy does not stop the credential working: also revoke the key or app secret in AWS, Azure or GCP.</p>
+      <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="ccaConfirm">Close case</button>
+        <button id="ccaCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
+        <span id="ccaMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
   <div id="deleteCaseOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Delete case</h3>
       <p id="dcCaseName" data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 10px"></p>
+      <p id="dcCloudRevoke" data-safe-style="font-size:12px; margin:0 0 10px;">The case&rsquo;s cloud credentials are deleted with it (an account another case uses is only detached). Deleting the companion&rsquo;s copy does not stop the credential working: also revoke the key or app secret in AWS, Azure or GCP.</p>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:6px;">Before deleting:</label>
       <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
         <input type="radio" name="dcArchiveFirst" id="dcArchiveNone" value="none" checked data-safe-style="margin:0" />
@@ -2293,8 +2320,11 @@
           <p id="cloudVaultKeyLine" role="status" data-safe-style="font-size:12px;margin:2px 0 6px"></p>
           <div id="cloudAccountsList" role="list"></div>
           <div id="cloudAccountsAll" hidden>
-            <p data-safe-style="font-size:12px;margin:8px 0 4px"><strong>All cloud accounts</strong> (instance administrator). An account added before cases owned accounts is not attached to a case; attach it to the open case or delete it.</p>
+            <p data-safe-style="font-size:12px;margin:8px 0 4px"><strong id="cloudAccountsAllTitle">Cloud credentials held</strong>: every credential the companion holds that you can see &mdash; the accounts of cases you can write. An instance administrator sees all of them, including accounts <strong>not attached to a case</strong> (added before cases owned accounts, or left after a case was deleted), and alone can delete those. Closing a case deletes its credentials unless you keep them; archiving or deleting a case always does.</p>
             <div id="cloudAccountsAllList" role="list"></div>
+            <div data-safe-style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+              <button id="cloudAccountsDeleteSelected" type="button" disabled data-tip="Deletes the ticked cloud accounts and their stored credentials. Revoke them in the cloud too.">Delete selected</button>
+            </div>
           </div>
           <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button id="cloudAccountAddBtn" type="button">+ Add cloud account</button>

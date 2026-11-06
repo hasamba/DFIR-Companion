@@ -148,6 +148,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-import-undo.js": "application/javascript; charset=utf-8",
   // Case lifecycle (#119) — open / on hold / closed / archived, and the buttons that move it.
   "/js/dashboard-case-lifecycle.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-case-close.js": "application/javascript; charset=utf-8",
   // Threat-intel enrichment — which providers are on for this case, and the toggle modal.
   "/js/dashboard-enrichment.js": "application/javascript; charset=utf-8",
   // Unified import — one button, the server decides what the file is. Listener wiring only.

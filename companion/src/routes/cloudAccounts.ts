@@ -3,15 +3,19 @@
  * uses. Secrets are sealed with a key file kept OUT of the data folder (vaultKeyFile.ts).
  *
  * Since #2308 accounts belong to cases: case writers use /cases/:id/cloud-accounts
- * (cloudAccountsCase.ts). These top-level routes are the INSTANCE ADMINISTRATOR's view of every
- * account — name, provider and attached cases, never a secret — and stay global admin:
+ * (cloudAccountsCase.ts). Since #2347 the LIST and DELETE routes are the cloud accounts list every
+ * analyst sees, cut to what they may see (cloudCredentialList.ts):
  *
- *   GET    /cloud-accounts                     every account (no secrets), its cases, the key's state,
- *                                              and the minimum read-only policy per provider (#2309)
+ *   GET    /cloud-accounts                     the accounts the caller may see (no secrets), with cases
+ *                                              and their status, added by, last used
+ *   POST   /cloud-accounts/delete              { ids } — delete several (cloudCredentialList.ts)
+ *   DELETE /cloud-accounts/:accountId          delete one (overwrites the sealed entry)
+ *
+ * The rest stay the INSTANCE ADMINISTRATOR's (global admin, auth/policy.ts):
+ *
  *   POST   /cloud-accounts                     add an UNATTACHED account; on first use makes the key
  *   POST   /cloud-accounts/reset               Reset vault — wipes the accounts, needs confirm
  *   PUT    /cloud-accounts/:accountId          edit (a left-out secret keeps the stored one)
- *   DELETE /cloud-accounts/:accountId          delete (overwrites the sealed entry)
  *   POST   /cloud-accounts/:accountId/attach   { caseId } — attach to a case (e.g. an account
  *                                              stored before #2308, which has no case)
  *
@@ -23,8 +27,8 @@
 import type { Express } from "express";
 import type { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
 import { parseCloudAccountInput } from "../integrations/cloudAccounts/accountInput.js";
-import { MINIMUM_POLICIES } from "../integrations/cloudCheck/minimumPolicies.js";
-import { cloudAudit, withCloudVault } from "./cloudAccountAccess.js";
+import { cloudAdder, cloudAudit, withCloudVault } from "./cloudAccountAccess.js";
+import { registerCloudCredentialListRoutes } from "./cloudCredentialList.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
@@ -38,20 +42,14 @@ function keyNotice(vault: CloudAccountVault): string {
 }
 
 export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): void {
-  app.get(
-    "/cloud-accounts",
-    withCloudVault(ctx, (vault, _req, res) => {
-      const { keyPath, keyState } = vault.status();
-      return res.json({ keyPath, keyState, accounts: vault.list(), minimumPolicies: MINIMUM_POLICIES });
-    }),
-  );
+  registerCloudCredentialListRoutes(app, ctx); // GET, POST /delete, DELETE /:accountId (#2347)
 
   app.post(
     "/cloud-accounts",
     withCloudVault(ctx, (vault, req, res) => {
       const parsed = parseCloudAccountInput(req.body);
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
-      const { account, keyCreated } = vault.create(parsed.value);
+      const { account, keyCreated } = vault.create(parsed.value, undefined, cloudAdder(req));
       if (keyCreated) {
         ctx.serverLogger.info(
           `[cloud-accounts] created the vault key at ${vault.keyPath}; keep it out of data backups`,
@@ -96,15 +94,6 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
       const account = vault.attach(req.params.accountId, caseId);
       cloudAudit(ctx, req, "cloud-account-attached", account, caseId);
       return res.json({ account });
-    }),
-  );
-
-  app.delete(
-    "/cloud-accounts/:accountId",
-    withCloudVault(ctx, (vault, req, res) => {
-      const gone = vault.remove(req.params.accountId);
-      cloudAudit(ctx, req, "cloud-account-deleted", gone);
-      return res.status(204).end();
     }),
   );
 }

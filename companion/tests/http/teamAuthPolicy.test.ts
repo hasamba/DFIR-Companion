@@ -239,17 +239,28 @@ describe("team-auth configuration and policy", () => {
     expect(resolveRequestPolicy("POST", "/tls/ca.crt")).not.toEqual({ kind: "public" });
   });
 
-  // Cloud accounts (#2307) name credentials, so the instance-wide list stays global admin (#2308).
-  it("keeps every cloud account route global admin, GET included", () => {
+  // Cloud accounts (#2307) name credentials. Adding, editing, attaching and Reset vault stay global
+  // admin (#2308); since #2347 the list and its deletes are any signed-in user's, cut by the route.
+  it("keeps cloud account changes global admin; the list and its deletes are authenticated", () => {
     for (const [m, p] of [
-      ["GET", "/cloud-accounts"],
       ["POST", "/cloud-accounts"],
       ["POST", "/cloud-accounts/reset"],
       ["PUT", "/cloud-accounts/a1"],
-      ["DELETE", "/cloud-accounts/a1"],
       ["POST", "/cloud-accounts/a1/attach"],
+      ["GET", "/cloud-accounts/a1"],
+      ["DELETE", "/cloud-accounts/a1/attach"],
+      ["POST", "/cloud-accounts/delete/x"],
     ]) {
       expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "global", permission: "admin" });
+    }
+    for (const [m, p] of [
+      ["GET", "/cloud-accounts"],
+      ["GET", "/CLOUD-ACCOUNTS/"],
+      ["POST", "/cloud-accounts/delete"],
+      ["POST", "/Cloud-Accounts/Delete/"],
+      ["DELETE", "/cloud-accounts/a1"],
+    ]) {
+      expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "authenticated" });
     }
   });
 

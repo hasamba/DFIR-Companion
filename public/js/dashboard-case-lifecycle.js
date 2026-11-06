@@ -69,6 +69,8 @@
     const restoreCaseBtn = document.getElementById("restoreCaseBtn");
     const deleteCaseBtn = document.getElementById("deleteCaseBtn");
     if (!btn || !menu) return;
+    // The close dialog that asks about the case's cloud credentials (#2347, dashboard-case-close.js).
+    if (typeof window.initCaseClose === "function") window.initCaseClose();
 
     // Toggle menu on button click — position fixed relative to button so it works
     // even though the menu lives outside the toolbar (prevents fitToolbar flicker).
@@ -96,16 +98,9 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       try {
-        const r = await fetch(`/cases/${caseId}/status`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ status: "closed" }),
-        });
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({}));
-          alert("Failed to close case: " + (err.error || "HTTP " + r.status));
-          return;
-        }
+        // Asks about the case's cloud credentials first when it has any (#2347).
+        const closed = await window.closeCaseWithCredentials(caseId);
+        if (!closed) return;
         loadCaseLifecycle(caseId);
         loadCaseList();
         if (

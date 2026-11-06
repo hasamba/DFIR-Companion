@@ -583,6 +583,13 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Close case: asks Delete or Keep for the case's cloud credentials first (#2347).
+    // No `initializer`: initCaseLifecycle() runs initCaseClose(), not the inline script.
+    file: "dashboard-case-close.js",
+    publish: ["initCaseClose", "closeCaseWithCredentials"],
+    private: ["pending"],
+  },
+  {
     // Threat-intel enrichment. `enrichProviders` is also an element id in the markup, which is why
     // a global named after a panel is a bad idea and the IIFE is not ceremony.
     file: "dashboard-enrichment.js",
@@ -1182,7 +1189,7 @@ export const FEATURES: Feature[] = [
     // No `initializer`: initCaseConnect() runs initCloudAccounts(), not the inline script.
     file: "dashboard-cloud-accounts.js",
     publish: ["initCloudAccounts", "loadCloudAccounts"],
-    private: ["editing", "policies", "checking"],
+    private: ["editing", "policies", "checking", "selected"],
   },
   {
     // The Cloud Collection panel and its toolbar button (#2311).

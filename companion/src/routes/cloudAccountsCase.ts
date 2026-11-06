@@ -20,6 +20,7 @@ import { parseCloudAccountInput } from "../integrations/cloudAccounts/accountInp
 import { MINIMUM_POLICIES } from "../integrations/cloudCheck/minimumPolicies.js";
 import {
   canWriteCloudCase,
+  cloudAdder,
   cloudAccountEditable,
   cloudAccountInCase,
   cloudAudit,
@@ -27,6 +28,7 @@ import {
   withCloudVault,
 } from "./cloudAccountAccess.js";
 import { registerCloudAccountCheckRoute } from "./cloudAccountCheck.js";
+import { deleteCloudCredentials } from "./cloudCredentialRelease.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
@@ -63,7 +65,7 @@ function registerListAndAdd(app: Express, ctx: RouteContext): void {
       if (!(await ctx.store.caseExists(caseId))) return res.status(404).json({ error: CASE_NOT_FOUND });
       const parsed = parseCloudAccountInput(req.body);
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
-      const { account, keyCreated } = vault.create(parsed.value, caseId);
+      const { account, keyCreated } = vault.create(parsed.value, caseId, cloudAdder(req));
       if (keyCreated) {
         ctx.serverLogger.info(
           `[cloud-accounts] created the vault key at ${vault.keyPath}; keep it out of data backups`,
@@ -141,12 +143,11 @@ function registerOne(app: Express, ctx: RouteContext): void {
 
   app.delete(
     "/cases/:id/cloud-accounts/:accountId",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVault(ctx, async (vault, req, res) => {
       const { id: caseId, accountId } = req.params;
       const allowed = cloudAccountEditable(ctx, req, vault, caseId, accountId);
       if (!allowed.ok) return sendCloudRefusal(res, allowed);
-      const gone = vault.remove(accountId);
-      cloudAudit(ctx, req, "cloud-account-deleted", gone, caseId);
+      await deleteCloudCredentials(ctx, req, [accountId], caseId); // audit + custody (#2347)
       return res.status(204).end();
     }),
   );

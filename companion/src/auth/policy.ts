@@ -59,7 +59,8 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/importers",
   "/server-sets",
   // Cloud accounts (#2307): every method, GET included — the list names credentials. Since #2308
-  // this is the instance administrator's view of every account; case writers use the case routes.
+  // this is the instance administrator's; case writers use the case routes. Since #2347 the list and
+  // its deletes are carved out above (isCloudListRoute): the route cuts them to what the caller may see.
   "/cloud-accounts",
 ];
 const CASE_ADMIN_SEGMENTS = [
@@ -112,6 +113,18 @@ const CASE_CLOUD_WRITE_PATTERN = /^\/cloud-(?:accounts|collect)(?:\/|$)/;
 // The same routes from the top: the global admin list and the case routes. The demo gate refuses
 // every one of them, GET included (composition/httpStack.ts).
 const CLOUD_ROUTE_PATTERN = /^(?:\/cases\/[^/]+)?\/cloud-(?:accounts|collect)(?:\/|$)/;
+
+/**
+ * The cloud accounts list and its deletes (#2347): any signed-in user, because the route itself cuts
+ * the answer to the accounts of cases the caller can write (routes/cloudCredentialList.ts). Adding,
+ * editing, attaching and Reset vault stay global admin. In Express's spelling (case, trailing slash).
+ */
+function isCloudListRoute(method: string, path: string): boolean {
+  const p = collectionPath(path);
+  if (method === "GET" || method === "HEAD") return p === "/cloud-accounts";
+  if (method === "POST") return p === "/cloud-accounts/delete";
+  return method === "DELETE" && /^\/cloud-accounts\/[^/]+$/.test(p);
+}
 
 /** True for every cloud-account and cloud-collect route, global or case, in Express's spelling. */
 export function isCloudRoutePath(rawPath: string): boolean {
@@ -289,6 +302,7 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   ) {
     return { kind: "authenticated" };
   }
+  if (isCloudListRoute(normalizedMethod, path)) return { kind: "authenticated" };
   if (GLOBAL_ADMIN_PREFIXES.some((prefix) => pathStarts(path, prefix))) {
     return { kind: "global", permission: "admin" };
   }

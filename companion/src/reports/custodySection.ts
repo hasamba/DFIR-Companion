@@ -55,6 +55,8 @@ function custodyRecords(records: CustodyRecord[], lines: string[]): void {
     if (last.sha1) lines.push(`- SHA-1: ${codeSpanMd(last.sha1)}`);
     // A receipt-only artifact arrived and was hashed but its bytes were not kept (#2111).
     if (chain.every((r) => r.event === "received")) lines.push("- Status: received — not stored");
+    if (chain.some((r) => r.event === "credential-deleted"))
+      lines.push("- Status: cloud credential — deleted, no file");
     lines.push("");
     lines.push("| # | Event | When (UTC) | By | Source | Trigger |", "| --- | --- | --- | --- | --- | --- |");
     for (const r of chain) {

@@ -59,12 +59,22 @@ export type CloudCredential =
   | { provider: "gcp"; settings: GcpSettings; secrets: GcpSecrets }
   | { provider: "microsoft"; settings: MicrosoftSettings; secrets: MicrosoftSecrets };
 
+/** Who added an account (#2347). Absent on an account added before it was recorded. */
+export interface CloudAccountAdder {
+  id: string;
+  displayName: string;
+}
+
 interface AccountMeta {
   id: string;
   name: string;
   revision: number;
   createdAt: string;
   updatedAt: string;
+  /** Who added it (#2347); absent on accounts added before this was recorded. */
+  createdBy?: CloudAccountAdder;
+  /** When collection or a read check last opened it (#2347); absent until then. */
+  lastUsedAt?: string;
 }
 
 /** An account opened with the vault key: the only shape that holds secrets. Never sent to a client. */
@@ -91,6 +101,13 @@ export type CloudAccountView = AccountMeta & {
   caseIds: string[];
   locked?: string;
 };
+
+/**
+ * An account the vault just erased or detached, without its secrets (#2347): what an audit or
+ * custody entry may say about it. `caseIds` are the cases it was attached to BEFORE the change for
+ * an erased account, and the cases it is still attached to for a detached one.
+ */
+export type ReleasedCloudAccount = Omit<StoredCloudAccount, "sealed" | "caseIds"> & { caseIds: string[] };
 
 /** A create or edit request. On edit, an absent or empty secret keeps the stored one. */
 export interface CloudAccountInput {

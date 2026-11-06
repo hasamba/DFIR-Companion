@@ -12,6 +12,11 @@ import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
+import {
+  closeCredentialChoice,
+  releaseOnCaseEnd,
+  runningCollectionRefusal,
+} from "./cloudCredentialRelease.js"; // #2347
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
@@ -204,9 +209,19 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const { status } = req.body ?? {};
       if (status !== "open" && status !== "closed")
         return res.status(400).json({ error: "status must be 'open' or 'closed'" });
+      // #2347: closing deletes the case's cloud credentials unless the analyst keeps them, and a
+      // running cloud collection blocks it.
+      const credentials = closeCredentialChoice(req.body);
+      if (!credentials) return res.status(400).json({ error: "cloudCredentials must be 'delete' or 'keep'" });
+      const running = status === "closed" ? runningCollectionRefusal(ctx, id) : undefined;
+      if (running) return res.status(409).json({ error: running });
       const updated = await store.setCaseStatus(id, status); // 409 for an archived case (#1809)
       logLine(`[lifecycle] case=${id} status=${status}`);
-      return res.status(200).json(sanitizeCaseMeta(updated));
+      const released =
+        status === "closed" && credentials === "delete"
+          ? await releaseOnCaseEnd(ctx, req, id, "case closed")
+          : {};
+      return res.status(200).json({ ...sanitizeCaseMeta(updated), ...released });
     } catch (err) {
       if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
@@ -220,10 +235,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   async function removeCaseFromActiveListBestEffort(
     id: string,
     logPrefix: string,
+    req: Request,
   ): Promise<{ removed: boolean; error?: string }> {
     try {
       await store.archiveCaseFolder(id, "archived"); // move + status in one locked step (#1809)
       logLine(`${logPrefix} case=${id} removed from active list (moved to _archived/)`);
+      await releaseOnCaseEnd(ctx, req, id, "case archived"); // an archived case keeps no credentials (#2347)
       return { removed: true };
     } catch (err) {
       errLine(`${logPrefix} case=${id} failed to remove from active list: ${(err as Error).message}`);
@@ -251,6 +268,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (meta.status === "archived")
         return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
+      const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
+      if (running) return res.status(409).json({ error: running });
       logLine(`[archive] starting archive for case=${id}`);
       const result = await archiveCaseLocked(id, meta.name);
       logLine(
@@ -267,7 +286,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       let removedFromList = false;
       let removeFromListError: string | undefined;
       if (removeFromList) {
-        const outcome = await removeCaseFromActiveListBestEffort(id, "[archive]");
+        const outcome = await removeCaseFromActiveListBestEffort(id, "[archive]", req);
         removedFromList = outcome.removed;
         removeFromListError = outcome.error;
       }
@@ -347,6 +366,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (archiveFirst !== "none" && archiveFirst !== "zip" && archiveFirst !== "encrypted") {
         return res.status(400).json({ error: `archiveFirst must be 'none', 'zip', or 'encrypted'` });
       }
+      const running = runningCollectionRefusal(ctx, id);
+      if (running) return res.status(409).json({ error: running });
+      // #2347: the credentials go BEFORE the archive is built, so their custody entries travel in it —
+      // the folder, and its custody log, are gone after the delete. A delete that then fails leaves a
+      // closed case without credentials, which is what closing does by default anyway.
+      const released = await releaseOnCaseEnd(ctx, req, id, "case deleted");
 
       if (archiveFirst === "encrypted") {
         const password = body.password;
@@ -380,6 +405,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
 
       return res.status(200).json({
         deleted,
+        ...released,
         ...(deleteError ? { deleteError } : {}),
         ...(archiveResult
           ? { archivePath: archiveResult.archivePath, manifest: archiveResult.manifest }
@@ -485,6 +511,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (meta?.status === "archived")
         return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
+      const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
+      if (running) return res.status(409).json({ error: running });
       // The signed custody manifest travels inside the archive, so the recipient can verify the
       // chain — including its length, which the log alone cannot vouch for (#231).
       const custodyManifest = options.custodyStore
@@ -513,7 +541,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       });
       let removedFromList = false;
       if (removeFromList) {
-        const outcome = await removeCaseFromActiveListBestEffort(id, "[export]");
+        const outcome = await removeCaseFromActiveListBestEffort(id, "[export]", req);
         removedFromList = outcome.removed;
       }
       res.type("application/octet-stream");

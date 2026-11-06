@@ -2,8 +2,12 @@
 // GCP projects that cloud collection will use, and the vault that keeps their credentials.
 //
 // Accounts belong to cases. The main list is the open case's accounts (/cases/<id>/cloud-accounts,
-// which needs write on the case). An instance administrator also sees every account with its cases
-// (/cloud-accounts) — including accounts added before #2308, which have no case until attached.
+// which needs write on the case). Below it, "Cloud credentials held" (/cloud-accounts, #2347) lists
+// every credential the caller may see: the accounts of cases they write, each with its cases and
+// their status (open, closed — credentials kept), who added it and when, and when it was last used.
+// An instance administrator (or the single user) sees every account, including unattached ones —
+// added before #2308 or left after a case delete — and alone may delete those. Rows can be ticked
+// and deleted together; every delete confirmation reminds the analyst to revoke the key in the cloud.
 // On the public demo every cloud route answers 403 with `demo: true`, and the panel hides itself.
 //
 // The server never sends a stored credential back — only the NAMES of the secrets an account holds.
@@ -56,6 +60,14 @@
     ],
   };
   const STATUS_TEXT = { succeeded: "Read worked", failed: "Failed", "not-tested": "Not tested" };
+  const CASE_STATUS_TEXT = {
+    open: "open",
+    closed: "closed — credentials kept",
+    archived: "archived",
+    missing: "deleted",
+  };
+  const REVOKE_REMINDER =
+    "Deleting the companion's copy does not stop the credential working: also revoke the key or app secret in AWS, Azure or GCP.";
 
   // The account open in the form and where it was opened from: { account, url } — `url` is the
   // account's own route (case or instance-wide). null for a new account.
@@ -64,6 +76,8 @@
   let policies = {};
   // The account open in the check panel: { account, url, boxes: [[sourceId, checkbox]] }, or null.
   let checking = null;
+  // The ticked rows of the held-credentials list: account id -> account.
+  let selected = new Map();
 
   const byId = (id) => document.getElementById(id);
 
@@ -142,9 +156,10 @@
     return s.tenantId || "";
   }
 
-  function accountRow(a, metaText) {
+  function accountRow(a, metaText, lead) {
     const row = el("div", null, "server-set-row");
     row.setAttribute("role", "listitem");
+    if (lead) row.appendChild(lead);
     row.appendChild(el("strong", a.name, "server-set-name"));
     row.appendChild(el("span", PROVIDER_LABELS[a.provider] || a.provider, "server-set-badge"));
     row.appendChild(el("span", summary(a), "server-set-meta"));
@@ -179,18 +194,79 @@
     return row;
   }
 
-  // One account in the administrator's instance-wide list: its cases, Attach to this case, Edit, Delete.
-  function renderAdminRow(a, caseId) {
-    const cases = (a.caseIds || []).length ? `Cases: ${a.caseIds.join(", ")}` : "Not attached to a case";
-    const row = accountRow(a, cases);
+  function shortDate(iso) {
+    return typeof iso === "string" && iso ? iso.slice(0, 16).replace("T", " ") + " UTC" : "";
+  }
+
+  // "Cases: c1 (open), c2 (closed — credentials kept)", or "Not attached to a case".
+  function casesText(a) {
+    const cases = Array.isArray(a.cases) ? a.cases : (a.caseIds || []).map((caseId) => ({ caseId }));
+    const hidden = Number(a.otherCases) || 0;
+    if (cases.length === 0 && hidden === 0) return "Not attached to a case";
+    const parts = cases.map((c) => (c.status ? `${c.caseId} (${CASE_STATUS_TEXT[c.status] || c.status})` : c.caseId));
+    if (hidden) parts.push(`${hidden} case${hidden === 1 ? "" : "s"} you cannot write`);
+    return `Cases: ${parts.join(", ")}`;
+  }
+
+  function heldDetails(a) {
+    const by = a.createdBy && a.createdBy.displayName ? a.createdBy.displayName : "not recorded";
+    const used = a.lastUsedAt ? shortDate(a.lastUsedAt) : "not recorded";
+    return `${casesText(a)} · Added by ${by}, ${shortDate(a.createdAt)} · Last used: ${used}`;
+  }
+
+  // Deletable from the list: the administrator any; anyone else only with write on every case.
+  function canDelete(a, admin) {
+    return admin || ((a.caseIds || []).length > 0 && !(Number(a.otherCases) > 0));
+  }
+
+  // One row of "Cloud credentials held": tick box, details, and (administrator) Attach / Edit; Delete.
+  function renderHeldRow(a, caseId, admin) {
+    let tick = null;
+    if (canDelete(a, admin)) {
+      tick = el("input");
+      tick.type = "checkbox";
+      tick.setAttribute("aria-label", `Select ${a.name}`);
+      tick.checked = selected.has(a.id);
+      tick.onchange = () => toggleSelected(a, tick.checked);
+    }
+    const row = accountRow(a, heldDetails(a), tick);
     const url = `/cloud-accounts/${encodeURIComponent(a.id)}`;
     const actions = el("span", null, "server-set-actions");
-    if (caseId && !(a.caseIds || []).includes(caseId))
+    if (admin && caseId && !(a.caseIds || []).includes(caseId))
       actions.appendChild(button("Attach to this case", () => attachTo(a, `${url}/attach`, caseId)));
-    if (!a.locked) actions.appendChild(button("Edit", () => openForm(a, url)));
-    actions.appendChild(button("Delete", () => deleteAccount(a, url)));
+    if (admin && !a.locked) actions.appendChild(button("Edit", () => openForm(a, url)));
+    if (canDelete(a, admin)) actions.appendChild(button("Delete", () => deleteAccount(a, url)));
     row.appendChild(actions);
     return row;
+  }
+
+  function toggleSelected(a, on) {
+    const next = new Map(selected);
+    if (on) next.set(a.id, a);
+    else next.delete(a.id);
+    selected = next;
+    const btn = byId("cloudAccountsDeleteSelected");
+    if (btn) {
+      btn.disabled = selected.size === 0;
+      btn.textContent = selected.size ? `Delete selected (${selected.size})` : "Delete selected";
+    }
+  }
+
+  async function deleteSelected() {
+    const picked = [...selected.values()];
+    if (picked.length === 0) return;
+    const names = picked.map((a) => `'${a.name}'`).join(", ");
+    const ok = confirm(
+      `Delete ${picked.length} cloud account${picked.length === 1 ? "" : "s"} (${names})? Each stored credential is ` +
+        `erased for every case it is attached to, and each case's custody log records it.\n\n${REVOKE_REMINDER}`,
+    );
+    if (!ok) return;
+    const res = await send("/cloud-accounts/delete", "POST", { ids: picked.map((a) => a.id) });
+    await loadCloudAccounts(); // clears the message line, so the outcome is written after it
+    setMsg(
+      res.ok ? `Deleted ${Number(res.body.deleted) || 0} cloud account(s).` : res.body.error || `Delete failed (HTTP ${res.status})`,
+      !res.ok,
+    );
   }
 
   function hidePanel() {
@@ -222,16 +298,20 @@
     if (accounts.length === 0) box.appendChild(el("div", "No cloud accounts in this case yet.", "server-set-meta"));
   }
 
-  function renderAdminList(caseId, res) {
+  // "Cloud credentials held" (#2347): what the caller may see; the administrator sees every account.
+  function renderHeldList(caseId, res) {
     const section = byId("cloudAccountsAll");
     const box = byId("cloudAccountsAllList");
+    const admin = res.ok && res.body.admin !== false;
     const reset = byId("cloudVaultResetBtn");
-    if (reset) reset.hidden = !res.ok;
+    if (reset) reset.hidden = !admin;
     if (!section || !box) return;
-    section.hidden = !res.ok;
-    if (!res.ok) return;
-    const accounts = Array.isArray(res.body.accounts) ? res.body.accounts : [];
-    box.replaceChildren(...accounts.map((a) => renderAdminRow(a, caseId)));
+    const accounts = res.ok && Array.isArray(res.body.accounts) ? res.body.accounts : [];
+    section.hidden = !res.ok || (!admin && accounts.length === 0);
+    selected = new Map();
+    toggleSelected({ id: "" }, false);
+    if (section.hidden) return;
+    box.replaceChildren(...accounts.map((a) => renderHeldRow(a, caseId, admin)));
     if (accounts.length === 0) box.appendChild(el("div", "No cloud accounts yet.", "server-set-meta"));
   }
 
@@ -240,17 +320,18 @@
     if (!box) return;
     const caseId = currentCaseId();
     const inCase = caseId ? await getJson(caseBase(caseId)) : { ok: false, status: 0, body: {} };
-    // The instance-wide list answers only an instance administrator (403 for everyone else).
+    // The held-credentials list, cut by the server to what this caller may see (#2347).
     const all = await getJson("/cloud-accounts");
     if (inCase.body.demo || all.body.demo) return hidePanel();
     const sent = (all.ok && all.body.minimumPolicies) || (inCase.ok && inCase.body.minimumPolicies);
     if (sent && typeof sent === "object") policies = sent;
     setMsg("", false);
-    keyLine(all.ok ? all.body : inCase.body);
+    const admin = all.ok && all.body.admin !== false;
+    keyLine(admin ? all.body : inCase.body);
     renderCaseList(box, caseId, inCase);
-    renderAdminList(caseId, all);
+    renderHeldList(caseId, all);
     const add = byId("cloudAccountAddBtn");
-    if (add) add.disabled = !caseId && !all.ok;
+    if (add) add.disabled = !caseId && !admin;
   }
 
   function showProvider(provider) {
@@ -437,8 +518,11 @@
   }
 
   async function deleteAccount(a, url) {
-    if (!confirm(`Delete cloud account '${a.name}'? Its stored credential is erased for every case it is attached to.`))
-      return;
+    const ok = confirm(
+      `Delete cloud account '${a.name}'? Its stored credential is erased for every case it is attached to, and ` +
+        `each case's custody log records it.\n\n${REVOKE_REMINDER}`,
+    );
+    if (!ok) return;
     const res = await send(url, "DELETE");
     setMsg(res.ok ? "Deleted." : res.body.error || `Delete failed (HTTP ${res.status})`, !res.ok);
     loadCloudAccounts();
@@ -483,6 +567,7 @@
     if (!byId("cloudAccountsPanel")) return;
     byId("cloudAccountAddBtn").onclick = () => openForm(null, null);
     byId("cloudVaultResetBtn").onclick = resetVault;
+    if (byId("cloudAccountsDeleteSelected")) byId("cloudAccountsDeleteSelected").onclick = deleteSelected;
     byId("caCancel").onclick = closeForm;
     if (byId("ccRun")) byId("ccRun").onclick = runCheck;
     if (byId("ccClose")) byId("ccClose").onclick = closeCheck;

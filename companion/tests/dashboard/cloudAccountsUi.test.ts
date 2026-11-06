@@ -63,7 +63,7 @@ describe("cloud accounts panel", () => {
   });
 
   it("shows the administrator every account, an unattached one offered for the open case", async () => {
-    const old = { ...ACCOUNT, id: "a2", name: "Before cases", caseIds: [] };
+    const old = { ...ACCOUNT, id: "a2", name: "Before cases", caseIds: [], otherCases: 0 };
     const { api, el } = load({
       "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [] } },
       "GET /cloud-accounts": { body: { keyState: "present", keyPath: "/k/vault.key", accounts: [old] } },
