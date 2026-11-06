@@ -515,8 +515,8 @@ Custom declarative importers:
 
 ## Sigma Rules
 
-Settings → **Sigma rules** controls the SigmaHQ rules that grade AWS CloudTrail and Entra ID sign-in /
-audit imports, and Apache / nginx / Squid access logs ([details](importing.md#sigma-rules-grade-cloudtrail-and-entra-imports)). Every setting is
+Settings → **Sigma rules** controls the SigmaHQ rules that grade AWS CloudTrail, Entra ID sign-in /
+audit and GCP Cloud Audit Log imports, and Apache / nginx / Squid access logs ([details](importing.md#sigma-rules-grade-cloudtrail-entra-and-gcp-imports)). Every setting is
 read on every import, so a change applies to the next import without a restart. Cases already imported
 keep the grading they got, and their report names the release and settings that produced it.
 
@@ -562,7 +562,7 @@ Disable, Enable and exclusions apply from the next import only. Events already i
 grading until you re-grade the case. The detection-rules line in each report carries a short hash of the exclusions that graded the case,
 so two imports graded under different exclusions never look the same.
 
-- **Re-grade this case** — grades the open case's CloudTrail, Entra and web access-log rows again with
+- **Re-grade this case** — grades the open case's CloudTrail, Entra, GCP audit and web access-log rows again with
   the rules and settings shown above. Click **Preview re-grade of the open case** first: it changes
   nothing and shows how many rows would be raised, lowered or left unchanged, how many would join or
   leave the forensic timeline, and each import's state ("already graded with the current rules",

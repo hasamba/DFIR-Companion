@@ -195,6 +195,8 @@ const cloudActivity: StreamProvider = {
       records,
       recordGate: ctx.gate,
       recordIndexBase: ctx.base,
+      // GCP records only — the importer grades no Azure Activity record with Sigma (#2346).
+      sigma: ctx.sigma,
       debug: ctx.debug,
       rowsOnly: true,
     });

@@ -1,6 +1,6 @@
 // AWS CloudTrail samples for the detection-overlap check (#2348), copied from the records the cloud
 // tagger and Sigma tests already use (tagsYamlCloudGaps, tagsYamlRemainingSources,
-// tagsYamlSigmaOverlap, sigmaCloudImport). The originals stay in their tests.
+// tagsYamlSigmaOverlap, sigmaCloudImport, tagsYamlTrailDiscover). The originals stay in their tests.
 import { sample, type DetectionSample } from "./types.js";
 
 /** The CloudTrail record base every sample (and every Sigma-built sample) starts from. */
@@ -28,6 +28,7 @@ const ct = (id: string, from: string, eventSource: string, eventName: string, ex
 const GAPS = "tagsYamlCloudGaps";
 const TS = "tagsYamlRemainingSources (Timesketch AWS)";
 const SIGMA = "sigmaCloudImport";
+const TD = "tagsYamlTrailDiscover (#2345)";
 const S3_BROWSER = "S3 Browser 11.5.7 https://s3browser.com";
 
 const snapshotPerm = (perm: unknown) => ({
@@ -125,5 +126,85 @@ export const AWS_SAMPLES: readonly DetectionSample[] = [
   ct("aws.DeleteDeliveryChannel.notFound", SIGMA, "config.amazonaws.com", "DeleteDeliveryChannel", {
     ...channel,
     errorCode: "NoSuchDeliveryChannelException",
+  }),
+  // TrailDiscover graded rules (#2345): one sample per operation, plus a root caller.
+  ct("aws.td.DisassociateFromMasterAccount", TD, "guardduty.amazonaws.com", "DisassociateFromMasterAccount", {
+    requestParameters: { detectorId: "12abc34d567e8fa901bc2d34e56789f0" },
+  }),
+  ct(
+    "aws.td.DisassociateFromMasterAccount.root",
+    TD,
+    "guardduty.amazonaws.com",
+    "DisassociateFromMasterAccount",
+    {
+      userIdentity: {
+        type: "Root",
+        principalId: "111111111111",
+        accountId: "111111111111",
+        arn: "arn:aws:iam::111111111111:root",
+      },
+    },
+  ),
+  ct(
+    "aws.td.DisassociateFromAdministratorAccount",
+    TD,
+    "guardduty.amazonaws.com",
+    "DisassociateFromAdministratorAccount",
+  ),
+  ct("aws.td.DeleteInvitations", TD, "guardduty.amazonaws.com", "DeleteInvitations", {
+    requestParameters: { accountIds: ["222222222222"] },
+  }),
+  ct("aws.td.AcceptHandshake", TD, "organizations.amazonaws.com", "AcceptHandshake", {
+    requestParameters: { handshakeId: "h-examplehandshakeid111" },
+  }),
+  ct("aws.td.PutAccountDetails", TD, "ses.amazonaws.com", "PutAccountDetails"),
+  ct("aws.td.EnableSerialConsoleAccess", TD, "ec2.amazonaws.com", "EnableSerialConsoleAccess"),
+  ct(
+    "aws.td.SendSerialConsoleSSHPublicKey",
+    TD,
+    "ec2-instance-connect.amazonaws.com",
+    "SendSerialConsoleSSHPublicKey",
+    {
+      requestParameters: { instanceId: "i-0123456789abcdef0", serialPort: 0 },
+    },
+  ),
+  ct(
+    "aws.td.ReplaceIamInstanceProfileAssociation",
+    TD,
+    "ec2.amazonaws.com",
+    "ReplaceIamInstanceProfileAssociation",
+    {
+      requestParameters: {
+        associationId: "iip-assoc-0123456789abcdef0",
+        iamInstanceProfile: { name: "AdminProfile" },
+      },
+    },
+  ),
+  ...["SharedSnapshotCopyInitiated", "SharedSnapshotVolumeCreated"].map((name) =>
+    ct(`aws.td.${name}`, TD, "ec2.amazonaws.com", name, {
+      eventType: "AwsServiceEvent",
+      sourceIPAddress: "ec2.amazonaws.com",
+      userIdentity: { type: "AWSAccount", principalId: "", accountId: "222222222222" },
+      serviceEventDetails: { snapshotId: "snap-0123456789abcdef0" },
+    }),
+  ),
+  ...["CreateSAMLProvider", "CreateOpenIDConnectProvider"].map((name) =>
+    ct(`aws.td.${name}`, TD, "iam.amazonaws.com", name, { requestParameters: { name: "ExampleIdP" } }),
+  ),
+  ct("aws.td.DeleteDBInstance", TD, "rds.amazonaws.com", "DeleteDBInstance", {
+    requestParameters: { dBInstanceIdentifier: "prod-db-1", skipFinalSnapshot: true },
+  }),
+  ...["PutUseCaseForModelAccess", "CreateFoundationModelAgreement", "PutFoundationModelEntitlement"].map(
+    (name) => ct(`aws.td.${name}`, TD, "bedrock.amazonaws.com", name),
+  ),
+  ct("aws.td.PasswordRecoveryRequested.root", TD, "signin.amazonaws.com", "PasswordRecoveryRequested", {
+    eventType: "AwsConsoleSignIn",
+    userIdentity: {
+      type: "Root",
+      principalId: "111111111111",
+      accountId: "111111111111",
+      arn: "arn:aws:iam::111111111111:root",
+    },
+    responseElements: { PasswordRecoveryRequested: "Success" },
   }),
 ];

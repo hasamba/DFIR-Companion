@@ -74,7 +74,7 @@ function parse(s: DetectionSample, rec: Row, withSigma: boolean): SiemEvent[] {
   const sigma = withSigma ? SIGMA : undefined;
   if (s.kind === "cloudtrail") return parseCloudTrail(text(s, rec), { sigma }).events;
   if (s.kind === "m365") return parseM365Audit(text(s, rec), { aggregate: false, sigma }).events;
-  return parseCloudActivity(text(s, rec)).events;
+  return parseCloudActivity(text(s, rec), { aggregate: false, sigma }).events;
 }
 
 const PROBE = "DetectionOverlapProbe";

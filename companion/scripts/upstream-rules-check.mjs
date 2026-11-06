@@ -61,6 +61,29 @@ async function fetchFile(repo, path, ref) {
   return text;
 }
 
+/** Every blob under `dir` at `ref` (path → blob sha), from one recursive tree read. */
+async function listFiles(repo, dir, ref) {
+  const tree = JSON.parse(await gh([`repos/${repo}/git/trees/${ref}?recursive=1`]));
+  // A truncated tree would silently drop event files and read as "removed upstream".
+  if (tree.truncated) throw new Error(`${repo}@${ref}: the git tree is truncated — cannot list ${dir}/`);
+  const prefix = `${dir}/`;
+  return new Map(
+    (tree.tree ?? [])
+      .filter((entry) => entry.type === "blob" && String(entry.path).startsWith(prefix))
+      .map((entry) => [entry.path, entry.sha]),
+  );
+}
+
+/** The files directly in `dir` at `ref` (path → blob sha), from the contents API — one level only. */
+async function listDir(repo, dir, ref) {
+  const path = dir.split("/").map(encodeURIComponent).join("/");
+  const entries = JSON.parse(await gh([`repos/${repo}/contents/${path}?ref=${ref}`]));
+  if (!Array.isArray(entries)) throw new Error(`${repo}/${dir}@${ref}: not a directory`);
+  // The contents API lists at most 1,000 entries; a folder that size cannot be read completely.
+  if (entries.length >= 1000) throw new Error(`${repo}/${dir}@${ref}: too many entries to list`);
+  return new Map(entries.filter((e) => e.type === "file").map((e) => [String(e.path), String(e.sha)]));
+}
+
 function summarise(result) {
   const head = `${result.group.name}: ${result.base.slice(0, 7)}..${result.head.slice(0, 7)}`;
   if (result.lists.length === 0) return `${head} — recorded commit is upstream's newest, nothing to compare`;
@@ -87,7 +110,7 @@ async function main() {
   for (const group of UPSTREAM_GROUPS) {
     const { sha: base } = readRecordedCommit(tagsYaml, group.marker);
     const head = await latestCommit(group);
-    results.push(await compareGroup(group, base, head, fetchFile));
+    results.push(await compareGroup(group, base, head, fetchFile, listFiles, listDir));
   }
   for (const result of results) console.log(summarise(result));
 

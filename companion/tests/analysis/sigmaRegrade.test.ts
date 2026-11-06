@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { parseCombinedLog } from "../../src/analysis/combinedLogImport.js";
+import { parseCloudActivity } from "../../src/analysis/cloudActivityImport.js";
 import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader, type SigmaGradingSnapshot } from "../../src/analysis/sigmaImportGrade.js";
 import {
@@ -416,4 +417,62 @@ describe("pairing holds for every Sigma-graded importer (#2206)", () => {
       expect(again.files[0].status).toBe("current");
     });
   }
+});
+
+describe("Re-grade raises a real GCP audit record through the method alias (#2346)", () => {
+  // Real Cloud Audit Log method names: the bundled rule spells the disable as
+  // `.serviceAccounts.disable`; the resolver aliases DisableServiceAccount to it, never its neighbours.
+  const rec = (i: number, methodName: string) => ({
+    timestamp: `2026-03-01T10:00:0${i}Z`,
+    insertId: `g-${i}`,
+    logName: "projects/p1/logs/cloudaudit.googleapis.com%2Factivity",
+    resource: { type: "service_account", labels: { project_id: "p1" } },
+    protoPayload: {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      methodName,
+      serviceName: "iam.googleapis.com",
+      resourceName: "projects/-/serviceAccounts/123456789012345678901",
+      authenticationInfo: { principalEmail: "alice@example.com" },
+      requestMetadata: { callerIp: "198.51.100.7" },
+    },
+  });
+  const text = JSON.stringify([
+    rec(1, "google.iam.admin.v1.DisableServiceAccount"),
+    rec(2, "google.iam.admin.v1.GetServiceAccount"),
+    rec(3, "google.iam.admin.v1.DisableServiceAccountKey"),
+  ]);
+  const snapMedium = createSigmaImportGrader(setOn, { minLevel: () => "medium" }).snapshot()!;
+
+  it("raises only DisableServiceAccount on an import never graded by Sigma", () => {
+    const rows = parseCloudActivity(text, { aggregate: false }).events;
+    const map = new Map<string, StoredRow>(
+      rows.map((e, i) => [
+        `g${i + 1}`,
+        { forensic: { ...e, id: `g${i + 1}`, relatedFindingIds: [], sourceScreenshots: [FILE] } },
+      ]),
+    );
+    const p = planSigmaRegrade({
+      files: [
+        {
+          file: FILE,
+          importer: "gcp-audit",
+          rows: map,
+          reparsed: reparseForRegrade("gcp-audit", text, snapMedium),
+        },
+      ],
+      token: snapMedium.token,
+      gate: "Low",
+      ruleMitre,
+    });
+    expect(p.files[0].status).toBe("never");
+    expect(p.counts.unmatched).toBe(0);
+    const changed = p.rows.filter((r) => r.kind === "changed");
+    expect(changed.map((r) => r.id)).toEqual(["g1"]);
+    expect(changed[0].after).toBe("Medium");
+    const after = changed[0].forensic!.after;
+    expect(after.description).toMatch(/^Sigma: Google Cloud Service Account Disabled or Deleted - /);
+    expect(after.description).toContain("google.iam.admin.v1.DisableServiceAccount");
+    for (const r of p.rows.filter((x) => x.id !== "g1"))
+      expect(r.forensic!.after.message ?? "").not.toContain("Sigma rule:");
+  });
 });

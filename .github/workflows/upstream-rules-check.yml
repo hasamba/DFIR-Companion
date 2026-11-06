@@ -1,7 +1,11 @@
 name: Upstream rules check
 
 # Weekly check for changes to the upstream lists that are HAND-PORTED into companion/data/tags.yaml
-# (today the five Microsoft-Analyzer-Suite blacklists, #2306). It never changes rules: porting
+# (the five Microsoft-Analyzer-Suite blacklists, #2306, and the TrailDiscover AWS event files under
+# events/, #2345 — for those only the operation, usedInWild and the ATT&CK ids are compared — and the
+# Panther and Sentinel GCP rule folders, #2346 — file list and per-file content hash). Each
+# source has its own "# <Source> upstream commit: <sha> (<date>)" line in tags.yaml, read by the
+# script; a missing line fails the run. It never changes rules: porting
 # needs judgment, so when entries changed upstream it opens ONE issue listing what was added,
 # removed or changed per list, and a person ports them. Nothing changed -> no issue. Bundled Sigma
 # is not covered here: Settings -> Sigma rules already checks and installs SigmaHQ releases.

@@ -814,6 +814,7 @@
     "sigmaMatch.ts": "analysis/hunt",
     "sigmaExclusions.ts": "analysis/hunt",
     "sigmaLogSources.ts": "analysis/hunt",
+    "sigmaGcpMethodAliases.ts": "analysis/hunt",
     "sigmaCoverage.ts": "analysis/hunt",
     "sigmaDryRun.ts": "analysis/hunt",
     "sigmaRuleSet.ts": "analysis/hunt",

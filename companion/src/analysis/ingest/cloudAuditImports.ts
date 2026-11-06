@@ -126,6 +126,8 @@ export async function importCloudActivity(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
+  // One Sigma snapshot for this whole import (#2204); it grades the GCP records only (#2346).
+  const sigma = ctx.opts.sigmaGrader?.snapshot();
   const { records, repairs } = readCloudRecords(text);
   const plan = await planCloudRecords(ctx, caseId, opts.idPrefix, () =>
     records.map((rec) => cloudRecordIdentity(cloudActivityRecordProvider(rec), rec)),
@@ -135,6 +137,7 @@ export async function importCloudActivity(
   const parsedRaw = parseCloudActivity(text, {
     ...opts.cloud,
     debug: opts.debug,
+    sigma,
     records,
     repairs,
     recordGate: plan.gate,
@@ -171,6 +174,10 @@ export async function importCloudActivity(
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
+      // Only an import that carried GCP records was graded by Sigma; Azure Activity never is.
+      (parsed.format === "gcp" || parsed.format === "mixed"
+        ? sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched)
+        : "") +
       (dedupNote ? `, ${dedupNote}` : "") +
       jsonRepairNote(parsed.repairs),
     summary: "",
