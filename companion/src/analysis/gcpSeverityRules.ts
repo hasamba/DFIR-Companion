@@ -11,7 +11,10 @@ export type GcpRule = [RegExp, Severity, string[]];
 export const GCP_RULES: GcpRule[] = [
   [/createserviceaccountkey/, "High", ["T1098.001"]],
   [/createserviceaccount\b/, "Medium", ["T1136"]],
-  [/(create|update).*\brole\b/, "Medium", ["T1098.003"]],
+  // A custom IAM role created, updated or restored with its permissions (#2358). The canonical
+  // method, plus the bare name some exports carry. DeleteRole is not here: removing a role grants
+  // nothing, and it keeps the generic floor.
+  [/^(?:google\.iam\.admin\.v1\.)?(?:create|update|undelete)role$/, "Medium", ["T1098.003"]],
   [/firewalls?\.(insert|patch|update)/, "Medium", ["T1562.007"]],
   [/sinks?\.(delete|update)|logentries.*delete/, "High", ["T1562.008"]],
   [/accesssecretversion/, "Medium", ["T1552.001"]],

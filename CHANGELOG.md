@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **GCP detection rules** — SigmaHQ's GCP audit rules are bundled and run on GCP imports (and in Re-grade), and 10 graded plus 5 tag-only GCP rules are ported from Panther, Sentinel, Chronicle and Rhino Security Labs, with upstream commits recorded and watched weekly (closes #2346)
+- **GCP detection rules** — SigmaHQ's GCP audit rules are bundled and run on GCP imports (and in Re-grade), and 9 graded plus 6 tag-only GCP rules are ported from Panther, Sentinel, Chronicle and Rhino Security Labs, with upstream commits recorded and watched weekly (closes #2346)
 - **AWS detection rules from TrailDiscover** — 12 graded rules for in-the-wild CloudTrail operations the importer and Sigma did not grade, and 211 more operations tagged by ATT&CK tactic for super-timeline search; TrailDiscover is watched by the weekly upstream check (closes #2345)
 - **Detection rule pack** — the curated tagger rules publish as a separate `rules-*` release when they change; Content tagger can check, review, measure, install (or install from a file) and roll back a pack without an app release, and reports name the rules that graded the case (closes #2349)
 - **New built-in rules for edited rules** — when an edited tagger copy is older than the built-in (or installed pack) rules, Content tagger lists what is new or changed and adds the chosen rules while keeping the analyst's edits; conflicts are picked per rule and deleted rules come back only on request (closes #2344)
@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cloud grading checks the service, not just the operation name** — CloudTrail grades a call only for the service that owns it (a Transfer Family or WorkMail `CreateUser` is no longer IAM user creation), Lambda `CreateFunction20150331` is graded, the Identity Center and route-table tags skip look-alike services, and GCP custom role create / update / undelete grade Medium (closes #2358)
 - **Cloud import follow-ups** — whole-file M365 and Cloud Activity rows carry the source-file hash, Sigma re-grade reads `.gz` imports, old source-record rows are not duplicated on replay, refused raw uploads hang up early (closes #2353)
 - **Tagger rules on Sigma-matched cloud rows** — content tagger rules match again on rows whose description carries the import-time Sigma head; Run tagger repairs existing cases (closes #2350)
 - **Detection rule fixes** — M365 sync-download rules use the real `FileSyncDownloadedFull` operation; a snapshot change that only removes sharing is graded Low (closes #2338)
