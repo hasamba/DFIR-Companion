@@ -58,6 +58,7 @@
     "ROUTE POST /cases/:id/cloud-accounts",
     "ROUTE POST /cases/:id/cloud-accounts/:accountId/attach",
     "ROUTE POST /cases/:id/cloud-accounts/:accountId/detach",
+    "ROUTE POST /cases/:id/cloud-accounts/:accountId/check",
     "ROUTE GET /cases/:id/cloud-accounts/:accountId",
     "ROUTE PUT /cases/:id/cloud-accounts/:accountId",
     "ROUTE DELETE /cases/:id/cloud-accounts/:accountId",

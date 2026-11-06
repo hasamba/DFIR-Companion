@@ -53,6 +53,9 @@ import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
 import { numEnv } from "./env.js";
+import { cloudTransportFromEnv } from "./cloudTransportEnv.js";
+import { createCheckClientFactory } from "../integrations/cloudCheck/checkClients.js";
+import { runCloudAccountCheck } from "../integrations/cloudCheck/runCloudCheck.js";
 import { redactAiStatusEvent } from "./aiStatusRedact.js";
 import { createAiStatusHandler } from "./aiStatusHandler.js";
 import { getServerLogger, warnLine } from "../logging/serverLogger.js";
@@ -363,6 +366,9 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     serverClients: createServerClients(rt.serverSetStore, process.env),
     serverSetStore: rt.serverSetStore,
     cloudAccountVault: rt.cloudAccountVault,
+    // A fresh transport per check, so saved DFIR_CLOUD_* settings apply without a restart.
+    cloudCheck: (account, request) =>
+      runCloudAccountCheck(account, request, () => createCheckClientFactory(cloudTransportFromEnv())),
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,

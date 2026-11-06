@@ -2342,11 +2342,31 @@
               </div>
               <div class="sfield"><label for="caGcpKeyJson">Service-account key JSON</label><textarea id="caGcpKeyJson" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
             </div>
+            <div id="caPolicyBox" data-safe-style="margin-top:6px;">
+              <p data-safe-style="font-size:12px;margin:2px 0 4px"><strong id="caPolicyTitle"></strong> — grant this and nothing more. The companion never checks that an account cannot write; this policy is how you keep it read-only.</p>
+              <pre id="caPolicyGrant" data-safe-style="max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;padding:8px;font-size:11px;color:var(--text-primary);margin:0"></pre>
+              <ul id="caPolicyNotes" data-safe-style="font-size:12px;color:var(--text-muted);margin:4px 0 0;padding-left:18px"></ul>
+              <p data-safe-style="font-size:12px;color:var(--text-muted);margin:4px 0 0">All three policies are in the user manual: <a href="https://hasamba.github.io/DFIR-Companion/manual/reference/cloud-collection/" target="_blank" rel="noopener noreferrer">Cloud Collection</a>.</p>
+            </div>
             <div data-safe-style="display:flex; gap:8px; margin-top:6px;">
               <button id="caSave" type="submit">Save</button>
               <button id="caCancel" type="button">Cancel</button>
             </div>
           </form>
+          <div id="cloudCheckPanel" hidden role="region" aria-labelledby="ccTitle" data-safe-style="margin-top:8px; padding:8px; border:1px solid var(--border-color, #444); border-radius:6px;">
+            <p data-safe-style="font-size:12px;margin:2px 0 4px"><strong id="ccTitle">Check access</strong></p>
+            <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 6px">The check makes one read per source you pick — a page of one entry, or one file listing and one file read — and reports which reads worked. It makes no write and does not test whether the account can also write.</p>
+            <div id="ccSources" data-safe-style="display:flex; gap:12px; flex-wrap:wrap; font-size:12px;"></div>
+            <div id="ccS3Fields" class="sfield-row" hidden>
+              <div class="sfield"><label for="ccS3Bucket">Trail bucket<span class="sfield-hint">The S3 bucket the trail writes to. Leave empty to skip the bucket test.</span></label><input id="ccS3Bucket" spellcheck="false" /></div>
+              <div class="sfield"><label for="ccS3Prefix">Key prefix<span class="sfield-hint">Where the trail writes in the bucket, default AWSLogs/</span></label><input id="ccS3Prefix" spellcheck="false" placeholder="AWSLogs/" /></div>
+            </div>
+            <div data-safe-style="display:flex; gap:8px; margin-top:6px;">
+              <button id="ccRun" type="button">Run check</button>
+              <button id="ccClose" type="button">Close</button>
+            </div>
+            <div id="ccResult" role="status" data-safe-style="font-size:12px;margin-top:6px"></div>
+          </div>
         </div>
         <div class="settings-group-head" data-essential>Notion</div>
         <div class="sfield-row" data-essential>

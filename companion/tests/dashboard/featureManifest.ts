@@ -1182,7 +1182,7 @@ export const FEATURES: Feature[] = [
     // No `initializer`: initCaseConnect() runs initCloudAccounts(), not the inline script.
     file: "dashboard-cloud-accounts.js",
     publish: ["initCloudAccounts", "loadCloudAccounts"],
-    private: ["editing"],
+    private: ["editing", "policies", "checking"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the

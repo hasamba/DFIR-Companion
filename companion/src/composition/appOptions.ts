@@ -78,6 +78,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
+import type { CloudCheckRunner } from "../integrations/cloudCheck/runCloudCheck.js";
 import type { IrisExportStore } from "../integrations/iris/irisExportStore.js";
 import type { ToolRunner } from "../integrations/tools/toolRunner.js";
 import type { ToolId, ToolConfig } from "../integrations/tools/toolConfig.js";
@@ -454,6 +455,9 @@ export interface AppOptions {
   serverSetStore?: ServerSetStore;
   // The cloud account vault behind /cloud-accounts (#2307). Tests that omit it get 503 from it.
   cloudAccountVault?: CloudAccountVault;
+  // The cloud account read check (#2309): one read per source over the cloud transport. Tests that
+  // omit it get 503 from POST /cases/:id/cloud-accounts/:accountId/check; tests inject mocked clients.
+  cloudCheck?: CloudCheckRunner;
   // Remembers the IRIS case name used on the last push per Companion case, so a re-push with
   // no explicit override still targets the same IRIS case (find-or-create is name-based).
   irisExportStore?: IrisExportStore;

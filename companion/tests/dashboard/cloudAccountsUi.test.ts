@@ -29,7 +29,13 @@ function load(routes: Record<string, Route>, caseId = "c1") {
   doc.add("button", "cloudAccountAddBtn", "cloudVaultResetBtn", "caCancel");
   doc.add("form", "cloudAccountForm");
   doc.add("select", "caProvider");
-  doc.add("input", "caName", "caMsPfx");
+  doc.add("input", "caName", "caMsPfx", "ccS3Bucket", "ccS3Prefix");
+  // #2309: the minimum-policy box in the form, and the Check access panel.
+  doc.add("div", "caPolicyBox", "cloudCheckPanel", "ccSources", "ccS3Fields", "ccResult");
+  doc.add("strong", "caPolicyTitle", "ccTitle");
+  doc.add("pre", "caPolicyGrant");
+  doc.add("ul", "caPolicyNotes");
+  doc.add("button", "ccRun", "ccClose");
   doc.add("input", "caseId").caseId.value = caseId;
   const net = routedFetch(routes);
   const api = loadDashboardModule<CloudApi>("dashboard-cloud-accounts.js", [], {
@@ -77,5 +83,104 @@ describe("cloud accounts panel", () => {
     await flush();
     expect(el("cloudAccountsPanel").hidden).toBe(true);
     expect(el("cloudAccountsHead").hidden).toBe(true);
+  });
+});
+
+// #2309: the add form shows the provider's minimum policy, and Check access reports per source.
+const POLICIES = {
+  aws: {
+    provider: "aws",
+    title: "AWS: IAM policy",
+    grant: '{"Action":["cloudtrail:LookupEvents"]}',
+    notes: ["Keep KMS only when encrypted."],
+  },
+  gcp: { provider: "gcp", title: "GCP: IAM roles", grant: "roles/logging.viewer", notes: [] },
+};
+
+function buttonIn(root: FakeEl, label: string): FakeEl {
+  const found = root.descendants().find((d) => d.tagName === "BUTTON" && d.textContent === label);
+  if (!found) throw new Error(`no ${label} button`);
+  return found;
+}
+
+describe("minimum policy and Check access", () => {
+  it("shows the picked provider's minimum policy in the form", async () => {
+    const { api, el } = load({
+      "GET /cases/c1/cloud-accounts": {
+        body: { keyState: "present", accounts: [], minimumPolicies: POLICIES },
+      },
+      "GET /cloud-accounts": { status: 403, body: {} },
+    });
+    api.initCloudAccounts();
+    await flush();
+    el("caProvider").fire("change", { target: Object.assign(el("caProvider"), { value: "gcp" }) });
+    expect(el("caPolicyTitle").textContent).toBe("GCP: IAM roles");
+    expect(el("caPolicyGrant").textContent).toBe("roles/logging.viewer");
+    el("caProvider").fire("change", { target: Object.assign(el("caProvider"), { value: "aws" }) });
+    expect(el("caPolicyGrant").textContent).toContain("cloudtrail:LookupEvents");
+    expect(el("caPolicyNotes").textContent).toContain("Keep KMS only when encrypted.");
+    expect(el("caPolicyBox").hidden).toBe(false);
+  });
+
+  it("runs the check for the picked sources and shows each result and the summary", async () => {
+    const summary =
+      "Tested reads succeeded for: CloudTrail event history. Failed: CloudTrail S3 bucket (HTTP 403 AccessDenied " +
+      "<b>x</b>). The companion did not test whether this identity can also write. Use the minimum policy.";
+    const report = {
+      provider: "aws",
+      signedInAs: "arn:aws:iam::123456789012:user/collector",
+      results: [
+        { id: "cloudtrail-lookup", label: "CloudTrail event history", status: "succeeded" },
+        {
+          id: "s3-trail",
+          label: "CloudTrail S3 bucket",
+          status: "failed",
+          detail: "HTTP 403 AccessDenied <b>x</b>",
+        },
+      ],
+      summary,
+    };
+    const { api, net, el } = load({
+      "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT] } },
+      "GET /cloud-accounts": { status: 403, body: {} },
+      "POST /cases/c1/cloud-accounts/a1/check": { body: { report } },
+    });
+    api.initCloudAccounts();
+    await flush();
+    buttonIn(el("cloudAccountsList"), "Check access").click();
+    expect(el("cloudCheckPanel").hidden).toBe(false);
+    expect(el("ccS3Fields").hidden).toBe(false);
+    expect(el("ccSources").textContent).toContain("CloudTrail S3 bucket");
+    el("ccS3Bucket").value = "trail-bucket";
+    el("ccRun").click();
+    await flush();
+    const call = net.calls.find((c) => c.method === "POST");
+    expect(call?.body).toEqual({ sources: ["cloudtrail-lookup", "s3-trail"], s3Bucket: "trail-bucket" });
+    expect(el("ccResult").textContent).toContain("Signed in as arn:aws:iam::123456789012:user/collector");
+    expect(el("ccResult").textContent).toContain(
+      "Failed: CloudTrail S3 bucket — HTTP 403 AccessDenied <b>x</b>",
+    );
+    expect(el("ccResult").textContent).toContain(summary);
+    expect(el("ccResult").htmlWrites).toEqual([]);
+  });
+
+  it("sends only the sources left ticked, and refuses none", async () => {
+    const { api, net, el } = load({
+      "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT] } },
+      "GET /cloud-accounts": { status: 403, body: {} },
+    });
+    api.initCloudAccounts();
+    await flush();
+    buttonIn(el("cloudAccountsList"), "Check access").click();
+    const boxes = el("ccSources")
+      .descendants()
+      .filter((d) => d.tagName === "INPUT");
+    for (const b of boxes) b.checked = false;
+    el("ccRun").click();
+    await flush();
+    expect(net.calls.some((c) => c.method === "POST")).toBe(false);
+    expect(el("ccResult").textContent).toBe("Pick at least one source to check.");
+    el("ccClose").click();
+    expect(el("cloudCheckPanel").hidden).toBe(true);
   });
 });
