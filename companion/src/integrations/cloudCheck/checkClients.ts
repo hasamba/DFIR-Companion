@@ -11,7 +11,6 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
 import { fromTemporaryCredentials } from "@aws-sdk/credential-providers";
 import { ClientCertificateCredential } from "@azure/identity";
-import type { JWTInput } from "google-auth-library";
 import type {
   AwsSecrets,
   AwsSettings,
@@ -23,8 +22,11 @@ import type { CloudTransport } from "../cloudTransport/cloudAgent.js";
 import { awsClientConfig, type AwsTransportConfig } from "../cloudTransport/awsTransport.js";
 import { azureCredentialOptions } from "../cloudTransport/azureTransport.js";
 import { cloudFetch, type CloudFetch } from "../cloudTransport/cloudFetch.js";
-import { createGoogleAuth, googleImpersonatedClient } from "../cloudTransport/googleTransport.js";
-import { googleAmbientImpersonatedClient } from "../cloudTransport/googleAmbient.js";
+import {
+  GoogleAccountSetupError,
+  LOGGING_READ_SCOPE,
+  googleAccountClient,
+} from "../cloudTransport/googleAccountAuth.js";
 import { awsAmbientCredentials } from "../cloudTransport/awsAmbient.js";
 import type { AwsCheckClients } from "./awsReadCheck.js";
 import type { GcpRequester } from "./gcpReadCheck.js";
@@ -54,7 +56,6 @@ export interface CheckWire {
 const DEFAULT_AWS_REGION = "us-east-1";
 const ROLE_SESSION_NAME = "dfir-companion-read-check";
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
-const LOGGING_READ_SCOPE = "https://www.googleapis.com/auth/logging.read";
 
 function awsCredentials(
   settings: AwsSettings,
@@ -152,48 +153,18 @@ function microsoftClients(
   };
 }
 
-function parseKey(json: string | undefined): JWTInput {
-  if (!json) throw new CheckSetupError("the account has no stored service-account key");
-  try {
-    return JSON.parse(json) as JWTInput;
-  } catch {
-    // A JSON parse error quotes part of its input, and this input is a private key.
-    throw new CheckSetupError("the stored service-account key is not valid JSON");
-  }
-}
-
 async function gcpClient(
   settings: GcpSettings,
   secrets: GcpSecrets,
   transport: CloudTransport,
 ): Promise<GcpRequester> {
-  const scopes = [LOGGING_READ_SCOPE];
-  if (settings.authMode === "service-account-key") {
-    const auth = createGoogleAuth(transport, {
-      credentials: parseKey(secrets.serviceAccountKeyJson),
-      scopes,
-      // Known already; without it the library runs the gcloud CLI and asks the metadata server.
-      projectId: settings.projectId,
-    });
-    return await auth.getClient();
+  try {
+    return await googleAccountClient(settings, secrets, transport, [LOGGING_READ_SCOPE]);
+  } catch (err) {
+    // The check words its own setup errors (readCheckWording.ts matches CheckSetupError).
+    if (err instanceof GoogleAccountSetupError) throw new CheckSetupError(err.message);
+    throw err;
   }
-  const targetPrincipal = settings.targetServiceAccount;
-  if (!targetPrincipal) throw new CheckSetupError("the account names no service account to impersonate");
-  if (settings.baseCredential === "service-account-key") {
-    const sourceCredentials = parseKey(secrets.serviceAccountKeyJson);
-    return googleImpersonatedClient(transport, {
-      sourceCredentials,
-      targetPrincipal,
-      targetScopes: scopes,
-    });
-  }
-  // Ambient base: the machine's own credentials call the IAM Credentials API, through the transport;
-  // only a GCE metadata token stays direct (see cloudTransport/googleAmbient.ts).
-  return googleAmbientImpersonatedClient(transport, {
-    targetPrincipal,
-    targetScopes: scopes,
-    projectId: settings.projectId,
-  });
 }
 
 /** The real clients, all over `transport`. `wire` replaces the AWS handler and Graph fetch in tests. */

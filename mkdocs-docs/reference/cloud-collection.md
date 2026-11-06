@@ -190,3 +190,65 @@ Cloud collection refuses to run when:
 
 An AWS profile with `credential_process` runs the program you configured. Whatever network that
 program uses is its own, outside the companion's settings.
+
+---
+
+## Collect GCP audit logs
+
+Pick a GCP cloud account, a source and a time window. The companion collects the project's four
+Cloud Audit Logs — **Admin Activity**, **Data Access**, **System Event** and **Policy** — saves
+every page as evidence, and imports it through the GCP importer. It needs no `gcloud` and no
+Windows tools.
+
+| Source | Where the logs come from |
+|---|---|
+| **GCP audit logs** | The Cloud Logging API |
+| **GCP audit logs from a log sink bucket** | A Cloud Storage bucket that a log sink writes to, when the sink passes the checks below. Otherwise the Cloud Logging API |
+
+### The Cloud Logging API
+
+The companion asks for 1,000 entries per page, oldest first, with this filter:
+
+```
+logName=("projects/<p>/logs/cloudaudit.googleapis.com%2Factivity" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fdata_access" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fsystem_event" OR "projects/<p>/logs/cloudaudit.googleapis.com%2Fpolicy") AND timestamp>="<start>" AND timestamp<"<end>"
+```
+
+- It makes at most **60 requests per minute**, the Cloud Logging read limit. When Google answers
+  that the quota is used, the companion waits and tries again.
+- Each saved page is Google's answer exactly as it came back. The manifest records the filter.
+- A page token expires after **24 hours**. If a stopped collection resumes later than that, the
+  companion starts that part of the window again from its start. Pages already saved stay as
+  evidence; the import removes the duplicates.
+- A part of the window with very many pages is split into smaller time windows, down to one
+  second, and then into one request per audit log.
+- Cloud Logging keeps Admin Activity, System Event and Policy logs **400 days**, and Data Access
+  logs **30 days** in the `_Default` bucket unless someone changed it. **Data Access logs are off
+  by default** for most services: unless someone turned them on, there are none to collect.
+
+### A log sink bucket
+
+A log sink can copy audit logs to a Cloud Storage bucket, which often keeps them longer than Cloud
+Logging does. The companion uses a sink **only after it checks**:
+
+1. **The filter.** The sink must send all four audit logs. An empty filter sends everything. A
+   filter that leaves out an audit log is rejected, and so is a filter the companion cannot prove:
+   one with `NOT` or `-`, one that narrows the logs with `AND`, or a sink with exclusion filters.
+2. **The history.** Logs are in the bucket from when the sink was created, or from its oldest audit
+   log file if that is later. A window that starts earlier is collected from the Cloud Logging API.
+3. **The permission.** The account must be able to list the bucket (`roles/storage.objectViewer`).
+
+When a check fails, the companion collects from the Cloud Logging API, and the manifest's first page
+records why the sink was rejected — for example `sink "audit-sink": its filter does not include the
+data_access audit logs`.
+
+From a sink, each saved page is one hourly log file from the bucket, exactly as stored. **Sinks
+write hourly batches, and parts of an hour can arrive late.** The companion does not assume a sink
+is complete minutes after the fact: it treats the logs as settled only up to the last whole hour
+that is at least **three hours** old, and the result says so: *Settled up to … only*. Collect that
+window again later to pick up what arrived after; duplicates are removed.
+
+### Roles
+
+- `roles/logging.viewer` — Admin Activity, System Event and Policy logs, and the list of log sinks
+- `roles/logging.privateLogViewer` — Data Access logs
+- `roles/storage.objectViewer` — on the sink's bucket, only for the log sink source
