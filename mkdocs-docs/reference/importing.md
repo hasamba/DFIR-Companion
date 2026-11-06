@@ -1855,8 +1855,10 @@ Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtr
 `azure/auditlogs` and `gcp/audit`. The 15 bundled GCP audit rules are all `medium`, so at the default
 minimum level (high) they **only tag** GCP events — for example `Sigma (medium, tag only): Google Cloud
 Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
-name GCP methods the way another log pipeline spells them, so they may match fewer real records than
-their titles suggest; the Companion runs them as SigmaHQ wrote them. A rule is not run when it uses a field the Companion cannot read in these exports
+name GCP methods the way another log pipeline spells them (`.serviceAccounts.disable` for what a real
+audit log calls `DisableServiceAccount`). The Companion runs the rules as SigmaHQ wrote them and also
+matches the real name for those exact calls, so every one of the 15 fires on real Cloud Audit Log
+records; the event still shows the method name as logged. A rule is not run when it uses a field the Companion cannot read in these exports
 (for example `properties.message`), and six rules that need tenant-specific values (an application id,
 a country list, an approved-inviter list) or that match routine sign-ins are shipped switched off.
 The server log lists, per source, how many rules loaded, were disabled, or were refused.

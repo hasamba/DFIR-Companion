@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { parseCloudActivity } from "../../src/analysis/cloudActivityImport.js";
 import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
-import { GCP_AUDIT, fieldResolvers } from "../../src/analysis/sigmaLogSources.js";
+import { GCP_METHOD_ALIASES } from "../../src/analysis/sigmaGcpMethodAliases.js";
+import { GCP_AUDIT, fieldResolvers, sourceResolver } from "../../src/analysis/sigmaLogSources.js";
 import { reparseForRegrade, SIGMA_REGRADE_IMPORTERS } from "../../src/analysis/sigmaRegradeSources.js";
 
 // Import-time Sigma grading of GCP Cloud Audit Logs (#2346): the bundled SigmaHQ
 // rules/cloud/gcp/audit folder, read through the real cloud-activity importer. Records are
-// synthetic (documentation IPs, example.com principals, fake project ids).
+// synthetic (documentation IPs, example.com principals, fake project ids) but every methodName /
+// serviceName is the shape Cloud Audit Logs really write — never the rule's own spelling.
 
 const { set } = loadBundledSigmaRuleSet();
 const sigma = createSigmaImportGrader(set).snapshot();
@@ -36,10 +38,11 @@ const parse = (records: Row[], s = sigma) =>
   parseCloudActivity(JSON.stringify(records), { aggregate: false, sigma: s });
 
 /**
- * One record per bundled GCP rule, each the method (or permission) the rule's own selection names.
- * Several SigmaHQ GCP rules name methods the way the Elastic integration lowercases them (e.g.
- * `.serviceAccounts.delete` where a real IAM record says `DeleteServiceAccount`); the sample
- * follows the rule, because this checks the field mapping, not the rule's real-world fidelity.
+ * One REAL-shaped record per bundled GCP rule: the methodName / serviceName a Cloud Audit Log
+ * really carries for the operation the rule is about (Google's audit-logging method names, e.g.
+ * `google.iam.admin.v1.DisableServiceAccount`, `v1.compute.vpnTunnels.delete`). Several rules spell
+ * the method the way another pipeline does (`.serviceAccounts.disable`); those match through the
+ * resolver's exact service + method aliases (sigmaGcpMethodAliases.ts), never by rewriting the rule.
  */
 const SAMPLES: Record<string, Row> = {
   "GCP Access Policy Deleted": gcp(
@@ -61,9 +64,9 @@ const SAMPLES: Record<string, Row> = {
     { request: { metadata: { annotations: { "alpha.image-policy.k8s.io/break-glass": "true" } } } },
     { resource: { type: "k8s_cluster", labels: { project_id: "p1" } } },
   ),
-  "Google Cloud Storage Buckets Modified or Deleted": gcp("storage.buckets.delete", "storage.googleapis.com"),
+  "Google Cloud Storage Buckets Modified or Deleted": gcp("storage.buckets.create", "storage.googleapis.com"),
   "Google Cloud Re-identifies Sensitive Information": gcp(
-    "projects.content.reidentify",
+    "google.privacy.dlp.v2.DlpService.ReidentifyContent",
     "dlp.googleapis.com",
   ),
   "Google Cloud DNS Zone Modified or Deleted": gcp("dns.managedZones.delete", "dns.googleapis.com"),
@@ -73,29 +76,93 @@ const SAMPLES: Record<string, Row> = {
     "compute.googleapis.com",
   ),
   "Google Cloud Kubernetes Admission Controller": gcp(
-    "admissionregistration.k8s.io.v1.mutatingwebhookconfigurations.create",
+    "io.k8s.admissionregistration.v1.mutatingwebhookconfigurations.create",
     "k8s.io",
   ),
-  "Google Cloud Kubernetes CronJob": gcp("io.k8s.api.batch.v1.CronJob", "k8s.io"),
+  "Google Cloud Kubernetes CronJob": gcp("io.k8s.batch.v1.cronjobs.create", "k8s.io"),
   "Google Cloud Kubernetes RoleBinding": gcp(
     "io.k8s.authorization.rbac.v1.clusterrolebindings.create",
     "k8s.io",
   ),
   "Google Cloud Kubernetes Secrets Modified or Deleted": gcp("io.k8s.core.v1.secrets.delete", "k8s.io"),
   "Google Cloud Service Account Disabled or Deleted": gcp(
-    "google.iam.admin.v1.serviceAccounts.disable",
+    "google.iam.admin.v1.DisableServiceAccount",
     "iam.googleapis.com",
   ),
   "Google Cloud Service Account Modified": gcp(
-    "google.iam.admin.v1.serviceAccounts.patch",
+    "google.iam.admin.v1.PatchServiceAccount",
     "iam.googleapis.com",
   ),
   "Google Cloud SQL Database Modified or Deleted": gcp(
     "cloudsql.instances.delete",
     "cloudsql.googleapis.com",
   ),
-  "Google Cloud VPN Tunnel Modified or Deleted": gcp("compute.vpnTunnels.delete", "compute.googleapis.com"),
+  "Google Cloud VPN Tunnel Modified or Deleted": gcp(
+    "v1.compute.vpnTunnels.delete",
+    "compute.googleapis.com",
+  ),
 };
+
+/** Bundled rules no real Cloud Audit Log method name reaches, even through an alias. Pinned. */
+const MATCHES_NO_REAL_METHOD: string[] = [];
+
+/** More real method names, each with the one rule it must fire (aliases beyond the samples). */
+const REAL_POSITIVES: Array<[string, string, string]> = [
+  [
+    "google.iam.admin.v1.DeleteServiceAccount",
+    "iam.googleapis.com",
+    "Google Cloud Service Account Disabled or Deleted",
+  ],
+  ["google.iam.admin.v1.CreateServiceAccount", "iam.googleapis.com", "Google Cloud Service Account Modified"],
+  ["google.iam.admin.v1.UpdateServiceAccount", "iam.googleapis.com", "Google Cloud Service Account Modified"],
+  ["google.iam.admin.v1.EnableServiceAccount", "iam.googleapis.com", "Google Cloud Service Account Modified"],
+  [
+    "google.iam.admin.v1.UndeleteServiceAccount",
+    "iam.googleapis.com",
+    "Google Cloud Service Account Modified",
+  ],
+  ["storage.buckets.delete", "storage.googleapis.com", "Google Cloud Storage Buckets Modified or Deleted"],
+  ["storage.buckets.update", "storage.googleapis.com", "Google Cloud Storage Buckets Modified or Deleted"],
+  ["v1.compute.vpnTunnels.insert", "compute.googleapis.com", "Google Cloud VPN Tunnel Modified or Deleted"],
+  ["beta.compute.vpnTunnels.delete", "compute.googleapis.com", "Google Cloud VPN Tunnel Modified or Deleted"],
+  ["io.k8s.batch.v1.jobs.create", "k8s.io", "Google Cloud Kubernetes CronJob"],
+  ["io.k8s.batch.v1beta1.cronjobs.create", "k8s.io", "Google Cloud Kubernetes CronJob"],
+  [
+    "io.k8s.admissionregistration.v1.validatingwebhookconfigurations.update",
+    "k8s.io",
+    "Google Cloud Kubernetes Admission Controller",
+  ],
+  [
+    "io.k8s.admissionregistration.v1.mutatingwebhookconfigurations.patch",
+    "k8s.io",
+    "Google Cloud Kubernetes Admission Controller",
+  ],
+  ["dns.managedZones.patch", "dns.googleapis.com", "Google Cloud DNS Zone Modified or Deleted"],
+  ["cloudsql.users.update", "cloudsql.googleapis.com", "Google Cloud SQL Database Modified or Deleted"],
+];
+
+/** Real neighbours of an aliased method that must match NO bundled GCP rule. */
+const REAL_NEGATIVES: Array<[string, string]> = [
+  ["google.iam.admin.v1.GetServiceAccount", "iam.googleapis.com"],
+  ["google.iam.admin.v1.ListServiceAccounts", "iam.googleapis.com"],
+  ["google.iam.admin.v1.DisableServiceAccountKey", "iam.googleapis.com"],
+  ["google.iam.admin.v1.DeleteServiceAccountKey", "iam.googleapis.com"],
+  ["google.iam.admin.v1.CreateServiceAccountKey", "iam.googleapis.com"],
+  ["google.privacy.dlp.v2.DlpService.DeidentifyContent", "dlp.googleapis.com"],
+  ["google.privacy.dlp.v2.DlpService.InspectContent", "dlp.googleapis.com"],
+  ["storage.buckets.get", "storage.googleapis.com"],
+  ["storage.objects.create", "storage.googleapis.com"],
+  ["v1.compute.vpnTunnels.get", "compute.googleapis.com"],
+  ["v1.compute.vpnTunnels.list", "compute.googleapis.com"],
+  ["io.k8s.batch.v1.cronjobs.list", "k8s.io"],
+  ["io.k8s.batch.v1.cronjobs.get", "k8s.io"],
+  ["io.k8s.admissionregistration.v1.mutatingwebhookconfigurations.get", "k8s.io"],
+  ["io.k8s.admissionregistration.v1.validatingwebhookconfigurations.delete", "k8s.io"],
+  // The alias is service-aware: the same method under another service gets none.
+  ["google.iam.admin.v1.DisableServiceAccount", "storage.googleapis.com"],
+  ["storage.buckets.create", "compute.googleapis.com"],
+  ["v1.compute.vpnTunnels.delete", "storage.googleapis.com"],
+];
 
 const gcpInventory = set.inventory.filter((e) => e.source === GCP_AUDIT.id);
 const loaded = gcpInventory.filter((e) => e.outcome === "loaded");
@@ -121,6 +188,73 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
     });
   }
 
+  it("pins the bundled rules no real method name reaches (printed count)", () => {
+    const reached = new Set(
+      [...Object.values(SAMPLES), ...REAL_POSITIVES.map(([m, svc]) => gcp(m, svc))].flatMap((rec) =>
+        loaded
+          .map((e) => e.title)
+          .filter((t) => (parse([rec]).events[0].message ?? "").includes(`Sigma rule: ${t} [`)),
+      ),
+    );
+    const none = loaded.map((e) => e.title).filter((t) => !reached.has(t));
+    console.log(`bundled GCP rules that match no real method name: ${none.length}`);
+    expect(none.sort()).toEqual([...MATCHES_NO_REAL_METHOD].sort());
+  });
+
+  for (const [method, service, title] of REAL_POSITIVES) {
+    it(`fires on the real method ${method} (${service}): ${title}`, () => {
+      const r = parse([gcp(method, service)]);
+      expect(r.events[0].message).toContain(`Sigma rule: ${title} [`);
+      expect(r.sigmaRowsMatched).toBe(1);
+    });
+  }
+
+  for (const [method, service] of REAL_NEGATIVES) {
+    it(`matches no GCP rule on the neighbour ${method} (${service})`, () => {
+      const r = parse([gcp(method, service)]);
+      expect(r.sigmaRowsMatched).toBe(0);
+      expect(r.events[0].message ?? "").not.toContain("Sigma rule:");
+    });
+  }
+
+  it("EnableServiceAccount is a modification, never the disable rule", () => {
+    const msg = parse([gcp("google.iam.admin.v1.EnableServiceAccount", "iam.googleapis.com")]).events[0]
+      .message;
+    expect(msg).toContain("Sigma rule: Google Cloud Service Account Modified [");
+    expect(msg).not.toContain("Disabled or Deleted");
+  });
+
+  it("offers no alias when the record names no service", () => {
+    const rec = gcp("google.iam.admin.v1.DisableServiceAccount", "");
+    expect(parse([rec]).sigmaRowsMatched).toBe(0);
+  });
+
+  it("resolves the method name to the raw value plus its alias, for both rule spellings", () => {
+    const resolve = sourceResolver(GCP_AUDIT);
+    const rec = gcp("google.iam.admin.v1.DisableServiceAccount", "iam.googleapis.com");
+    for (const field of ["gcp.audit.method_name", "data.protoPayload.methodName"]) {
+      expect(resolve(rec, field).values).toEqual([
+        "google.iam.admin.v1.DisableServiceAccount",
+        "iam.serviceAccounts.disable",
+      ]);
+    }
+    const plain = gcp("google.iam.admin.v1.GetServiceAccount", "iam.googleapis.com");
+    expect(resolve(plain, "gcp.audit.method_name").values).toEqual(["google.iam.admin.v1.GetServiceAccount"]);
+  });
+
+  it("keeps the raw method name in the event; the alias is used only for matching", () => {
+    const r = parse([SAMPLES["Google Cloud Service Account Disabled or Deleted"]]);
+    expect(r.events[0].description).toContain("google.iam.admin.v1.DisableServiceAccount");
+    expect(r.events[0].description).not.toContain("serviceAccounts.disable");
+  });
+
+  it("every alias in the table makes some bundled rule fire on its exact service + method", () => {
+    const dead = Object.entries(GCP_METHOD_ALIASES).flatMap(([service, methods]) =>
+      Object.keys(methods).filter((m) => parse([gcp(m, service)]).sigmaRowsMatched !== 1),
+    );
+    expect(dead).toEqual([]);
+  });
+
   it("tags only at the default minimum level (every GCP rule is medium), with the DRL credit", () => {
     const rec = SAMPLES["Google Cloud SQL Database Modified or Deleted"];
     const without = parseCloudActivity(JSON.stringify([rec]), { aggregate: false });
@@ -136,7 +270,7 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
   });
 
   it("raises a Low row to Medium when the minimum level is medium", () => {
-    const rec = gcp("compute.vpnTunnels.insert", "compute.googleapis.com");
+    const rec = gcp("v1.compute.vpnTunnels.insert", "compute.googleapis.com");
     expect(parseCloudActivity(JSON.stringify([rec]), { aggregate: false }).events[0].severity).toBe("Low");
     const r = parse([rec], sigmaMedium);
     expect(r.events[0].severity).toBe("Medium");
@@ -240,7 +374,7 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
 describe("Re-grade this case reads GCP stored files (#2346)", () => {
   it("lists the GCP importer and re-parses its file with the snapshot", () => {
     expect(SIGMA_REGRADE_IMPORTERS.has("gcp-audit")).toBe(true);
-    const text = JSON.stringify([gcp("compute.vpnTunnels.insert", "compute.googleapis.com")]);
+    const text = JSON.stringify([gcp("v1.compute.vpnTunnels.insert", "compute.googleapis.com")]);
     const rows = reparseForRegrade("gcp-audit", text, sigmaMedium!);
     expect(rows).toHaveLength(1);
     expect(rows[0].severity).toBe("Medium");

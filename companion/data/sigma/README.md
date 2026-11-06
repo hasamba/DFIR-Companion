@@ -16,6 +16,14 @@ SigmaHQ release named in `version.txt`; nothing in `rules/` is edited by hand.
 - License: the rules are released under the Detection Rule License (DRL) 1.1 —
   `LICENSE.DRL-1.1.md`, and SigmaHQ's own `LICENSE`. Every match the Companion records names the
   rule's author and links the rule, as the DRL requires.
+- GCP method names: several GCP rules spell the method the way another log pipeline does
+  (`.serviceAccounts.disable`, `projects.content.reidentify`, `compute.vpnTunnels.insert`) where a
+  real Cloud Audit Log writes `google.iam.admin.v1.DisableServiceAccount`,
+  `google.privacy.dlp.v2.DlpService.ReidentifyContent` or `v1.compute.vpnTunnels.insert`. The rules
+  stay verbatim; the field resolver also offers the rule's spelling for that exact service + method
+  (`src/analysis/sigmaGcpMethodAliases.ts`, which holds the 15-rule audit). Every bundled GCP rule
+  is reached by at least one real method name, and `tests/analysis/sigmaGcpImport.test.ts` pins the
+  list of rules that match none (currently empty).
 - `disabled.yml` is the Companion's own list of rules shipped switched off, each with its reason.
 
 Which rules actually load (by status, by whether the Companion can read every field they use) is

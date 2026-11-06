@@ -1,7 +1,7 @@
 // GCP audit-log samples for the detection-overlap check (#2348), copied from tagsYamlCloudGaps and
 // tagsYamlRemainingSources (Timesketch GCS), plus one sample per graded gcp_* tagger rule (#2346,
 // copied from tagsYamlGcpPorted). The originals stay in their tests. The bundled SigmaHQ GCP audit
-// rules (#2346) also read these, and get one built sample each from gcpBase() (sigmaBuilt.ts).
+// rules (#2346) are checked with the real-shaped SIGMA_REAL_SAMPLES below, never built samples.
 import { sample, type DetectionSample } from "./types.js";
 
 /** A neutral GCP read call for the built Sigma samples: no importer table entry, no tagger rule. */
@@ -132,6 +132,48 @@ const PORTED_SAMPLES: readonly DetectionSample[] = [
   ),
 ];
 
+// #2346 — one REAL-shaped record per other bundled SigmaHQ GCP rule (copied from sigmaGcpImport's
+// SAMPLES): the methodName / serviceName a Cloud Audit Log really writes, so the overlap check sees
+// what a real import grades. These replace the rule-shaped samples the builder makes for other
+// sources (sigmaBuilt.ts does not build GCP samples); several match through the method aliases.
+const SIGMA = "sigmaGcpImport (real method names)";
+const real = (id: string, methodName: string, serviceName: string, extra?: Record<string, unknown>) =>
+  sample("gcp", `gcp.sigma.${id}`, SIGMA, call(methodName, serviceName, extra));
+
+const SIGMA_REAL_SAMPLES: readonly DetectionSample[] = [
+  real(
+    "DeleteAccessPolicy",
+    "google.identity.accesscontextmanager.v1.AccessContextManager.DeleteAccessPolicy",
+    "accesscontextmanager.googleapis.com",
+    {
+      authorizationInfo: [
+        {
+          resource: "accessPolicies/1",
+          permission: "accesscontextmanager.accessPolicies.delete",
+          granted: true,
+        },
+      ],
+    },
+  ),
+  real("storage.buckets.delete", "storage.buckets.delete", "storage.googleapis.com"),
+  real("ReidentifyContent", "google.privacy.dlp.v2.DlpService.ReidentifyContent", "dlp.googleapis.com"),
+  real("dns.managedZones.delete", "dns.managedZones.delete", "dns.googleapis.com"),
+  real("compute.firewalls.delete", "v1.compute.firewalls.delete", "compute.googleapis.com"),
+  real("compute.packetMirrorings.insert", "v1.compute.packetMirrorings.insert", "compute.googleapis.com"),
+  real(
+    "k8s.mutatingwebhookconfigurations.create",
+    "io.k8s.admissionregistration.v1.mutatingwebhookconfigurations.create",
+    "k8s.io",
+  ),
+  real("k8s.cronjobs.create", "io.k8s.batch.v1.cronjobs.create", "k8s.io"),
+  real("k8s.clusterrolebindings.create", "io.k8s.authorization.rbac.v1.clusterrolebindings.create", "k8s.io"),
+  real("k8s.secrets.delete", "io.k8s.core.v1.secrets.delete", "k8s.io"),
+  real("DisableServiceAccount", "google.iam.admin.v1.DisableServiceAccount", "iam.googleapis.com"),
+  real("PatchServiceAccount", "google.iam.admin.v1.PatchServiceAccount", "iam.googleapis.com"),
+  real("cloudsql.instances.delete", "cloudsql.instances.delete", "cloudsql.googleapis.com"),
+  real("compute.vpnTunnels.delete", "v1.compute.vpnTunnels.delete", "compute.googleapis.com"),
+];
+
 export const GCP_SAMPLES: readonly DetectionSample[] = [
   sample("gcp", "gcp.SetIamPolicy.ownerAdded", GAPS, setIam("roles/owner", "user:carol@example.com")),
   sample(
@@ -162,4 +204,5 @@ export const GCP_SAMPLES: readonly DetectionSample[] = [
     storage("storage.setIamPermissions", delta("ADD", "allUsers")),
   ),
   ...PORTED_SAMPLES,
+  ...SIGMA_REAL_SAMPLES,
 ];

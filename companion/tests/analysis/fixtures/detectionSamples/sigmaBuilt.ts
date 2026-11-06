@@ -30,7 +30,7 @@ type Row = Record<string, unknown>;
 /** The cloud log sources in scope, with the importer and base record each one's samples use. */
 export const CLOUD_SIGMA_SOURCES: Record<
   string,
-  { def: SigmaLogSourceDef; base: () => Row; kind: DetectionSample["kind"] }
+  { def: SigmaLogSourceDef; base: () => Row; kind: DetectionSample["kind"]; notBuilt?: string }
 > = {
   // A neutral read call: the importer needs an event name, and a rule that names one overwrites it.
   "aws-cloudtrail": {
@@ -41,8 +41,15 @@ export const CLOUD_SIGMA_SOURCES: Record<
   },
   "azure-signinlogs": { def: AZURE_SIGNIN_LOGS, base: () => signInBase(), kind: "m365" },
   "azure-auditlogs": { def: AZURE_AUDIT_LOGS, base: () => auditBase(), kind: "m365" },
-  // A neutral read call; a rule that names a method overwrites it (#2346).
-  "gcp-audit": { def: GCP_AUDIT, base: () => gcpBase(), kind: "gcp" },
+  // Not built (#2346): a sample built from a GCP rule carries the rule's own spelling of the method
+  // (`.serviceAccounts.disable`), which hid that real records never matched. The rules are checked
+  // with real-shaped hand samples (gcp.ts SIGMA_REAL_SAMPLES) instead.
+  "gcp-audit": {
+    def: GCP_AUDIT,
+    base: () => gcpBase(),
+    kind: "gcp",
+    notBuilt: "GCP rules are checked with real-shaped hand samples, not rule-shaped built ones",
+  },
 };
 
 export interface SigmaBuild {
@@ -130,7 +137,8 @@ function apply(rec: Row, def: SigmaLogSourceDef, f: SigmaFieldMatch, done: Map<s
 }
 
 function build(rule: SigmaRule, source: string): Row {
-  const { def, base } = CLOUD_SIGMA_SOURCES[source];
+  const { def, base, notBuilt } = CLOUD_SIGMA_SOURCES[source];
+  if (notBuilt) throw new NotBuildable(notBuilt);
   const names = positives(rule.detection.condition);
   let rec = base();
   const done = new Map<string, string>();

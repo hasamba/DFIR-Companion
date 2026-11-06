@@ -7,6 +7,7 @@
 // and a rule that uses it is refused at load with a sentence naming the field — it never runs
 // half-matched. Adding a log source is one entry here plus the importer passing its records.
 
+import { gcpMethodAliases } from "./sigmaGcpMethodAliases.js";
 import { lookupPath, type SigmaFieldLookup } from "./sigmaLookup.js";
 import type { SigmaFieldResolver } from "./sigmaMatch.js";
 import type { SigmaLogsource } from "./sigmaRuleTypes.js";
@@ -248,6 +249,16 @@ function gcpLogName(record: Row): SigmaFieldLookup {
 
 const payload = (path: string): string[] => [`protoPayload.${path}`, `jsonPayload.${path}`];
 
+/** The rule-side alias(es) of the record's exact service + method (sigmaGcpMethodAliases.ts, with
+ * the 15-rule audit). Read beside the raw methodName paths, so a rule matches either spelling. */
+function gcpMethodAlias(record: Row): SigmaFieldLookup {
+  const root = firstText(record, "protoPayload.methodName") !== undefined ? "protoPayload" : "jsonPayload";
+  return found(
+    gcpMethodAliases(firstText(record, `${root}.serviceName`), firstText(record, `${root}.methodName`)),
+  );
+}
+const methodName: Resolver[] = [...payload("methodName"), gcpMethodAlias];
+
 export const GCP_AUDIT: SigmaLogSourceDef = {
   id: "gcp-audit",
   label: "GCP Cloud Audit Logs",
@@ -255,7 +266,7 @@ export const GCP_AUDIT: SigmaLogSourceDef = {
   fields: {
     exact: {
       // Elastic GCP integration names, each the AuditLog field of the same meaning.
-      "gcp.audit.method_name": payload("methodName"),
+      "gcp.audit.method_name": methodName,
       "gcp.audit.service_name": payload("serviceName"),
       "gcp.audit.resource_name": payload("resourceName"),
       "gcp.audit.authentication_info.principal_email": payload("authenticationInfo.principalEmail"),
@@ -267,6 +278,8 @@ export const GCP_AUDIT: SigmaLogSourceDef = {
       // The two top-level LogEntry fields under the `data.protoPayload` wrapper (see above).
       "data.protopayload.resource.type": ["resource.type"],
       "data.protopayload.logname": [gcpLogName],
+      // The method name under the wrapper, with the same aliases (not the bare prefix below).
+      "data.protopayload.methodname": methodName,
     },
     prefixes: [
       { from: "data.protopayload.", to: ["protoPayload.", "jsonPayload."] },
