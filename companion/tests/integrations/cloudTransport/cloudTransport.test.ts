@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import { format } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cloudTransportSettingsFromEnv } from "../../../src/composition/cloudTransportEnv.js";
 import {
@@ -38,6 +40,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   server.seen.length = 0;
   proxy.tunnels.length = 0;
+  proxy.proxyAuth.length = 0;
 });
 afterAll(async () => {
   await proxy.close();
@@ -103,6 +106,41 @@ describe("proxy", () => {
     const fetchCloud = cloudFetch(transport({ proxyUrl: proxy.url }));
     await expect(fetchCloud("https://login.cloud.test/a")).rejects.toThrow(/certificate/i);
     expect(proxy.tunnels).toEqual(["login.cloud.test:443"]);
+  });
+
+  it("sends proxy credentials as Proxy-Authorization and never writes them to debug output", async () => {
+    // The debug instance https-proxy-agent itself imports, switched on the way DEBUG= would.
+    const proxyRequire = createRequire(createRequire(import.meta.url).resolve("https-proxy-agent"));
+    const debug = proxyRequire("debug") as {
+      enable(ns: string): void;
+      disable(): string;
+      log: (...args: unknown[]) => void;
+    };
+    const captured: string[] = [];
+    const originalLog = debug.log;
+    debug.log = (...args: unknown[]) => captured.push(format(...args));
+    debug.enable("https-proxy-agent*");
+    try {
+      const withLogin = proxy.url.replace("http://", "http://pxuser:pxs%40cret@");
+      const res = await cloudFetch(transport({ caCertPath: material.caPath, proxyUrl: withLogin }))(
+        "https://login.cloud.test/a",
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      debug.disable();
+      debug.log = originalLog;
+    }
+    expect(proxy.proxyAuth).toEqual([`Basic ${Buffer.from("pxuser:pxs@cret").toString("base64")}`]);
+    expect(captured.length).toBeGreaterThan(0); // the debug channel really was on
+    const log = captured.join("\n");
+    for (const secret of [
+      "pxuser",
+      "pxs@cret",
+      "pxs%40cret",
+      Buffer.from("pxuser:pxs@cret").toString("base64"),
+    ]) {
+      expect(log).not.toContain(secret);
+    }
   });
 
   it("refuses a proxy URL that is not http(s)", () => {

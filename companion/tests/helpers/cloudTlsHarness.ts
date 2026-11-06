@@ -11,10 +11,11 @@ import { certNamesFor, ensureServerCert, loadOrCreateCa } from "../../src/http/t
 // runtime (no key material in the repo), an HTTPS server that plays every cloud endpoint, and a
 // CONNECT proxy that sends every tunnel to that server whatever host was asked for. Fake host names
 // use the reserved .test TLD, so a routing bug can never reach a real cloud endpoint. The one
-// exception is Google's token endpoint, which google-auth-library hardcodes: those tests always go
-// through the proxy, which answers for it locally.
+// exceptions are Google's token and IAM Credentials endpoints, which google-auth-library hardcodes:
+// those tests always go through the proxy, which answers for them locally.
 
 export const GOOGLE_TOKEN_HOST = "oauth2.googleapis.com";
+export const GOOGLE_IAM_HOST = "iamcredentials.googleapis.com";
 
 export const FAKE_HOSTS = [
   "sts.cloud.test",
@@ -24,6 +25,7 @@ export const FAKE_HOSTS = [
   "logging.cloud.test",
   "graph.cloud.test",
   GOOGLE_TOKEN_HOST,
+  GOOGLE_IAM_HOST,
 ];
 
 export interface TlsMaterial {
@@ -56,6 +58,8 @@ export interface SeenRequest {
   path: string;
   /** The TLS SNI the client sent: the destination host it believed it was talking to. */
   sni: string | undefined;
+  /** The Authorization header, to tell which credential a request carried. */
+  authorization: string | undefined;
   body: string;
 }
 
@@ -90,6 +94,7 @@ export async function startTlsServer(material: TlsMaterial, route: Route): Promi
         method: req.method ?? "",
         path: req.url ?? "",
         sni: (req.socket as TLSSocket).servername || undefined,
+        authorization: req.headers.authorization,
         body: Buffer.concat(chunks).toString("utf8"),
       };
       seen.push(entry);
@@ -115,16 +120,20 @@ export interface ConnectProxy {
   url: string;
   /** Every CONNECT target asked for, as host:port. */
   tunnels: string[];
+  /** The Proxy-Authorization header of each CONNECT, in order (undefined when absent). */
+  proxyAuth: (string | undefined)[];
   close(): Promise<void>;
 }
 
 /** A CONNECT proxy that tunnels every request to 127.0.0.1:<targetPort>, recording the asked host. */
 export async function startConnectProxy(targetPort: number): Promise<ConnectProxy> {
   const tunnels: string[] = [];
+  const proxyAuth: (string | undefined)[] = [];
   const sockets = new Set<Socket>();
   const proxy = createHttpServer((_req, res) => res.writeHead(405).end());
   proxy.on("connect", (req: IncomingMessage, client: Socket, head: Buffer) => {
     tunnels.push(req.url ?? "");
+    proxyAuth.push(req.headers["proxy-authorization"]);
     const upstream = netConnect(targetPort, "127.0.0.1", () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       upstream.write(head);
@@ -142,6 +151,7 @@ export async function startConnectProxy(targetPort: number): Promise<ConnectProx
   return {
     url: `http://127.0.0.1:${port}`,
     tunnels,
+    proxyAuth,
     close: () =>
       new Promise<void>((resolve) => {
         for (const s of sockets) s.destroy();

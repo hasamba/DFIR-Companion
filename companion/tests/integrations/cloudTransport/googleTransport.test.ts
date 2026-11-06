@@ -1,12 +1,14 @@
 import { generateKeyPairSync } from "node:crypto";
 import { Agent as HttpsAgent } from "node:https";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { GoogleAuth } from "google-auth-library";
 import {
   createCloudTransport,
   type CloudTransport,
 } from "../../../src/integrations/cloudTransport/cloudAgent.js";
-import { googleAuthOptions } from "../../../src/integrations/cloudTransport/googleTransport.js";
+import {
+  createGoogleAuth,
+  googleImpersonatedClient,
+} from "../../../src/integrations/cloudTransport/googleTransport.js";
 import {
   makeTlsMaterial,
   startConnectProxy,
@@ -15,6 +17,7 @@ import {
   type Route,
   type TlsMaterial,
   type TlsServer,
+  GOOGLE_IAM_HOST,
   GOOGLE_TOKEN_HOST,
 } from "../../helpers/cloudTlsHarness.js";
 
@@ -24,9 +27,20 @@ import {
 // local CONNECT proxy, which answers for that host from the local TLS server — no request leaves the
 // machine. The service-account key is generated at runtime.
 
+const TARGET = "collector-target@lab-project.iam.gserviceaccount.com";
+const SOURCE_EMAIL = "collector@lab-project.iam.gserviceaccount.com";
+
 const route: Route = (req) => {
   if (req.method === "POST" && req.path === "/token") {
     return { body: JSON.stringify({ access_token: "test-access", expires_in: 3600, token_type: "Bearer" }) };
+  }
+  if (
+    req.method === "POST" &&
+    decodeURIComponent(req.path).endsWith(`/serviceAccounts/${TARGET}:generateAccessToken`)
+  ) {
+    return {
+      body: JSON.stringify({ accessToken: "impersonated-access", expireTime: "2099-01-01T00:00:00Z" }),
+    };
   }
   if (req.method === "POST" && req.path === "/v2/entries:list")
     return { body: JSON.stringify({ entries: [] }) };
@@ -63,17 +77,14 @@ afterAll(async () => {
 
 const DATA_ORIGIN = "https://logging.cloud.test";
 
-async function listEntries(t: CloudTransport, requestAgent?: HttpsAgent): Promise<unknown> {
-  const auth = new GoogleAuth({
-    credentials: {
-      type: "service_account",
-      client_email: "collector@lab-project.iam.gserviceaccount.com",
-      private_key: privateKey,
-    },
-    scopes: ["https://www.googleapis.com/auth/logging.read"],
-    ...googleAuthOptions(t),
-  });
-  const client = await auth.getClient();
+function serviceAccountKey() {
+  return { type: "service_account", client_email: SOURCE_EMAIL, private_key: privateKey };
+}
+
+async function entriesWith(
+  client: { request: (o: object) => Promise<{ data: unknown }> },
+  requestAgent?: HttpsAgent,
+): Promise<unknown> {
   const res = await client.request({
     url: `${DATA_ORIGIN}/v2/entries:list`,
     method: "POST",
@@ -83,6 +94,20 @@ async function listEntries(t: CloudTransport, requestAgent?: HttpsAgent): Promis
   });
   return res.data;
 }
+
+async function listEntries(t: CloudTransport, requestAgent?: HttpsAgent): Promise<unknown> {
+  const auth = createGoogleAuth(t, {
+    credentials: serviceAccountKey(),
+    scopes: ["https://www.googleapis.com/auth/logging.read"],
+  });
+  return entriesWith(await auth.getClient(), requestAgent);
+}
+
+const IMPERSONATED_JSON = () => ({
+  type: "impersonated_service_account",
+  source_credentials: serviceAccountKey(),
+  service_account_impersonation_url: `https://${GOOGLE_IAM_HOST}/v1/projects/-/serviceAccounts/${TARGET}:generateAccessToken`,
+});
 
 describe("Google auth over the cloud transport", () => {
   it("carries the custom CA to the token exchange and the Logging data request", async () => {
@@ -116,5 +141,47 @@ describe("Google auth over the cloud transport", () => {
     transport = createCloudTransport({ caCertPath: material.caPath, proxyUrl: proxy.url });
     expect(await listEntries(transport, new HttpsAgent())).toEqual({ entries: [] });
     expect(proxy.tunnels).toContain("logging.cloud.test:443");
+  });
+});
+
+describe("Google impersonation over the cloud transport", () => {
+  const expectImpersonatedFlow = () => {
+    // Source key → oauth2 token; source token → IAM generateAccessToken; target token → data.
+    expect(proxy.tunnels).toEqual([
+      `${GOOGLE_TOKEN_HOST}:443`,
+      `${GOOGLE_IAM_HOST}:443`,
+      "logging.cloud.test:443",
+    ]);
+    expect(server.seen.map((r) => r.sni)).toEqual([GOOGLE_TOKEN_HOST, GOOGLE_IAM_HOST, "logging.cloud.test"]);
+    expect(server.seen[1]?.authorization).toBe("Bearer test-access");
+    expect(server.seen[2]?.authorization).toBe("Bearer impersonated-access");
+  };
+
+  it("routes impersonated_service_account JSON through the transport on source AND target", async () => {
+    transport = createCloudTransport({ caCertPath: material.caPath, proxyUrl: proxy.url });
+    const auth = createGoogleAuth(transport, {
+      credentials: IMPERSONATED_JSON() as never,
+      scopes: ["https://www.googleapis.com/auth/logging.read"],
+    });
+    expect(await entriesWith(await auth.getClient())).toEqual({ entries: [] });
+    expectImpersonatedFlow();
+  });
+
+  it("builds impersonated credentials explicitly with the transport on both clients", async () => {
+    transport = createCloudTransport({ caCertPath: material.caPath, proxyUrl: proxy.url });
+    const client = googleImpersonatedClient(transport, {
+      sourceCredentials: serviceAccountKey(),
+      targetPrincipal: TARGET,
+      targetScopes: ["https://www.googleapis.com/auth/logging.read"],
+    });
+    expect(await entriesWith(client)).toEqual({ entries: [] });
+    expectImpersonatedFlow();
+  });
+
+  it("fails the source token refresh without the CA — IAM and data are never reached", async () => {
+    transport = createCloudTransport({ proxyUrl: proxy.url });
+    const auth = createGoogleAuth(transport, { credentials: IMPERSONATED_JSON() as never });
+    await expect(entriesWith(await auth.getClient())).rejects.toThrow(/certificate/i);
+    expect(server.seen).toEqual([]);
   });
 });

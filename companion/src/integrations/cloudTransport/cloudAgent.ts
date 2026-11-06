@@ -33,6 +33,24 @@ export function parseProxyUrl(raw: string): URL {
   return url;
 }
 
+/**
+ * The proxy URL without its user:password. https-proxy-agent writes the URL it is given to its debug
+ * log (DEBUG=https-proxy-agent), so the login travels only in the CONNECT header it never logs.
+ */
+function withoutCredentials(url: URL): URL {
+  const bare = new URL(url.href);
+  bare.username = "";
+  bare.password = "";
+  return bare;
+}
+
+/** Basic Proxy-Authorization for a proxy URL that carries a login, decoded the way browsers do. */
+function proxyAuthHeaders(url: URL): Record<string, string> {
+  if (!url.username && !url.password) return {};
+  const login = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+  return { "Proxy-Authorization": `Basic ${Buffer.from(login).toString("base64")}` };
+}
+
 /** Socket options for one destination: its own TLS policy, and SNI only for a host name. */
 function destinationOptions(policy: DestinationTlsPolicy, host: string) {
   return { ...policy(host), servername: isIP(host) ? undefined : host };
@@ -47,8 +65,9 @@ export class CloudAgent extends AgentBase {
     this.#policy = policy;
     // The proxy's own certificate (an https:// proxy) is checked with the same policy as any host.
     this.#proxy = proxyUrl
-      ? new HttpsProxyAgent(proxyUrl.href, {
+      ? new HttpsProxyAgent(withoutCredentials(proxyUrl).href, {
           ...(proxyUrl.protocol === "https:" ? destinationOptions(policy, proxyUrl.hostname) : {}),
+          headers: proxyAuthHeaders(proxyUrl),
         })
       : undefined;
   }

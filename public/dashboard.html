@@ -2277,7 +2277,7 @@
         <div class="settings-group-head">Cloud accounts (AWS, Microsoft, GCP)</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_CLOUD_CA">Cloud CA bundle<span class="sfield-hint">DFIR_CLOUD_CA — PEM CA bundle (e.g. a TLS-inspecting proxy's CA) trusted for every cloud request, token endpoints included. Added to the built-in trust; verification stays ON.</span></label><input id="env-DFIR_CLOUD_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label for="env-DFIR_CLOUD_INSECURE">Cloud: skip TLS verify<span class="sfield-hint">DFIR_CLOUD_INSECURE — 1 = accept any certificate. Cloud hosts are never loopback, so this also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. Lab only; prefer the CA bundle.</span></label><input id="env-DFIR_CLOUD_INSECURE" placeholder="0" /></div>
+          <div class="sfield"><label for="env-DFIR_CLOUD_INSECURE">Cloud: skip TLS verify<span class="sfield-hint">DFIR_CLOUD_INSECURE — true to accept any certificate. Cloud hosts are never loopback, so this also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. Lab only; prefer the CA bundle.</span></label><input id="env-DFIR_CLOUD_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_PROXY_URL">Cloud proxy URL<span class="sfield-hint">DFIR_CLOUD_PROXY_URL — http(s)://host:port proxy every cloud request tunnels through. HTTPS_PROXY is not read for cloud collection.</span></label><input id="env-DFIR_CLOUD_PROXY_URL" type="password" placeholder="http://proxy.corp:3128" /></div>
         </div>
         <div id="cloudAccountsPanel">
