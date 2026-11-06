@@ -338,7 +338,10 @@ Set `DFIR_DEMO_MODE=true` (or `1`) in `.env`. Demo mode:
 - Blocks every mutating request **except** `POST /cases/seed-demo`. That one stays open so visitors
   can seed and reseed the demo case — and it takes a case name and a force flag from the caller, so
   a visitor can create and reseed cases with a name they choose.
-- Blocks the server-filesystem browser in **Settings** (the one blocked read).
+- Blocks the server-filesystem browser in **Settings**.
+- Has no cloud features at all. Every cloud-account and cloud-collection request is refused with
+  403, reads included, the **Cloud accounts** panel is hidden, and interrupted cloud collection is
+  not picked up again at startup.
 - Seeds a demo case at startup and resets it every `DFIR_DEMO_RESET_HOURS` hours (default and
   minimum 1).
 

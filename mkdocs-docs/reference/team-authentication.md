@@ -12,7 +12,7 @@ Team mode adds:
 - reader, investigator, reviewer, and administrator access per case;
 - immutable user identities in activity and chain-of-custody records;
 - case-scoped service identities for the capture extension and automation;
-- an authentication audit covering sign-ins, role changes, users, and tokens.
+- an authentication audit covering sign-ins, role changes, users, tokens, and cloud accounts.
 
 Local account passwords have one rule: they must contain at least six characters.
 
@@ -154,6 +154,11 @@ Roles express different jobs; they are not a simple rank.
 A global administrator manages local users and can administer every case. A case administrator can
 manage roles and service identities only for that case. Role changes are audited with the
 administrator's immutable identity.
+
+**Cloud accounts** (the credentials for live cloud collection) belong to cases. Seeing, adding
+and using a case's cloud accounts needs **write** on the case — Investigator or Administrator;
+Readers and Reviewers do not see them. Editing or deleting an account shared by several cases needs
+write on every one of them. See [Cloud accounts](settings.md#cloud-accounts).
 
 The older per-case password remains available as a second evidence barrier. It is not a user
 identity and does not replace a team-mode role.

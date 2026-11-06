@@ -38,6 +38,10 @@ import {
 } from "../storage/exportStaging.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import {
+  startCloudCollectRecovery,
+  type CloudCollectRecoverer,
+} from "../integrations/cloudAccounts/collectRecovery.js";
 
 /**
  * Delay before the FIRST evidence-integrity sweep after boot. Long enough to stay out of the startup
@@ -239,6 +243,8 @@ export interface PostListenDeps {
   updateRepo: string;
   /** SIEM audit export (#929). Absent → the feature is off and nothing is resumed. */
   auditExporter?: AuditExporter;
+  /** Cloud collect job recovery (#2308; live collection registers its steps). Skipped on the demo. */
+  cloudCollectRecoverers?: readonly CloudCollectRecoverer[];
 }
 
 /**
@@ -255,7 +261,10 @@ export function startPostListenTasks({
   updateCheckStore,
   updateRepo,
   auditExporter,
+  cloudCollectRecoverers = [],
 }: PostListenDeps): void {
+  void startCloudCollectRecovery({ demoMode, recoverers: cloudCollectRecoverers, log: logLine });
+
   // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
   // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
   // but never fatal. The timer is .unref()'d so it doesn't block a clean process exit.

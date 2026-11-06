@@ -268,7 +268,32 @@ DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not
 
 A cloud account holds the credential that cloud collection uses for one AWS account, one Microsoft
 tenant or one GCP project. Find the list at Settings → Integrations → **Cloud accounts**. The
-list shows in **All** settings mode. In team mode, only an administrator sees and edits it.
+list shows in **All** settings mode.
+
+Cloud accounts belong to cases. The list shows the accounts of the **open case**, and a new
+account is added to the open case.
+
+- **Who can see and use them.** In team mode, anyone with **write** access to a case (an
+  investigator or a case administrator) can see, add and use that case's accounts. A reader or a
+  reviewer cannot see them. A user never sees the accounts of a case they cannot write.
+- **Share with case…** attaches the account to another case. You need write access to both cases.
+- **Detach** removes the account from the open case only. Other cases that use it keep it, so one
+  case's investigator can never stop another case's collection.
+- **Edit and delete a shared account.** The credential is the same for every case it is attached
+  to, so editing or deleting it needs write access to **every** attached case. Otherwise the
+  Companion refuses and tells you how many attached cases you cannot write. Detach it instead, or
+  ask an instance administrator.
+- **Instance administrators** also see **All cloud accounts**: every account with its provider and
+  the cases it is attached to, never a secret. **Reset vault** is there too.
+- **Accounts added before this change** are not attached to any case. Only an instance
+  administrator sees them, under **All cloud accounts**, until they click **Attach to this case** or
+  delete them. In single-user mode you are the administrator: open a case, then attach them.
+- **Deleting a case** detaches its accounts. An account that other cases use stays.
+- **Audit.** In team mode, the authentication audit records every add, edit, delete, attach,
+  detach and collect with the case, the user, and the account name and provider. It never records a
+  credential.
+- **Public demo.** With `DFIR_DEMO_MODE=1` there are no cloud features: the panel is hidden and
+  every cloud request is refused.
 
 - **Add an account.** Click **+ Add cloud account**, give a name and pick the provider. Prefer a
   short-lived credential:
@@ -304,7 +329,7 @@ Set `DFIR_CLOUD_VAULT_KEY_FILE` in `.env` (or the container environment) to use 
 has no field in Settings. The key file holds 32 random bytes. The Companion makes it the first
 time you add a cloud account, readable by its owner only (mode 0600 on Linux, an owner-only ACL on
 Windows). It then tells you where the key is and to keep it out of data backups. The top of the
-Cloud accounts list always shows the key path.
+Cloud accounts list shows the key path to an instance administrator.
 
 **Docker provisioning.** The supplied `docker-compose.yml` mounts the accounts at
 `./cloud-accounts:/data/cloud-accounts` and the key at `./cloud-vault-key:/run/dfir-vault`.

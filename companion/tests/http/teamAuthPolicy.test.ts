@@ -4,7 +4,7 @@ import {
   describeUnauthenticatedExposure,
   resolveTeamAuthConfig,
 } from "../../src/auth/authConfig.js";
-import { caseRoleAllows, resolveRequestPolicy } from "../../src/auth/policy.js";
+import { caseRoleAllows, isCloudRoutePath, resolveRequestPolicy } from "../../src/auth/policy.js";
 
 describe("team-auth configuration and policy", () => {
   it("keeps team mode opt-in and refuses unsafe remote single-user binding", () => {
@@ -232,7 +232,7 @@ describe("team-auth configuration and policy", () => {
     expect(resolveRequestPolicy("POST", "/tls/ca.crt")).not.toEqual({ kind: "public" });
   });
 
-  // Cloud accounts (#2307) name credentials, so even the list is global admin. #2308 rescopes them.
+  // Cloud accounts (#2307) name credentials, so the instance-wide list stays global admin (#2308).
   it("keeps every cloud account route global admin, GET included", () => {
     for (const [m, p] of [
       ["GET", "/cloud-accounts"],
@@ -240,9 +240,61 @@ describe("team-auth configuration and policy", () => {
       ["POST", "/cloud-accounts/reset"],
       ["PUT", "/cloud-accounts/a1"],
       ["DELETE", "/cloud-accounts/a1"],
+      ["POST", "/cloud-accounts/a1/attach"],
     ]) {
       expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({ kind: "global", permission: "admin" });
     }
+  });
+
+  // A case's cloud accounts (#2308): listing and reading need WRITE, not read — a reader must not
+  // learn which credentials a case holds. Collect routes take the same bar.
+  it("puts every case cloud-account and collect route in write, GET included", () => {
+    for (const [m, p] of [
+      ["GET", "/cases/c1/cloud-accounts"],
+      ["HEAD", "/cases/c1/cloud-accounts"],
+      ["POST", "/cases/c1/cloud-accounts"],
+      ["GET", "/cases/c1/cloud-accounts/a1"],
+      ["PUT", "/cases/c1/cloud-accounts/a1"],
+      ["DELETE", "/cases/c1/cloud-accounts/a1"],
+      ["POST", "/cases/c1/cloud-accounts/a1/attach"],
+      ["POST", "/cases/c1/cloud-accounts/a1/detach"],
+      ["GET", "/cases/c1/CLOUD-ACCOUNTS/"],
+      ["GET", "/cases/c1/cloud-collect"],
+      ["GET", "/cases/c1/cloud-collect/j1"],
+      ["POST", "/cases/c1/cloud-collect"],
+    ]) {
+      expect(resolveRequestPolicy(m, p), `${m} ${p}`).toEqual({
+        kind: "case",
+        permission: "write",
+        caseId: "c1",
+      });
+    }
+    // The demo gate (#2308) refuses exactly these paths and the global ones, in any spelling.
+    for (const p of [
+      "/cloud-accounts",
+      "/CLOUD-ACCOUNTS/",
+      "/cloud-accounts/a1",
+      "/cases/c1/cloud-accounts",
+      "/cases/c1/Cloud-Accounts/a1/detach",
+      "/cases/c1/cloud-collect/j1",
+      "/cases/c%31/cloud-accounts",
+    ]) {
+      expect(isCloudRoutePath(p), p).toBe(true);
+    }
+    for (const p of [
+      "/cases/c1/cloud-coverage",
+      "/cloud-accountsx",
+      "/cases/c1/import-cloud-activity",
+      "/",
+    ]) {
+      expect(isCloudRoutePath(p), p).toBe(false);
+    }
+    // The Cloud Coverage panel is case data, not a credential: it keeps the reader's GET.
+    expect(resolveRequestPolicy("GET", "/cases/c1/cloud-coverage")).toEqual({
+      kind: "case",
+      permission: "read",
+      caseId: "c1",
+    });
   });
 
   it("treats a basemap tile as an authenticated asset, and only for GET", () => {
