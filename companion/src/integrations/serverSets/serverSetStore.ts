@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWriteFileSync } from "../../storage/atomicWriteSync.js";
 import { open, seal } from "./secretBox.js";
 import { secretsOfSet } from "./setSecrets.js";
 import {
@@ -214,11 +215,11 @@ export class ServerSetStore {
   }
 
   private writeSets(sets: ServerSet[]): void {
-    atomicWriteSync(this.setsPath, JSON.stringify(sets, null, 2));
+    atomicWriteFileSync(this.setsPath, JSON.stringify(sets, null, 2));
   }
 
   private writeLinks(links: Links): void {
-    atomicWriteSync(this.linksPath, JSON.stringify(links, null, 2));
+    atomicWriteFileSync(this.linksPath, JSON.stringify(links, null, 2));
   }
 }
 
@@ -237,15 +238,4 @@ export function checkUrl(tool: string, url: string | undefined): void {
 function readJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
   return JSON.parse(readFileSync(path, "utf8")) as T;
-}
-
-function atomicWriteSync(path: string, text: string): void {
-  const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, text, { mode: 0o600 });
-  renameSync(tmp, path);
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // chmod is best effort on Windows.
-  }
 }
