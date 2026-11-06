@@ -21,6 +21,7 @@ import {
   type CollectionPaths,
   type LoadedManifest,
 } from "./collectManifest.js";
+import { applySplit, splitParents } from "./collectSplit.js";
 import type {
   CollectWindow,
   ManifestEntry,
@@ -45,7 +46,7 @@ export interface ReplayResult {
   unreadableLines: number;
 }
 
-/** The one sub-window per source #2311 collects; #2312 splits these further. */
+/** The one root sub-window per source; a capped one splits into a tree (#2312, collectSplit.ts). */
 export function initialSubWindows(sources: readonly string[], window: CollectWindow): SubWindowStatus[] {
   return sources.map((source) => ({
     id: `${source}:0`,
@@ -58,29 +59,49 @@ export function initialSubWindows(sources: readonly string[], window: CollectWin
   }));
 }
 
-/** Each sub-window's state as the manifest tells it. Pure. */
+const SETTLED = new Set(["split"]);
+
+function applyRestart(sw: SubWindowStatus): SubWindowStatus {
+  // A split parent is re-collected by its children: a restart changes nothing but the count.
+  if (SETTLED.has(sw.state)) return { ...sw, restarts: sw.restarts + 1 };
+  return {
+    ...sw,
+    state: "pending",
+    pageToken: undefined,
+    capped: undefined,
+    reason: undefined,
+    restarts: sw.restarts + 1,
+  };
+}
+
+function applyPage(sw: SubWindowStatus, page: ManifestPage): SubWindowStatus {
+  const counted = {
+    ...sw,
+    pages: sw.pages + 1,
+    records: sw.records + page.records,
+    firstRetrievedAt: sw.firstRetrievedAt ?? page.retrievedAt,
+    ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
+  };
+  if (SETTLED.has(sw.state) || sw.state === "incomplete") return counted;
+  if (page.capped) return { ...counted, state: "capped", capped: page.capped, pageToken: undefined };
+  return { ...counted, pageToken: page.pageTokenOut, state: page.pageTokenOut ? "pending" : "done" };
+}
+
+/** Each sub-window's state — the split tree included (#2312) — as the manifest tells it. Pure. */
 export function deriveSubWindows(
   header: ManifestHeader,
   entries: readonly ManifestEntry[],
 ): SubWindowStatus[] {
-  const byId = new Map(initialSubWindows(header.sources, header.window).map((s) => [s.id, s]));
+  let list = initialSubWindows(header.sources, header.window);
+  const update = (id: string, fn: (sw: SubWindowStatus) => SubWindowStatus): void => {
+    list = list.map((s) => (s.id === id ? fn(s) : s));
+  };
   for (const entry of entries) {
-    if (entry.type !== "page" && entry.type !== "restart") continue;
-    const sw = byId.get(entry.subWindowId);
-    if (!sw) continue;
-    if (entry.type === "restart") {
-      byId.set(sw.id, { ...sw, state: "pending", pageToken: undefined, restarts: sw.restarts + 1 });
-      continue;
-    }
-    byId.set(sw.id, {
-      ...sw,
-      pages: sw.pages + 1,
-      records: sw.records + entry.records,
-      pageToken: entry.pageTokenOut,
-      state: entry.pageTokenOut ? "pending" : "done",
-    });
+    if (entry.type === "split") list = applySplit(list, entry);
+    else if (entry.type === "restart") update(entry.subWindowId, applyRestart);
+    else if (entry.type === "page") update(entry.subWindowId, (sw) => applyPage(sw, entry));
   }
-  return [...byId.values()];
+  return list;
 }
 
 async function freeName(fs: CollectFs, dir: string, name: string): Promise<string> {
@@ -167,7 +188,9 @@ export function outstandingRestarts(
     const sw = windowOf.get(entry.file);
     if (sw) owed.add(sw);
   }
-  return [...owed];
+  // A split parent's window is re-collected by its children (#2312): it owes nothing.
+  const parents = splitParents(entries);
+  return [...owed].filter((id) => !parents.has(id));
 }
 
 async function quarantineOrphans(

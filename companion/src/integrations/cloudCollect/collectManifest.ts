@@ -50,7 +50,12 @@ function isEntry(value: unknown): value is ManifestEntry {
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
-    type === "header" || type === "page" || type === "restart" || type === "quarantine" || type === "resume"
+    type === "header" ||
+    type === "page" ||
+    type === "restart" ||
+    type === "quarantine" ||
+    type === "resume" ||
+    type === "split"
   );
 }
 

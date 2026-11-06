@@ -11,6 +11,11 @@
 //   - any other provider error fails that sub-window — the others still run, the result is partial;
 //   - a write error (disk full, permissions) STOPS the stage: everything committed stays, the result
 //     is partial, and the reason names the error code.
+//
+// #2312 adds, per request: the source's rate limiter; back-off on 429 / Retry-After from a per-run
+// retry budget; the tenant's daily query budget before every new query (a used-up budget STOPS the
+// stage, "partial — budget used", resumable later); and the split tree — a capped sub-window is
+// decided (halves, partitions, or too dense) by a manifest line and its children join the work list.
 
 import { join } from "node:path";
 import type { CollectFs } from "./collectFs.js";
@@ -20,10 +25,22 @@ import {
   CursorExpiredError,
   type CloudCollectSession,
   type CollectPage,
+  type CollectSourceInfo,
   type ManifestEntry,
   type ManifestPage,
   type SubWindowStatus,
 } from "./collectTypes.js";
+import { applySplit, decideSplit, nextWork } from "./collectSplit.js";
+import { budgetStopReason, type QueryBudget } from "./collectBudget.js";
+import {
+  backoffMs,
+  DEFAULT_RETRY_BUDGET,
+  RateLimiter,
+  rateKey,
+  rateLimitOf,
+  realClock,
+  type CollectClock,
+} from "./collectRateLimit.js";
 
 /** How often one sub-window may start over after an expired cursor before it is given up. */
 export const MAX_RESTARTS = 3;
@@ -51,6 +68,14 @@ async function guardWrite<T>(step: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The tenant's query budget is used: the stage stops, the rest stays pending for a later resume. */
+export class BudgetStopError extends Error {
+  constructor(used: number, limit: number) {
+    super(budgetStopReason(used, limit));
+    this.name = "BudgetStopError";
+  }
+}
+
 export function pageFileName(seq: number, source: string, extension: CollectPage["extension"]): string {
   return `p${String(seq).padStart(6, "0")}-${source}.${extension}`;
 }
@@ -60,7 +85,7 @@ export async function commitPage(
   fs: CollectFs,
   paths: CollectionPaths,
   page: CollectPage,
-  meta: { seq: number; sw: SubWindowStatus; retrievedAt: string },
+  meta: { seq: number; sw: SubWindowStatus; retrievedAt: string; capped?: ManifestPage["capped"] },
 ): Promise<ManifestPage> {
   const file = pageFileName(meta.seq, meta.sw.source, page.extension);
   const tmp = join(paths.pages, `${file}.tmp`);
@@ -82,6 +107,8 @@ export async function commitPage(
       bytes: page.body.byteLength,
       sha256: sha256Hex(page.body),
       records: page.recordCount,
+      ...(meta.capped ? { capped: meta.capped } : {}),
+      ...(page.acquiredUntil ? { acquiredUntil: page.acquiredUntil } : {}),
     };
     await appendManifest(fs, paths, line);
     return line;
@@ -93,6 +120,14 @@ export interface NetworkStageDeps {
   paths: CollectionPaths;
   session: CloudCollectSession;
   now: () => string;
+  /** The provider's sources: their split, rate, quota and overlap specs (#2312). */
+  sources?: readonly CollectSourceInfo[];
+  /** Pacing and back-off; the tests inject a clock that never waits. */
+  clock?: CollectClock;
+  /** The tenant's daily query budget, for sources with a `queryCost`. */
+  budget?: QueryBudget;
+  /** Throttle retries this run may spend. */
+  retryBudget?: number;
   signal?: AbortSignal;
   /** Persist the checkpoint after a page or a sub-window change (the last commit step). */
   onChange: (subWindows: SubWindowStatus[]) => Promise<void>;
@@ -119,23 +154,87 @@ function providerReason(err: unknown): string {
 
 type Step = { sw: SubWindowStatus; page?: ManifestPage; done: boolean };
 
+/** Per-run state shared by every request: limiter and retry budget. */
+interface Pacing {
+  clock: CollectClock;
+  limiter: RateLimiter;
+  retriesLeft: number;
+  readonly retryBudget: number;
+}
+
+type Fetched = { page: CollectPage } | { failed: string };
+
+async function chargeQuery(deps: NetworkStageDeps, source: CollectSourceInfo | undefined): Promise<void> {
+  const cost = source?.queryCost ?? 0;
+  if (!deps.budget || cost <= 0) return;
+  if (await deps.budget.reserve(cost)) return;
+  throw new BudgetStopError(await deps.budget.used(), deps.budget.limit);
+}
+
+/** One request, paced and retried on throttling. Other errors propagate to fetchStep. */
+async function requestPage(
+  deps: NetworkStageDeps,
+  pacing: Pacing,
+  sw: SubWindowStatus,
+  source: CollectSourceInfo | undefined,
+): Promise<Fetched> {
+  for (let attempt = 0; ; attempt++) {
+    abortIfCancelled(deps.signal);
+    if (!sw.pageToken) await chargeQuery(deps, source); // a new query is a submission, every try
+    if (source?.rateLimit)
+      await pacing.limiter.acquire(
+        rateKey(sw.source, source.rateLimit, sw.partition),
+        source.rateLimit,
+        deps.signal,
+      );
+    try {
+      const page = await deps.session.fetchPage({
+        source: sw.source,
+        subWindowId: sw.id,
+        window: sw.window,
+        ...(sw.pageToken ? { pageToken: sw.pageToken } : {}),
+        ...(sw.partition ? { partition: sw.partition } : {}),
+        ...(deps.signal ? { signal: deps.signal } : {}),
+      });
+      return { page };
+    } catch (err) {
+      const throttled = rateLimitOf(err, pacing.clock.now());
+      if (!throttled) throw err;
+      if (pacing.retriesLeft <= 0)
+        return {
+          failed: `rate limited: the collection's ${pacing.retryBudget} throttle retries are used up`,
+        };
+      pacing.retriesLeft--;
+      await pacing.clock.sleep(backoffMs(attempt, throttled.retryAfterMs), deps.signal);
+    }
+  }
+}
+
+function cappedBy(
+  page: CollectPage,
+  sw: SubWindowStatus,
+  source: CollectSourceInfo | undefined,
+): ManifestPage["capped"] {
+  if (page.capped) return "provider";
+  const cap = source?.maxPagesPerWindow;
+  if (cap && page.nextPageToken && sw.pages + 1 >= cap) return "page-cap";
+  return undefined;
+}
+
 async function fetchStep(
   deps: NetworkStageDeps,
+  pacing: Pacing,
   sw: SubWindowStatus,
   seq: number,
   note: (e: ManifestEntry) => Promise<void>,
 ): Promise<Step> {
-  let page: CollectPage;
+  const source = deps.sources?.find((s) => s.id === sw.source);
+  let fetched: Fetched;
   try {
-    page = await deps.session.fetchPage({
-      source: sw.source,
-      subWindowId: sw.id,
-      window: sw.window,
-      ...(sw.pageToken ? { pageToken: sw.pageToken } : {}),
-      ...(deps.signal ? { signal: deps.signal } : {}),
-    });
+    fetched = await requestPage(deps, pacing, sw, source);
   } catch (err) {
-    if ((err as Error)?.name === "AbortError") throw err;
+    const name = (err as Error)?.name;
+    if (name === "AbortError" || err instanceof BudgetStopError) throw err;
     if (err instanceof CursorExpiredError && sw.pageToken && sw.restarts < MAX_RESTARTS) {
       await note({ type: "restart", subWindowId: sw.id, reason: "cursor-expired", at: deps.now() });
       return { sw: { ...sw, pageToken: undefined, restarts: sw.restarts + 1 }, done: false };
@@ -146,19 +245,61 @@ async function fetchStep(
         : providerReason(err);
     return { sw: { ...sw, state: "failed", reason }, done: true };
   }
-  const line = await commitPage(deps.fs, deps.paths, page, { seq, sw, retrievedAt: deps.now() });
-  const next: SubWindowStatus = {
+  if ("failed" in fetched) return { sw: { ...sw, state: "failed", reason: fetched.failed }, done: true };
+  const { page } = fetched;
+  const capped = cappedBy(page, sw, source);
+  const retrievedAt = deps.now();
+  const line = await commitPage(deps.fs, deps.paths, page, { seq, sw, retrievedAt, capped });
+  const counted: SubWindowStatus = {
     ...sw,
     pages: sw.pages + 1,
     records: sw.records + line.records,
+    firstRetrievedAt: sw.firstRetrievedAt ?? retrievedAt,
+    ...(line.acquiredUntil ? { acquiredUntil: line.acquiredUntil } : {}),
+    reason: undefined,
+  };
+  if (capped)
+    return { sw: { ...counted, state: "capped", capped, pageToken: undefined }, page: line, done: false };
+  const next: SubWindowStatus = {
+    ...counted,
     pageToken: line.pageTokenOut,
     state: line.pageTokenOut ? "pending" : "done",
-    reason: undefined,
   };
   return { sw: next, page: line, done: !line.pageTokenOut };
 }
 
-/** Fetch every unfinished sub-window, page by page. */
+/** The partition values a capped minimum window may fall back on. A lookup failure means none. */
+async function partitionValuesFor(
+  deps: NetworkStageDeps,
+  sw: SubWindowStatus,
+  source: CollectSourceInfo | undefined,
+): Promise<readonly string[] | undefined> {
+  if (!source?.partition || sw.partition) return undefined;
+  if (!deps.session.partitionValues) return source.partition.values;
+  try {
+    return await deps.session.partitionValues(source.id, deps.signal);
+  } catch (err) {
+    if ((err as Error)?.name === "AbortError") throw err;
+    return source.partition.values;
+  }
+}
+
+/** Decide a capped sub-window and write the split line before any child is fetched. */
+async function splitCapped(
+  deps: NetworkStageDeps,
+  subWindows: SubWindowStatus[],
+  sw: SubWindowStatus,
+  note: (e: ManifestEntry) => Promise<void>,
+): Promise<SubWindowStatus[]> {
+  const source = deps.sources?.find((s) => s.id === sw.source);
+  const values = await partitionValuesFor(deps, sw, source);
+  const nodes = subWindows.filter((s) => s.source === sw.source).length;
+  const decision = decideSplit(sw, source, values, nodes);
+  await note({ type: "split", ...decision, at: deps.now() });
+  return applySplit(subWindows, decision);
+}
+
+/** Fetch every unfinished sub-window, page by page, splitting the capped ones. */
 export async function runNetworkStage(
   deps: NetworkStageDeps,
   start: { subWindows: SubWindowStatus[]; nextSeq: number },
@@ -168,29 +309,31 @@ export async function runNetworkStage(
   );
   let seq = start.nextSeq;
   const pages: ManifestPage[] = [];
+  const clock = deps.clock ?? realClock;
+  const retryBudget = deps.retryBudget ?? DEFAULT_RETRY_BUDGET;
+  const pacing: Pacing = { clock, limiter: new RateLimiter(clock), retriesLeft: retryBudget, retryBudget };
   const note = (e: ManifestEntry) => guardWrite(() => appendManifest(deps.fs, deps.paths, e));
-  const save = async (sw: SubWindowStatus): Promise<void> => {
-    subWindows = subWindows.map((s) => (s.id === sw.id ? sw : s));
-    await guardWrite(() => deps.onChange(subWindows));
-  };
+  const persist = () => guardWrite(() => deps.onChange(subWindows));
   try {
     await guardWrite(() => deps.fs.mkdir(deps.paths.pages));
-    for (const initial of start.subWindows) {
-      let sw = subWindows.find((s) => s.id === initial.id)!;
-      while (sw.state === "pending") {
-        abortIfCancelled(deps.signal);
-        const step = await fetchStep(deps, sw, seq, note);
-        if (step.page) {
-          seq++;
-          pages.push(step.page);
-          deps.onPage?.(step.page);
-        }
-        sw = step.sw;
-        await save(sw);
-        if (step.done) break;
+    for (let sw = nextWork(subWindows); sw; sw = nextWork(subWindows)) {
+      abortIfCancelled(deps.signal);
+      if (sw.state === "capped") {
+        subWindows = await splitCapped(deps, subWindows, sw, note);
+        await persist();
+        continue;
       }
+      const step = await fetchStep(deps, pacing, sw, seq, note);
+      if (step.page) {
+        seq++;
+        pages.push(step.page);
+        deps.onPage?.(step.page);
+      }
+      subWindows = subWindows.map((s) => (s.id === step.sw.id ? step.sw : s));
+      await persist();
     }
   } catch (err) {
+    if (err instanceof BudgetStopError) return { subWindows, pages, nextSeq: seq, stopReason: err.message };
     if (!(err instanceof EvidenceWriteError)) throw err;
     return { subWindows, pages, nextSeq: seq, stopReason: err.message };
   }

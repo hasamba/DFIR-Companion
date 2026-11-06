@@ -31,6 +31,7 @@ import type {
   CloudCollectSession,
   CollectionCheckpoint,
 } from "../integrations/cloudCollect/collectTypes.js";
+import type { QueryBudget } from "../integrations/cloudCollect/collectBudget.js";
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import { caseCollectImporter } from "./cloudCollectImporter.js";
 import type { RouteContext } from "./context.js";
@@ -41,6 +42,8 @@ export const CLOUD_COLLECT_MAX_RETRIES = 1000;
 export interface CollectSessionRef {
   provider: CloudCollectProvider;
   session: CloudCollectSession;
+  /** The tenant's shared daily query budget (#2312), when the provider has one. */
+  budget?: QueryBudget;
 }
 
 const parkedSessions = new Map<string, CollectSessionRef>();
@@ -94,6 +97,10 @@ export async function executeCollection(
         importer: caseCollectImporter(ctx),
         sources: input.ref.provider.sources,
         now,
+        ...(input.ref.budget ? { budget: input.ref.budget } : {}),
+        ...(input.ref.provider.retryBudget !== undefined
+          ? { retryBudget: input.ref.provider.retryBudget }
+          : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         onProgress: (p) => {
           const line = progressLine(p);
@@ -108,7 +115,8 @@ export async function executeCollection(
         `${cp.missing.length} window(s) missing, ${cp.quarantined.length} file(s) quarantined`,
     );
     if (cp.status === "failed") throw new Error(cp.missing[0]?.reason ?? "nothing was collected");
-    if (cp.missing.length)
+    if (cp.stopReason?.startsWith("partial — budget used")) await manager?.warn(input.jobId, cp.stopReason);
+    else if (cp.missing.length)
       await manager?.warn(input.jobId, `partial — ${cp.missing.length} window(s) missing`);
     return cp;
   } catch (err) {

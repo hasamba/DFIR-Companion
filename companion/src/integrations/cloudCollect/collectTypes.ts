@@ -17,6 +17,26 @@ export interface CollectWindow {
   end: string;
 }
 
+/** How long a source keeps its logs (#2312): the retention pre-check and the result's disclosure. */
+export interface RetentionSpec {
+  /** The shortest retention any licence or configuration gives (Entra Free: 7 days). */
+  minDays: number;
+  /** The longest (Entra P1/P2: 30 days). Absent when there is one figure. */
+  maxDays?: number;
+  /** One plain sentence: what decides between the two. */
+  note: string;
+  /** Set when the log is OFF unless someone enabled it (GCP Data Access): the warning to show. */
+  offByDefault?: string;
+}
+
+/** A provider's request-rate limit (#2312): `requests` per `perMs`, optionally per partition. */
+export interface RateLimitSpec {
+  requests: number;
+  perMs: number;
+  /** One limiter per value of this partition key (CloudTrail LookupEvents: per region). */
+  perPartitionKey?: string;
+}
+
 /** One source a provider can collect (e.g. "cloudtrail-s3", "entra-signins", "gcp-audit"). */
 export interface CollectSourceInfo {
   /** Stable id, `[a-z0-9-]`, used in file names and the manifest. */
@@ -24,6 +44,23 @@ export interface CollectSourceInfo {
   label: string;
   /** The streaming importer (#2303) that reads this source's saved pages. */
   streamKind: StreamKind;
+  // ── #2312: every field below is optional; a source without them collects as in #2311. ──
+  /** The smallest window a capped sub-window splits down to (Graph 1 min, CloudTrail/GCP 1 s). */
+  minWindowMs?: number;
+  /** A sub-window that still has a next page after this many pages counts as capped and splits. */
+  maxPagesPerWindow?: number;
+  /**
+   * Partition fallback for a minimum window that is still capped: the key and its values (Graph:
+   * record type or service; GCP: logName; AWS: region). `CloudCollectSession.partitionValues`
+   * overrides the values at run time (the AWS regions an account uses).
+   */
+  partition?: { key: string; values?: readonly string[] };
+  rateLimit?: RateLimitSpec;
+  /** Tenant query submissions each new sub-window query costs (Graph AuditLogQuery: 1). */
+  queryCost?: number;
+  /** Default ingestion-delay overlap: the newest part of the window that may still be arriving. */
+  overlapMs?: number;
+  retention?: RetentionSpec;
 }
 
 /** What the engine asks a provider for: one page of one sub-window. */
@@ -33,6 +70,8 @@ export interface CollectPageRequest {
   window: CollectWindow;
   /** The token the previous page returned; absent for the first page of a sub-window. */
   pageToken?: string;
+  /** Partition fallback (#2312): only this slice of the source, e.g. `{ region: "eu-west-1" }`. */
+  partition?: Record<string, string>;
   signal?: AbortSignal;
 }
 
@@ -48,6 +87,16 @@ export interface CollectPage {
   requestId?: string;
   /** The request as sent, minus secrets: filter, page size, bucket/key, API version. */
   requestParams: Record<string, string>;
+  /**
+   * The cloud capped this sub-window's results (#2312): Graph `isRecordCountLimitExceeded`, a result
+   * cap. The engine stops paging it and re-collects its whole window as two halves (or partitions).
+   */
+  capped?: boolean;
+  /**
+   * The provider's own statement of how far this window's data is settled (a GCS sink's last
+   * complete hourly batch). The disclosed cutoff is never later than it.
+   */
+  acquiredUntil?: string;
 }
 
 /** Who the session is, for the manifest header. Never a secret. */
@@ -66,6 +115,8 @@ export interface CloudCollectSession {
    * Graph query expiry); the engine then restarts the sub-window from its start.
    */
   fetchPage(request: CollectPageRequest): Promise<CollectPage>;
+  /** The partition values to fall back on for `source` (the regions an AWS account uses). */
+  partitionValues?(source: string, signal?: AbortSignal): Promise<readonly string[]>;
   close?(): void | Promise<void>;
 }
 
@@ -75,10 +126,32 @@ export interface CloudCollectProvider {
   sources: readonly CollectSourceInfo[];
   /** Open a session with an account opened through openCloudAccountForCollect. */
   open(account: OpenCloudAccount): CloudCollectSession;
+  /**
+   * The key a shared daily query quota is counted under (#2312), from the account's NON-secret
+   * settings — Microsoft: the tenant id, so two accounts of one tenant share one count. Absent: the
+   * provider has no such quota. Only sources with a `queryCost` draw on it.
+   */
+  quotaScope?(settings: Readonly<Record<string, unknown>>): string | undefined;
+  /** Throttle retries one collection run may spend (#2312). Default DEFAULT_RETRY_BUDGET. */
+  retryBudget?: number;
 }
 
 /** The providers this server can collect with, keyed by provider. Empty until #2313–#2315. */
 export type CloudCollectProviders = Partial<Record<CloudProvider, CloudCollectProvider>>;
+
+/**
+ * The cloud said slow down (#2312): HTTP 429, ThrottlingException, RESOURCE_EXHAUSTED. Providers
+ * throw this with the Retry-After they were given; the engine backs off and retries the same request.
+ */
+export class RateLimitedError extends Error {
+  constructor(
+    readonly retryAfterMs?: number,
+    message = "rate limited by the cloud",
+  ) {
+    super(message);
+    this.name = "RateLimitedError";
+  }
+}
 
 /** A page token the cloud no longer accepts. */
 export class CursorExpiredError extends Error {
@@ -105,6 +178,8 @@ export interface ManifestHeader {
   sdkVersions: Record<string, string>;
   companionVersion: string;
   startedAt: string;
+  /** Per source: the ingestion-delay overlap this collection discloses its cutoff with (#2312). */
+  overlapMs?: Record<string, number>;
 }
 
 export interface ManifestPage {
@@ -121,6 +196,22 @@ export interface ManifestPage {
   bytes: number;
   sha256: string;
   records: number;
+  /** #2312: why this page ended its sub-window as capped — the cloud said so, or the page cap. */
+  capped?: "provider" | "page-cap";
+  acquiredUntil?: string;
+}
+
+/**
+ * A capped sub-window, decided (#2312). Appended BEFORE the first child is fetched, so replay
+ * rebuilds the tree. `time`: two halves; `partition`: the same window per partition value;
+ * `too-dense`: a minimum window still capped with nothing left to split by — given up, disclosed.
+ */
+export interface ManifestSplit {
+  type: "split";
+  subWindowId: string;
+  mode: "time" | "partition" | "too-dense";
+  children: Array<{ id: string; window: CollectWindow; partition?: Record<string, string> }>;
+  at: string;
 }
 
 /** A sub-window started over: its earlier pages stay evidence, its cursor does not. */
@@ -149,11 +240,15 @@ export interface ManifestResume {
 }
 
 export type ManifestEntry =
-  ManifestHeader | ManifestPage | ManifestRestart | ManifestQuarantine | ManifestResume;
+  ManifestHeader | ManifestPage | ManifestRestart | ManifestQuarantine | ManifestResume | ManifestSplit;
 
 // ── Checkpoint and result ─────────────────────────────────────────────────────────────────────
 
-export type SubWindowState = "pending" | "done" | "failed";
+/**
+ * `capped`: a capped page is saved but the split is not yet decided (replay re-decides it);
+ * `split`: re-collected by its children; `incomplete`: too dense even at the minimum window.
+ */
+export type SubWindowState = "pending" | "done" | "failed" | "capped" | "split" | "incomplete";
 
 export interface SubWindowStatus {
   id: string;
@@ -164,8 +259,25 @@ export interface SubWindowStatus {
   pages: number;
   records: number;
   restarts: number;
-  /** Why a failed sub-window is missing. */
+  /** Why a failed or incomplete sub-window is missing. */
   reason?: string;
+  /** #2312 split tree: the parent's id, and the slice a partition child collects. */
+  parent?: string;
+  partition?: Record<string, string>;
+  capped?: "provider" | "page-cap";
+  /** When its first page came back (the disclosed cutoff is measured from it). */
+  firstRetrievedAt?: string;
+  acquiredUntil?: string;
+}
+
+/** Per source, how far the collection really got (#2312): never "complete" past this. */
+export interface SourceCoverage {
+  source: string;
+  requested: CollectWindow;
+  overlapMs: number;
+  /** The newest time this collection's results are settled up to; absent when the end is missing. */
+  acquiredCutoff?: string;
+  notes: string[];
 }
 
 export type CollectionStatus = "running" | "interrupted" | "complete" | "partial" | "failed";
@@ -201,8 +313,10 @@ export interface CollectionCheckpoint {
   imported: string[];
   quarantined: QuarantinedFile[];
   missing: MissingWindow[];
-  /** A stop that ended the network stage early (disk full, write error). */
+  /** A stop that ended the network stage early (disk full, write error, budget used). */
   stopReason?: string;
+  /** #2312: the acquired cutoff and retention notes per source, written at the end of a run. */
+  coverage?: SourceCoverage[];
   error?: string;
   startedAt: string;
   updatedAt: string;

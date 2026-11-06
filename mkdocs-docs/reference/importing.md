@@ -2815,6 +2815,44 @@ only then given its manifest line, which is flushed too. Linux and macOS also fl
 the rename. Windows cannot flush a folder, so there a power cut right after a rename can leave a page
 with no manifest line — which the next Resume finds and quarantines as above.
 
+### Before a collection: the pre-check
+
+**Check and start…** runs a pre-check first and shows it; nothing starts until you press
+**Confirm and start**. Per source it lists:
+
+- **Retention.** The part of the window older than the source keeps, where nothing can come back:
+  Entra sign-in and audit logs 7 days (Free) or 30 days (P1/P2), the unified audit log 180 or 365
+  days, CloudTrail `LookupEvents` 90 days, Azure Activity 90 days. GCP Data Access audit logs are
+  off by default, so only services someone enabled have any.
+- **Ingestion delay.** Clouds deliver logs late. Each source has a default overlap — AWS 15 min,
+  Microsoft Graph 60 min, GCP 5 min — and you can set your own in **Ingestion overlap (min)**. These
+  are defaults, not completeness guarantees.
+- **Microsoft query quota.** The submissions this collection needs at least, and how many this
+  companion has used for the tenant in the last 24 hours — *used by this companion (estimate)*,
+  never "what the tenant has left". See `DFIR_CLOUD_M365_QUERY_BUDGET` in Settings. A start is
+  refused when the budget is already used.
+
+### Dense windows, throttling and completeness
+
+**Dense windows split.** When the cloud caps a window's results (Graph `isRecordCountLimitExceeded`,
+or a page cap), the window is collected again as two halves, and again, down to the source's
+minimum window (1 minute for Graph, 1 second for CloudTrail and GCP). At the minimum it falls back
+on partitions (Graph: record type or service; GCP: log name; AWS: region). A window that is still
+capped is marked **incomplete — too dense** and the collection moves on. The capped pages stay
+evidence and are imported; deduplication removes the records the smaller windows return again.
+Every split is a manifest line, so a Resume continues the same tree. Each split costs Microsoft
+query submissions: a window split into N pieces costs about 2N−1.
+
+**Throttling.** Requests are paced per source (Graph sign-ins 5 per 10 s, CloudTrail `LookupEvents`
+2 per second per region, GCP 60 per minute). On HTTP 429 or a `Retry-After` the collection waits
+and retries, from a retry budget per run; a window whose retries run out is listed as missing.
+
+**What the result says.** Every window that is incomplete is listed with its reason — too dense,
+budget used, a provider error. Each source also shows its **acquired cutoff**: the newest time its
+results are settled up to, which is when the end of the window was read minus the overlap (or
+earlier, when the source itself says so — a GCS sink's last complete hourly batch). To pick up
+later events, collect again from the cutoff; overlapping windows are safe.
+
 ## What the log says about an import
 
 Every import — the Import button, a server path, the drop folder, a push, an external tool, MCP, a
