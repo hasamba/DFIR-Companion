@@ -396,7 +396,8 @@ describe("the cloud accounts list (team mode)", () => {
     const sharedRow = mine.body.accounts.find((a: { name: string }) => a.name === "Shared");
     expect(sharedRow.caseIds).toEqual(["c1"]);
     expect(sharedRow.otherCases).toBe(1);
-    expect(JSON.stringify(sharedRow)).not.toContain("c3");
+    // Whole-word match: the row's random UUID id can contain "c3" as hex (a flake, #2347).
+    expect(JSON.stringify(sharedRow)).not.toMatch(/\bc3\b/);
     const mineRow = mine.body.accounts.find((a: { name: string }) => a.name === "Mine");
     expect(mineRow.createdBy.displayName).toBe("alice");
     expect(mineRow.cases).toEqual([{ caseId: "c1", status: "open" }]);
@@ -421,7 +422,7 @@ describe("the cloud accounts list (team mode)", () => {
       .set("X-DFIR-CSRF", csrf)
       .send({ ids: [shared.id] });
     expect(refused.status).toBe(403);
-    expect(refused.text).not.toContain("c3");
+    expect(refused.text).not.toMatch(/\bc3\b/);
     expect(vault.list()).toHaveLength(2);
     const ok = await agents.admin.agent
       .delete(`/cloud-accounts/${leftover.id}`)
