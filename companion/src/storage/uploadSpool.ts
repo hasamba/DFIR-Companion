@@ -105,6 +105,9 @@ function pump(
     req.on("close", onClose);
     req.on("error", fail);
     out.on("error", fail);
+    // The client may have hung up while the spool file was being opened: "close" then fired before
+    // these listeners existed, so settle through the failure path now instead of waiting forever.
+    if (req.destroyed && !req.complete) return fail(new UploadAbortedError());
     req.resume();
   });
 }
