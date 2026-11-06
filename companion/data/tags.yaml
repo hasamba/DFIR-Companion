@@ -990,7 +990,10 @@ ts_aws_iam_persistence:
 ts_aws_identity_center:
   description: AWS IAM Identity Center API call (Timesketch SuspicousIICActivity)
   any:
-    - { field: description, regex: '^AWS (?:StartSSO|CreateUser|CreateGroup|AddMemberToGroup|CreatePermissionSet|CreateAccountAssignment|Authenticate|Federate|AssumeRoleWithSAML) \(', flags: 'i' }
+    - { field: description, regex: '^AWS (?:StartSSO|CreatePermissionSet|CreateAccountAssignment|Authenticate|Federate|AssumeRoleWithSAML) \(', flags: 'i' }
+    # CreateUser / CreateGroup / AddMemberToGroup are also IAM, Transfer Family, WorkMail and Resource
+    # Groups calls: only the Identity Center directory services count here (#2358).
+    - { field: description, regex: '^AWS (?:CreateUser|CreateGroup|AddMemberToGroup) \((?:sso|sso-directory|identitystore|identitystore-scim)\)', flags: 'i' }
   tags: ['SuspicousIICActivity']
   view: 'AWS CloudTrail'
 
@@ -1011,7 +1014,8 @@ ts_aws_network_acl_changed:
 ts_aws_route_table_changed:
   description: AWS route-table change (Timesketch NetworkChanged RouteTable)
   any:
-    - { field: description, regex: '^AWS (?:CreateRoute|CreateRouteTable|DeleteRoute|DeleteRouteTable|DisassociateRouteTable|ReplaceRoute|ReplaceRouteTableAssociation) \(', flags: 'i' }
+    # EC2 only: API Gateway v2 also records CreateRoute / DeleteRoute (#2358).
+    - { field: description, regex: '^AWS (?:CreateRoute|CreateRouteTable|DeleteRoute|DeleteRouteTable|DisassociateRouteTable|ReplaceRoute|ReplaceRouteTableAssociation) \(ec2\)', flags: 'i' }
   tags: ['NetworkChanged', 'RouteTable']
   view: 'AWS network changes'
 
@@ -1534,20 +1538,16 @@ td_aws_resource_development:
 #   calls on the project's behalf.
 
 gcp_iam_custom_role_updated:
-  description: GCP custom IAM role updated — permissions can be added to a role the caller already holds
-  # Medium: Rhino privilege-escalation method 3 (iam.roles.update). Panther grades it High
-  # (iam_roles_update_privilege_escalation) and Info (iam_custom_role_changes) — the lower dedicated
-  # grade of the two sets is used, as routine role maintenance looks the same. The importer's
-  # role-change entry is meant to grade this Medium but its pattern does not match the real method
-  # name (google.iam.admin.v1.UpdateRole), so this rule is the only grade.
+  description: GCP custom IAM role updated — permissions can be added to a role the caller already holds (tag only)
+  # Rhino privilege-escalation method 3 (iam.roles.update). Tag only since #2358: the GCP importer
+  # grades UpdateRole Medium + T1098.003 itself (gcpSeverityRules.ts), so a severity here would only
+  # duplicate it. The rule keeps the privilege-escalation tags and the GCP IAM view.
   all:
     - { field: description, regex: '^GCP (?:[\w.-]+\.)?UpdateRole \(iam\)', flags: 'i' }
   none:
     - { field: description, regex: '\[DENIED' }
     - { field: description, regex: ' by (?:service-\d+@|\d+@cloudservices\.gserviceaccount\.com|[^ @]+@gcp-sa-)', flags: 'i' }
   tags: ['gcp_iam', 'privilege_escalation', 'rhino_privesc']
-  mitre: ['T1098.003']
-  severity: Medium
   view: 'GCP IAM'
 
 gcp_org_policy_removed:

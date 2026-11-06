@@ -396,6 +396,35 @@ describe("bundled data/tags.yaml — Timesketch AWS/GCS parity", () => {
     expect(aws("CreatePermissionSet", "sso.amazonaws.com").ruleIds).toContain("ts_aws_identity_center");
   });
 
+  it("tags Identity Center user / group creation only from Identity Center services (#2358)", () => {
+    for (const source of [
+      "identitystore.amazonaws.com",
+      "identitystore-scim.amazonaws.com",
+      "sso-directory.amazonaws.com",
+    ]) {
+      expect(aws("CreateUser", source).ruleIds, source).toContain("ts_aws_identity_center");
+      expect(aws("CreateGroup", source).ruleIds, source).toContain("ts_aws_identity_center");
+    }
+    expect(aws("AddMemberToGroup", "sso-directory.amazonaws.com").ruleIds).toContain(
+      "ts_aws_identity_center",
+    );
+    for (const source of ["iam.amazonaws.com", "transfer.amazonaws.com", "workmail.amazonaws.com"]) {
+      expect(aws("CreateUser", source).ruleIds, source).not.toContain("ts_aws_identity_center");
+    }
+    expect(aws("CreateGroup", "iam.amazonaws.com").ruleIds).not.toContain("ts_aws_identity_center");
+    expect(aws("CreateGroup", "resource-groups.amazonaws.com").ruleIds).not.toContain(
+      "ts_aws_identity_center",
+    );
+  });
+
+  it("tags route changes only from EC2, not API Gateway routes (#2358)", () => {
+    expect(aws("CreateRoute").ruleIds).toContain("ts_aws_route_table_changed");
+    expect(aws("DeleteRoute").ruleIds).toContain("ts_aws_route_table_changed");
+    for (const name of ["CreateRoute", "DeleteRoute"]) {
+      expect(aws(name, "apigateway.amazonaws.com").ruleIds, name).not.toContain("ts_aws_route_table_changed");
+    }
+  });
+
   it("tags NetworkChanged families (SG / NACL / RouteTable / VPC / GW)", () => {
     expect(aws("AuthorizeSecurityGroupIngress").ruleIds).toContain("ts_aws_security_group_changed");
     expect(aws("CreateNetworkAcl").ruleIds).toContain("ts_aws_network_acl_changed");

@@ -76,17 +76,6 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    rule: "gcp_iam_custom_role_updated",
-    severity: "Medium",
-    fires: [rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com")],
-    quiet: [
-      rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com", AGENT),
-      denied(rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com")),
-      rec("google.iam.admin.v1.CreateRole", "iam.googleapis.com"),
-      rec("google.iam.admin.v1.GetRole", "iam.googleapis.com"),
-    ],
-  },
-  {
     rule: "gcp_org_policy_removed",
     severity: "Medium",
     fires: [
@@ -317,6 +306,22 @@ describe("ported GCP rules (#2346) — tag-only rules", () => {
     ["gcp_credential_access", rec("google.api.apikeys.v2.ApiKeys.GetKeyString", "apikeys.googleapis.com")],
     ["gcp_discovery", rec("google.iam.admin.v1.ListServiceAccountKeys", "iam.googleapis.com")],
   ];
+  it("gcp_iam_custom_role_updated tags UpdateRole while the importer grades it (#2358)", () => {
+    const rule = RULES.rules.find((x) => x.id === "gcp_iam_custom_role_updated");
+    expect(rule?.severity).toBeUndefined();
+    expect(rule?.view).toBe("GCP IAM");
+    const g = grade(rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com"));
+    expect(g.ids).toContain("gcp_iam_custom_role_updated");
+    expect(g.tagger).toBeUndefined();
+    expect(g.importer).toBe("Medium");
+    for (const quiet of [
+      rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com", AGENT),
+      denied(rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com")),
+      rec("google.iam.admin.v1.GetRole", "iam.googleapis.com"),
+    ]) {
+      expect(grade(quiet).ids).not.toContain("gcp_iam_custom_role_updated");
+    }
+  });
   for (const [id, r] of tagOnly) {
     it(`${id} tags ${String((r.protoPayload as Row).methodName)} without grading it`, () => {
       const rule = RULES.rules.find((x) => x.id === id);
