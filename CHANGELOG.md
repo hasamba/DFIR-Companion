@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live Microsoft 365, Entra and Azure Activity collection** — collect the unified audit log via Graph AuditLogQuery (status shown, capped windows split), Entra directory audits and sign-ins per category, and Azure Activity per subscription as manifest-backed evidence; PFX certificates are converted in memory only (part of #2315)
 - **Cloud collection quotas, window splitting and completeness** — a pre-check shows retention, overlap and quota estimates; capped windows split down to a minimum then partition; a per-tenant Microsoft query budget (`DFIR_CLOUD_M365_QUERY_BUDGET`) persists across jobs and restarts; 429 back-off; each source discloses its acquired cutoff (closes #2312)
 - **Cloud account read check and minimum policies** — Check access tests one read per selected source and says which reads succeeded or failed, never claiming read-only; the minimum AWS, Microsoft and GCP read policies show at add time and in the manual (closes #2309)
 - **Durable cloud collection with an evidence manifest** — Cloud Collection panel runs collections as resumable jobs; every page is saved with a SHA-256 in an append-only manifest, orphans are quarantined, resume never loses or duplicates evidence or events, and results are complete, partial or failed (closes #2311)
