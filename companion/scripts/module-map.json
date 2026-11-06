@@ -891,6 +891,7 @@
     "taggerRulesMerge.ts": "analysis/findings",
     "rulePackCheck.ts": "analysis/findings",
     "rulePackClient.ts": "analysis/findings",
+    "rulePackLayout.ts": "analysis/findings",
     "rulePackManifest.ts": "analysis/findings",
     "rulePackMeasure.ts": "analysis/findings",
     "rulePackStore.ts": "analysis/findings",

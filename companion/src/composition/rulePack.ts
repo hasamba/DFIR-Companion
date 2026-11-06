@@ -12,6 +12,12 @@ let store: RulePackStore | undefined;
 /** Set up the installed-pack store under `<dataRoot>/tagger/pack`. Called once by the runtime stores. */
 export function configureRulePack(dataRoot: string, appVersion: string): RulePackStore {
   store = new RulePackStore(join(dataRoot, "tagger", "pack"), appVersion);
+  // Sweep what an interrupted install left behind. Readers never wait on it: they resolve the
+  // active pack through its pointer, which leftovers cannot affect; install and roll back do wait.
+  void store.recover().then((failed) => {
+    if (failed.length)
+      getServerLogger().warn(`Rule pack cleanup left ${failed.length} item(s): ${failed.join(", ")}`);
+  });
   return store;
 }
 

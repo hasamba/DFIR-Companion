@@ -2,12 +2,15 @@
 // for review (downloaded and verified, or from a file), install a staged pack, roll back to the
 // previous pack or to the rules bundled with the app.
 //
-// LAYOUT, under <dataRoot>/tagger/pack/:
-//   current/tags.yaml + current/pack.json    the installed pack and its record
-//   previous/tags.yaml + previous/pack.json  the pack it replaced, for Roll back
-// A new pack is written to a fresh staging folder first and renamed into place, so a failed write
-// never leaves a half-installed pack; the record carries the rules file's SHA-256 and a pack whose
-// bytes no longer match it is not used (the bundled rules win and the status says why).
+// LAYOUT, under <dataRoot>/tagger/pack/ (rulePackLayout.ts): one immutable folder per installed
+// pack, and a small pointer file naming the current pack and the previous one (for Roll back).
+// Install writes the new pack's folder completely, then atomically replaces the pointer; Roll back
+// only replaces the pointer. A reader therefore always resolves the old pack or the new one — there
+// is never a moment with no pack — and a failure at any step leaves the pack in use unchanged. A
+// folder is removed only after the pointer stopped naming it; leftovers from a crash are swept by
+// recover() at startup. The record carries the rules file's SHA-256 and a pack whose bytes no longer
+// match it is not used (the bundled rules win and the status says why). A pointer that cannot be read
+// is reported the same way — visibly, never as a silent "no pack".
 //
 // WHERE A PACK SITS. The tagger store's precedence is TAGGER_RULES_FILE > analyst-edited copy >
 // installed pack > bundled (taggerStore.ts). This store only answers "which pack is in use";
@@ -18,9 +21,16 @@
 // Nothing installs without install(token): check and file previews only stage, in memory.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StateLock } from "./stateLock.js";
+import {
+  PackLayout,
+  defaultPackFs,
+  newPackId,
+  pointerIds,
+  type PackFs,
+  type PackPointer,
+} from "./rulePackLayout.js";
 import { compileText, type PackRulesProvider } from "./taggerStore.js";
 import { RULE_PACK_UPSTREAM } from "./taggerRulesBase.js";
 import { sha256Hex } from "./githubReleaseDownload.js";
@@ -99,34 +109,110 @@ export interface StageInput {
   htmlUrl?: string;
 }
 
+interface PackRead {
+  pack: InstalledPack;
+  text: string;
+  path: string;
+}
+
+/** The pointer as resolved: the current pack's files, or why there is none. */
+interface Resolved {
+  /** null when the pointer cannot be trusted (corrupt). */
+  pointer: PackPointer | null;
+  current: PackRead | null;
+  /** Set when the pointer names a pack that cannot be used for a reason other than its content. */
+  problem?: string;
+}
+
+const NO_PACK: PackPointer = { current: null, previous: null };
+const RESOLVE_RETRIES = 3;
+
 export class RulePackStore implements PackRulesProvider {
   private readonly staged = new Map<string, StagedPack & { expires: number }>();
+  private readonly layout: PackLayout;
+  private recovered?: Promise<string[]>;
   lastCheck?: RulePackCheckRecord;
 
   constructor(
     private readonly dir: string,
     readonly appVersion: string,
-  ) {}
-
-  private slot(name: "current" | "previous"): string {
-    return join(this.dir, name);
+    /** The fs seam: tests fail or delay a single step through it. */
+    private readonly fs: PackFs = defaultPackFs,
+  ) {
+    this.layout = new PackLayout(dir, fs);
   }
 
-  private async readSlot(
-    name: "current" | "previous",
-  ): Promise<{ pack: InstalledPack; text: string } | null> {
+  private async readPack(id: string): Promise<PackRead | null> {
+    const folder = this.layout.packDir(id);
     try {
-      const pack = JSON.parse(await readFile(join(this.slot(name), "pack.json"), "utf8")) as InstalledPack;
-      const text = await readFile(join(this.slot(name), "tags.yaml"), "utf8");
+      const pack = JSON.parse(await this.fs.readFile(join(folder, "pack.json"), "utf8")) as InstalledPack;
+      const path = join(folder, "tags.yaml");
+      const text = await this.fs.readFile(path, "utf8");
       if (!pack || typeof pack.version !== "string" || typeof pack.rulesSha256 !== "string") return null;
-      return { pack, text };
+      return { pack, text, path };
     } catch {
-      return null; // absent or unreadable: no pack in that slot
+      return null; // absent or unreadable
     }
   }
 
+  /**
+   * Resolve the pointer to the current pack. A folder that vanished under a reader (a later install
+   * cleaned it up after the pointer moved on) is retried against the new pointer, so a concurrent
+   * reader never mistakes a switch for "no pack".
+   */
+  private async resolve(): Promise<Resolved> {
+    for (let attempt = 0; ; attempt++) {
+      const read = await this.layout.readPointer();
+      if (read.kind === "missing") return { pointer: NO_PACK, current: null };
+      if (read.kind === "corrupt") {
+        return {
+          pointer: null,
+          current: null,
+          problem: `the record of the installed rule pack (active.json) is unreadable — ${read.reason}; the bundled rules are used until a pack is installed or rolled back`,
+        };
+      }
+      const { pointer } = read;
+      if (!pointer.current) return { pointer, current: null };
+      const current = await this.readPack(pointer.current);
+      if (current) return { pointer, current };
+      const again = await this.layout.readPointer();
+      const moved = again.kind !== "ok" || again.pointer.current !== pointer.current;
+      if (moved && attempt < RESOLVE_RETRIES) continue;
+      return {
+        pointer,
+        current: null,
+        problem: `the installed rule pack's files are missing or unreadable; the bundled rules are used`,
+      };
+    }
+  }
+
+  /**
+   * Startup recovery, once per store: sweep staging leftovers, pointer temp files and pack folders
+   * the pointer no longer names. With an unreadable pointer no pack folder is touched. Returns the
+   * paths that could not be removed (they are retried at the next start). Never throws.
+   */
+  recover(): Promise<string[]> {
+    this.recovered ??= lock
+      .runExclusive(this.dir, async () => {
+        const read = await this.layout.readPointer();
+        const keep =
+          read.kind === "ok" ? pointerIds(read.pointer) : read.kind === "missing" ? new Set<string>() : null;
+        return this.layout.sweep(keep);
+      })
+      .catch((err: Error) => [`${this.dir}: ${err.message}`]);
+    return this.recovered;
+  }
+
+  /** Switch the pointer, then remove the folders it no longer names. A failed switch changes nothing. */
+  private async activate(before: PackPointer | null, next: PackPointer): Promise<void> {
+    await this.layout.writePointer(next);
+    if (!before) return; // an untrusted old pointer: leave its folders to recovery, never guess
+    const keep = pointerIds(next);
+    await this.layout.removePacks([...pointerIds(before)].filter((id) => !keep.has(id)));
+  }
+
   /** Why the installed pack is not used, or undefined when it is. */
-  private unusable(slot: { pack: InstalledPack; text: string }): string | undefined {
+  private unusable(slot: PackRead): string | undefined {
     if (sha256Hex(slot.text) !== slot.pack.rulesSha256)
       return `the installed rule pack's file no longer matches its recorded SHA-256; the bundled rules are used`;
     if (slot.pack.minAppVersion && packFit(slot.pack.minAppVersion, this.appVersion) === "superseded")
@@ -136,27 +222,22 @@ export class RulePackStore implements PackRulesProvider {
 
   /** PackRulesProvider: the installed pack's rules while it is in use. */
   async activeRules(): Promise<{ text: string; path: string; id: string; label: string } | null> {
-    const cur = await this.readSlot("current");
-    if (!cur || this.unusable(cur)) return null;
-    return {
-      text: cur.text,
-      path: join(this.slot("current"), "tags.yaml"),
-      id: RULE_PACK_UPSTREAM,
-      label: packLabel(cur.pack),
-    };
+    const { current } = await this.resolve();
+    if (!current || this.unusable(current)) return null;
+    return { text: current.text, path: current.path, id: RULE_PACK_UPSTREAM, label: packLabel(current.pack) };
   }
 
   async status(): Promise<PackStatus> {
-    const cur = await this.readSlot("current");
-    const prev = await this.readSlot("previous");
-    const problem = cur ? this.unusable(cur) : undefined;
+    const res = await this.resolve();
+    const prev = res.pointer?.previous ? await this.readPack(res.pointer.previous) : null;
+    const problem = res.problem ?? (res.current ? this.unusable(res.current) : undefined);
     return {
       appVersion: this.appVersion,
-      installed: cur?.pack ?? null,
+      installed: res.current?.pack ?? null,
       previous: prev?.pack ?? null,
       superseded: !!problem && /older than the rules bundled/.test(problem),
       ...(problem ? { problem } : {}),
-      inUse: cur && !problem ? "pack" : "bundled",
+      inUse: res.current && !problem ? "pack" : "bundled",
       ...(this.lastCheck ? { lastCheck: this.lastCheck } : {}),
     };
   }
@@ -222,53 +303,48 @@ export class RulePackStore implements PackRulesProvider {
     const s = this.getStaged(token);
     if (!s)
       throw new RulePackError("that review has expired; check for updates or choose the file again", 410);
+    await this.recover();
     return lock.runExclusive(this.dir, async () => {
       const pack: InstalledPack = { ...s.pack, installedAt: new Date().toISOString() };
-      const stagingDir = join(this.dir, `staging-${randomUUID()}`);
-      await mkdir(stagingDir, { recursive: true });
+      const before = await this.resolve();
+      const id = newPackId(pack.rulesSha256);
+      await this.layout.writePack(id, {
+        "tags.yaml": s.rulesText,
+        "pack.json": JSON.stringify(pack, null, 2) + "\n",
+      });
+      // A current pack that cannot be read is dropped, not kept for Roll back; the previous stays.
+      const previous = before.current ? before.pointer!.current : (before.pointer?.previous ?? null);
       try {
-        await writeFile(join(stagingDir, "tags.yaml"), s.rulesText);
-        await writeFile(join(stagingDir, "pack.json"), JSON.stringify(pack, null, 2) + "\n");
-        await this.shiftCurrentToPrevious();
-        await rename(stagingDir, this.slot("current"));
-      } finally {
-        await rm(stagingDir, { recursive: true, force: true });
+        await this.activate(before.pointer, { current: id, previous });
+      } catch (err) {
+        await this.layout.removePacks([id]); // the pointer never named it; recovery sweeps it if this fails
+        throw err;
       }
       this.staged.delete(token);
       return pack;
     });
   }
 
-  private async shiftCurrentToPrevious(): Promise<void> {
-    if (!(await this.readSlot("current"))) {
-      await rm(this.slot("current"), { recursive: true, force: true });
-      return;
-    }
-    await rm(this.slot("previous"), { recursive: true, force: true });
-    await rename(this.slot("current"), this.slot("previous"));
-  }
-
   /**
    * "previous": the previous pack becomes the installed one, and the one it replaces becomes the
    * previous (so the step can be undone). "bundled": no pack is installed; the removed one becomes
-   * the previous. Returns the installed pack afterwards, or null for the bundled rules.
+   * the previous. Returns the installed pack afterwards, or null for the bundled rules. Only the
+   * pointer changes, so a failure leaves the pack in use as it was.
    */
   async rollback(to: "previous" | "bundled"): Promise<InstalledPack | null> {
+    await this.recover();
     return lock.runExclusive(this.dir, async () => {
+      const before = await this.resolve();
+      const currentId = before.current ? before.pointer!.current : null;
       if (to === "bundled") {
-        if (!(await this.readSlot("current")))
-          throw new RulePackError("no rule pack is installed; the bundled rules are in use");
-        await this.shiftCurrentToPrevious();
+        if (!currentId) throw new RulePackError("no rule pack is installed; the bundled rules are in use");
+        await this.activate(before.pointer, { current: null, previous: currentId });
         return null;
       }
-      const prev = await this.readSlot("previous");
-      if (!prev) throw new RulePackError("there is no previous rule pack to roll back to");
-      const swap = join(this.dir, `swap-${randomUUID()}`);
-      const hadCurrent = !!(await this.readSlot("current"));
-      if (hadCurrent) await rename(this.slot("current"), swap);
-      else await rm(this.slot("current"), { recursive: true, force: true });
-      await rename(this.slot("previous"), this.slot("current"));
-      if (hadCurrent) await rename(swap, this.slot("previous"));
+      const prevId = before.pointer?.previous ?? null;
+      const prev = prevId ? await this.readPack(prevId) : null;
+      if (!prevId || !prev) throw new RulePackError("there is no previous rule pack to roll back to");
+      await this.activate(before.pointer, { current: prevId, previous: currentId });
       return prev.pack;
     });
   }

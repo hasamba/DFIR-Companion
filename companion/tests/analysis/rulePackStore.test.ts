@@ -148,7 +148,8 @@ describe("rule pack store", () => {
 
   it("a pack whose file was altered on disk is not used", async () => {
     await packs.install(downloaded(r("one") + r("x"), "rules-2026.11.05").token);
-    await writeFile(join(dir, "tagger", "pack", "current", "tags.yaml"), r("tampered", "Critical"));
+    const installedPath = (await packs.activeRules())!.path; // the pack's own folder, named by the pointer
+    await writeFile(installedPath, r("tampered", "Critical"));
     expect((await tagger.readActive()).source).toBe("default");
     expect((await packs.status()).problem).toMatch(/no longer matches/);
   });
