@@ -13,12 +13,14 @@
 // first page `capped`: the engine stops paging it and re-collects the window as two halves, and at
 // one minute, once per record type (ualRecordTypes.ts).
 //
-// A throttled poll is waited out here, inside the step; a throttled CREATE goes back to the engine
+// A throttled poll is waited out here, inside the step (its Retry-After honoured, within the same
+// wait ceiling as the query itself); a throttled CREATE goes back to the engine
 // as RateLimitedError (a retried create is a new submission, and the engine charges it again). A
 // query created but not yet paged is remembered per sub-window, so a retry after a throttled first
 // page reuses it instead of submitting a second one.
 
 import type { CollectPage, CollectPageRequest } from "../cloudCollect/collectTypes.js";
+import { parseRetryAfter } from "../cloudCollect/collectRateLimit.js";
 import {
   assertLink,
   failure,
@@ -110,8 +112,16 @@ async function waitForQuery(
     });
     const elapsed = timing.now() - started;
     if (answer.status === 429) {
+      // Bounded like any other wait: the ceiling is checked on every throttled poll too, so
+      // sustained throttling ends in a resumable failure instead of stalling the stage forever.
+      const left = maxWait - elapsed;
+      if (left <= 0)
+        throw new Error(
+          `the audit query poll was throttled by Microsoft for ${minutes(elapsed)}; resume later to try again`,
+        );
+      const asked = parseRetryAfter(answer.headers["retry-after"], timing.now()) ?? THROTTLED_POLL_MS;
       req.onStatus?.(`audit query throttled by Microsoft — waiting (${minutes(elapsed)} so far)`);
-      await timing.sleep(THROTTLED_POLL_MS, req.signal);
+      await timing.sleep(Math.min(Math.max(1000, asked), left), req.signal);
       continue;
     }
     if (answer.status < 200 || answer.status >= 300)

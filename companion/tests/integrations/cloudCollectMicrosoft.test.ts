@@ -12,7 +12,10 @@ import {
   UAL_SOURCE,
 } from "../../src/integrations/cloudCollectMicrosoft/microsoftSources.js";
 import { UAL_RECORD_TYPES } from "../../src/integrations/cloudCollectMicrosoft/ualRecordTypes.js";
-import { NO_SUBSCRIPTION } from "../../src/integrations/cloudCollectMicrosoft/azureActivitySource.js";
+import {
+  listSubscriptions,
+  NO_SUBSCRIPTION,
+} from "../../src/integrations/cloudCollectMicrosoft/azureActivitySource.js";
 import { rateKey } from "../../src/integrations/cloudCollect/collectRateLimit.js";
 import { fakeClock } from "../helpers/cloudCollectDense.js";
 import {
@@ -192,6 +195,23 @@ describe("unified audit log: the AuditLogQuery lifecycle", () => {
     await expect(slow.session.fetchPage(req(UAL_SOURCE))).rejects.toThrow(/still "running" after 6\d min/);
   });
 
+  it("gives up on a poll throttled past the wait ceiling with a resumable reason (review finding)", async () => {
+    const { session: s, clock } = session({ throttle: { match: /queries\/[^/]+$/, times: 100_000 } });
+    const started = clock.now();
+    await expect(s.fetchPage(req(UAL_SOURCE))).rejects.toThrow(/throttled .*resume later/);
+    expect(clock.now() - started).toBeLessThanOrEqual(60 * 60_000);
+    expect(clock.sleeps.length).toBeLessThan(200);
+  });
+
+  it("honours a throttled poll's Retry-After", async () => {
+    const { session: s, clock } = session({
+      ual: [graphUalRecord(1, at(1))],
+      throttle: { match: /queries\/[^/]+$/, times: 2, retryAfter: "45" },
+    });
+    await s.fetchPage(req(UAL_SOURCE));
+    expect(clock.sleeps.slice(0, 2)).toEqual([45_000, 45_000]);
+  });
+
   it("returns a throttled CREATE to the engine as RateLimitedError with its Retry-After", async () => {
     const { session: s } = session({ throttle: { match: /queries$/, times: 1, retryAfter: "7" } });
     const err = await s.fetchPage(req(UAL_SOURCE)).catch((e: unknown) => e);
@@ -307,6 +327,35 @@ describe("Azure Activity: every readable subscription", () => {
       "eventTimestamp ge '2026-10-01T10:00:00.000Z' and eventTimestamp le '2026-10-01T10:59:59.999Z'",
     );
     expect(tenant.requests.filter((r) => new URL(r.url).pathname === "/subscriptions")).toHaveLength(1);
+  });
+
+  it("follows the subscription listing past 50 pages, to its end (review finding)", async () => {
+    const subs = Array.from(
+      { length: 60 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const tenant = mockTenant({ subscriptions: subs, subscriptionPageSize: 1 });
+    const found = await listSubscriptions(tenant.call, () => 0);
+    expect(found).toEqual([...subs].sort());
+    expect(tenant.requests).toHaveLength(60);
+  });
+
+  it("refuses a partial subscription list: a page cap reached with a nextLink left is an error", async () => {
+    const subs = Array.from(
+      { length: 5 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const tenant = mockTenant({ subscriptions: subs, subscriptionPageSize: 1 });
+    await expect(listSubscriptions(tenant.call, () => 0, undefined, 3)).rejects.toThrow(
+      /subscription discovery incomplete/,
+    );
+  });
+
+  it("names the subscription whose Activity log could not be read", async () => {
+    const { session: s } = session({ subscriptions: [SUB_A], deniedSubscriptions: [SUB_A] });
+    await expect(s.fetchPage(req("azure-activity"))).rejects.toThrow(
+      new RegExp(`subscription ${SUB_A}: HTTP 403 AuthorizationFailed`),
+    );
   });
 
   it("fails with what to grant when the app can read no subscription", async () => {

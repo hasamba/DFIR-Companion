@@ -24,6 +24,10 @@ export interface MockTenantOptions {
   /** Sign-ins; `signInEventTypes` and `createdDateTime` decide which filter matches them. */
   signIns?: Row[];
   subscriptions?: string[];
+  /** Subscriptions per listing page (default: all on one page); later pages follow nextLink. */
+  subscriptionPageSize?: number;
+  /** Subscriptions whose Activity log answers 403. */
+  deniedSubscriptions?: string[];
   /** Per subscription, Activity log records (`eventTimestamp`). */
   activity?: Record<string, Row[]>;
   /** Answer the next N requests whose URL matches with 429 and this Retry-After (seconds). */
@@ -140,15 +144,18 @@ export function mockTenant(opts: MockTenantOptions): MockTenant {
   };
 
   const arm = (url: URL): HttpAnswer => {
-    if (url.pathname === "/subscriptions")
-      return answer(200, {
-        value: (opts.subscriptions ?? []).map((subscriptionId) => ({ subscriptionId, state: "Enabled" })),
-      });
+    if (url.pathname === "/subscriptions") {
+      const all = (opts.subscriptions ?? []).map((subscriptionId) => ({ subscriptionId, state: "Enabled" }));
+      const per = opts.subscriptionPageSize ?? all.length + 1;
+      return answer(200, paged(withoutSkip(url), all, skipOf(url), per, "nextLink"));
+    }
     const m =
       /^\/subscriptions\/([^/]+)\/providers\/Microsoft\.Insights\/eventtypes\/management\/values$/.exec(
         url.pathname,
       );
     if (!m) return answer(404, { error: { code: "NotFound", message: "no such path" } });
+    if (opts.deniedSubscriptions?.includes(m[1]))
+      return answer(403, { error: { code: "AuthorizationFailed", message: "no read access" } });
     const { start, end } = timeRange(url.searchParams.get("$filter") ?? "", "eventTimestamp");
     const rows = (opts.activity?.[m[1]] ?? []).filter((r) => inWindow(r.eventTimestamp, start, end, true));
     return answer(200, paged(withoutSkip(url), rows, skipOf(url), size, "nextLink"));

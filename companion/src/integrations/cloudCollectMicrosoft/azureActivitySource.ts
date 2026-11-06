@@ -30,7 +30,8 @@ import {
 
 export const AZURE_ACTIVITY_SOURCE = "azure-activity";
 const SUBSCRIPTION_ID = /^[0-9a-fA-F-]{36}$/;
-const MAX_SUBSCRIPTION_PAGES = 50;
+/** A safety stop, far above any real tenant: reaching it with a nextLink left is an error. */
+export const MAX_SUBSCRIPTION_PAGES = 1000;
 
 export const NO_SUBSCRIPTION =
   "the app can read no Azure subscription: grant it the Reader role on each subscription to collect";
@@ -51,15 +52,25 @@ function parseToken(token: string): ActivityToken {
   throw new Error("the saved Azure Activity page token is unreadable");
 }
 
-/** The subscriptions the app can read, sorted by id. */
+/**
+ * The subscriptions the app can read, sorted by id — the WHOLE list, nextLink followed to its end.
+ * A list cut short would let the source finish "complete" without visiting the rest, so a listing
+ * still unfinished at the safety cap fails the source with that reason instead.
+ */
 export async function listSubscriptions(
   arm: HttpCall,
   nowMs: () => number,
   signal?: AbortSignal,
+  maxPages = MAX_SUBSCRIPTION_PAGES,
 ): Promise<string[]> {
   const ids = new Set<string>();
   let url: string | undefined = `${ARM_BASE}/subscriptions?api-version=${SUBSCRIPTIONS_API_VERSION}`;
-  for (let page = 0; url && page < MAX_SUBSCRIPTION_PAGES; page++) {
+  for (let page = 0; url; page++) {
+    if (page >= maxPages)
+      throw new Error(
+        `subscription discovery incomplete: the listing still had more after ${maxPages} pages, ` +
+          "so the Activity log was not collected rather than collected from part of the subscriptions",
+      );
     const answer = await arm({ method: "GET", url, ...(signal ? { signal } : {}) });
     if (answer.status < 200 || answer.status >= 300)
       throw failure(answer, { pageLink: page > 0, nowMs: nowMs() });
