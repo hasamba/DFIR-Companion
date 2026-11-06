@@ -12,7 +12,8 @@
  * The layers, and why each sits where it does:
  *   originGuard          browser origin + DNS-rebinding rejection, before anything reads the body
  *   securityHeaders      CSP/Trusted-Types on every response, including error responses
- *   demoModeReadOnlyGate blocks writes on the public demo before any route can act on them
+ *   demoModeReadOnlyGate blocks writes on the public demo before any route can act on them,
+ *                        and every cloud-account/collect route, GET included (#2308)
  *   requestLogger        so even a rejected request is logged
  *   operationalMetrics   counts what the logger logged
  *   preAuthBodyGate      team mode only: 401 before the generous parsers can read a stranger's body
@@ -42,7 +43,7 @@ import {
   parseCookieHeader,
 } from "../analysis/casePassword.js";
 import { isTeamAuthRoutePath, registerTeamAuthRoutes } from "../auth/authRoutes.js";
-import { resolveRequestPolicy } from "../auth/policy.js";
+import { isCloudRoutePath, resolveRequestPolicy } from "../auth/policy.js";
 import { setRequestAuthentication } from "../auth/types.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
@@ -128,6 +129,14 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
         return res
           .status(403)
           .json({ error: "Demo mode: filesystem browsing is disabled on the public demo." });
+      }
+      // Cloud accounts and cloud collection (#2308): refused outright, GET included — a list names
+      // credentials, and the demo is open to strangers. The routes refuse again on their own.
+      if (isCloudRoutePath(req.path)) {
+        return res.status(403).json({
+          error: "Demo mode: cloud accounts and cloud collection are disabled on the public demo.",
+          demo: true,
+        });
       }
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();

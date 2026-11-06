@@ -70,11 +70,16 @@ interface AccountMeta {
 /** An account opened with the vault key: the only shape that holds secrets. Never sent to a client. */
 export type OpenCloudAccount = AccountMeta & CloudCredential;
 
-/** What the vault writes to disk: the secrets as one sealed string. */
+/**
+ * What the vault writes to disk: the secrets as one sealed string. `caseIds` (#2308) are the cases
+ * that may use the account — plain metadata, never sealed. An account stored before #2308 has none
+ * and reads as unattached: only an instance administrator sees it until they attach it to a case.
+ */
 export type StoredCloudAccount = AccountMeta & {
   provider: CloudProvider;
   settings: AwsSettings | GcpSettings | MicrosoftSettings;
   sealed: string;
+  caseIds?: string[];
 };
 
 /** What a client sees. `locked` holds the reason when the vault cannot open the account. */
@@ -82,6 +87,8 @@ export type CloudAccountView = AccountMeta & {
   provider: CloudProvider;
   settings: AwsSettings | GcpSettings | MicrosoftSettings;
   storedSecrets: string[];
+  /** The cases attached to the account (#2308); empty for an unattached one. */
+  caseIds: string[];
   locked?: string;
 };
 

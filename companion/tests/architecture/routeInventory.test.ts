@@ -123,3 +123,18 @@ describe("route registration contract", () => {
     expect(last).toMatch(/^USE .*\/4$/);
   });
 });
+
+describe("demo-mode cloud refusal sits above the cloud routes (#2308)", () => {
+  // The recorded inventory is a non-demo app, so the demo gate is not in it. On the demo it must
+  // sit above every cloud-account route: it is the layer that refuses their GETs, which the rest of
+  // the demo gate lets through.
+  const demo = inventoryOf(
+    createApp(new CaseStore(mkdtempSync(join(tmpdir(), "dfir-route-inventory-demo-"))), { demoMode: true }),
+  ).stack;
+  it("registers demoModeReadOnlyGate before the first cloud-account route", () => {
+    const gate = demo.findIndex((e) => e.startsWith("USE ") && e.includes("demoModeReadOnlyGate"));
+    const firstCloud = demo.findIndex((e) => e.startsWith("ROUTE ") && e.includes("/cloud-accounts"));
+    expect(gate).toBeGreaterThan(-1);
+    expect(firstCloud).toBeGreaterThan(gate);
+  });
+});

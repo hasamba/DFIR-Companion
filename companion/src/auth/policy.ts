@@ -58,7 +58,8 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/velociraptor",
   "/importers",
   "/server-sets",
-  // Cloud accounts (#2307): every method, GET included — the list names credentials. #2308 rescopes.
+  // Cloud accounts (#2307): every method, GET included — the list names credentials. Since #2308
+  // this is the instance administrator's view of every account; case writers use the case routes.
   "/cloud-accounts",
 ];
 const CASE_ADMIN_SEGMENTS = [
@@ -103,6 +104,25 @@ export function isNonCasePath(path: string): boolean {
   return NON_CASE_PATHS.has(collectionPath(path));
 }
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
+// A case's cloud accounts and cloud collection (#2308): WRITE for every method, GET included.
+// Listing names the credentials a case holds, so a reader must not see it; any writer may add an
+// account to the case and collect with it. The route then checks the cases the account is attached
+// to (routes/cloudAccountAccess.ts). Matched against the lowercased suffix like the patterns below.
+const CASE_CLOUD_WRITE_PATTERN = /^\/cloud-(?:accounts|collect)(?:\/|$)/;
+// The same routes from the top: the global admin list and the case routes. The demo gate refuses
+// every one of them, GET included (composition/httpStack.ts).
+const CLOUD_ROUTE_PATTERN = /^(?:\/cases\/[^/]+)?\/cloud-(?:accounts|collect)(?:\/|$)/;
+
+/** True for every cloud-account and cloud-collect route, global or case, in Express's spelling. */
+export function isCloudRoutePath(rawPath: string): boolean {
+  const spellings = [rawPath];
+  try {
+    spellings.push(decodeURIComponent(rawPath));
+  } catch {
+    // An undecodable path is still checked as sent.
+  }
+  return spellings.some((path) => CLOUD_ROUTE_PATTERN.test(path.toLowerCase()));
+}
 /**
  * A BUCKET IS CHOSEN BY THE ROUTE, NEVER BY A VALUE THE ROUTE CARRIES.
  *
@@ -186,6 +206,7 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   if (CASE_READ_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "read", caseId };
   }
+  if (CASE_CLOUD_WRITE_PATTERN.test(lowerSuffix)) return { kind: "case", permission: "write", caseId };
   // Changing a case's server set stops its monitors and forgets its links: case administrator.
   // GET /cases/:id/server-set (read) is not affected.
   if (method === "POST" && matchSuffix === "/server-set")

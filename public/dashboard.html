@@ -2274,11 +2274,16 @@
             <span data-server-set-default class="server-set-default-label"></span>
           </div>
         </div>
-        <div class="settings-group-head">Cloud accounts (AWS, Microsoft, GCP)</div>
+        <div class="settings-group-head" id="cloudAccountsHead">Cloud accounts (AWS, Microsoft, GCP)</div>
         <div id="cloudAccountsPanel">
           <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">A cloud account holds the credential that cloud collection uses for one AWS account, Microsoft tenant or GCP project. Prefer short-lived credentials: an AWS role, GCP impersonation, a Microsoft app certificate. Credentials are encrypted with a <strong>vault key file that is not in the data folder</strong>. Back the key file up on its own and keep it out of data backups. If the key file is lost, add the accounts again; case evidence is not affected.</p>
+          <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">Cloud accounts belong to cases. The list shows the accounts of the <strong>open case</strong>; you need write access to the case to see, add or use them. Share an account with another case you can write, or detach it from this case only. Editing or deleting a shared account needs write access to every case it is attached to.</p>
           <p id="cloudVaultKeyLine" role="status" data-safe-style="font-size:12px;margin:2px 0 6px"></p>
           <div id="cloudAccountsList" role="list"></div>
+          <div id="cloudAccountsAll" hidden>
+            <p data-safe-style="font-size:12px;margin:8px 0 4px"><strong>All cloud accounts</strong> (instance administrator). An account added before cases owned accounts is not attached to a case; attach it to the open case or delete it.</p>
+            <div id="cloudAccountsAllList" role="list"></div>
+          </div>
           <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button id="cloudAccountAddBtn" type="button">+ Add cloud account</button>
             <button id="cloudVaultResetBtn" type="button" data-tip="Deletes every cloud account and its stored credential. The key file and all case evidence stay.">Reset vault</button>

@@ -63,13 +63,36 @@ export class CloudAccountVault {
   /** Every account, without secrets. An account the key cannot open is listed as locked, with why. */
   list(): CloudAccountView[] {
     const key = this.key();
-    return this.readRaw().map((raw) => {
-      const view = viewOf(raw, []);
-      if (!key.ok) return { ...view, locked: key.reason };
-      const secrets = openSecrets(raw.sealed, key.key);
-      if (!secrets) return { ...view, locked: this.wrongKeyReason() };
-      return { ...view, storedSecrets: storedSecretNames(secrets) };
-    });
+    return this.readRaw().map((raw) => this.viewWith(raw, key));
+  }
+
+  /** The accounts attached to one case (#2308), without secrets. */
+  listForCase(caseId: string): CloudAccountView[] {
+    return this.list().filter((a) => a.caseIds.includes(caseId));
+  }
+
+  /** One account without secrets. Throws `not-found`. */
+  view(id: string): CloudAccountView {
+    return this.viewWith(this.find(id), this.key());
+  }
+
+  /** Attaches a case to an account (#2308). Attaching an attached case changes nothing. */
+  attach(id: string, caseId: string): CloudAccountView {
+    return this.setCases(id, (cases) => (cases.includes(caseId) ? cases : [...cases, caseId]));
+  }
+
+  /** Detaches one case. The account and its other cases stay; the last detach leaves it unattached. */
+  detach(id: string, caseId: string): CloudAccountView {
+    return this.setCases(id, (cases) => cases.filter((c) => c !== caseId));
+  }
+
+  /** Drops a deleted case from every account; returns how many accounts it was attached to. */
+  detachCase(caseId: string): number {
+    const raw = this.readRaw();
+    const hit = raw.filter((a) => (a.caseIds ?? []).includes(caseId)).length;
+    if (hit === 0) return 0;
+    this.write(raw.map((a) => ({ ...a, caseIds: (a.caseIds ?? []).filter((c) => c !== caseId) })));
+    return hit;
   }
 
   /** One account with its secrets, for a collector. Throws `locked` when the key cannot open it. */
@@ -85,7 +108,7 @@ export class CloudAccountVault {
    * Adds an account. With no key file and an empty vault, the key is made first (`keyCreated`);
    * with no key file and accounts already stored, it refuses — a new key would orphan them.
    */
-  create(input: CloudAccountInput): { account: CloudAccountView; keyCreated: boolean } {
+  create(input: CloudAccountInput, caseId?: string): { account: CloudAccountView; keyCreated: boolean } {
     const raw = this.readRaw();
     const name = this.uniqueName(raw, input.name);
     const credential = buildCredential(input);
@@ -97,7 +120,8 @@ export class CloudAccountVault {
     }
     if (!key.ok) throw new CloudVaultError("locked", key.reason);
     const now = new Date().toISOString();
-    const meta = { id: randomUUID(), name, revision: 1, createdAt: now, updatedAt: now };
+    const caseIds = caseId ? [caseId] : [];
+    const meta = { id: randomUUID(), name, revision: 1, createdAt: now, updatedAt: now, caseIds };
     const stored = this.sealed(meta, credential, key.key);
     this.write([...raw, stored]);
     return { account: viewOf(stored, storedSecretNames(credential.secrets)), keyCreated };
@@ -117,6 +141,7 @@ export class CloudAccountVault {
       revision: prev.revision + 1,
       createdAt: prev.createdAt,
       updatedAt: new Date().toISOString(),
+      caseIds: prev.caseIds ?? [],
     };
     const next = this.sealed(meta, credential, this.requireKey());
     this.write(raw.map((a) => (a.id === id ? next : a)));
@@ -165,6 +190,22 @@ export class CloudAccountVault {
     };
     const reason = reasons[read.state];
     return { ok: false, reason, state: read.state };
+  }
+
+  private viewWith(raw: StoredCloudAccount, key: Key): CloudAccountView {
+    const view = viewOf(raw, []);
+    if (!key.ok) return { ...view, locked: key.reason };
+    const secrets = openSecrets(raw.sealed, key.key);
+    if (!secrets) return { ...view, locked: this.wrongKeyReason() };
+    return { ...view, storedSecrets: storedSecretNames(secrets) };
+  }
+
+  private setCases(id: string, next: (cases: string[]) => string[]): CloudAccountView {
+    const raw = this.readRaw();
+    const prev = this.find(id, raw);
+    const updated = { ...prev, caseIds: next(prev.caseIds ?? []) };
+    this.write(raw.map((a) => (a.id === id ? updated : a)));
+    return this.viewWith(updated, this.key());
   }
 
   private requireKey(): Buffer {
@@ -241,5 +282,16 @@ export class CloudAccountVault {
 
 function viewOf(raw: StoredCloudAccount, storedSecrets: string[]): CloudAccountView {
   const { id, name, revision, createdAt, updatedAt, provider, settings } = raw;
-  return { id, name, revision, createdAt, updatedAt, provider, settings: { ...settings }, storedSecrets };
+  const caseIds = [...(raw.caseIds ?? [])];
+  return {
+    id,
+    name,
+    revision,
+    createdAt,
+    updatedAt,
+    provider,
+    settings: { ...settings },
+    storedSecrets,
+    caseIds,
+  };
 }
