@@ -196,7 +196,7 @@ describe("the read check with the machine's own AWS credentials, on the wire", (
 describe("the read check's source", () => {
   const dir = new URL("../../../src/integrations/cloudCheck/", import.meta.url);
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
-  const code = files.map((f) => readFileSync(join(dir.pathname, f), "utf8")).join("\n");
+  const code = files.map((f) => readFileSync(new URL(f, dir), "utf8")).join("\n");
 
   it("names no write, delete or simulate API", () => {
     expect(files.length).toBeGreaterThan(5);
