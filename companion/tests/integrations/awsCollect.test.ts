@@ -238,6 +238,38 @@ describe("S3 trail discovery and paths (#2313)", () => {
     expect(NO_TRAIL_REASON).toMatch(/90 days, management events only/);
   });
 
+  it("an empty window closes with one 0-record page that records the listing, and no token (#2352)", async () => {
+    const root = `AWSLogs/${ACCOUNT}/`;
+    const outside = trailKey(root, "us-east-1", "2026-10-05T01:00:00Z"); // the folders exist, not this window
+    const { session: s, clients } = session({
+      trails: [{ Name: "main", S3BucketName: "b" }],
+      buckets: { b: [{ key: outside, body: trailObject([trailRecord(1)]) }] },
+    });
+    const out = await walk(s, "s3-trail");
+    expect(out).toHaveLength(1);
+    const page = (out[0] as { page: CollectPage }).page;
+    expect(Buffer.from(page.body).toString("utf8")).toBe('{"Records":[]}');
+    expect(page.extension).toBe("json");
+    expect(page.recordCount).toBe(0);
+    expect(page.nextPageToken).toBeUndefined();
+    expect(page.requestParams).toMatchObject({ api: "s3:ListObjectsV2", emptyWindow: "yes", bucket: "b" });
+    expect(page.requestParams.prefixes).toContain(`${root}CloudTrail/us-east-1/2026/10/01/`);
+    expect(page.requestParams.adaptation).toMatch(/not an S3 object/);
+    expect(clients.sent.some((c) => c.op === "GetObject")).toBe(false);
+  });
+
+  it("a token that finds nothing still fails: only a first page may close empty (#2352)", async () => {
+    const root = `AWSLogs/${ACCOUNT}/`;
+    const { session: s } = session({
+      trails: [{ Name: "main", S3BucketName: "b" }],
+      buckets: { b: [{ key: trailKey(root, "us-east-1", "2026-10-05T01:00:00Z"), body: trailObject([]) }] },
+    });
+    const token = JSON.stringify({ b: "b", p: root, r: "us-east-1", d: "2026/10/01", k: `${root}zzz` });
+    await expect(
+      s.fetchPage({ source: "s3-trail", subWindowId: "x", window: WINDOW, pageToken: token }),
+    ).rejects.toThrow(/no CloudTrail file/);
+  });
+
   it("parses delivery times and the days a window touches", () => {
     expect(deliveredAt(`x/${ACCOUNT}_CloudTrail_us-east-1_20261001T1005Z_abc.json.gz`)).toBe(
       Date.parse("2026-10-01T10:05:00Z"),

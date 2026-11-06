@@ -98,6 +98,11 @@ only.
   Files already collected are not imported twice.
 - When no trail writes to a bucket the identity can list, the S3 source is reported as missing,
   and the result tells you to collect event history instead.
+- When the trail folders hold no file for the window, the source **completes with 0 files**. The
+  manifest records which folders were listed. If the trail should have been logging, check the
+  trail status (a `StopLogging` call shows in the trail just before the gap) and the bucket's
+  lifecycle rules. For a window that ends in the last few minutes, collect again later: CloudTrail
+  delivers files 5 to 15 minutes late.
 
 ### Event history
 
