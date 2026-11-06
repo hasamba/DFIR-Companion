@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cloud import follow-ups** — whole-file M365 and Cloud Activity rows carry the source-file hash, Sigma re-grade reads `.gz` imports, old source-record rows are not duplicated on replay, refused raw uploads hang up early (closes #2353)
 - **Tagger rules on Sigma-matched cloud rows** — content tagger rules match again on rows whose description carries the import-time Sigma head; Run tagger repairs existing cases (closes #2350)
 - **Detection rule fixes** — M365 sync-download rules use the real `FileSyncDownloadedFull` operation; a snapshot change that only removes sharing is graded Low (closes #2338)
 - **Sigma and failed AWS calls** — a logging/Config call that failed because its target was not found keeps the importer's Low grade; access-denied attempts can still be raised (closes #2351)

@@ -2,6 +2,7 @@
   "stack": [
     "USE /^\\/?(?=\\/|$)/i query/3",
     "USE /^\\/?(?=\\/|$)/i expressInit/3",
+    "USE /^\\/?(?=\\/|$)/i closeUnreadRawUploads/3",
     "USE /^\\/?(?=\\/|$)/i originGuard/3",
     "USE /^\\/?(?=\\/|$)/i securityHeaders/3",
     "USE /^\\/?(?=\\/|$)/i requestLogger/3",

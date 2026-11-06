@@ -542,8 +542,8 @@ The tab also shows:
   Re-grade this case preview with the reviewed release instead of the installed one, and counts the
   rows it would raise, lower, move into the forensic timeline or take out of it. It uses your current
   statuses, disabled rules, exclusions and minimum level. A lowered row never drops below the
-  importer's own grade. Imports whose stored file is missing or changed are not scanned, and the
-  result says how many. It changes nothing; it runs only when you click it.
+  importer's own grade. Imports whose stored file is missing, changed, too large to re-read or
+  unreadable are not scanned, and the result says how many. It changes nothing; it runs only when you click it.
 - **Roll back** — switches back to the previous release (the bundled rules after a first install).
 - **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
   noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion
@@ -580,6 +580,8 @@ so two imports graded under different exclusions never look the same.
       grouped row) is counted in the preview: re-import the file to add it. A grouped row is
       re-graded on the record that sets its identity. A row whose stored file is missing or changed,
       or whose record reads differently now, is left as it is and counted.
+    - A compressed (`.gz`) import is re-read decompressed. A stored file whose text is larger than
+      256 MB, or a damaged `.gz`, is not re-read: its rows are left as they are and counted.
     - No AI run starts. The case's conclusions are marked out of date; press **Re-synthesize** when
       you want them updated. The content tagger does not run again.
     - With the same rules and settings, a re-grade changes nothing.

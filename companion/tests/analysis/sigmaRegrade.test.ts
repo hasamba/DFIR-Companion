@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { sourceArtifactHash } from "../../src/analysis/canonicalEvent.js";
 
 // Re-grade an imported case with the current Sigma rules (#2206): the pure diff. Records are
 // synthetic CloudTrail, parsed by the real importer under the bundled SigmaHQ rules.
@@ -249,8 +250,8 @@ describe("planSigmaRegrade (#2206)", () => {
 describe("storedFileChanged (#2206)", () => {
   it("is true when the stored file is not the text the row was parsed from", () => {
     const e = stored(snapOn)[0];
-    expect(storedFileChanged(e, TEXT)).toBe(false);
-    expect(storedFileChanged(e, `${TEXT} `)).toBe(true);
+    expect(storedFileChanged(e, sourceArtifactHash(TEXT))).toBe(false);
+    expect(storedFileChanged(e, sourceArtifactHash(`${TEXT} `))).toBe(true);
   });
 });
 
@@ -290,9 +291,10 @@ describe("loadRegradePlan — stored file changed (#2337)", () => {
     expect(p.rows.some((r) => r.kind === "changed")).toBe(true);
   });
 
-  it("does not call a gzip stored file changed", async () => {
+  it("reads a gzip stored file decompressed, so its rows are paired (#2353)", async () => {
     const p = await planFor(gzipSync(TEXT));
-    expect(p.files[0]).not.toMatchObject({ reason: "file-changed" });
+    expect(p.files[0].status).not.toBe("skipped");
+    expect(p.rows.some((r) => r.kind === "changed")).toBe(true);
   });
 });
 
