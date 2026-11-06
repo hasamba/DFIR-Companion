@@ -245,7 +245,12 @@
     const checkBox = el("div", null, "cc-precheck");
     checkBox.setAttribute("aria-live", "polite");
     // Any edit invalidates a shown pre-check: Confirm would otherwise start the old body.
-    const invalidate = () => checkBox.replaceChildren();
+    // `revision` also drops a pre-check answer that arrives after an edit made while it was pending.
+    let revision = 0;
+    const invalidate = () => {
+      revision++;
+      checkBox.replaceChildren();
+    };
     const pickerFor = () => {
       const p = providerOf();
       if (p && p.available && p.regionPicker) return regionPicker(caseId, select.value, regionState, invalidate);
@@ -302,10 +307,13 @@
       go.disabled = true;
       const body = bodyOf(chosen, picked);
       const extra = regionLines(regionState, picked);
+      const asked = revision;
       const check = await post(`${base(caseId)}/precheck`, body);
       go.disabled = false;
+      if (asked !== revision) return setMsg("The form changed while it was checked — press Check and start again.", true);
       if (!check.ok) return setMsg(check.body.error || `Pre-check failed (HTTP ${check.status})`, true);
       renderPrecheck(checkBox, check.body, extra, async (confirm) => {
+        if (asked !== revision) return checkBox.replaceChildren();
         confirm.disabled = true;
         const res = await post(base(caseId), body);
         confirm.disabled = false;

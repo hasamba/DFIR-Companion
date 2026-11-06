@@ -196,6 +196,25 @@ describe("the AWS region picker (#2363)", () => {
     expect(q(".cc-precheck").textContent).toBe("");
   });
 
+  it("an edit made while the pre-check is pending drops its answer: no Confirm for the old choice", async () => {
+    let release: (r: Route) => void = () => {};
+    const { api, net, q, qa } = load({
+      ...regionsRoute({ body: LISTING }),
+      "POST /cases/c1/cloud-collect/precheck": () => new Promise<Route>((resolve) => (release = resolve)),
+    });
+    await api.loadCloudCollect("c1");
+    await flush();
+    q(".cc-form").fire("submit");
+    await flush();
+    qa(".cc-region")[2].checked = false;
+    q(".cc-form").fire("change");
+    release({ body: { sources: [], quota: null } });
+    await flush();
+    expect(q(".cc-precheck").textContent).toBe("");
+    expect(q("#cloudCollectMsg").textContent).toMatch(/form changed while it was checked/);
+    expect(net.calls.some((c) => c.method === "POST" && c.url === "/cases/c1/cloud-collect")).toBe(false);
+  });
+
   it("a collection's row shows the recorded region scope, skipped regions and the fallback", async () => {
     const collection = {
       checkpoint: {
