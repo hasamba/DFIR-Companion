@@ -8,6 +8,7 @@
 //   - Entra sign-in: tenant + id
 //   - GCP: project + timestamp + insertId (Google's own dedup identity; insertId alone is not enough)
 //   - Azure Activity: subscription + eventDataId, else correlationId + operationId + eventTimestamp
+//   - GuardDuty finding: account + region + Id + UpdatedAt (each update is its own observation)
 // A record with no usable id is identified by the SHA-256 of its canonical form and flagged
 // `hashIdentified`, so the analyst can tell a provider id from a content hash.
 //
@@ -20,7 +21,14 @@ import { getCI, getPath, isObject, str } from "./siemFieldPick.js";
 type Row = Record<string, unknown>;
 
 export type CloudRecordProvider =
-  "cloudtrail" | "ual" | "graph-audit" | "entra-signin" | "entra-audit" | "gcp" | "azure-activity";
+  | "cloudtrail"
+  | "ual"
+  | "graph-audit"
+  | "entra-signin"
+  | "entra-audit"
+  | "gcp"
+  | "azure-activity"
+  | "guardduty";
 
 export interface CloudRecordIdentity {
   key: string; // "<provider>|<account>|<id…>" or "<provider>|sha256:<hex>"
@@ -112,6 +120,21 @@ export function azureActivityRecordId(rec: Row): string | null {
   return correlation && operation && time ? `${sub}|${correlation}|${operation}|${time}` : null;
 }
 
+/** When a GuardDuty finding last changed: UpdatedAt, else CreatedAt — the version half of its key. */
+export function guardDutyVersion(rec: Row): string {
+  return text(rec, "UpdatedAt") || text(rec, "CreatedAt");
+}
+
+/**
+ * GuardDuty finding (#2361): account + region + finding id + version. GuardDuty keeps a finding's id
+ * while its count and update time move, so an identical re-collect is a duplicate and an updated
+ * finding is a new observation — never a false "conflict" under one id.
+ */
+export function guardDutyRecordId(rec: Row): string | null {
+  const id = text(rec, "Id");
+  return id ? [text(rec, "AccountId"), text(rec, "Region"), id, guardDutyVersion(rec)].join("|") : null;
+}
+
 const ID_OF: Record<CloudRecordProvider, (rec: Row) => string | null> = {
   cloudtrail: cloudTrailRecordId,
   ual: ualRecordId,
@@ -120,6 +143,7 @@ const ID_OF: Record<CloudRecordProvider, (rec: Row) => string | null> = {
   "entra-audit": entraAuditRecordId,
   gcp: gcpRecordId,
   "azure-activity": azureActivityRecordId,
+  guardduty: guardDutyRecordId,
 };
 
 /** The identity of `rec` under `provider`'s id rule, falling back to a flagged content hash. */

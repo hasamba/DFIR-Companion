@@ -516,6 +516,10 @@ export class AnalysisPipeline {
     return state;
   }
 
+  importGuardDuty(...args: ImporterArgs<typeof ingest.importGuardDuty>): Promise<InvestigationState> {
+    return ingest.importGuardDuty(this.importCtx, ...args);
+  }
+
   importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
     return ingest.importK8sAudit(this.importCtx, ...args);
   }

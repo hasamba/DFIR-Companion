@@ -5,6 +5,7 @@
 //   cloudtrail:LookupEvents      one page of one event                 → "cloudtrail-lookup"
 //   s3:ListObjectsV2             one key under the trail prefix        → "s3-trail"
 //   s3:GetObject                 the first byte of that key            → "s3-trail"
+//   guardduty:ListDetectors      the detectors of the account's region → "guardduty" (#2361)
 //
 // No policy simulator (it needs extra permission and cannot prove read-only) and no write of any
 // kind. The clients are injected, so a test can record every command sent.
@@ -12,6 +13,7 @@
 import { GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { LookupEventsCommand } from "@aws-sdk/client-cloudtrail";
 import { GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { ListDetectorsCommand } from "@aws-sdk/client-guardduty";
 import {
   CHECK_CALL_TIMEOUT_MS,
   sourceResult,
@@ -29,6 +31,8 @@ export interface AwsCheckClients {
   sts: AwsCommandSender;
   cloudtrail: AwsCommandSender;
   s3: AwsCommandSender;
+  /** GuardDuty in the account's region (#2361). */
+  guardduty: AwsCommandSender;
 }
 
 export interface AwsCheckInput {
@@ -57,6 +61,26 @@ async function checkLookup(clients: AwsCheckClients, secrets: readonly string[])
     return sourceResult("cloudtrail-lookup", "succeeded");
   } catch (err) {
     return sourceResult("cloudtrail-lookup", "failed", checkFailureReason(err, secrets));
+  }
+}
+
+/** No detector in the account's region: the read worked, but GuardDuty is off there. */
+export const NO_DETECTOR_DETAIL =
+  "the read worked; GuardDuty has no detector in the account's region (collection also asks the other regions)";
+
+async function checkGuardDuty(
+  clients: AwsCheckClients,
+  secrets: readonly string[],
+): Promise<SourceCheckResult> {
+  try {
+    const out = (await send(clients.guardduty, new ListDetectorsCommand({ MaxResults: 1 }))) as {
+      DetectorIds?: unknown[];
+    };
+    return out.DetectorIds?.length
+      ? sourceResult("guardduty", "succeeded")
+      : sourceResult("guardduty", "succeeded", NO_DETECTOR_DETAIL);
+  } catch (err) {
+    return sourceResult("guardduty", "failed", checkFailureReason(err, secrets));
   }
 }
 
@@ -131,7 +155,9 @@ export async function runAwsReadCheck(
     results.push(
       source === "cloudtrail-lookup"
         ? await checkLookup(clients, input.secrets)
-        : await checkS3(clients, input),
+        : source === "guardduty"
+          ? await checkGuardDuty(clients, input.secrets)
+          : await checkS3(clients, input),
     );
   }
   return { results, ...(signedInAs ? { signedInAs } : {}) };

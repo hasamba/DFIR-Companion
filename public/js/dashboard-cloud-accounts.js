@@ -49,6 +49,7 @@
     aws: [
       ["cloudtrail-lookup", "CloudTrail event history"],
       ["s3-trail", "CloudTrail S3 bucket"],
+      ["guardduty", "GuardDuty findings"],
     ],
     microsoft: [
       ["entra-signins", "Entra sign-in logs"],

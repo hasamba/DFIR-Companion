@@ -1821,6 +1821,57 @@ three feeds the beacon detector (an interval-aggregated row would read as a low-
   compare to the other two providers. **The records are sampled**: a flow that does not appear is
   not evidence that no traffic occurred, and the import note says so.
 
+### AWS GuardDuty findings
+
+The GuardDuty importer reads Amazon GuardDuty findings: the output of
+`aws guardduty get-findings` (`{"Findings": [...]}`), a JSON array of findings, JSON lines, or the
+camelCase spelling an EventBridge rule delivers. The pages the live collector saves (see
+[Cloud collection](cloud-collection.md)) use the same shape. Drop or upload the file; it is
+detected by the finding type (`Purpose:ResourceType/Family…`) together with GuardDuty's own service
+name or ARN. A Security Hub (ASFF) export also wraps its findings in `Findings`, but it is not read
+as GuardDuty. A large or gzipped export is read in batches, like a large CloudTrail export.
+
+Each finding becomes **one event**:
+`GuardDuty finding Recon:EC2/Portscan: Unusual outbound port scan — Instance i-0abc… (account
+123456789012, eu-west-1, severity 5)`. The event time is the first time GuardDuty saw the activity
+(`Service.EventFirstSeen`, else the finding's creation time). The finding's description, id, ARN,
+count and first, last and update times are in the event detail.
+
+| GuardDuty severity | Event severity |
+|---|---|
+| 9.0 and above | **Critical** |
+| 7.0 – 8.9 | **High** |
+| 4.0 – 6.9 | **Medium** |
+| below 4.0 | **Low** |
+| archived finding (any score) | **Info**, with "archived" in the description |
+| no numeric severity | **Low**, counted in the import note |
+
+An Info event never reaches the forensic timeline, so archived findings are in the super-timeline
+only. The remote address of the finding's action (network connection, API call, Kubernetes call,
+port probe, RDS login) becomes an IP indicator, and a DNS request's domain a domain indicator.
+
+**MITRE ATT&CK** is added only where the finding type itself establishes the technique. Any other
+type carries no technique:
+
+| Finding type | Technique |
+|---|---|
+| `CryptoCurrency:*`, `Impact:EC2/BitcoinDomainRequest.*` | T1496 Resource Hijacking |
+| `…InstanceCredentialExfiltration.*`, `UnauthorizedAccess:EC2/MetadataDNSRebind` | T1552.005 Cloud Instance Metadata API |
+| `…/SSHBruteForce`, `…/RDPBruteForce`, `…/WinRMBruteForce` | T1110 Brute Force |
+| `Recon:EC2/Portscan` | T1046 Network Service Discovery |
+| `Backdoor:EC2/DenialOfService.*` | T1498 Network Denial of Service |
+| `Trojan:EC2/DNSDataExfiltration` | T1048 Exfiltration Over Alternative Protocol |
+| `Stealth:IAMUser/CloudTrailLoggingDisabled`, `Stealth:S3/ServerAccessLoggingDisabled` | T1562.008 Disable or Modify Cloud Logs |
+| `Policy:IAMUser/RootCredentialUsage` | T1078.004 Cloud Accounts |
+| `Exfiltration:S3/*` | T1530 Data from Cloud Storage |
+| `Discovery:S3/*` | T1619 Cloud Storage Object Discovery |
+| `Execution:Runtime/ReverseShell` | T1059 Command and Scripting Interpreter |
+
+**Duplicates.** A finding is identified by its account, region, id and last update time. Importing
+the same findings again (or collecting an overlapping window) imports nothing twice. When GuardDuty
+updated a finding in between, the update is imported as a new event, so each update is on the
+timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel does not list them.
+
 ### Sigma rules grade CloudTrail, Entra and GCP imports
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log

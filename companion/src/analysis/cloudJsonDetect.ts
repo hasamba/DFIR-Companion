@@ -12,10 +12,12 @@ import { isAzureFlowLogUpload } from "./azureFlowLogImport.js";
 import { isGcpFlowLogEntry } from "./gcpFlowLogImport.js";
 import { isLogAnalyticsEntra } from "./cloudExportDetect.js";
 import { isAzureDiagnosticEntra } from "./azureDiagnosticRecord.js";
+import { isGuardDutyUpload } from "./guardDutyRecord.js";
 
 type Row = Record<string, unknown>;
 
-export type CloudJsonKind = "azureflowlog" | "gcpflowlog" | "aws" | "cloud" | "azurestoragelog" | "m365";
+export type CloudJsonKind =
+  "azureflowlog" | "gcpflowlog" | "aws" | "cloud" | "azurestoragelog" | "m365" | "guardduty";
 
 export function isAws(s: Row): boolean {
   return !!getCI(s, "eventName") && !!getCI(s, "eventSource");
@@ -35,6 +37,9 @@ export function isAzure(s: Row): boolean {
 }
 
 export function detectCloudJson(root: unknown, sample: Row): CloudJsonKind | null {
+  // A GuardDuty findings export (#2361) — its own signature (finding type + GuardDuty service/ARN,
+  // never Security Hub ASFF), first: a finding has no field any later check reads.
+  if (isGuardDutyUpload(root, sample)) return "guardduty";
   if (isAzureFlowLogUpload(root, sample)) return "azureflowlog";
   if (isGcpFlowLogEntry(sample)) return "gcpflowlog";
   if (isAws(sample)) return "aws";

@@ -203,6 +203,8 @@
     "azureVmssComputeRow.ts": "analysis/ingest",
     "azureVmssComputeState.ts": "analysis/ingest",
     "awsFlowLogImport.ts": "analysis/ingest",
+    "guardDutyImport.ts": "analysis/ingest",
+    "guardDutyRecord.ts": "analysis/ingest",
     "azureFlowLogImport.ts": "analysis/ingest",
     "collectionInventory.ts": "analysis/ai",
     "gcpFlowLogImport.ts": "analysis/ingest",

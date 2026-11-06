@@ -52,7 +52,7 @@ describe("parseCloudCheckRequest", () => {
   it("defaults to every source of the provider, in report order", () => {
     expect(parseCloudCheckRequest("aws", {})).toEqual({
       ok: true,
-      value: { sources: ["cloudtrail-lookup", "s3-trail"] },
+      value: { sources: ["cloudtrail-lookup", "s3-trail", "guardduty"] },
     });
     expect(parseCloudCheckRequest("gcp", { sources: [] })).toEqual({
       ok: true,

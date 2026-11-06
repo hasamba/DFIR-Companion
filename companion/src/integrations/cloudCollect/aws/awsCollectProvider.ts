@@ -1,12 +1,14 @@
-// AWS CloudTrail live collection (#2313): the provider the #2311 engine runs. Two sources, in the
-// order the panel lists them:
+// AWS live collection (#2313): the provider the #2311 engine runs. Three sources, in the order the
+// panel lists them:
 //
 //   s3-trail           the trail's S3 objects — full history, data events included, each object
 //                      saved as CloudTrail wrote it (awsTrailObjects.ts);
 //   cloudtrail-lookup  LookupEvents, region by region — 90 days, management events only, the
-//                      fallback when no trail delivers to S3 (awsLookupEvents.ts).
+//                      fallback when no trail delivers to S3 (awsLookupEvents.ts);
+//   guardduty-findings GuardDuty findings updated in the window, every region with a detector
+//                      (awsGuardDutyFindings.ts, #2361) — imported by the GuardDuty importer.
 //
-// Both import through the existing CloudTrail importer (stream kind "aws"). The #2312 limits:
+// The two CloudTrail sources import through the existing CloudTrail importer (stream kind "aws"). The #2312 limits:
 // LookupEvents is paced at 2 requests a second per region; both sources split down to 1 s and fall
 // back on the account's regions; the ingestion-delay overlap is 15 minutes.
 //
@@ -36,6 +38,7 @@ import type {
 } from "../collectTypes.js";
 import {
   DEFAULT_AWS_REGIONS,
+  GUARDDUTY_SOURCE,
   LOOKUP_SOURCE,
   S3_TRAIL_SOURCE,
   sendAws,
@@ -45,6 +48,7 @@ import { createAwsCollectClients } from "./awsCollectClients.js";
 import { discoverTrailRoots, type TrailDiscovery } from "./awsTrailDiscovery.js";
 import { CLOUDTRAIL_DELIVERY_HORIZON_MS, fetchTrailObject, TrailObjectWalk } from "./awsTrailObjects.js";
 import { fetchLookupPage } from "./awsLookupEvents.js";
+import { fetchGuardDutyPage, guardDutyRegions } from "./awsGuardDutyFindings.js";
 
 export const LOOKUP_NOTICE =
   "CloudTrail event history (LookupEvents) holds the last 90 days of management events only — no " +
@@ -54,6 +58,12 @@ export const LOOKUP_NOTICE =
 export const S3_TRAIL_NOTICE =
   `Trail files delivered more than ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after the window end ` +
   "are not collected; collect the window again later to pick up a file delivered that late.";
+
+/** The GuardDuty source's limits, always disclosed (#2361). */
+export const GUARDDUTY_NOTICE =
+  "GuardDuty findings are chosen by their last update time inside the window, archived ones included; " +
+  "a finding updated again later is saved as it is now. Archived findings are graded Info. " +
+  "Regions not enabled for the account, and regions without a GuardDuty detector, are named on each page.";
 
 export const AWS_COLLECT_SOURCES: readonly CollectSourceInfo[] = [
   {
@@ -76,9 +86,24 @@ export const AWS_COLLECT_SOURCES: readonly CollectSourceInfo[] = [
     retention: RETENTION.cloudTrailLookupEvents,
     notice: LOOKUP_NOTICE,
   },
+  {
+    id: GUARDDUTY_SOURCE,
+    label: "GuardDuty findings",
+    streamKind: "guardduty",
+    minWindowMs: MIN_WINDOW_MS.cloudTrail,
+    partition: { key: PARTITION_KEYS.aws },
+    overlapMs: DEFAULT_OVERLAP_MS.aws,
+    retention: RETENTION.guardDutyFindings,
+    notice: GUARDDUTY_NOTICE,
+  },
 ];
 
-const SDK_PACKAGES = ["@aws-sdk/client-cloudtrail", "@aws-sdk/client-s3", "@aws-sdk/client-sts"];
+const SDK_PACKAGES = [
+  "@aws-sdk/client-cloudtrail",
+  "@aws-sdk/client-guardduty",
+  "@aws-sdk/client-s3",
+  "@aws-sdk/client-sts",
+];
 
 /** The SDK versions for the manifest header; empty where they cannot be read (a packaged build). */
 function sdkVersions(): Record<string, string> {
@@ -154,6 +179,8 @@ class AwsCollectSession implements CloudCollectSession {
   async fetchPage(request: CollectPageRequest): Promise<CollectPage> {
     if (request.source === LOOKUP_SOURCE)
       return fetchLookupPage(this.clients, lookupRegions(this.settings), request);
+    if (request.source === GUARDDUTY_SOURCE)
+      return fetchGuardDutyPage(this.clients, guardDutyRegions(this.settings.region), request);
     if (request.source !== S3_TRAIL_SOURCE) throw new Error(`unknown AWS source "${request.source}"`);
     const discovery = await this.trailRoots(request.signal);
     this.walk ??= new TrailObjectWalk(this.clients);
@@ -162,6 +189,7 @@ class AwsCollectSession implements CloudCollectSession {
 
   async partitionValues(source: string, signal?: AbortSignal): Promise<readonly string[]> {
     if (source === LOOKUP_SOURCE) return lookupRegions(this.settings);
+    if (source === GUARDDUTY_SOURCE) return guardDutyRegions(this.settings.region);
     const { roots } = await this.trailRoots(signal);
     return [...new Set(roots.flatMap((r) => r.regions))].sort();
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runAwsReadCheck } from "../../../src/integrations/cloudCheck/awsReadCheck.js";
 import { checkSummary } from "../../../src/integrations/cloudCheck/readCheckWording.js";
+import { NO_DETECTOR_DETAIL } from "../../../src/integrations/cloudCheck/awsReadCheck.js";
 import { ALLOWED_AWS_COMMANDS, AWS_ALL_OK, awsDenied, mockAws } from "./readCheckMocks.js";
 
 // #2309: the AWS check signs in with GetCallerIdentity, then makes one read per selected source.
@@ -118,5 +119,32 @@ describe("runAwsReadCheck", () => {
       await runAwsReadCheck(clients, input());
       for (const name of sent) expect(ALLOWED_AWS_COMMANDS.has(name), name).toBe(true);
     }
+  });
+
+  // #2361: GuardDuty findings — one read, ListDetectors in the account's region.
+  it("tests GuardDuty with one ListDetectors read", async () => {
+    const { clients, sent } = mockAws(AWS_ALL_OK);
+    const out = await runAwsReadCheck(clients, input({ sources: ["guardduty"] }));
+    expect(out.results).toEqual([{ id: "guardduty", label: "GuardDuty findings", status: "succeeded" }]);
+    expect(sent).toEqual(["GetCallerIdentityCommand", "ListDetectorsCommand"]);
+  });
+
+  it("reports GuardDuty as read when the region has no detector, with a note", async () => {
+    const { clients } = mockAws({ ...AWS_ALL_OK, ListDetectorsCommand: () => ({ DetectorIds: [] }) });
+    const out = await runAwsReadCheck(clients, input({ sources: ["guardduty"] }));
+    expect(out.results[0]).toMatchObject({ status: "succeeded", detail: NO_DETECTOR_DETAIL });
+  });
+
+  it("fails GuardDuty with the reason when the read is refused", async () => {
+    const { clients } = mockAws({
+      ...AWS_ALL_OK,
+      ListDetectorsCommand: awsDenied(
+        "AccessDeniedException",
+        "not authorized to perform guardduty:ListDetectors",
+      ),
+    });
+    const out = await runAwsReadCheck(clients, input({ sources: ["guardduty"] }));
+    expect(out.results[0].status).toBe("failed");
+    expect(out.results[0].detail).toMatch(/AccessDenied|not authorized/);
   });
 });

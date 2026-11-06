@@ -59,6 +59,10 @@ export const RETENTION = {
     minDays: 90,
     note: "LookupEvents returns the last 90 days of management events only; the S3 trail keeps more.",
   },
+  guardDutyFindings: {
+    minDays: 90,
+    note: "GuardDuty keeps findings for 90 days after their last update, archived findings included.",
+  },
   azureActivity: {
     minDays: 90,
     note: "The Azure Activity log keeps 90 days unless it is exported to a workspace or storage.",

@@ -57,6 +57,21 @@ export interface FakeAwsOptions {
   slowDowns?: number;
   /** Buckets whose object listing (no delimiter, the trail walk) is refused; folder listing still works. */
   walkListDenied?: string[];
+  /** GuardDuty per region (#2361): its detector and pages of findings, "off" (region not enabled) or "dns". */
+  guardduty?: Record<string, FakeGuardDuty | "off" | "dns">;
+  /** ListFindings in `region` fails DNS on page `page` (0-based) `times` times. */
+  guarddutyDnsFail?: { region: string; page: number; times: number };
+  /** Every GuardDuty call is refused (the identity lacks the GuardDuty statement). */
+  guarddutyDenied?: boolean;
+}
+
+export interface FakeGuardDuty {
+  /** The detector id; null = GuardDuty off in the region. */
+  detector: string | null;
+  /** ListFindings pages; GetFindings returns these findings by id. */
+  pages: Record<string, unknown>[][];
+  /** Ids GetFindings does not return (expired between the calls). */
+  notReturned?: string[];
 }
 
 export interface Sent {
@@ -184,6 +199,10 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
             $metadata: { requestId: `ct-${region}-${index}` },
           };
         }
+        case "ListDetectors":
+        case "ListFindings":
+        case "GetFindings":
+          return guardDutyAnswer(opts, op, region ?? "", input);
         default:
           throw new Error(`unexpected AWS command ${op}`);
       }
@@ -191,5 +210,36 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
   });
   const s3 = sender();
   const sts = sender();
-  return { sent, sts, s3, cloudtrail: (region) => sender(region) };
+  return { sent, sts, s3, cloudtrail: (region) => sender(region), guardduty: (region) => sender(region) };
+}
+
+/** GuardDuty answered from `opts.guardduty` (#2361): one region's detector and its finding pages. */
+function guardDutyAnswer(opts: FakeAwsOptions, op: string, region: string, input: Record<string, unknown>) {
+  if (opts.guarddutyDenied)
+    throw awsError("AccessDeniedException", 403, `not authorized to perform guardduty:${op}`);
+  const plan = opts.guardduty?.[region] ?? { detector: null, pages: [] };
+  if (plan === "off") throw awsError("UnrecognizedClientException", 400);
+  if (plan === "dns") throw dnsError(region);
+  if (op === "ListDetectors") return { DetectorIds: plan.detector ? [plan.detector] : [] };
+  if (input.DetectorId !== plan.detector) throw awsError("BadRequestException", 400, "wrong detector");
+  const all = plan.pages.flat();
+  if (op === "GetFindings") {
+    const ids = input.FindingIds as string[];
+    return {
+      Findings: all.filter((f) => ids.includes(String(f.Id)) && !plan.notReturned?.includes(String(f.Id))),
+      $metadata: { requestId: `gd-get-${region}` },
+    };
+  }
+  const index = input.NextToken ? Number(String(input.NextToken).slice(1)) : 0;
+  const dns = opts.guarddutyDnsFail;
+  if (dns && dns.region === region && dns.page === index && dns.times > 0) {
+    dns.times--;
+    throw dnsError(region);
+  }
+  const next = index + 1 < plan.pages.length ? `g${index + 1}` : undefined;
+  return {
+    FindingIds: (plan.pages[index] ?? []).map((f) => String(f.Id)),
+    ...(next ? { NextToken: next } : {}),
+    $metadata: { requestId: `gd-list-${region}-${index}` },
+  };
 }

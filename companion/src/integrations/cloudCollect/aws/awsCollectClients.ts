@@ -5,6 +5,7 @@
 // The credential is built once per session and shared by every client, regional ones included.
 
 import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
+import { GuardDutyClient } from "@aws-sdk/client-guardduty";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
 import type { AwsSecrets, AwsSettings } from "../../cloudAccounts/types.js";
@@ -38,6 +39,7 @@ export function createAwsCollectClients(
   });
   const region = settings.region || DEFAULT_AWS_REGION;
   const trails = new Map<string, CloudTrailClient>();
+  const guardduty = new Map<string, GuardDutyClient>();
   return {
     sts: new STSClient({ region, credentials, ...wire }),
     s3: new S3Client({ region, credentials, followRegionRedirects: true, ...wire }),
@@ -46,6 +48,14 @@ export function createAwsCollectClients(
       if (!client) {
         client = new CloudTrailClient({ region: r, credentials, ...wire });
         trails.set(r, client);
+      }
+      return client;
+    },
+    guardduty(r: string) {
+      let client = guardduty.get(r);
+      if (!client) {
+        client = new GuardDutyClient({ region: r, credentials, ...wire });
+        guardduty.set(r, client);
       }
       return client;
     },

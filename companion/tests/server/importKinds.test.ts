@@ -50,11 +50,13 @@ describe("importKinds — the streaming-import kind predicate", () => {
 // and Plaso — which also "streams" from disk — keeps its non-cancellable job.
 describe("cancellableByParse — parse-driven cancellability (#2337)", () => {
   it("is true for a streamed cloud import of every streamed kind", () => {
-    for (const kind of ["m365", "aws", "cloud"]) expect(cancellableByParse(kind, true), kind).toBe(true);
+    for (const kind of ["m365", "aws", "cloud", "guardduty"])
+      expect(cancellableByParse(kind, true), kind).toBe(true);
   });
 
   it("is false for the same kinds on the whole-file path", () => {
-    for (const kind of ["m365", "aws", "cloud"]) expect(cancellableByParse(kind, false), kind).toBe(false);
+    for (const kind of ["m365", "aws", "cloud", "guardduty"])
+      expect(cancellableByParse(kind, false), kind).toBe(false);
     expect(cancellableByParse("aws", undefined)).toBe(false);
   });
 

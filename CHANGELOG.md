@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GuardDuty findings** — collect findings live from every region with a GuardDuty detector, and import exported findings, each graded by GuardDuty's own severity (archived ones Info) with MITRE from the finding type; Check access tests the GuardDuty read (closes #2361)
 - **GCP detection rules** — SigmaHQ's GCP audit rules are bundled and run on GCP imports (and in Re-grade), and 10 graded plus 5 tag-only GCP rules are ported from Panther, Sentinel, Chronicle and Rhino Security Labs, with upstream commits recorded and watched weekly (closes #2346)
 - **AWS detection rules from TrailDiscover** — 12 graded rules for in-the-wild CloudTrail operations the importer and Sigma did not grade, and 211 more operations tagged by ATT&CK tactic for super-timeline search; TrailDiscover is watched by the weekly upstream check (closes #2345)
 - **Detection rule pack** — the curated tagger rules publish as a separate `rules-*` release when they change; Content tagger can check, review, measure, install (or install from a file) and roll back a pack without an app release, and reports name the rules that graded the case (closes #2349)

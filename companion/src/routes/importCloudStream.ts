@@ -28,7 +28,7 @@ import { routeSettleDeps, type SettleContext } from "./routeSettleDeps.js";
 
 /** The refusal for a gzip upload of a kind that does not stream. */
 export const GZIP_ONLY_CLOUD =
-  "gzip uploads are read only for cloud audit exports (M365 / Entra, AWS CloudTrail, GCP / Azure Activity) — decompress the file and import it again";
+  "gzip uploads are read only for cloud audit exports (M365 / Entra, AWS CloudTrail, GCP / Azure Activity, AWS GuardDuty findings) — decompress the file and import it again";
 
 /** Whether a stored upload of `kind` takes the streaming path. */
 export function streamsCloudImport(kind: string, bytes: number, gzip: boolean): kind is StreamKind {

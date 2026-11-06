@@ -49,6 +49,7 @@ which failed, with the reason the cloud gave.
 |---|---|---|
 | AWS | CloudTrail event history | One page of CloudTrail event history (`LookupEvents`) |
 | AWS | CloudTrail S3 bucket | List one file under the trail's key prefix, then read the first byte of that file |
+| AWS | GuardDuty findings | List the GuardDuty detectors of the account's region (`ListDetectors`) |
 | Microsoft | Entra sign-in logs | One page of sign-ins |
 | Microsoft | Entra directory audit logs | One page of directory audits |
 | GCP | Admin Activity, System Event and Policy audit logs | One page of those logs (`entries.list`) |
@@ -70,6 +71,9 @@ policy below and nothing more.
 
 Some sources can be reported as **Not tested**, with the reason:
 
+- **GuardDuty findings** is reported as a success with a note when the account's region has no
+  GuardDuty detector: the read worked, but GuardDuty is off in that region. Collection still asks
+  every other region.
 - **CloudTrail S3 bucket** — you did not name the trail bucket, or the key prefix holds no file
   to read. Enter the bucket and, if the trail uses one, its key prefix (default `AWSLogs/`).
 - **GCP Data Access audit logs** — the last 30 days hold no Data Access entry, so reading them
@@ -80,7 +84,7 @@ fails until the identity also has `kms:Decrypt` on that key. The check says so w
 fails.
 
 The check does not test the Microsoft unified audit log (searching it starts by creating a
-query, which is a write), Azure Activity logs, GuardDuty or a GCP log sink bucket.
+query, which is a write), Azure Activity logs or a GCP log sink bucket.
 
 Every check is recorded in the team audit log as `cloud-account-check`. No credential ever
 appears in a result, a log line or the audit log.
@@ -92,11 +96,14 @@ appears in a result, a log line or the audit log.
 Open the **Collect cloud logs** panel in a case, pick an AWS account, tick the log sources and set
 the time window. The companion saves what AWS returns as case evidence and imports it through the
 same CloudTrail importer as an uploaded CloudTrail file, so the events are graded by the same rules.
+GuardDuty findings go through the GuardDuty importer, the same one that reads a findings export you
+import by hand.
 
 | Source | What it reads | Covers |
 |---|---|---|
 | **CloudTrail S3 trail files** | The trail's own files in its S3 bucket | Everything the trail logs, for as long as the bucket keeps it — data events included |
 | **CloudTrail event history** | `LookupEvents`, region by region | The last 90 days of management events only |
+| **GuardDuty findings** | `ListDetectors`, `ListFindings` and `GetFindings`, region by region | The findings GuardDuty updated inside the window, in every region where it has a detector — 90 days |
 
 Pick **CloudTrail S3 trail files** whenever the account has a trail that writes to S3. Pick
 **CloudTrail event history** when it has none, or as a quick look at recent management activity.
@@ -147,13 +154,39 @@ only.
   text from each event exactly as AWS returned it, inside a standard `{"Records": [...]}` file, so
   the importer reads it like a trail file. The manifest notes this on every event history page.
 
-### Both sources
+### GuardDuty findings
+
+- The companion asks every region in turn: the account's own region first, then the regions AWS
+  enables by default, then the opt-in regions. In each region it asks for the GuardDuty detector.
+  A region without a detector has GuardDuty turned off; a region the account has not enabled cannot
+  have one. Neither is an error: each page names those regions (`noDetectorRegions`,
+  `regionsNotEnabled` in the manifest). A network failure is never taken for either; that part of
+  the collection is reported missing with the error, and **Resume** carries on from the page it
+  stopped at.
+- Findings are chosen by the time GuardDuty **last updated** them: every finding updated inside
+  the window, archived findings included. GuardDuty updates a finding each time it sees the
+  activity again, so a finding first seen long before the window is collected when it was
+  updated inside it. A finding updated again after the window end is saved as it is now; the
+  manifest counts those (`updatedAfterWindow`).
+- Each page holds up to 50 findings, saved as `{"Findings": [...]}` — the findings as the AWS SDK
+  returns them, the same shape `aws guardduty get-findings` prints. The manifest notes this on
+  every GuardDuty page, with the number of findings listed and fetched.
+- Collecting the same findings again is safe. A finding that has not changed is a duplicate and
+  is not imported twice. A finding GuardDuty updated since is imported as a new event, so the
+  timeline shows each update.
+- When the identity may not read GuardDuty, the source is reported missing with the reason. Add
+  the GuardDuty statement of the minimum policy and press **Resume**.
+- Each finding becomes one event, graded by GuardDuty's own severity: **Critical** from 9.0,
+  **High** from 7.0, **Medium** from 4.0, **Low** below 4.0. An **archived** finding is graded
+  **Info**, so it is in the super-timeline only, with "archived" in its description. See
+  [Importing — AWS GuardDuty findings](importing.md#aws-guardduty-findings).
+
+### CloudTrail sources
 
 - Every request — sign-in included — goes through the cloud network settings below.
 - The newest 15 minutes of the window may still be arriving when you collect. The result states
   the time the collection is settled up to. Collect again from that time to pick up later events;
   overlapping windows are safe, duplicates are removed.
-- GuardDuty findings are not collected yet.
 
 ---
 
@@ -221,7 +254,8 @@ bucket the trail writes to — for an organization trail, the organization's log
 
 - Keep the `kms:Decrypt` statement only when the trail is encrypted with a KMS key, and name that
   key. Without it, listing works but every trail file read fails.
-- The GuardDuty statement is optional. Remove it if you do not collect GuardDuty findings.
+- The GuardDuty statement is needed only to collect GuardDuty findings and to test them with
+  Check access. Remove it if you do not collect GuardDuty findings.
 - For an assumed role, the role's trust policy must also allow the calling identity (and the
   external ID, if you set one).
 

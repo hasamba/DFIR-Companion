@@ -12,6 +12,7 @@ export const ALLOWED_AWS_COMMANDS = new Set([
   "LookupEventsCommand",
   "ListObjectsV2Command",
   "GetObjectCommand",
+  "ListDetectorsCommand",
 ]);
 
 export function awsDenied(name = "AccessDenied", message = "Access Denied"): Error {
@@ -36,7 +37,7 @@ export function mockAws(answers: Record<string, AwsAnswer | Error>): {
       return answer((command as { input: Record<string, unknown> }).input);
     },
   };
-  return { clients: { sts: sender, cloudtrail: sender, s3: sender }, sent };
+  return { clients: { sts: sender, cloudtrail: sender, s3: sender, guardduty: sender }, sent };
 }
 
 export const AWS_ALL_OK: Record<string, AwsAnswer> = {
@@ -44,6 +45,7 @@ export const AWS_ALL_OK: Record<string, AwsAnswer> = {
   LookupEventsCommand: () => ({ Events: [{}] }),
   ListObjectsV2Command: () => ({ Contents: [{ Key: "AWSLogs/123456789012/CloudTrail/x.json.gz" }] }),
   GetObjectCommand: () => ({ Body: { transformToByteArray: async () => new Uint8Array([31]) } }),
+  ListDetectorsCommand: () => ({ DetectorIds: ["12abc34d567e8fa901bc2d34e56789f0"] }),
 };
 
 export interface RecordedCall {
