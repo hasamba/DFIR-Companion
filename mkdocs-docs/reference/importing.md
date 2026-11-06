@@ -1835,6 +1835,8 @@ they are imported. No AI is involved, and the same file always gets the same res
   and a link to the rule. The rule's ATT&CK techniques are added to the event.
 - **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
   stays one event with both verdicts.
+- **Tagger rules still match a Sigma-matched event.** The content tagger reads the description both
+  with and without the Sigma lead, so the cloud tags, ATT&CK techniques and grades still apply.
 - **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
 - **An Entra audit record that becomes several rows** carries its match on the first row, with a note
   that the rule matched the whole record.

@@ -8,8 +8,12 @@
 // COMPILES a ruleset (precompiling every regex once); matchEvent() then evaluates a compiled rule
 // against one event. I/O (reading the YAML file) lives in taggerStore.ts; the runner that applies
 // matches to a case lives in tagger.ts.
+//
+// Import-time Sigma rewrites a matched row's description to start with its own head; matchEvent()
+// also judges the row with that head removed, so importer-anchored rules still fire (#2350).
 
 import { checkRegexSafety } from "./regexSafety.js";
+import { splitSigmaOverlay } from "./sigmaOverlay.js";
 import { z } from "zod";
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 
@@ -251,12 +255,39 @@ function conditionMatches(event: ForensicEvent, cond: CompiledCondition): boolea
   }
 }
 
-/** Whether an event satisfies a compiled rule: all `all` match, ≥1 `any` matches, no `none` matches. */
-export function matchEvent(event: ForensicEvent, rule: CompiledRule): boolean {
+function matchesView(event: ForensicEvent, rule: CompiledRule): boolean {
   if (!rule.all.every((c) => conditionMatches(event, c))) return false;
   if (rule.any.length > 0 && !rule.any.some((c) => conditionMatches(event, c))) return false;
   if (rule.none.some((c) => conditionMatches(event, c))) return false;
   return true;
+}
+
+// The row as its importer wrote it, before import-time Sigma put its head at the start of the
+// description (#2350). Built once per event object — the callers loop every rule over one event.
+const baseViews = new WeakMap<ForensicEvent, ForensicEvent | null>();
+
+function sigmaBaseView(event: ForensicEvent): ForensicEvent | null {
+  const { description, message } = event;
+  if (typeof description !== "string" || !description.startsWith("Sigma")) return null;
+  if (typeof message !== "string" || !message.includes("Sigma rule: ")) return null;
+  const cached = baseViews.get(event);
+  if (cached !== undefined) return cached;
+  const base = splitSigmaOverlay(description, message).description;
+  const view = base === description ? null : { ...event, description: base };
+  baseViews.set(event, view);
+  return view;
+}
+
+/**
+ * Whether an event satisfies a compiled rule: all `all` match, ≥1 `any` matches, no `none` matches.
+ * A row with a verified import-time Sigma head is judged twice — as stored, and with that head
+ * removed — and matches when either view matches as a whole (#2350). Importer-anchored rules
+ * (`^AWS …`, `^Entra audit:`) keep matching; a rule anchored on `^Sigma` still matches the stored row.
+ */
+export function matchEvent(event: ForensicEvent, rule: CompiledRule): boolean {
+  if (matchesView(event, rule)) return true;
+  const base = sigmaBaseView(event);
+  return base !== null && matchesView(base, rule);
 }
 
 /** Every field a rule's conditions reference, once each, in first-seen order (all → any → none). */
