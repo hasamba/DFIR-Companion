@@ -93,7 +93,7 @@ describe("tenant query budget (#2312)", () => {
   it("stops 'partial — budget used', and the count survives a restart and a second account of the tenant", async () => {
     const usageFile = join(await mkdtemp(join(tmpdir(), "dfir-quota-")), "cloud-quota", "query-usage.json");
     let wall = Date.UTC(2026, 9, 5);
-    const store = () => new QueryUsageStore(usageFile, () => wall);
+    const store = () => new QueryUsageStore(usageFile, { nowMs: () => wall });
     const scope = "microsoft:00000000-0000-4000-a000-000000000001";
     const source = denseSource({ minWindowMs: 60_000, queryCost: 1 });
     // 40 records, a 10-record cap: the hour splits into a tree of many queries.

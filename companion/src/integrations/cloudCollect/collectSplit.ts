@@ -13,6 +13,7 @@
 // rebuilds the same tree. A crash after the capped page but before that line leaves the node
 // `capped` (derived from the page line itself) and the next run decides it again — same ids.
 
+import { createHash } from "node:crypto";
 import type {
   CollectSourceInfo,
   CollectWindow,
@@ -53,8 +54,22 @@ function midpoint(window: CollectWindow): number {
   return start + Math.floor(duration / 2);
 }
 
-function safeValue(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60);
+/**
+ * A partition child's id: the sibling index plus a digest of the FULL value, so two values that
+ * look alike once sanitised ("projects/a", "projects_a") or share a long prefix never collide. The
+ * readable value lives in the child's `partition`, for display only.
+ */
+function partitionChildId(parent: string, key: string, index: number, value: string): string {
+  const digest = createHash("sha256").update(value).digest("hex").slice(0, 12);
+  return `${parent}.${key}#${index}-${digest}`;
+}
+
+function assertUniqueIds(ids: readonly string[], taken: ReadonlySet<string> = new Set()): void {
+  const seen = new Set(taken);
+  for (const id of ids) {
+    if (seen.has(id)) throw new Error(`duplicate sub-window id in a split: ${id}`);
+    seen.add(id);
+  }
 }
 
 /** The reason a too-dense window is missing. */
@@ -71,11 +86,8 @@ export function tooDenseReason(sw: Pick<SubWindowStatus, "window" | "partition">
   );
 }
 
-/**
- * How to split a capped sub-window. `partitionValues` are the source's partition values (from the
- * session when it has them, else the source's own list). Pure.
- */
-export function decideSplit(
+/** The split decision before its ids are checked. Pure. */
+function decideRaw(
   sw: SubWindowStatus,
   source: CollectSourceInfo | undefined,
   partitionValues: readonly string[] | undefined,
@@ -112,14 +124,29 @@ export function decideSplit(
     return {
       ...base,
       mode: "partition",
-      children: values.map((value) => ({
-        id: `${sw.id}.${key}=${safeValue(value)}`,
+      children: values.map((value, i) => ({
+        id: partitionChildId(sw.id, key, i, value),
         window: sw.window,
         partition: { [key]: value },
       })),
     };
   }
   return { ...base, mode: "too-dense", children: [] };
+}
+
+/**
+ * How to split a capped sub-window. `partitionValues` are the source's partition values (from the
+ * session when it has them, else the source's own list). Throws on a duplicate child id. Pure.
+ */
+export function decideSplit(
+  sw: SubWindowStatus,
+  source: CollectSourceInfo | undefined,
+  partitionValues: readonly string[] | undefined,
+  nodesOfSource: number,
+): SplitDecision {
+  const decision = decideRaw(sw, source, partitionValues, nodesOfSource);
+  assertUniqueIds(decision.children.map((c) => c.id));
+  return decision;
 }
 
 function childOf(parent: SubWindowStatus, child: ManifestSplit["children"][number]): SubWindowStatus {
@@ -145,8 +172,14 @@ export function applySplit(subWindows: readonly SubWindowStatus[], line: SplitDe
     line.mode === "too-dense"
       ? { ...parent, state: "incomplete", pageToken: undefined, reason: tooDenseReason(parent) }
       : { ...parent, state: "split", pageToken: undefined, reason: undefined };
-  const known = new Set(subWindows.map((s) => s.id));
-  const children = line.children.filter((c) => !known.has(c.id)).map((c) => childOf(parent, c));
+  // Applied once: a parent already split keeps its children (an idempotent replay of the line).
+  if (parent.state === "split") return [...subWindows];
+  // A child id already in the tree would merge two windows' results: refused, never merged.
+  assertUniqueIds(
+    line.children.map((c) => c.id),
+    new Set(subWindows.map((s) => s.id)),
+  );
+  const children = line.children.map((c) => childOf(parent, c));
   return [...subWindows.slice(0, index), settled, ...children, ...subWindows.slice(index + 1)];
 }
 

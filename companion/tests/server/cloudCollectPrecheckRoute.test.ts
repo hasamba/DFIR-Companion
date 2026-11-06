@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -121,6 +121,21 @@ describe("cloud collect pre-check (#2312)", () => {
       .send({ accountId: account!.id, sources: ["ual"], ...window() });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/partial — budget used: this companion has used 4 of its 4/);
+  });
+
+  it("an unreadable quota record fails closed: the pre-check says so and a start is refused", async () => {
+    const { app, account } = await makeApp();
+    mkdirSync(join(dir, "cloud-quota"), { recursive: true });
+    writeFileSync(join(dir, "cloud-quota", "query-usage.json"), "{not json");
+    const body = { accountId: account!.id, sources: ["ual"], ...window() };
+    const check = await request(app).post("/cases/c1/cloud-collect/precheck").send(body);
+    expect(check.body.quota).toMatchObject({ enough: false });
+    expect(check.body.quota.note).toMatch(
+      /quota record unreadable at .*query-usage\.json — check or remove it/,
+    );
+    const start = await request(app).post("/cases/c1/cloud-collect").send(body);
+    expect(start.status).toBe(409);
+    expect(start.body.error).toMatch(/check or remove it/);
   });
 
   it("is refused on the public demo", async () => {

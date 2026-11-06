@@ -123,7 +123,12 @@ async function budgetRefusal(
   sources: string[],
 ) {
   if (!budget || !spendsQuota(provider, sources)) return null;
-  const used = await budget.used();
+  let used: number;
+  try {
+    used = await budget.used();
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err); // an unreadable record fails closed
+  }
   if (used < budget.limit) return null;
   return budgetStopReason(used, budget.limit);
 }

@@ -51,7 +51,14 @@ export function spendsQuota(provider: CloudCollectProvider, sources: readonly st
 
 async function quotaView(budget: QueryBudget | undefined, provider: CloudCollectProvider, sources: string[]) {
   if (!budget || !spendsQuota(provider, sources)) return null;
-  const used = await budget.used();
+  let used: number;
+  try {
+    used = await budget.used();
+  } catch (err) {
+    // An unreadable quota record fails closed: the start will be refused with the same reason.
+    const note = err instanceof Error ? err.message : String(err);
+    return { usedByCompanion: null, budget: budget.limit, estimatedQueries: 0, enough: false, note };
+  }
   const minimum = provider.sources
     .filter((s) => sources.includes(s.id))
     .reduce((n, s) => n + (s.queryCost ?? 0), 0);

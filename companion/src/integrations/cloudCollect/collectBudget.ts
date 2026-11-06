@@ -9,9 +9,14 @@
 // It is an ESTIMATE of this companion's own use — never "what the tenant has left": other tools
 // spend from the same quota and nothing here can see them. A submission is counted before it is
 // sent, so a crash over-counts (the safe side) and never under-counts.
+//
+// A reservation is reported only once it is DURABLE: temp file written and fsynced, renamed, the
+// folder fsynced. A record that cannot be read or saved FAILS CLOSED — new submissions are refused
+// with the file's path — and is never silently reset to a fresh count.
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DIR_FSYNC_UNSUPPORTED } from "../cloudAccounts/vaultKeyFile.js";
+import { nodeCollectFs, type CollectFs } from "./collectFs.js";
 
 export const QUOTA_WINDOW_MS = 24 * 3_600_000;
 /** The per-tenant floor Microsoft documents for audit query submissions per rolling 24 h. */
@@ -46,19 +51,49 @@ export interface QueryBudget {
   used(): Promise<number>;
 }
 
+function isEntry(e: unknown): boolean {
+  const x = e as { at?: unknown; n?: unknown } | null;
+  return !!x && Number.isFinite(x.at) && Number.isFinite(x.n);
+}
+
 function isUsage(value: unknown): value is UsageFile {
   const v = value as Partial<UsageFile> | null;
-  return !!v && v.version === 1 && !!v.scopes && typeof v.scopes === "object";
+  if (!v || v.version !== 1 || !v.scopes || typeof v.scopes !== "object" || Array.isArray(v.scopes))
+    return false;
+  return Object.values(v.scopes).every((list) => Array.isArray(list) && list.every(isEntry));
+}
+
+/** The quota record cannot be read or saved: new submissions are refused (fail closed). */
+export class QuotaRecordError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "QuotaRecordError";
+  }
+}
+
+export interface QueryUsageStoreOptions {
+  nowMs?: () => number;
+  /** The filesystem; the tests inject faults at every persistence step. */
+  fs?: CollectFs;
+}
+
+function errorCode(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  return typeof code === "string" ? code : (err as Error)?.message?.slice(0, 120) || String(err);
 }
 
 export class QueryUsageStore {
   private chain: Promise<unknown> = Promise.resolve();
+  private readonly nowMs: () => number;
+  private readonly fs: CollectFs;
 
   constructor(
     private readonly file: string,
-    private readonly nowMs: () => number = () => Date.now(),
-    private readonly onWarn: (message: string) => void = () => {},
-  ) {}
+    options: QueryUsageStoreOptions = {},
+  ) {
+    this.nowMs = options.nowMs ?? (() => Date.now());
+    this.fs = options.fs ?? nodeCollectFs;
+  }
 
   /** Serialize every read-modify-write: two collections of one tenant may run at once. */
   private locked<T>(fn: () => Promise<T>): Promise<T> {
@@ -67,31 +102,49 @@ export class QueryUsageStore {
     return run;
   }
 
+  private unreadable(): QuotaRecordError {
+    return new QuotaRecordError(
+      `quota record unreadable at ${this.file} — check or remove it. New Microsoft query ` +
+        "submissions are refused until then (this companion cannot tell how many it has used).",
+    );
+  }
+
   private async load(): Promise<UsageFile> {
     let text: string;
     try {
-      text = await readFile(this.file, "utf8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, scopes: {} };
-      throw err;
+      if (!(await this.fs.exists(this.file))) return { version: 1, scopes: {} };
+      text = (await this.fs.readFile(this.file)).toString("utf8");
+    } catch {
+      throw this.unreadable();
     }
     try {
       const parsed: unknown = JSON.parse(text);
       if (isUsage(parsed)) return parsed;
     } catch {
-      // fall through: an unreadable file is kept aside, never silently overwritten
+      // fall through: fail closed, the file is left exactly as it is
     }
-    const aside = `${this.file}.unreadable-${this.nowMs()}`;
-    await rename(this.file, aside);
-    this.onWarn(`[cloud-collect] query usage file was unreadable; kept as ${aside} and started a new count`);
-    return { version: 1, scopes: {} };
+    throw this.unreadable();
   }
 
+  /** Write tmp (fsynced) → rename → fsync the folder. Resolves only once the count is durable. */
   private async save(usage: UsageFile): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true });
+    const dir = dirname(this.file);
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(usage)}\n`);
-    await rename(tmp, this.file);
+    try {
+      await this.fs.mkdir(dir);
+      await this.fs.writeFileSync(tmp, `${JSON.stringify(usage)}\n`);
+      await this.fs.rename(tmp, this.file);
+      try {
+        await this.fs.fsyncDir(dir);
+      } catch (err) {
+        // A folder fsync the platform cannot do (Windows, some filesystems) is not a failure.
+        if (!DIR_FSYNC_UNSUPPORTED.has((err as NodeJS.ErrnoException)?.code ?? "")) throw err;
+      }
+    } catch (err) {
+      throw new QuotaRecordError(
+        `quota record could not be saved at ${this.file} (${errorCode(err)}); the submission was not sent.`,
+      );
+    }
   }
 
   private recent(usage: UsageFile, scope: string): Array<{ at: number; n: number }> {

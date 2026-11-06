@@ -70,8 +70,8 @@ async function guardWrite<T>(step: () => Promise<T>): Promise<T> {
 
 /** The tenant's query budget is used: the stage stops, the rest stays pending for a later resume. */
 export class BudgetStopError extends Error {
-  constructor(used: number, limit: number) {
-    super(budgetStopReason(used, limit));
+  constructor(reason: string) {
+    super(reason);
     this.name = "BudgetStopError";
   }
 }
@@ -167,8 +167,14 @@ type Fetched = { page: CollectPage } | { failed: string };
 async function chargeQuery(deps: NetworkStageDeps, source: CollectSourceInfo | undefined): Promise<void> {
   const cost = source?.queryCost ?? 0;
   if (!deps.budget || cost <= 0) return;
-  if (await deps.budget.reserve(cost)) return;
-  throw new BudgetStopError(await deps.budget.used(), deps.budget.limit);
+  try {
+    if (await deps.budget.reserve(cost)) return;
+    throw new BudgetStopError(budgetStopReason(await deps.budget.used(), deps.budget.limit));
+  } catch (err) {
+    if (err instanceof BudgetStopError || (err as Error)?.name === "AbortError") throw err;
+    // The quota record cannot be read or saved: fail closed — stop before sending (#2312 review).
+    throw new BudgetStopError(err instanceof Error ? err.message : String(err));
+  }
 }
 
 /** One request, paced and retried on throttling. Other errors propagate to fetchStep. */

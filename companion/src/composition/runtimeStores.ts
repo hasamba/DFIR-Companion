@@ -300,7 +300,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   // (Microsoft) each add one here, and the Collect cloud logs panel lists only what is present.
   const cloudCollectProviders: CloudCollectProviders = {};
   // #2312: the shared-quota usage count, per tenant, beside the cases root (never in a case).
-  const cloudQueryUsage = new QueryUsageStore(queryUsageFile(casesRoot), () => Date.now(), logLine);
+  const cloudQueryUsage = new QueryUsageStore(queryUsageFile(casesRoot));
   const cloudQueryBudget = parseQueryBudget(process.env.DFIR_CLOUD_M365_QUERY_BUDGET);
   const appVersion = getAppVersion();
   const updateRepo = (() => {
