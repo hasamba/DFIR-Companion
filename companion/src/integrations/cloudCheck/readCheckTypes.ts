@@ -6,14 +6,14 @@
 
 import type { CloudProvider } from "../cloudAccounts/types.js";
 
-export type AwsCheckSource = "cloudtrail-lookup" | "s3-trail" | "guardduty";
+export type AwsCheckSource = "cloudtrail-lookup" | "s3-trail" | "ec2-regions" | "guardduty";
 export type MicrosoftCheckSource = "entra-signins" | "entra-directory-audits";
 export type GcpCheckSource = "audit-logs" | "data-access-logs";
 export type CloudCheckSource = AwsCheckSource | MicrosoftCheckSource | GcpCheckSource;
 
 /** Every source a check can test, per provider, in the order a report lists them. */
 export const CHECK_SOURCES: Readonly<Record<CloudProvider, readonly CloudCheckSource[]>> = {
-  aws: ["cloudtrail-lookup", "s3-trail", "guardduty"],
+  aws: ["cloudtrail-lookup", "s3-trail", "ec2-regions", "guardduty"],
   microsoft: ["entra-signins", "entra-directory-audits"],
   gcp: ["audit-logs", "data-access-logs"],
 };
@@ -22,6 +22,7 @@ export const CHECK_SOURCES: Readonly<Record<CloudProvider, readonly CloudCheckSo
 export const CHECK_SOURCE_LABELS: Readonly<Record<CloudCheckSource, string>> = {
   "cloudtrail-lookup": "CloudTrail event history",
   "s3-trail": "CloudTrail S3 bucket",
+  "ec2-regions": "Enabled regions (ec2:DescribeRegions)",
   guardduty: "GuardDuty findings",
   "entra-signins": "Entra sign-in logs",
   "entra-directory-audits": "Entra directory audit logs",

@@ -7,6 +7,7 @@
 // and iamcredentials.googleapis.com.
 
 import { CloudTrailClient } from "@aws-sdk/client-cloudtrail";
+import { EC2Client } from "@aws-sdk/client-ec2";
 import { GuardDutyClient } from "@aws-sdk/client-guardduty";
 import { S3Client } from "@aws-sdk/client-s3";
 import { STSClient } from "@aws-sdk/client-sts";
@@ -74,6 +75,7 @@ function awsClients(
     guardduty: new GuardDutyClient({ region, credentials, ...config }),
     // The trail bucket may live in another region; the client follows the redirect.
     s3: new S3Client({ region, credentials, followRegionRedirects: true, ...config }),
+    ec2: new EC2Client({ region, credentials, ...config }),
   };
 }
 

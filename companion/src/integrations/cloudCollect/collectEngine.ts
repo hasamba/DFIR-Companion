@@ -194,6 +194,8 @@ export async function runCollection(
 ): Promise<CollectionCheckpoint> {
   const paths = collectionPaths(dir);
   const replay = await replayCollection(deps.fs, paths, deps.now);
+  // #2363: the scope the start decided (the AWS regions) — the header is the one record of it.
+  deps.session.applyFilters?.(replay.header.filters ?? {});
   let cp = await baseCheckpoint(deps, paths, replay.header.collectionId);
   let derived = replay.subWindows;
   if (opts.resume) {

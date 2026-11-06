@@ -2,10 +2,17 @@
 // reads the case's forensic rows, its super-timeline rows and the stored import files, and writes
 // nothing. The pure diff is analysis/sigmaRegrade.ts.
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
-import { decodeImportedText } from "../ingest/decodeText.js";
+import { sourceArtifactHash } from "../analysis/canonicalEvent.js";
+import { fileIsGzip } from "../analysis/cloudStreamReader.js";
+import {
+  GZIP_MAX_RATIO,
+  GZIP_RATIO_SLACK_BYTES,
+  REGRADE_TEXT_MAX_BYTES,
+} from "../analysis/cloudStreamLimits.js";
+import { readStoredImportText } from "./storedImportText.js";
 import type { ForensicRowStore } from "../analysis/forensicRows.js";
 import type { SigmaGradingSnapshot } from "../analysis/sigmaImportGrade.js";
 import type { Severity } from "../analysis/stateTypes.js";
@@ -30,6 +37,8 @@ export interface RegradePlanDeps {
   snapshot: SigmaGradingSnapshot;
   gate: Severity;
   ruleMitre: SigmaRuleMitre;
+  /** Decoded bytes read from one stored file (test seam); REGRADE_TEXT_MAX_BYTES by default. */
+  maxTextBytes?: number;
 }
 
 const MISSING = "(no stored file)";
@@ -44,15 +53,26 @@ async function storedFiles(dir: string): Promise<Set<string>> {
 }
 
 /**
+ * The most text a re-grade can read from a gzip file of `size` compressed bytes (#2353): the
+ * decompression-ratio bound past its slack, never past the re-grade's own cap. Never the gzip
+ * trailer's size, which describes only the last member of a concatenated file.
+ */
+function gzipReadBound(size: number): number {
+  return Math.min(REGRADE_TEXT_MAX_BYTES, Math.max(GZIP_RATIO_SLACK_BYTES, size * GZIP_MAX_RATIO));
+}
+
+/**
  * The bytes a re-grade re-reads: every stored import file of the case (#2227). It sizes the apply
- * for the memory guard; the files are already stored, so a refusal loses nothing.
+ * for the memory guard; the files are already stored, so a refusal loses nothing. A gzip file is
+ * read decompressed (#2353), so it counts at the most it can decompress to.
  */
 export async function storedImportBytes(dir: string): Promise<number> {
   let total = 0;
   for (const file of await storedFiles(dir)) {
     try {
-      const s = await stat(join(dir, file));
-      if (s.isFile()) total += s.size;
+      const path = join(dir, file);
+      const s = await stat(path);
+      if (s.isFile()) total += s.size > 1 && (await fileIsGzip(path)) ? gzipReadBound(s.size) : s.size;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
@@ -83,25 +103,19 @@ async function fileInput(
   dir: string,
   file: string,
   g: Group,
-  snapshot: SigmaGradingSnapshot,
+  deps: Pick<RegradePlanDeps, "snapshot" | "maxTextBytes">,
 ): Promise<RegradeFileInput> {
   const base = { file, importer: g.importer, rows: g.rows };
   if (file === MISSING) return { ...base, reparsed: { skipped: "file-missing" } };
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(join(dir, file));
-  } catch {
-    return { ...base, reparsed: { skipped: "file-missing" } };
-  }
-  // A .gz upload (streamed, #2303) is not decompressed here, so its rows' hash — taken over the
-  // decompressed text (#2337) — cannot be compared: it is not reported as changed, and its rows
-  // stay unpaired as before. Otherwise decode as the import did (BOM honoured), so the hash matches.
-  const gzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-  const text = gzip ? "" : decodeImportedText(bytes);
+  // Decoded as the import did (BOM honoured) and, for a .gz upload (#2303), decompressed (#2353),
+  // so the text hashes to what the rows carry (#2337). Bounded: a file past the cap is skipped.
+  const read = await readStoredImportText(join(dir, file), deps.maxTextBytes);
+  if ("skipped" in read) return { ...base, reparsed: { skipped: read.skipped } };
+  const textHash = sourceArtifactHash(read.text); // once per file, never per row
   const rows = [...g.rows.values()].map((r) => (r.forensic ?? r.super)!);
-  if (!gzip && rows.some((e) => storedFileChanged(e, text)))
+  if (rows.some((e) => storedFileChanged(e, textHash)))
     return { ...base, reparsed: { skipped: "file-changed" } };
-  return { ...base, reparsed: reparseForRegrade(g.importer, text, snapshot) };
+  return { ...base, reparsed: reparseForRegrade(g.importer, read.text, deps.snapshot) };
 }
 
 /** The re-grade plan for one case, from what is stored now. Read-only. */
@@ -114,7 +128,7 @@ export async function loadRegradePlan(deps: RegradePlanDeps, caseId: string): Pr
     for await (const batch of deps.superTimelineStore.eventBatches(caseId))
       for (const e of batch) addRow(groups, files, e, "super");
   const inputs: RegradeFileInput[] = [];
-  for (const [file, g] of groups) inputs.push(await fileInput(deps.importsDir, file, g, deps.snapshot));
+  for (const [file, g] of groups) inputs.push(await fileInput(deps.importsDir, file, g, deps));
   return planSigmaRegrade({
     files: inputs,
     token: deps.snapshot.token,
@@ -138,8 +152,8 @@ export function regradeNotes(plan: RegradePlan): string[] {
     notes.push(`${c.counted} grouped row(s) are re-graded on the record that sets their identity.`);
   if (c.unmatched)
     notes.push(
-      `${c.unmatched} row(s) could not be paired with their stored record (file missing or changed, ` +
-        "or the record reads differently now) and stay as they are.",
+      `${c.unmatched} row(s) could not be paired with their stored record (file missing, changed, ` +
+        "too large to re-read or unreadable, or the record reads differently now) and stay as they are.",
     );
   const unresolved = new Set(plan.rows.flatMap((r) => r.unresolvedRules));
   if (unresolved.size)

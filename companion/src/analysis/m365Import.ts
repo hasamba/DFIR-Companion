@@ -28,7 +28,7 @@ import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.j
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
 import { isEntraSignIn, readEntraSignIn } from "./ualLogon.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
-import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
+import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { m365Coverage } from "./cloudCoverageBuilders.js";
 import {
   applySigmaMatches,
@@ -675,7 +675,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
         )
       : []),
   ];
-  const events = [...capped.events, ...summaries];
+  // The hash of the parsed text on every row (#2353), as whole-file CloudTrail does. A parse with
+  // no text (the streaming providers) stamps nothing: the stream stamps its own reader's hash.
+  const rows = [...capped.events, ...summaries];
+  const events = text ? stampSourceArtifactHash(rows, text) : rows;
   const groups = capped.groups;
 
   const represented = capped.events.reduce((n, e) => n + (e.count ?? 1), 0);

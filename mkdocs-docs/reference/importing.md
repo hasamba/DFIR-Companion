@@ -2778,7 +2778,6 @@ techniques that had no rule of their own:
     | Grade | Calls | ATT&CK |
     |---|---|---|
     | **High** | a GCS object created whose name looks like a ransom note (`HOW_TO_DECRYPT_YOUR_FILES.txt`, `RANSOM_NOTE.html`, …) | T1486 |
-    | **Medium** | a custom IAM role updated (`UpdateRole`) — permissions added to a role the caller holds | T1098.003 |
     | **Medium** | an organization policy deleted or cleared (`OrgPolicy.DeletePolicy`, `ClearOrgPolicy`) | T1484 |
     | **Medium** | a project ownership invitation sent (`InsertProjectOwnershipInvite`) | T1098.003 |
     | **Medium** | a GCS HMAC key or an API key created (`storage.hmacKeys.create`, `ApiKeys.CreateKey`) | T1098.001 |
@@ -2791,7 +2790,9 @@ techniques that had no rule of their own:
     lower one is used. Other calls are **tagged only**, so you can find them in the super-timeline:
     code and workload deployments under a service account (Cloud Build, Deployment Manager, Cloud
     Functions, Cloud Run, Cloud Scheduler, instance metadata) — everyday CI/CD that the importer
-    already reads for the attached service account — policy, security-service and logging changes,
+    already reads for the attached service account — custom IAM role changes (the GCP importer grades
+    `CreateRole`, `UpdateRole` and `UndeleteRole` Medium, T1098.003, for any caller; `DeleteRole` is
+    not graded), policy, security-service and logging changes,
     key / secret / data destruction, API key reads, and service-account and role enumeration. The rules
     read the row as the importer writes it, which does not show the request body: a firewall rule
     opened to `0.0.0.0/0`, flow logs switched off on a subnet, DNSSEC turned off or an owner invitation

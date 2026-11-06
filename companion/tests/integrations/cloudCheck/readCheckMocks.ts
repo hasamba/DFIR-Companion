@@ -37,7 +37,7 @@ export function mockAws(answers: Record<string, AwsAnswer | Error>): {
       return answer((command as { input: Record<string, unknown> }).input);
     },
   };
-  return { clients: { sts: sender, cloudtrail: sender, s3: sender, guardduty: sender }, sent };
+  return { clients: { sts: sender, cloudtrail: sender, s3: sender, ec2: sender, guardduty: sender }, sent };
 }
 
 export const AWS_ALL_OK: Record<string, AwsAnswer> = {
@@ -45,6 +45,8 @@ export const AWS_ALL_OK: Record<string, AwsAnswer> = {
   LookupEventsCommand: () => ({ Events: [{}] }),
   ListObjectsV2Command: () => ({ Contents: [{ Key: "AWSLogs/123456789012/CloudTrail/x.json.gz" }] }),
   GetObjectCommand: () => ({ Body: { transformToByteArray: async () => new Uint8Array([31]) } }),
+  // #2363: the regions enabled on the account.
+  DescribeRegionsCommand: () => ({ Regions: [{ RegionName: "eu-west-1" }, { RegionName: "af-south-1" }] }),
   ListDetectorsCommand: () => ({ DetectorIds: ["12abc34d567e8fa901bc2d34e56789f0"] }),
 };
 

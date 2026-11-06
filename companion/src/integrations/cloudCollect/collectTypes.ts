@@ -133,8 +133,39 @@ export interface CollectIdentity {
   sdkVersions: Record<string, string>;
 }
 
+/**
+ * The regions a regional provider can collect (#2363, AWS): listed by the cloud, or a fallback list
+ * with `reason` and `note` — the disclosure the picker, the pre-check and the result show.
+ */
+export interface CollectRegionListing {
+  regions: string[];
+  /** The account's own region, listed first. */
+  home: string;
+  source: "ec2:DescribeRegions" | "fallback";
+  reason?: string;
+  note?: string;
+}
+
+/** The analyst's region picker: what stayed ticked and what was unticked, of the list it showed. */
+export interface CollectRegionChoice {
+  regions?: readonly string[];
+  excludeRegions?: readonly string[];
+}
+
 export interface CloudCollectSession {
   identity(signal?: AbortSignal): Promise<CollectIdentity>;
+  /** #2363: the regions the analyst can pick from. Present only on a regional provider's session. */
+  listRegions?(signal?: AbortSignal): Promise<CollectRegionListing>;
+  /**
+   * #2363: decide a NEW collection's scope from the picker; the returned filters are written to the
+   * manifest header (the record of what was walked and what was skipped by choice).
+   */
+  prepareFilters?(choice: CollectRegionChoice, signal?: AbortSignal): Promise<Record<string, string>>;
+  /**
+   * #2363: the header's filters, handed back by the engine on every start AND resume, so a resume
+   * walks exactly what the start decided.
+   */
+  applyFilters?(filters: Readonly<Record<string, string>>): void;
   /**
    * Fetch one page. Throws CursorExpiredError when `pageToken` is no longer accepted (GCP 24 h,
    * Graph query expiry); the engine then restarts the sub-window from its start.
@@ -161,6 +192,8 @@ export interface CloudCollectProvider {
   retryBudget?: number;
   /** Plain sentences the panel shows under the provider's sources: what it does NOT collect. */
   notes?: readonly string[];
+  /** #2363: the panel offers a region picker (its sessions implement listRegions/prepareFilters). */
+  regionPicker?: boolean;
 }
 
 /** The providers this server can collect with, keyed by provider. Empty until #2313–#2315. */

@@ -2,9 +2,10 @@
 // every region where the account has a GuardDuty detector. Read-only: ListDetectors, ListFindings,
 // GetFindings — the optional GuardDuty statement of the minimum policy.
 //
-// REGIONS. Findings are regional and the minimum policy grants no region listing, so the walk asks
-// a fixed list: the account's own region, AWS's default regions and the opt-in commercial regions
-// (GUARDDUTY_REGIONS). A region that answers "not enabled for this account" cannot hold a detector:
+// REGIONS. Findings are regional. The walk asks the regions the collection walks — the session's
+// walkRegions() (#2363): the regions enabled on the account (ec2:DescribeRegions, opt-in ones
+// included) minus any the analyst unticked, or the disclosed default list without that permission.
+// A region that answers "not enabled for this account" cannot hold a detector:
 // for this source that is not a skip and does not make the collection partial — it is named in the
 // page's `regionsNotEnabled`. A region with no detector (GuardDuty off there) is named in
 // `noDetectorRegions`. A transport failure is never read as either: it fails the window with its
@@ -23,49 +24,12 @@
 // not saved as a page of its own — the walk goes on — except the last, which closes the source.
 
 import { GetFindingsCommand, ListDetectorsCommand, ListFindingsCommand } from "@aws-sdk/client-guardduty";
-import { DEFAULT_AWS_REGION } from "../../cloudTransport/awsCredentials.js";
 import { CursorExpiredError, type CollectPage, type CollectPageRequest } from "../collectTypes.js";
-import {
-  awsReason,
-  DEFAULT_AWS_REGIONS,
-  errorName,
-  regionOff,
-  sendAws,
-  type AwsCollectClients,
-} from "./awsCollectTypes.js";
+import { awsReason, errorName, regionOff, sendAws, type AwsCollectClients } from "./awsCollectTypes.js";
 
 export const GUARDDUTY_ADAPTATION =
   'GetFindings Findings[] as the AWS SDK returns them, saved as a {"Findings":[...]} document';
 const PAGE_SIZE = 50; // ListFindings' and GetFindings' maximum
-
-/** The opt-in commercial regions: off unless the account enabled them; a disabled one says so. */
-export const OPT_IN_AWS_REGIONS = [
-  "af-south-1",
-  "ap-east-1",
-  "ap-south-2",
-  "ap-southeast-3",
-  "ap-southeast-4",
-  "ap-southeast-5",
-  "ap-southeast-7",
-  "ca-west-1",
-  "eu-central-2",
-  "eu-south-1",
-  "eu-south-2",
-  "il-central-1",
-  "me-central-1",
-  "me-south-1",
-  "mx-central-1",
-] as const;
-
-/** A region outside the commercial partition (China, GovCloud, ISO) is asked alone. */
-const OTHER_PARTITION = /^(?:cn-|us-gov-|us-iso)/;
-
-/** The regions the GuardDuty walk asks: the account's own first, then every commercial region. */
-export function guardDutyRegions(accountRegion?: string): string[] {
-  const own = accountRegion || DEFAULT_AWS_REGION;
-  if (OTHER_PARTITION.test(own)) return [own];
-  return [...new Set([own, ...DEFAULT_AWS_REGIONS, ...OPT_IN_AWS_REGIONS])];
-}
 
 interface GdToken {
   r: string;

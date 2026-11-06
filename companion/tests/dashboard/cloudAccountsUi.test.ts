@@ -155,7 +155,11 @@ describe("minimum policy and Check access", () => {
     el("ccRun").click();
     await flush();
     const call = net.calls.find((c) => c.method === "POST");
-    expect(call?.body).toEqual({ sources: ["cloudtrail-lookup", "s3-trail"], s3Bucket: "trail-bucket" });
+    expect(call?.body).toEqual({
+      sources: ["cloudtrail-lookup", "s3-trail", "ec2-regions"], // #2363: the region list is tested too
+      s3Bucket: "trail-bucket",
+    });
+    expect(el("ccSources").textContent).toContain("Enabled regions (ec2:DescribeRegions)");
     expect(el("ccResult").textContent).toContain("Signed in as arn:aws:iam::123456789012:user/collector");
     expect(el("ccResult").textContent).toContain(
       "Failed: CloudTrail S3 bucket — HTTP 403 AccessDenied <b>x</b>",

@@ -9,12 +9,7 @@ import {
   createAwsCollectProvider,
   GUARDDUTY_NOTICE,
 } from "../../src/integrations/cloudCollect/aws/awsCollectProvider.js";
-import {
-  GUARDDUTY_ADAPTATION,
-  guardDutyRegions,
-  OPT_IN_AWS_REGIONS,
-} from "../../src/integrations/cloudCollect/aws/awsGuardDutyFindings.js";
-import { DEFAULT_AWS_REGIONS } from "../../src/integrations/cloudCollect/aws/awsCollectTypes.js";
+import { GUARDDUTY_ADAPTATION } from "../../src/integrations/cloudCollect/aws/awsGuardDutyFindings.js";
 import {
   CursorExpiredError,
   type CloudCollectSession,
@@ -44,6 +39,13 @@ function session(opts: FakeAwsOptions, region = "eu-west-1") {
   return { clients, provider, session: provider.open(awsAccount(region)) };
 }
 
+/** A session with its region scope decided the way a start decides it (#2363 picker). */
+async function scoped(opts: FakeAwsOptions, choice: { excludeRegions?: string[] } = {}) {
+  const made = session(opts);
+  const filters = await made.session.prepareFilters!(choice);
+  return { ...made, filters };
+}
+
 /** Every page of the source, the way the engine walks it. */
 async function walk(s: CloudCollectSession, extra: Partial<CollectPageRequest> = {}): Promise<CollectPage[]> {
   const out: CollectPage[] = [];
@@ -70,9 +72,15 @@ const EU = [gdFinding(1, { Severity: 9.3 }), gdFinding(2)];
 const EU2 = [gdFinding(3, { Severity: 7.5 })];
 const ME = [gdFinding(4, { Region: "me-south-1", Severity: 4.5 }, {}, "me-south-1")];
 
+// The regions DescribeRegions lists (#2363): an opt-in one (me-south-1) among them.
+const ENABLED = ["eu-west-1", "us-east-1", "us-west-2", "me-south-1", "ap-south-1"].map((RegionName) => ({
+  RegionName,
+}));
+
 const SCRIPT: FakeAwsOptions = {
   trails: [],
   buckets: {},
+  enabledRegions: ENABLED,
   guardduty: {
     "eu-west-1": { detector: GD_DETECTOR, pages: [EU, EU2] },
     "us-east-1": "off",
@@ -92,23 +100,15 @@ describe("the GuardDuty source (#2361)", () => {
     });
   });
 
-  it("asks the account's region first, then the default and opt-in regions; another partition alone", () => {
-    const regions = guardDutyRegions("me-south-1");
-    expect(regions[0]).toBe("me-south-1");
-    for (const r of [...DEFAULT_AWS_REGIONS, ...OPT_IN_AWS_REGIONS]) expect(regions).toContain(r);
-    expect(new Set(regions).size).toBe(regions.length);
-    expect(guardDutyRegions("us-gov-west-1")).toEqual(["us-gov-west-1"]);
-    expect(guardDutyRegions("cn-north-1")).toEqual(["cn-north-1"]);
-  });
-
   it("collects every region with a detector — an opt-in one included — and names the rest", async () => {
-    const { session: s, clients } = session(SCRIPT);
+    const { session: s, clients } = await scoped(SCRIPT);
     const all = await walk(s);
     // Three pages of findings, then the closing page of the last region asked (no detector there).
     expect(all).toHaveLength(4);
     expect(all[3].nextPageToken).toBeUndefined();
     expect(findingsOf(all[3])).toEqual([]);
-    expect(all[3].requestParams.region).toBe(OPT_IN_AWS_REGIONS[OPT_IN_AWS_REGIONS.length - 1]);
+    const walked = await s.partitionValues!(SOURCE);
+    expect(all[3].requestParams.region).toBe(walked[walked.length - 1]);
     const pages = all.slice(0, 3);
     expect(pages.map((p) => p.requestParams.region)).toEqual(["eu-west-1", "eu-west-1", "me-south-1"]);
     expect(pages.map((p) => findingsOf(p).map((f) => f.Id))).toEqual([
@@ -124,11 +124,10 @@ describe("the GuardDuty source (#2361)", () => {
       fetched: "2",
       adaptation: GUARDDUTY_ADAPTATION,
     });
-    // The walk to me-south-1 passed us-east-1 (not enabled) and regions without a detector.
-    const toMe = pages[2].requestParams;
-    expect(toMe.regionsNotEnabled).toBe("us-east-1");
-    expect(toMe.noDetectorRegions.split(",")).toContain("us-west-2");
-    expect(toMe.noDetectorRegions.split(",")).not.toContain("me-south-1");
+    // Regions passed on the way are named: us-east-1 answered "not enabled", the others no detector.
+    const named = (k: string) => all.flatMap((p) => (p.requestParams[k] ?? "").split(",").filter(Boolean));
+    expect(named("regionsNotEnabled")).toEqual(["us-east-1"]);
+    expect(named("noDetectorRegions").sort()).toEqual(["ap-south-1", "us-west-2"]);
     // The ListFindings request: updatedAt in the window, oldest first, 50 a page, archived included.
     const list = clients.sent.find((c) => c.op === "ListFindings")!;
     expect(list.input).toEqual({
@@ -143,9 +142,9 @@ describe("the GuardDuty source (#2361)", () => {
     });
     const get = clients.sent.find((c) => c.op === "GetFindings")!;
     expect(get.input).toEqual({ DetectorId: GD_DETECTOR, FindingIds: EU.map((f) => f.Id) });
-    // Read-only, and nothing but the three GuardDuty reads.
+    // Read-only: the region listing, then nothing but the three GuardDuty reads.
     expect(new Set(clients.sent.map((c) => c.op))).toEqual(
-      new Set(["ListDetectors", "ListFindings", "GetFindings"]),
+      new Set(["DescribeRegions", "ListDetectors", "ListFindings", "GetFindings"]),
     );
   });
 
@@ -162,11 +161,21 @@ describe("the GuardDuty source (#2361)", () => {
   });
 
   it("walks one region only on the partition fallback", async () => {
-    const { session: s, clients } = session(SCRIPT);
+    const { session: s, clients } = await scoped(SCRIPT);
     const pages = await walk(s, { partition: { region: "me-south-1" } });
     expect(pages.map((p) => p.requestParams.region)).toEqual(["me-south-1"]);
-    expect(clients.sent.every((c) => c.region === "me-south-1")).toBe(true);
-    expect(await s.partitionValues!(SOURCE)).toEqual(guardDutyRegions("eu-west-1"));
+    expect(
+      clients.sent.filter((c) => c.op !== "DescribeRegions").every((c) => c.region === "me-south-1"),
+    ).toBe(true);
+    expect([...(await s.partitionValues!(SOURCE))].sort()).toEqual(ENABLED.map((r) => r.RegionName).sort());
+  });
+
+  it("honours the region picker: an unticked region is never asked", async () => {
+    const { session: s, clients } = await scoped(SCRIPT, { excludeRegions: ["me-south-1"] });
+    const pages = await walk(s);
+    expect(pages.flatMap(findingsOf).map((f) => f.Id)).toEqual([...EU, ...EU2].map((f) => f.Id));
+    expect(clients.sent.some((c) => c.region === "me-south-1")).toBe(false);
+    expect(pages.some((p) => /me-south-1/.test(p.note ?? ""))).toBe(true); // skipped by choice, said
   });
 
   it("counts findings expired between list and get, and findings updated after the window end", async () => {
@@ -219,7 +228,7 @@ function fakeClock(): CollectClock {
 }
 
 async function collect(t: TempCase, opts: FakeAwsOptions, importer?: CollectPageImporter) {
-  const { session: s, provider, clients } = session(opts);
+  const { session: s, provider, clients, filters } = await scoped(opts);
   const fs = faultFs();
   await createCollection(
     fs,
@@ -233,7 +242,7 @@ async function collect(t: TempCase, opts: FakeAwsOptions, importer?: CollectPage
       provider: "aws",
       sources: [SOURCE],
       window: WINDOW,
-      filters: {},
+      filters,
       companionVersion: "0.0.0-test",
     },
     now,
