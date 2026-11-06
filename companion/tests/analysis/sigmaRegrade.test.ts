@@ -187,6 +187,53 @@ describe("planSigmaRegrade (#2206)", () => {
     expect(p.files[0]).toMatchObject({ status: "skipped", reason: "file-changed" });
   });
 
+  it("lowers a not-found AWS Config call a pre-#2351 import graded High back to Low", () => {
+    const text = JSON.stringify({
+      Records: [
+        ct(3, {
+          eventSource: "config.amazonaws.com",
+          eventName: "StopConfigurationRecorder",
+          requestParameters: { configurationRecorderName: "default" },
+          errorCode: "NoSuchConfigurationRecorderException",
+        }),
+      ],
+    });
+    const now = parseCloudTrail(text, { sigma: snapOn }).events[0];
+    // What the import stored before the veto: graded High, no veto note.
+    const old: ForensicEvent = {
+      ...now,
+      id: "a1e9",
+      relatedFindingIds: [],
+      sourceScreenshots: [FILE],
+      severity: "High",
+      description: now.description.replace(/^Sigma \(high, tag only\): /, "Sigma: "),
+      message: (now.message ?? "")
+        .split("\n")
+        .filter((l) => !l.startsWith("Sigma note: "))
+        .join("\n"),
+    };
+    const p = planSigmaRegrade({
+      files: [
+        {
+          file: FILE,
+          importer: "aws-cloudtrail",
+          rows: new Map<string, StoredRow>([[old.id, { forensic: old }]]),
+          reparsed: reparseForRegrade("aws-cloudtrail", text, snapOn),
+        },
+      ],
+      token: snapOn.token,
+      gate: "Medium",
+      ruleMitre,
+    });
+    const r = p.rows.find((x) => x.id === old.id)!;
+    expect(r.kind).toBe("changed");
+    expect(r.before).toBe("High");
+    expect(r.after).toBe("Low");
+    expect(r.leavesForensic).toBe(true);
+    expect(r.forensic!.after.message).toMatch(/^Sigma note: not graded — the request failed/m);
+    expect(p.counts.lowered).toBe(1);
+  });
+
   it("does not pair a row whose text differs from its record", () => {
     const rows = stored(snapOn).map((e) => ({
       ...e,

@@ -1839,6 +1839,10 @@ they are imported. No AI is involved, and the same file always gets the same res
   stays one event with both verdicts.
 - **Tagger rules still match a Sigma-matched event.** The content tagger reads the description both
   with and without the Sigma lead, so the cloud tags, ATT&CK techniques and grades still apply.
+- **A CloudTrail logging or AWS Config call that failed because its target was not found is only
+  tagged.** It changed nothing, so it keeps the importer's grade (Low) and carries a `Sigma note:`
+  saying why. A denied or otherwise failed attempt can still be raised. A rule that checks the error
+  code itself still grades.
 - **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
 - **An Entra audit record that becomes several rows** carries its match on the first row, with a note
   that the rule matched the whole record.

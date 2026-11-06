@@ -822,6 +822,7 @@
     "sigmaOverlay.ts": "analysis/findings",
     "sigmaRegrade.ts": "analysis/ingest",
     "sigmaRegradeSources.ts": "analysis/ingest",
+    "sigmaCloudTrailVeto.ts": "analysis/ingest",
     "sigmaWebRecord.ts": "analysis/ingest",
     "sigmaRuleStore.ts": "analysis/ingest",
     "sigmaReleaseFiles.ts": "analysis/hunt",

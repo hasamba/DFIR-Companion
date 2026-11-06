@@ -25,6 +25,7 @@ import {
   type SigmaGradingSnapshot,
 } from "./sigmaImportGrade.js";
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
+import { cloudTrailSigmaVeto } from "./sigmaCloudTrailVeto.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
@@ -659,7 +660,11 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
     recordIndex: g.members[0].recordIndex,
   }));
-  const mapped = merged.map((g) => (snapshot ? applySigmaMatches(g.event, g.sigma, snapshot) : g.event));
+  const mapped = merged.map((g) =>
+    snapshot
+      ? applySigmaMatches(g.event, g.sigma, snapshot, undefined, cloudTrailSigmaVeto(g.event))
+      : g.event,
+  );
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)
