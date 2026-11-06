@@ -108,9 +108,10 @@
             : "";
 
         // Data files → the unified /import endpoint (server auto-detects + routes).
-        // Files over 200 MB would OOM the browser tab if read via FileReader, so those (and every
-        // .gz) go to /import-upload as the raw body instead, capped by DFIR_MAX_UPLOAD_MB (#2336).
-        const LARGE_FILE_MB = 200;
+        // Files over 32 MB (the server's streaming threshold) go to /import-upload as the raw body
+        // instead of being read in the tab and sent as JSON: an 80 MB CSV read via FileReader ran the
+        // server out of memory at 1 GB heap. Every .gz goes there too; capped by DFIR_MAX_UPLOAD_MB (#2336).
+        const LARGE_FILE_MB = 32;
         const kinds = {};
         let dataFail = 0,
           aiOffSkipped = 0;

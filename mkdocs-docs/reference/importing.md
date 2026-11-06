@@ -2669,7 +2669,7 @@ techniques that had no rule of their own:
   for review only. A user agent is what the client *claimed*, not proof of the tool used. The
   suite's country, ASN and application lists are not included.
 
-**Size limits.** The Import button reads a file of up to 200 MB in the browser and sends it
+**Size limits.** The Import button reads a file of up to 32 MB in the browser and sends it
 (server limit 256 MB, `DFIR_MAX_BODY_MB`). A larger file, or any `.gz` file, is **uploaded** as it
 is: the browser sends the file's bytes without reading them, and the server writes them to disk
 inside the case folder and imports them from there, the same way Import-from-path does. No path on
@@ -2740,9 +2740,8 @@ the whole file.
 minutes as CSV, with the server's memory peaking under 2 GB. A 30-object, 1.2M-record CloudTrail set
 (`.json.gz`) needs `--max-old-space-size=2048`: the limit is the size of the case it builds, not the
 file — at 1 GB the server's own heap guard refuses the last objects once the case holds ~21,000
-events. Below 32 MB the whole-file path still applies. A file of 200 MB or less is still read in
-the browser and sent whole, so an 80 MB CSV sent through the Import button needs more memory than
-the streamed import itself; a file over 200 MB is uploaded and streamed.
+events. Below 32 MB the whole-file path still applies: the Import button reads such a file in the browser
+and sends it whole. A larger file is uploaded as it is and streamed.
 
 **gzip.** A `.gz` file is decompressed while it is read. A file that decompresses to more than 100
 times its compressed size (past the first 64 MB), or to more than 20 GB, is refused as a possible
