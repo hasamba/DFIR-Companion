@@ -78,6 +78,12 @@ export interface FakeGuardDuty {
   pages: Record<string, unknown>[][];
   /** Ids GetFindings does not return (expired between the calls). */
   notReturned?: string[];
+  /** #2372: explicit ListDetectors pages (NextToken `d<i>` while more remain); default one page of `detector`. */
+  detectorPages?: string[][];
+  /** #2372: ListDetectors always answers the same NextToken — an endpoint that never ends the listing. */
+  detectorTokenRepeat?: boolean;
+  /** #2372: ListDetectors page `page` (0-based) fails `times` times — DNS or a rejected NextToken. */
+  detectorFail?: { page: number; error: "dns" | "token"; times: number };
 }
 
 export interface Sent {
@@ -238,6 +244,21 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
   };
 }
 
+/** ListDetectors, paginated when the plan says so (#2372). */
+function listDetectors(plan: FakeGuardDuty, region: string, input: Record<string, unknown>) {
+  const pages = plan.detectorPages ?? [plan.detector ? [plan.detector] : []];
+  const index = input.NextToken ? Number(String(input.NextToken).slice(1)) : 0;
+  const fail = plan.detectorFail;
+  if (fail && fail.page === index && fail.times > 0) {
+    fail.times--;
+    if (fail.error === "dns") throw dnsError(region);
+    throw awsError("BadRequestException", 400, "The request is rejected because the NextToken is invalid.");
+  }
+  if (plan.detectorTokenRepeat) return { DetectorIds: pages[0] ?? [], NextToken: "d0" };
+  const next = index + 1 < pages.length ? `d${index + 1}` : undefined;
+  return { DetectorIds: pages[index] ?? [], ...(next ? { NextToken: next } : {}) };
+}
+
 /** GuardDuty answered from `opts.guardduty` (#2361): one region's detector and its finding pages. */
 function guardDutyAnswer(opts: FakeAwsOptions, op: string, region: string, input: Record<string, unknown>) {
   if (opts.guarddutyDenied)
@@ -245,7 +266,7 @@ function guardDutyAnswer(opts: FakeAwsOptions, op: string, region: string, input
   const plan = opts.guardduty?.[region] ?? { detector: null, pages: [] };
   if (plan === "off") throw awsError("UnrecognizedClientException", 400);
   if (plan === "dns") throw dnsError(region);
-  if (op === "ListDetectors") return { DetectorIds: plan.detector ? [plan.detector] : [] };
+  if (op === "ListDetectors") return listDetectors(plan, region, input);
   if (input.DetectorId !== plan.detector) throw awsError("BadRequestException", 400, "wrong detector");
   const all = plan.pages.flat();
   if (op === "GetFindings") {

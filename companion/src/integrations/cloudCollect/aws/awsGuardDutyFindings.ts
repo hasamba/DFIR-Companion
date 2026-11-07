@@ -8,7 +8,8 @@
 // A region that answers "not enabled for this account" cannot hold a detector:
 // for this source that is not a skip and does not make the collection partial — it is named in the
 // page's `regionsNotEnabled`. A region with no detector (GuardDuty off there) is named in
-// `noDetectorRegions`. A transport failure is never read as either: it fails the window with its
+// `noDetectorRegions`. ListDetectors is read page by page (#2372, at most MAX_DETECTOR_PAGES); a
+// listing cut at that bound names its region in `detectorListTruncated`. A transport failure is never read as either: it fails the window with its
 // page token kept, so Resume carries on from the same page.
 //
 // THE PAGE BODY is `{"Findings":[…]}` — GetFindings' findings as the AWS SDK returns them, the
@@ -83,24 +84,56 @@ function parseToken(regions: readonly string[], token?: string): { index: number
 const tokenFor = (region: string, detector?: string, next?: string): string =>
   JSON.stringify({ r: region, ...(detector ? { d: detector } : {}), ...(next ? { n: next } : {}) });
 
-/** The region's detector id; null when GuardDuty is off there; "off" when the region is not enabled. */
+/**
+ * A safety stop (#2372): one region's ListDetectors listing never walks more pages than this. AWS
+ * allows one detector per account and region, so a second page is already unusual; the cap bounds
+ * one discovery attempt (the engine paces fetchPage, not the calls inside it, and a retried fetch
+ * repeats the attempt). A listing cut here is disclosed in `detectorListTruncated`.
+ */
+export const MAX_DETECTOR_PAGES = 20;
+
+interface Detectors {
+  id: string | null;
+  extra: string[];
+  /** The bound was hit with a NextToken still pending: more ids may exist. */
+  truncated: boolean;
+}
+
+/** One ListDetectors page; a rejected NextToken is NOT a stale findings cursor. */
+async function detectorPage(clients: AwsCollectClients, region: string, next?: string, signal?: AbortSignal) {
+  try {
+    return await sendAws<{ DetectorIds?: string[]; NextToken?: string }>(
+      clients.guardduty(region),
+      new ListDetectorsCommand(next ? { NextToken: next } : {}),
+      signal,
+    );
+  } catch (err) {
+    if (regionOff(err)) return "off" as const;
+    const mapped = guardDutyError(err);
+    // Expiring the cursor would make the engine drop the window's findings token; failing plainly
+    // keeps it, and the retry lists this region's detectors again from the first page.
+    if (mapped instanceof CursorExpiredError)
+      throw new Error(`GuardDuty ListDetectors NextToken rejected in ${region}: ${awsReason(err)}`);
+    throw mapped;
+  }
+}
+
+/** The region's detector ids, every page (bounded); "off" when the region is not enabled. */
 async function detectorOf(
   clients: AwsCollectClients,
   region: string,
   signal?: AbortSignal,
-): Promise<{ id: string | null; extra: string[] } | "off"> {
-  try {
-    const out = await sendAws<{ DetectorIds?: string[] }>(
-      clients.guardduty(region),
-      new ListDetectorsCommand({}),
-      signal,
-    );
-    const ids = (out.DetectorIds ?? []).filter((d) => typeof d === "string" && d);
-    return { id: ids[0] ?? null, extra: ids.slice(1) };
-  } catch (err) {
-    if (regionOff(err)) return "off";
-    throw guardDutyError(err);
+): Promise<Detectors | "off"> {
+  const ids: string[] = [];
+  let next: string | undefined;
+  for (let page = 0; page < MAX_DETECTOR_PAGES; page++) {
+    const out = await detectorPage(clients, region, next, signal);
+    if (out === "off") return "off";
+    for (const d of out.DetectorIds ?? []) if (typeof d === "string" && d && !ids.includes(d)) ids.push(d);
+    next = typeof out.NextToken === "string" && out.NextToken ? out.NextToken : undefined;
+    if (!next) break;
   }
+  return { id: ids[0] ?? null, extra: ids.slice(1), truncated: next !== undefined };
 }
 
 interface WalkNotes {
@@ -108,6 +141,7 @@ interface WalkNotes {
   noDetector: string[];
   empty: string[];
   extraDetectors: string[];
+  detectorListCut: string[];
 }
 
 function pageOf(
@@ -147,6 +181,7 @@ function pageOf(
       ...list2("noDetector", "noDetectorRegions"),
       ...list2("empty", "emptyRegions"),
       ...list2("extraDetectors", "otherDetectors"),
+      ...list2("detectorListCut", "detectorListTruncated"),
     },
   };
 }
@@ -197,7 +232,13 @@ export async function fetchGuardDutyPage(
   const only = request.partition?.region;
   const regions = only ? [only] : allRegions;
   let { index, d, n } = parseToken(regions, request.pageToken);
-  const notes: WalkNotes = { notEnabled: [], noDetector: [], empty: [], extraDetectors: [] };
+  const notes: WalkNotes = {
+    notEnabled: [],
+    noDetector: [],
+    empty: [],
+    extraDetectors: [],
+    detectorListCut: [],
+  };
   for (;;) {
     const region = regions[index];
     const following = regions[index + 1];
@@ -205,10 +246,13 @@ export async function fetchGuardDutyPage(
     if (!detector) {
       const found = await detectorOf(clients, region, request.signal);
       if (found === "off") notes.notEnabled.push(region);
-      else if (!found.id) notes.noDetector.push(region);
       else {
-        detector = found.id;
-        notes.extraDetectors.push(...found.extra.map((x) => `${region}:${x}`));
+        // A cut listing with no id is not proof GuardDuty is off there: named as cut, not as off.
+        if (found.truncated) notes.detectorListCut.push(region);
+        if (found.id) {
+          detector = found.id;
+          notes.extraDetectors.push(...found.extra.map((x) => `${region}:${x}`));
+        } else if (!found.truncated) notes.noDetector.push(region);
       }
     }
     if (!detector) {

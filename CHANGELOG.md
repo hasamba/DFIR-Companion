@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GuardDuty detector pagination** — collection reads every page of a region's GuardDuty detector listing (bounded) and names a listing cut at the bound (closes #2372)
 - **Cloud credential release custody race** — closing, archiving or deleting a case now records its detached credentials from the same snapshot the release acts on, so a concurrent attach, detach, delete or vault reset waits instead of leaving a custody entry that disagrees with the outcome (closes #2371)
 - **Cloud collection survives a briefly locked file** — on Windows a checkpoint or page rename that hits a momentary lock (antivirus, indexer, a reader) is retried like every other atomic write instead of failing the collection (closes #2370)
 - **Sigma re-grade preview memory guard** — the preview and the staged-release measure are sized by the import memory guard like Apply, refusing with a clear message instead of risking an out-of-memory crash (closes #2366)

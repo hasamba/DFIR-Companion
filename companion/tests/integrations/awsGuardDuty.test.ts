@@ -9,7 +9,10 @@ import {
   createAwsCollectProvider,
   GUARDDUTY_NOTICE,
 } from "../../src/integrations/cloudCollect/aws/awsCollectProvider.js";
-import { GUARDDUTY_ADAPTATION } from "../../src/integrations/cloudCollect/aws/awsGuardDutyFindings.js";
+import {
+  GUARDDUTY_ADAPTATION,
+  MAX_DETECTOR_PAGES,
+} from "../../src/integrations/cloudCollect/aws/awsGuardDutyFindings.js";
 import {
   CursorExpiredError,
   type CloudCollectSession,
@@ -19,7 +22,7 @@ import {
 import type { CollectPageImporter } from "../../src/integrations/cloudCollect/collectImport.js";
 import type { CollectClock } from "../../src/integrations/cloudCollect/collectRateLimit.js";
 import { faultFs, kill, pipelineImporter, tempCase, type TempCase } from "../helpers/cloudCollectFakes.js";
-import { awsAccount, fakeAwsClients, type FakeAwsOptions } from "../helpers/awsCollectFakes.js";
+import { awsAccount, fakeAwsClients, type FakeAwsOptions, type Sent } from "../helpers/awsCollectFakes.js";
 import { GD_DETECTOR, gdFinding } from "../helpers/guardDutyFixtures.js";
 
 // #2361 — the GuardDuty findings source on a recording fake (no real AWS is reached): which regions
@@ -216,6 +219,143 @@ describe("the GuardDuty source (#2361)", () => {
       s.fetchPage({ ...req, pageToken: JSON.stringify({ r: "xx-nowhere-1" }) }),
     ).rejects.toBeInstanceOf(CursorExpiredError);
   });
+});
+
+// #2372 — ListDetectors is paginated. AWS allows one detector per account and region, so this is
+// defensive: every page is read (bounded), and a listing cut at the bound is said, never silent.
+describe("GuardDuty detector listing pagination (#2372)", () => {
+  const EU_ONLY = { partition: { region: "eu-west-1" } };
+  const gdOnly = (plan: FakeAwsOptions["guardduty"]): FakeAwsOptions => ({
+    trails: [],
+    buckets: {},
+    guardduty: plan,
+  });
+  const detectorCalls = (sent: Sent[], region = "eu-west-1") =>
+    sent.filter((c) => c.op === "ListDetectors" && c.region === region);
+
+  it("follows NextToken: detectors on later pages are named in otherDetectors", async () => {
+    const { session: s, clients } = session(
+      gdOnly({
+        "eu-west-1": { detector: GD_DETECTOR, pages: [EU], detectorPages: [[GD_DETECTOR], ["d-2"], ["d-3"]] },
+      }),
+    );
+    const [first] = await walk(s, EU_ONLY);
+    const calls = detectorCalls(clients.sent);
+    expect(calls.map((c) => c.input.NextToken)).toEqual([undefined, "d1", "d2"]);
+    expect(first.requestParams.otherDetectors).toBe("eu-west-1:d-2,eu-west-1:d-3");
+    expect(first.requestParams.detectorListTruncated).toBeUndefined();
+    expect(findingsOf(first).map((f) => f.Id)).toEqual(EU.map((f) => f.Id));
+  });
+
+  it("an empty first page with a NextToken is not 'no detector': the detector on page two is used", async () => {
+    const { session: s } = session(
+      gdOnly({ "eu-west-1": { detector: GD_DETECTOR, pages: [EU], detectorPages: [[], [GD_DETECTOR]] } }),
+    );
+    const [first] = await walk(s, EU_ONLY);
+    expect(first.requestParams.detectorId).toBe(GD_DETECTOR);
+    expect(first.requestParams.noDetectorRegions).toBeUndefined();
+    expect(findingsOf(first)).toHaveLength(EU.length);
+  });
+
+  it("an id listed on two pages is named once", async () => {
+    const { session: s } = session(
+      gdOnly({
+        "eu-west-1": {
+          detector: GD_DETECTOR,
+          pages: [EU],
+          detectorPages: [
+            [GD_DETECTOR, "d-2"],
+            ["d-2", GD_DETECTOR],
+          ],
+        },
+      }),
+    );
+    const [first] = await walk(s, EU_ONLY);
+    expect(first.requestParams.otherDetectors).toBe("eu-west-1:d-2");
+  });
+
+  it("exactly the bound of pages, the last with no NextToken, is a complete listing", async () => {
+    const detectorPages = Array.from({ length: MAX_DETECTOR_PAGES }, (_, i) =>
+      i === 0 ? [GD_DETECTOR] : [],
+    );
+    const { session: s, clients } = session(
+      gdOnly({ "eu-west-1": { detector: GD_DETECTOR, pages: [EU], detectorPages } }),
+    );
+    const [first] = await walk(s, EU_ONLY);
+    expect(detectorCalls(clients.sent)).toHaveLength(MAX_DETECTOR_PAGES);
+    expect(first.requestParams.detectorListTruncated).toBeUndefined();
+  });
+
+  it("a listing that never ends stops at the bound and says so; the first detector is still collected", async () => {
+    const { session: s, clients } = session(
+      gdOnly({
+        "eu-west-1": {
+          detector: GD_DETECTOR,
+          pages: [EU],
+          detectorPages: [[GD_DETECTOR]],
+          detectorTokenRepeat: true,
+        },
+      }),
+    );
+    const [first] = await walk(s, EU_ONLY);
+    expect(detectorCalls(clients.sent)).toHaveLength(MAX_DETECTOR_PAGES);
+    expect(first.requestParams.detectorListTruncated).toBe("eu-west-1");
+    expect(findingsOf(first)).toHaveLength(EU.length);
+  });
+
+  it("a cut listing with no id found is disclosed as cut, not as 'no detector'", async () => {
+    const { session: s } = session(
+      gdOnly({ "eu-west-1": { detector: null, pages: [], detectorPages: [[]], detectorTokenRepeat: true } }),
+    );
+    const [only] = await walk(s, EU_ONLY);
+    expect(only.requestParams.detectorListTruncated).toBe("eu-west-1");
+    expect(only.requestParams.noDetectorRegions).toBeUndefined();
+  });
+
+  it("the cut note of a region with no finding in the window is carried onto the next region's page", async () => {
+    const { session: s } = await scoped({
+      ...gdOnly({
+        "eu-west-1": {
+          detector: GD_DETECTOR,
+          pages: [[]],
+          detectorPages: [[GD_DETECTOR]],
+          detectorTokenRepeat: true,
+        },
+        "us-east-1": { detector: "d-us", pages: [EU2] },
+      }),
+      enabledRegions: [{ RegionName: "eu-west-1" }, { RegionName: "us-east-1" }],
+    });
+    const pages = await walk(s);
+    const us = pages.find((p) => p.requestParams.region === "us-east-1")!;
+    expect(findingsOf(us).map((f) => f.Id)).toEqual(EU2.map((f) => f.Id));
+    expect(us.requestParams).toMatchObject({ emptyRegions: "eu-west-1", detectorListTruncated: "eu-west-1" });
+  });
+
+  it.each(["dns", "token"] as const)(
+    "a %s failure on detector page two fails the fetch without expiring the cursor; a retry succeeds",
+    async (error) => {
+      const { session: s } = session(
+        gdOnly({
+          "eu-west-1": {
+            detector: GD_DETECTOR,
+            pages: [EU],
+            detectorPages: [[GD_DETECTOR], ["d-2"]],
+            detectorFail: { page: 1, error, times: 1 },
+          },
+        }),
+      );
+      const req = { source: SOURCE, subWindowId: `${SOURCE}:0`, window: WINDOW, ...EU_ONLY };
+      const failed = await s.fetchPage(req).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(failed).toBeInstanceOf(Error);
+      expect(failed).not.toBeInstanceOf(CursorExpiredError);
+      const page = await s.fetchPage(req);
+      expect(page.requestParams.otherDetectors).toBe("eu-west-1:d-2");
+      expect(findingsOf(page)).toHaveLength(EU.length);
+    },
+  );
 });
 
 // ── through the engine ───────────────────────────────────────────────────────────────────────────
