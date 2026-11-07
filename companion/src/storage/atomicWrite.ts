@@ -110,6 +110,45 @@ export async function atomicWrite(
   }
 }
 
+export interface RenameRetryIo {
+  rename?: (from: string, to: string) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+  retries?: number;
+  onRetry?: (attempts: number) => void;
+}
+
+/**
+ * `rename(from → to)`, retried with atomicWrite's linear backoff while it fails with a transient
+ * Windows lock (EPERM/EBUSY/EACCES — Defender, the search indexer, a sync client or a reader holding
+ * a handle for a few ms). Any other error, or a lock that outlasts the budget, is rethrown as is.
+ *
+ * Exported for writers that need the rename without atomicWrite's write step — the cloud collection
+ * fs (integrations/cloudCollect/collectFs.ts) fsyncs its own temp file and folder, which atomicWrite
+ * deliberately does not (#2370).
+ */
+export async function renameRetryingLocks(from: string, to: string, io: RenameRetryIo = {}): Promise<void> {
+  const rename = io.rename ?? fsRename;
+  const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const retries = io.retries ?? atomicWriteRetries();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to);
+      if (attempt > 0) {
+        try {
+          io.onRetry?.(attempt);
+        } catch {
+          /* observability is best-effort */
+        }
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= retries || !TRANSIENT_LOCK.has(code)) throw err;
+      await sleep(Math.min(BACKOFF_CAP_MS, 40 * (attempt + 1))); // linear backoff, capped at 1s
+    }
+  }
+}
+
 interface WriteIo {
   write: (path: string, content: string | Uint8Array) => Promise<void>;
   rename: (from: string, to: string) => Promise<void>;
@@ -120,32 +159,15 @@ interface WriteIo {
 }
 
 async function writeThenRename(target: string, content: string | Uint8Array, io: WriteIo): Promise<void> {
-  const { write, rename, unlink, sleep, retries } = io;
   const tmp = tempPathFor(target);
-  await write(tmp, content);
+  await io.write(tmp, content);
   try {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await rename(tmp, target);
-        if (attempt > 0) {
-          try {
-            io.onRetry?.(attempt);
-          } catch {
-            /* observability is best-effort */
-          }
-        }
-        return;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code ?? "";
-        if (attempt >= retries || !TRANSIENT_LOCK.has(code)) throw err;
-        await sleep(Math.min(BACKOFF_CAP_MS, 40 * (attempt + 1))); // linear backoff, capped at 1s
-      }
-    }
+    await renameRetryingLocks(tmp, target, io);
   } catch (err) {
     // Best-effort cleanup of the now-orphaned temp file so failed writes don't litter the
     // state dir. Ignore ENOENT — the rename may have partially succeeded or another caller
     // already cleaned up.
-    await unlink(tmp).catch(() => {});
+    await io.unlink(tmp).catch(() => {});
     throw err;
   }
 }
