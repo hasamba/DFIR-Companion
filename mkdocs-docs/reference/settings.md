@@ -544,6 +544,7 @@ The tab also shows:
   statuses, disabled rules, exclusions and minimum level. A lowered row never drops below the
   importer's own grade. Imports whose stored file is missing, changed, too large to re-read or
   unreadable are not scanned, and the result says how many. It changes nothing; it runs only when you click it.
+  Like the re-grade preview, the import memory guard can refuse it on a server short of memory.
 - **Roll back** — switches back to the previous release (the bundled rules after a first install).
 - **Rules** — every rule for a graded log source, with its state and reason. **Disable** switches a
   noisy rule off with a reason; **Enable** switches it back on, including the six rules the Companion
@@ -587,7 +588,8 @@ so two imports graded under different exclusions never look the same.
     - With the same rules and settings, a re-grade changes nothing.
     - One re-grade per case at a time: a second Apply for the same case while one runs is refused
       until the first finishes. On a server short of memory the import memory guard can refuse the
-      apply; nothing changes, and you run the re-grade again later.
+      preview or the apply, before it reads anything: nothing changes, and you preview or run the
+      re-grade again once memory is free.
 
 Updates, rule changes and Apply re-grade are not available in the demo.
 

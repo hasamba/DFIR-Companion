@@ -18,7 +18,9 @@
 // (caseWriteExistsGate) and, below, for a closed or archived case (423). #2227: it is single-flight
 // per case (a second POST while one runs or waits answers 409) and its section is sized for the
 // memory guard from the stored import files it re-reads (a refusal answers 503). The GET preview
-// stays on the heavy-read gate (composition/heavyReadGate.ts).
+// stays on the heavy-read gate (composition/heavyReadGate.ts) and, #2366, is sized for the same
+// memory guard the same way — without the import section, since it writes nothing. Its refusal
+// answers 503 too, without the server-busy marker, so the dashboard shows it instead of retrying.
 
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
@@ -50,6 +52,7 @@ const REGRADE_REFUSAL_WORDING = {
   saved: "The case's imports are unchanged",
   retry: "run the re-grade again",
 };
+const PREVIEW_REFUSAL_WORDING = { ...REGRADE_REFUSAL_WORDING, retry: "preview the re-grade again" };
 
 export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): void {
   const { options, store: cases } = ctx;
@@ -109,9 +112,20 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
       // #2209: the staged release, filtered the way it would be once installed. Read-only.
       const snapshot =
         release === undefined ? active : await options.sigmaRuleStore!.pendingSnapshot(release);
-      return res.json(summary(await prepare(caseId, snapshot), release !== undefined));
+      // #2366: the preview re-reads every stored file like the apply, so the guard sizes it the same way.
+      const releaseAdmission = await ctx.importLock.admitWithoutSection(caseId, {
+        incomingBytes: await storedImportBytes(cases.importsDir(caseId)),
+        uncapped: true,
+        wording: PREVIEW_REFUSAL_WORDING,
+      });
+      try {
+        return res.json(summary(await prepare(caseId, snapshot), release !== undefined));
+      } finally {
+        releaseAdmission();
+      }
     } catch (err) {
-      const status = err instanceof SigmaStoreError ? err.status : 500;
+      const status =
+        err instanceof SigmaStoreError ? err.status : err instanceof ImportMemoryRefusedError ? 503 : 500;
       return res.status(status).json({ error: (err as Error).message });
     }
   });
