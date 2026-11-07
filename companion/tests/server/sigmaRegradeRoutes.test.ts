@@ -419,6 +419,107 @@ describe("POST /cases/:id/sigma/regrade — admission (#2227)", () => {
   });
 });
 
+// #2366: the preview re-parses every stored import file too, so the memory guard sizes it the way it
+// sizes the apply — without taking the case's import section — and a refusal answers 503.
+describe("GET /cases/:id/sigma/regrade — memory guard (#2366)", () => {
+  const storedBytes = async () => {
+    const dir = cases.importsDir("c1");
+    let total = 0;
+    for (const f of await readdir(dir)) total += (await stat(join(dir, f))).size;
+    return total;
+  };
+
+  /** A fake guard that records the preview's admissions (the import's own are let through). */
+  function previewGuard() {
+    const seen = { hints: [] as ImportAdmissionHint[], released: 0, refuse: false };
+    const admission: ImportAdmission = {
+      admit: async (_caseId, hint) => {
+        if (!/preview/.test(hint?.wording?.retry ?? "")) return () => {};
+        seen.hints.push(hint!);
+        if (seen.refuse)
+          throw new ImportMemoryRefusedError(
+            `Import refused to protect the server. Then ${hint!.wording!.retry}.`,
+          );
+        return () => void seen.released++;
+      },
+    };
+    return { seen, importLock: new ImportLock(admission) };
+  }
+
+  it("is sized from the stored import files, uncapped, and releases its reservation", async () => {
+    const { seen, importLock } = previewGuard();
+    const app = build({ importLock });
+    await importTrail(app);
+    rules = SET_OFF;
+
+    const res = await request(app).get("/cases/c1/sigma/regrade");
+    expect(res.status).toBe(200);
+    expect(res.body.counts.lowered).toBe(1);
+    expect(seen.hints).toHaveLength(1);
+    expect(seen.hints[0].incomingBytes).toBe(await storedBytes());
+    expect(seen.hints[0].incomingBytes).toBeGreaterThan(0);
+    expect(seen.hints[0].uncapped).toBe(true);
+    expect(seen.released).toBe(1);
+    expect(importLock.isBusy("c1")).toBe(false);
+  });
+
+  it("a refusal answers 503 with the guard's message, is not marked busy, and changes nothing", async () => {
+    const { seen, importLock } = previewGuard();
+    const app = build({ importLock });
+    await importTrail(app);
+    rules = SET_OFF;
+    const forensicBefore = (await stateStore.load("c1")).forensicTimeline;
+    const row = target(forensicBefore)!;
+    const superBefore = await superRow(row.id);
+    seen.refuse = true;
+
+    const refused = await request(app).get("/cases/c1/sigma/regrade");
+    expect(refused.status).toBe(503);
+    expect(refused.body.error).toMatch(/refused to protect the server/);
+    expect(refused.body.error).toContain(seen.hints[0].wording!.retry);
+    expect(refused.headers["x-dfir-server-busy"]).toBeUndefined(); // not auto-retried by the dashboard
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual(forensicBefore);
+    expect(await superRow(row.id)).toEqual(superBefore);
+
+    seen.refuse = false;
+    const next = await request(app).get("/cases/c1/sigma/regrade");
+    expect(next.status).toBe(200);
+    expect(next.body.counts.lowered).toBe(1);
+  });
+
+  it("guards the staged-release measure the same way", async () => {
+    const dir = bundledSigmaDir() as string;
+    const files = ruleFiles(dir).files.filter((f) => !f.text.includes(`id: ${RULE_ID}`));
+    const store = new SigmaRuleStore(await mkdtemp(join(tmpdir(), "dfir-sigma-staged-")), dir, {});
+    await store.init();
+    const zip = createZip(files.map((f) => ({ path: f.path, data: Buffer.from(f.text) })));
+    const { token } = await store.preview(zip, { source: "file", fileName: "next.zip", verified: false });
+    const { seen, importLock } = previewGuard();
+    const app = build({ importLock, sigmaRuleStore: store });
+    await importTrail(app);
+    seen.refuse = true;
+
+    const res = await request(app).get(`/cases/c1/sigma/regrade?release=${encodeURIComponent(token)}`);
+    expect(res.status).toBe(503);
+    expect(seen.hints).toHaveLength(1);
+    expect(seen.hints[0].uncapped).toBe(true);
+  });
+
+  it("releases its reservation when the preview fails", async () => {
+    const { seen, importLock } = previewGuard();
+    const app = build({ importLock });
+    await importTrail(app);
+    vi.spyOn(stateStore, "forensicTimelineBatches").mockImplementation(() => {
+      throw new Error("disk read failed");
+    });
+
+    const res = await request(app).get("/cases/c1/sigma/regrade");
+    expect(res.status).toBe(500);
+    expect(seen.hints).toHaveLength(1);
+    expect(seen.released).toBe(1);
+  });
+});
+
 // #2220: Undo of a re-grade puts BOTH timelines back; Redo re-grades both again.
 describe("Undo / Redo of a Sigma re-grade (#2220)", () => {
   /** The fields a re-grade rewrites on a super-timeline copy. */
