@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ImportLock } from "../../src/analysis/importLock.js";
+import { createImportMemoryGuard, ImportMemoryRefusedError } from "../../src/analysis/importMemoryGuard.js";
 
 // The primitive behind "one import writer per case". Its contract is small and load-bearing: FIFO
 // per case, independent across cases, and a failed section must not wedge the ones behind it.
@@ -79,5 +80,54 @@ describe("ImportLock", () => {
     first();
     (await second)();
     expect(secondGranted).toBe(true);
+  });
+});
+
+// #2366: read-only work as heavy as an import (the Sigma re-grade preview) is admitted by the same
+// memory guard, without the case's import section, and its reservation counts against imports.
+describe("ImportLock.admitWithoutSection (#2366)", () => {
+  const MB = 1024 ** 2;
+  /** Room for one 1,000-event reservation (128 MB of the 200 MB the probe reports), not two. */
+  const guarded = () =>
+    new ImportLock(
+      createImportMemoryGuard({
+        countEvents: async () => 0,
+        probe: () => ({ availableBytes: 200 * MB, rssBytes: 0, heapLimitBytes: 8 * 1024 * MB }),
+      }),
+    );
+  const hint = { incomingEvents: 1000 };
+
+  it("holds a reservation that a sectioned import is refused against, until it is released", async () => {
+    const lock = guarded();
+    const release = await lock.admitWithoutSection("c1", hint);
+    expect(lock.isBusy("c1")).toBe(false); // no section taken
+
+    await expect(lock.acquire("c2", hint)).rejects.toBeInstanceOf(ImportMemoryRefusedError);
+    await expect(lock.admitWithoutSection("c2", hint)).rejects.toBeInstanceOf(ImportMemoryRefusedError);
+
+    release();
+    const section = await lock.acquire("c2", hint);
+    section();
+  });
+
+  it("is not blocked by an import section held for the same case", async () => {
+    const lock = new ImportLock({ admit: async () => () => {} });
+    const section = await lock.acquire("c1");
+    const release = await lock.admitWithoutSection("c1", hint); // resolves although the section is held
+    release();
+    section();
+  });
+
+  it("admits everything when no guard is wired or no size is given", async () => {
+    let admitted = 0;
+    (await new ImportLock().admitWithoutSection("c1", hint))();
+    const counting = new ImportLock({
+      admit: async () => {
+        admitted++;
+        return () => {};
+      },
+    });
+    (await counting.admitWithoutSection("c1"))();
+    expect(admitted).toBe(0);
   });
 });

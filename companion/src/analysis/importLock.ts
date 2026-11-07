@@ -80,6 +80,18 @@ export class ImportLock {
     };
   }
 
+  /**
+   * Admit read-only work as heavy as an import — the Sigma re-grade preview, which re-parses every
+   * stored import file (#2366) — through the same memory guard, WITHOUT taking the case's section:
+   * it writes nothing, so it must neither wait behind an import nor hold one up. The reservation is
+   * shared with sectioned imports, so a preview and an import running together are both counted.
+   * Resolves to the release (call it from a `finally`), or rejects with the guard's refusal. With no
+   * guard wired or no size hint it admits at once and reserves nothing.
+   */
+  admitWithoutSection(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
+    return this.admit(caseId, hint);
+  }
+
   /** True while an import section for the case is held or queued (#1903 — archive refuses then). */
   isBusy(caseId: string): boolean {
     return this.lock.isBusy(caseId);
