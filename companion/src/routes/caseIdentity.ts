@@ -91,7 +91,14 @@ export async function clearStateOutlivingCase(
     ["reset audit export positions", () => options.auditExportCursors?.clearCase(id)],
     // Cloud accounts attached to the deleted case (#2308) are detached, never deleted — another case
     // may share the credential — so a same-id successor cannot inherit them.
-    ["detach cloud accounts", () => void options.cloudAccountVault?.detachCase(id)],
+    // Under the vault lock, like every other change to an account's cases (#2371).
+    [
+      "detach cloud accounts",
+      async () => {
+        const vault = options.cloudAccountVault;
+        if (vault) await vault.exclusive(() => vault.detachCase(id));
+      },
+    ],
     // Every per-case in-memory map (capture buffers, synthesis timers and in-flight marks, deferred
     // kicks, enrichment pending, drop-scan state, …) drops the deleted case's entries, and its
     // timers are cleared: nothing of it can be analysed into, or coalesce with, a new case (#1866).

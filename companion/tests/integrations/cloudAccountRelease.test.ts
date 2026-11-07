@@ -99,3 +99,63 @@ describe("releaseCase", () => {
     expect(vault.list().map((x) => x.id)).toEqual([c.id]);
   });
 });
+
+// #2371: the release and the record of its detaches come from one snapshot, under the vault lock.
+describe("releaseCaseRecorded", () => {
+  function sharedAndSole() {
+    const shared = vault.create(awsKeyInput("S", fakeAwsSecret()), "c1").account;
+    vault.attach(shared.id, "c2");
+    const sole = vault.create(awsKeyInput("A", fakeAwsSecret()), "c1").account;
+    return { shared, sole };
+  }
+
+  it("hands the shared accounts to the recorder, then releases exactly those as detached", async () => {
+    const { shared, sole } = sharedAndSole();
+    const recorded: string[] = [];
+    const out = await vault.releaseCaseRecorded("c1", async (accounts) => {
+      recorded.push(...accounts.map((a) => a.id));
+    });
+    expect(recorded).toEqual([shared.id]);
+    expect(out.detached.map((a) => a.id)).toEqual([shared.id]);
+    expect(out.deleted.map((a) => a.id)).toEqual([sole.id]);
+  });
+
+  it("a recorder that throws part-way leaves the vault unchanged, and the lock is free again", async () => {
+    const { shared } = sharedAndSole();
+    const other = vault.create(awsKeyInput("T", fakeAwsSecret()), "c1").account;
+    vault.attach(other.id, "c3");
+    const before = readFileSync(storeFile(), "utf8");
+    let writes = 0;
+    await expect(
+      vault.releaseCaseRecorded("c1", async (accounts) => {
+        for (const _ of accounts) if (++writes === 2) throw new Error("custody disk full");
+      }),
+    ).rejects.toThrow("custody disk full");
+    expect(readFileSync(storeFile(), "utf8")).toBe(before);
+    // A retry records both again and releases.
+    const retry = await vault.releaseCaseRecorded("c1", async () => {});
+    expect(retry.detached.map((a) => a.id).sort()).toEqual([shared.id, other.id].sort());
+  });
+
+  it("a locked change waits for the release instead of landing inside it", async () => {
+    const { shared } = sharedAndSole();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const release = vault.releaseCaseRecorded("c1", () => gate);
+    const detach = vault.exclusive(() => vault.detach(shared.id, "c2"));
+    open();
+    const out = await release;
+    expect(out.detached.map((a) => a.id)).toEqual([shared.id]);
+    expect((await detach).caseIds).toEqual([]);
+  });
+
+  it("refuses, releasing nothing, when a writer outside the lock changed the plan", async () => {
+    const { shared } = sharedAndSole();
+    await expect(
+      vault.releaseCaseRecorded("c1", async () => {
+        vault.detach(shared.id, "c2"); // bypasses the lock: shared -> sole
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(vault.listForCase("c1")).toHaveLength(2);
+  });
+});

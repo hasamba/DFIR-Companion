@@ -27,7 +27,7 @@
 import type { Express } from "express";
 import type { CloudAccountVault } from "../integrations/cloudAccounts/cloudAccountVault.js";
 import { parseCloudAccountInput } from "../integrations/cloudAccounts/accountInput.js";
-import { cloudAdder, cloudAudit, withCloudVault } from "./cloudAccountAccess.js";
+import { cloudAdder, cloudAudit, withCloudVaultExclusive } from "./cloudAccountAccess.js";
 import { registerCloudCredentialListRoutes } from "./cloudCredentialList.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
@@ -46,7 +46,7 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
 
   app.post(
     "/cloud-accounts",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVaultExclusive(ctx, (vault, req, res) => {
       const parsed = parseCloudAccountInput(req.body);
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       const { account, keyCreated } = vault.create(parsed.value, undefined, cloudAdder(req));
@@ -63,7 +63,7 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
   // Registered before the :accountId routes, so "reset" is never read as an account id.
   app.post(
     "/cloud-accounts/reset",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVaultExclusive(ctx, (vault, req, res) => {
       if ((req.body as { confirm?: unknown } | undefined)?.confirm !== true)
         return res.status(400).json({ error: RESET_CONFIRM });
       const removed = vault.reset();
@@ -74,7 +74,7 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
 
   app.put(
     "/cloud-accounts/:accountId",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVaultExclusive(ctx, (vault, req, res) => {
       const parsed = parseCloudAccountInput(req.body);
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       const account = vault.update(req.params.accountId, parsed.value);
@@ -85,7 +85,7 @@ export function registerCloudAccountRoutes(app: Express, ctx: RouteContext): voi
 
   app.post(
     "/cloud-accounts/:accountId/attach",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const target = (req.body as { caseId?: unknown } | undefined)?.caseId;
       const caseId = typeof target === "string" ? target.trim() : "";
       if (!caseId) return res.status(400).json({ error: "caseId names the case to attach the account to." });
