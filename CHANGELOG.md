@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cloud collection survives a briefly locked file** — on Windows a checkpoint or page rename that hits a momentary lock (antivirus, indexer, a reader) is retried like every other atomic write instead of failing the collection (closes #2370)
 - **Sigma re-grade preview memory guard** — the preview and the staged-release measure are sized by the import memory guard like Apply, refusing with a clear message instead of risking an out-of-memory crash (closes #2366)
 - **Cloud grading checks the service, not just the operation name** — CloudTrail grades a call only for the service that owns it (a Transfer Family or WorkMail `CreateUser` is no longer IAM user creation), Lambda `CreateFunction20150331` is graded, the Identity Center and route-table tags skip look-alike services, and GCP custom role create / update / undelete grade Medium (closes #2358)
 - **Cloud import follow-ups** — whole-file M365 and Cloud Activity rows carry the source-file hash, Sigma re-grade reads `.gz` imports, old source-record rows are not duplicated on replay, refused raw uploads hang up early (closes #2353)

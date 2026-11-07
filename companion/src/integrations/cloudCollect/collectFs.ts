@@ -8,11 +8,13 @@
 // WINDOWS: a directory cannot be opened for fsync there (EPERM/EISDIR), so `fsyncDir` is a no-op
 // on win32. The rename is still atomic (MoveFileEx), the page file itself was fsynced before it,
 // and the manifest is fsynced after its line — so the only loss a crash can cause is a renamed page
-// with no manifest line, which resume finds and quarantines (collectReplay.ts).
+// with no manifest line, which resume finds and quarantines (collectReplay.ts). A rename that hits
+// a transient lock (AV, indexer, a reader) is retried with atomicWrite's backoff (#2370).
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, stat, truncate } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, stat, truncate } from "node:fs/promises";
+import { renameRetryingLocks } from "../../storage/atomicWrite.js";
 
 export interface CollectFs {
   mkdir(path: string): Promise<void>;
@@ -73,7 +75,10 @@ export const nodeCollectFs: CollectFs = {
     await mkdir(path, { recursive: true });
   },
   writeFileSync: (path, data) => writeAndSync(path, data, "w"),
-  rename: (from, to) => rename(from, to),
+  // Retried through a transient Windows lock (EPERM/EBUSY/EACCES), as every atomic write in the app
+  // is: Defender, the indexer or a reader holding checkpoint.json for a few ms must not fail a
+  // collection (#2370). The fsyncs around it are unchanged, so durability is the same.
+  rename: (from, to) => renameRetryingLocks(from, to),
   fsyncDir: syncDirectory,
   appendSync: (path, data) => writeAndSync(path, data, "a"),
   truncate: (path, length) => truncate(path, length),

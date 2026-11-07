@@ -87,13 +87,44 @@ async function makeApp(opts: { providers?: boolean; demo?: boolean; failPage?: n
 
 const WINDOW = { start: "2026-10-01T00:00:00Z", end: "2026-10-02T00:00:00Z" };
 
-async function settled(app: ReturnType<typeof createApp>, want: string[]) {
+interface SettleWatch {
+  jobManager: JobManager;
+  jobId: string;
+  /** The job attempt whose failure counts: 1 for a start, 2 after one resume (requeue increments). */
+  attempt: number;
+}
+
+/** What the poll last saw, for a failure message that says where the job stopped (#2370). */
+function settleReport(watch: SettleWatch, lastStatus: string | undefined): string {
+  const job = watch.jobManager.get(watch.jobId);
+  const failure = job?.failure ? JSON.stringify(job.failure) : (job?.error ?? "none");
+  const tail = logged.filter((l) => /\[(cloud-collect|import|import-debug)\]/.test(l)).slice(-6);
+  return (
+    `checkpoint status ${lastStatus ?? "(no collection listed)"}; job ${job?.status ?? "missing"} ` +
+    `attempt ${job?.attempt ?? "?"}, detail "${job?.detail ?? ""}", failure ${failure}; ` +
+    `last log lines:\n  ${tail.join("\n  ") || "(none)"}`
+  );
+}
+
+/**
+ * Wait for the collection to reach one of `want`. Bounded: a real hang still fails, and the message
+ * names the job's state and its last log lines (the logger is mocked, so nothing else would). A job
+ * that FAILS on the watched attempt, when failing is not wanted, ends the wait at once instead of
+ * spinning the whole budget (#2370: every Windows failure was the full 24 s, every pass under 1 s).
+ */
+async function settled(app: ReturnType<typeof createApp>, want: string[], watch: SettleWatch) {
+  let lastStatus: string | undefined;
   return pollFor(
-    `a collection reaching ${want.join("/")}`,
+    () => `a collection reaching ${want.join("/")} — ${settleReport(watch, lastStatus)}`,
     async () => {
       const res = await request(app).get("/cases/c1/cloud-collect");
       const c = res.body.collections?.[0];
-      return c && want.includes(c.checkpoint.status) ? c : null;
+      lastStatus = c?.checkpoint.status;
+      if (c && want.includes(c.checkpoint.status)) return c;
+      const job = watch.jobManager.get(watch.jobId);
+      if (!want.includes("failed") && job?.status === "failed" && job.attempt >= watch.attempt)
+        throw new Error(`the collect job failed instead — ${settleReport(watch, lastStatus)}`);
+      return null;
     },
     { timeoutMs: pollBudget(8_000) },
   );
@@ -114,13 +145,13 @@ describe("cloud collect routes (#2311)", () => {
   it(
     "starts a collection as a job: pages saved, imported, complete; no secret anywhere",
     async () => {
-      const { app, cases, stateStore, account, secret } = await makeApp();
+      const { app, cases, stateStore, account, secret, jobManager } = await makeApp();
       const res = await request(app)
         .post("/cases/c1/cloud-collect")
         .send({ accountId: account!.id, sources: ["ct"], ...WINDOW });
       expect(res.status).toBe(202);
       expect(res.body.collectionId).toMatch(/^cc-\d{8}t\d{6}-[a-f0-9]{8}$/);
-      const c = await settled(app, ["complete"]);
+      const c = await settled(app, ["complete"], { jobManager, jobId: res.body.jobId, attempt: 1 });
       expect(c.pages).toBe(2);
       expect(c.checkpoint.imported).toHaveLength(2);
       const state = await stateStore.load("c1");
@@ -161,7 +192,8 @@ describe("cloud collect routes (#2311)", () => {
       const res = await request(app)
         .post("/cases/c1/cloud-collect")
         .send({ accountId: account!.id, sources: ["ct"], ...WINDOW });
-      const failed = await settled(app, ["failed"]);
+      const watch = { jobManager, jobId: res.body.jobId, attempt: 1 };
+      const failed = await settled(app, ["failed"], watch);
       expect(failed.checkpoint.missing[0].reason).toMatch(/AccessDenied/);
       const job = await pollFor("the collect job failing", async () => {
         const j = jobManager.get(res.body.jobId);
@@ -179,7 +211,7 @@ describe("cloud collect routes (#2311)", () => {
       const resumed = await request(app).post(`/cases/c1/cloud-collect/${res.body.collectionId}/resume`);
       expect(resumed.status).toBe(202);
       expect(resumed.body.jobId).toBe(res.body.jobId);
-      const done = await settled(app, ["complete"]);
+      const done = await settled(app, ["complete"], { ...watch, attempt: 2 });
       expect(done.checkpoint.imported).toHaveLength(2);
       expect(provider.opened).toBe(2);
       expect(logged.filter((l) => l.includes("cloud-account-collect"))).toHaveLength(2);
