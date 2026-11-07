@@ -26,6 +26,7 @@ import {
   cloudAudit,
   sendCloudRefusal,
   withCloudVault,
+  withCloudVaultExclusive,
 } from "./cloudAccountAccess.js";
 import { registerCloudAccountCheckRoute } from "./cloudAccountCheck.js";
 import { deleteCloudCredentials } from "./cloudCredentialRelease.js";
@@ -60,7 +61,7 @@ function registerListAndAdd(app: Express, ctx: RouteContext): void {
 
   app.post(
     "/cases/:id/cloud-accounts",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const caseId = req.params.id;
       if (!(await ctx.store.caseExists(caseId))) return res.status(404).json({ error: CASE_NOT_FOUND });
       const parsed = parseCloudAccountInput(req.body);
@@ -81,7 +82,7 @@ function registerListAndAdd(app: Express, ctx: RouteContext): void {
 function registerAttachDetach(app: Express, ctx: RouteContext): void {
   app.post(
     "/cases/:id/cloud-accounts/:accountId/attach",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const { id: caseId, accountId } = req.params;
       const found = cloudAccountInCase(ctx, req, vault, caseId, accountId);
       if (!found.ok) return sendCloudRefusal(res, found);
@@ -94,8 +95,9 @@ function registerAttachDetach(app: Express, ctx: RouteContext): void {
       // answers like a case that does not exist.
       if (!canWriteCloudCase(ctx, req, targetId) || !(await ctx.store.caseExists(targetId)))
         return res.status(404).json({ error: CASE_NOT_FOUND });
-      // The await above can interleave with a detach or a role change. Re-check both cases now,
-      // synchronously, and let the vault refuse if the account left the source case meanwhile.
+      // The vault lock holds off a detach (#2371), but the await above can still interleave with a
+      // role change. Re-check both cases now, synchronously; the vault still refuses if the account
+      // left the source case meanwhile.
       if (!canWriteCloudCase(ctx, req, caseId) || !canWriteCloudCase(ctx, req, targetId))
         return res.status(404).json({ error: CASE_NOT_FOUND });
       const account = vault.attach(accountId, targetId, caseId);
@@ -106,7 +108,7 @@ function registerAttachDetach(app: Express, ctx: RouteContext): void {
 
   app.post(
     "/cases/:id/cloud-accounts/:accountId/detach",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVaultExclusive(ctx, (vault, req, res) => {
       const { id: caseId, accountId } = req.params;
       const found = cloudAccountInCase(ctx, req, vault, caseId, accountId);
       if (!found.ok) return sendCloudRefusal(res, found);
@@ -129,7 +131,7 @@ function registerOne(app: Express, ctx: RouteContext): void {
 
   app.put(
     "/cases/:id/cloud-accounts/:accountId",
-    withCloudVault(ctx, (vault, req, res) => {
+    withCloudVaultExclusive(ctx, (vault, req, res) => {
       const { id: caseId, accountId } = req.params;
       const allowed = cloudAccountEditable(ctx, req, vault, caseId, accountId);
       if (!allowed.ok) return sendCloudRefusal(res, allowed);
@@ -143,7 +145,7 @@ function registerOne(app: Express, ctx: RouteContext): void {
 
   app.delete(
     "/cases/:id/cloud-accounts/:accountId",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const { id: caseId, accountId } = req.params;
       const allowed = cloudAccountEditable(ctx, req, vault, caseId, accountId);
       if (!allowed.ok) return sendCloudRefusal(res, allowed);

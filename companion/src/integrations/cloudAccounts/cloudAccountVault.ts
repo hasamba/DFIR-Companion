@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { buildCredential, cleanName } from "./accountInput.js";
 import { atomicWriteFileSync } from "../../storage/atomicWriteSync.js";
+import { StateLock } from "../../analysis/stateLock.js";
 import { CloudVaultError } from "./errors.js";
 import {
   secretsOfAccount,
@@ -37,11 +38,28 @@ export interface VaultStatus {
 
 type Key = { ok: true; key: Buffer } | { ok: false; reason: string; state: VaultKeyState };
 
+/** What `releaseCase` returns: the accounts erased and the accounts only detached. */
+export interface CaseRelease {
+  deleted: ReleasedCloudAccount[];
+  detached: ReleasedCloudAccount[];
+}
+
+// One file, one key: every vault critical section queues behind the same tail.
+const VAULT_LOCK_KEY = "accounts.json";
+
+export const RELEASE_PLAN_CHANGED =
+  "the case's cloud accounts changed while the release was being recorded; nothing was released";
+
 // The cloud account vault. Re-reads accounts.json and the key file on every call (no cache), so a
 // restored key file unlocks the accounts at once and a hand edit is seen. The key is read lazily:
 // listing, deleting and resetting work with no key at all, and a missing key never deletes anything.
 export class CloudAccountVault {
   private readonly file: string;
+  // In-process mutex (#2371). A synchronous vault call can never interleave with another, but a
+  // caller that awaits between reading the vault and changing it can. Every route that changes the
+  // vault runs its whole check-then-act under exclusive(), and releaseCaseRecorded holds it across
+  // its custody writes, so the custody log and the release come from one snapshot.
+  private readonly lock = new StateLock();
 
   constructor(
     dir: string,
@@ -199,7 +217,7 @@ export class CloudAccountVault {
    * A case ends (#2347): an account only this case used is erased (sealed entry overwritten first),
    * an account other cases share is detached from it. One pass, one write.
    */
-  releaseCase(caseId: string): { deleted: ReleasedCloudAccount[]; detached: ReleasedCloudAccount[] } {
+  releaseCase(caseId: string): CaseRelease {
     const raw = this.readRaw();
     const attached = raw.filter((a) => (a.caseIds ?? []).includes(caseId));
     if (attached.length === 0) return { deleted: [], detached: [] };
@@ -215,6 +233,44 @@ export class CloudAccountVault {
     this.write(kept);
     const detached = kept.filter((a) => attached.some((b) => b.id === a.id)).map(releasedOf);
     return { deleted, detached };
+  }
+
+  /**
+   * Runs `fn` with no other exclusive section of this vault running. Not re-entrant: never call it
+   * from inside another exclusive section (it would wait for itself).
+   */
+  exclusive<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.lock.runExclusive(VAULT_LOCK_KEY, async () => fn());
+  }
+
+  /**
+   * A case ends, with the detaches recorded first (#2347, #2371): under the vault lock, reads which
+   * accounts would only be detached, awaits `recordDetach(those)`, then releases. No locked change
+   * can land in between, so what was recorded is what is done. A `recordDetach` that throws stops
+   * the release with the vault unchanged. If the plan changed anyway — only a writer outside the
+   * lock can do that: a hand edit or a second process — nothing is released (`conflict`): acting on
+   * a plan the custody log does not describe is the outcome this guards against.
+   */
+  releaseCaseRecorded(
+    caseId: string,
+    recordDetach: (shared: ReleasedCloudAccount[]) => Promise<void>,
+  ): Promise<CaseRelease> {
+    return this.exclusive(async () => {
+      const before = this.releasePlan(caseId);
+      await recordDetach(this.sharedWith(caseId));
+      if (this.releasePlan(caseId) !== before) throw new CloudVaultError("conflict", RELEASE_PLAN_CHANGED);
+      return this.releaseCase(caseId);
+    });
+  }
+
+  /** The attached accounts and which of them are shared, as one comparable string. */
+  private releasePlan(caseId: string): string {
+    return JSON.stringify(
+      this.readRaw()
+        .filter((a) => (a.caseIds ?? []).includes(caseId))
+        .map((a) => [a.id, (a.caseIds ?? []).length > 1])
+        .sort(([x], [y]) => String(x).localeCompare(String(y))),
+    );
   }
 
   /**

@@ -189,6 +189,19 @@ export function withCloudVault(
   };
 }
 
+/**
+ * withCloudVault for a route that CHANGES the vault: the whole handler — its checks, the change and
+ * its audit — runs under the vault lock (#2371), so a case release recording its detaches never
+ * sees an attach, detach, edit or delete land between its custody writes and the release, and the
+ * handler's own checks still hold when it acts.
+ */
+export function withCloudVaultExclusive(
+  ctx: RouteContext,
+  handler: (vault: CloudAccountVault, req: Request, res: Response) => unknown,
+) {
+  return withCloudVault(ctx, (vault, req, res) => vault.exclusive(() => handler(vault, req, res)));
+}
+
 /** Sends a refusal from one of the access checks above. */
 export function sendCloudRefusal(res: Response, refusal: { status: number; error: string }): Response {
   return res.status(refusal.status).json({ error: refusal.error });

@@ -28,6 +28,7 @@ import {
   isCloudAdmin,
   sendCloudRefusal,
   withCloudVault,
+  withCloudVaultExclusive,
   type CloudAccess,
 } from "./cloudAccountAccess.js";
 import { deleteCloudCredentials } from "./cloudCredentialRelease.js";
@@ -135,7 +136,7 @@ export function registerCloudCredentialListRoutes(app: Express, ctx: RouteContex
   // Registered before the :accountId routes, so "delete" is never read as an account id.
   app.post(
     "/cloud-accounts/delete",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const ids = parseIds(req.body);
       if (typeof ids === "string") return res.status(400).json({ error: ids });
       const allowed = authoriseAll(ctx, req, vault, ids);
@@ -147,7 +148,7 @@ export function registerCloudCredentialListRoutes(app: Express, ctx: RouteContex
 
   app.delete(
     "/cloud-accounts/:accountId",
-    withCloudVault(ctx, async (vault, req, res) => {
+    withCloudVaultExclusive(ctx, async (vault, req, res) => {
       const allowed = authoriseAll(ctx, req, vault, [req.params.accountId]);
       if (!allowed.ok) return sendCloudRefusal(res, allowed);
       await deleteCloudCredentials(ctx, req, allowed.value);
