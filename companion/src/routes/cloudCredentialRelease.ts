@@ -10,7 +10,11 @@
  *     collected evidence came from after the credential is gone.
  *   - a shared credential only DETACHED from an ending case leaves the same provenance in that case's
  *     log as a `credential-detached` entry. It is written BEFORE the detach: a detach is cheap to
- *     retry, lost provenance is not, so a custody write that fails stops the release instead.
+ *     retry, lost provenance is not, so a custody write that fails stops the release instead. The
+ *     vault lock spans those writes and the release (#2371), so a concurrent attach or detach waits
+ *     and the entries match what was done. With several shared accounts, a write that fails after
+ *     the first leaves the earlier entries although nothing was detached; the vault is unchanged and
+ *     a retry records them again before detaching.
  *
  * Erasing the companion's copy does not stop the credential working in the cloud — the dashboard
  * reminds the analyst to revoke the key or app secret in AWS, Azure or GCP as well.
@@ -187,10 +191,14 @@ export async function releaseCaseCredentials(
 ): Promise<ReleaseOutcome> {
   const vault = ctx.options.cloudAccountVault;
   if (!vault || ctx.options.demoMode) return { deleted: 0, detached: 0 };
-  // Provenance first: a failed write throws here, before anything is detached or erased.
-  for (const account of vault.sharedWith(caseId))
-    await writeCredentialCustody(ctx, req, caseId, account, reason, CREDENTIAL_DETACHED_EVENT);
-  const { deleted, detached } = vault.releaseCase(caseId);
+  // Provenance first: a failed write throws here, before anything is detached or erased. The vault
+  // holds its lock from the read through the release, so a concurrent attach or detach cannot make
+  // the recorded detaches disagree with what the release does (#2371). Only the custody of the
+  // DETACHES needs that snapshot; audit and the deleted entries below run after the lock is let go.
+  const { deleted, detached } = await vault.releaseCaseRecorded(caseId, async (shared) => {
+    for (const account of shared)
+      await writeCredentialCustody(ctx, req, caseId, account, reason, CREDENTIAL_DETACHED_EVENT);
+  });
   await recordDeleted(ctx, req, deleted, reason, caseId);
   for (const account of detached)
     cloudAudit(
@@ -203,7 +211,12 @@ export async function releaseCaseCredentials(
   return { deleted: deleted.length, detached: detached.length };
 }
 
-/** Erases the named accounts (already authorised by the caller) and records each delete. */
+/**
+ * Erases the named accounts (already authorised by the caller) and records each delete. The caller
+ * runs inside `vault.exclusive` (withCloudVaultExclusive), with its authorisation in the same
+ * section, so nothing changes between the check and the erase (#2371). Not locked here: the vault
+ * lock is not re-entrant.
+ */
 export async function deleteCloudCredentials(
   ctx: RouteContext,
   req: Request,
