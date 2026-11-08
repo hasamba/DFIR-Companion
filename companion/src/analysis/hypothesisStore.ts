@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { normalizeExhaustion } from "./hypothesisExhaustion.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -61,7 +62,8 @@ export class HypothesisStore {
     try {
       const parsed = hypothesesSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
       // Backfill statusHistory (issue #95) for hypotheses persisted before that field existed.
-      return parsed.map(ensureHypothesisStatusHistory);
+      // #2415: a stored non-open hypothesis is never exhausted (records written before that fix).
+      return parsed.map(ensureHypothesisStatusHistory).map(normalizeExhaustion);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;

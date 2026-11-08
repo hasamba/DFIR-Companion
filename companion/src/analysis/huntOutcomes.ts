@@ -225,6 +225,7 @@ export interface HuntSignal {
   techniques: string[];
   missed: boolean;
   title?: string;
+  at?: string; // deployment time — stable across re-collections (#2415)
 }
 
 export function huntSignalsFromOutcomes(outcomes: readonly HuntOutcome[]): HuntSignal[] {
@@ -235,6 +236,7 @@ export function huntSignalsFromOutcomes(outcomes: readonly HuntOutcome[]): HuntS
       techniques: o.mitreTechniques ?? [],
       missed: isMiss(o),
       title: o.title,
+      at: o.deployedAt,
     }));
 }
 
