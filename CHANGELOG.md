@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Honest cloud collection progress** — the job line says how many files are saved and which trail folder it is in, with an ETA estimated from that position, and no fake one-page-away ETA (closes #2384).
 - **Job ETA and Cloud Collection Account field** — the ETA now says how long is left ("16:44 (in about 2 min)") instead of a bare clock time, and the Account dropdown lines up with the date fields beside it.
 
 - **Steady Cloud Collection form** — a progress poll refreshes only the collection rows, so the start form keeps the analyst's edits and the AWS regions are no longer re-listed every few seconds; the region checkboxes are a wrapping grid, each next to its name (closes #2379)
