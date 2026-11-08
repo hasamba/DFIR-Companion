@@ -12,9 +12,10 @@
  *     log as a `credential-detached` entry. It is written BEFORE the detach: a detach is cheap to
  *     retry, lost provenance is not, so a custody write that fails stops the release instead. The
  *     vault lock spans those writes and the release (#2371), so a concurrent attach or detach waits
- *     and the entries match what was done. With several shared accounts, a write that fails after
- *     the first leaves the earlier entries although nothing was detached; the vault is unchanged and
- *     a retry records them again before detaching.
+ *     and the entries match what was done. The entries are one append, and each carries a release
+ *     token the vault stored before the write (#2378): when the release fails after entries landed
+ *     (the chain-head pin or the vault write failed), the vault keeps the token and a retry finds
+ *     the entries by it and records nothing twice. Once detached, the token goes with the case.
  *
  * Erasing the companion's copy does not stop the credential working in the cloud — the dashboard
  * reminds the analyst to revoke the key or app secret in AWS, Azure or GCP as well.
@@ -31,6 +32,7 @@ import {
   CREDENTIAL_DETACHED_EVENT,
   CREDENTIAL_PATH_PREFIX,
   type CredentialCustodyEvent,
+  type CustodyRecordInput,
 } from "../analysis/custody.js";
 import type {
   AwsSettings,
@@ -99,6 +101,50 @@ async function writeCredentialCustody(
 ): Promise<void> {
   const custody = ctx.options.custodyStore;
   if (!custody) return;
+  await custody.record(caseId, await credentialCustodyInput(ctx, req, caseId, account, reason, event));
+}
+
+/**
+ * The `credential-detached` entries of a release, as one append (#2378). An account whose release
+ * token the log already holds was recorded by an earlier attempt that did not get to detach it, and
+ * is skipped, so a retry never records the same detach twice. Throws when the write fails.
+ */
+async function writeDetachCustody(
+  ctx: RouteContext,
+  req: Request,
+  caseId: string,
+  shared: readonly ReleasedCloudAccount[],
+  tokens: ReadonlyMap<string, string>,
+  reason: CredentialReleaseReason,
+): Promise<void> {
+  const custody = ctx.options.custodyStore;
+  if (!custody || shared.length === 0) return;
+  const recorded = new Set(
+    (await custody.load(caseId)).flatMap((r) =>
+      r.event === CREDENTIAL_DETACHED_EVENT && r.credential?.releaseToken ? [r.credential.releaseToken] : [],
+    ),
+  );
+  const inputs: CustodyRecordInput[] = [];
+  for (const account of shared) {
+    const token = tokens.get(account.id);
+    if (token && recorded.has(token)) continue;
+    inputs.push(
+      await credentialCustodyInput(ctx, req, caseId, account, reason, CREDENTIAL_DETACHED_EVENT, token),
+    );
+  }
+  await custody.recordMany(caseId, inputs);
+}
+
+/** The custody entry describing `account` on `caseId`: provider, identifier, who, when and why. */
+async function credentialCustodyInput(
+  ctx: RouteContext,
+  req: Request,
+  caseId: string,
+  account: ReleasedCloudAccount,
+  reason: CredentialReleaseReason,
+  event: CredentialCustodyEvent,
+  releaseToken?: string,
+): Promise<CustodyRecordInput> {
   const identifier = credentialIdentifier(account);
   const addedBy = account.createdBy?.displayName ?? NOT_RECORDED;
   const actor = actorName(req);
@@ -113,6 +159,7 @@ async function writeCredentialCustody(
     addedAt: account.createdAt,
     collections,
     reason,
+    ...(releaseToken ? { releaseToken } : {}),
   };
   const label = PROVIDER_LABEL[account.provider] ?? account.provider;
   const used = collections.length ? `; used by ${collections.join(", ")}` : "";
@@ -121,7 +168,7 @@ async function writeCredentialCustody(
     event === CREDENTIAL_DELETED_EVENT
       ? { deletedBy: actor, deletedAt: at }
       : { detachedBy: actor, detachedAt: at };
-  await custody.record(caseId, {
+  return {
     artifactPath: `${CREDENTIAL_PATH_PREFIX}${account.provider}/${account.id}`,
     // No file stands behind the entry: the hash pins the entry's own description of the credential.
     sha256: createHash("sha256")
@@ -134,7 +181,7 @@ async function writeCredentialCustody(
     source: `${label} ${identifier} ("${account.name}"), added by ${addedBy} at ${account.createdAt}${used}`,
     trigger: `cloud credential ${VERB[event]} — ${reason}`,
     credential,
-  });
+  };
 }
 
 /** Writes one `credential-deleted` custody entry on `caseId`. Never throws. */
@@ -195,10 +242,9 @@ export async function releaseCaseCredentials(
   // holds its lock from the read through the release, so a concurrent attach or detach cannot make
   // the recorded detaches disagree with what the release does (#2371). Only the custody of the
   // DETACHES needs that snapshot; audit and the deleted entries below run after the lock is let go.
-  const { deleted, detached } = await vault.releaseCaseRecorded(caseId, async (shared) => {
-    for (const account of shared)
-      await writeCredentialCustody(ctx, req, caseId, account, reason, CREDENTIAL_DETACHED_EVENT);
-  });
+  const { deleted, detached } = await vault.releaseCaseRecorded(caseId, (shared, tokens) =>
+    writeDetachCustody(ctx, req, caseId, shared, tokens, reason),
+  );
   await recordDeleted(ctx, req, deleted, reason, caseId);
   for (const account of detached)
     cloudAudit(

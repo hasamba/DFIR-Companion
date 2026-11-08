@@ -120,21 +120,34 @@ describe("releaseCaseRecorded", () => {
     expect(out.deleted.map((a) => a.id)).toEqual([sole.id]);
   });
 
-  it("a recorder that throws part-way leaves the vault unchanged, and the lock is free again", async () => {
+  it("a recorder that throws part-way leaves the vault unchanged but for the release tokens, and the lock is free again", async () => {
     const { shared } = sharedAndSole();
     const other = vault.create(awsKeyInput("T", fakeAwsSecret()), "c1").account;
     vault.attach(other.id, "c3");
-    const before = readFileSync(storeFile(), "utf8");
+    type Stored = { id: string; releaseTokens?: Record<string, string> };
+    const stored = (): Stored[] => JSON.parse(readFileSync(storeFile(), "utf8")).accounts;
+    const withoutTokens = (accounts: Stored[]) => accounts.map(({ releaseTokens: _t, ...rest }) => rest);
+    const before = stored();
     let writes = 0;
+    const handed: Array<ReadonlyMap<string, string>> = [];
     await expect(
-      vault.releaseCaseRecorded("c1", async (accounts) => {
+      vault.releaseCaseRecorded("c1", async (accounts, tokens) => {
+        handed.push(tokens);
         for (const _ of accounts) if (++writes === 2) throw new Error("custody disk full");
       }),
     ).rejects.toThrow("custody disk full");
-    expect(readFileSync(storeFile(), "utf8")).toBe(before);
-    // A retry records both again and releases.
-    const retry = await vault.releaseCaseRecorded("c1", async () => {});
+    expect(withoutTokens(stored())).toEqual(before);
+    // #2378: each shared account keeps the token the failed release recorded under, for this case only.
+    const kept = new Map(stored().map((a) => [a.id, a.releaseTokens]));
+    expect(kept.get(shared.id)).toEqual({ c1: handed[0].get(shared.id) });
+    expect(kept.get(other.id)).toEqual({ c1: handed[0].get(other.id) });
+    // A retry is handed the SAME tokens, releases, and the tokens go with the case.
+    const retry = await vault.releaseCaseRecorded("c1", async (_accounts, tokens) => {
+      handed.push(tokens);
+    });
+    expect(handed[1]).toEqual(handed[0]);
     expect(retry.detached.map((a) => a.id).sort()).toEqual([shared.id, other.id].sort());
+    expect(stored().some((a) => a.releaseTokens)).toBe(false);
   });
 
   it("a locked change waits for the release instead of landing inside it", async () => {

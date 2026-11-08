@@ -183,6 +183,8 @@ export class CloudAccountVault {
       ...(prev.createdBy ? { createdBy: prev.createdBy } : {}),
       ...(prev.lastUsedAt ? { lastUsedAt: prev.lastUsedAt } : {}),
       caseIds: prev.caseIds ?? [],
+      // A release still pending on a case keeps its token, or its retry would record the detach twice (#2378).
+      ...(prev.releaseTokens ? { releaseTokens: { ...prev.releaseTokens } } : {}),
     };
     const next = this.sealed(meta, credential, this.requireKey());
     this.write(raw.map((a) => (a.id === id ? next : a)));
@@ -253,14 +255,37 @@ export class CloudAccountVault {
    */
   releaseCaseRecorded(
     caseId: string,
-    recordDetach: (shared: ReleasedCloudAccount[]) => Promise<void>,
+    recordDetach: (shared: ReleasedCloudAccount[], tokens: ReadonlyMap<string, string>) => Promise<void>,
   ): Promise<CaseRelease> {
     return this.exclusive(async () => {
       const before = this.releasePlan(caseId);
-      await recordDetach(this.sharedWith(caseId));
+      const tokens = this.releaseTokensFor(caseId);
+      await recordDetach(this.sharedWith(caseId), tokens);
       if (this.releasePlan(caseId) !== before) throw new CloudVaultError("conflict", RELEASE_PLAN_CHANGED);
       return this.releaseCase(caseId);
     });
+  }
+
+  /**
+   * The release token of every account `caseId` shares, by account id (#2378). A token a failed
+   * earlier release left is reused, so a retry finds the entries that release recorded; a missing
+   * one is made and stored BEFORE any custody write — a failed store writes no entry. `write()`
+   * drops the token when the case leaves the account, so a later release gets a new one.
+   */
+  private releaseTokensFor(caseId: string): Map<string, string> {
+    const raw = this.readRaw();
+    const shared = (a: StoredCloudAccount) =>
+      (a.caseIds ?? []).includes(caseId) && (a.caseIds ?? []).length > 1;
+    const tokens = new Map(
+      raw.filter(shared).map((a) => [a.id, a.releaseTokens?.[caseId] ?? randomUUID()] as const),
+    );
+    if (raw.some((a) => shared(a) && !a.releaseTokens?.[caseId]))
+      this.write(
+        raw.map((a) =>
+          tokens.has(a.id) ? { ...a, releaseTokens: { ...a.releaseTokens, [caseId]: tokens.get(a.id)! } } : a,
+        ),
+      );
+    return tokens;
   }
 
   /** The attached accounts and which of them are shared, as one comparable string. */
@@ -413,12 +438,20 @@ export class CloudAccountVault {
   }
 
   private write(accounts: StoredCloudAccount[]): void {
-    atomicWriteFileSync(this.file, this.text(accounts));
+    atomicWriteFileSync(this.file, this.text(accounts.map(withLiveReleaseTokens)));
   }
 }
 
+/** The account with release tokens only for cases still attached (#2378); none left, no field. */
+function withLiveReleaseTokens(account: StoredCloudAccount): StoredCloudAccount {
+  if (!account.releaseTokens) return account;
+  const { releaseTokens, ...rest } = account;
+  const live = Object.entries(releaseTokens).filter(([caseId]) => (account.caseIds ?? []).includes(caseId));
+  return live.length ? { ...rest, releaseTokens: Object.fromEntries(live) } : rest;
+}
+
 function releasedOf(raw: StoredCloudAccount): ReleasedCloudAccount {
-  const { sealed: _sealed, caseIds, ...rest } = raw;
+  const { sealed: _sealed, caseIds, releaseTokens: _tokens, ...rest } = raw;
   return { ...rest, settings: { ...raw.settings }, caseIds: [...(caseIds ?? [])] };
 }
 
