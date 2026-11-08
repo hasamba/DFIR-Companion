@@ -114,6 +114,12 @@ describe("team-auth configuration and policy", () => {
       permission: "read",
       caseId: "c1",
     });
+    // #2416: forgetting your own unlock is read-level — a reader who may unlock must be able to lock.
+    expect(resolveRequestPolicy("POST", "/cases/c1/lock")).toMatchObject({
+      permission: "read",
+      caseId: "c1",
+    });
+    expect(resolveRequestPolicy("GET", "/cases/c1/lock-status")).toMatchObject({ permission: "read" });
     expect(resolveRequestPolicy("POST", "/cases/c1/%70assword")).toMatchObject({
       permission: "admin",
       caseId: "c1",
