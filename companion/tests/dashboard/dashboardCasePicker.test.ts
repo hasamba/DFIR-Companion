@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 import type { CasePickerApi } from "./dashboardApi.js";
 
-// The picker is a NAME box over a hidden id (#1523). Every other module keeps reading #caseId, so
-// the contract under test is the translation: a pick lands the id in #caseId with the events its
-// listeners expect, and a programmatic id lands the name in the box.
+// The picker is a NAME box over a hidden id (#1523). Every other module keeps reading #caseId, which
+// holds the LOADED case (#2399): a pick resolves to the id Connect will load (pickedCaseId) and
+// leaves #caseId alone; the case load commits it, with the events #caseId's listeners expect.
 
 type Listener = (e: { type?: string; key?: string }) => void;
 
@@ -130,27 +130,28 @@ describe("dashboard-case-picker.js", () => {
     expect(h.options[0].label).toBe("\u{1F512} raw-1");
   });
 
-  it("a pick puts the ID in #caseId and replays input+change for its listeners", async () => {
+  it("a pick chooses the case for Connect and leaves the loaded case alone (#2399)", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
+    h.caseId.value = "INC-2026-001"; // case A is loaded
     h.picker.value = "Payroll BEC";
     h.picker.fire("input");
-    expect(h.caseId.value).toBe("INC-2026-002");
-    expect(h.caseId.fired).toEqual(["input", "change"]);
-    // the same value again is not a change — no second round of events
-    h.picker.fire("change");
-    expect(h.caseId.fired).toEqual(["input", "change"]);
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-002");
+    expect(h.caseId.value).toBe("INC-2026-001"); // every action still targets the case on screen
+    expect(h.caseId.fired).toEqual([]);
+    expect(h.picker.value).toBe("Payroll BEC");
   });
 
-  it("text that matches no case passes through as the id on change, so Connect can create it", async () => {
+  it("text that matches no case passes through as the pick on change, so Connect can create it", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     h.picker.value = "  brand-new-case ";
     h.picker.fire("change");
-    expect(h.caseId.value).toBe("brand-new-case");
+    expect(h.mod.pickedCaseId()).toBe("brand-new-case");
+    expect(h.caseId.value).toBe("");
   });
 
-  it("typing an unknown id fires nothing per keystroke; blur lands it once (#1962)", async () => {
+  it("typing an unknown id changes no pick per keystroke; blur picks it once (#1962)", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     h.caseId.value = "INC-2026-001";
@@ -158,22 +159,19 @@ describe("dashboard-case-picker.js", () => {
       h.picker.value = partial;
       h.picker.fire("input");
     }
-    expect(h.caseId.value).toBe("INC-2026-001");
-    expect(h.caseId.fired).toEqual([]);
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001"); // no pick yet: Connect would reload A
     h.picker.fire("change");
-    expect(h.caseId.value).toBe("new-c");
-    expect(h.caseId.fired).toEqual(["input", "change"]);
+    expect(h.mod.pickedCaseId()).toBe("new-c");
+    expect(h.caseId.value).toBe("INC-2026-001");
   });
 
-  it("Enter on an unknown id still lands it and connects (#1962)", async () => {
+  it("Enter on an unknown id picks it and connects (#1962)", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     h.picker.value = "brand-new-case";
     h.picker.fire("input");
-    expect(h.caseId.fired).toEqual([]);
     h.picker.fire("keydown", { key: "Enter" });
-    expect(h.caseId.value).toBe("brand-new-case");
-    expect(h.caseId.fired).toEqual(["input", "change"]);
+    expect(h.mod.pickedCaseId()).toBe("brand-new-case");
     expect(h.connected()).toBe(1);
   });
 
@@ -182,7 +180,53 @@ describe("dashboard-case-picker.js", () => {
     await h.mod.loadCaseList();
     h.picker.value = "INC-2026-001";
     h.picker.fire("input");
-    expect(h.caseId.value).toBe("INC-2026-001");
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
+  });
+
+  it("the case load commits the case to #caseId, once, with input+change for its listeners", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.picker.value = "Payroll BEC";
+    h.picker.fire("input");
+    h.mod.commitLoadedCase("INC-2026-002");
+    expect(h.caseId.value).toBe("INC-2026-002");
+    expect(h.caseId.fired).toEqual(["input", "change"]);
+    h.mod.commitLoadedCase("INC-2026-002"); // a same-case reconnect is not a case change
+    expect(h.caseId.fired).toEqual(["input", "change"]);
+    expect(h.picker.value).toBe("Payroll BEC");
+  });
+
+  it("a newer pick made while a connect was probing survives that connect's commit", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.mod.setCasePick("INC-2026-002"); // connect to B starts its lock probe…
+    h.mod.setCasePick("test9"); // …and the analyst picks another case meanwhile
+    h.mod.commitLoadedCase("INC-2026-002");
+    expect(h.caseId.value).toBe("INC-2026-002");
+    expect(h.mod.pickedCaseId()).toBe("test9");
+    expect(h.picker.value).toBe("test9");
+  });
+
+  it("a cancelled load leaves no case targeted, and keeps the cancelled case picked for a retry", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.mod.commitLoadedCase("INC-2026-001");
+    h.mod.clearLoadedCase("INC-2026-001");
+    expect(h.caseId.value).toBe("");
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
+    expect(h.picker.value).toBe("Acme ransomware");
+  });
+
+  it("the Current marker follows the loaded case, not the pick", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.mod.commitLoadedCase("INC-2026-001");
+    await new Promise((r) => setTimeout(r, 0));
+    h.picker.value = "Payroll BEC";
+    h.picker.fire("input");
+    await h.mod.loadCaseList();
+    const current = h.options.filter((o) => (o.label ?? "").includes("Current"));
+    expect(current.map((o) => o.value)).toEqual(["Acme ransomware"]);
   });
 
   it("two cases with one name are listed as `name (id)` and both resolve", async () => {
@@ -195,7 +239,7 @@ describe("dashboard-case-picker.js", () => {
     expect(h.options.map((o) => o.value)).toEqual(["Twin (A-1)", "Twin (A-2)"]);
     h.picker.value = "Twin (A-2)";
     h.picker.fire("input");
-    expect(h.caseId.value).toBe("A-2");
+    expect(h.mod.pickedCaseId()).toBe("A-2");
   });
 
   it("a programmatic id shows its name in the box; an unknown id shows the id itself", async () => {
@@ -218,7 +262,7 @@ describe("dashboard-case-picker.js", () => {
     expect(h.picker.value).toBe("Acme ransomware");
   });
 
-  it("focus clears the box for the full dropdown; blur without a pick restores it, and #caseId never moves", async () => {
+  it("focus clears the box for the full dropdown; blur without a pick restores it, and nothing moves", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();
     h.caseId.value = "INC-2026-001";
@@ -236,7 +280,7 @@ describe("dashboard-case-picker.js", () => {
     await h.mod.loadCaseList();
     h.picker.value = "Acme ransomware";
     h.picker.fire("keydown", { key: "Enter" });
-    expect(h.caseId.value).toBe("INC-2026-001");
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
     expect(h.connected()).toBe(1);
     h.picker.fire("keydown", { key: "a" });
     expect(h.connected()).toBe(1);

@@ -1166,8 +1166,16 @@ export const FEATURES: Feature[] = [
     // that translate between a name and an id are the state the closure keeps.
     file: "dashboard-case-picker.js",
     initializer: "initCasePicker",
-    publish: ["initCasePicker", "loadCaseList", "syncCasePicker"],
-    private: ["byId", "byText"],
+    publish: [
+      "initCasePicker",
+      "loadCaseList",
+      "syncCasePicker",
+      "pickedCaseId",
+      "setCasePick",
+      "commitLoadedCase",
+      "clearLoadedCase",
+    ],
+    private: ["byId", "byText", "pick"],
   },
   {
     // New case creation. Its banner is 692 lines and 595 of them are the page's shared wiring run

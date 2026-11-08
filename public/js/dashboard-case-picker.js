@@ -1,11 +1,15 @@
 // Case picker — the toolbar box shows the case NAME (#1523).
 //
 // The dashboard reads the open case's id from #caseId in ~200 places, and the extension, deep
-// links and localStorage all carry the id too. So the id stays where it is: #caseId is now a
-// hidden input, and #casePicker is the visible box the analyst types in and picks from. This
-// module keeps the two in step — a pick or a keystroke in the picker resolves to an id and lands
-// in #caseId (with the input/change events its listeners expect), and anything that sets #caseId
-// directly calls syncCasePicker() so the box shows that case's name.
+// links and localStorage all carry the id too. So the id stays where it is: #caseId is a hidden
+// input, and #casePicker is the visible box the analyst types in and picks from.
+//
+// #caseId IS THE LOADED CASE, NOT THE PICKED ONE (#2399). A pick used to land in #caseId at once,
+// before Connect, so with case A still on screen every Import, Re-synthesize, Close, Undo, Promote
+// and Notebook action went to the newly picked case B. Now a pick only resolves into `pick` here
+// (pickedCaseId()); Connect loads it, and the case load commits it to #caseId (commitLoadedCase).
+// A cancelled load clears #caseId (clearLoadedCase) — nothing is loaded, so nothing is targeted —
+// and keeps the cancelled case as the pick so retrying is one click.
 //
 // Text the analyst types that matches no case is passed through as an id, exactly as the old box
 // did: Connect creates a case by that id. Two cases with the same name are listed as `name (id)`
@@ -13,6 +17,7 @@
 (function () {
   let byId = new Map(); // caseId -> the text the picker shows for it
   let byText = new Map(); // that text -> caseId
+  let pick = null; // the case the picker has chosen for Connect; null = no pending choice
 
   function displayTextFor(c, dupNames) {
     const name = String(c.name || "").trim();
@@ -104,32 +109,67 @@
     return knownCaseId(text) || String(text || "").trim();
   }
 
-  // Make the visible box show the name of whatever id #caseId holds. Called after every
-  // programmatic write to #caseId and after each list refresh (a freshly created case's name is
-  // only known once the list has it).
+  // Make the visible box show the name of the pending pick, or of the loaded case when there is
+  // none. Called after every pick, every commit and each list refresh (a freshly created case's
+  // name is only known once the list has it).
   function syncCasePicker() {
     const picker = document.getElementById("casePicker");
     const idEl = document.getElementById("caseId");
     if (!picker || !idEl) return;
-    const id = idEl.value.trim();
+    const id = pick !== null ? pick : idEl.value.trim();
     picker.value = byId.get(id) || id;
     // The box is narrow, so a long name is cut off. The tooltip carries the full name and id.
     const text = picker.value;
     picker.title = id && id !== text ? `${text}\n${id}` : text;
   }
 
-  function pushPickerToCaseId() {
-    const picker = document.getElementById("casePicker");
+  // The case Connect should load: the pending pick, else the loaded case (a same-case reconnect).
+  function pickedCaseId() {
+    if (pick !== null) return pick;
     const idEl = document.getElementById("caseId");
-    if (!picker || !idEl) return;
-    const id = resolveCaseId(picker.value);
-    if (idEl.value === id) return;
+    return idEl ? idEl.value.trim() : "";
+  }
+
+  // A programmatic pick (deep link, remembered case, new or imported case, the cross-case switch).
+  function setCasePick(id) {
+    pick = String(id || "").trim();
+    syncCasePicker();
+  }
+
+  function pushPickerToPick() {
+    const picker = document.getElementById("casePicker");
+    if (!picker) return;
+    pick = resolveCaseId(picker.value);
+  }
+
+  // Writes the loaded case into #caseId, replaying input+change for its listeners (the hunt
+  // workbench reloads its saved hunts on a case change) — a programmatic write is silent otherwise.
+  function writeLoadedCase(id) {
+    const idEl = document.getElementById("caseId");
+    if (!idEl || idEl.value === id) return;
     idEl.value = id;
-    // Listeners on #caseId (the hunt workbench reloads its saved hunts on a case change) fire on
-    // user input only; a programmatic write is silent, so replay the events by hand. Only a real
-    // case change reaches here: a keystroke pushes only text that names a listed case (#1962).
     idEl.dispatchEvent(new Event("input", { bubbles: true }));
     idEl.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // The case load started for `caseId`: it is now the case every action targets. A NEWER pick made
+  // while this connect was probing the lock survives; only the pick this load answers is consumed.
+  // The list is rebuilt so its "● Current" marker moves with the loaded case.
+  function commitLoadedCase(caseId) {
+    const id = String(caseId || "").trim();
+    writeLoadedCase(id);
+    if (pick === id) pick = null;
+    syncCasePicker();
+    loadCaseList();
+  }
+
+  // The load was cancelled: no case is loaded, so no action may target one. The box keeps showing
+  // the cancelled case as the pick, so Connect retries it.
+  function clearLoadedCase(cancelledId) {
+    const id = String(cancelledId || "").trim();
+    if (id && pick === null) pick = id;
+    writeLoadedCase("");
+    syncCasePicker();
   }
 
   function initCasePicker() {
@@ -139,18 +179,18 @@
     // only text that names a listed case. Half-typed ids wait for `change` (blur) or Enter, which
     // pass any text through so Connect can still create a new case (#1962).
     picker.addEventListener("input", () => {
-      if (knownCaseId(picker.value)) pushPickerToCaseId();
+      if (knownCaseId(picker.value)) pushPickerToPick();
     });
-    picker.addEventListener("change", pushPickerToCaseId);
+    picker.addEventListener("change", pushPickerToPick);
     picker.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
-      pushPickerToCaseId();
+      pushPickerToPick();
       if (typeof connect === "function") connect();
     });
     // A <datalist> filters its suggestions by the field's current text, so a pre-filled name hides
     // every other case. On focus: refresh the list and clear the box so the FULL dropdown shows;
-    // on blur, restore the prior text if the analyst didn't pick or type one. #caseId is untouched
-    // while the box is empty, so a focus-then-blur is not a case change.
+    // on blur, restore the prior text if the analyst didn't pick or type one. The pick is untouched
+    // while the box is empty, so a focus-then-blur is not a new choice.
     let prev = "";
     picker.addEventListener("focus", () => {
       loadCaseList();
@@ -166,4 +206,8 @@
   window.initCasePicker = initCasePicker;
   window.loadCaseList = loadCaseList;
   window.syncCasePicker = syncCasePicker;
+  window.pickedCaseId = pickedCaseId;
+  window.setCasePick = setCasePick;
+  window.commitLoadedCase = commitLoadedCase;
+  window.clearLoadedCase = clearLoadedCase;
 })();

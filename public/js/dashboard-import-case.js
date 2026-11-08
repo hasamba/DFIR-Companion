@@ -212,7 +212,9 @@
             document.getElementById("importPasswordOverlay").classList.remove("open");
           }
           status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
-          document.getElementById("caseId").value = body.caseId;
+          // A pick; connect() below loads it and only then does #caseId change (#2399).
+          if (typeof setCasePick === "function") setCasePick(body.caseId);
+          else document.getElementById("caseId").value = body.caseId;
           loadCaseList();
           connect(); // attach to the freshly imported case
         } else if (res.status === 400) {
@@ -282,7 +284,9 @@
       // Cancel button closes it.
       document.getElementById("importCaseHint").textContent = line;
       document.getElementById("importCaseOverlay").classList.add("open");
-      document.getElementById("caseId").value = body.caseId;
+      // A pick; connect() below loads it and only then does #caseId change (#2399).
+      if (typeof setCasePick === "function") setCasePick(body.caseId);
+      else document.getElementById("caseId").value = body.caseId;
       loadCaseList();
       connect();
     } catch (err) {
