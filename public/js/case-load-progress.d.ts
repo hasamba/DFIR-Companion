@@ -127,6 +127,9 @@ export declare function createPanelReloader(lanes: LanePool): {
   retire(caseId?: string | null): void;
 };
 
+/** Window event fired once per abort signal that had panel requests issued under it (#2400). */
+export declare const PANEL_REQUESTS_ABANDONED: "dfir:panel-requests-abandoned";
+
 /**
  * Run every `[name, thunk]` panel loader, tallying each as its requests settle.
  *

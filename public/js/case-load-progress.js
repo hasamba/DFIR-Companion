@@ -274,6 +274,32 @@ export function createLanePool(limit) {
   };
 }
 
+// ── Abandonment notice (#2400) ──────────────────────────────────────────────────────────────────
+// An abandoned panel request is handed a promise that never settles (see runPanelLoaders), which is
+// right for a loader that only draws — and wrong for one that holds a lock until its request
+// settles: the lock stays on for the rest of the session. So the page is TOLD. The first request
+// issued under a signal hooks it, and when that signal aborts a window event fires; a module that
+// keeps such a lock (js/dashboard-tags.js, js/dashboard-jobs.js) drops it there. One hook per
+// signal: the panel reloader's signal lives across hundreds of runs, and a listener per run would
+// pile up on it.
+export const PANEL_REQUESTS_ABANDONED = "dfir:panel-requests-abandoned";
+const hookedSignals = new WeakSet();
+
+function announceAbandonment() {
+  if (typeof globalThis.dispatchEvent !== "function" || typeof Event !== "function") return;
+  try {
+    globalThis.dispatchEvent(new Event(PANEL_REQUESTS_ABANDONED));
+  } catch {
+    /* a listener's failure must never break the abort that triggered it */
+  }
+}
+
+function hookAbandonment(signal) {
+  if (!signal || typeof signal.addEventListener !== "function" || hookedSignals.has(signal)) return;
+  hookedSignals.add(signal);
+  signal.addEventListener("abort", announceAbandonment, { once: true });
+}
+
 /**
  * Run every panel loader, tallying each one as its requests settle.
  *
@@ -454,6 +480,7 @@ export function runPanelLoaders(entries, onProgress, options) {
     if (owner === null) return originalFetch.apply(this, args);
 
     const self = this;
+    hookAbandonment(signal);
     // Counted against its loader NOW, synchronously, so attribution survives a lane wait.
     outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
     // `held` is false only for a waiter its own abort released: it never got a lane to free.
