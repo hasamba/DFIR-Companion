@@ -681,6 +681,7 @@
     "ROUTE GET /js/dashboard-tagger.js",
     "ROUTE GET /js/dashboard-tagger-updates.js",
     "ROUTE GET /js/dashboard-rule-pack.js",
+    "ROUTE GET /js/dashboard-detection-rules.js",
     "ROUTE GET /js/dashboard-kev.js",
     "ROUTE GET /js/dashboard-sigma-rules.js",
     "ROUTE GET /js/dashboard-sigma-coverage.js",
