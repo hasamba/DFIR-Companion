@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
 import { requestSettingsUpdate, type UpdateSettingsResult } from "./settingsClient.js";
+import type { SettingsExpectation } from "./settingsStore.js";
 import { caseListFailure, clampIntervalSeconds, settingsFromForm } from "./popupSettings.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
@@ -186,8 +187,8 @@ async function load(): Promise<Settings> {
  * popup can no longer put back a stale capture state or case over a change made elsewhere — the
  * options page, the keyboard shortcut, or another popup. A failure is shown, never swallowed.
  */
-async function save(patch: Partial<Settings>, ifCaseId?: string): Promise<UpdateSettingsResult> {
-  const result = await requestSettingsUpdate((m) => browserApi.runtime.sendMessage(m), patch, ifCaseId);
+async function save(patch: Partial<Settings>, expect?: SettingsExpectation): Promise<UpdateSettingsResult> {
+  const result = await requestSettingsUpdate((m) => browserApi.runtime.sendMessage(m), patch, expect);
   if (!result.ok) statusEl().textContent = `settings not saved — ${result.error}`;
   return result;
 }
@@ -224,6 +225,9 @@ async function persistForm(): Promise<Settings> {
 
 /** Persist one field the analyst just left, and nothing else (#2398). */
 async function persistField(field: keyof Settings): Promise<void> {
+  // A case list still on its way was asked for the old case, companion or token: its answer must
+  // not repaint the dropdown or clear the case now (#2398).
+  if (field !== "intervalSeconds") invalidateCaseList();
   const value = formFields()[field];
   if (value !== undefined) await save({ [field]: value });
 }
@@ -233,8 +237,12 @@ async function persistField(field: keyof Settings): Promise<void> {
  * token is scoped elsewhere). Clear it — only if it is still the stored case — and say so when
  * that stopped capture, instead of leaving a recording icon that captures nothing (#2398).
  */
-async function clearVanishedCase(caseId: string): Promise<void> {
-  const result = await save({ caseId: "" }, caseId);
+async function clearVanishedCase(checked: Settings): Promise<void> {
+  const caseId = checked.caseId;
+  const result = await save(
+    { caseId: "" },
+    { caseId, companionUrl: checked.companionUrl, serviceToken: checked.serviceToken },
+  );
   if (result.ok && result.applied && result.stoppedForNoCase) {
     statusNotice = `case ${caseId} is no longer available — capture stopped`;
     await refreshStatus(result.settings);
@@ -271,6 +279,10 @@ async function refreshStatus(s: Settings): Promise<void> {
 // Each case-list request gets a number; an answer that arrives after a newer request was made is
 // thrown away, so a slow reply cannot overwrite a newer URL, token or case choice (#2398).
 let caseListGeneration = 0;
+
+function invalidateCaseList(): void {
+  caseListGeneration += 1;
+}
 
 interface CaseListResult {
   ok: boolean;
@@ -380,7 +392,7 @@ async function init() {
     return { caseId: f.caseId, companionUrl: f.companionUrl, serviceToken: f.serviceToken };
   });
   await refreshStatus(s);
-  if (initialCases.missing) await clearVanishedCase(s.caseId);
+  if (initialCases.missing) await clearVanishedCase(s);
   // The status line follows capture state however it changed — the keyboard shortcut included.
   browserApi.storage.onChanged.addListener((changes, areaName) => {
     const change = changes.settings;
@@ -430,7 +442,7 @@ async function init() {
     // A refresh can drop the stored case from the list, which blanks the dropdown. Without clearing
     // it the service worker would keep "capturing" into a case the analyst can no longer see. A
     // failed list (offline, token rejected) proves nothing, so the case is kept then.
-    if (result.missing) await clearVanishedCase(saved.caseId);
+    if (result.missing) await clearVanishedCase(saved);
   };
   // Cases are created in the dashboard — open it in a new tab.
   document.getElementById("openDashboard")!.onclick = (e) => {

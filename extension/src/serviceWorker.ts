@@ -12,7 +12,7 @@ import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { artifactPushErrorText, artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
-  isExtensionPageSender, sanitizeSettingsPatch, SettingsReconciler, settingsChangeNeedsReconcile, SettingsWriter,
+  isExtensionPageSender, sanitizeSettingsExpectation, sanitizeSettingsPatch, SettingsReconciler, settingsChangeNeedsReconcile, SettingsWriter,
   SETTINGS_KEY, type SettingsArea,
 } from "./settingsStore.js";
 import type { UpdateSettingsMessage, UpdateSettingsResult } from "./settingsClient.js";
@@ -457,8 +457,9 @@ async function toggleCapture(): Promise<void> {
 async function updateSettingsFromPage(msg: UpdateSettingsMessage): Promise<UpdateSettingsResult> {
   const patch = sanitizeSettingsPatch(msg.patch);
   if (!patch) return { ok: false, error: "invalid settings change" };
-  const ifCaseId = typeof msg.ifCaseId === "string" ? msg.ifCaseId : undefined;
-  const result = await settingsWriter.update(patch, ifCaseId);
+  const expect = sanitizeSettingsExpectation(msg.expect);
+  if (expect === null) return { ok: false, error: "invalid settings condition" };
+  const result = await settingsWriter.update(patch, expect);
   return { ok: true, ...result };
 }
 

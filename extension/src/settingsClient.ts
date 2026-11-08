@@ -1,4 +1,5 @@
 import type { Settings } from "./types.js";
+import type { SettingsExpectation } from "./settingsStore.js";
 
 /**
  * Pages ask the service worker to change settings instead of writing storage themselves (#2398):
@@ -8,8 +9,8 @@ import type { Settings } from "./types.js";
 export interface UpdateSettingsMessage {
   kind: "update_settings";
   patch: Partial<Settings>;
-  /** Apply only while the stored case is still this one (compare-and-set). */
-  ifCaseId?: string;
+  /** Apply only while these stored values still match (compare-and-set). */
+  expect?: SettingsExpectation;
 }
 
 export type UpdateSettingsResult =
@@ -29,10 +30,10 @@ function isResult(value: unknown): value is UpdateSettingsResult {
 export async function requestSettingsUpdate(
   send: Send,
   patch: Partial<Settings>,
-  ifCaseId?: string,
+  expect?: SettingsExpectation,
 ): Promise<UpdateSettingsResult> {
   const message: UpdateSettingsMessage = { kind: "update_settings", patch };
-  if (ifCaseId !== undefined) message.ifCaseId = ifCaseId;
+  if (expect !== undefined) message.expect = expect;
   try {
     const answer = await send(message);
     if (isResult(answer)) return answer;

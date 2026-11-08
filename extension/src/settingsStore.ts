@@ -26,6 +26,34 @@ export interface SettingsWriteResult {
 
 export const SETTINGS_KEY = "settings";
 
+/**
+ * The stored values a compare-and-set write requires. A case-list check names the case AND the
+ * companion and token it asked, so a late answer from one server cannot clear the case after the
+ * analyst pointed the extension at another.
+ */
+export type SettingsExpectation = Partial<Pick<Settings, "caseId" | "companionUrl" | "serviceToken">>;
+
+const EXPECTABLE: ReadonlyArray<keyof SettingsExpectation> = ["caseId", "companionUrl", "serviceToken"];
+
+/** Keep only string expectations on the known keys; undefined when there are none or one is bad. */
+export function sanitizeSettingsExpectation(raw: unknown): SettingsExpectation | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const input = raw as Record<string, unknown>;
+  const out: SettingsExpectation = {};
+  for (const key of EXPECTABLE) {
+    if (!(key in input)) continue;
+    if (typeof input[key] !== "string") return null;
+    out[key] = input[key] as string;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function meetsExpectation(current: Settings, expect: SettingsExpectation | undefined): boolean {
+  if (!expect) return true;
+  return EXPECTABLE.every((key) => expect[key] === undefined || current[key] === expect[key]);
+}
+
 function withDefaults(stored: unknown): Settings {
   const partial = stored && typeof stored === "object" ? (stored as Partial<Settings>) : {};
   return { ...DEFAULT_SETTINGS, ...partial };
@@ -102,13 +130,12 @@ export class SettingsWriter {
   }
 
   /**
-   * Change only the named fields. With `ifCaseId`, the write happens only while the stored case is
-   * still that one — a case-list check that finished late must not clear a case picked since.
+   * Change only the named fields. With `expect`, the write happens only while every named stored
+   * value still matches — a case-list check that finished late must not clear a case picked since,
+   * or one that is valid on the companion the analyst switched to.
    */
-  update(patch: Partial<Settings>, ifCaseId?: string): Promise<SettingsWriteResult> {
-    return this.transact(async (current) =>
-      ifCaseId !== undefined && current.caseId !== ifCaseId ? undefined : patch,
-    );
+  update(patch: Partial<Settings>, expect?: SettingsExpectation): Promise<SettingsWriteResult> {
+    return this.transact(async (current) => (meetsExpectation(current, expect) ? patch : undefined));
   }
 
   /** Read, decide and write as one step, ordered against every other change. */

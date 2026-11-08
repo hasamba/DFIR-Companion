@@ -85,6 +85,14 @@ describe("service-worker settings ownership (#2398)", () => {
     expect(handler).toContain("isExtensionPageSender(sender.url");
   });
 
+  it("a case list asked before an edit to the case, URL or token cannot repaint or clear (#2398 review)", () => {
+    const popup = pages[0];
+    const persistField = /async function persistField\([\s\S]*?\n\}/.exec(popup)?.[0];
+    expect(persistField).toContain("invalidateCaseList()");
+    const clear = /async function clearVanishedCase\([\s\S]*?\n\}/.exec(popup)?.[0];
+    expect(clear).toMatch(/caseId, companionUrl: checked\.companionUrl, serviceToken: checked\.serviceToken/);
+  });
+
   it("reschedules the timer from the storage change, not only from a message", () => {
     expect(sw).toMatch(/storage\.onChanged\.addListener\([\s\S]{0,400}settingsChangeNeedsReconcile\(changes\[SETTINGS_KEY\]\)/);
   });

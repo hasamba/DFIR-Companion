@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isExtensionPageSender,
   mergeSettingsPatch,
+  sanitizeSettingsExpectation,
   sanitizeSettingsPatch,
   SerialQueue,
   SettingsReconciler,
@@ -85,14 +86,26 @@ describe("SettingsWriter — #2398 writers change only their own fields", () => 
   it("compare-and-set: a late case check does not clear a case picked since", async () => {
     const area = fakeArea({ caseId: "CASE-B", running: true });
     const writer = new SettingsWriter(area);
-    const result = await writer.update({ caseId: "" }, "CASE-A");
+    const result = await writer.update({ caseId: "" }, { caseId: "CASE-A" });
     expect(result.applied).toBe(false);
     expect(stored(area)).toMatchObject({ caseId: "CASE-B", running: true });
   });
 
+  it("compare-and-set: a late answer from the old companion does not clear the case on the new one", async () => {
+    const area = fakeArea({ caseId: "CASE-A", running: true, companionUrl: "http://old:1", serviceToken: "t1" });
+    const writer = new SettingsWriter(area);
+    const checked = { caseId: "CASE-A", companionUrl: "http://old:1", serviceToken: "t1" };
+    await writer.update({ companionUrl: "http://new:1" }); // analyst switches server while the list loads
+    const result = await writer.update({ caseId: "" }, checked);
+    expect(result.applied).toBe(false);
+    expect(stored(area)).toMatchObject({ caseId: "CASE-A", running: true, companionUrl: "http://new:1" });
+    await writer.update({ companionUrl: "http://old:1", serviceToken: "t2" }); // or changes the token
+    expect((await writer.update({ caseId: "" }, checked)).applied).toBe(false);
+  });
+
   it("compare-and-set: clearing the checked case stops capture and says so", async () => {
     const area = fakeArea({ caseId: "CASE-A", running: true });
-    const result = await new SettingsWriter(area).update({ caseId: "" }, "CASE-A");
+    const result = await new SettingsWriter(area).update({ caseId: "" }, { caseId: "CASE-A" });
     expect(result).toMatchObject({ applied: true, stoppedForNoCase: true });
     expect(stored(area)).toMatchObject({ caseId: "", running: false });
   });
@@ -139,6 +152,20 @@ describe("sanitizeSettingsPatch", () => {
       expect(sanitizeSettingsPatch(raw)).toBeUndefined();
     },
   );
+});
+
+describe("sanitizeSettingsExpectation", () => {
+  it("keeps string conditions on the case and connection only", () => {
+    expect(sanitizeSettingsExpectation({ caseId: "A", companionUrl: "u", serviceToken: "", running: true })).toEqual({
+      caseId: "A", companionUrl: "u", serviceToken: "",
+    });
+  });
+  it("passes through an absent condition", () => {
+    expect(sanitizeSettingsExpectation(undefined)).toBeUndefined();
+  });
+  it.each([null, "A", [], {}, { caseId: 1 }])("refuses %j", (raw) => {
+    expect(sanitizeSettingsExpectation(raw)).toBeNull();
+  });
 });
 
 describe("SettingsReconciler — timer and icon follow the stored value", () => {
@@ -226,9 +253,9 @@ describe("requestSettingsUpdate", () => {
   it("returns the worker's answer", async () => {
     const answer = { ok: true, settings: DEFAULT_SETTINGS, applied: true, stoppedForNoCase: false };
     const sent: unknown[] = [];
-    const r = await requestSettingsUpdate(async (m) => { sent.push(m); return answer; }, { running: false }, "CASE-A");
+    const r = await requestSettingsUpdate(async (m) => { sent.push(m); return answer; }, { running: false }, { caseId: "CASE-A" });
     expect(r).toEqual(answer);
-    expect(sent).toEqual([{ kind: "update_settings", patch: { running: false }, ifCaseId: "CASE-A" }]);
+    expect(sent).toEqual([{ kind: "update_settings", patch: { running: false }, expect: { caseId: "CASE-A" } }]);
   });
 
   it("turns a rejected message into a reportable failure", async () => {
