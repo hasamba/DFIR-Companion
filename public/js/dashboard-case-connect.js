@@ -207,6 +207,10 @@
     // panel. The result was a dashboard that kept redrawing and re-loading a case the analyst had
     // just walked out of, at a URL that named no case at all.
     //
+    // Nothing is loaded now, so no action may target the cancelled case (#2399); the picker keeps it
+    // as its choice so retrying is one click.
+    const cancelledCaseId = activeCaseId;
+    if (typeof clearLoadedCase === "function") clearLoadedCase(cancelledCaseId);
     // Order matters: drop activeCaseId LAST. render()'s stale guard compares against it, so
     // clearing it before the socket is closed would open a window where a push in flight is
     // measured against nothing.
@@ -216,10 +220,6 @@
     retirePanelReloads(null);
     if (typeof closeCaseSocket === "function") closeCaseSocket();
     if (typeof retireCount === "function") retireCount();
-    // Nothing is loaded now, so no action may target the cancelled case (#2399); the picker keeps it
-    // as its choice so retrying is one click.
-    const cancelledCaseId = activeCaseId;
-    if (typeof clearLoadedCase === "function") clearLoadedCase(cancelledCaseId);
     activeCaseId = null;
     hideCaseLoadingOverlay();
     // Take the case back out of the URL. proceedConnect put it there the moment the load STARTED,

@@ -1401,7 +1401,9 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toMatch(/if \(fromUrl\)\s*\{[\s\S]{0,120}connect\(\)/);
     // The REMEMBERED case is pre-filled into the picker and nothing more. Landing on a bare
     // /dashboard must not drag the analyst into the last case's load before they can choose.
-    expect(html).toMatch(/else if \(remembered\)\s*\{\s*el\.value = remembered;\s*\}/);
+    // Since #2399 that pre-fill is a pick (setCasePick via choose()), not a write to #caseId, so
+    // nothing reads the remembered case as loaded either.
+    expect(html).toMatch(/else if \(remembered\)\s*\{\s*choose\(remembered\);\s*\}/);
     // The two reads are separate: the one that can auto-open comes from the URL, never from
     // storage. This is the regression that must not come back. Whitespace-tolerant for the same
     // reason as the DELETE call at the top of this file — prettier wraps these declarations now
