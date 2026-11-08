@@ -595,6 +595,7 @@
     "jobLedgerStore.ts": "analysis/case",
     "jobLedgerWorker.ts": "analysis/case",
     "jobManager.ts": "analysis/case",
+    "jobManagerSupport.ts": "analysis/case",
     "jobRegistry.ts": "analysis/case",
     "jobServedModel.ts": "analysis/case",
     "journaldImport.ts": "analysis/ingest",

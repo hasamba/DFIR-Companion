@@ -26,12 +26,14 @@
   let _jobsMenuShape = "";
   let _jobsLoadPromise = null;
   let _jobsLoadCaseId = "";
+  let _jobsLoadSeq = 0; // the newest read; only its answer may write the cache (#2400)
   const JOB_UI_REFRESH_MS = 1000;
   const JOBS_MENU_ROWS = 12; // rows the popover renders; active jobs are never crowded out of them
   let _jobUiRefreshTimer = null;
   let _jobUiRefreshRunning = false;
   let _jobUiRefreshQueued = false;
   let _jobUiRefreshCaseId = "";
+  let _jobUiRefreshGen = 0; // bumped when an abandonment releases a refresh stuck on a dead read
   // Does any gate (Presidio, duplicate host) still hold the case? Fed by the AI pill's derived
   // state (js/dashboard-ai-status.js). Unknown counts as holding, so no Re-run is offered on a guess.
   let _gateClearedCaseId = "";
@@ -62,6 +64,7 @@
     if (!cid) return Promise.resolve();
     if (_jobsLoadPromise && _jobsLoadCaseId === cid) return _jobsLoadPromise;
     _jobsLoadCaseId = cid;
+    const seq = ++_jobsLoadSeq;
     // THROW, don't substitute an empty list. A non-ok answer — an expired session's 401, a 500, a
     // request the server dropped while it was overloaded — used to be mapped to `{ jobs: [] }`,
     // which emptied the cache and hid the badge: the case was drawn as idle at the exact moment the
@@ -80,6 +83,7 @@
       })
       .then((d) => {
         if (cid !== jobsCaseId()) return;
+        if (seq !== _jobsLoadSeq) return; // a newer read superseded this one; its answer wins
         _jobsCache = Array.isArray(d.jobs) ? d.jobs : [];
         _jobsCacheCaseId = cid;
         renderJobs();
@@ -94,6 +98,25 @@
     _jobsLoadPromise = request;
     return request;
   }
+  // AN ABANDONED READ NEVER SETTLES (#2400). The case load and the reconnect catch-up hand an
+  // abandoned request a promise that stays pending for ever (js/case-load-progress.js), and
+  // runPanelLoaders announces each abandonment. Without this, a cancelled load followed by a retry of
+  // the same case got that dead promise back from loadJobs for the rest of the session, and
+  // runJobUiRefresh, awaiting it, held its running flag on — so no job_changed push refreshed the
+  // chip, the cockpit or the parked provenance panels again. A refresh still waiting on its timer is
+  // dropped rather than re-armed: a case switch and a reconnect both re-read jobs themselves, and
+  // after a cancel nothing may read the case the analyst walked out of.
+  function resetJobsLoads() {
+    _jobsLoadPromise = null;
+    _jobsLoadCaseId = "";
+    _jobUiRefreshGen++;
+    clearTimeout(_jobUiRefreshTimer);
+    _jobUiRefreshTimer = null;
+    _jobUiRefreshQueued = false;
+    _jobUiRefreshRunning = false;
+  }
+  if (typeof addEventListener === "function")
+    addEventListener("dfir:panel-requests-abandoned", resetJobsLoads);
   // WHICH CASE THE SOCKET HAS FED (#1453). Once a push has carried a job list for the case on
   // screen, the refresh stops re-reading it over HTTP: the push IS the answer, and the HTTP read is
   // the thing that never arrived while an import was running — every lane held by a panel read
@@ -140,16 +163,20 @@
     }
     _jobUiRefreshQueued = false;
     _jobUiRefreshRunning = true;
+    const gen = _jobUiRefreshGen;
     try {
       const jobsRead = _jobsPushCaseId === cid ? Promise.resolve() : loadJobs();
       await Promise.all([jobsRead, loadCockpit(cid)]);
+      if (gen !== _jobUiRefreshGen) return; // released by an abandonment; a newer refresh owns this
       // #1447: the IOC-provenance panels park their reloads while an import runs; now that the
       // cache knows the current job set, let them fire if the import is gone.
       if (typeof flushDeferredIocProvenanceReloads === "function") flushDeferredIocProvenanceReloads();
     } finally {
-      _jobUiRefreshRunning = false;
-      if (_jobUiRefreshQueued && _jobUiRefreshCaseId === jobsCaseId()) {
-        _jobUiRefreshTimer = setTimeout(runJobUiRefresh, JOB_UI_REFRESH_MS);
+      if (gen === _jobUiRefreshGen) {
+        _jobUiRefreshRunning = false;
+        if (_jobUiRefreshQueued && _jobUiRefreshCaseId === jobsCaseId()) {
+          _jobUiRefreshTimer = setTimeout(runJobUiRefresh, JOB_UI_REFRESH_MS);
+        }
       }
     }
   }
