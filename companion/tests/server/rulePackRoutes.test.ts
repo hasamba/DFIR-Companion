@@ -120,6 +120,18 @@ describe("rule pack routes", () => {
     expect(again.body.review).toBeNull();
   });
 
+  // #2389: the check said "update"; after Install the status read that stale record and still showed
+  // "rules-… is available (installed: the bundled rules)" right above "installed and current".
+  it("an install makes the last check read as current, and a roll back makes it an update again", async () => {
+    const check = await request(app()).post("/tagger/pack/check");
+    await request(app()).post("/tagger/pack/install").send({ token: check.body.review.token }).expect(200);
+    const after = await request(app()).get("/tagger/pack");
+    expect(after.body.lastCheck.status).toBe("current");
+    expect(after.body.lastCheck.message).toBe(`Rule pack ${PACK_TAG} is installed and current.`);
+    await request(app()).post("/tagger/pack/rollback").send({ to: "bundled" }).expect(200);
+    expect((await request(app()).get("/tagger/pack")).body.lastCheck.status).toBe("update");
+  });
+
   it("a SHA mismatch installs nothing and answers 502 with a sentence", async () => {
     gh.current = fakeGitHub([
       {

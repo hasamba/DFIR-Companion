@@ -94,6 +94,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-tagger-updates.js": "application/javascript; charset=utf-8",
   "/js/dashboard-rule-pack.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-detection-rules.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",
   "/js/dashboard-sigma-rules.js": "application/javascript; charset=utf-8",
   "/js/dashboard-sigma-coverage.js": "application/javascript; charset=utf-8",
