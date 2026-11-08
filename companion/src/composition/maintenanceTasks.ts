@@ -246,6 +246,8 @@ export interface PostListenDeps {
   auditExporter?: AuditExporter;
   /** Cloud collect job recovery (#2308; live collection registers its steps). Skipped on the demo. */
   cloudCollectRecoverers?: readonly CloudCollectRecoverer[];
+  /** SO-CRATES jobs a restart left unfinished (#2408): resume or mark interrupted. Skipped on the demo. */
+  socratesRecovery?: () => Promise<void>;
 }
 
 /**
@@ -263,8 +265,14 @@ export function startPostListenTasks({
   updateRepo,
   auditExporter,
   cloudCollectRecoverers = [],
+  socratesRecovery,
 }: PostListenDeps): void {
   void startCloudCollectRecovery({ demoMode, recoverers: cloudCollectRecoverers, log: logLine });
+  // SO-CRATES does not run on the public demo, and a leftover job there must not be picked up.
+  if (socratesRecovery && !demoMode)
+    void socratesRecovery().catch((e) =>
+      warnLine(`[socrates] startup recovery failed: ${(e as Error).message}`),
+    );
 
   // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
   // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
