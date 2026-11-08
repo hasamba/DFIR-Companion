@@ -7,6 +7,9 @@ export interface CapturePayload {
   tabTitle: string;
   triggerType: TriggerType;
   imageBase64: string;     // base64 without data: prefix
+  // A random id per screenshot, sent with every attempt, so the companion recognises a re-send
+  // instead of storing the same evidence twice (#2397). Absent on rows queued by an older build.
+  captureId?: string;
 }
 
 export interface Settings {

@@ -1,5 +1,5 @@
 import { lockedQueueMessage, lockedQueuedMessage } from "./casePasswordSession.js";
-import { CAPTURE_LOG_NEEDS_REPAIR } from "./captureRefusal.js";
+import { CAPTURE_LOG_NEEDS_REPAIR, isCaseLockRefusal } from "./captureRefusal.js";
 import type { ConnectionStatus, DroppedCapture } from "./types.js";
 import type { QueueDrainStatus } from "./captureController.js";
 
@@ -47,13 +47,17 @@ function droppedNote(status: ConnectionStatus): string {
 // Queued captures refused for access (or a capture log needing repair) — KEPT, not lost (#2254).
 function keptNote(status: ConnectionStatus): string {
   if (!status.kept?.length) return "";
-  const repair = status.kept.filter((k) => k.errorCode === CAPTURE_LOG_NEEDS_REPAIR);
-  const access = status.kept.filter((k) => k.errorCode !== CAPTURE_LOG_NEEDS_REPAIR);
+  // Captures waiting for a case password are described by the locked-case message, not as an
+  // access problem: "check the service token" would send the analyst the wrong way (#2397).
+  const waiting = status.kept.filter((k) => !isCaseLockRefusal(k.status, k.errorMessage, k.errorCode));
+  if (!waiting.length) return "";
+  const repair = waiting.filter((k) => k.errorCode === CAPTURE_LOG_NEEDS_REPAIR);
+  const access = waiting.filter((k) => k.errorCode !== CAPTURE_LOG_NEEDS_REPAIR);
   const parts = [
     ...(access.length ? [`refused (HTTP ${codesOf(access)}); ${CHECK_ACCESS}`] : []),
     ...(repair.length ? [NEEDS_REPAIR] : []),
   ];
-  return ` · ${status.kept.length} queued capture(s) kept — ${parts.join("; ")}`;
+  return ` · ${waiting.length} queued capture(s) kept — ${parts.join("; ")}`;
 }
 
 // Queued captures taken for a different companion than the current one — kept, not sent (#2396).
