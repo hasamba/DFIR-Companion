@@ -343,12 +343,17 @@ async function loadCases(
 async function showLastCapture(): Promise<void> {
   const el = document.getElementById("lastCapture");
   if (!el) return;
-  const { lastCapture } = await browserApi.storage.local.get("lastCapture");
+  const { lastCapture, lastQueueDrain } = await browserApi.storage.local.get(["lastCapture", "lastQueueDrain"]);
   if (lastCapture) {
     const c = lastCapture as { at: string; trigger: string; bytes: number; diag: string };
     el.textContent = `last capture (${c.trigger}, ${c.bytes}B) @ ${c.at}: ${c.diag}`;
   } else {
     el.textContent = "no capture attempted yet";
+  }
+  // What the last automatic retry of the offline queue did (#2396) — a stuck queue is visible.
+  if (lastQueueDrain) {
+    const d = lastQueueDrain as { at: string; diag: string };
+    el.textContent += ` · last queue retry @ ${d.at}: ${d.diag}`;
   }
 }
 
