@@ -261,7 +261,10 @@ export interface ValuesApi {
   toolForExt(ext: string, status: unknown): string | null;
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
-  jobMenuView(j: Record<string, unknown>, opts?: { gateCleared?: boolean; newestOfKind?: boolean; now?: number }): JobView;
+  jobMenuView(
+    j: Record<string, unknown>,
+    opts?: { gateCleared?: boolean; newestOfKind?: boolean; now?: number },
+  ): JobView;
   jobBarPercent(j: JobProgressLike): number | null;
   jobTime(iso: string | undefined): string;
   jobWhen(j: Record<string, unknown>): string;
