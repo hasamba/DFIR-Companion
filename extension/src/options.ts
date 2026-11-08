@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
+import { requestSettingsUpdate } from "./settingsClient.js";
 import { browserApi } from "./browser.js";
 import { readAuditEntries, SITE_ACCESS_AUDIT_KEY } from "./siteAccess.js";
 
@@ -59,16 +60,15 @@ async function init() {
   browserApi.permissions.onAdded.addListener(() => void renderSiteAccess());
   browserApi.permissions.onRemoved.addListener(() => void renderSiteAccess());
 
+  // Save sends ONLY the two fields this page edits (#2398). It used to write back the whole copy it
+  // read on opening, which undid any Start, Stop or case change made in the popup since then.
   document.getElementById("save")!.onclick = async () => {
-    const updated = {
-      ...settings,
+    const result = await requestSettingsUpdate((m) => browserApi.runtime.sendMessage(m), {
       companionUrl: normalizeCompanionUrl(input.value),
       serviceToken: tokenInput.value.trim(),
-    };
-    await browserApi.storage.local.set({ settings: updated });
-    await browserApi.runtime.sendMessage({ kind: "settings_changed" }).catch(() => {});
-    msg.textContent = "Saved.";
-    setTimeout(() => { msg.textContent = ""; }, 2000);
+    });
+    msg.textContent = result.ok ? "Saved." : `Not saved — ${result.error}`;
+    if (result.ok) setTimeout(() => { msg.textContent = ""; }, 2000);
   };
 }
 
